@@ -1,5 +1,6 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import {
+  createModuleArgumentError,
   createOverflowError,
   defineArithmetic,
   defineBinary,
@@ -83,9 +84,6 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
-const getReducibleElements = (set: ReducibleSet) =>
-  set.kind === "Interval" ? toFiniteSet(set).elements : set.elements;
-
 // TLC combines a set enumeration or an interval with another set element by element, testing each
 // element for membership in the other set.
 const combineReducible = (
@@ -93,7 +91,7 @@ const combineReducible = (
   set: ReducibleSet,
   other: Value,
 ): Value => {
-  const elements = getReducibleElements(set);
+  const elements = set.kind === "Interval" ? toFiniteSet(set).elements : set.elements;
   if (operator !== "\\cup") {
     const isKept = operator === "\\cap";
     return createEnumeratedSet(
@@ -383,9 +381,7 @@ const createSequencesOperators = (version: TlcVersion) =>
           (element) => {
             const result = test.call([element]);
             if (typeof result !== "boolean") {
-              throw new TlaModuleError(
-                `The second argument of SelectSeq should be a operator, but instead it is:\n${formatValue(result)}`,
-              );
+              throw createModuleArgumentError("second", "SelectSeq", "operator", result);
             }
             return result;
           },

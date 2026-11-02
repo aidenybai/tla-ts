@@ -1,4 +1,4 @@
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { TlaEvaluationError } from "./errors";
 import { prettyPrint } from "./pretty-print";
 import type { TlcVersion } from "./tlc/version";
 
@@ -169,12 +169,8 @@ export const describeKind = (value: Value) => {
   return isSetValue(value) ? "set" : "function";
 };
 
-export const checkInteger = (value: number) => {
-  if (!Number.isInteger(value) || value > MAXIMUM_INTEGER || value < MINIMUM_INTEGER) {
-    throw new TlaModuleError(`Integer overflow: ${value} is outside TLC's 32-bit range`);
-  }
-  return value;
-};
+export const isTlcInteger = (value: number) =>
+  Number.isInteger(value) && value <= MAXIMUM_INTEGER && value >= MINIMUM_INTEGER;
 
 // TLC keeps a record, or a function with string keys that @@ builds, in the order the spec writes
 // it until it sorts the value to compare or fingerprint it. ToString, Assert, and error messages
@@ -689,56 +685,25 @@ const toTlcRecord = (value: Value) => {
   return functionValue.domain.every((key) => typeof key === "string") ? functionValue : undefined;
 };
 
+// A model value compared with a value of another kind. The other value is never a model value.
 const compareModelValueWith = (modelValue: ModelValue, other: Value) => {
-  if (getModelValueType(modelValue) !== undefined) {
-    throw new TlaEvaluationError(
-      `Attempted to compare the typed model value ${formatValue(modelValue)} and the non-model value\n${formatValue(other)}`,
-    );
-  }
+  checkModelValueTypes(other, modelValue, false);
   return 1;
 };
 
 const equalsModelValueWith = (modelValue: ModelValue, other: Value) => {
-  if (getModelValueType(modelValue) !== undefined) {
-    throw new TlaEvaluationError(
-      `Attempted to check equality of the typed model value ${formatValue(modelValue)} and the non-model value\n${formatValue(other)}`,
-    );
-  }
+  checkModelValueTypes(other, modelValue, true);
   return false;
 };
 
 const compareModelValue = (left: ModelValue, right: Value) => {
-  const type = getModelValueType(left);
-  if (type === undefined) return isModelValue(right) ? left.rank - right.rank : -1;
-  if (!isModelValue(right)) {
-    throw new TlaEvaluationError(
-      `Attempted to compare the typed model value ${formatValue(left)} and non-model value\n${formatValue(right)}`,
-    );
-  }
-  const otherType = getModelValueType(right);
-  if (otherType !== undefined && otherType !== type) {
-    throw new TlaEvaluationError(
-      `Attempted to compare the differently-typed model values ${formatValue(left)} and ${formatValue(right)}`,
-    );
-  }
-  return left.rank - right.rank;
+  if (left.type !== undefined) checkModelValueTypes(left, right, false);
+  return isModelValue(right) ? left.rank - right.rank : -1;
 };
 
 const equalsModelValue = (left: ModelValue, right: Value) => {
-  const type = getModelValueType(left);
-  if (type === undefined) return isModelValue(right) && left.name === right.name;
-  if (!isModelValue(right)) {
-    throw new TlaEvaluationError(
-      `Attempted to check equality of typed model value ${formatValue(left)} and non-model value\n${formatValue(right)}`,
-    );
-  }
-  const otherType = getModelValueType(right);
-  if (otherType !== undefined && otherType !== type) {
-    throw new TlaEvaluationError(
-      `Attempted to check equality of the differently-typed model values ${formatValue(left)} and ${formatValue(right)}`,
-    );
-  }
-  return left.name === right.name;
+  if (left.type !== undefined) checkModelValueTypes(left, right, true);
+  return isModelValue(right) && left.name === right.name;
 };
 
 const SCALAR_KINDS = {
@@ -1729,10 +1694,8 @@ const describeOverflow = (value: Value) =>
 // checking whether one is empty, so an infinite component fails even beside an empty one.
 export const getCardinality = (value: Value, version?: TlcVersion): number => {
   if (typeof value !== "object") {
-    const kind =
-      typeof value === "number" ? "integer" : typeof value === "string" ? "string" : "boolean";
     throw new TlaEvaluationError(
-      `Attempted to compute the number of elements in the ${kind} ${formatValue(value)}.`,
+      `Attempted to compute the number of elements in the ${describeKind(value)} ${formatValue(value)}.`,
     );
   }
   switch (value.kind) {

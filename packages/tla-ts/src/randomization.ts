@@ -1,12 +1,15 @@
-import { createJavaOverrideError, defineStateOperator, getValue } from "./builtins";
-import { TlaModuleError } from "./errors";
+import {
+  createJavaOverrideError,
+  createModuleArgumentError,
+  defineStateOperator,
+  getValue,
+} from "./builtins";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc/random";
 import {
   createSet,
   createTuple,
-  formatValue,
   isEmptySet,
   isEnumerable,
   isSetValue,
@@ -20,23 +23,11 @@ const RANDOM_SUBSET_SIGNATURE =
 // TLCGlobals.setBound: TLC 1.7.4's ValueVec holds at most this many elements of a set.
 const SET_BOUND_174 = 1000000;
 
-const createArgumentError = (position: string, name: string, expected: string, value: string) =>
-  new TlaModuleError(
-    `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${value}`,
-  );
-
 const getCount = (value: Value, position: string, name: string) => {
   if (typeof value !== "number" || value < 0) {
-    throw createArgumentError(position, name, "nonnegative integer", formatValue(value));
+    throw createModuleArgumentError(position, name, "nonnegative integer", value);
   }
   return value;
-};
-
-const getFiniteElements = (value: Value, position: string, name: string, expected: string) => {
-  if (!isSetValue(value) || !isEnumerable(value)) {
-    throw createArgumentError(position, name, expected, formatValue(value));
-  }
-  return toFiniteSet(value).elements;
 };
 
 // SubsetValue.CoinTossingSubsetEnumerator: each pick keeps each element with the probability.
@@ -51,21 +42,25 @@ const getRandomSetOfSubsets = (args: BuiltinArgument[], runtime: CheckerRuntime)
   const name = "RandomSetOfSubsets";
   const picks = getCount(getValue(args, 0, name), "first", name);
   const size = getCount(getValue(args, 1, name), "second", name);
-  const elements = getFiniteElements(getValue(args, 2, name), "third", name, "finite set");
+  const set = getValue(args, 2, name);
+  if (!isSetValue(set) || !isEnumerable(set)) {
+    throw createModuleArgumentError("third", name, "finite set", set);
+  }
+  const elements = toFiniteSet(set).elements;
   if (elements.length < 31 && picks > 2 ** elements.length) {
-    throw createArgumentError(
+    throw createModuleArgumentError(
       "first",
       name,
       `nonnegative integer that is smaller than the subset's size of 2^${elements.length}`,
-      String(picks),
+      picks,
     );
   }
   if (elements.length < size) {
-    throw createArgumentError(
+    throw createModuleArgumentError(
       "second",
       name,
       "nonnegative integer in range 0..Cardinality(S)",
-      String(size),
+      size,
     );
   }
   return tossSubsets(
@@ -80,14 +75,14 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
   defineStateOperator("RandomSubset", 2, (args) => {
     const count = getValue(args, 0, "RandomSubset");
     if (typeof count !== "number") {
-      throw createArgumentError("first", "RandomSubset", "nonnegative integer", formatValue(count));
+      throw createModuleArgumentError("first", "RandomSubset", "nonnegative integer", count);
     }
     if (count < 0) {
       throw createJavaOverrideError(RANDOM_SUBSET_SIGNATURE, String(count));
     }
     const set = getValue(args, 1, "RandomSubset");
     if (!isSetValue(set) || (!isEmptySet(set) && !isEnumerable(set))) {
-      throw createArgumentError("second", "RandomSubset", "a finite set", formatValue(set));
+      throw createModuleArgumentError("second", "RandomSubset", "a finite set", set);
     }
     const factors = getEnumeratedFactors(set, runtime.version);
     if (factors) {

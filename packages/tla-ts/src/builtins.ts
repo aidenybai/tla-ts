@@ -50,6 +50,17 @@ const CORE_OPERATOR_NAMES = new Set([
 const createArgumentError = (name: string, message: string) =>
   CORE_OPERATOR_NAMES.has(name) ? new TlaEvaluationError(message) : new TlaModuleError(message);
 
+// TLC's EC.TLC_MODULE_ARGUMENT_ERROR.
+export const createModuleArgumentError = (
+  position: string,
+  name: string,
+  expected: string,
+  value: Value,
+) =>
+  new TlaModuleError(
+    `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${formatValue(value)}`,
+  );
+
 const isOperatorValue = (argument: BuiltinArgument): argument is OperatorValue =>
   typeof argument === "object" && argument.kind === "Operator";
 
@@ -98,11 +109,8 @@ export const getEnumerableSet = (args: BuiltinArgument[], index: number, name: s
   return set;
 };
 
-const getFiniteSet = (args: BuiltinArgument[], index: number, name: string) =>
-  toFiniteSet(getEnumerableSet(args, index, name));
-
 export const getElements = (args: BuiltinArgument[], index: number, name: string) =>
-  getFiniteSet(args, index, name).elements;
+  toFiniteSet(getEnumerableSet(args, index, name)).elements;
 
 export const getSequence = (args: BuiltinArgument[], index: number, name: string) => {
   const value = getValue(args, index, name);

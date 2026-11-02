@@ -12,7 +12,7 @@ import {
   type Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getArity, getBoundNames, getPatternNames, isBefore } from "./resolve";
+import { getArity, getBoundNames, getPatternNames, isBefore, LOCAL_RESOLUTION } from "./resolve";
 
 export const substitutedExpressions = new WeakSet<Expression>();
 
@@ -440,14 +440,14 @@ const substituteInEnabled = (
   };
 };
 
-const createLocalIdentifier = (name: string, location: SourceLocation): Expression => ({
+export const createLocalIdentifier = (name: string, location: SourceLocation): Expression => ({
   kind: "Identifier",
   name,
   location,
-  resolution: { kind: "Local" },
+  resolution: LOCAL_RESOLUTION,
 });
 
-const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
+export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
   params.map((param) => createLocalIdentifier(param.name, location));
 
 const getInstanceOperator = (
@@ -579,7 +579,7 @@ const substitute = (
           ...expression,
           operator: LAMBDA_NAME,
           args,
-          resolution: { kind: "Local" },
+          resolution: LOCAL_RESOLUTION,
         },
         location: expression.location,
       };

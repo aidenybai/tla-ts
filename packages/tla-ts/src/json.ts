@@ -1,10 +1,10 @@
 import {
   createJavaOverrideError,
+  createModuleArgumentError,
   defineStateOperator,
   getJavaClassName,
   getValue,
 } from "./builtins";
-import { TlaModuleError } from "./errors";
 import type { Builtin } from "./evaluate";
 import {
   createRecord,
@@ -53,12 +53,6 @@ const createUnsupportedError = (method: string, value: Value) =>
   createJavaOverrideError(
     method,
     `Cannot convert value: unsupported value type tlc2.value.impl.${getJavaClassName(value)}`,
-  );
-
-const createCastError = (method: string, value: Value) =>
-  createJavaOverrideError(
-    method,
-    `Cannot cast tlc2.value.impl.${getJavaClassName(value)} to tlc2.value.impl.StringValue`,
   );
 
 const toJsonString = (text: string) =>
@@ -150,7 +144,12 @@ const parseJson = (text: string, method: string) => {
 };
 
 const getPath = (value: Value, method: string) => {
-  if (typeof value !== "string") throw createCastError(method, value);
+  if (typeof value !== "string") {
+    throw createJavaOverrideError(
+      method,
+      `Cannot cast tlc2.value.impl.${getJavaClassName(value)} to tlc2.value.impl.StringValue`,
+    );
+  }
   return value;
 };
 
@@ -176,9 +175,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
     const path = getPath(getValue(args, 0, "JsonSerialize"), SERIALIZE_SIGNATURE);
     const value = getValue(args, 1, "JsonSerialize");
     if (!getSequenceElements(value) && !isRecord(value)) {
-      throw new TlaModuleError(
-        `The second argument of JsonSerialize should be a sequence or record, but instead it is:\n${formatValue(value)}`,
-      );
+      throw createModuleArgumentError("second", "JsonSerialize", "sequence or record", value);
     }
     files.writeFile?.(path, toJson(value, SERIALIZE_SIGNATURE));
     return true;
@@ -188,9 +185,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
     const value = getValue(args, 1, "ndJsonSerialize");
     const elements = getSequenceElements(value);
     if (!elements) {
-      throw new TlaModuleError(
-        `The second argument of ndJsonSerialize should be a sequence, but instead it is:\n${formatValue(value)}`,
-      );
+      throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", value);
     }
     files.writeFile?.(
       path,

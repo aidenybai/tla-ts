@@ -55,8 +55,7 @@ import {
   isReducibleSet,
   isSetValue,
   isSettledValue,
-  MAXIMUM_INTEGER,
-  MINIMUM_INTEGER,
+  isTlcInteger,
   toFiniteFunction,
   toFiniteSet,
   updateFunction,
@@ -965,6 +964,18 @@ const isOperatorArgument = (expression: Expression, context: Context) => {
   return operator !== undefined && getArity(operator) > 0;
 };
 
+const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
+  args.map((arg) =>
+    isOperatorArgument(arg, context)
+      ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
+      : evaluate(arg, context),
+  );
+
+const createArityError = (closure: Closure, count: number) =>
+  new TlaEvaluationError(
+    `Operator ${closure.name} expects ${closure.params.length} arguments but received ${count}`,
+  );
+
 const createThunk = (expression: Expression, context: Context): Thunk => ({
   kind: "Thunk",
   expression,
@@ -1034,11 +1045,7 @@ export const bindOperatorArguments = (
   context: Context,
   binders?: ArgumentBinder[],
 ): Scope | undefined => {
-  if (args.length !== closure.params.length) {
-    throw new TlaEvaluationError(
-      `Operator ${closure.name} expects ${closure.params.length} arguments but received ${args.length}`,
-    );
-  }
+  if (args.length !== closure.params.length) throw createArityError(closure, args.length);
   let scope = closure.scope;
   for (let index = 0; index < args.length; index++) {
     const param = closure.params[index];
@@ -1078,14 +1085,7 @@ const callOperator = (
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
   if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
-  return operator.evaluate(
-    args.map((arg) =>
-      isOperatorArgument(arg, context)
-        ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
-        : evaluate(arg, context),
-    ),
-    context,
-  );
+  return operator.evaluate(evaluateBuiltinArguments(args, context), context);
 };
 
 // The LET definitions that a reference evaluates again, and those that cache only a settled value.
@@ -1170,9 +1170,6 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   if (builtin?.arity === 0) return builtin.evaluate([], context);
   throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
 };
-
-export const isTlcInteger = (value: number) =>
-  Number.isInteger(value) && value <= MAXIMUM_INTEGER && value >= MINIMUM_INTEGER;
 
 const IMPURE_BUILTINS = new Set([
   "Print",
@@ -1639,19 +1636,12 @@ const cacheStateValue = (evaluator: Evaluator): Evaluator => {
   };
 };
 
-const isOperatorName = (name: string, environment: Environment) => {
-  const operator = resolveGlobalOperator(name, environment);
-  return operator !== undefined && getArity(operator) > 0;
+export const isValueArgument = (argument: Expression, environment: Environment) => {
+  if (argument.kind === "Lambda" || argument.kind === "OperatorReference") return false;
+  if (argument.kind !== "Identifier" || isLocallyResolved(argument)) return true;
+  const operator = resolveGlobalOperator(argument.name, environment);
+  return operator === undefined || getArity(operator) === 0;
 };
-
-export const isValueArgument = (argument: Expression, environment: Environment) =>
-  argument.kind !== "Lambda" &&
-  argument.kind !== "OperatorReference" &&
-  !(
-    argument.kind === "Identifier" &&
-    !isLocallyResolved(argument) &&
-    isOperatorName(argument.name, environment)
-  );
 
 const getLazyArguments = (args: Expression[], context: Context): OperatorValue[] =>
   args.map((arg) => ({
@@ -1685,15 +1675,7 @@ const compileBuiltinCall = (
     const right = getEvaluator(args[1], environment);
     return (context) => binary(left(context), right(context));
   }
-  return (context) =>
-    builtin.evaluate(
-      args.map((arg) =>
-        isOperatorArgument(arg, context)
-          ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
-          : evaluate(arg, context),
-      ),
-      context,
-    );
+  return (context) => builtin.evaluate(evaluateBuiltinArguments(args, context), context);
 };
 
 export const compileArgumentScope = (
@@ -1703,9 +1685,7 @@ export const compileArgumentScope = (
 ): ((context: Context) => Scope | undefined) => {
   if (args.length !== closure.params.length) {
     return () => {
-      throw new TlaEvaluationError(
-        `Operator ${closure.name} expects ${closure.params.length} arguments but received ${args.length}`,
-      );
+      throw createArityError(closure, args.length);
     };
   }
   const params = closure.params;

@@ -12,7 +12,6 @@ import {
   getMissingArgumentDescriber,
   getQuantifierElements,
   isClosedConstant,
-  isTlcInteger,
   isValueArgument,
   isWorthCaching,
   keepLazy,
@@ -33,6 +32,7 @@ import {
   createSortedRecord,
   createTuple,
   createWrittenRecord,
+  isTlcInteger,
   valuesEqual,
   type Value,
 } from "./values";

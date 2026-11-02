@@ -19,6 +19,7 @@ import {
   formatSanyWarnings,
   TlaConfigError,
   TlaEvaluationError,
+  TlaModuleError,
   TlaSyntaxError,
   type SanyError,
 } from "./errors";
@@ -28,12 +29,13 @@ import {
   createRealNumberError,
   evaluate,
   getDefinition,
-  isTlcInteger,
   type Builtin,
   type Environment,
 } from "./evaluate";
 import {
   createInstantiation,
+  createLocalArguments,
+  createLocalIdentifier,
   getEnabledVariableName,
   renameLocals,
   withLetInstances,
@@ -73,7 +75,7 @@ import { createInstanceChecker, type InstanceCheck } from "./substitution-levels
 import { isEvalException } from "./tlc/messages";
 import { createTlcDefinitionOrder, getTlcDeclarationOrder } from "./tlc/order";
 import {
-  checkInteger,
+  isTlcInteger,
   createModelValue,
   createSet,
   formatValue,
@@ -122,12 +124,14 @@ export interface InstanceAction {
 const toValue = (value: ConfigValue): Value => {
   switch (value.kind) {
     case "Number":
-      try {
-        return checkInteger(value.value);
-      } catch (error) {
-        // TLC fails with an unexpected exception on a configuration number too big for it.
-        throw setExitCode(error, EXIT_STATUS.error);
+      // TLC fails with an unexpected exception on a configuration number too big for it.
+      if (!isTlcInteger(value.value)) {
+        throw setExitCode(
+          new TlaModuleError(`Integer overflow: ${value.value} is outside TLC's 32-bit range`),
+          EXIT_STATUS.error,
+        );
       }
+      return value.value;
     case "String":
     case "Boolean":
       return value.value;
@@ -221,12 +225,7 @@ const createLocalFunction = (definition: Definition, key: string): Definition =>
   body: {
     kind: "Let",
     definitions: [definition],
-    body: {
-      kind: "Identifier",
-      name: definition.name,
-      location: definition.location,
-      resolution: LOCAL_RESOLUTION,
-    },
+    body: createLocalIdentifier(definition.name, definition.location),
     location: definition.location,
   },
   isLocal: true,
@@ -608,14 +607,6 @@ export const createEnvironment = (
     );
   };
 
-  const getLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
-    params.map((param): Expression => ({
-      kind: "Identifier",
-      name: param.name,
-      location,
-      resolution: LOCAL_RESOLUTION,
-    }));
-
   const createLocalAlias = (
     name: string,
     key: string,
@@ -629,7 +620,12 @@ export const createEnvironment = (
     body:
       forwarded.length === 0
         ? { kind: "Identifier", name: key, location }
-        : { kind: "Apply", operator: key, args: getLocalArguments(forwarded, location), location },
+        : {
+            kind: "Apply",
+            operator: key,
+            args: createLocalArguments(forwarded, location),
+            location,
+          },
     isLocal: true,
     isRecursive: false,
     location,
@@ -659,7 +655,7 @@ export const createEnvironment = (
           : declaration.name;
     return {
       params,
-      body: { kind: "Apply", operator, args: getLocalArguments(params, location), location },
+      body: { kind: "Apply", operator, args: createLocalArguments(params, location), location },
     };
   };
 
@@ -730,16 +726,11 @@ export const createEnvironment = (
         declarations.map((declaration): [string, Expression] => [
           declaration.name,
           !isParameterDependent(declaration)
-            ? {
-                kind: "Identifier",
-                name: `${declaration.name}${suffix}`,
-                location,
-                resolution: LOCAL_RESOLUTION,
-              }
+            ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
             : {
                 kind: "Apply",
                 operator: `${declaration.name}${suffix}`,
-                args: getLocalArguments(instance.params, location),
+                args: createLocalArguments(instance.params, location),
                 location,
                 resolution: LOCAL_RESOLUTION,
               },

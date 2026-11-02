@@ -1,5 +1,6 @@
 import {
   createJavaOverrideError,
+  createModuleArgumentError,
   createOverflowError,
   defineConstant,
   defineHigherOrderOperator,
@@ -32,11 +33,6 @@ const createWrongValueError = (name: string, expected: string, value: Value) =>
     `Applying ${name} to the following value,\nwhich is not ${expected}:\n${formatValue(value)}`,
   );
 
-const createWrongArgumentError = (position: string, name: string, expected: string, value: Value) =>
-  new TlaModuleError(
-    `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${formatValue(value)}`,
-  );
-
 const toFunction = (value: Value) => (isFunctionValue(value) ? toFiniteFunction(value) : undefined);
 
 const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
@@ -50,7 +46,7 @@ const getBagArgument = (args: BuiltinArgument[], index: number, name: string) =>
   const value = getValue(args, index, name);
   const functionValue = toFunction(value);
   if (!functionValue)
-    throw createWrongArgumentError(index === 0 ? "first" : "second", name, "bag", value);
+    throw createModuleArgumentError(index === 0 ? "first" : "second", name, "bag", value);
   return functionValue;
 };
 
@@ -144,21 +140,22 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     const bag = getValue(args, 1, "BagIn");
     const count = findCount(getFunction(args, 1, "BagIn"), getValue(args, 0, "BagIn"));
     if (count === undefined) return false;
-    if (typeof count !== "number") throw createWrongArgumentError("second", "BagIn", "bag", bag);
+    if (typeof count !== "number") throw createModuleArgumentError("second", "BagIn", "bag", bag);
     return count > 0;
   }),
   defineOperator("CopiesIn", 2, (args) => {
     const bag = getValue(args, 1, "CopiesIn");
     const count = findCount(getFunction(args, 1, "CopiesIn"), getValue(args, 0, "CopiesIn"));
     if (count === undefined) return 0;
-    if (typeof count !== "number") throw createWrongArgumentError("second", "CopiesIn", "bag", bag);
+    if (typeof count !== "number")
+      throw createModuleArgumentError("second", "CopiesIn", "bag", bag);
     return count;
   }),
   defineOperator("\\oplus", 2, (args) => {
     const bags = [0, 1].map((index) => {
       const functionValue = getBagArgument(args, index, "(+)");
       if (!isBag(functionValue)) {
-        throw createWrongArgumentError(
+        throw createModuleArgumentError(
           index === 0 ? "first" : "second",
           "(+)",
           "bag",
@@ -214,7 +211,7 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     const value = getValue(args, 1, "BagOfAll");
     const functionValue = toFunction(value);
     if (!functionValue) {
-      throw createWrongArgumentError("second", "BagOfAll", "function with a finite domain", value);
+      throw createModuleArgumentError("second", "BagOfAll", "function with a finite domain", value);
     }
     return mergeBags(
       functionValue.domain.map((key, index) =>
