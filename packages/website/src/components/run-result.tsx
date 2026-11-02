@@ -98,7 +98,7 @@ export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
               </code>
             )}
             {result.summary && (
-              <span className="ml-2 hidden text-gray-1000 tabular-nums sm:inline">
+              <span className="ml-2 hidden text-gray-1000 tabular-nums whitespace-nowrap sm:inline">
                 {result.summary}
               </span>
             )}
@@ -154,6 +154,13 @@ export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
               activeIndex={playback.stepIndex}
               onSelect={playback.select}
             />
+            {result.loopStart !== undefined && (
+              <p className="px-4 py-3 text-sm text-gray-1000">
+                {result.loopStart === trace.length - 1
+                  ? "The last state stutters forever."
+                  : `After the last state, the behavior loops back to state ${String(result.loopStart + 1).padStart(2, "0")} forever.`}
+              </p>
+            )}
           </div>
         ) : (
           <ol className="min-h-0 overflow-auto border-t font-mono text-sm">

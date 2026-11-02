@@ -15,7 +15,7 @@ const GRAY = "text-gray-1000";
 const PATTERNS = {
   shell: /^\S+/g,
   typescript: /(?<comment>\/\/.*)|(?<string>"[^"]*")|\b(?:import|from|const|await)\b/g,
-  tla: /(?<comment>-{4,}|={4,})|\\A|\\in\b|\b(?:MODULE|EXTENDS|VARIABLES?|THEOREM|BY)\b/g,
+  tla: /(?<comment>\\\*.*|-{4,}|={4,})|(?<string>"[^"]*")|\\[AE]\b|\\(?:in|cap)\b|<\d+>\d*\.?|\b(?:MODULE|EXTENDS|VARIABLES?|THEOREM|BY|DEF|IF|THEN|ELSE|QED)\b/g,
 };
 
 type Language = keyof typeof PATTERNS;
