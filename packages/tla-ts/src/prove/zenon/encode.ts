@@ -5,8 +5,7 @@ import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
 import type { Bound, Builtin, Expr, Hyp, Sequent } from "../../obligations/expression";
 import { format, formatDelimited, renderDoc, text, type Doc } from "../../obligations/format";
-import { pickle } from "../../obligations/pickle";
-import { getUnprintableError, printFact, splitFirstBound } from "../first-order";
+import { getUnprintableError, pickle, printFact, splitFirstBound } from "../first-order";
 
 const SPACE = format("@ ");
 

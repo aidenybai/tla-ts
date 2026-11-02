@@ -4,8 +4,7 @@
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
 import type { Bound, Builtin, Expr, Sequent } from "../../obligations/expression";
-import { pickle } from "../../obligations/pickle";
-import { getUnprintableError, printFact, splitFirstBound } from "../first-order";
+import { getUnprintableError, pickle, printFact, splitFirstBound } from "../first-order";
 
 const cook = (name: string) => `is${pickle(name)}`;
 
