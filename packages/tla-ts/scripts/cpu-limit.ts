@@ -12,7 +12,7 @@ import type { DecideResponse } from "../src/prove/decide-pool";
 import type { Verdict } from "../src/prove/verdict";
 import { DIST_DIRECTORY } from "./dist";
 
-export interface CpuLimitedRun {
+interface CpuLimitedRun {
   verdict: Verdict;
   wallMilliseconds: number;
   cpuMilliseconds: number;

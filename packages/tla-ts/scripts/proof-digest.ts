@@ -11,19 +11,19 @@ import { getChild, getChildren, type XmlElement } from "./xml";
 
 // A proof tree reduced to what both SANY and tla-ts can report: each node's kind, name, and
 // location, with facts by their location and definitions by their names.
-export type ProofDigest =
+type ProofDigest =
   | { kind: "omitted" | "obvious"; range: string | undefined }
   | { kind: "by"; range: string | undefined; only: boolean; facts: string[]; defs: string[] }
   | { kind: "steps"; range: string | undefined; level: number; steps: StepDigest[] };
 
-export interface TheoremDigest {
+interface TheoremDigest {
   kind: string;
   name: string | undefined;
   range: string | undefined;
   proof: ProofDigest | undefined;
 }
 
-export interface UseDigest {
+interface UseDigest {
   kind: "use" | "hide";
   range: string | undefined;
   only: boolean;
@@ -31,7 +31,7 @@ export interface UseDigest {
   defs: string[];
 }
 
-export type StepDigest =
+type StepDigest =
   | TheoremDigest
   | UseDigest
   | { kind: "define"; range: string | undefined; names: string[] }
@@ -119,8 +119,7 @@ export const digestSany = (document: XmlElement, moduleName: string): ModuleDige
       range: getRange(proof),
       level: Number(getText(getChild(proof, "proofLevel"))),
       steps: proof.children
-        .filter((child) => child.name !== "location" && child.name !== "level")
-        .filter((child) => child.name !== "proofLevel")
+        .filter((child) => !["location", "level", "proofLevel"].includes(child.name))
         .map(digestStep),
     };
   };

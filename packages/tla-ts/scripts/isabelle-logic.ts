@@ -26,8 +26,9 @@ import {
   mkTVar,
   mkType,
   mkVar,
+  type Term,
+  type Typ,
 } from "../src/prove/isabelle/pure/term";
-import type { Term, Typ } from "../src/prove/isabelle/pure/term";
 
 type RawType = ["T", string, number[]] | ["F", string, string[]] | ["V", string, number, string[]];
 type RawTerm =
