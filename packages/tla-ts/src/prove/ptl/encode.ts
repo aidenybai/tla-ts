@@ -126,13 +126,12 @@ const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
   };
   for (const original of expression.sequent.context) {
     const hyp = substituteHyp(state.substitution, original);
-    if (hyp.kind === "Fact") {
-      push({ ...hyp, expression: prepareHyps(state.scope, hyp.expression) });
-      state.substitution = bumpBy(1, state.substitution);
-      continue;
-    }
     if (hyp.kind !== "Fresh" || !hyp.domain || original.kind !== "Fresh" || !original.domain) {
-      push(hyp);
+      push(
+        hyp.kind === "Fact"
+          ? { ...hyp, expression: prepareHyps(state.scope, hyp.expression) }
+          : hyp,
+      );
       state.substitution = bumpBy(1, state.substitution);
       continue;
     }
