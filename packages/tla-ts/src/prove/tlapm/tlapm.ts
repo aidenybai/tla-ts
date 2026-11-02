@@ -19,7 +19,6 @@ interface TlapmOptions {
   onResult?: (id: number, result: TlapmResult) => void;
 }
 
-// Each tlapm on the PATH, first to last.
 export const getTlapmPaths = () =>
   (process.env.PATH ?? "")
     .split(path.delimiter)
