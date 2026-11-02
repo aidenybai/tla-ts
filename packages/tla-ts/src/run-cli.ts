@@ -7,7 +7,6 @@ import {
   realpathSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { arch, availableParallelism, release, tmpdir, type } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -103,7 +102,7 @@ const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options
   { flag: "-workers <count|auto>" },
 ]);
 
-const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
+const OBLIGATIONS_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
   { flag: "-N", isRequired: true },
   { flag: "--toolbox <start> <end>" },
   { flag: "--line <num>" },
@@ -113,8 +112,8 @@ const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...
   { flag: "-I <directory>", isRepeatable: true },
 ]);
 
-const BACKEND_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
-  { flag: `--backend <${PROVE_BACKENDS.join("|")}>`, isRequired: true },
+const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
+  { flag: `--backend <${PROVE_BACKENDS.join("|")}>` },
   { flag: "-I <directory>", isRepeatable: true },
   { flag: "-workers <count|auto>" },
 ]);
@@ -174,8 +173,7 @@ const XML_EXPORT_USAGE = (() => {
 const USAGE = [
   `Usage: ${CHECK_COMMAND.usage}`,
   `       ${PROVE_COMMAND.usage}`,
-  `       ${BACKEND_COMMAND.usage}`,
-  "       tla-ts prove [<tlapm option>]... <Module.tla|glob>...",
+  `       ${OBLIGATIONS_COMMAND.usage}`,
   "       tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>",
   "       (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)",
   "       tla-ts [<JVM option>]... tla2sany.xml.XMLExporter [-I <directory>]... [-o] [-t] [-r] [-u] <Module.tla>",
@@ -1060,17 +1058,6 @@ const getTlapmLibrary = () =>
 const expandGlobs = (paths: string[]) =>
   paths.flatMap((path) => (GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path]));
 
-const proveWithTlapm = (args: string[]) => {
-  const tlapm = getTlapmPaths()[0];
-  if (tlapm === undefined) {
-    console.error(
-      "Error: tla-ts prove runs tlapm to prove obligations, but tlapm isn't on your PATH. Install tlapm, or pass -N to only generate the obligations.",
-    );
-    return 1;
-  }
-  return spawnSync(tlapm, expandGlobs(args), { stdio: "inherit" }).status ?? 1;
-};
-
 const readModule = (path: string) =>
   existsSync(path) ? { file: path, source: readFileSync(path, "utf8") } : undefined;
 
@@ -1126,19 +1113,23 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   }
 };
 
-// tla-ts prove --backend: proves each module with prove, printing each obligation as it ends.
-const proveWithBackend = (args: string[]) => {
-  const parsed = BACKEND_COMMAND.parse(args);
+// tla-ts prove: proves each module with prove, printing each obligation as it ends.
+const proveModules = (args: string[]) => {
+  const parsed = PROVE_COMMAND.parse(args);
   const backend = parsed.get("--backend")?.[0];
-  if (parsed.unknown[0] !== undefined || parsed.incomplete || !isProveBackend(backend)) {
-    console.error(`Usage: ${BACKEND_COMMAND.usage}`);
+  if (
+    parsed.unknown[0] !== undefined ||
+    parsed.incomplete ||
+    (backend !== undefined && !isProveBackend(backend))
+  ) {
+    console.error(`Usage: ${PROVE_COMMAND.usage}`);
     return 1;
   }
   const modulePaths = expandGlobs(parsed.positionals).map((path) =>
     path.endsWith(".tla") ? path : `${path}.tla`,
   );
   if (modulePaths.length === 0) {
-    console.error(`Usage: ${BACKEND_COMMAND.usage}`);
+    console.error(`Usage: ${PROVE_COMMAND.usage}`);
     return 1;
   }
   const tlapmLibrary = getTlapmLibrary();
@@ -1176,9 +1167,8 @@ const proveWithBackend = (args: string[]) => {
 };
 
 const runProve = (args: string[]) => {
-  if (args.includes("--backend")) return proveWithBackend(args);
-  if (!args.includes("-N") && !args.includes("--summary")) return proveWithTlapm(args);
-  const parsed = PROVE_COMMAND.parse(args);
+  if (!args.includes("-N") && !args.includes("--summary")) return proveModules(args);
+  const parsed = OBLIGATIONS_COMMAND.parse(args);
   const unsupported = parsed.unknown[0];
   if (unsupported !== undefined) {
     console.error(`Error: tla-ts prove does not support the tlapm option ${unsupported}.`);

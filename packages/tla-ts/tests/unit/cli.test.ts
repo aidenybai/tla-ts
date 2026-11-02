@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -1286,36 +1286,39 @@ describe("prove prints obligations as tlapm -N does", () => {
     expect(result.stdout + result.stderr).toBe("");
   });
 
-  it("explains that proving needs tlapm when it isn't on the PATH", () => {
-    const result = spawnSync(
-      "bun",
-      [join(import.meta.dirname, "../../src/cli.ts"), "prove", "Proofs.tla"],
-      {
-        cwd: join(FIXTURES, "obligations"),
-        encoding: "utf8",
-        env: {
-          PATH: dirname(
-            spawnSync("bun", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim(),
-          ),
-        },
+  // Bun's directory alone, so tlapm isn't on the PATH.
+  const proveWithoutTlapm = (args: string[]) =>
+    spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "prove", ...args], {
+      cwd: join(FIXTURES, "obligations"),
+      encoding: "utf8",
+      env: {
+        PATH: dirname(
+          spawnSync("bun", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim(),
+        ),
       },
-    );
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe(
-      "Error: tla-ts prove runs tlapm to prove obligations, but tlapm isn't on your PATH. Install tlapm, or pass -N to only generate the obligations.\n",
+    });
+
+  it("proves with tla-ts's own provers by default", () => {
+    const result = proveWithoutTlapm(["Proofs.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(
+      [
+        "Proofs.tla:7:3:7:5: proved by smt",
+        "Proofs.tla:7:6:7:11: trivial",
+        "Proofs.tla:11:9:11:16: proved by smt",
+        "Proofs.tla:10:1:10:19: proved by smt",
+        "Proofs.tla:10:1:10:19: trivial",
+        "5 obligations: 3 proved, 2 trivial, 0 failed, 0 unsupported",
+        "",
+      ].join("\n"),
     );
   });
 
-  const tlapm = (process.env.PATH ?? "")
-    .split(delimiter)
-    .map((directory) => join(directory, "tlapm"))
-    .find((path) => spawnSync(path, ["--version"]).status === 0);
-
-  it.skipIf(tlapm === undefined)("runs tlapm without -N", () => {
-    const result = runCliWith("obligations", ["prove", "--version"]);
-    const expected = spawnSync(tlapm ?? "", ["--version"], { encoding: "utf8" });
-    expect(result.status).toBe(expected.status);
-    expect(result.stdout).toBe(expected.stdout);
+  it("explains that the tlapm backend needs tlapm on the PATH", () => {
+    const result = proveWithoutTlapm(["--backend", "tlapm", "Proofs.tla"]);
+    expect(result.stderr).toBe(
+      "TlaUnsupportedError: The tlapm backend needs tlapm on your PATH.\n",
+    );
   });
 
   it("rejects the tlapm options it doesn't support", () => {
