@@ -49,6 +49,9 @@ const NUM_ARGS_SHIFT = 7;
 // data with no object.
 export class EnodeStore {
   readonly nodes: Enode[] = [];
+  // The expression and declaration of each node.
+  owner = new Int32Array(1024);
+  decl = new Int32Array(1024);
   root = new Int32Array(1024);
   next = new Int32Array(1024);
   classSize = new Int32Array(1024);
@@ -71,6 +74,8 @@ export class EnodeStore {
     const id = this.nodes.length;
     this.nodes.push(node);
     if (id === this.root.length) {
+      this.owner = growColumn(this.owner);
+      this.decl = growColumn(this.decl);
       this.root = growColumn(this.root);
       this.next = growColumn(this.next);
       this.classSize = growColumn(this.classSize);
@@ -115,8 +120,8 @@ export class Enode {
   // moreArgs are the arguments past the second, and arg0 and arg1 are null when there are fewer.
   constructor(
     readonly store: EnodeStore,
-    readonly owner: number,
-    readonly decl: number,
+    owner: number,
+    decl: number,
     numArgs: number,
     arg0: Enode | null,
     arg1: Enode | null,
@@ -129,6 +134,8 @@ export class Enode {
     iscopeLevel: number,
   ) {
     this.id = store.allocate(this);
+    store.owner[this.id] = owner;
+    store.decl[this.id] = decl;
     store.generation[this.id] = generation;
     store.iscopeLevel[this.id] = iscopeLevel;
     this.arg0 = arg0 ?? this;
@@ -172,6 +179,14 @@ export class Enode {
 
   set cg(value: Enode) {
     this.store.cg[this.id] = value.id;
+  }
+
+  get owner() {
+    return this.store.owner[this.id];
+  }
+
+  get decl() {
+    return this.store.decl[this.id];
   }
 
   get generation() {
