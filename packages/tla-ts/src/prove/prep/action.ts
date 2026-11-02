@@ -6,6 +6,7 @@ import { TlapmBugError } from "../../errors";
 import { rewriteUnchanged } from "../../obligations/action";
 import {
   adjoin,
+  adjoinAll,
   applyBuiltin,
   at,
   createContextMap,
@@ -29,7 +30,7 @@ import { getLevelInfo } from "../../obligations/levels";
 import { printExpression } from "../../obligations/printer";
 import { getMd5 } from "./md5";
 
-type Map = (scope: Scope | undefined, expression: Expr) => Expr;
+type Rewrite = (scope: Scope | undefined, expression: Expr) => Expr;
 
 const getHyp = (scope: Scope | undefined, index: number) => {
   const hyp = getScopeAt(scope, index - 1)?.hyp;
@@ -47,7 +48,7 @@ const isBuiltin = (expression: Expr, builtins: Builtin[]) =>
 
 // Visit.map over a sequent: each hypothesis maps in the scope before it, hidden ones too if hyps
 // is "all". The context maps by the obligation's own hypotheses, from which it derives.
-const createSequentMap = (map: Map, hyps: "visible" | "all") => {
+const createSequentMap = (map: Rewrite, hyps: "visible" | "all") => {
   const mapContext = createContextMap<Scope | undefined>(undefined, (scope, hyp) => {
     const mapped = mapHyp(hyp, (inner) => map(scope, inner), hyps);
     return [adjoin(scope, mapped), mapped];
@@ -59,7 +60,7 @@ const createSequentMap = (map: Map, hyps: "visible" | "all") => {
 };
 
 // Expr.Tla_norm.expand_action, then expand_unchanged.
-const expandAction: Map = (scope, expression) => {
+const expandAction: Rewrite = (scope, expression) => {
   if (expression.kind === "Sub" || expression.kind === "Tsub") {
     const action = expandAction(scope, expression.action);
     const subscript = expandAction(scope, expression.subscript);
@@ -74,7 +75,7 @@ const expandAction: Map = (scope, expression) => {
   return mapScoped(scope, expression, expandAction, adjoin, "all");
 };
 
-const expandUnchanged: Map = (scope, expression) =>
+const expandUnchanged: Rewrite = (scope, expression) =>
   expression.kind === "Apply" &&
   isBuiltin(expression, ["UNCHANGED"]) &&
   expression.args.length === 1
@@ -85,7 +86,7 @@ const getModal = (builtin: Builtin, expression: Expr) =>
   applyBuiltin(builtin, [expression], expression);
 
 // prime_commuter: a prime distributes down to the declarations that are not constant.
-const commutePrime: Map = (scope, expression) => {
+const commutePrime: Rewrite = (scope, expression) => {
   if (expression.kind === "Ix") {
     const hyp = getHyp(scope, expression.index);
     if (hyp.kind === "Fresh" && hyp.level === "Constant") return expression;
@@ -125,10 +126,10 @@ const commutePrime: Map = (scope, expression) => {
 
 // box_commuter and dia_commuter: [] distributes over /\ and \A, and <> over \/ and \E, and both
 // vanish on a constant.
-const getModalCommuter = (builtin: "BoxTrue" | "Diamond"): Map => {
+const getModalCommuter = (builtin: "BoxTrue" | "Diamond"): Rewrite => {
   const connective: Builtin = builtin === "BoxTrue" ? "Conj" : "Disj";
   const quantifier = builtin === "BoxTrue" ? "Forall" : "Exists";
-  const commute: Map = (scope, expression) => {
+  const commute: Rewrite = (scope, expression) => {
     if (getLevel(scope, expression) === 0) return expression;
     const isDistributed =
       isBuiltin(expression, [connective]) ||
@@ -141,14 +142,14 @@ const getModalCommuter = (builtin: "BoxTrue" | "Diamond"): Map => {
   return commute;
 };
 
-const COMMUTERS: Partial<Record<Builtin, Map>> = {
+const COMMUTERS: Partial<Record<Builtin, Rewrite>> = {
   Prime: commutePrime,
   BoxTrue: getModalCommuter("BoxTrue"),
   Diamond: getModalCommuter("Diamond"),
 };
 
 // symbol_commute: each prime, [] and <> commutes down its operand.
-const commuteSymbols: Map = (scope, expression) => {
+const commuteSymbols: Rewrite = (scope, expression) => {
   if (expression.kind === "Apply" && expression.operator.kind === "Internal") {
     const commuter = COMMUTERS[expression.operator.builtin];
     if (commuter) {
@@ -256,23 +257,23 @@ const renameSequent = (scope: Scope | undefined, sequent: Sequent): Sequent => {
   return { context, active: rename(inner, sequent.active) };
 };
 
-const rename: Map = (scope, expression) => {
+const rename: Rewrite = (scope, expression) => {
   switch (expression.kind) {
     case "Lambda": {
       const params = expression.params.map((param) => ({
         ...param,
         name: getRenamed("Unknown", param.name),
       }));
-      const inner = params.reduce(
-        (current, param) => adjoin(current, getFresh(param.name, "Unknown", param.shape)),
+      const inner = adjoinAll(
         scope,
+        params.map((param) => getFresh(param.name, "Unknown", param.shape)),
       );
       return { ...expression, params, body: rename(inner, expression.body) };
     }
     case "Tquant": {
-      const inner = expression.names.reduce(
-        (current, name) => adjoin(current, { kind: "Flex", name: getRenamed("VARIABLE", name) }),
+      const inner = adjoinAll(
         scope,
+        expression.names.map((name) => ({ kind: "Flex", name: getRenamed("VARIABLE", name) })),
       );
       return { ...expression, body: rename(inner, expression.body) };
     }
@@ -299,9 +300,9 @@ const rename: Map = (scope, expression) => {
             ? { kind: "Domain" as const, expression: rename(scope, bound.domain.expression) }
             : bound.domain,
       }));
-      const inner = bounds.reduce(
-        (current, bound) => adjoin(current, getFresh(bound.name, bound.level)),
+      const inner = adjoinAll(
         scope,
+        bounds.map((bound) => getFresh(bound.name, bound.level)),
       );
       return expression.kind === "SetOf"
         ? { ...expression, bounds, element: rename(inner, expression.element) }
@@ -341,9 +342,9 @@ const getSubstitutiveArgs = (scope: Scope | undefined, definition: Defn): boolea
   if (cached) return cached;
   const body = definition.kind === "Operator" ? definition.body : undefined;
   if (body?.kind !== "Lambda") return [];
-  const inner = body.params.reduce(
-    (current, param) => adjoin(current, getFresh(param.name, "Unknown", param.shape)),
+  const inner = adjoinAll(
     scope,
+    body.params.map((param) => getFresh(param.name, "Unknown", param.shape)),
   );
   const result = body.params.map((_param, index) =>
     isSubstitutive(inner, body.body, index + 1, true),
@@ -351,6 +352,18 @@ const getSubstitutiveArgs = (scope: Scope | undefined, definition: Defn): boolea
   substitutiveArgs.set(definition, result);
   return result;
 };
+
+const UNARY_MODALS: Builtin[] = [
+  "Prime",
+  "StrongPrime",
+  "BoxTrue",
+  "BoxFalse",
+  "Diamond",
+  "ENABLED",
+  "UNCHANGED",
+];
+
+const BINARY_MODALS: Builtin[] = ["Leadsto", "Actplus", "Cdot"];
 
 // compute_substitutivity_array: whether the parameter at index occurs only where scope holds.
 const isSubstitutive = (
@@ -362,19 +375,9 @@ const isSubstitutive = (
   if (expression.kind === "Ix") return isInScope || expression.index !== index;
   if (expression.kind === "Apply" && expression.operator.kind === "Internal") {
     const builtin = expression.operator.builtin;
-    const isUnary = [
-      "Prime",
-      "StrongPrime",
-      "BoxTrue",
-      "BoxFalse",
-      "Diamond",
-      "ENABLED",
-      "UNCHANGED",
-    ];
-    const isBinary = ["Leadsto", "Actplus", "Cdot"];
     if (
-      (isUnary.includes(builtin) && expression.args.length === 1) ||
-      (isBinary.includes(builtin) && expression.args.length === 2)
+      (UNARY_MODALS.includes(builtin) && expression.args.length === 1) ||
+      (BINARY_MODALS.includes(builtin) && expression.args.length === 2)
     ) {
       return expression.args.every((arg) => isSubstitutive(scope, arg, index, false));
     }
@@ -396,20 +399,18 @@ const isSubstitutive = (
       });
     }
   }
-  let isSubstitutiveHere = true;
+  const found = { isSubstitutive: true };
   mapScoped(
     { scope, index },
     expression,
     (state, inner) => {
-      if (isSubstitutiveHere && !isSubstitutive(state.scope, inner, state.index, isInScope)) {
-        isSubstitutiveHere = false;
-      }
+      found.isSubstitutive &&= isSubstitutive(state.scope, inner, state.index, isInScope);
       return inner;
     },
     (state, hyp) => ({ scope: adjoin(state.scope, hyp), index: state.index + 1 }),
     "all",
   );
-  return isSubstitutiveHere;
+  return found.isSubstitutive;
 };
 
 // Coalesce.crypthash: h and the first five hexadecimal digits of the MD5 of the expression as
@@ -457,7 +458,7 @@ const MODAL_BUILTINS: Builtin[] = [
 // modal expression an opaque name. tlapm means to apply that name to the expression's free
 // variables, but compute_vars collects them into an instance variable and returns its own empty
 // set, so the name always stands alone.
-const coalesceModal: Map = (scope, expression) => {
+const coalesceModal: Rewrite = (scope, expression) => {
   if (expression.kind !== "Apply") return mapScoped(scope, expression, coalesceModal, adjoin);
   const operator = expression.operator;
   const [arg] = expression.args;

@@ -64,31 +64,33 @@ const getDeclaration = (scope: Scope | undefined, index: number): Declaration =>
 };
 
 const bindBounds = (scope: Scope | undefined, bounds: Bound[]) =>
-  bounds.reduce((current, bound) => adjoin(current, getFresh(bound.name, bound.level)), scope);
+  adjoinAll(
+    scope,
+    bounds.map((bound) => getFresh(bound.name, bound.level)),
+  );
 
 const bindParams = (scope: Scope | undefined, params: Param[]) =>
-  params.reduce(
-    (current, param) => adjoin(current, getFresh(param.name, "Unknown", param.shape)),
+  adjoinAll(
     scope,
+    params.map((param) => getFresh(param.name, "Unknown", param.shape)),
   );
 
 const bindDefinitions = (scope: Scope | undefined, definitions: Defn[]) =>
-  definitions.reduce<Scope | undefined>(
-    (current, definition) =>
-      adjoin(current, {
-        kind: "Defn",
-        definition,
-        whereDefined: "User",
-        visibility: "Visible",
-        isLocal: true,
-      }),
+  adjoinAll(
     scope,
+    definitions.map((definition) => ({
+      kind: "Defn",
+      definition,
+      whereDefined: "User",
+      visibility: "Visible",
+      isLocal: true,
+    })),
   );
 
 const bindFlexible = (scope: Scope | undefined, names: string[]) =>
-  names.reduce<Scope | undefined>(
-    (current, name) => adjoin(current, { kind: "Flex", name }),
+  adjoinAll(
     scope,
+    names.map((name) => ({ kind: "Flex", name })),
   );
 
 // level_comparison#compare: the expressions match up to a renaming that maps each name one way,
@@ -140,7 +142,10 @@ const compare = (
     const leftArgs = left.instance.args;
     const rightArgs = right.instance.args;
     const bindArgs = (scope: Scope | undefined, args: string[]) =>
-      args.reduce((current, name) => adjoin(current, getFresh(name, "Unknown")), scope);
+      adjoinAll(
+        scope,
+        args.map((name) => getFresh(name, "Unknown")),
+      );
     const getFields = (definition: typeof left.instance) =>
       getSortedFields(
         definition.substitutions.map((entry) => ({ name: entry.name, value: entry.expression })),
