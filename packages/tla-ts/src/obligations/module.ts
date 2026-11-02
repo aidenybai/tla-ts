@@ -13,7 +13,7 @@ import {
   exprifySequent,
   findNamed,
   getAtPrefix,
-  getLocusText,
+  getLocationText,
   getLocusPrefix,
   getScopeHyps,
   mapAccumulate,
@@ -486,7 +486,7 @@ const lambdifyTheorem = (
   } catch (error) {
     if (!(error instanceof TlaProofError) || error.failure === undefined) throw error;
     const location = sequent.active.location;
-    const message = `${error.failure}\nCould not instantiate the theorem ${name === undefined ? "" : `named: ${name}, `}at: ${location ? getLocusText(location) : "<unknown location>"}`;
+    const message = `${error.failure}\nCould not instantiate the theorem ${name === undefined ? "" : `named: ${name}, `}at: ${getLocationText(location)}`;
     pipeline.onWarning({ text: `${getAtPrefix(location)}[ERROR]${message}`, channel: "stdout" });
     pipeline.onWarning({ text: message, channel: "toolboxOnly" });
     return { context: [], active: at({ kind: "Internal", builtin: "TRUE" }, sequent.active) };

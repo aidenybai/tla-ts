@@ -12,7 +12,7 @@ import {
   bumpBy,
   getAtPrefix,
   getErrorNote,
-  getLocusText,
+  getLocationText,
   getParamFresh,
   getScopeAt,
   mapScoped,
@@ -21,7 +21,6 @@ import {
   stripProps,
   substituteExpr,
   type Expr,
-  type Locus,
   type ObligationWarning,
   type Param,
   type Scope,
@@ -56,9 +55,6 @@ const NESTED_CDOT =
 
 // Unlike auto_expansion_of_defs, tlapm puts a space before "For example" here.
 const NESTED_CDOT_SPACED = `${NESTED_CDOT} For example, writing \`BY ExpandCdot\`.`;
-
-const getLocationText = (locus: Locus | undefined) =>
-  locus ? getLocusText(locus) : "<unknown location>";
 
 // Visit.map_visible_hyp with no state.
 const mapVisibleChildren = (expression: Expr, map: (child: Expr) => Expr) =>

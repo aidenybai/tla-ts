@@ -29,8 +29,10 @@ export const getLocusPosition = (locus: Locus) => {
 export const getLocusText = (locus: Locus) =>
   `File ${JSON.stringify(locus.file)}, ${getLocusPosition(locus)}`;
 
-export const getAtPrefix = (locus: Locus | undefined) =>
-  `${locus ? getLocusText(locus) : "<unknown location>"}:\n`;
+export const getLocationText = (locus: Locus | undefined) =>
+  locus ? getLocusText(locus) : "<unknown location>";
+
+export const getAtPrefix = (locus: Locus | undefined) => `${getLocationText(locus)}:\n`;
 
 export const getErrorNote = (locus: Locus | undefined, message: string): ObligationWarning => ({
   text: `${getAtPrefix(locus)}Error: ${message}`,
