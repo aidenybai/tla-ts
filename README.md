@@ -68,16 +68,38 @@ result.obligations; // each with a status: "proved", "trivial", "failed", or "un
 | `onObligation` | Receives each obligation as soon as it's decided |
 | `workers`      | The number of worker threads. Defaults to 1      |
 
-### Other exports
+### `parseModule`
 
-- `parseModule(source)`: the module's syntax tree.
-- `parseConfig(source)`: a TLC configuration you can change before passing it to `check`.
-- `formatValue(value)`: a value in TLA+ syntax.
-- `TlaError`: the base class of every error below.
-- `TlaSyntaxError`: the module doesn't parse.
-- `TlaConfigError`: the configuration is invalid.
-- `TlaEvaluationError`: evaluating the spec failed.
-- `TlaUnsupportedError`: tla-ts doesn't support something the spec or call uses.
+```ts
+const module = parseModule(source);
+module.name; // "Spec"
+module.definitions;
+```
+
+### `parseConfig`
+
+```ts
+const config = parseConfig(configSource);
+config.invariants.push("TypeOK");
+await check({ source, config });
+```
+
+### `formatValue`
+
+```ts
+const step = result.violation.trace[0];
+formatValue(step.state.queue); // "<<1, 2>>"
+```
+
+### Errors
+
+| Error                 | Thrown when                                     |
+| --------------------- | ----------------------------------------------- |
+| `TlaError`            | Any of the errors below                         |
+| `TlaSyntaxError`      | The module doesn't parse                        |
+| `TlaConfigError`      | The configuration is invalid                    |
+| `TlaEvaluationError`  | Evaluating the spec fails                       |
+| `TlaUnsupportedError` | The spec or call uses something tla-ts can't do |
 
 ## Benchmarks
 
