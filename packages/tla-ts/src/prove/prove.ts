@@ -85,6 +85,12 @@ interface ProofReport {
   attempts: ProofAttempt[];
 }
 
+// Why a method left an obligation unproved: a prover decided so, or tla-ts couldn't try it.
+interface MethodFailure {
+  reason: string;
+  isDecided: boolean;
+}
+
 // The SMT encoder numbers the CASE errors it standardizes across the run, so an obligation it
 // encodes one in waits for every earlier obligation and starts from the count they leave.
 interface ObligationTask {
@@ -170,7 +176,8 @@ const getUnproved = (
   obligation: PrintedObligation,
   status: "failed" | "unsupported",
   reason: string,
-): ProofObligation => ({ ...getBase(obligation), status, reason });
+  attempts: ProofAttempt[] = [],
+): ProofReport => ({ obligation: { ...getBase(obligation), status, reason }, attempts });
 
 // Prep.normalize_expand: expand_defs, Elab.normalize, then the frontends the step cites.
 const normalizeExpand = (obligation: PrintedObligation, methods = findMethods(obligation)) =>
@@ -251,18 +258,19 @@ const proveWithBackends = async (
   signal: AbortSignal | undefined,
 ): Promise<ProofReport> => {
   if (obligation.kind.kind === "Error")
-    return { obligation: getUnproved(obligation, "failed", obligation.kind.message), attempts: [] };
+    return getUnproved(obligation, "failed", obligation.kind.message);
   const methods = findMethods(obligation);
   const fingerprint = getFingerprint(obligation.sequent);
   const earlier = run.lastByFingerprint.get(fingerprint);
   run.lastByFingerprint.set(fingerprint, run.tasks[index].done);
   await earlier;
   const attempts: ProofAttempt[] = [];
+  const failures: MethodFailure[] = [];
   const getProved = (prover: string): ProofReport => ({
     obligation: { ...getBase(obligation), status: "proved", prover },
     attempts,
   });
-  // Prep.already_processed.
+  // Prep.already_processed, which forgets the fingerprint's results on each call under --nofp.
   const getPrior = (method: Method) => {
     if (!run.isFingerprinted(obligation)) run.results.delete(fingerprint);
     const prior = run.results.get(fingerprint)?.get(method.prover);
@@ -272,6 +280,17 @@ const proveWithBackends = async (
   const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
   const reuse = (prior: ProofAttempt) =>
     attempts.push({ ...prior, isReused: true, timeUsedMs: undefined });
+  const record = (attempt: ProofAttempt) => {
+    attempts.push(attempt);
+    run.results.set(
+      fingerprint,
+      (run.results.get(fingerprint) ?? new Map()).set(attempt.method.prover, attempt),
+    );
+  };
+  const skip = (method: Method, reason: string) => {
+    attempts.push({ method, isProved: false, isReused: false, reason });
+    failures.push({ reason, isDecided: false });
+  };
   const firstPrior = getPrior(methods.provers[0]);
   if (firstPrior?.isProved) {
     reuse(firstPrior);
@@ -283,16 +302,6 @@ const proveWithBackends = async (
     run.results.set(fingerprint, run.results.get(fingerprint) ?? new Map());
     return { obligation: { ...getBase(obligation), status: "trivial" }, attempts };
   }
-  const reasons: string[] = [];
-  const state = { isDecided: false };
-  const decideAttempt = (attempt: ProofAttempt) => {
-    attempts.push(attempt);
-    run.results.set(
-      fingerprint,
-      (run.results.get(fingerprint) ?? new Map()).set(attempt.method.prover, attempt),
-    );
-    state.isDecided = true;
-  };
   for (const method of methods.provers) {
     const prior = getPrior(method);
     if (prior?.isProved) {
@@ -301,8 +310,10 @@ const proveWithBackends = async (
     }
     if (prior && getBudget(prior.method) >= getBudget(method)) {
       reuse(prior);
-      state.isDecided = true;
-      reasons.push(`${method.prover} failed on an obligation with the same fingerprint`);
+      failures.push({
+        reason: `${method.prover} failed on an obligation with the same fingerprint`,
+        isDecided: true,
+      });
       continue;
     }
     if (!run.isProving) continue;
@@ -310,9 +321,7 @@ const proveWithBackends = async (
     if (method.prover === "trivial") return getProved(method.prover);
     const backend = BACKENDS[method.prover];
     if (!backend) {
-      const reason = `tla-ts has no ${method.prover} backend`;
-      attempts.push({ method, isProved: false, isReused: false, reason });
-      reasons.push(reason);
+      skip(method, `tla-ts has no ${method.prover} backend`);
       continue;
     }
     try {
@@ -328,7 +337,7 @@ const proveWithBackends = async (
         index,
       );
       const isProved = decision.verdict === "unsat";
-      decideAttempt({
+      record({
         method,
         isProved,
         isReused: false,
@@ -339,44 +348,32 @@ const proveWithBackends = async (
         timeUsedMs: decision.timeUsedMs,
       });
       if (isProved) return getProved(method.prover);
-      reasons.push(`${method.prover} answered ${decision.verdict}`);
+      failures.push({ reason: `${method.prover} answered ${decision.verdict}`, isDecided: true });
     } catch (error) {
       if (error instanceof TlaProverError) {
-        decideAttempt({ method, isProved: false, isReused: false, reason: "false" });
-        reasons.push(`${method.prover} failed: ${error.message}`);
+        record({ method, isProved: false, isReused: false, reason: "false" });
+        failures.push({ reason: `${method.prover} failed: ${error.message}`, isDecided: true });
         continue;
       }
       if (!(error instanceof TlaUnsupportedError)) throw error;
-      const reason = `${method.prover} can't encode ${error.message}`;
-      attempts.push({ method, isProved: false, isReused: false, reason });
-      reasons.push(reason);
+      skip(method, `${method.prover} can't encode ${error.message}`);
     }
   }
-  return {
-    obligation: getUnproved(
-      obligation,
-      state.isDecided ? "failed" : "unsupported",
-      reasons.join(", "),
-    ),
+  return getUnproved(
+    obligation,
+    failures.some((failure) => failure.isDecided) ? "failed" : "unsupported",
+    failures.map((failure) => failure.reason).join(", "),
     attempts,
-  };
+  );
 };
 
-// The one place an error becomes a result: what tla-ts can't handle is unsupported, and what tlapm
+// An error that escapes proveWithBackends: what tla-ts can't handle is unsupported, and what tlapm
 // refuses, as a frontend's soundness check, fails.
-const getResult = async (
-  obligation: PrintedObligation,
-  getReport: () => Promise<ProofReport>,
-): Promise<ProofReport> => {
-  try {
-    return await getReport();
-  } catch (error) {
-    if (error instanceof TlaUnsupportedError)
-      return { obligation: getUnproved(obligation, "unsupported", error.message), attempts: [] };
-    if (error instanceof TlaProverError)
-      return { obligation: getUnproved(obligation, "failed", error.message), attempts: [] };
-    throw error;
-  }
+const getErrorReport = (obligation: PrintedObligation, error: unknown) => {
+  if (error instanceof TlaUnsupportedError)
+    return getUnproved(obligation, "unsupported", error.message);
+  if (error instanceof TlaProverError) return getUnproved(obligation, "failed", error.message);
+  throw error;
 };
 
 interface ObligationsOptions {
@@ -428,8 +425,8 @@ export const proveObligations = async (
       options.signal?.throwIfAborted();
       const done = Promise.withResolvers<void>();
       run.tasks.push({ done: done.promise, session: undefined });
-      const report = getResult(obligation, () =>
-        proveWithBackends(obligation, index, run, options.signal),
+      const report = proveWithBackends(obligation, index, run, options.signal).catch(
+        (error: unknown) => getErrorReport(obligation, error),
       );
       pending.push(report);
       running.add(done.promise);
@@ -451,10 +448,13 @@ export const proveObligations = async (
   return reports;
 };
 
-const getFromTlapm = (obligation: PrintedObligation, result: TlapmResult | undefined) =>
+const getFromTlapm = (
+  obligation: PrintedObligation,
+  result: TlapmResult | undefined,
+): ProofObligation =>
   result
     ? { ...getBase(obligation), ...result }
-    : getUnproved(obligation, "unsupported", "tlapm reported no result");
+    : { ...getBase(obligation), status: "unsupported", reason: "tlapm reported no result" };
 
 export const prove = async (options: ProveOptions): Promise<ProveResult> => {
   const name = getModuleName(options.source);
