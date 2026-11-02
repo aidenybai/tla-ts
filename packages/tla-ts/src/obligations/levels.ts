@@ -6,6 +6,7 @@ import {
   adjoin,
   adjoinAll,
   getBoundedFresh,
+  getBoundFresh,
   getFresh,
   getLocalDefn,
   getParamFresh,
@@ -155,11 +156,7 @@ const getBoundsLevel = (scope: Scope | undefined, bounds: Bound[], body: Expr) =
   const domains = bounds.flatMap((bound) =>
     bound.domain.kind === "Domain" ? [getLevelInfo(scope, bound.domain.expression)] : [],
   );
-  const inner = adjoinAll(
-    scope,
-    bounds.map((bound) => getFresh(bound.name, bound.level)),
-  );
-  return combine([getLevelInfo(inner, body), ...domains]);
+  return combine([getLevelInfo(adjoinAll(scope, bounds.map(getBoundFresh)), body), ...domains]);
 };
 
 const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {

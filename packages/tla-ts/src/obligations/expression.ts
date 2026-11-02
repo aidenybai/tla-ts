@@ -430,7 +430,10 @@ export const getFact = (
   location: Locus | undefined,
 ) => ({ kind: "Fact", expression, visibility, time, location }) satisfies Hyp;
 
-// What a LAMBDA binds each parameter as, and a LET each definition, as Visit.map does.
+// What a quantifier binds each name as, a LAMBDA each parameter, and a LET each definition, as
+// Visit.map does.
+export const getBoundFresh = (bound: Bound) => getFresh(bound.name, bound.level);
+
 export const getParamFresh = (param: Param) => getFresh(param.name, "Unknown", param.shape);
 
 export const getLocalDefn = (definition: Defn) =>
@@ -971,7 +974,7 @@ export const mapScoped = <State>(
 ): Expr => {
   const recurse = (inner: Expr) => map(state, inner);
   const bindBounds = (bounds: Bound[]) =>
-    bounds.reduce((current, bound) => bind(current, getFresh(bound.name, bound.level)), state);
+    bounds.reduce((current, bound) => bind(current, getBoundFresh(bound)), state);
   switch (expression.kind) {
     case "Ix":
     case "Internal":

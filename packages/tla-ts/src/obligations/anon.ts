@@ -10,6 +10,7 @@ import {
   consSubstitution,
   exprifySequent,
   findNamed,
+  getBoundFresh,
   getErrorNote,
   getFresh,
   getLocalDefn,
@@ -279,10 +280,7 @@ export const createAnonymizer = (
     withScope(context, adjoin(context.scope, hyp));
 
   const adjoinBounds = (context: AnonContext, items: Bound[]) =>
-    items.reduce(
-      (current, bound) => adjoinContext(current, getFresh(bound.name, bound.level)),
-      context,
-    );
+    withScope(context, adjoinAll(context.scope, items.map(getBoundFresh)));
 
   const bounds = (context: AnonContext, items: Bound[]): [AnonContext, Bound[]] => {
     const mapped = mapBoundDomains(items, (domain) => expr(context, domain));

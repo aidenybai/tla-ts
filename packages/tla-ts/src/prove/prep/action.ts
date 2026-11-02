@@ -11,6 +11,7 @@ import {
   at,
   createContextMap,
   getBoundedFresh,
+  getBoundFresh,
   getFresh,
   getLocalDefn,
   getParamFresh,
@@ -299,10 +300,7 @@ const rename: Rewrite = (scope, expression) => {
             ? { kind: "Domain" as const, expression: rename(scope, bound.domain.expression) }
             : bound.domain,
       }));
-      const inner = adjoinAll(
-        scope,
-        bounds.map((bound) => getFresh(bound.name, bound.level)),
-      );
+      const inner = adjoinAll(scope, bounds.map(getBoundFresh));
       return expression.kind === "SetOf"
         ? { ...expression, bounds, element: rename(inner, expression.element) }
         : { ...expression, bounds, body: rename(inner, expression.body) };

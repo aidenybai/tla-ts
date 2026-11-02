@@ -7,6 +7,7 @@ import {
   consAll,
   consSubstitution,
   getErrorNote,
+  getBoundFresh,
   getChildren,
   getFresh,
   getParamFresh,
@@ -71,7 +72,7 @@ const findLabel = (expression: Expr, label: string, context: Hyp[]): Label | und
       (found, bound) =>
         found ?? (bound.domain.kind === "Domain" ? search(bound.domain.expression) : undefined),
       undefined,
-    ) ?? search(body, [...context, ...bounds.map((bound) => getFresh(bound.name, bound.level))]);
+    ) ?? search(body, [...context, ...bounds.map(getBoundFresh)]);
   switch (expression.kind) {
     case "Parens":
       if (expression.form.kind !== "Xlabel") return search(expression.expression);

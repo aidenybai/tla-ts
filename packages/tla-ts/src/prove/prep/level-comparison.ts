@@ -7,6 +7,7 @@ import {
   adjoin,
   adjoinAll,
   getBoundedFresh,
+  getBoundFresh,
   getFresh,
   getLocalDefn,
   getParamFresh,
@@ -66,10 +67,7 @@ const getDeclaration = (scope: Scope | undefined, index: number): Declaration =>
 };
 
 const bindBounds = (scope: Scope | undefined, bounds: Bound[]) =>
-  adjoinAll(
-    scope,
-    bounds.map((bound) => getFresh(bound.name, bound.level)),
-  );
+  adjoinAll(scope, bounds.map(getBoundFresh));
 
 const bindParams = (scope: Scope | undefined, params: Param[]) =>
   adjoinAll(scope, params.map(getParamFresh));
