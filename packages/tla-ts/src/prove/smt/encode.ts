@@ -13,7 +13,7 @@ import {
 import { compareStrings } from "../ocaml";
 import { createPrinter } from "./context";
 import { getSymbolSpec, type CollectState, type SymbolSpec } from "./data";
-import type { Entry, Flattened } from "./flatten";
+import type { Entry } from "./flatten";
 import { declare, getTlaName, MEM } from "./format";
 import { createEncoder, type Binding, type EncodingSession, type Env, type Mode } from "./rewrite";
 import { compareAxioms, getAxiomKey, type Axiom } from "./table";
@@ -73,21 +73,16 @@ const sortRecordFields = (expression: Expr): Expr =>
 
 // N_axiomatize.collect: each symbol the obligation uses, in the order tlapm visits them, brings
 // the symbols and axioms it depends on, smallest name first.
-const collectSymbols = (
-  entries: Entry[],
-  flattened: Map<string, Flattened>,
-  anonymous: Map<string, number>,
-  recordFields: Map<string, string[]>,
-) => {
+const collectSymbols = (entries: Entry[], encoder: Encoder) => {
   const state: CollectState = {
-    recordFields,
+    recordFields: encoder.recordFields,
     strings: [],
     isFunConstr: false,
     isFunSet: false,
     isExcept: false,
     tuples: [],
     records: [],
-    anonymous,
+    anonymous: encoder.anonymous,
   };
   const symbols = new Map<string, SymbolSpec>();
   const axioms = new Map<string, Axiom>();
@@ -114,7 +109,7 @@ const collectSymbols = (
         if (pending.at(-1)?.depth === depth) visit(pending.pop()?.text ?? "");
         return depth - 1;
       }
-      const flat = flattened.get(token);
+      const flat = encoder.flattened.get(token);
       if (!flat) {
         const builtin = getTlaName(token);
         if (builtin !== undefined) add(builtin);
@@ -245,12 +240,7 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
       );
   const entries = [...context.entries, ...goal];
   const printer = createPrinter(encoder.declared);
-  const collected = collectSymbols(
-    entries,
-    encoder.flattened,
-    encoder.anonymous,
-    encoder.recordFields,
-  );
+  const collected = collectSymbols(entries, encoder);
   const declarations = [...collected.symbols]
     .toSorted((left, right) => compareStrings(left[0], right[0]))
     .flatMap((symbol) => (symbol[1].declaration === undefined ? [] : [symbol[1].declaration]));
