@@ -163,15 +163,17 @@ const commuteSymbols: Rewrite = (scope, expression) => {
   return mapScoped(scope, expression, commuteSymbols, adjoin, "all");
 };
 
-const LEVEL_KINDS = ["CONSTANT", "STATE", "ACTION", "TEMPORAL"];
-
-const FRESH_KINDS: Record<Level, string> = {
+// The prefix rename_with_loc gives a declaration of each level, and a definition by the number of
+// its body's level.
+export const LEVEL_PREFIXES: Record<Level, string> = {
   Constant: "CONSTANT",
   State: "STATE",
   Action: "ACTION",
   Temporal: "TEMPORAL",
   Unknown: "Unknown",
 };
+
+export const LEVEL_NUMBER_PREFIXES = ["CONSTANT", "STATE", "ACTION", "TEMPORAL"];
 
 const getRenamed = (kind: string, name: string) => `${kind}_${name}_`;
 
@@ -189,7 +191,7 @@ const renameDefn = (scope: Scope | undefined, definition: Defn, level?: number):
       : definition;
   }
   const body = rename(scope, definition.body);
-  const kind = LEVEL_KINDS[level ?? getLevel(scope, body)];
+  const kind = LEVEL_NUMBER_PREFIXES[level ?? getLevel(scope, body)];
   if (kind === undefined) throw new TlapmBugError();
   return { ...definition, name: getRenamed(kind, definition.name), body };
 };
@@ -199,7 +201,7 @@ const renameHyp = (scope: Scope | undefined, hyp: Hyp, level?: number): Hyp => {
     case "Fresh":
       return {
         ...hyp,
-        name: getRenamed(FRESH_KINDS[hyp.level], hyp.name),
+        name: getRenamed(LEVEL_PREFIXES[hyp.level], hyp.name),
         domain: hyp.domain && rename(scope, hyp.domain),
       };
     case "Flex":
@@ -294,7 +296,7 @@ const rename: Rewrite = (scope, expression) => {
     case "SetOf": {
       const bounds = expression.bounds.map((bound) => ({
         ...bound,
-        name: getRenamed(FRESH_KINDS[bound.level], bound.name),
+        name: getRenamed(LEVEL_PREFIXES[bound.level], bound.name),
         domain:
           bound.domain.kind === "Domain"
             ? { kind: "Domain" as const, expression: rename(scope, bound.domain.expression) }
@@ -402,13 +404,11 @@ const isSubstitutive = (
 
 // Coalesce.crypthash: h and the first five hexadecimal digits of the MD5 of the expression as
 // tlapm prints it.
-const getHashName = (scope: Scope | undefined, expression: Expr) => {
-  const text = renderDoc(printExpression(getScopeHyps(scope), expression));
-  return `h${getMd5(text).slice(0, 5)}`;
-};
+export const getHashName = (hyps: Hyp[], expression: Expr) =>
+  `h${getMd5(renderDoc(printExpression(hyps, expression))).slice(0, 5)}`;
 
 const coalesce = (scope: Scope | undefined, expression: Expr): Expr =>
-  at({ kind: "Opaque", name: getHashName(scope, expression) }, expression);
+  at({ kind: "Opaque", name: getHashName(getScopeHyps(scope), expression) }, expression);
 
 // coalesce_operator: an operator applied to arguments that are not all substitutive is opaque,
 // hiding the arguments that are constant or substitutive.

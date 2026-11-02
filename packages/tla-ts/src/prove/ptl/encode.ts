@@ -17,26 +17,13 @@ import {
   type Builtin,
   type Expr,
   type Hyp,
-  type Level,
   type Scope,
   type Sequent,
   type Substitution,
 } from "../../obligations/expression";
-import { renderDoc } from "../../obligations/format";
 import { getLevelInfo } from "../../obligations/levels";
-import { printExpression } from "../../obligations/printer";
 import { expandAction, expandFairness, expandLeadsto, getTime } from "../../obligations/temporal";
-import { getMd5 } from "../prep/md5";
-
-const KIND_NAMES: Record<Level, string> = {
-  Constant: "CONSTANT",
-  State: "STATE",
-  Action: "ACTION",
-  Temporal: "TEMPORAL",
-  Unknown: "Unknown",
-};
-
-const LEVEL_NAMES = ["CONSTANT", "STATE", "ACTION", "TEMPORAL"];
+import { getHashName, LEVEL_NUMBER_PREFIXES, LEVEL_PREFIXES } from "../prep/action";
 
 // Coalesce.rename_with_loc: each declared name gets its kind in front, or its level for a definition,
 // as in VARIABLE_x_ and CONSTANT_i_, so atoms print with the names tlapm hashes. A variable a
@@ -51,7 +38,7 @@ const renameSequent = (scope: Scope | undefined, sequent: Sequent): Sequent => {
           case "Fresh":
             return {
               ...hyp,
-              name: `${KIND_NAMES[hyp.level]}_${hyp.name}_`,
+              name: `${LEVEL_PREFIXES[hyp.level]}_${hyp.name}_`,
               domain: hyp.domain && renameDeclarations(current, hyp.domain),
             };
           case "Flex":
@@ -60,7 +47,7 @@ const renameSequent = (scope: Scope | undefined, sequent: Sequent): Sequent => {
             const definition = hyp.definition;
             if (definition.kind !== "Operator") return hyp;
             const body = renameDeclarations(current, definition.body);
-            const level = LEVEL_NAMES[getLevelInfo(current, body).level];
+            const level = LEVEL_NUMBER_PREFIXES[getLevelInfo(current, body).level];
             return {
               ...hyp,
               definition: { ...definition, name: `${level}_${definition.name}_`, body },
@@ -93,7 +80,7 @@ const renameDeclarations = (scope: Scope | undefined, expression: Expr): Expr =>
         ...mapped,
         bounds: mapped.bounds.map((bound) => ({
           ...bound,
-          name: `${KIND_NAMES[bound.level]}_${bound.name}_`,
+          name: `${LEVEL_PREFIXES[bound.level]}_${bound.name}_`,
         })),
       };
     case "Choose":
@@ -246,8 +233,8 @@ export const encodePtl = (sequent: Sequent): string => {
         return facts.length === 0 ? goal : `(${facts.join(" & ")} -> ${goal})`;
       }
     }
-    // Pltl.coalesce_fol: an atom is named by the first five hex digits of the MD5 of its print.
-    return `h${getMd5(renderDoc(printExpression(hyps, expression))).slice(0, 5)}`;
+    // Pltl.coalesce_fol names an atom as Coalesce does.
+    return getHashName(hyps, expression);
   };
   const renamed = renameDeclarations(undefined, { kind: "Sequent", sequent });
   const prepared = prepareHyps(undefined, expandAction(expandLeadsto(expandFairness(renamed))));
