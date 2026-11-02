@@ -87,10 +87,6 @@ const TEMPORAL_OPERATORS: Partial<Record<Builtin, [string, number]>> = {
   Diamond: ["<>", 1],
 };
 
-const unsupported = (message: string): never => {
-  throw new TlaUnsupportedError(message);
-};
-
 const getSuccessors = (integer: string) => {
   const count = Number.parseInt(integer, 10);
   return `${"(TLA.fapply TLA.Succ ".repeat(count)}0${")".repeat(count)}`;
@@ -120,7 +116,6 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
     if (atom !== undefined && args.length === 0) return text(atom);
     const operator = OPERATORS[builtin];
     if (operator && operator[1] === args.length) return nonatomic(operator[0], args);
-    const [first, second] = args;
     if (args.length === 2) {
       switch (builtin) {
         case "Neq":
@@ -129,27 +124,26 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
           return format("(-. %a)", nonatomic("TLA.in", args));
         case "Minus":
           return nonatomic("arith.add", [
-            first,
+            args[0],
             {
               kind: "Apply",
-              operator: { kind: "Internal", builtin: "Uminus", location: second.location },
-              args: [second],
-              location: second.location,
+              operator: { kind: "Internal", builtin: "Uminus", location: args[1].location },
+              args: [args[1]],
+              location: args[1].location,
             },
           ]);
         case "Gteq":
-          return nonatomic("arith.le", [second, first]);
+          return nonatomic("arith.le", args.toReversed());
         case "Gt":
-          return nonatomic("arith.lt", [second, first]);
+          return nonatomic("arith.lt", args.toReversed());
       }
     }
-    if (builtin === "Unprimable" && args.length === 1) return printExpr(first);
+    if (builtin === "Unprimable" && args.length === 1) return printExpr(args[0]);
     const isFrontend = builtin === "Prime" || builtin === "StrongPrime" || builtin === "UNCHANGED";
     if (isFrontend && args.length === 1) throw new TlapmBugError();
     const temporal = TEMPORAL_OPERATORS[builtin];
-    if (temporal && temporal[1] === args.length) {
+    if (temporal && temporal[1] === args.length)
       throw new TlaProverError(`Unsupported operator \`${temporal[0]}\`.\n`);
-    }
     throw new TlaProverError("Backend.Zenon.fmt_apply");
   };
 
@@ -179,8 +173,9 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
 
   // The first bound binds around a quantifier over the others, which move under it.
   const printQuant = (quantifier: "Forall" | "Exists", bounds: Bound[], body: Expr): Doc => {
-    const [bound, ...rest] = bounds;
-    if (!bound) return printExpr(body);
+    if (bounds.length === 0) return printExpr(body);
+    const bound = bounds[0];
+    const rest = bounds.slice(1);
     const undittoed =
       rest[0]?.domain.kind === "Ditto"
         ? [{ ...rest[0], domain: bound.domain }, ...rest.slice(1)]
@@ -203,9 +198,8 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
             location: body.location,
           };
     const isForall = quantifier === "Forall";
-    if (bound.domain.kind === "NoDomain") {
+    if (bound.domain.kind === "NoDomain")
       return printBinder(bound.name, text(isForall ? "(A. " : "(E. "), inner, ")");
-    }
     if (bound.domain.kind !== "Domain") throw new TlapmBugError();
     const domain = printExpr(bound.domain.expression);
     return printBinder(
@@ -218,7 +212,7 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
 
   // SetOf and Fcn take one bound, whose domain prints outside it.
   const printOneBound = (name: string, bounds: Bound[], body: Expr, what: string) => {
-    if (bounds.length !== 1) return unsupported(`${what} (multiple declared constants)`);
+    if (bounds.length !== 1) throw new TlaUnsupportedError(`${what} (multiple declared constants)`);
     const bound = bounds[0];
     if (bound.domain.kind !== "Domain") throw new TlapmBugError();
     return printBinder(
@@ -231,9 +225,10 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
 
   // A sequent inside an expression, as an implication under quantifiers.
   const printNestedSequent = (sequent: Sequent): Doc => {
-    const [hyp, ...rest] = sequent.context;
-    if (!hyp) return printExpr(sequent.active);
-    const printRest = () => printNestedSequent({ context: rest, active: sequent.active });
+    if (sequent.context.length === 0) return printExpr(sequent.active);
+    const hyp = sequent.context[0];
+    const printRest = () =>
+      printNestedSequent({ context: sequent.context.slice(1), active: sequent.active });
     if (hyp.kind === "Fact") {
       const fact = hyp.visibility === "Visible" ? printExpr(hyp.expression) : undefined;
       bump();
@@ -281,9 +276,8 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
       case "List":
         if (expression.bullet === "Refs" && expression.items.length === 0)
           throw new TlapmBugError();
-        if (expression.bullet === "Refs" && expression.items.length === 1) {
+        if (expression.bullet === "Refs" && expression.items.length === 1)
           return printExpr(expression.items[0]);
-        }
         return format(
           "(%s %a)",
           expression.bullet === "Or" ? "\\/" : "/\\",
@@ -292,7 +286,7 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
       case "Quant":
         return printQuant(expression.quantifier, expression.bounds, expression.body);
       case "Tquant":
-        return unsupported("\\AA or \\EE");
+        throw new TlaUnsupportedError("\\AA or \\EE");
       case "Choose":
         return expression.domain
           ? printBinder(
@@ -342,7 +336,7 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
       case "Except": {
         const spec = expression.specs[0];
         if (expression.specs.length !== 1 || spec.trail.length !== 1)
-          return unsupported("complex EXCEPT");
+          throw new TlaUnsupportedError("complex EXCEPT");
         const point = spec.trail[0];
         const argument =
           point.kind === "Dot" ? text(`"${point.field}"`) : printExpr(point.expression);
@@ -368,7 +362,7 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
       case "Sub":
       case "Tsub":
       case "Fair":
-        return unsupported(expression.kind);
+        throw new TlaUnsupportedError(expression.kind);
       case "Case": {
         const arms = formatDelimited(
           expression.arms,
@@ -382,7 +376,7 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
       case "String":
         return format('"%s"', expression.value);
       case "Num":
-        if (expression.fraction !== "") return unsupported("Real number constants");
+        if (expression.fraction !== "") throw new TlaUnsupportedError("Real number constants");
         return text(getSuccessors(expression.integer));
       case "Bang":
       case "Let":
@@ -424,9 +418,8 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
         const count = String(context.stack.length);
         const fact = hyp.visibility === "Visible" ? getFactDoc(hyp.expression) : undefined;
         bump();
-        if (fact instanceof TlaUnsupportedError) {
+        if (fact instanceof TlaUnsupportedError)
           return format("; omitted temporal assumption : %s @.", fact.message);
-        }
         return fact ? format('$hyp "v\'%s" %a@\n', count, fact) : [];
       }
     }

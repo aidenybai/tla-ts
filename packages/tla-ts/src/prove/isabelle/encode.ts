@@ -111,17 +111,11 @@ const DECLARED: [string, number][] = [
 const HEADER = [
   "consts",
   ...DECLARED.map(
-    ([name, arity]) =>
-      `  "${cook(name)}" :: ${arity === 0 ? "c" : `"[${Array(arity).fill("c").join(",")}] => c"`}`,
+    (declared) =>
+      `  "${cook(declared[0])}" :: ${declared[1] === 0 ? "c" : `"[${Array(declared[1]).fill("c").join(",")}] => c"`}`,
   ),
   "",
 ].join("\n");
-
-// tlapm raises Unsupported for what Isabelle/TLA+ can't express, which omits a fact and fails the
-// obligation anywhere else.
-const unsupported = (message: string): never => {
-  throw new TlaUnsupportedError(message);
-};
 
 const getSuccessors = (integer: string) => {
   const count = Number.parseInt(integer, 10);
@@ -167,7 +161,7 @@ const printLemma = (sequent: Sequent) => {
     if (operator && operator[1] === args.length) return nonfix(operator[0], args);
     if (builtin === "Unprimable" && args.length === 1) return printExpr(args[0]);
     // tlapm prints an irregular expression as the hash of its TLA+ text, but never makes one.
-    if (builtin === "Irregular" && args.length === 1) return unsupported("Irregular");
+    if (builtin === "Irregular" && args.length === 1) throw new TlaUnsupportedError("Irregular");
     const isFrontend = builtin === "Prime" || builtin === "StrongPrime" || builtin === "UNCHANGED";
     if (isFrontend && args.length === 1) throw new TlapmBugError();
     const temporal = TEMPORAL[builtin];
@@ -203,8 +197,9 @@ const printLemma = (sequent: Sequent) => {
 
   // The first bound binds around a quantifier over the others, which move under it.
   const printQuant = (quantifier: "Forall" | "Exists", bounds: Bound[], body: Expr): string => {
-    const [bound, ...rest] = bounds;
-    if (!bound) return formatExpr(body);
+    if (bounds.length === 0) return formatExpr(body);
+    const bound = bounds[0];
+    const rest = bounds.slice(1);
     const undittoed =
       rest[0]?.domain.kind === "Ditto"
         ? [{ ...rest[0], domain: bound.domain }, ...rest.slice(1)]
@@ -239,9 +234,10 @@ const printLemma = (sequent: Sequent) => {
 
   // pp_print_sequent_inner: a sequent inside an expression, as a meta-level implication.
   const printNestedSequent = (sequent: Sequent): string => {
-    const [hyp, ...rest] = sequent.context;
-    if (!hyp) return printExpr(sequent.active);
-    const printRest = () => printNestedSequent({ context: rest, active: sequent.active });
+    if (sequent.context.length === 0) return printExpr(sequent.active);
+    const hyp = sequent.context[0];
+    const printRest = () =>
+      printNestedSequent({ context: sequent.context.slice(1), active: sequent.active });
     switch (hyp.kind) {
       case "Flex":
         return withBound(hyp.name, (name) => `(\\<And> ${name} ${name}'.${printRest()})`);
@@ -265,7 +261,7 @@ const printLemma = (sequent: Sequent) => {
         return doc;
       }
       case "Defn":
-        return unsupported("Inner definition");
+        throw new TlaUnsupportedError("Inner definition");
     }
   };
 
@@ -286,7 +282,7 @@ const printLemma = (sequent: Sequent) => {
       case "Parens":
         return formatExpr(expression.expression);
       case "Let":
-        return unsupported("LET");
+        throw new TlaUnsupportedError("LET");
       case "List":
         if (expression.bullet === "Refs" && expression.items.length === 0) return "TRUE";
         if (expression.bullet === "Refs" && expression.items.length === 1)
@@ -297,50 +293,49 @@ const printLemma = (sequent: Sequent) => {
       case "Quant":
         return printQuant(expression.quantifier, expression.bounds, expression.body);
       case "Tquant":
-        return unsupported(expression.quantifier === "Forall" ? "\\\\AA" : "\\\\EE");
+        throw new TlaUnsupportedError(expression.quantifier === "Forall" ? "\\\\AA" : "\\\\EE");
       case "Choose": {
-        const body = expression.body;
         if (!expression.domain)
-          return withBound(expression.name, (name) => `Choice(%${name}. ${printExpr(body)})`);
+          return withBound(
+            expression.name,
+            (name) => `Choice(%${name}. ${printExpr(expression.body)})`,
+          );
         const domain = printExpr(expression.domain);
         return withBound(
           expression.name,
-          (name) => `bChoice(${domain}, %${name}. ${printExpr(body)})`,
+          (name) => `bChoice(${domain}, %${name}. ${printExpr(expression.body)})`,
         );
       }
       case "SetSt": {
-        const body = expression.body;
         const domain = printExpr(expression.domain);
         return withBound(
           expression.name,
-          (name) => `subsetOf(${domain}, %${name}. ${printExpr(body)})`,
+          (name) => `subsetOf(${domain}, %${name}. ${printExpr(expression.body)})`,
         );
       }
       case "SetOf": {
-        const element = expression.element;
-        const [bound] = expression.bounds;
-        if (!bound) throw new TlapmBugError();
+        if (expression.bounds.length === 0) throw new TlapmBugError();
+        const bound = expression.bounds[0];
         if (expression.bounds.length !== 1 || bound.domain.kind !== "Domain")
-          return unsupported("SetOf (multiple declared constants)");
+          throw new TlaUnsupportedError("SetOf (multiple declared constants)");
         const domain = printExpr(bound.domain.expression);
         return withBound(
           bound.name,
-          (name) => `setOfAll(${domain}, %${name}. ${printExpr(element)})`,
+          (name) => `setOfAll(${domain}, %${name}. ${printExpr(expression.element)})`,
         );
       }
       case "SetEnum":
         return `{${delimited(expression.elements)}}`;
       case "Fcn": {
-        const body = expression.body;
-        const [bound] = expression.bounds;
-        if (!bound || expression.bounds.length !== 1)
-          return unsupported("function (multiple declared constants)");
+        const bound = expression.bounds[0];
+        if (expression.bounds.length !== 1)
+          throw new TlaUnsupportedError("function (multiple declared constants)");
         if (bound.domain.kind === "Ditto") throw new TlapmBugError();
         const domain =
           bound.domain.kind === "Domain" ? printExpr(bound.domain.expression) : undefined;
         return withBound(bound.name, (name) => {
           const printed = domain === undefined ? name : ` ${name} \\<in> ${domain} `;
-          return `[${printed} \\<mapsto> ${printExpr(body)}]`;
+          return `[${printed} \\<mapsto> ${printExpr(expression.body)}]`;
         });
       }
       case "FcnApp": {
@@ -392,7 +387,7 @@ const printLemma = (sequent: Sequent) => {
       case "String":
         return `''${expression.value}''`;
       case "Num":
-        if (expression.fraction !== "") return unsupported("real constants");
+        if (expression.fraction !== "") throw new TlaUnsupportedError("real constants");
         return `(${getSuccessors(expression.integer)})`;
       case "At":
         throw new TlapmBugError();
