@@ -4,8 +4,11 @@
 import { TlaProofError, TlapmBugError } from "../errors";
 import {
   adjoin,
+  adjoinAll,
   getBoundedFresh,
   getFresh,
+  getLocalDefn,
+  getParamFresh,
   getScopeAt,
   mapAccumulate,
   type Bound,
@@ -151,9 +154,9 @@ const getBoundsLevel = (scope: Scope | undefined, bounds: Bound[], body: Expr) =
   const domains = bounds.flatMap((bound) =>
     bound.domain.kind === "Domain" ? [getLevelInfo(scope, bound.domain.expression)] : [],
   );
-  const inner = bounds.reduce(
-    (current, bound) => adjoin(current, getFresh(bound.name, bound.level)),
+  const inner = adjoinAll(
     scope,
+    bounds.map((bound) => getFresh(bound.name, bound.level)),
   );
   return combine([getLevelInfo(inner, body), ...domains]);
 };
@@ -188,11 +191,10 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
     case "Num":
       return getInfo(0);
     case "Lambda": {
-      const inner = expression.params.reduce(
-        (current, param) => adjoin(current, getFresh(param.name, "Unknown", param.shape)),
-        scope,
+      const body = getLevelInfo(
+        adjoinAll(scope, expression.params.map(getParamFresh)),
+        expression.body,
       );
-      const body = getLevelInfo(inner, expression.body);
       const names = new Set(expression.params.map((param) => param.name));
       return {
         level: body.level,
@@ -255,20 +257,11 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
     case "Dot":
     case "Parens":
       return recurse(expression.expression);
-    case "Let": {
-      const inner = expression.definitions.reduce(
-        (current, definition) =>
-          adjoin(current, {
-            kind: "Defn",
-            definition,
-            whereDefined: "User",
-            visibility: "Visible",
-            isLocal: true,
-          }),
-        scope,
+    case "Let":
+      return getLevelInfo(
+        adjoinAll(scope, expression.definitions.map(getLocalDefn)),
+        expression.body,
       );
-      return getLevelInfo(inner, expression.body);
-    }
     case "If":
       return combine(
         [expression.condition, expression.consequent, expression.alternative].map(recurse),
@@ -282,7 +275,10 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       return getBoundsLevel(scope, expression.bounds, expression.element);
     case "Tquant":
       getLevelInfo(
-        expression.names.reduce((current, name) => adjoin(current, { kind: "Flex", name }), scope),
+        adjoinAll(
+          scope,
+          expression.names.map((name) => ({ kind: "Flex", name })),
+        ),
         expression.body,
       );
       return getInfo(3);

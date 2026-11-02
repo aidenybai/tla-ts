@@ -12,6 +12,7 @@ import {
   findNamed,
   getErrorNote,
   getFresh,
+  getLocalDefn,
   getLocusPrefix,
   getScopeAt,
   isEqualExpr,
@@ -331,14 +332,7 @@ export const createAnonymizer = (
         continue;
       }
       const result = defn(current, definition);
-      current = adjoinContext(current, {
-        kind: "Defn",
-        definition: result,
-        whereDefined: "User",
-        visibility: "Visible",
-        isLocal: true,
-        isConstnessUnset: true,
-      });
+      current = adjoinContext(current, { ...getLocalDefn(result), isConstnessUnset: true });
       mapped.push(result);
     }
     return [current, mapped];

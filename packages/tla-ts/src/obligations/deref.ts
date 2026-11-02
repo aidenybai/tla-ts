@@ -9,6 +9,7 @@ import {
   getErrorNote,
   getChildren,
   getFresh,
+  getParamFresh,
   mapChildren,
   mapSelectorArgs,
   shift,
@@ -78,10 +79,7 @@ const findLabel = (expression: Expr, label: string, context: Hyp[]): Label | und
         ? { context, expression: expression.expression, indices: expression.form.indices }
         : undefined;
     case "Lambda":
-      return search(expression.body, [
-        ...context,
-        ...expression.params.map((param) => getFresh(param.name, "Unknown", param.shape)),
-      ]);
+      return search(expression.body, [...context, ...expression.params.map(getParamFresh)]);
     case "Let": {
       const inner = [...context];
       for (const definition of expression.definitions) {

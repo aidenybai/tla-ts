@@ -12,6 +12,8 @@ import {
   createContextMap,
   getBoundedFresh,
   getFresh,
+  getLocalDefn,
+  getParamFresh,
   getScopeAt,
   getScopeHyps,
   mapAccumulate,
@@ -264,10 +266,7 @@ const rename: Rewrite = (scope, expression) => {
         ...param,
         name: getRenamed("Unknown", param.name),
       }));
-      const inner = adjoinAll(
-        scope,
-        params.map((param) => getFresh(param.name, "Unknown", param.shape)),
-      );
+      const inner = adjoinAll(scope, params.map(getParamFresh));
       return { ...expression, params, body: rename(inner, expression.body) };
     }
     case "Tquant": {
@@ -314,14 +313,7 @@ const rename: Rewrite = (scope, expression) => {
         expression.definitions,
         (current, definition) => {
           const renamed = renameDefn(current, definition);
-          const hyp: Hyp = {
-            kind: "Defn",
-            definition: renamed,
-            whereDefined: "User",
-            visibility: "Visible",
-            isLocal: true,
-          };
-          return [adjoin(current, hyp), renamed];
+          return [adjoin(current, getLocalDefn(renamed)), renamed];
         },
       );
       return { ...expression, definitions, body: rename(inner, expression.body) };
@@ -342,10 +334,7 @@ const getSubstitutiveArgs = (scope: Scope | undefined, definition: Defn): boolea
   if (cached) return cached;
   const body = definition.kind === "Operator" ? definition.body : undefined;
   if (body?.kind !== "Lambda") return [];
-  const inner = adjoinAll(
-    scope,
-    body.params.map((param) => getFresh(param.name, "Unknown", param.shape)),
-  );
+  const inner = adjoinAll(scope, body.params.map(getParamFresh));
   const result = body.params.map((_param, index) =>
     isSubstitutive(inner, body.body, index + 1, true),
   );

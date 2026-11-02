@@ -12,8 +12,8 @@ import {
   bumpBy,
   getAtPrefix,
   getErrorNote,
-  getFresh,
   getLocusText,
+  getParamFresh,
   getScopeAt,
   mapScoped,
   normalizeApply,
@@ -500,10 +500,7 @@ const replaceWithQuantifiers = (
     body: replaceWithQuantifiers(
       options,
       onWarning,
-      adjoinAll(
-        scope,
-        params.map((param) => getFresh(param.name, "Unknown", param.shape)),
-      ),
+      adjoinAll(scope, params.map(getParamFresh)),
       body,
       true,
     ),

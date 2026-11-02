@@ -411,6 +411,18 @@ export const getBoundedFresh = (name: string, domain: Expr): Hyp => ({
   domainVisibility: "Visible",
 });
 
+// What a LAMBDA binds each parameter as, and a LET each definition, as Visit.map does.
+export const getParamFresh = (param: Param) => getFresh(param.name, "Unknown", param.shape);
+
+export const getLocalDefn = (definition: Defn) =>
+  ({
+    kind: "Defn",
+    definition,
+    whereDefined: "User",
+    visibility: "Visible",
+    isLocal: true,
+  }) satisfies Hyp;
+
 const applyIndex = (substitution: Substitution, index: number, from: Expr): Expr => {
   switch (substitution.kind) {
     case "Shift":
@@ -951,7 +963,7 @@ export const mapScoped = <State>(
       return expression;
     case "Lambda": {
       const inner = expression.params.reduce((current, param) => {
-        const fresh = getFresh(param.name, "Unknown", param.shape);
+        const fresh = getParamFresh(param);
         return bind(current, param.location ? { ...fresh, location: param.location } : fresh);
       }, state);
       return { ...expression, body: map(inner, expression.body) };
@@ -969,14 +981,7 @@ export const mapScoped = <State>(
         expression.definitions,
         (current, definition) => {
           const mapped = mapDefnBody(definition, (body) => map(current, body));
-          const hyp: Hyp = {
-            kind: "Defn",
-            definition: mapped,
-            whereDefined: "User",
-            visibility: "Visible",
-            isLocal: true,
-          };
-          return [bind(current, hyp), mapped];
+          return [bind(current, getLocalDefn(mapped)), mapped];
         },
       );
       return { ...expression, definitions, body: map(inner, expression.body) };

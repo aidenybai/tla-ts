@@ -8,6 +8,8 @@ import {
   adjoinAll,
   getBoundedFresh,
   getFresh,
+  getLocalDefn,
+  getParamFresh,
   getScopeAt,
   getScopeHyps,
   type Bound,
@@ -70,22 +72,10 @@ const bindBounds = (scope: Scope | undefined, bounds: Bound[]) =>
   );
 
 const bindParams = (scope: Scope | undefined, params: Param[]) =>
-  adjoinAll(
-    scope,
-    params.map((param) => getFresh(param.name, "Unknown", param.shape)),
-  );
+  adjoinAll(scope, params.map(getParamFresh));
 
 const bindDefinitions = (scope: Scope | undefined, definitions: Defn[]) =>
-  adjoinAll(
-    scope,
-    definitions.map((definition) => ({
-      kind: "Defn",
-      definition,
-      whereDefined: "User",
-      visibility: "Visible",
-      isLocal: true,
-    })),
-  );
+  adjoinAll(scope, definitions.map(getLocalDefn));
 
 const bindFlexible = (scope: Scope | undefined, names: string[]) =>
   adjoinAll(

@@ -3,9 +3,11 @@
 
 import {
   adjoin,
+  adjoinAll,
   applyBuiltin,
   at,
   getFresh,
+  getLocalDefn,
   getScopeAt,
   mapChildren,
   type Builtin,
@@ -132,9 +134,9 @@ const isConstantHyp = (scope: Scope | undefined, hyp: Hyp) => {
 };
 
 const bindConstants = (scope: Scope | undefined, names: string[]) =>
-  names.reduce<Scope | undefined>(
-    (inner, name) => adjoin(inner, getFresh(name, "Constant")),
+  adjoinAll(
     scope,
+    names.map((name) => getFresh(name, "Constant")),
   );
 
 export const isConstant = (scope: Scope | undefined, expression: Expr): boolean => {
@@ -196,13 +198,7 @@ export const isConstant = (scope: Scope | undefined, expression: Expr): boolean 
     case "Let": {
       const inner = expression.definitions.reduce<{ scope: Scope | undefined; isGood: boolean }>(
         (state, definition) => ({
-          scope: adjoin(state.scope, {
-            kind: "Defn",
-            definition,
-            whereDefined: "User",
-            visibility: "Visible",
-            isLocal: true,
-          }),
+          scope: adjoin(state.scope, getLocalDefn(definition)),
           isGood:
             state.isGood &&
             definition.kind === "Operator" &&
@@ -281,8 +277,7 @@ const isClosed = (scope: Scope | undefined, expression: Expr, isBox: boolean): b
   if (expression.kind === "List")
     return expression.items.every((item) => isClosed(scope, item, isBox));
   if (expression.kind === "Sequent") {
-    const inner = expression.sequent.context.reduce<Scope | undefined>(adjoin, scope);
-    return isClosed(inner, expression.sequent.active, isBox);
+    return isClosed(adjoinAll(scope, expression.sequent.context), expression.sequent.active, isBox);
   }
   if (expression.kind !== "Apply") return false;
   const args = expression.args;
