@@ -413,12 +413,6 @@ const getOperatorDefinition = (name: string, environment: Environment) => {
     : undefined;
 };
 
-const describeDefinition = (definition: Definition) =>
-  createRecord([
-    ["name", definition.name],
-    ["location", toLocationValue(definition.location)],
-  ]);
-
 const describe = (
   config: ModelConfig,
   environment: Environment,
@@ -512,7 +506,14 @@ export const getSpecificationValue = (
     createSet(
       names.flatMap((name) => {
         const definition = getOperatorDefinition(name, environment);
-        return definition ? [describeDefinition(definition)] : [];
+        return definition
+          ? [
+              createRecord([
+                ["name", definition.name],
+                ["location", toLocationValue(definition.location)],
+              ]),
+            ]
+          : [];
       }),
     );
   return createRecord([

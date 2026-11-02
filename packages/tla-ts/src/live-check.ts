@@ -535,7 +535,6 @@ export const createLivenessChecker = (
       actions.push(actionResults[position]);
     });
     writeNode(check, index, successors, actions, stateResults);
-    return undefined;
   };
 
   // The shortest path from an initial node to the node, last node first, as TLC's getPath finds it.
@@ -832,9 +831,11 @@ export const createLivenessChecker = (
           );
           const stateResults = checkState(check, index, state);
           const tableau = check.solution.tableau;
-          const accepted = tableau
-            ? addTableauState(check, tableau, set, actionResults, stateResults, index)
-            : addPlainState(check, set, actionResults, stateResults, index);
+          if (!tableau) {
+            addPlainState(check, set, actionResults, stateResults, index);
+            continue;
+          }
+          const accepted = addTableauState(check, tableau, set, actionResults, stateResults, index);
           if (accepted) return accepted;
         }
         return undefined;

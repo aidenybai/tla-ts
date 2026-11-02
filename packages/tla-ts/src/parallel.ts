@@ -56,7 +56,6 @@ export interface StartMessage {
 
 export interface LevelMessage {
   type: "level";
-  level: number;
   generated: number;
   added: number;
   outDegrees: number[];
@@ -70,7 +69,7 @@ export type WorkerMessage =
   | LevelMessage;
 
 export type CoordinatorMessage =
-  | { type: "level"; level: number }
+  | { type: "level" }
   | { type: "resize"; fingerprints: SharedFingerprints };
 
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
@@ -313,11 +312,11 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     terminate();
     return fallBack();
   }
-  for (let level = 1; ; level++) {
+  for (;;) {
     const reported = waitForReports(count);
     // Every worker is idle, so peers can ask any of them for states once the level starts.
     requests.forEach((_, index) => Atomics.store(requests, index, 0));
-    send({ type: "level", level });
+    send({ type: "level" });
     const messages = await collectLevels(await reported);
     if (isAborted(messages)) {
       terminate();

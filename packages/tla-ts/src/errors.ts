@@ -1,5 +1,5 @@
 import type { SourceRange } from "./ast";
-import { EXIT_STATUS, getExitCode } from "./exit-codes";
+import { EXIT_STATUS, getExitCode, setExitCode } from "./exit-codes";
 import type { PcalNode } from "./pcal/ast";
 import type { Value } from "./values";
 
@@ -10,6 +10,8 @@ export const getUnexpectedException = (exceptionClass: string) =>
 // How TLC reports a RuntimeException it did not expect, such as one raised while computing next
 // states.
 export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeException");
+
+export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
 
 // V8's RangeError for a stack overflow, which TLC raises as a Java StackOverflowError.
 export const isStackOverflow = (error: unknown) =>
@@ -140,6 +142,10 @@ export class TlaStackOverflowError extends TlaEvaluationError {
     super(STACK_OVERFLOW_MESSAGE);
   }
 }
+
+// TLC reports a stack overflow outside the computation of states on its own, and exits with 255.
+export const createStackOverflowError = () =>
+  setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
 
 // A next-state action left variables of a successor state unassigned. TLC reports the partial
 // state, with null for each unassigned variable.

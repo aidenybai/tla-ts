@@ -18,7 +18,7 @@ export interface GraphState {
   getText: () => string;
 }
 
-export interface GraphAction {
+interface GraphAction {
   name: string;
   signature: string;
 }

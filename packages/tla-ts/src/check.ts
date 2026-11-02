@@ -18,7 +18,8 @@ import {
   TlaIncompleteSuccessorError,
   TlaModuleError,
   TlaStackOverflowError,
-  getUnexpectedException,
+  createStackOverflowError,
+  UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
 import type { JavaOverride } from "./java-overrides";
@@ -134,7 +135,7 @@ export interface CheckOptions {
   onProgress?: (progress: CheckProgress) => void;
 }
 
-export interface InitialStatesProgress {
+interface InitialStatesProgress {
   kind: "initial-states-progress";
   count: number;
 }
@@ -1318,8 +1319,6 @@ const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.i
 const WRAPPED_EVAL_EXCEPTION = `${UNEXPECTED_EXCEPTION}tlc2.tool.EvalException: `;
 const WRAPPED_RUNTIME_EXCEPTION = `${UNEXPECTED_EXCEPTION}util.Assert$TLCRuntimeException: `;
 
-const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
-
 const getWrappedException = (error: TlaEvaluationError) =>
   isEvalException(error) ? WRAPPED_EVAL_EXCEPTION : WRAPPED_RUNTIME_EXCEPTION;
 
@@ -1397,14 +1396,11 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   try {
     return searchStates(options, stateWriter);
   } catch (error) {
-    // TLC reports a stack overflow outside the search on its own, and exits with 255.
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
     stateWriter?.close();
   }
 };
-
-const createStackOverflowError = () => setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
 
 const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
   const config =

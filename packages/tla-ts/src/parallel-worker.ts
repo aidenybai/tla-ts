@@ -8,7 +8,7 @@ import {
 } from "./fingerprints";
 import type { CoordinatorMessage, LevelMessage, StartMessage, WorkerMessage } from "./parallel";
 import { getSuccessors, type Successor } from "./successors";
-import { getTlcStringOrder, getTlcDeclarationOrder } from "./tlc/order";
+import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import {
@@ -55,7 +55,7 @@ const run = (start: StartMessage, parent: Port) => {
   });
   const environment = specification.environment;
   const search = createSearch(start.config, environment, () =>
-    getTlcDeclarationOrder(start.source, loadModule, "variable"),
+    getTlcVariableOrder(start.source, loadModule),
   );
   const nextAction = search?.spec.next;
   if (!search || nextAction === undefined)
@@ -182,7 +182,7 @@ const run = (start: StartMessage, parent: Port) => {
   const report = (message: WorkerMessage) =>
     parent.postMessage(message, message.type === "level" ? [message.fingerprints.buffer] : []);
 
-  const runLevel = async (level: number): Promise<LevelMessage | undefined> => {
+  const runLevel = async (): Promise<LevelMessage | undefined> => {
     const expansion: Expansion = {
       states: frontier.states,
       origin: 0,
@@ -213,7 +213,6 @@ const run = (start: StartMessage, parent: Port) => {
     Atomics.store(remaining, self, frontier.states.length);
     return {
       type: "level",
-      level,
       generated: expansion.generated,
       added: expansion.next.length,
       outDegrees: expansion.outDegrees,
@@ -221,15 +220,15 @@ const run = (start: StartMessage, parent: Port) => {
     };
   };
 
-  const step = (level: number) => {
-    runLevel(level).then(
+  const step = () => {
+    runLevel().then(
       (message) => report(message ?? { type: "abort" }),
       () => report({ type: "abort" }),
     );
   };
   parent.addEventListener("message", (event) => {
     const message = event.data as CoordinatorMessage;
-    if (message.type === "level") step(message.level);
+    if (message.type === "level") step();
     if (message.type === "resize") {
       shared.fingerprints = message.fingerprints;
       waiters.resume();

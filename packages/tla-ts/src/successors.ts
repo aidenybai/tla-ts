@@ -131,8 +131,8 @@ const getIfConditionMessage = (run: Run, value: Value, expression: Expression) =
   return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
 };
 
-const holds = (run: Run, expression: Expression, context: Context, isWalked = true) =>
-  holdsValue(run, expression, evaluate(expression, context), isWalked);
+const holds = (run: Run, expression: Expression, context: Context) =>
+  holdsValue(run, expression, evaluate(expression, context));
 
 const holdsValue = (run: Run, expression: Expression, value: Value, isWalked = true) => {
   if (typeof value === "boolean") return value;
@@ -1006,9 +1006,6 @@ const getEmptyState = (environment: Environment) => {
   return state;
 };
 
-const getMissingVariables = (partial: State, environment: Environment) =>
-  environment.variables.filter((_, index) => partial[index] === undefined);
-
 const isComplete = (partial: State): partial is Value[] => {
   for (let index = 0; index < partial.length; index++) {
     if (partial[index] === undefined) return false;
@@ -1120,7 +1117,7 @@ export const forEachSuccessor = (
     (partial, action) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
-        const missing = getMissingVariables(partial, environment);
+        const missing = environment.variables.filter((_, index) => partial[index] === undefined);
         throw new TlaIncompleteSuccessorError(
           `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${missing.join(", ")}`,
           partial,

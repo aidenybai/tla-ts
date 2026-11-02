@@ -50,26 +50,20 @@ const TRACE_METHOD = `public static tlc2.value.impl.TupleValue tlc2.module.TLCEx
 
 const PICK_SUCCESSOR_METHOD = `public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(${OVERRIDE_PARAMETERS})`;
 
-const createEmptyCounterExample = () =>
-  createRecord([
-    ["action", createSet([])],
-    ["state", createSet([])],
-  ]);
-
-const createBuiltinLocation = () =>
-  createRecord([
-    ["beginLine", 0],
-    ["beginColumn", 0],
-    ["endLine", 0],
-    ["endColumn", 0],
-    ["module", "--TLA+ BUILTINS--"],
-  ]);
-
 // TLC's record for an action it doesn't store, such as every action in breadth-first search.
 export const createActionRecord = (action: string | undefined) =>
   createRecord([
     ["name", action ?? "UnnamedAction"],
-    ["location", createBuiltinLocation()],
+    [
+      "location",
+      createRecord([
+        ["beginLine", 0],
+        ["beginColumn", 0],
+        ["endLine", 0],
+        ["endColumn", 0],
+        ["module", "--TLA+ BUILTINS--"],
+      ]),
+    ],
   ]);
 
 // TLC's CounterExample is a graph of the violating behavior: the states numbered from 1, an edge
@@ -245,7 +239,12 @@ export const createTlcExtOperators = (
     defineStateOperator(
       "CounterExample",
       0,
-      () => runtime.counterExample ?? createEmptyCounterExample(),
+      () =>
+        runtime.counterExample ??
+        createRecord([
+          ["action", createSet([])],
+          ["state", createSet([])],
+        ]),
     ),
     defineOperator("ToTrace", 1, (args) => {
       const counterExample = getValue(args, 0, "ToTrace");

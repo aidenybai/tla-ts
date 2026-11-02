@@ -1,5 +1,10 @@
 import { isLocallyResolved, type Bound, type Definition, type Expression } from "./ast";
-import { getUnexpectedException, TlaEvaluationError, TlaStackOverflowError } from "./errors";
+import {
+  createStackOverflowError,
+  TlaEvaluationError,
+  TlaStackOverflowError,
+  UNEXPECTED_EVAL_EXCEPTION,
+} from "./errors";
 import {
   describeNode,
   describeRange,
@@ -58,9 +63,6 @@ export const createTautologyError = () =>
     new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)."),
     EXIT_STATUS.livenessEvaluationFailure,
   );
-
-// TLC expands a temporal formula that refers to itself until Java's stack overflows.
-const createStackOverflowError = () => setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
 
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
@@ -173,9 +175,7 @@ const getUnrolledElements = (bounds: Bound[], context: Context) => {
     if (!(error instanceof TlaEvaluationError)) throw error;
     if (!isEvalException(error)) return undefined;
     throw setExitCode(
-      new TlaEvaluationError(
-        `${getUnexpectedException("tlc2.tool.EvalException")}${error.message}`,
-      ),
+      new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`),
       EXIT_STATUS.error,
     );
   }
@@ -298,13 +298,6 @@ const bindLetDefinitions = (
   }
   return bound;
 };
-
-const createAngleAction = (action: Expression, subscript: Expression): Expression => ({
-  kind: "AngleAction",
-  action,
-  subscript,
-  location: action.location,
-});
 
 export const toLiveExpression = (
   root: Expression,
@@ -545,7 +538,12 @@ export const toLiveExpression = (
         return createUnary(expression.kind, convert(expression.expression, scope));
       case "WeakFairness":
       case "StrongFairness": {
-        const step = createAngleAction(expression.action, expression.subscript);
+        const step: Expression = {
+          kind: "AngleAction",
+          action: expression.action,
+          subscript: expression.subscript,
+          location: expression.action.location,
+        };
         const enabled: LiveEnabled = { kind: "Enabled", step: expression.enabled ?? step, scope };
         const disabled = createUnary("Not", enabled);
         const taken: LiveExpression = {
