@@ -3,7 +3,7 @@
 // down to the variables (Symbol_commute), and what remains modal becomes opaque (Coalesce).
 
 import { TlapmBugError } from "../../errors";
-import { rewriteUnchanged } from "../../obligations/action";
+import { rewriteUnchanged } from "../../obligations/temporal";
 import {
   adjoin,
   adjoinAll,

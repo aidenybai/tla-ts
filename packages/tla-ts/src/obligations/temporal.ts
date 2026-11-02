@@ -24,6 +24,19 @@ const isApplied = (expression: Expr, builtins: Builtin[]) =>
 
 const unchanged = (expression: Expr) => applyBuiltin("UNCHANGED", [expression], expression);
 
+const getEquality = (expression: Expr) =>
+  applyBuiltin("Eq", [applyBuiltin("Prime", [expression], expression), expression], expression);
+
+// E_tla_norm.rewrite_unch: UNCHANGED <<x, <<y>>>> as x' = x /\ y' = y.
+export const rewriteUnchanged = (expression: Expr): Expr => {
+  const flatten = (inner: Expr): Expr[] =>
+    inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
+  const items = flatten(expression);
+  if (items.length === 0) return at({ kind: "Internal", builtin: "TRUE" }, expression);
+  if (items.length === 1) return getEquality(items[0]);
+  return at({ kind: "List", bullet: "And", items: items.map(getEquality) }, expression);
+};
+
 // Each visitor rewrites the outermost match and leaves the rest of the tree as it is.
 const rewrite =
   (match: (expression: Expr, recurse: (inner: Expr) => Expr) => Expr | undefined) =>
@@ -92,18 +105,12 @@ export const expandAction = rewrite((expression, recurse) => {
   return applyBuiltin(expression.modal === "Box" ? "BoxTrue" : "Diamond", [step], expression);
 });
 
-const flattenTuple = (expression: Expr): Expr[] =>
-  expression.kind === "Tuple" ? expression.elements.flatMap(flattenTuple) : [expression];
-
-const expandUnchanged = rewrite((expression) => {
-  if (expression.kind !== "Apply" || !isApplied(expression, ["UNCHANGED"])) return undefined;
-  const equalities = flattenTuple(expression.args[0]).map((element) =>
-    applyBuiltin("Eq", [applyBuiltin("Prime", [element], element), element], element),
-  );
-  if (equalities.length === 0) return at({ kind: "Internal", builtin: "TRUE" }, expression);
-  if (equalities.length === 1) return equalities[0];
-  return at({ kind: "List", bullet: "And", items: equalities }, expression);
-});
+// Only getTime uses this, so the locations rewriteUnchanged gives do not matter.
+const expandUnchanged = rewrite((expression) =>
+  expression.kind === "Apply" && isApplied(expression, ["UNCHANGED"])
+    ? rewriteUnchanged(expression.args[0])
+    : undefined,
+);
 
 const TEMPORAL_BUILTINS: Builtin[] = [
   "Prime",

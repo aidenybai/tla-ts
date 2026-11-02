@@ -28,6 +28,7 @@ import {
   type Substitution,
 } from "./expression";
 import { getLevelInfo, LEVEL_NUMBERS } from "./levels";
+import { rewriteUnchanged } from "./temporal";
 
 // Which of ENABLED and \cdot a pass handles, and whether it may expand the definitions that
 // soundness needs expanded, as the AutoUSE directive allows.
@@ -223,19 +224,6 @@ const expandDefinitions = (
   return recurse(
     stripProps(expression.kind === "Apply" ? normalizeApply(body, expression.args) : body),
   );
-};
-
-const getEquality = (expression: Expr): Expr =>
-  applyBuiltin("Eq", [applyBuiltin("Prime", [expression], expression), expression], expression);
-
-// E_tla_norm.rewrite_unch: UNCHANGED <<x, <<y>>>> as x' = x /\ y' = y.
-export const rewriteUnchanged = (expression: Expr): Expr => {
-  const flatten = (inner: Expr): Expr[] =>
-    inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
-  const items = flatten(expression);
-  if (items.length === 0) return at({ kind: "Internal", builtin: "TRUE" }, expression);
-  if (items.length === 1) return getEquality(items[0]);
-  return at({ kind: "List", bullet: "And", items: items.map(getEquality) }, expression);
 };
 
 // expand_propositional_action_operators: UNCHANGED v, [A]_v and <<A>>_v in terms of primes.
