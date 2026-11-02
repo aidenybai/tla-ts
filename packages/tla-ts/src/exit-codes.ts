@@ -1,4 +1,4 @@
-import type { LivenessChecker } from "./live-check";
+import type { LivenessChecker } from "./liveness-checker";
 
 // TLC's exit statuses, from EC.ExitStatus.
 export const EXIT_STATUS = {

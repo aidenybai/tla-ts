@@ -46,7 +46,7 @@ import {
   type Lasso,
   type LivenessChecker,
   type LiveSuccessor,
-} from "./live-check";
+} from "./liveness-checker";
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import {
   ACTION_LEVEL,
