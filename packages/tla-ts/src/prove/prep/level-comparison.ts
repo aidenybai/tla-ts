@@ -377,9 +377,8 @@ const compare = (
           )
         );
       case "Choose":
-        return right.kind === "Choose" && isSameBinder(leftScope, rightScope, left, right);
       case "SetSt":
-        return right.kind === "SetSt" && isSameBinder(leftScope, rightScope, left, right);
+        return right.kind === left.kind && isSameBinder(leftScope, rightScope, left, right);
       case "SetOf":
         return (
           right.kind === "SetOf" &&
@@ -420,18 +419,9 @@ const compare = (
       case "Product":
         return right.kind === "Product" && recurseList(left.factors, right.factors);
       case "Rect":
-        return (
-          right.kind === "Rect" &&
-          isSameFields(
-            leftScope,
-            rightScope,
-            getSortedFields(left.fields),
-            getSortedFields(right.fields),
-          )
-        );
       case "Record":
         return (
-          right.kind === "Record" &&
+          right.kind === left.kind &&
           isSameFields(
             leftScope,
             rightScope,
@@ -465,15 +455,9 @@ const compare = (
           left.field === right.field
         );
       case "Sub":
-        return (
-          right.kind === "Sub" &&
-          left.modal === right.modal &&
-          recurse(left.action, right.action) &&
-          recurse(left.subscript, right.subscript)
-        );
       case "Tsub":
         return (
-          right.kind === "Tsub" &&
+          right.kind === left.kind &&
           left.modal === right.modal &&
           recurse(left.action, right.action) &&
           recurse(left.subscript, right.subscript)
