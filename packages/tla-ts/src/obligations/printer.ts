@@ -829,7 +829,7 @@ const createPrinter = (hyps: Hyp[] = []) => {
 export const printExpression = (hyps: Hyp[], expression: Expr) =>
   createPrinter(hyps).printExpr(expression);
 
-export const formatObligation = (sequent: Sequent) => {
-  const printer = createPrinter();
-  return renderDoc(format("@[<b0>%a@]", printer.printSequent(sequent))).trimEnd();
-};
+export const printSequent = (sequent: Sequent) => createPrinter().printSequent(sequent);
+
+export const formatObligation = (sequent: Sequent) =>
+  renderDoc(format("@[<b0>%a@]", printSequent(sequent))).trimEnd();

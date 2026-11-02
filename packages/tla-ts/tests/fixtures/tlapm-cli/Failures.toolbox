@@ -1,0 +1,229 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:7:3:7:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:7:6:7:15
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:7:17:7:25
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:9:3:9:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:9:6:9:11
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:11:3:11:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:11:6:11:15
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:11:17:11:25
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:11:27:11:32
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:13:3:13:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:13:6:13:9
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:11
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:7:3:7:5
+@!!status:proved
+@!!prover:smt
+@!!meth:time-limit: 5; time-used: 0.0 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:7:6:7:15
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:7:17:7:25
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:9:3:9:5
+@!!status:failed
+@!!prover:zenon
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT Alpha,
+       NEW CONSTANT Beta,
+       NEW CONSTANT Gamma,
+       TRUE 
+PROVE  1 + 1 = 2
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:5
+@!!loc:9:6:9:11
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:6
+@!!loc:11:3:11:5
+@!!status:failed
+@!!prover:zenon
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME NEW CONSTANT Alpha,
+       NEW CONSTANT Beta,
+       NEW CONSTANT Gamma,
+       Alpha \in Nat /\ Alpha > 1 ,
+       Beta \in Nat /\ Beta > Alpha ,
+       TRUE 
+PROVE  Alpha + Beta + Gamma + Alpha * Beta * Gamma + Alpha * Alpha * Beta
+       = Gamma * Gamma * Gamma + Beta * Beta
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:7
+@!!loc:11:6:11:15
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:8
+@!!loc:11:17:11:25
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:9
+@!!loc:11:27:11:32
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:10
+@!!loc:13:3:13:5
+@!!status:proved
+@!!prover:isabelle
+@!!meth:auto; time-limit: 30; time-used: 0.1 (0%)
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:11
+@!!loc:13:6:13:9
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./Failures.tla", line 11, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Alpha,
+                  NEW CONSTANT Beta,
+                  NEW CONSTANT Gamma,
+                  AlphaType == Alpha \in Nat /\ Alpha > 1,
+                  BetaType == Beta \in Nat /\ Beta > Alpha,
+                  AlphaType ,
+                  BetaType ,
+                  Zenon 
+           PROVE  Alpha + Beta + Gamma + Alpha * Beta * Gamma
+                  + Alpha * Alpha * Beta
+                  = Gamma * Gamma * Gamma + Beta * Beta
+File "./Failures.tla", line 9, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Alpha,
+                  NEW CONSTANT Beta,
+                  NEW CONSTANT Gamma,
+                  AlphaType == Alpha \in Nat /\ Alpha > 1,
+                  BetaType == Beta \in Nat /\ Beta > Alpha,
+                  Zenon 
+           PROVE  1 + 1 = 2
+File "./Failures.tla", line 1, character 1 to line 14, character 4:
+[ERROR]: 2/11 obligations failed.
+There were backend errors processing module `"Failures"`.

@@ -35,6 +35,7 @@ npm install tla-ts
 ```shell
 npx tla-ts Spec.tla          # check a spec with TLC's options
 npx tla-ts prove Module.tla  # prove a module's obligations
+npx tla-ts tlapm Module.tla  # tlapm's command line, with tla-ts's provers
 ```
 
 ## API

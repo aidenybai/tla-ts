@@ -1,0 +1,25 @@
+File "./Failures.tla", line 11, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Alpha,
+                  NEW CONSTANT Beta,
+                  NEW CONSTANT Gamma,
+                  AlphaType == Alpha \in Nat /\ Alpha > 1,
+                  BetaType == Beta \in Nat /\ Beta > Alpha,
+                  AlphaType ,
+                  BetaType ,
+                  Zenon 
+           PROVE  Alpha + Beta + Gamma + Alpha * Beta * Gamma
+                  + Alpha * Alpha * Beta
+                  = Gamma * Gamma * Gamma + Beta * Beta
+File "./Failures.tla", line 9, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME NEW CONSTANT Alpha,
+                  NEW CONSTANT Beta,
+                  NEW CONSTANT Gamma,
+                  AlphaType == Alpha \in Nat /\ Alpha > 1,
+                  BetaType == Beta \in Nat /\ Beta > Alpha,
+                  Zenon 
+           PROVE  1 + 1 = 2
+File "./Failures.tla", line 1, character 1 to line 14, character 4:
+[ERROR]: 2/11 obligations failed.
+There were backend errors processing module `"Failures"`.

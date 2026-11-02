@@ -60,7 +60,7 @@ const getSentinel = (): ScanElement => ({
   element: { size: UNKNOWN, token: { kind: "Text", text: "" }, length: 0 },
 });
 
-const createFormatter = (): Formatter => {
+const createFormatter = (maxIndent: number): Formatter => {
   const systemBox: QueueElement = {
     size: UNKNOWN,
     token: { kind: "Begin", indent: 0, box: "hov" },
@@ -72,7 +72,7 @@ const createFormatter = (): Formatter => {
     scanStack: [getSentinel(), { leftTotal: 1, element: systemBox }],
     formatStack: [],
     margin: 78,
-    maxIndent: 68,
+    maxIndent,
     spaceLeft: 78,
     currentIndent: 0,
     isNewLine: true,
@@ -242,7 +242,7 @@ const flush = (formatter: Formatter) => {
 const flushNewline = (formatter: Formatter) => {
   flush(formatter);
   const output = [...formatter.output, "\n"];
-  Object.assign(formatter, createFormatter());
+  Object.assign(formatter, createFormatter(formatter.maxIndent));
   formatter.output = output;
 };
 
@@ -399,8 +399,9 @@ const renderInto = (formatter: Formatter, doc: Doc) => {
   }
 };
 
-export const renderDoc = (doc: Doc) => {
-  const formatter = createFormatter();
+// OCaml's formatters indent at most 68 columns, and tlapm's stderr at most 35.
+export const renderDoc = (doc: Doc, maxIndent = 68) => {
+  const formatter = createFormatter(maxIndent);
   renderInto(formatter, doc);
   return flush(formatter);
 };

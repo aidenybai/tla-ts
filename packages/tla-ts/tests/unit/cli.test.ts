@@ -1276,7 +1276,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     const result = runCliWith("obligations", ["tlapm", "-N", "--line", "3", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 5f5037f\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
+      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
     );
   });
 
@@ -1284,12 +1284,6 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     const result = runCliWith("obligations", ["tlapm", "-N", "Proofs.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout + result.stderr).toBe("");
-  });
-
-  it("rejects the tlapm options it doesn't support", () => {
-    const result = runCliWith("obligations", ["tlapm", "-N", "-C", "Proofs.tla"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts tlapm does not support the tlapm option -C.\n");
   });
 
   // Each .summary file is what tlapm --summary writes to stdout.
@@ -1328,6 +1322,59 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.stderr).toBe(
       'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
     );
+  });
+});
+
+describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () => {
+  // Each file in tlapm-cli is what tlapm 9ed0376 wrote to stderr: .stderr without options, .strict
+  // with --strict, and .toolbox with --threads 1 --toolbox 0 0.
+  const readRecording = (name: string) => readFileSync(join(FIXTURES, "tlapm-cli", name), "utf8");
+
+  // The time each backend took varies from run to run.
+  const withoutTimeUsed = (output: string) =>
+    output.replaceAll(/time-used: [\d.]+ \(\d+%\)/g, "time-used: <time>");
+
+  it("reports that every obligation is proved", () => {
+    const result = runCliWith("obligations", ["tlapm", "Proofs.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(readRecording("Proofs.stderr"));
+  });
+
+  it("prints the obligations it couldn't prove and ends abnormally", () => {
+    const result = runCliWith("tlapm-cli", ["tlapm", "Failures.tla"]);
+    expect(result.status).toBe(3);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(readRecording("Failures.stderr"));
+  });
+
+  it("exits with --strict's status for a failed obligation", () => {
+    const result = runCliWith("tlapm-cli", ["tlapm", "--strict", "Failures.tla"]);
+    expect(result.status).toBe(10);
+    expect(result.stderr).toBe(readRecording("Failures.strict"));
+  });
+
+  it("prints each prover's result in toolbox mode", () => {
+    const result = runCliWith("tlapm-cli", [
+      "tlapm",
+      "--threads",
+      "1",
+      "--toolbox",
+      "0",
+      "0",
+      "Failures.tla",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(
+      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n$/,
+    );
+    expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
+  });
+
+  it("rejects the tlapm options it doesn't support", () => {
+    const result = runCliWith("obligations", ["tlapm", "-C", "Proofs.tla"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Error: tla-ts tlapm does not support the tlapm option -C.\n");
   });
 });
 

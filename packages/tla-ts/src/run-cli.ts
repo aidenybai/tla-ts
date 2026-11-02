@@ -43,10 +43,27 @@ import {
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { LineRange } from "./obligations/generate";
 import { getAtPrefix, getLocusText } from "./obligations/expression";
-import { formatSummary, getObligations, WHOLE_MODULE, type ModuleObligations } from "./obligations";
+import {
+  formatSummary,
+  getObligations,
+  WHOLE_MODULE,
+  type ModuleObligations,
+  type PrintedObligation,
+} from "./obligations";
+import { format, renderDoc } from "./obligations/format";
+import { printSequent } from "./obligations/printer";
 import { check } from "./parallel";
 import { parseModule } from "./parser";
-import { isProveBackend, prove, PROVE_BACKENDS, type ProofStatus } from "./prove/prove";
+import {
+  formatNormalized,
+  isProveBackend,
+  prove,
+  proveObligations,
+  PROVE_BACKENDS,
+  type ProofAttempt,
+  type ProofStatus,
+} from "./prove/prove";
+import { TLAPS_MODULE } from "./prove/tlaps-module";
 import type { StateDump } from "./state-graph";
 import {
   formatProbability,
@@ -102,15 +119,28 @@ const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options
   { flag: "-workers <count|auto>" },
 ]);
 
+// tla-ts keeps no fingerprints, so the options for them change nothing, as -k changes nothing in
+// tlapm.
 const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|glob>...", [
-  { flag: "-N", isRequired: true },
+  { flag: "-N" },
+  { flag: "--summary" },
+  { flag: "--strict" },
   { flag: "--toolbox <start> <end>" },
   { flag: "--line <num>" },
   { flag: "--printallobs" },
-  { flag: "--summary" },
-  { flag: "--strict" },
+  { flag: "--threads <num>" },
+  { flag: "--version" },
   { flag: "-I <directory>", isRepeatable: true },
+  { flag: "-k" },
+  { flag: "--nofp" },
+  { flag: "--nofpl <start> <end>" },
+  { flag: "--safefp" },
+  { flag: "--cleanfp" },
+  { flag: "--usefp <file>" },
+  { flag: "--cache-dir <directory>" },
 ]);
+
+const TLAPM_INTEGER_OPTIONS = new Set(["--toolbox", "--line", "--threads", "--nofpl"]);
 
 const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
   { flag: `--backend <${PROVE_BACKENDS.join("|")}>` },
@@ -1065,7 +1095,16 @@ const readModule = (path: string) =>
 const printToolboxMessage = (fields: string[]) =>
   console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
 
-const TLAPM_VERSION = "5f5037f";
+const printObligationMessage = (obligation: PrintedObligation, status: string, fields: string[]) =>
+  printToolboxMessage([
+    "type:obligation",
+    `id:${obligation.id}`,
+    `loc:${obligation.location}`,
+    `status:${status}`,
+    ...fields,
+  ]);
+
+const TLAPM_VERSION = "9ed0376";
 
 const quoteArgument = (arg: string) =>
   /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
@@ -1075,7 +1114,8 @@ const printToolboxHeader = (args: string[]) =>
     `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteArgument).join(" ")}\n`,
   );
 
-const STRICT_EXIT_STATUS = { incomplete: 11, emptyTarget: 12 };
+// The most severe first, as tlapm exits with the most severe status --strict noted.
+const STRICT_EXIT_STATUS = { failed: 10, incomplete: 11, emptyTarget: 12 };
 
 const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
   const summary = result.summary;
@@ -1102,6 +1142,19 @@ const checkStrictly = (result: ModuleObligations, isTargeted: boolean, isSummary
 };
 
 const TLAPM_FAILURE_STATUS = 3;
+
+// What tlapm prints when a module has unproved obligations outside toolbox mode, OCaml's backtrace
+// included.
+const UNPROVED_ENDING = [
+  ' tlapm ending abnormally with Failure("backend errors: there are unproved obligations")',
+  'Raised at Stdlib.failwith in file "stdlib.ml", line 29, characters 17-33',
+  'Called from Tlapm_lib.process_module in file "src/tlapm_lib.ml", lines 492-493, characters 12-37',
+  'Called from Tlapm_lib.main.f in file "src/tlapm_lib.ml", line 640, characters 23-43',
+  'Called from Stdlib__List.fold_left in file "list.ml", line 125, characters 24-34',
+  'Called from Tlapm_lib.main in file "src/tlapm_lib.ml", line 643, characters 13-40',
+  'Called from Tlapm_lib.init in file "src/tlapm_lib.ml", line 659, characters 8-59',
+  "",
+].join("\n");
 
 const generateObligations = (generate: () => ModuleObligations[]) => {
   try {
@@ -1166,10 +1219,91 @@ const proveModules = (args: string[]) => {
   );
 };
 
-// tla-ts tlapm: tlapm's command line, which generates the obligations with -N or --summary.
-const runTlapm = (args: string[]) => {
+// Toolbox.print_res_aux: what one method concluded, with the obligation it failed on, as Prep
+// normalized it. Only a new SMT failure notes the solver's answer.
+const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
+  const limit = attempt.method.timeLimitMs;
+  const used =
+    attempt.timeUsedMs === undefined
+      ? ""
+      : `; time-used: ${(attempt.timeUsedMs / 1000).toFixed(1)} (${Math.round((100 * attempt.timeUsedMs) / limit)}%)`;
+  const times =
+    limit === 0
+      ? ""
+      : `time-limit: ${limit === Infinity ? "inf" : Number((limit / 1000).toPrecision(6))}${used}`;
+  const method = [attempt.method.tactic, times].filter(Boolean).join("; ");
+  const isSmt = attempt.method.prover === "smt" || attempt.method.prover === "z3";
+  const note =
+    isSmt && attempt.reason === "false" && attempt.verdict
+      ? `(* SMT failed with status = ${attempt.verdict}\n *)\n`
+      : "";
+  printObligationMessage(obligation, attempt.isProved ? "proved" : "failed", [
+    `prover:${attempt.method.prover}`,
+    ...(method === "" ? [] : [`meth:${method}`]),
+    ...(attempt.reason === undefined ? [] : [`reason:${attempt.reason}`]),
+    `already:${attempt.isReused}`,
+    ...(attempt.isProved
+      ? []
+      : [`obl:${attempt.isReused ? "" : `\n${note}`}${formatNormalized(obligation)}`]),
+  ]);
+};
+
+// tlapm fails with Method.Fail an obligation that is an error, and one no method was tried on.
+const printFailure = (obligation: PrintedObligation, reason: string) =>
+  printObligationMessage(obligation, "failed", [
+    "prover:fail",
+    "meth:time-limit: inf",
+    `reason:${reason}`,
+    "already:false",
+    `obl:${obligation.text}`,
+  ]);
+
+// Tlapm_lib.process_obs: proves a module's obligations, printing each result in toolbox mode,
+// then those tlapm couldn't prove, the last first. Returns whether some obligation failed.
+const proveModule = async (result: ModuleObligations, isToolbox: boolean, workers: number) => {
+  const reports = await proveObligations(result.obligations, {
+    workers,
+    onReport: (report, obligation) => {
+      if (!isToolbox) return;
+      if (report.obligation.status === "trivial")
+        return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
+      if (obligation.kind.kind === "Error") return printFailure(obligation, "user error");
+      report.attempts.forEach((attempt) => printAttempt(obligation, attempt));
+    },
+  });
+  const unproved = reports.flatMap((report, index) =>
+    "reason" in report.obligation ? [{ report, obligation: result.obligations[index] }] : [],
+  );
+  if (isToolbox) {
+    unproved
+      .filter(
+        (entry) => entry.report.attempts.length === 0 && entry.obligation.kind.kind !== "Error",
+      )
+      .forEach((entry) => printFailure(entry.obligation, "unexpected error"));
+  }
+  unproved
+    .toReversed()
+    .forEach((entry) =>
+      console.error(
+        `${getAtPrefix(entry.obligation.locus)}${renderDoc(format("[ERROR]: @[<v2>Could not prove or check:@,%a@]", printSequent(entry.obligation.sequent)), 35)}`,
+      ),
+    );
+  const total = `${result.obligations.length} obligation${result.obligations.length > 1 ? "s" : ""}`;
+  console.error(
+    unproved.length === 0
+      ? `${getAtPrefix(result.location)}[INFO]: All ${total} proved.`
+      : `${getAtPrefix(result.location)}[ERROR]: ${unproved.length}/${total} failed.\nThere were backend errors processing module \`${JSON.stringify(result.name)}\`.`,
+  );
+  return unproved.length > 0;
+};
+
+// tla-ts tlapm: tlapm's command line, proving with tla-ts's backends. -N and --summary only
+// generate the obligations.
+const runTlapm = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
-  const unsupported = parsed.unknown[0];
+  const isProving = !parsed.has("-N") && !parsed.has("--summary");
+  const unsupported =
+    parsed.unknown[0] ?? (isProving && parsed.has("--printallobs") ? "--printallobs" : undefined);
   if (unsupported !== undefined) {
     console.error(`Error: tla-ts tlapm does not support the tlapm option ${unsupported}.`);
     return 1;
@@ -1179,15 +1313,21 @@ const runTlapm = (args: string[]) => {
     return 1;
   }
   const nonInteger = parsed.options.find(
-    (option) => option.name !== "-I" && option.values.some((value) => !/^-?\d+$/.test(value)),
+    (option) =>
+      TLAPM_INTEGER_OPTIONS.has(option.name) &&
+      option.values.some((value) => !/^-?\d+$/.test(value)),
   );
   if (nonInteger) {
     console.error(`Error: option '${nonInteger.name}' expects an integer.`);
     return 1;
   }
+  if (parsed.has("--version")) {
+    console.log(TLAPM_VERSION);
+    return EXIT_STATUS.success;
+  }
   const files = expandGlobs(parsed.positionals);
   const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
-  if (modulePaths.length === 0 || (!parsed.has("-N") && !parsed.has("--summary"))) {
+  if (modulePaths.length === 0) {
     console.error(USAGE);
     return 1;
   }
@@ -1201,7 +1341,7 @@ const runTlapm = (args: string[]) => {
     return range;
   }, WHOLE_MODULE);
   // tlapm searches the current directory and each module's, then its library, then each -I
-  // directory, the last given first.
+  // directory, the last given first. Without tlapm, TLAPS is the copy tla-ts bundles.
   const tlapmLibrary = getTlapmLibrary();
   const includes = parsed.options.flatMap((option) => (option.name === "-I" ? option.values : []));
   const directories = modulePaths.reduce(
@@ -1219,7 +1359,8 @@ const runTlapm = (args: string[]) => {
     return getObligations(
       modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
       (name) =>
-        directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean),
+        directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean) ??
+        (name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined),
       {
         lines,
         onWarning: (warning) => {
@@ -1234,26 +1375,35 @@ const runTlapm = (args: string[]) => {
     );
   });
   if (!results) return TLAPM_FAILURE_STATUS;
-  const failures = results.flatMap((result) => {
+  const workers = Math.max(1, Number(parsed.get("--threads")?.[0] ?? availableParallelism()));
+  const statuses: number[] = [];
+  for (const result of results) {
     if (parsed.has("--summary")) console.log(formatSummary(result));
     if (isToolbox) {
       result.obligations.forEach((obligation) =>
-        printToolboxMessage([
-          "type:obligation",
-          `id:${obligation.id}`,
-          `loc:${obligation.location}`,
-          "status:to be proved",
-          ...(parsed.has("--printallobs") ? [`obl:${obligation.text}`] : []),
-        ]),
+        printObligationMessage(
+          obligation,
+          "to be proved",
+          parsed.has("--printallobs") ? [`obl:${obligation.text}`] : [],
+        ),
       );
       printToolboxMessage(["type:obligationsnumber", `count:${result.obligations.length}`]);
     }
-    if (!parsed.has("--strict")) return [];
-    return checkStrictly(result, lines.start > 0 || lines.end < Infinity, parsed.has("--summary"));
-  });
-  return failures.includes(STRICT_EXIT_STATUS.incomplete)
-    ? STRICT_EXIT_STATUS.incomplete
-    : (failures[0] ?? EXIT_STATUS.success);
+    if (parsed.has("--strict"))
+      statuses.push(
+        ...checkStrictly(result, lines.start > 0 || lines.end < Infinity, parsed.has("--summary")),
+      );
+    if (!isProving || !(await proveModule(result, isToolbox, workers))) continue;
+    if (parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
+    else if (!isToolbox) {
+      console.error(UNPROVED_ENDING);
+      return TLAPM_FAILURE_STATUS;
+    }
+  }
+  return (
+    Object.values(STRICT_EXIT_STATUS).find((status) => statuses.includes(status)) ??
+    EXIT_STATUS.success
+  );
 };
 
 const checkSpecs = async (args: string[], java: JavaProperties) => {

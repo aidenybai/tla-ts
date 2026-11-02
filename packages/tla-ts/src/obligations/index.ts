@@ -41,6 +41,7 @@ export interface ObligationSource {
 export interface PrintedObligation {
   id: number;
   location: string;
+  locus: Locus | undefined;
   text: string;
   kind: ObligationKind;
   sequent: Sequent;
@@ -316,6 +317,7 @@ export const getObligations = (
         {
           id: index + 1,
           location: formatLocus(location),
+          locus: location,
           text,
           kind: obligation.kind,
           sequent: obligation.sequent,
