@@ -258,8 +258,6 @@ type Command =
 
 export type Doc = (Command | Doc)[];
 
-type FormatArgument = string | Doc;
-
 const BOX_KINDS: Record<string, BoxKind> = { h: "h", v: "v", hv: "hv", hov: "hov", b: "b" };
 
 const getText = (value: string): Command => ({ kind: "Text", text: value, size: getLength(value) });
@@ -282,7 +280,7 @@ const parseOpen = (directive: string): Command => {
 
 // Interprets the subset of OCaml format strings that tlapm's printers use, so ported printers read
 // like the OCaml they come from. Each %s or %a consumes one argument.
-export const format = (pattern: string, ...args: FormatArgument[]): Doc => {
+export const format = (pattern: string, ...args: (string | Doc)[]): Doc => {
   const doc: Doc = [];
   let argumentIndex = 0;
   let pending = "";
@@ -399,7 +397,7 @@ const renderInto = (formatter: Formatter, doc: Doc) => {
   }
 };
 
-// tlapm's stderr indents at most 35 columns.
+// 68 is Format's default maximum indent; tlapm's stderr formatter allows 35.
 export const renderDoc = (doc: Doc, maxIndent = 68) => {
   const formatter = createFormatter(maxIndent);
   renderInto(formatter, doc);
