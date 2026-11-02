@@ -49,7 +49,7 @@ import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
-import { createTlcFingerprinter, getTlcFingerprint } from "./tlc/random";
+import { createTlcFingerprinter, getTlcFingerprint } from "./tlc/fingerprint";
 import { formatValue, isUpdatedElementOf, type Value } from "./values";
 
 interface NamedExpression {

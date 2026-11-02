@@ -80,7 +80,7 @@ import type { SanySpecification } from "../sany/generator";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
 import { getSanyModuleName, getSanyReport, type SanyModuleOrigin } from "../sany/report";
 import { exportSanyXml, XML_EXPORT_EXIT_CODE, type XmlExportOptions } from "../sany/xml";
-import { getTlcFingerprint } from "../tlc/random";
+import { getTlcFingerprint } from "../tlc/fingerprint";
 import { getTlcVersion, type TlcVersion } from "../tlc/version";
 import {
   createMessagePrinter,

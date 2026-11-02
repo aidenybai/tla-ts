@@ -1,4 +1,5 @@
-import { createJavaRandom, getTlcFingerprint, type JavaRandom } from "./tlc/random";
+import { getTlcFingerprint } from "./tlc/fingerprint";
+import { createJavaRandom, type JavaRandom } from "./tlc/random";
 import { createFunction, createRecord, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
 

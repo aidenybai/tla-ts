@@ -9,7 +9,7 @@ import {
   getValue,
 } from "../builtins";
 import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "../errors";
-import { getTlcFingerprint } from "./random";
+import { getTlcFingerprint } from "./fingerprint";
 import { formatNestedMessage } from "./messages";
 import {
   evaluate,
