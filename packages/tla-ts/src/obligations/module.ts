@@ -87,34 +87,29 @@ export interface Mule {
   location?: Locus;
 }
 
-const getBuiltinConstant = (name: string, builtin: Builtin): ModuleUnit => ({
-  kind: "Definition",
-  definition: { kind: "Operator", name, body: { kind: "Internal", builtin } },
-  whereDefined: "Builtin",
-  visibility: "Visible",
-  isLocal: false,
-});
-
-const getBuiltinOperator = (arity: number, name: string, builtin: Builtin): ModuleUnit => ({
+const getBuiltin = (arity: number, name: string, builtin: Builtin): ModuleUnit => ({
   kind: "Definition",
   definition: {
     kind: "Operator",
     name,
-    body: {
-      kind: "Lambda",
-      params: Array.from({ length: arity }, (_item, index) => ({
-        name: `x${index + 1}`,
-        shape: 0,
-      })),
-      body: {
-        kind: "Apply",
-        operator: { kind: "Internal", builtin },
-        args: Array.from({ length: arity }, (_item, index) => ({
-          kind: "Ix",
-          index: arity - index,
-        })),
-      },
-    },
+    body:
+      arity === 0
+        ? { kind: "Internal", builtin }
+        : {
+            kind: "Lambda",
+            params: Array.from({ length: arity }, (_item, index) => ({
+              name: `x${index + 1}`,
+              shape: 0,
+            })),
+            body: {
+              kind: "Apply",
+              operator: { kind: "Internal", builtin },
+              args: Array.from({ length: arity }, (_item, index) => ({
+                kind: "Ix",
+                index: arity - index,
+              })),
+            },
+          },
   },
   whereDefined: "Builtin",
   visibility: "Visible",
@@ -122,59 +117,55 @@ const getBuiltinOperator = (arity: number, name: string, builtin: Builtin): Modu
 });
 
 const NATURALS: ModuleUnit[] = [
-  getBuiltinConstant("Nat", "Nat"),
-  getBuiltinOperator(2, "+", "Plus"),
-  getBuiltinOperator(2, "-", "Minus"),
-  getBuiltinOperator(2, "*", "Times"),
-  getBuiltinOperator(2, "^", "Exp"),
-  getBuiltinOperator(2, "<", "Lt"),
-  getBuiltinOperator(2, ">", "Gt"),
-  getBuiltinOperator(2, "=<", "Lteq"),
-  getBuiltinOperator(2, ">=", "Gteq"),
-  getBuiltinOperator(2, "%", "Remainder"),
-  getBuiltinOperator(2, "\\div", "Quotient"),
-  getBuiltinOperator(2, "..", "Range"),
+  getBuiltin(0, "Nat", "Nat"),
+  getBuiltin(2, "+", "Plus"),
+  getBuiltin(2, "-", "Minus"),
+  getBuiltin(2, "*", "Times"),
+  getBuiltin(2, "^", "Exp"),
+  getBuiltin(2, "<", "Lt"),
+  getBuiltin(2, ">", "Gt"),
+  getBuiltin(2, "=<", "Lteq"),
+  getBuiltin(2, ">=", "Gteq"),
+  getBuiltin(2, "%", "Remainder"),
+  getBuiltin(2, "\\div", "Quotient"),
+  getBuiltin(2, "..", "Range"),
 ];
 
-const INTEGERS = [
-  ...NATURALS,
-  getBuiltinConstant("Int", "Int"),
-  getBuiltinOperator(1, "-.", "Uminus"),
-];
+const INTEGERS = [...NATURALS, getBuiltin(0, "Int", "Int"), getBuiltin(1, "-.", "Uminus")];
 
 const REALS = [
   ...INTEGERS,
-  getBuiltinConstant("Real", "Real"),
-  getBuiltinOperator(2, "/", "Ratio"),
-  getBuiltinConstant("Infinity", "Infinity"),
+  getBuiltin(0, "Real", "Real"),
+  getBuiltin(2, "/", "Ratio"),
+  getBuiltin(0, "Infinity", "Infinity"),
 ];
 
 const SEQUENCES = [
-  getBuiltinOperator(1, "Seq", "Seq"),
-  getBuiltinOperator(1, "Len", "Len"),
-  getBuiltinOperator(2, "BSeq", "BSeq"),
-  getBuiltinOperator(2, "\\o", "Cat"),
-  getBuiltinOperator(2, "Append", "Append"),
-  getBuiltinOperator(1, "Head", "Head"),
-  getBuiltinOperator(1, "Tail", "Tail"),
-  getBuiltinOperator(3, "SubSeq", "SubSeq"),
-  getBuiltinOperator(2, "SelectSeq", "SelectSeq"),
+  getBuiltin(1, "Seq", "Seq"),
+  getBuiltin(1, "Len", "Len"),
+  getBuiltin(2, "BSeq", "BSeq"),
+  getBuiltin(2, "\\o", "Cat"),
+  getBuiltin(2, "Append", "Append"),
+  getBuiltin(1, "Head", "Head"),
+  getBuiltin(1, "Tail", "Tail"),
+  getBuiltin(3, "SubSeq", "SubSeq"),
+  getBuiltin(2, "SelectSeq", "SelectSeq"),
 ];
 
 const TLC = [
-  getBuiltinOperator(2, "Print", "Print"),
-  getBuiltinOperator(1, "PrintT", "PrintT"),
-  getBuiltinOperator(2, "Assert", "Assert"),
-  getBuiltinConstant("JavaTime", "JavaTime"),
-  getBuiltinOperator(1, "TLCGet", "TLCGet"),
-  getBuiltinOperator(2, "TLCSet", "TLCSet"),
-  getBuiltinOperator(2, ":>", "OneArg"),
-  getBuiltinOperator(2, "@@", "Extend"),
-  getBuiltinOperator(1, "Permutations", "Permutations"),
-  getBuiltinOperator(2, "SortSeq", "SortSeq"),
-  getBuiltinOperator(1, "RandomElement", "RandomElement"),
-  getBuiltinConstant("Any", "Any"),
-  getBuiltinOperator(1, "ToString", "ToString"),
+  getBuiltin(2, "Print", "Print"),
+  getBuiltin(1, "PrintT", "PrintT"),
+  getBuiltin(2, "Assert", "Assert"),
+  getBuiltin(0, "JavaTime", "JavaTime"),
+  getBuiltin(1, "TLCGet", "TLCGet"),
+  getBuiltin(2, "TLCSet", "TLCSet"),
+  getBuiltin(2, ":>", "OneArg"),
+  getBuiltin(2, "@@", "Extend"),
+  getBuiltin(1, "Permutations", "Permutations"),
+  getBuiltin(2, "SortSeq", "SortSeq"),
+  getBuiltin(1, "RandomElement", "RandomElement"),
+  getBuiltin(0, "Any", "Any"),
+  getBuiltin(1, "ToString", "ToString"),
 ];
 
 const getStandard = (name: string, body: ModuleUnit[]): Mule => ({
