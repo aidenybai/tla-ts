@@ -344,7 +344,7 @@ export type LevelNode = ExprOrOpArgNode | AssumeProveNode | NewSymbNode;
 
 export type ProofPartNode = ProofNode | DefStepNode;
 
-export type TopLevelNode = InstanceNode | AssumeNode | TheoremNode | UseOrHideNode;
+type TopLevelNode = InstanceNode | AssumeNode | TheoremNode | UseOrHideNode;
 
 export type SemanticNode = SymbolNode | LevelNode | TopLevelNode | ProofPartNode;
 
@@ -362,7 +362,7 @@ interface HashtableEntry {
   value: SymbolNode;
 }
 
-export interface JavaHashtable {
+interface JavaHashtable {
   buckets: HashtableEntry[][];
   count: number;
   threshold: number;

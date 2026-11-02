@@ -1442,7 +1442,7 @@ const resolveTheorem = (theorem: Theorem, unit: Unit) => {
 
 // The declarations of the module an INSTANCE instantiates, the names the INSTANCE adds, and the
 // module that instantiates it.
-export interface InstancedModule {
+interface InstancedModule {
   declarations: Declaration[];
   symbols: Symbols;
   instancer: string;
