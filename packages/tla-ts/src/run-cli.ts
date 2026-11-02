@@ -77,9 +77,7 @@ import { getTlapmPaths } from "./prove/tlapm/tlapm";
 import {
   getKnownResults,
   loadFingerprints,
-  saveFingerprints,
   saveHistory,
-  updateFingerprints,
   type FingerprintTable,
 } from "./tlapm-cache";
 import type { SanySpecification } from "./sany-generator";
@@ -1283,10 +1281,10 @@ const proveModule = async (
   settings: ProvingSettings,
 ) => {
   saveHistory(fingerprintsPath, sources);
-  const results = getKnownResults(settings.fingerprints);
+  const known = getKnownResults(settings.fingerprints);
   const reports = await proveObligations(result.obligations, {
     workers: settings.workers,
-    results,
+    results: known.results,
     isFingerprinted: settings.isFingerprinted,
     isProving: settings.isProving,
     onReport: (report, obligation) => {
@@ -1299,8 +1297,7 @@ const proveModule = async (
   });
   writeFileSync(theoryPath, encodeProofTheory(result.name, reports, result.obligations));
   console.log(`(* created new ${JSON.stringify(theoryPath)} *)`);
-  updateFingerprints(settings.fingerprints, results);
-  saveFingerprints(settings.fingerprints, fingerprintsPath);
+  known.save(fingerprintsPath);
   console.log(`(* fingerprints written in ${JSON.stringify(fingerprintsPath)} *)`);
   if (!settings.isProving) return false;
   const unproved = reports.flatMap((report, index) =>

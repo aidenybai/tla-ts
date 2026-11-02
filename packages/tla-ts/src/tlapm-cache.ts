@@ -73,11 +73,6 @@ const hashKey = (key: string) => {
   return (second ^ (second >>> 16)) & 0x3fffffff;
 };
 
-// What each loaded result and record was in the file, so saving keeps their dates, versions and
-// other provers' results.
-const storedResults = new WeakMap<ProofAttempt, OcamlValue>();
-const storedRecords = new WeakMap<Map<string, ProofAttempt>, OcamlValue[]>();
-
 const readBucket = (entry: OcamlValue | undefined): [OcamlValue, OcamlValue][] =>
   entry !== undefined && isBlock(entry)
     ? [[entry.fields[0], entry.fields[1]], ...readBucket(entry.fields[2])]
@@ -130,23 +125,6 @@ const decodeResult = (prover: string, sti: OcamlValue | undefined): ProofAttempt
   };
 };
 
-// Fpfile.query.
-export const getKnownResults = (table: FingerprintTable) =>
-  new Map(
-    [...table].map(([fingerprint, record]) => {
-      const results = new Map(
-        Object.entries(PROVERS).flatMap(([prover, known]) => {
-          const result = decodeResult(prover, getField(record[known.field], 0));
-          if (!result) return [];
-          storedResults.set(result, record[known.field]);
-          return [[prover, result]];
-        }),
-      );
-      storedRecords.set(results, record);
-      return [fingerprint, results];
-    }),
-  );
-
 // Fpfile.fp_writes, whose date counts months from 0.
 const encodeResult = (attempt: ProofAttempt) => {
   const now = new Date();
@@ -188,21 +166,6 @@ const encodeResult = (attempt: ProofAttempt) => {
   );
 };
 
-// Fpfile.fp_writes and add_to_table.
-export const updateFingerprints = (
-  table: FingerprintTable,
-  results: Map<string, Map<string, ProofAttempt>>,
-) => {
-  table.clear();
-  results.forEach((attempts, fingerprint) => {
-    const record = [...(storedRecords.get(attempts) ?? Array<OcamlValue>(RECORD_SIZE).fill(0))];
-    attempts.forEach((attempt, prover) => {
-      record[PROVERS[prover].field] = storedResults.get(attempt) ?? encodeResult(attempt);
-    });
-    table.set(fingerprint, record);
-  });
-};
-
 const encodeTable = (table: FingerprintTable) => {
   const length = 2 ** Math.max(9, Math.ceil(Math.log2(table.size / 2)));
   const buckets: OcamlValue[] = Array.from({ length }, () => 0);
@@ -234,11 +197,40 @@ export const saveHistory = (path: string, sources: string[]) => {
     .forEach((old) => rmSync(old, { recursive: true, force: true }));
 };
 
-// Fpfile.fp_close_and_consolidate.
-export const saveFingerprints = (table: FingerprintTable, path: string) => {
-  writeFileSync(
-    `${path}.tmp`,
-    Buffer.concat([writeMarshaled(MAGIC_NUMBER), writeMarshaled(encodeTable(table))]),
+// Fpfile.query: what each prover concluded for each fingerprint. Saving them, as fp_writes,
+// add_to_table and fp_close_and_consolidate do, keeps each record and result loaded unchanged, with
+// its date, versions and other provers' results.
+export const getKnownResults = (table: FingerprintTable) => {
+  const storedResults = new Map<ProofAttempt, OcamlValue>();
+  const storedRecords = new Map<Map<string, ProofAttempt>, OcamlValue[]>();
+  const results = new Map(
+    [...table].map(([fingerprint, record]) => {
+      const attempts = new Map(
+        Object.entries(PROVERS).flatMap(([prover, known]) => {
+          const result = decodeResult(prover, getField(record[known.field], 0));
+          if (!result) return [];
+          storedResults.set(result, record[known.field]);
+          return [[prover, result]];
+        }),
+      );
+      storedRecords.set(attempts, record);
+      return [fingerprint, attempts];
+    }),
   );
-  renameSync(`${path}.tmp`, path);
+  const save = (path: string) => {
+    table.clear();
+    results.forEach((attempts, fingerprint) => {
+      const record = [...(storedRecords.get(attempts) ?? Array<OcamlValue>(RECORD_SIZE).fill(0))];
+      attempts.forEach((attempt, prover) => {
+        record[PROVERS[prover].field] = storedResults.get(attempt) ?? encodeResult(attempt);
+      });
+      table.set(fingerprint, record);
+    });
+    writeFileSync(
+      `${path}.tmp`,
+      Buffer.concat([writeMarshaled(MAGIC_NUMBER), writeMarshaled(encodeTable(table))]),
+    );
+    renameSync(`${path}.tmp`, path);
+  };
+  return { results, save };
 };
