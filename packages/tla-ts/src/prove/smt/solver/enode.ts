@@ -55,6 +55,11 @@ export class EnodeStore {
   cg = new Int32Array(1024);
   // The Boolean fields of each node, one bit each, and its number of arguments in the bits above.
   flags = new Int32Array(1024);
+  generation = new Int32Array(1024);
+  // The theory variable of each node, or -1.
+  thVar = new Int32Array(1024);
+  // The scope level at which each node was made.
+  iscopeLevel = new Int32Array(1024);
 
   // The id of a new node, which goes on the stack, with columns of room for it.
   allocate(node: Enode) {
@@ -66,11 +71,15 @@ export class EnodeStore {
       this.classSize = growColumn(this.classSize);
       this.cg = growColumn(this.cg);
       this.flags = growColumn(this.flags);
+      this.generation = growColumn(this.generation);
+      this.thVar = growColumn(this.thVar);
+      this.iscopeLevel = growColumn(this.iscopeLevel);
     }
     this.root[id] = id;
     this.next[id] = id;
     this.classSize[id] = 1;
     this.cg[id] = id;
+    this.thVar[id] = -1;
     return id;
   }
 }
@@ -88,7 +97,6 @@ export class Enode {
   // two are equal.
   transTarget: Enode | null = null;
   transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
-  thVar = -1;
   // The approximate label sets of the class, 64 bits in two words: the low 32 bits, then the high.
   lbls = 0;
   lblsHigh = 0;
@@ -110,14 +118,16 @@ export class Enode {
     arg0: Enode | null,
     arg1: Enode | null,
     moreArgs: Enode[],
-    public generation: number,
+    generation: number,
     isEq: boolean,
     isBool: boolean,
     isMergeTf: boolean,
     isCgcEnabled: boolean,
-    readonly iscopeLevel: number,
+    iscopeLevel: number,
   ) {
     this.id = store.allocate(this);
+    store.generation[this.id] = generation;
+    store.iscopeLevel[this.id] = iscopeLevel;
     this.arg0 = arg0 ?? this;
     this.arg1 = arg1 ?? this;
     this.moreArgs = moreArgs;
@@ -159,6 +169,26 @@ export class Enode {
 
   set cg(value: Enode) {
     this.store.cg[this.id] = value.id;
+  }
+
+  get generation() {
+    return this.store.generation[this.id];
+  }
+
+  set generation(value: number) {
+    this.store.generation[this.id] = value;
+  }
+
+  get thVar() {
+    return this.store.thVar[this.id];
+  }
+
+  set thVar(value: number) {
+    this.store.thVar[this.id] = value;
+  }
+
+  get iscopeLevel() {
+    return this.store.iscopeLevel[this.id];
   }
 
   private get flags() {
