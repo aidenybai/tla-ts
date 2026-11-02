@@ -163,7 +163,7 @@ export class QuantifierInfo {
           if (manager.isUninterpretedSort(sort)) {
             // Every term of the sort joins the set, see Section 4.1 of the paper.
             const node = solver.getUvar(flatQ, info.varIndex);
-            for (const enode of context.enodes)
+            for (const enode of context.enodeStore.nodes)
               if (context.isRelevant(enode.owner) && manager.sorts[enode.owner] === sort)
                 node.insert(manager, enode.owner, context.getGeneration(enode));
           }

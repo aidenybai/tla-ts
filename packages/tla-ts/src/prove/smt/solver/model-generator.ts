@@ -35,7 +35,7 @@ export const mkModel = (context: Context): GeneratedModel => {
   const model = new ProtoModel(manager);
   context.theory?.initModel(model);
   // register_existing_model_values.
-  for (const node of context.enodes)
+  for (const node of context.enodeStore.nodes)
     if (node.root === node && context.isRelevant(node.owner) && manager.isModelValue(node.owner))
       model.registerValue(node.owner);
   // mk_bool_model.
@@ -52,7 +52,7 @@ export const mkModel = (context: Context): GeneratedModel => {
   // theory variable, such as a coefficient.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
-  for (const node of context.enodes) {
+  for (const node of context.enodeStore.nodes) {
     if (node.root !== node) continue;
     const expr = node.owner;
     if (!context.isRelevant(expr) && !manager.isUniqueValue(expr)) continue;
@@ -73,11 +73,11 @@ export const mkModel = (context: Context): GeneratedModel => {
   }
   const getValue = (node: Enode) =>
     root2value.get(node.root) ?? model.getSomeValue(manager.sorts[node.owner]);
-  for (const node of context.enodes)
+  for (const node of context.enodeStore.nodes)
     if (manager.isUninterpretedConst(node.owner) && context.isRelevant(node.owner))
       model.registerConst(manager.decls[node.owner], getValue(node));
   // mk_func_interps.
-  for (const node of context.enodes) {
+  for (const node of context.enodeStore.nodes) {
     const expr = node.owner;
     if (!context.isRelevant(expr) || !isIncludedFuncInterp(manager.funcDecls[node.decl])) continue;
     if (node.numArgs === 0) {

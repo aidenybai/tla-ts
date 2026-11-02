@@ -34,6 +34,7 @@ import {
 import {
   AXIOM_EQ_JUSTIFICATION,
   Enode,
+  EnodeStore,
   EqJustification,
   EqPropagationJustification,
   Justification,
@@ -175,7 +176,7 @@ export abstract class Internalizer {
   protected clausesToReinit: Clause[][] = [];
   protected conflict: Conflict | null = null;
   protected eqPropagationQueue: NewEq[] = [];
-  enodes: Enode[] = [];
+  readonly enodeStore = new EnodeStore();
   protected decl2enodes = new Map<number, Enode[]>();
   trueEnode: Enode;
   private isDiseqTmp = -1;
@@ -597,6 +598,7 @@ export abstract class Internalizer {
     for (let index = 2; index < numArgs; index++) moreArgs.push(this.getArgEnode(expr, index));
     const isEq = !isSuppressingArgs && manager.getOp(expr) === OP_EQ;
     const node = new Enode(
+      this.enodeStore,
       expr,
       manager.decls[expr],
       numArgs,
@@ -616,7 +618,6 @@ export abstract class Internalizer {
     // m_e_internalized_stack holds a reference to the expression until the enode is deleted.
     manager.incRef(expr);
     this.trailKinds.push(UNDO_MK_ENODE);
-    this.enodes.push(node);
     if (numArgs > 0) {
       if (node.isTrueEq()) {
         this.assign(
@@ -649,7 +650,7 @@ export abstract class Internalizer {
   }
 
   private undoMkEnode() {
-    const node = this.enodes.pop();
+    const node = this.enodeStore.nodes.pop();
     if (node === undefined) return;
     this.exprToEnode[node.owner] = undefined;
     if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node);

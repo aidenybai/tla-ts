@@ -44,11 +44,40 @@ const IS_INTERPRETED = 64;
 // The number of arguments, in the bits of flags above the Boolean fields.
 const NUM_ARGS_SHIFT = 7;
 
+// The e-graph's nodes by id, a node's place in the stack of nodes, which pops a node when its
+// scope is popped. The per-node data are columns indexed by id, so that a node's id reaches its
+// data with no object.
+export class EnodeStore {
+  readonly nodes: Enode[] = [];
+  root = new Int32Array(1024);
+  next = new Int32Array(1024);
+  classSize = new Int32Array(1024);
+
+  // The id of a new node, which goes on the stack, with columns of room for it.
+  allocate(node: Enode) {
+    const id = this.nodes.length;
+    this.nodes.push(node);
+    if (id === this.root.length) {
+      this.root = growColumn(this.root);
+      this.next = growColumn(this.next);
+      this.classSize = growColumn(this.classSize);
+    }
+    this.root[id] = id;
+    this.next[id] = id;
+    this.classSize[id] = 1;
+    return id;
+  }
+}
+
+const growColumn = (column: Int32Array) => {
+  const grown = new Int32Array(2 * column.length);
+  grown.set(column);
+  return grown;
+};
+
 export class Enode {
-  root: Enode = this;
-  next: Enode = this;
+  readonly id: number;
   cg: Enode = this;
-  classSize = 1;
   parents: Enode[] = NO_ENODES;
   // m_trans: the next node on the transitivity branch toward the root of the proof tree, and why the
   // two are equal.
@@ -71,6 +100,7 @@ export class Enode {
 
   // moreArgs are the arguments past the second, and arg0 and arg1 are null when there are fewer.
   constructor(
+    readonly store: EnodeStore,
     readonly owner: number,
     readonly decl: number,
     numArgs: number,
@@ -84,6 +114,7 @@ export class Enode {
     isCgcEnabled: boolean,
     readonly iscopeLevel: number,
   ) {
+    this.id = store.allocate(this);
     this.arg0 = arg0 ?? this;
     this.arg1 = arg1 ?? this;
     this.moreArgs = moreArgs;
@@ -93,6 +124,30 @@ export class Enode {
       (isBool ? IS_BOOL : 0) |
       (isMergeTf ? IS_MERGE_TF : 0) |
       (isCgcEnabled ? IS_CGC_ENABLED : 0);
+  }
+
+  get root() {
+    return this.store.nodes[this.store.root[this.id]];
+  }
+
+  set root(value: Enode) {
+    this.store.root[this.id] = value.id;
+  }
+
+  get next() {
+    return this.store.nodes[this.store.next[this.id]];
+  }
+
+  set next(value: Enode) {
+    this.store.next[this.id] = value.id;
+  }
+
+  get classSize() {
+    return this.store.classSize[this.id];
+  }
+
+  set classSize(value: number) {
+    this.store.classSize[this.id] = value;
   }
 
   private setFlag(flag: number, value: boolean) {
