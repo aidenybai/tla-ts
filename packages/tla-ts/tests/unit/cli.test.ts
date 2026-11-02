@@ -1201,8 +1201,7 @@ describe("the CLI takes several specs and globs", () => {
 
 describe("tlapm -N prints obligations as tlapm does", () => {
   // Each .toolbox file is what tlapm -N writes to stderr for the same arguments.
-  const readToolbox = (name: string) =>
-    readFileSync(join(FIXTURES, "obligations", `${name}.toolbox`), "utf8");
+  const readExpected = (name: string) => readFileSync(join(FIXTURES, "obligations", name), "utf8");
 
   it("prints each obligation with its text", () => {
     const result = runTlapm("obligations", [
@@ -1214,19 +1213,19 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       "Proofs.tla",
     ]);
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe(readToolbox("Proofs"));
+    expect(result.stderr).toBe(readExpected("Proofs.toolbox"));
   });
 
   it("numbers omitted proofs but doesn't print them", () => {
     const result = runTlapm("obligations", ["-N", "--toolbox", "0", "0", "Omit.tla"]);
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe(readToolbox("Omit"));
+    expect(result.stderr).toBe(readExpected("Omit.toolbox"));
   });
 
   it("generates only the proofs within the lines", () => {
     const result = runTlapm("obligations", ["-N", "--toolbox", "6", "7", "Omit.tla"]);
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe(readToolbox("Omit-6-7"));
+    expect(result.stderr).toBe(readExpected("Omit-6-7.toolbox"));
   });
 
   it("warns when a module's name differs from its file's", () => {
@@ -1239,7 +1238,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       "Renamed.tla",
     ]);
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe(readToolbox("Renamed"));
+    expect(result.stderr).toBe(readExpected("Renamed.toolbox"));
   });
 
   it("reports the warnings tlapm reports", () => {
@@ -1252,32 +1251,28 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       "Warnings.tla",
     ]);
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe(readToolbox("Warnings"));
+    expect(result.stderr).toBe(readExpected("Warnings.toolbox"));
   });
 
   // Each .strict file is what tlapm -N --strict writes to stderr.
   it("reports incomplete proofs under --strict", () => {
     const result = runTlapm("obligations", ["-N", "--strict", "Incomplete.tla"]);
     expect(result.status).toBe(11);
-    expect(result.stderr).toBe(
-      readFileSync(join(FIXTURES, "obligations", "Incomplete.strict"), "utf8"),
-    );
+    expect(result.stderr).toBe(readExpected("Incomplete.strict"));
   });
 
   it("reports a target without obligations under --strict", () => {
     const result = runTlapm("obligations", ["-N", "--strict", "--line", "2", "Proofs.tla"]);
     expect(result.status).toBe(12);
-    expect(result.stderr).toBe(
-      readFileSync(join(FIXTURES, "obligations", "Proofs-2.strict"), "utf8"),
-    );
+    expect(result.stderr).toBe(readExpected("Proofs-2.strict"));
   });
 
   // Notes.stdout and Notes.stderr are what tlapm -N writes.
   it("prints the notes tlapm prints outside toolbox mode", () => {
     const result = runTlapm("obligations", ["-N", "Notes.tla"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stdout"), "utf8"));
-    expect(result.stderr).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stderr"), "utf8"));
+    expect(result.stdout).toBe(readExpected("Notes.stdout"));
+    expect(result.stderr).toBe(readExpected("Notes.stderr"));
   });
 
   it("prints tlapm's header in toolbox mode", () => {
@@ -1298,9 +1293,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   it("summarizes the missing and omitted proofs of each theorem", () => {
     const result = runTlapm("obligations", ["--summary", "Incomplete.tla"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe(
-      readFileSync(join(FIXTURES, "obligations", "Incomplete.summary"), "utf8"),
-    );
+    expect(result.stdout).toBe(readExpected("Incomplete.summary"));
     expect(result.stderr).toBe("");
   });
 
@@ -1465,7 +1458,7 @@ describe("tlapm shares its cache with tlapm", () => {
 describe("prove proves each module with tla-ts's own provers", () => {
   // Bun's directory alone, so tlapm isn't on the PATH.
   const proveWithoutTlapm = (args: string[]) =>
-    spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "prove", ...args], {
+    spawnSync("bun", [CLI, "prove", ...args], {
       cwd: join(FIXTURES, "obligations"),
       encoding: "utf8",
       env: {
