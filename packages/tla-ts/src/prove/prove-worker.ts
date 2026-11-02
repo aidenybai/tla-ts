@@ -9,12 +9,10 @@ const getResponse = (request: DecideRequest): DecideResponse => {
   try {
     return decide(request.prover, request.text, { timeLimitMs: request.timeLimitMs });
   } catch (error) {
-    if (error instanceof TlaProverError) {
+    if (error instanceof TlaProverError)
       return { error: { name: "TlaProverError", message: error.message } };
-    }
-    if (error instanceof TlaUnsupportedError) {
+    if (error instanceof TlaUnsupportedError)
       return { error: { name: "TlaUnsupportedError", message: error.message } };
-    }
     throw error;
   }
 };

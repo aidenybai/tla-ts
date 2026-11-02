@@ -14,7 +14,7 @@ export type TlapmResult =
   | { status: "trivial" }
   | { status: "failed"; reason: string };
 
-export interface TlapmOptions {
+interface TlapmOptions {
   signal?: AbortSignal;
   onResult?: (id: number, result: TlapmResult) => void;
 }

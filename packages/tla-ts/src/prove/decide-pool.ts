@@ -22,7 +22,7 @@ interface PendingDecision {
   reject: (error: unknown) => void;
 }
 
-export interface DecidePool {
+interface DecidePool {
   decide: (
     prover: string,
     text: string,
@@ -57,7 +57,7 @@ export const createDecidePool = async (count: number): Promise<DecidePool> => {
     running.delete(index);
     idle.push(index);
     if ("verdict" in response) decision?.resolve(response);
-    else {
+    if ("error" in response) {
       const ErrorClass =
         response.error.name === "TlaProverError" ? TlaProverError : TlaUnsupportedError;
       decision?.reject(new ErrorClass(response.error.message));

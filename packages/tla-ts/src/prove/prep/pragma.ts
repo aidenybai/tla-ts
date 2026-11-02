@@ -4,7 +4,7 @@
 // obligation.
 
 import { TlapmBugError, TlaProverError } from "../../errors";
-import type { Expr, Hyp, Locus, Sequent } from "../../obligations/expression";
+import type { Expr, Locus, Sequent } from "../../obligations/expression";
 import type { OldMethod, PragmaSetting } from "../../obligations/pragma";
 
 // A method, named after the Method.t constructor tlapm reports it by. A Z3 resource budget turns
@@ -17,7 +17,7 @@ export interface Method {
 }
 
 // The methods that rewrite an obligation in Prep.expand_enabled_cdot instead of proving it.
-export const FRONTENDS = new Set([
+const FRONTENDS = new Set([
   "expandenabled",
   "expandcdot",
   "autouse",
@@ -37,7 +37,7 @@ const RLIMIT_BASE = 3_000_000;
 const MAX_RLIMIT = 0xffff_ffff;
 
 // Params.default_method: what tlapm tries when a step cites no prover.
-export const DEFAULT_METHODS: Method[] = [
+const DEFAULT_METHODS: Method[] = [
   { prover: "smt", timeLimitMs: SMT_SECONDS * 1000 },
   { prover: "zenon", timeLimitMs: ZENON_SECONDS * 1000 },
   { prover: "isabelle", timeLimitMs: ISABELLE_SECONDS * 1000, tactic: "auto" },
@@ -166,7 +166,7 @@ const getCitedMethods = (sequent: Sequent) => {
     methods: [],
     useLocation: null,
   };
-  sequent.context.forEach((hyp: Hyp, index) => {
+  sequent.context.forEach((hyp, index) => {
     const expression = hyp.kind === "Fact" && hyp.visibility === "Visible" && hyp.expression;
     if (expression && expression.kind === "With") {
       state.methods.push(getOldMethod(expression.method));

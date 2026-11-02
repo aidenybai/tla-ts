@@ -44,7 +44,7 @@ const getVisitedExprs = (hyp: Hyp): Expr[] => {
 };
 
 // non_temporal: no temporal operator, but in hidden hypotheses.
-export const isNonTemporal = (expression: Expr): boolean => {
+const isNonTemporal = (expression: Expr): boolean => {
   if (expression.kind === "Tsub" || expression.kind === "Fair") return false;
   if (
     expression.kind === "Apply" &&
