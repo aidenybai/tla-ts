@@ -1,10 +1,6 @@
 import type { Expression } from "./ast";
 import {
   checkSequentially,
-  createSearch,
-  findAssumptionViolation,
-  reportInitialStatesProgress,
-  reportStartup,
   type CheckOptions,
   type CheckProgress,
   type CheckResult,
@@ -22,6 +18,12 @@ import {
   writeStateFingerprint,
   type SharedFingerprints,
 } from "./fingerprints";
+import {
+  createSearch,
+  findAssumptionViolation,
+  reportInitialStatesProgress,
+  reportStartup,
+} from "./search";
 import { getInitialStates } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";

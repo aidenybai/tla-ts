@@ -1,4 +1,3 @@
-import { createSearch } from "./check";
 import { createEnvironment } from "./environment";
 import {
   createFingerprintTable,
@@ -7,6 +6,7 @@ import {
   writeStateFingerprint,
 } from "./fingerprints";
 import type { CoordinatorMessage, LevelMessage, StartMessage, WorkerMessage } from "./parallel";
+import { createSearch } from "./search";
 import { getSuccessors, type Successor } from "./successors";
 import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";

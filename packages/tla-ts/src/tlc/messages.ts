@@ -1,4 +1,12 @@
-import { STACK_OVERFLOW_MESSAGE, TlaModuleError, type TlaEvaluationError } from "../errors";
+import {
+  getErrorExitCode,
+  STACK_OVERFLOW_MESSAGE,
+  TlaEvaluationError,
+  TlaModuleError,
+  UNEXPECTED_EVAL_EXCEPTION,
+  UNEXPECTED_EXCEPTION,
+} from "../errors";
+import { setExitCode } from "../exit-codes";
 import type { TlcVersion } from "./version";
 
 // TLC's codes for the messages it prints, from tlc2.output.EC.
@@ -329,3 +337,105 @@ export const formatTlcDuration = (milliseconds: number) => {
 // TLC's SimpleDateFormat("yyyy-MM-dd HH:mm:ss") in the local time zone.
 export const formatTlcDate = (date: Date) =>
   `${date.getFullYear()}-${zeroPad(date.getMonth() + 1)}-${zeroPad(date.getDate())} ${zeroPad(date.getHours())}:${zeroPad(date.getMinutes())}:${zeroPad(date.getSeconds())}`;
+
+// An error that TLC reports with a message of its own, by that message's code and first line, and
+// the error whose message follows.
+interface HeadedError {
+  code: number;
+  headline: string;
+  inner: TlaEvaluationError;
+}
+
+const headedErrors = new WeakMap<Error, HeadedError>();
+
+export const withHeadline = (error: unknown, code: number, headline: string) => {
+  if (!(error instanceof TlaEvaluationError)) return error;
+  const headed = setExitCode(
+    new TlaEvaluationError(`${headline}\n${error.message}`, error),
+    getErrorExitCode(error),
+  );
+  headedErrors.set(headed, { code, headline, inner: error });
+  return headed;
+};
+
+export const isHeadedError = (error: Error) => headedErrors.has(error);
+
+const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
+
+// TLC 1.7.4's Worker wraps an error in adding a successor in a RuntimeException, whose message
+// names the class of the error.
+const WRAPPED_EVAL_EXCEPTION = `${UNEXPECTED_EXCEPTION}tlc2.tool.EvalException: `;
+const WRAPPED_RUNTIME_EXCEPTION = `${UNEXPECTED_EXCEPTION}util.Assert$TLCRuntimeException: `;
+
+export const getWrappedException = (error: TlaEvaluationError) =>
+  isEvalException(error) ? WRAPPED_EVAL_EXCEPTION : WRAPPED_RUNTIME_EXCEPTION;
+
+// TLC reports an EvalException, or a TLCRuntimeException without a message of its own, as an
+// exception it didn't expect.
+export const withUnexpectedException = <Result>(compute: () => Result) => {
+  try {
+    return compute();
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (isEvalException(error)) {
+      throw new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`);
+    }
+    if (getCodedMessage(error.message)) throw error;
+    throw new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`);
+  }
+};
+
+const UNEXPECTED_EXCEPTION_PREFIXES = [
+  WRAPPED_EVAL_EXCEPTION,
+  WRAPPED_RUNTIME_EXCEPTION,
+  UNEXPECTED_EXCEPTION,
+  UNEXPECTED_EVAL_EXCEPTION,
+];
+
+// The text of an error's message, with the message of a coded error inside it marked in -tool
+// output as TLC marks it.
+const formatErrorMessage = (error: TlaEvaluationError, isTool: boolean): string => {
+  const headed = headedErrors.get(error);
+  if (headed) return `${headed.headline}\n${formatErrorMessage(headed.inner, isTool)}`;
+  const message = error.message;
+  const prefix = UNEXPECTED_EXCEPTION_PREFIXES.find((start) => message.startsWith(start)) ?? "";
+  return `${prefix}${formatNestedMessage(message.slice(prefix.length), isTool)}`;
+};
+
+// How TLC reports an error: with the code of its own message for an error that it reports with a
+// headline; and, when the error escapes the computation of next states, with the code of an
+// EvalException, or as an unexpected exception for any other error.
+export interface FailureMessage {
+  code: number;
+  message: string;
+  toolMessage: string;
+}
+
+export const getFailureMessage = (
+  error: TlaEvaluationError,
+  isNextState: boolean,
+): FailureMessage => {
+  const headed = headedErrors.get(error);
+  const message = error.message;
+  if (headed) {
+    return {
+      code: headed.code,
+      message,
+      toolMessage: formatErrorMessage(error, true),
+    };
+  }
+  if (isNextState && isEvalException(error)) {
+    return {
+      code: getCodedMessage(message)?.code ?? MESSAGE_CODE.general,
+      message,
+      toolMessage: message,
+    };
+  }
+  const isUnexpected = isNextState && !message.startsWith(UNEXPECTED_HEADLINE);
+  const prefix = isUnexpected ? UNEXPECTED_EXCEPTION : "";
+  return {
+    code: MESSAGE_CODE.general,
+    message: `${prefix}${message}`,
+    toolMessage: `${prefix}${formatErrorMessage(error, true)}`,
+  };
+};
