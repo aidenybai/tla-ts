@@ -115,7 +115,7 @@ const isBinary = (expression: Expr): expression is BinaryExpr =>
   expression.kind === "imply" ||
   expression.kind === "equiv";
 
-export const isBinder = (expression: Expr): expression is BinderExpr =>
+const isBinder = (expression: Expr): expression is BinderExpr =>
   expression.kind === "all" ||
   expression.kind === "ex" ||
   expression.kind === "tau" ||
@@ -253,7 +253,7 @@ export const compareExprs = (left: Expr, right: Expr): number => {
   return 0;
 };
 
-export type Substitution = [Expr, Expr][];
+type Substitution = [Expr, Expr][];
 
 const lookup = (map: Substitution, variable: Expr) => map.find((pair) => pair[0] === variable)?.[1];
 

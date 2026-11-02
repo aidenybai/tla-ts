@@ -36,7 +36,7 @@ export type SymbolKind =
 
 // range is where SANY reports the symbol, and two symbols at one range are one node to SANY. params
 // holds the arity of each parameter of a defined operator.
-export interface Binding {
+interface Binding {
   kind: SymbolKind;
   arity: number;
   params?: number[];

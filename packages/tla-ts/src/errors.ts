@@ -39,7 +39,7 @@ export interface SanyError {
 // The errors SANY reports for a spec, and the warnings it prints before them. A fatal error stops it
 // before semantic analysis. SANY's parser prints its message for a module it rejects before the
 // report.
-export interface SanyReport {
+interface SanyReport {
   errors: SanyError[];
   warnings: SanyError[];
   isFatal: boolean;
@@ -112,15 +112,6 @@ export const createMissingModuleError = (name: string, importer: string | undefi
 // How SANY prints the warnings it reports, which do not stop TLC.
 export const formatSanyWarnings = (warnings: SanyError[]) =>
   `*** Warnings: ${warnings.length}\n\n${warnings.map((warning) => `${warning.location}\n\n${warning.message}\n\n\n`).join("\n")}`;
-
-// SANY's message for a module its parser rejects, such as a "***Parse Error***" with the
-// productions it was in.
-export class TlaParseError extends TlaError {
-  constructor(message: string) {
-    super(message);
-    this.name = "TlaParseError";
-  }
-}
 
 export const formatRange = (range: SourceRange) =>
   `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
@@ -196,24 +187,6 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
-// TLC reports a successor state that the next-state relation leaves incomplete as an error of its
-// own, not as an exception. It keeps the name TlaEvaluationError, and index.ts doesn't export it.
-export class TlaIncompleteStateError extends TlaEvaluationError {
-  state: (Value | undefined)[];
-  action: string | undefined;
-  missing: string[];
-
-  constructor(state: (Value | undefined)[], action: string | undefined, missing: string[]) {
-    super(
-      `Successor state is not completely specified by the next-state action. The following variable${missing.length > 1 ? "s are" : " is"} not defined: ${missing.join(", ")}.\n`,
-    );
-    this.name = "TlaEvaluationError";
-    this.state = state;
-    this.action = action;
-    this.missing = missing;
-  }
-}
-
 // TLC reports an initial state that the initial predicate leaves incomplete as an illegal state.
 export class TlaIllegalStateError extends TlaEvaluationError {
   state: (Value | undefined)[];
@@ -225,7 +198,7 @@ export class TlaIllegalStateError extends TlaEvaluationError {
   }
 }
 
-export interface TlapmReport {
+interface TlapmReport {
   failure?: string;
   exception?: string;
 }
@@ -269,7 +242,7 @@ export class TlaZenonError extends TlaError {
 
 // The exceptions Isabelle raises: ERROR for a rejected theory or a failed proof, TERM, TYPE and THM
 // for an ill-formed term, type or theorem, and Interrupt when the time limit runs out.
-export type IsabelleException = "ERROR" | "TERM" | "TYPE" | "THM" | "Interrupt";
+type IsabelleException = "ERROR" | "TERM" | "TYPE" | "THM" | "Interrupt";
 
 // Isabelle's tactics raise and handle these as control flow, often millions of times per proof, and
 // decideIsabelle answers "unknown" for any that escape. So unlike an Error, it skips the stack trace.

@@ -481,7 +481,7 @@ const getEqualityPropositionNodes = (
   ];
 };
 
-export interface ExtensionNodes {
+interface ExtensionNodes {
   nodes: Node[];
   isStopped: boolean;
 }

@@ -135,7 +135,7 @@ interface Frame {
   current: number;
 }
 
-export interface SearchStatistics {
+interface SearchStatistics {
   inferences: number;
   proofNodes: number;
   // The proofs that closed another branch from the lemma cache. Zenon counts the uses in mlrefc and

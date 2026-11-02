@@ -20,7 +20,7 @@ const SIGN_PRECISION = 2;
 const X = 0;
 const Y = 1;
 
-export class AlgebraicCell {
+class AlgebraicCell {
   constructor(
     public p: Upolynomial,
     public lower: Mpbq,
@@ -81,12 +81,12 @@ interface IsolatingFactor {
   lowerVariations: number;
 }
 
-export interface ClosestAnums {
+interface ClosestAnums {
   roots: Anum[];
   indices: number[];
 }
 
-export interface SignedRoots {
+interface SignedRoots {
   roots: Anum[];
   signs: number[];
 }

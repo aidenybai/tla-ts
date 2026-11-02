@@ -59,14 +59,14 @@ const trim = (coeffs: bigint[]) => {
   return coeffs;
 };
 
-export interface IsolatedRoots {
+interface IsolatedRoots {
   roots: Mpbq[];
   lowers: Mpbq[];
   uppers: Mpbq[];
 }
 
 // An interval (a, b) refined around the root of a square-free polynomial, or the root itself.
-export interface Refinement {
+interface Refinement {
   isInterval: boolean;
   lower: Mpbq;
   upper: Mpbq;

@@ -345,7 +345,7 @@ export class PatternInference {
   }
 }
 
-export interface InferredPatterns {
+interface InferredPatterns {
   patterns: number[];
   weight: number;
 }

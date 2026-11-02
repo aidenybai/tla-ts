@@ -8,14 +8,13 @@ import {
   foldTable,
   isEmptyTable,
   lookupTable,
-  tableEntries,
   updateTable,
   deleteTable,
   type Table,
 } from "./table";
 import { headOf, type Term } from "./term";
 
-export type NetKey =
+type NetKey =
   | { readonly kind: "Comb" }
   | { readonly kind: "Var" }
   | { readonly kind: "Atom"; readonly name: string };
@@ -105,18 +104,11 @@ export const insertNet = <Item>(
 export const insertTermNet = <Item>(term: Term, item: Item, net: Net<Item>) =>
   insertNet(() => false, keyOfTerm(term), item, net) ?? net;
 
-export const insertTermSafe = <Item>(
-  isEqual: (left: Item, right: Item) => boolean,
-  term: Term,
-  item: Item,
-  net: Net<Item>,
-) => insertNet(isEqual, keyOfTerm(term), item, net) ?? net;
-
 const newNet = <Item>(node: Extract<Net<Item>, { kind: "Net" }>): Net<Item> =>
   isEmptyNet(node.comb) && isEmptyNet(node.var) && isEmptyTable(node.atoms) ? emptyNet : node;
 
 // Net.delete: undefined where Isabelle raises DELETE.
-export const deleteNet = <Item>(
+const deleteNet = <Item>(
   isEqual: (left: Item, right: Item) => boolean,
   keys: readonly NetKey[],
   item: Item,
@@ -221,42 +213,3 @@ export const matchTermNet = <Item>(net: Net<Item>, term: Term) =>
 
 export const unifyTermNet = <Item>(net: Net<Item>, term: Term) =>
   extractLeaves(matching(true, term, net, undefined));
-
-// Net.content: every item, by the order of Net.dest.
-export const netContent = <Item>(net: Net<Item>): Item[] => {
-  if (net.kind === "Leaf") return [...net.items];
-  return [
-    ...netContent(net.comb),
-    ...netContent(net.var),
-    ...tableEntries(net.atoms).flatMap((entry) => netContent(entry[1])),
-  ];
-};
-
-// Net.subtract: the items of second that are not in first.
-export const subtractNet = <Item>(
-  isEqual: (left: Item, right: Item) => boolean,
-  first: Net<Item>,
-  second: Net<Item>,
-) => {
-  const subtr = (left: Net<Item>, right: Net<Item>, result: Item[]): Item[] => {
-    if (right.kind === "Leaf") {
-      if (left.kind === "Net") return [...right.items, ...result];
-      return right.items.reduceRight(
-        (accumulated, item) =>
-          left.items.some((other) => isEqual(other, item)) ? accumulated : [item, ...accumulated],
-        result,
-      );
-    }
-    if (left.kind === "Leaf") return subtr(makeNode(), right, result);
-    const afterComb = subtr(left.comb, right.comb, result);
-    const afterVar = subtr(left.var, right.var, afterComb);
-    return tableEntries(right.atoms).reduce(
-      (accumulated, entry) =>
-        subtr(lookupTable(left.atoms, entry[0]) ?? makeNode(), entry[1], accumulated),
-      afterVar,
-    );
-  };
-  return subtr(first, second, []);
-};
-
-export const netEntries = <Item>(net: Net<Item>) => subtractNet(() => false, emptyNet, net);

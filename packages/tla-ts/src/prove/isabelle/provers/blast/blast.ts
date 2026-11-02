@@ -44,7 +44,7 @@ import {
   type VarRef,
 } from "./term";
 
-export type { BlastContext, BlastData } from "./state";
+export type { BlastContext } from "./state";
 
 // Blast's depth_limit configuration option.
 const DEPTH_LIMIT = 20;

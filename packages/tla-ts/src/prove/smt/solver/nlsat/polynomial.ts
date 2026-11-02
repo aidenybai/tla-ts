@@ -62,7 +62,7 @@ const RATIONAL_OPS: ValueOps<Rational> = {
 const getMonomialKey = (vars: readonly number[], degrees: readonly number[]) =>
   vars.map((variable, index) => `${variable}^${degrees[index]}`).join(",");
 
-export class Monomial {
+class Monomial {
   readonly totalDegree: number;
 
   // vars and degrees change only when the manager renames the variables.
@@ -102,7 +102,7 @@ export class Monomial {
 }
 
 // lex_compare: the biggest variable dominates, then its degree.
-export const lexCompare = (first: Monomial, second: Monomial) => {
+const lexCompare = (first: Monomial, second: Monomial) => {
   if (first === second) return 0;
   let firstIndex = first.size - 1;
   let secondIndex = second.size - 1;
@@ -124,7 +124,7 @@ export const lexCompare = (first: Monomial, second: Monomial) => {
   return firstIndex < 0 ? -1 : 1;
 };
 
-export const gradedLexCompare = (first: Monomial, second: Monomial) =>
+const gradedLexCompare = (first: Monomial, second: Monomial) =>
   first.totalDegree === second.totalDegree
     ? lexCompare(first, second)
     : first.totalDegree < second.totalDegree
@@ -335,7 +335,7 @@ class CheapSomBuffer {
   }
 }
 
-export interface Factors {
+interface Factors {
   constant: bigint;
   factors: Polynomial[];
   degrees: number[];

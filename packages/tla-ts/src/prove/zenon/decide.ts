@@ -24,7 +24,7 @@ import type { Proof } from "./proof";
 import { search, type SearchFailure } from "./search";
 import { getBuiltInDefinitions, PREDEFINED_SYMBOLS } from "./tla/tla";
 
-export interface ZenonRun {
+interface ZenonRun {
   proof: Proof | undefined;
   // Why Zenon gave up: in the search, or at the limits while it checked or printed the proof.
   // "zenon error" stands for the exceptions that stop Zenon mid-search.
@@ -103,7 +103,7 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
   };
 };
 
-export type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown" };
+type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown" };
 
 // Zenon's verdict on a .znn file: "unsat" with the Isar proof that tlapm writes, when Zenon refutes
 // the hypotheses with a proof that the checker accepts and prints it within the time limit.

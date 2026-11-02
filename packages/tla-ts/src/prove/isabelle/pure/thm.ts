@@ -293,29 +293,6 @@ export const combination = (first: Thm, second: Thm): Thm => {
   );
 };
 
-const destImp = (prop: Term): [Term, Term] | undefined =>
-  prop.kind === "App" &&
-  prop.fun.kind === "App" &&
-  prop.fun.fun.kind === "Const" &&
-  prop.fun.fun.name === "Pure.imp"
-    ? [prop.fun.arg, prop.arg]
-    : undefined;
-
-export const equalIntr = (first: Thm, second: Thm): Thm => {
-  const left = destImp(first.prop);
-  const right = destImp(second.prop);
-  if (left === undefined || right === undefined)
-    throw new TlaIsabelleError("THM", "equal_intr: premises");
-  if (!aconv(left[0], right[1]) || !aconv(left[1], right[0]))
-    throw new TlaIsabelleError("THM", "equal_intr: not equal");
-  return makeThm(
-    Math.max(first.maxidx, second.maxidx),
-    unionHyps(first.hyps, second.hyps),
-    unionTpairs(first.tpairs, second.tpairs),
-    mkEquals(left[0], left[1]),
-  );
-};
-
 export const equalElim = (first: Thm, second: Thm): Thm => {
   const parts = destEq(first);
   if (parts === undefined) throw new TlaIsabelleError("THM", "equal_elim: major premise");
@@ -465,7 +442,7 @@ interface State {
   readonly conclusion: Term;
 }
 
-export const destState = (state: Thm, index: number): State => {
+const destState = (state: Thm, index: number): State => {
   const premises = stripImpPrems(state.prop);
   if (index < 1 || index > premises.length)
     throw new TlaIsabelleError("THM", `dest_state ${index}`);
@@ -603,13 +580,13 @@ export const permutePrems = (fixed: number, count: number, rule: Thm): Thm => {
   );
 };
 
-export interface ComposeFlags {
+interface ComposeFlags {
   readonly flatten: boolean;
   readonly match: boolean;
   readonly incremented: boolean;
 }
 
-export interface ComposeRule {
+interface ComposeRule {
   readonly isElim: boolean;
   readonly rule: Thm;
   readonly subgoals: number;
@@ -750,7 +727,7 @@ export const bicompose = (
   state: Thm,
 ) => bicomposeAux(limits, flags, state, destState(state, index), false, compose);
 
-export const couldBires = (hyps: readonly Term[], goal: Term, isElim: boolean, rule: Thm) => {
+const couldBires = (hyps: readonly Term[], goal: Term, isElim: boolean, rule: Thm) => {
   if (!couldUnify(conclOf(rule), goal)) return false;
   if (!isElim) return true;
   const first = premsOf(rule)[0];

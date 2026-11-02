@@ -6,18 +6,7 @@
 // functions return undefined instead.
 
 import { TlaIsabelleError } from "../../../errors";
-import {
-  aeconv,
-  emptyTEnv,
-  genvar,
-  headNorm,
-  lookup,
-  lookup1,
-  substTerm,
-  update,
-  type Envir,
-  type TEnv,
-} from "./envir";
+import { aeconv, genvar, headNorm, lookup, lookup1, update, type Envir, type TEnv } from "./envir";
 import { hasKey, indexnameOrd, updateTable } from "./table";
 import {
   eqTyp,
@@ -31,14 +20,13 @@ import {
   mkAbs,
   mkApp,
   mkBound,
-  renameAbs,
   stripComb,
   aconv,
   type Term,
   type Typ,
   type Var,
 } from "./term";
-import { emptyTyEnv, matchTypes, normType, substType, unifyTypes, type TyEnv } from "./type";
+import { matchTypes, normType, substType, unifyTypes, type TyEnv } from "./type";
 
 class Unif {}
 class NotPattern {}
@@ -427,7 +415,7 @@ const flexRigid = (
   return update(variable, mkAbsOver(binders, indexes, projected), updated);
 };
 
-export type PatternUnifyResult =
+type PatternUnifyResult =
   | { kind: "unified"; envir: Envir }
   | { kind: "clash" }
   | { kind: "not a pattern" };
@@ -640,11 +628,4 @@ export const isFirstOrder = (term: Term): boolean => {
   if (term.kind === "App")
     return term.fun.kind !== "Var" && isFirstOrder(term.fun) && isFirstOrder(term.arg);
   return true;
-};
-
-// Pattern.match_rew
-export const matchRew = (term: Term, lhs: Term, rhs: Term): [Term, Term] | undefined => {
-  const renamed = renameAbs(lhs, term, rhs) ?? rhs;
-  const env = matchPattern(lhs, term, { tyenv: emptyTyEnv, tenv: emptyTEnv });
-  return env === undefined ? undefined : [substTerm(env.tyenv, env.tenv, renamed), renamed];
 };

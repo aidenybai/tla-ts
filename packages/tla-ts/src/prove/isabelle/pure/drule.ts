@@ -135,7 +135,7 @@ export const isNormHhf = (isProtecting: boolean, term: Term): boolean => {
 };
 
 // Drule.outer_params: the outermost parameters, named apart.
-export const outerParams = (term: Term) => {
+const outerParams = (term: Term) => {
   const vars = stripAllVars(term);
   const names = variantList(
     [],
@@ -228,7 +228,7 @@ export const zeroVarIndexes = (thm: Thm): Thm => {
 export const makeElim = (rule: Thm) => zeroVarIndexes(rs(rule, revcutRl));
 
 // Drule.compose: resolves tha into premise index of thb without lifting, with a unique result.
-export const compose = (tha: Thm, index: number, thb: Thm): Thm => {
+const compose = (tha: Thm, index: number, thb: Thm): Thm => {
   const results = listOfSeq(
     bicompose(
       undefined,

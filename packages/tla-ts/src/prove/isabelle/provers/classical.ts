@@ -264,7 +264,7 @@ export const appWrappers = (context: ClassicalContext, tactic: GoalTactic) =>
   context.claset.uwrappers.reduce((result, wrapper) => wrapper.wrap(result), tactic);
 
 // contr_tac: solves a goal that assumes both P and ~P.
-export const contrTac = (context: ClassicalContext): GoalTactic =>
+const contrTac = (context: ClassicalContext): GoalTactic =>
   thenGoal(
     eresolveTac(context.limits, [context.data.notElim]),
     orElseGoal(eqAssumeTac, assumeTac(context.limits)),
@@ -280,7 +280,7 @@ const eqMpTac =
     );
 
 // safe_step_tac: one safe inference, by matching rather than unification.
-export const safeStepTac = (context: ClassicalContext): GoalTactic =>
+const safeStepTac = (context: ClassicalContext): GoalTactic =>
   appSWrappers(
     context,
     firstGoal([
@@ -365,7 +365,7 @@ export const unsafeStepTac = (context: ClassicalContext): GoalTactic =>
   biresolveFromNetsTac(context.limits, context.claset.unsafe);
 
 // step_tac: a safe step, or else an unsafe one.
-export const stepTac =
+const stepTac =
   (context: ClassicalContext): GoalTactic =>
   (index) =>
     orElse(

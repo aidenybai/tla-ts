@@ -5,9 +5,9 @@ import { AstManager, KIND_APP, OP_AND, OP_IMPLIES, OP_ITE, OP_OR } from "./ast";
 import type { Enode } from "./enode";
 import { shrink } from "./array";
 
-export type RelevancyHandler = () => void;
+type RelevancyHandler = () => void;
 
-export interface RelevancyContext {
+interface RelevancyContext {
   manager: AstManager;
   // lbool as 1, -1 or 0.
   findAssignment(expr: number): number;

@@ -2,7 +2,6 @@
 // University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { aeconv } from "./envir";
 import {
   appendSeq,
   emptySeq,
@@ -129,11 +128,6 @@ export const every = (tactics: readonly Tactic[]): Tactic => {
   return (state) => evy([], tactics, state);
 };
 
-export const everyGoal =
-  (tactics: readonly GoalTactic[]): GoalTactic =>
-  (index) =>
-    every(tactics.map((tactic) => tactic(index)));
-
 export const first = (tactics: readonly Tactic[]): Tactic =>
   tactics.reduceRight((rest, tactic) => orElse(tactic, rest), noTac);
 
@@ -159,41 +153,7 @@ export const repeatDetermN =
 
 export const repeatDeterm = (tactic: Tactic) => repeatDetermN(-1, tactic);
 
-export const repeat =
-  (tactic: Tactic): Tactic =>
-  (start) => {
-    const rep = (stack: readonly Seq<Thm>[], state: Thm): Cell<Thm> => {
-      let current = state;
-      let queue = stack;
-      for (;;) {
-        const cell = tactic(current).pull();
-        if (cell === undefined) {
-          const saved = queue;
-          return [current, makeSeq(() => repq(saved))];
-        }
-        queue = [cell[1], ...queue];
-        current = cell[0];
-      }
-    };
-    const repq = (stack: readonly Seq<Thm>[]): Cell<Thm> => {
-      let queue = stack;
-      while (queue.length > 0) {
-        const cell = queue[0].pull();
-        if (cell !== undefined) return rep([cell[1], ...queue.slice(1)], cell[0]);
-        queue = queue.slice(1);
-      }
-      return undefined;
-    };
-    return makeSeq(() => rep([], start));
-  };
-
 export const repeatDeterm1 = (tactic: Tactic) => thenTac(determ(tactic), repeatDeterm(tactic));
-export const repeat1 = (tactic: Tactic) => thenTac(tactic, repeat(tactic));
-
-export const filterTac =
-  (predicate: (state: Thm) => boolean, tactic: Tactic): Tactic =>
-  (state) =>
-    filterSeq(predicate, tactic(state));
 
 export const changed =
   (tactic: Tactic): Tactic =>
@@ -213,14 +173,6 @@ export const allGoals =
     return doall(nprems(state))(state);
   };
 
-export const someGoal =
-  (tactic: GoalTactic): Tactic =>
-  (state) => {
-    const find = (index: number): Tactic =>
-      index === 0 ? noTac : orElse(tactic(index), find(index - 1));
-    return find(nprems(state))(state);
-  };
-
 export const firstGoalTac =
   (tactic: GoalTactic): Tactic =>
   (state) => {
@@ -229,14 +181,6 @@ export const firstGoalTac =
       index > count ? noTac : orElse(tactic(index), find(index + 1));
     return find(1)(state);
   };
-
-export const repeatSome = (tactic: GoalTactic) =>
-  repeat1(someGoal((index) => repeat1(tactic(index))));
-export const repeatFirst = (tactic: GoalTactic) =>
-  repeat1(firstGoalTac((index) => repeat1(tactic(index))));
-export const repeatDetermFirst = (tactic: GoalTactic) =>
-  repeatDeterm1(firstGoalTac((index) => repeatDeterm1(tactic(index))));
-export const tryAll = (tactic: GoalTactic) => allGoals((index) => tryTac(tactic(index)));
 
 const isThmError = (error: unknown) =>
   error instanceof TlaIsabelleError && error.exception === "THM";
@@ -249,25 +193,6 @@ export const subgoal =
     if (index < 1 || index > nprems(state)) return emptySeq;
     return build(premOf(state, index), index)(state);
   };
-
-export const changedGoal =
-  (tactic: GoalTactic): GoalTactic =>
-  (index) =>
-  (state) => {
-    if (index < 1 || index > nprems(state)) return emptySeq;
-    const goal = premOf(state, index);
-    const distance = nprems(state) - index;
-    return filterSeq((result) => {
-      const count = nprems(result);
-      return count - distance <= 0 || !aeconv(goal, premOf(result, count - distance));
-    }, tactic(index)(state));
-  };
-
-export const solvedGoal =
-  (tactic: GoalTactic): GoalTactic =>
-  (index) =>
-  (state) =>
-    filterSeq((result) => nprems(result) < nprems(state), tactic(index)(state));
 
 // Seq.INTERVAL: applies tactic to goals last down to first.
 const interval = (tactic: GoalTactic, firstIndex: number, lastIndex: number): Tactic =>
@@ -308,7 +233,7 @@ export const condTac =
 // Search.DEPTH_FIRST: depth-first search for a state satisfying the test. The stack of
 // alternatives and the states already returned are lists, as in Isabelle, since the stack can grow
 // as deep as the search goes.
-export const depthFirst = (test: (state: Thm) => boolean, tactic: Tactic): Tactic => {
+const depthFirst = (test: (state: Thm) => boolean, tactic: Tactic): Tactic => {
   const isUsed = (used: List<Thm> | undefined, state: Thm) => {
     for (let current = used; current !== undefined; current = current.tail)
       if (eqThm(current.head, state)) return true;
@@ -334,14 +259,6 @@ export const depthFirst = (test: (state: Thm) => boolean, tactic: Tactic): Tacti
 };
 
 export const hasFewerPrems = (count: number) => (state: Thm) => nprems(state) < count;
-
-// Search.DEPTH_SOLVE_1: depth-first search until one goal fewer remains.
-export const depthSolve1 =
-  (tactic: Tactic): Tactic =>
-  (state) => {
-    const count = nprems(state);
-    return count === 0 ? emptySeq : depthFirst(hasFewerPrems(count), tactic)(state);
-  };
 
 // Search.DEPTH_SOLVE: depth-first search until no goals remain.
 export const depthSolve = (tactic: Tactic) => depthFirst(hasFewerPrems(1), tactic);

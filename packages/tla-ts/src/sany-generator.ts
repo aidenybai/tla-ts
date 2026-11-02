@@ -161,7 +161,7 @@ export interface SanySpecification {
   messages: SanyMessage[];
 }
 
-export interface SanyGenerationOptions {
+interface SanyGenerationOptions {
   // The name of the root module's file, which SANY requires to match the module's name.
   rootFileName?: string;
   // The path of the root module's file as SANY's caller gives it, which SANY names when it cannot

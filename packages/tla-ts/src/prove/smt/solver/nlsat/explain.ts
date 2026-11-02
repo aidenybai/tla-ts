@@ -24,7 +24,7 @@ import {
 import { type IneqAtom, type IneqKind, type RootKind, isIneqAtom } from "./types";
 
 // The solver state an explanation reads.
-export interface ExplainContext {
+interface ExplainContext {
   atoms: AtomTable;
   // sample(): the solver's assignment, refined in place.
   sample: (Anum | undefined)[];

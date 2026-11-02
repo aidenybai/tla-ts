@@ -30,7 +30,7 @@ export interface MlProof {
 // A translated proof, with the hypotheses it uses that aren't conclusions of the node.
 export type Translated = [LlProof, Expr[]];
 
-export interface TranslateContext {
+interface TranslateContext {
   exprs: Expressions;
   // Zenon's Index.get_number, which also names the formulas in the Isar output.
   getNumber: (expression: Expr) => number;

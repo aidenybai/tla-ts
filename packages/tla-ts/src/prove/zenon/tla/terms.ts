@@ -40,25 +40,6 @@ export const SET_CONSTRUCTORS = [
 
 export const FUNCTION_CONSTRUCTORS = ["TLA.Fcn", "TLA.except", "TLA.oneArg", "TLA.extend"];
 
-const OTHER_SYMBOLS = [
-  "TLA.in",
-  "TLA.isAFcn",
-  "TLA.cond",
-  "TLA.CASE",
-  "TLA.tuple",
-  "TLA.record",
-  "TLA.fapply",
-  "TLA.box",
-];
-
-// The symbols that hypotheses can't define, as Zenon's predef with the tla extension.
-export const PREDEFINED_SYMBOLS = [
-  "=",
-  ...SET_CONSTRUCTORS,
-  ...FUNCTION_CONSTRUCTORS,
-  ...OTHER_SYMBOLS,
-];
-
 export const isVariable = (expression: Expr, name: string) =>
   expression.kind === "var" && expression.symbol === name;
 
@@ -68,7 +49,7 @@ export const isConstructor = (constructors: string[], expression: Expr) =>
 
 export const isNotEquiv = (expression: Expr) => isApp(expression, "$notequiv");
 
-export const isString = (expression: Expr) => isApp(expression, "$string");
+const isString = (expression: Expr) => isApp(expression, "$string");
 
 export const equal = (exprs: Expressions, left: Expr, right: Expr) =>
   exprs.eapp("=", [left, right]);

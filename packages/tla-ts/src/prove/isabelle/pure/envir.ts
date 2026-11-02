@@ -17,14 +17,12 @@ import {
   type Table,
 } from "./table";
 import {
-  binderTypes as plainBinderTypes,
   flagsOf,
   funT,
   HAS_ETA_REDEX,
   HAS_REDEX,
   HAS_VAR,
   isDependent,
-  listComb,
   maxidxOfTerm,
   mkAbs,
   mkApp,
@@ -33,8 +31,6 @@ import {
   substBound,
   updateAbs,
   updateApp,
-  incrBoundvars,
-  fastypeOf1,
   aconv,
   type Term,
   type Typ,
@@ -63,7 +59,7 @@ export const emptyEnvir = (maxidx: number): Envir => ({
   tyenv: emptyTyEnv,
 });
 
-export const initEnvir = emptyEnvir(-1);
+const initEnvir = emptyEnvir(-1);
 
 export const isEmptyEnvir = (envir: Envir) => isEmptyTable(envir.tenv) && isEmptyTable(envir.tyenv);
 
@@ -146,7 +142,7 @@ export const vupdate = (variable: Var, term: Term, envir: Envir): Envir => {
   return update(variable, term, envir);
 };
 
-export const couldBetaContract = (term: Term) => (flagsOf(term) & HAS_REDEX) !== 0;
+const couldBetaContract = (term: Term) => (flagsOf(term) & HAS_REDEX) !== 0;
 
 const normTerm1 = (tenv: TEnv, term: Term): Term => {
   if ((flagsOf(term) & (HAS_VAR | HAS_REDEX)) === 0) return term;
@@ -224,32 +220,6 @@ export const headNorm = (envir: Envir, term: Term): Term => {
   }
 };
 
-export const etaLong = (types: readonly Typ[], term: Term): Term => {
-  if (term.kind === "Abs")
-    return mkAbs(term.name, term.type, etaLong([term.type, ...types], term.body));
-  const [head, args] = stripCombLocal(term);
-  if (head.kind === "Abs") return etaLong(types, betaNorm(term));
-  const binders = plainBinderTypes(fastypeOf1(types, term));
-  const count = binders.length;
-  const inner = [...binders].reverse().concat(types);
-  const long = (current: Term) => etaLong(inner, current);
-  const body = listComb(incrBoundvars(count, head), [
-    ...args.map((arg) => long(incrBoundvars(count, arg))),
-    ...binders.map((_type, position) => long(mkBound(count - 1 - position))),
-  ]);
-  return binders.reduceRight((result, type) => mkAbs("x", type, result), body);
-};
-
-const stripCombLocal = (term: Term): [Term, Term[]] => {
-  const args: Term[] = [];
-  let current = term;
-  while (current.kind === "App") {
-    args.unshift(current.arg);
-    current = current.fun;
-  }
-  return [current, args];
-};
-
 const decrementLoose = (term: Term, level: number): Term => {
   switch (term.kind) {
     case "Bound":
@@ -263,7 +233,7 @@ const decrementLoose = (term: Term, level: number): Term => {
   }
 };
 
-export const couldEtaContract = (term: Term) => (flagsOf(term) & HAS_ETA_REDEX) !== 0;
+const couldEtaContract = (term: Term) => (flagsOf(term) & HAS_ETA_REDEX) !== 0;
 
 const etaSame = (term: Term): Term => {
   if (!couldEtaContract(term)) return term;
@@ -282,8 +252,6 @@ const etaSame = (term: Term): Term => {
 
 // Envir.eta_contract
 export const etaContract = (term: Term) => (couldEtaContract(term) ? etaSame(term) : term);
-
-export const betaEtaContract = (term: Term) => etaContract(betaNorm(term));
 
 export const aeconv = (left: Term, right: Term) =>
   aconv(left, right) || aconv(etaContract(left), etaContract(right));

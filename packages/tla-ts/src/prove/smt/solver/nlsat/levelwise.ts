@@ -20,7 +20,7 @@ import {
 
 // A section is the index-th root of lower. A sector lies between the lowerIndex-th root of lower
 // and the upperIndex-th root of upper, and a null bound is infinite.
-export interface CellInterval {
+interface CellInterval {
   isSection: boolean;
   lower: Polynomial | null;
   lowerIndex: number;
@@ -29,13 +29,13 @@ export interface CellInterval {
 }
 
 // lws_spt_threshold, lws_witness_subs_lc and lws_witness_subs_disc.
-export interface LevelwiseParams {
+interface LevelwiseParams {
   spanningTreeThreshold: number;
   isWitnessSubsLc: boolean;
   isWitnessSubsDisc: boolean;
 }
 
-export const DEFAULT_LEVELWISE_PARAMS: LevelwiseParams = {
+const DEFAULT_LEVELWISE_PARAMS: LevelwiseParams = {
   spanningTreeThreshold: 4,
   isWitnessSubsLc: true,
   isWitnessSubsDisc: true,
@@ -56,10 +56,7 @@ const BOTH_SIDES = 3;
 
 // stable_index_merge_sort: bottom-up, so each pair is compared once even though comparing refines
 // the numbers.
-export const sortIndicesStably = (
-  count: number,
-  isLess: (first: number, second: number) => boolean,
-) => {
+const sortIndicesStably = (count: number, isLess: (first: number, second: number) => boolean) => {
   let source = Array.from({ length: count }, (_, index) => index);
   for (let width = 1; width < count; width *= 2) {
     const target: number[] = [];

@@ -51,7 +51,7 @@ import {
   getSetStAxioms,
 } from "./instances";
 
-export interface Term {
+interface Term {
   isBool: boolean;
   text: string;
   // Type.Synthesize: the Int-sorted form of a term that is an integer before it's cast to Idv.

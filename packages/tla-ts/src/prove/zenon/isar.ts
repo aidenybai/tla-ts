@@ -105,7 +105,7 @@ const increment = (indent: number) => (indent >= 15 ? indent : indent + 1);
 // What the search knew when it found a proof: the .znn file's phrases, the proofs that it reused
 // and the properties of relations that the hypotheses stated. The printer stops at the search's
 // limits.
-export interface IsarContext {
+interface IsarContext {
   exprs: Expressions;
   phrases: Phrase[];
   sharedProofs: ReadonlySet<MlProof>;

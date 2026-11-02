@@ -28,7 +28,7 @@ import { getStreamedElements, isTlcEnumerable, setTrace, valuesEqual, type Value
 // Tool.getNextStates do, in their order and with their nesting, so that it records the nodes TLC
 // records. It evaluates the other expressions with an environment that records the nodes too.
 
-export interface ReplayAction {
+interface ReplayAction {
   expression: Expression;
   scope: Scope | undefined;
 }

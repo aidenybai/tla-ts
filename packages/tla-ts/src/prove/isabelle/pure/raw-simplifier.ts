@@ -8,7 +8,7 @@ import { TlaIsabelleError } from "../../../errors";
 import { etaContract } from "./envir";
 import { symmetricThm } from "./drule";
 import { destEquals, isEquals, occs, stripImpConcl, stripImpPrems } from "./logic";
-import { deleteTermSafe, emptyNet, insertNet, keyOfTerm, type Net } from "./net";
+import { emptyNet, insertNet, keyOfTerm, type Net } from "./net";
 import { isFirstOrder, isPattern, matches } from "./pattern";
 import { emptyTable, type Table } from "./table";
 import { emptyTEnv } from "./envir";
@@ -118,11 +118,7 @@ const hasNewTVar = (type: Typ, keys: ReadonlySet<string>): boolean => {
 
 // rewrite_rule_extra_vars: whether the right-hand sides have variables outside the left-hand side
 // and the premises.
-export const rewriteRuleExtraVars = (
-  prems: readonly Term[],
-  elhs: Term,
-  erhss: readonly Term[],
-) => {
+const rewriteRuleExtraVars = (prems: readonly Term[], elhs: Term, erhss: readonly Term[]) => {
   const terms = [elhs, ...prems];
   const vars = terms.flatMap(varsOf);
   const tvars = new Set<string>();
@@ -205,7 +201,7 @@ interface Decomposed {
   readonly perm: boolean;
 }
 
-export const decompSimp = (thm: Thm): Decomposed => {
+const decompSimp = (thm: Thm): Decomposed => {
   const prems = stripImpPrems(thm.prop);
   const concl = stripImpConcl(thm.prop);
   if (!isEquals(concl)) throw new TlaIsabelleError("ERROR", "Rewrite rule not a meta-equality");
@@ -293,22 +289,11 @@ export const insertRrule = (raw: RawRrule, simpset: Simpset): Simpset => {
   return rules === undefined ? simpset : { ...simpset, rules };
 };
 
-export const delRrule = (raw: RawRrule, simpset: Simpset): Simpset => {
-  const rrule = mkRrule2(raw.thm, raw.lhs, raw.elhs, raw.perm);
-  return { ...simpset, rules: deleteTermSafe(eqRrule, rrule.elhs, rrule, simpset.rules) };
-};
-
 export const addSimps = (context: SimpContext, thms: readonly Thm[]): Simpset =>
   thms
     .flatMap((thm) => context.simpset.mkRews.mk(thm, context))
     .flatMap((rew) => mkRrule(context, rew))
     .reduce((simpset, raw) => insertRrule(raw, simpset), context.simpset);
-
-export const delSimps = (context: SimpContext, thms: readonly Thm[]): Simpset =>
-  thms
-    .flatMap((thm) => context.simpset.mkRews.mk(thm, context))
-    .flatMap((rew) => mkRrule(context, rew))
-    .reduce((simpset, raw) => delRrule(raw, simpset), context.simpset);
 
 // mk_procrule: the rewrite rule a simplification procedure proves.
 export const mkProcrule = (thm: Thm): Rrule[] => {

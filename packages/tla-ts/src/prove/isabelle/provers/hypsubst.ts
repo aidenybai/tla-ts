@@ -16,7 +16,6 @@ import {
   every,
   firstGoal,
   noTac,
-  orElseGoal,
   repeatDetermN,
   repeatDeterm1,
   subgoal,
@@ -73,7 +72,7 @@ export interface HypsubstData {
   readonly thinRefl: Thm;
 }
 
-export interface HypsubstContext {
+interface HypsubstContext {
   readonly limits: Limits;
   readonly data: HypsubstData;
 }
@@ -366,13 +365,6 @@ export const hypSubstTac =
         genHypSubstTac(context, false),
         varsGenHypSubstTac(context, false),
       ])(index),
-    );
-
-export const boundHypSubstTac =
-  (context: HypsubstContext): GoalTactic =>
-  (index) =>
-    repeatDeterm1(
-      orElseGoal(genHypSubstTac(context, true), varsGenHypSubstTac(context, true))(index),
     );
 
 const reverseNTac = (context: HypsubstContext, count: number, index: number): Tactic =>

@@ -50,12 +50,12 @@ import { proverTac, type IntuitionisticContext } from "../tools/intuitionistic";
 import { insertTac } from "./proof";
 import type { OuterToken } from "./theory";
 
-export interface Modifier {
+interface Modifier {
   readonly kind: "intro" | "dest";
   readonly facts: readonly string[];
 }
 
-export type MethodText =
+type MethodText =
   | {
       readonly kind: "auto" | "blast" | "force" | "clarsimp";
       readonly modifiers: readonly Modifier[];
@@ -66,7 +66,7 @@ export type MethodText =
   | { readonly kind: "try"; readonly method: MethodText };
 
 // The methods of by: the initial one, and the terminal one that qed runs.
-export interface ProofText {
+interface ProofText {
   readonly initial: MethodText;
   readonly terminal: MethodText | undefined;
 }

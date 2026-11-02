@@ -19,7 +19,7 @@ const FLIPPED_KIND: Record<IneqKind, IneqKind> = { EQ: "EQ", LT: "GT", GT: "LT" 
 export const flipKind = (kind: IneqKind) => FLIPPED_KIND[kind];
 
 // What the solver keeps per Boolean variable, reset when a variable is made or deleted.
-export interface BoolVarHooks {
+interface BoolVarHooks {
   onMk: (boolVar: number) => void;
   onDelete: (boolVar: number) => void;
 }

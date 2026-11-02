@@ -653,7 +653,7 @@ const addFfpair = (dpair: Dpair, envir: Envir, tpairs: readonly Tpair[]): [Envir
     : cleanFfpair({ binders: dpair.binders, left, right }, envir, tpairs);
 };
 
-export interface Unifier {
+interface Unifier {
   readonly envir: Envir;
   readonly tpairs: readonly Tpair[];
 }

@@ -35,7 +35,7 @@ export interface CondMacro {
   weight: number;
 }
 
-export interface QuantifierMacroInfo {
+interface QuantifierMacroInfo {
   readonly condMacros: CondMacro[];
   readonly ngDecls: Set<number>;
   readonly isAuf: boolean;

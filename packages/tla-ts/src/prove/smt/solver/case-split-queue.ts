@@ -115,7 +115,7 @@ class ActivityHeap {
   }
 }
 
-export interface CaseSplitContext {
+interface CaseSplitContext {
   activity: number[];
   getIsSearching(): boolean;
   getRandomValue(): number;

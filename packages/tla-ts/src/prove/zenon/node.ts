@@ -17,7 +17,7 @@ export interface Node {
   branches: Expr[][];
 }
 
-export interface Cons<Item> {
+interface Cons<Item> {
   head: Item;
   tail: Cons<Item> | undefined;
 }

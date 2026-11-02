@@ -16,7 +16,7 @@ export interface Origin {
   variables: number[];
 }
 
-export interface RelationInfo {
+interface RelationInfo {
   reflexive: Origin | undefined;
   symmetric: Origin | undefined;
   transitive: Origin | undefined;

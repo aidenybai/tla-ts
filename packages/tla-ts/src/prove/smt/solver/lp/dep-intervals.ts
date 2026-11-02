@@ -587,24 +587,10 @@ export const intersect = (
 export const setValue = (interval: DepInterval, value: Rational) =>
   setBounds(interval, mkNumeral(value), false, mkNumeral(value), false);
 
-// reset: both bounds infinite, keeping the values, openness, and dependencies.
-export const reset = (interval: DepInterval) => {
-  interval.isLowerInf = true;
-  interval.isUpperInf = true;
-};
-
 export const setZeroIntervalDepsForMult = (interval: DepInterval) => {
   interval.lowerDep = mkJoin(interval.lowerDep, interval.upperDep);
   interval.upperDep = interval.lowerDep;
 };
-
-export const isZero = (interval: DepInterval) =>
-  !interval.isLowerInf &&
-  !interval.isUpperInf &&
-  !interval.isLowerOpen &&
-  !interval.isUpperOpen &&
-  interval.lower.isZero() &&
-  interval.upper.isZero();
 
 export const isEmpty = (interval: DepInterval) => {
   if (interval.isLowerInf || interval.isUpperInf) return false;

@@ -17,7 +17,7 @@ import {
   type Thm,
 } from "./thm";
 
-export type Conversion = (term: Term) => Thm;
+type Conversion = (term: Term) => Thm;
 
 const isReflexive = (eq: Thm) => {
   const [lhs, rhs] = destEquals(eq.prop);

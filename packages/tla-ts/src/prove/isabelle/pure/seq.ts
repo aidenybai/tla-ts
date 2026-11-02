@@ -91,12 +91,6 @@ export const mappSeq = <Item, Result>(
   return copy(first);
 };
 
-export const interleaveSeq = <Item>(first: Seq<Item>, second: Seq<Item>): Seq<Item> =>
-  deferSeq(() => {
-    const cell = first.pull();
-    return cell === undefined ? second : [cell[0], interleaveSeq(second, cell[1])];
-  });
-
 export const filterSeq = <Item>(predicate: (item: Item) => boolean, seq: Seq<Item>): Seq<Item> => {
   const copy = (current: Seq<Item>): Seq<Item> =>
     makeSeq(() => {
@@ -124,15 +118,6 @@ export const mapsSeq = <Item, Result>(
     return cell === undefined ? undefined : appendSeq(map(cell[0]), mapsSeq(map, cell[1]));
   });
 
-export const mapFilterSeq = <Item, Result>(
-  map: (item: Item) => Result | undefined,
-  seq: Seq<Item>,
-): Seq<Result> =>
-  mapsSeq((item) => {
-    const result = map(item);
-    return result === undefined ? emptySeq : singleSeq(result);
-  }, seq);
-
 // Seq.it_right: accumulates lazily from the right.
 export const itRightSeq = <Item, Result>(
   combine: (item: Item, rest: Seq<Result>) => Seq<Result>,
@@ -146,11 +131,3 @@ export const itRightSeq = <Item, Result>(
     });
   return its(seq);
 };
-
-export const takeSeq = <Item>(count: number, seq: Seq<Item>): Seq<Item> =>
-  count <= 0
-    ? emptySeq
-    : makeSeq(() => {
-        const cell = seq.pull();
-        return cell === undefined ? undefined : [cell[0], takeSeq(count - 1, cell[1])];
-      });

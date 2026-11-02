@@ -20,7 +20,7 @@ import { insertNode, type Priority, type Queue } from "./node";
 import { makeRelationRule, makeRule } from "./proof";
 import { insertAll, makeNode, unequal, type SearchContext, type SearchRule } from "./rules";
 
-export const makeInstance = (
+const makeInstance = (
   exprs: Expressions,
   queue: Queue,
   quantified: Expr,

@@ -1,4 +1,4 @@
-export interface LocalResolution {
+interface LocalResolution {
   kind: "Local";
 }
 
@@ -230,7 +230,7 @@ export type ExceptPathStep =
   | { kind: "Field"; name: string }
   | { kind: "Index"; args: Expression[] };
 
-export interface ExceptUpdate {
+interface ExceptUpdate {
   path: ExceptPathStep[];
   value: Expression;
 }

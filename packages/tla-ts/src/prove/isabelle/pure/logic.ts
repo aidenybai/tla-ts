@@ -3,17 +3,13 @@
 // LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { makeNameContext, variantList, variantNames } from "./name";
+import { variantList } from "./name";
 import {
   aconv,
-  addFreeNames,
   fastypeOf,
   funT,
   funTs,
   incrBoundvars,
-  isDependent,
-  abstractOver,
-  termName,
   mapAtyps,
   mkAbs,
   mkApp,
@@ -24,7 +20,6 @@ import {
   mkVar,
   mayOccur,
   propT,
-  substBounds,
   type App,
   type Term,
   type Typ,
@@ -45,27 +40,12 @@ export interface Binder {
 
 export const allConst = (type: Typ) => mkConst("Pure.all", funT(funT(type, propT), propT));
 
-export const isAll = (term: Term) =>
-  term.kind === "App" &&
-  term.fun.kind === "Const" &&
-  term.fun.name === "Pure.all" &&
-  term.arg.kind === "Abs";
-
 export const listAll = (vars: readonly Binder[], body: Term): Term =>
   vars.reduceRight<Term>(
     (result, variable) =>
       mkApp(allConst(variable.type), mkAbs(variable.name, variable.type, result)),
     body,
   );
-
-// Logic.dependent_all_name
-export const dependentAllName = (name: string, variable: Term, body: Term) => {
-  const abstracted = abstractOver(variable, body);
-  const type = fastypeOf(variable);
-  return isDependent(abstracted)
-    ? mkApp(allConst(type), mkAbs(name === "" ? termName(variable) : name, type, abstracted))
-    : body;
-};
 
 export const mkEquals = (left: Term, right: Term) => {
   const type = fastypeOf(left);
@@ -134,24 +114,12 @@ export const stripPrems = (
 
 export const countPrems = (term: Term) => stripImpPrems(term).length;
 
-export const nthPrem = (index: number, term: Term): Term => {
-  const premise = stripImpPrems(term)[index - 1];
-  if (index < 1 || premise === undefined) throw new TlaIsabelleError("TERM", "nth_prem");
-  return premise;
-};
-
-export const protectConst = mkConst("Pure.prop", funT(propT, propT));
+const protectConst = mkConst("Pure.prop", funT(propT, propT));
 
 export const protect = (term: Term) => mkApp(protectConst, term);
 
 export const isProtected = (term: Term) =>
   term.kind === "App" && term.fun.kind === "Const" && term.fun.name === "Pure.prop";
-
-export const unprotect = (term: Term) => {
-  if (term.kind !== "App" || term.fun.kind !== "Const" || term.fun.name !== "Pure.prop")
-    throw new TlaIsabelleError("TERM", "unprotect");
-  return term.arg;
-};
 
 export const mkTerm = (term: Term) =>
   mkApp(mkConst("Pure.term", funT(fastypeOf(term), propT)), term);
@@ -174,7 +142,7 @@ const incrTVar = (increment: number, type: Typ) =>
       );
 
 // Logic.incr_indexes_operation: lifts the variables over the types and increments their indexes.
-export const incrIndexesFixed = (
+const incrIndexesFixed = (
   fixed: readonly string[],
   types: readonly Typ[],
   increment: number,
@@ -336,17 +304,6 @@ export const flattenParams = (index: number, term: Term) => {
   return listAll(vars, removeParams(vars.length, index, term));
 };
 
-export const listRenameParams = (names: readonly string[], term: Term): Term => {
-  if (isConstApp2(term, "Pure.imp"))
-    return mkImplies(term.fun.arg, listRenameParams(names, term.arg));
-  if (names.length > 0 && isAllAbs(term))
-    return mkApp(
-      term.fun,
-      mkAbs(names[0], term.arg.type, listRenameParams(names.slice(1), term.arg.body)),
-    );
-  return term;
-};
-
 // Logic.strip_assums_imp: strips at most count premises.
 const stripAssumsImp = (count: number, hyps: Term[], term: Term): [Term[], Term] => {
   if (count === 0) return [hyps, term];
@@ -360,15 +317,7 @@ const stripAssumsAll = (params: Binder[], term: Term): [Binder[], Term] =>
     ? stripAssumsAll([{ name: term.arg.name, type: term.arg.type }, ...params], term.arg.body)
     : [params, term];
 
-// Logic.assum_pairs: the disagreement pairs, one for each assumption of the lifted premise.
-export const assumPairs = (count: number, term: Term): [Term, Term][] => {
-  const [params, body] = stripAssumsAll([], term);
-  const [hyps, conclusion] = stripAssumsImp(count, [], body);
-  const target = rlistAbs(params, conclusion);
-  return [...hyps].reverse().map((hyp): [Term, Term] => [rlistAbs(params, hyp), target]);
-};
-
-export interface AssumProblems {
+interface AssumProblems {
   readonly abstract: (term: Term) => Term;
   readonly hyps: Term[];
   readonly conclusion: Term;
@@ -378,25 +327,4 @@ export const assumProblems = (count: number, term: Term): AssumProblems => {
   const [params, body] = stripAssumsAll([], term);
   const [hyps, conclusion] = stripAssumsImp(count, [], body);
   return { abstract: (inner) => rlistAbs(params, inner), hyps: [...hyps].reverse(), conclusion };
-};
-
-// Logic.goal_params
-export const goalParams = (state: Term, index: number): [Term, Term[]] => {
-  const goal = nthPrem(index, state);
-  const params = stripParams(goal);
-  const names = variantNames(
-    params.map((param) => param.name),
-    makeNameContext(addFreeNames(goal, [])),
-  );
-  return [goal, params.map((param, position) => mkFree(names[position], param.type)).reverse()];
-};
-
-export const conclOfGoal = (state: Term, index: number) => {
-  const [goal, frees] = goalParams(state, index);
-  return substBounds(frees, stripAssumsConcl(goal));
-};
-
-export const premsOfGoal = (state: Term, index: number) => {
-  const [goal, frees] = goalParams(state, index);
-  return stripAssumsHyp(goal).map((hyp) => substBounds(frees, hyp));
 };

@@ -32,7 +32,7 @@ import type { Ast } from "./inner-syntax";
 // The name a type parameter carries until it is fixed, as Type_Infer.param does.
 const PARAM_NAME = "?'a";
 
-export interface NameScope {
+interface NameScope {
   readonly consts: ReadonlyMap<string, ConstInfo>;
   // The constant an unqualified name stands for.
   readonly constNames: ReadonlyMap<string, string>;

@@ -90,18 +90,6 @@ export const matchTypes = (pattern: Typ, object: Typ, tyenv: TyEnv): TyEnv | und
   return object.kind === "TFree" && object.name === pattern.name ? tyenv : undefined;
 };
 
-// Type.could_unify
-export const couldUnifyTypes = (left: Typ, right: Typ): boolean => {
-  if (left.kind === "TVar" || right.kind === "TVar") return true;
-  if (left.kind === "Type" && right.kind === "Type")
-    return (
-      left.name === right.name &&
-      left.args.length === right.args.length &&
-      left.args.every((arg, index) => couldUnifyTypes(arg, right.args[index]))
-    );
-  return left.kind === "TFree" && right.kind === "TFree" && left.name === right.name;
-};
-
 // Envir.norm_type: instantiates the assigned type variables, chasing chains.
 export const normType = (tyenv: TyEnv, type: Typ): Typ => {
   if (type.kind === "TFree") return type;

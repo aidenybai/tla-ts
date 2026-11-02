@@ -120,7 +120,7 @@ const pruneParamsTac = (simp: SimpContext): Tactic => {
   );
 };
 
-export const mkAutoTac = (context: ClasimpContext, depth: number, nodupDepth: number): Tactic => {
+const mkAutoTac = (context: ClasimpContext, depth: number, nodupDepth: number): Tactic => {
   const mainTac = orElseGoal(context.blastDepthTac(context.classical, depth), (index) =>
     changed(nodupDepthTac(addss(context), nodupDepth)(index)),
   );

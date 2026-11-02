@@ -3,8 +3,7 @@
 // contributors, see LICENSE.
 
 // Symbol.explode: \<name> symbols count as one symbol.
-export const explodeSymbols = (text: string): string[] =>
-  text.match(/\\<\^?[A-Za-z0-9_']*>|[^]/gu) ?? [];
+const explodeSymbols = (text: string): string[] => text.match(/\\<\^?[A-Za-z0-9_']*>|[^]/gu) ?? [];
 
 const isRawSymbolic = (symbol: string) => symbol.startsWith("\\<") && !symbol.startsWith("\\<^");
 
@@ -91,17 +90,6 @@ export const variantNames = (names: readonly string[], context: NameContext) => 
 
 export const variantList = (used: readonly string[], names: readonly string[]) =>
   variantNames(names, makeNameContext(used));
-
-// Name.invent: count fresh names starting from name.
-export const inventNames = (context: NameContext, name: string, count: number) => {
-  const names: string[] = [];
-  let current = cleanName(name);
-  while (names.length < count) {
-    if (!context.has(current)) names.push(current);
-    current = bumpString(current);
-  }
-  return names;
-};
 
 // Name.is_bound and Name.bound: the names of loose bound variables in nets and printing.
 // Name.is_bound: the names the simplifier gives the free variables standing for bound ones.

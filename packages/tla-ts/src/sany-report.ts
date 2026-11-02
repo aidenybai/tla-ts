@@ -15,7 +15,7 @@ import { formatSanyLocation, type SanyMessage } from "./sany-nodes";
 import { getUnboxedSource } from "./sany-source";
 import type { TlcVersion } from "./tlc-version";
 
-export interface SanyReport {
+interface SanyReport {
   text: string;
   isFailed: boolean;
   // The specification SANY analyzes, which has errors when SANY rejects it.

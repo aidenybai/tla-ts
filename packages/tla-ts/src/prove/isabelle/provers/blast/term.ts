@@ -169,7 +169,7 @@ export const blastAconv = (left: BlastTerm, right: BlastTerm): boolean => {
 const blastAconvs = (lefts: readonly BlastTerm[], rights: readonly BlastTerm[]) =>
   lefts.length === rights.length && lefts.every((left, index) => blastAconv(left, rights[index]));
 
-export const memTerm = (term: BlastTerm, terms: readonly BlastTerm[]) =>
+const memTerm = (term: BlastTerm, terms: readonly BlastTerm[]) =>
   terms.some((other) => blastAconv(term, other));
 
 export const insTerm = (term: BlastTerm, terms: readonly BlastTerm[]) =>
@@ -178,7 +178,7 @@ export const insTerm = (term: BlastTerm, terms: readonly BlastTerm[]) =>
 export const sameVars = (left: readonly VarRef[], right: readonly VarRef[]) =>
   left.length === right.length && left.every((ref, index) => ref === right[index]);
 
-export const memVar = (ref: VarRef, refs: readonly VarRef[]) => refs.includes(ref);
+const memVar = (ref: VarRef, refs: readonly VarRef[]) => refs.includes(ref);
 
 const insVar = (ref: VarRef, refs: readonly VarRef[]) =>
   memVar(ref, refs) ? refs : [ref, ...refs];
@@ -525,8 +525,7 @@ export const toTerm = (depth: number, term: BlastTerm): Term => {
   }
 };
 
-export const stripTrueprop = (trueprop: string, term: BlastTerm) =>
-  destConstApp(term, trueprop) ?? term;
+const stripTrueprop = (trueprop: string, term: BlastTerm) => destConstApp(term, trueprop) ?? term;
 
 // A1 ==> ... ==> An ==> B goes to [A1, ..., An], where B is not an implication.
 export const stripBlastImpPrems = (trueprop: string, term: BlastTerm): BlastTerm[] =>

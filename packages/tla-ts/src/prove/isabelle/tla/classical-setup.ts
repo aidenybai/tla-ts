@@ -37,7 +37,7 @@ const destBinary = (name: string, term: Term): [Term, Term] => {
   throw new TlaIsabelleError("TERM", `dest ${name}`);
 };
 
-export const destTrueprop = (term: Term): Term => {
+const destTrueprop = (term: Term): Term => {
   if (
     term.kind === "App" &&
     term.fun.kind === "Const" &&

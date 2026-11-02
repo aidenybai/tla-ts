@@ -1,4 +1,4 @@
-export interface OptionSpec {
+interface OptionSpec {
   flag: string;
   isRequired?: boolean;
   isRepeatable?: boolean;

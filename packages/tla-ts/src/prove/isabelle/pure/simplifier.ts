@@ -48,7 +48,7 @@ const singleProver =
     solveAllTac(solvers, context)(thm).pull()?.[0];
 
 // generic_simp_tac
-export const genericSimpTac =
+const genericSimpTac =
   (isSafe: boolean, mode: RewriteMode) =>
   (context: SimpContext): GoalTactic =>
   (index) => {
@@ -62,10 +62,7 @@ export const genericSimpTac =
       );
     return preferGoal(simpLoopTac(1))(index);
   };
-
-export const simpTac = genericSimpTac(false, { simprem: false, useprem: false, mutsimp: false });
 export const asmSimpTac = genericSimpTac(false, { simprem: false, useprem: true, mutsimp: false });
-export const fullSimpTac = genericSimpTac(false, { simprem: true, useprem: false, mutsimp: false });
 export const asmLrSimpTac = genericSimpTac(false, { simprem: true, useprem: true, mutsimp: false });
 export const asmFullSimpTac = genericSimpTac(false, {
   simprem: true,
@@ -79,16 +76,13 @@ export const safeAsmFullSimpTac = genericSimpTac(true, {
 });
 
 // Simplifier.simp_thm: simplifies a theorem's proposition.
-export const simpThm = (mode: RewriteMode, context: SimpContext, thm: Thm): Thm => {
+const simpThm = (mode: RewriteMode, context: SimpContext, thm: Thm): Thm => {
   const prover = singleProver([...context.simpset.unsafeSolvers].reverse());
   return fconvRule((term) => rewriteCterm(mode, prover, context, term), thm);
 };
 
 export const simplify = (context: SimpContext, thm: Thm) =>
   simpThm({ simprem: false, useprem: false, mutsimp: false }, context, thm);
-
-export const fullSimplify = (context: SimpContext, thm: Thm) =>
-  simpThm({ simprem: true, useprem: false, mutsimp: false }, context, thm);
 
 // Raw_Simplifier.norm_hhf: moves the quantifiers of a theorem left of its implications, then makes
 // the outermost ones schematic. Drule.sort_constraint_eq, the other rule of hhf_ss, never applies:

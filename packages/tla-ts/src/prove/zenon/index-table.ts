@@ -45,7 +45,7 @@ const getLatestFirst = <Key, Value>(table: Map<Key, Value[]>, key: Key) =>
   [...(table.get(key) ?? [])].reverse();
 
 // Zenon's head of a term, or undefined for No_head. Taus and metavariables are heads by identity.
-export type Head = string | Expr;
+type Head = string | Expr;
 
 export const getHead = (expression: Expr): Head | undefined => {
   switch (expression.kind) {

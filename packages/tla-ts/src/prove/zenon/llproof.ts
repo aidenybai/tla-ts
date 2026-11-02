@@ -53,7 +53,7 @@ export const connect = (exprs: Expressions, connective: Connective, left: Expr, 
         ? exprs.eimply(left, right)
         : exprs.eequiv(left, right);
 
-export const getLemma = (lemmas: Map<string, Lemma>, name: string) => {
+const getLemma = (lemmas: Map<string, Lemma>, name: string) => {
   const lemma = lemmas.get(name);
   if (lemma === undefined) throw new TlaZenonError(`Zenon: no lemma ${name}`);
   return lemma;

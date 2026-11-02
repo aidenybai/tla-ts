@@ -7,7 +7,7 @@
 import { TlaIsabelleError } from "../../../errors";
 import { funT, mkType, propT, type Typ } from "../pure/term";
 
-export const TLA_TYPE = mkType("PredicateLogic.c");
+const TLA_TYPE = mkType("PredicateLogic.c");
 
 // A parsed term before names resolve and types are inferred. A name is a bound or free variable
 // or a constant; a constant comes from notation.

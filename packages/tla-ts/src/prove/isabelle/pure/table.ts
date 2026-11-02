@@ -175,12 +175,6 @@ export const tableEntries = <Key, Value>(table: Table<Key, Value>) =>
     [],
   );
 
-export const tableSize = <Key, Value>(table: Table<Key, Value>): number => {
-  const count = (node: Node<Key, Value>): number =>
-    node ? 1 + count(node.left) + count(node.right) : 0;
-  return count(table.root);
-};
-
 // fast_string_ord: shorter strings first, then by code units.
 export const fastStringOrd = (left: string, right: string) =>
   left === right
@@ -191,8 +185,7 @@ export const fastStringOrd = (left: string, right: string) =>
         ? -1
         : 1;
 
-export const stringOrd = (left: string, right: string) =>
-  left === right ? 0 : left < right ? -1 : 1;
+const stringOrd = (left: string, right: string) => (left === right ? 0 : left < right ? -1 : 1);
 
 export interface IndexKey {
   readonly name: string;

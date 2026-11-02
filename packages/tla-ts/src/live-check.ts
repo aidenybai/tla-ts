@@ -49,7 +49,7 @@ export interface LivenessChecker {
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
 }
 
-export interface LiveGraph {
+interface LiveGraph {
   getFingerprint: (successor: LiveSuccessor) => number;
   getSuccessors: (index: number, state: Value[]) => LiveSuccessor[];
 }

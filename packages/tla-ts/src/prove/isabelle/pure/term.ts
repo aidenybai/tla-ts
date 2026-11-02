@@ -55,14 +55,8 @@ export type Term =
   | TermOf<"App", "fun" | "arg" | "loose" | "maxidx" | "flags">;
 
 export type Var = Extract<Term, { kind: "Var" }>;
-export type Abs = Extract<Term, { kind: "Abs" }>;
+type Abs = Extract<Term, { kind: "Abs" }>;
 export type App = Extract<Term, { kind: "App" }>;
-export type TVar = Extract<Typ, { kind: "TVar" }>;
-
-export interface Indexname {
-  readonly name: string;
-  readonly index: number;
-}
 
 export const HAS_VAR = 1;
 export const HAS_REDEX = 2;
@@ -86,7 +80,7 @@ export const maxidxOfTerm = (term: Term, maxidx = -1): number => {
 };
 
 // The bound on loose bound variables: every one is below it.
-export const looseOf = (term: Term) =>
+const looseOf = (term: Term) =>
   term.kind === "Bound"
     ? term.index + 1
     : term.kind === "App" || term.kind === "Abs"
@@ -208,19 +202,6 @@ export const funT = (domain: Typ, range: Typ) => mkType("fun", [domain, range]);
 export const funTs = (domains: readonly Typ[], range: Typ) =>
   domains.reduceRight((result, domain) => funT(domain, result), range);
 
-export const isFunType = (type: Typ) => type.kind === "Type" && type.name === "fun";
-
-export const domainType = (type: Typ) => {
-  if (type.kind !== "Type" || type.name !== "fun")
-    throw new TlaIsabelleError("TYPE", "domain_type");
-  return type.args[0];
-};
-
-export const rangeType = (type: Typ) => {
-  if (type.kind !== "Type" || type.name !== "fun") throw new TlaIsabelleError("TYPE", "range_type");
-  return type.args[1];
-};
-
 export const binderTypes = (type: Typ): Typ[] => {
   const types: Typ[] = [];
   let current = type;
@@ -302,18 +283,6 @@ export const headOf = (term: Term): Term => {
   return current;
 };
 
-export const argsOf = (term: Term) => stripComb(term)[1];
-
-export const stripAbs = (term: Term): [{ name: string; type: Typ }[], Term] => {
-  const vars: { name: string; type: Typ }[] = [];
-  let current = term;
-  while (current.kind === "Abs") {
-    vars.push({ name: current.name, type: current.type });
-    current = current.body;
-  }
-  return [vars, current];
-};
-
 export const stripAbsBody = (term: Term): Term =>
   term.kind === "Abs" ? stripAbsBody(term.body) : term;
 
@@ -328,7 +297,7 @@ export const sizeOfTerm = (term: Term): number => {
   }
 };
 
-export const isAllConst = (term: Term) => term.kind === "Const" && term.name === "Pure.all";
+const isAllConst = (term: Term) => term.kind === "Const" && term.name === "Pure.all";
 
 export const stripAllBody = (term: Term): Term =>
   term.kind === "App" && isAllConst(term.fun) && term.arg.kind === "Abs"
@@ -366,13 +335,13 @@ const incrBvAt = (increment: number, level: number, term: Term): Term => {
   }
 };
 
-export const incrBv = (increment: number, level: number, term: Term) =>
+const incrBv = (increment: number, level: number, term: Term) =>
   increment === 0 ? term : incrBvAt(increment, level, term);
 
 export const incrBoundvars = (increment: number, term: Term) => incrBv(increment, 0, term);
 
 // loose_bvar: whether term has a loose bound variable at level or beyond.
-export const looseBvar = (term: Term, level: number) => looseOf(term) > level;
+const looseBvar = (term: Term, level: number) => looseOf(term) > level;
 
 export const looseBvar1 = (term: Term, level: number): boolean => {
   if (looseOf(term) <= level) return false;
@@ -542,14 +511,6 @@ export const termName = (term: Term) =>
       ? term.name
       : "uu";
 
-export const lambdaName = (name: string, variable: Term, body: Term) =>
-  mkAbs(name === "" ? termName(variable) : name, fastypeOf(variable), abstractOver(variable, body));
-
-export const lambda = (variable: Term, body: Term) => lambdaName("", variable, body);
-
-export const absfree = (name: string, type: Typ, body: Term) =>
-  mkAbs(name, type, abstractOver(mkFree(name, type), body));
-
 export const mapTypes = (mapType: (type: Typ) => Typ, term: Term): Term => {
   const visit = (current: Term): Term => {
     switch (current.kind) {
@@ -579,18 +540,7 @@ export const mapAtyps = (mapAtyp: (type: Typ) => Typ, type: Typ): Typ => {
   return args.every((arg, index) => arg === type.args[index]) ? type : mkType(type.name, args);
 };
 
-export const mapAterms = (mapAterm: (term: Term) => Term, term: Term): Term => {
-  switch (term.kind) {
-    case "Abs":
-      return updateAbs(term, mapAterms(mapAterm, term.body));
-    case "App":
-      return updateApp(term, mapAterms(mapAterm, term.fun), mapAterms(mapAterm, term.arg));
-    default:
-      return mapAterm(term);
-  }
-};
-
-export const foldAterms = <State>(
+const foldAterms = <State>(
   visit: (term: Term, state: State) => State,
   term: Term,
   state: State,
@@ -660,10 +610,6 @@ export const existsSubterm = (predicate: (term: Term) => boolean, term: Term): b
   return false;
 };
 
-export const existsSubtype = (predicate: (type: Typ) => boolean, type: Typ): boolean =>
-  predicate(type) ||
-  (type.kind === "Type" && type.args.some((arg) => existsSubtype(predicate, arg)));
-
 export const existsType = (predicate: (type: Typ) => boolean, term: Term): boolean => {
   switch (term.kind) {
     case "Const":
@@ -679,9 +625,6 @@ export const existsType = (predicate: (type: Typ) => boolean, term: Term): boole
   }
 };
 
-export const eqIndexname = (left: Indexname, right: Indexname) =>
-  left.index === right.index && left.name === right.name;
-
 const sameVar = (left: Var, right: Var) =>
   left.name === right.name && left.index === right.index && eqTyp(left.type, right.type);
 
@@ -694,25 +637,6 @@ export const addVars = (term: Term, vars: Var[]): Var[] =>
     vars,
   );
 
-export const addTVarsT = (type: Typ, tvars: TVar[]): TVar[] =>
-  foldAtyps(
-    (current, result: TVar[]) =>
-      current.kind === "TVar" &&
-      !result.some(
-        (other) =>
-          other.name === current.name &&
-          other.index === current.index &&
-          eqSort(other.sort, current.sort),
-      )
-        ? [current, ...result]
-        : result,
-    type,
-    tvars,
-  );
-
-export const addTVars = (term: Term, tvars: TVar[]) =>
-  foldTypes((type, result: TVar[]) => addTVarsT(type, result), term, tvars);
-
 export const addFreeNames = (term: Term, names: string[]): string[] =>
   foldAterms(
     (current, result: string[]) =>
@@ -723,39 +647,8 @@ export const addFreeNames = (term: Term, names: string[]): string[] =>
     names,
   );
 
-export const addFrees = (term: Term, frees: Term[]): Term[] =>
-  foldAterms(
-    (current, result: Term[]) =>
-      current.kind === "Free" && !result.some((other) => aconv(other, current))
-        ? [current, ...result]
-        : result,
-    term,
-    frees,
-  );
-
-export const addTFreeNames = (term: Term, names: string[]): string[] =>
-  foldTypes(
-    (type, result: string[]) =>
-      foldAtyps(
-        (current, inner: string[]) =>
-          current.kind === "TFree" && !inner.includes(current.name)
-            ? [current.name, ...inner]
-            : inner,
-        type,
-        result,
-      ),
-    term,
-    names,
-  );
-
-export const isSchematic = (term: Term) => maxidxOfTerm(term) >= 0;
-
 // match_bvs: the pairs of corresponding abstraction names while two terms look alike.
-export const matchBvs = (
-  left: Term,
-  right: Term,
-  pairs: [string, string][],
-): [string, string][] => {
+const matchBvs = (left: Term, right: Term, pairs: [string, string][]): [string, string][] => {
   if (left.kind === "Abs" && right.kind === "Abs") {
     const added: [string, string][] =
       left.name !== "" && right.name !== "" ? [[left.name, right.name], ...pairs] : pairs;
@@ -769,7 +662,7 @@ export const matchBvs = (
 export const matchBvars = (left: Term, right: Term, pairs: [string, string][]) =>
   matchBvs(stripAbsBody(left), stripAbsBody(right), pairs);
 
-export const mapAbsVars = (rename: (name: string) => string, term: Term): Term => {
+const mapAbsVars = (rename: (name: string) => string, term: Term): Term => {
   switch (term.kind) {
     case "Abs": {
       const name = rename(term.name);
@@ -792,17 +685,4 @@ export const renameAbs = (pattern: Term, object: Term, term: Term): Term | undef
   if ([...renaming].every(([from, to]) => from === to)) return undefined;
   const renamed = mapAbsVars((name) => renaming.get(name) ?? name, term);
   return renamed === term ? undefined : renamed;
-};
-
-// subst_free: replaces subterms by the first pair whose left side they equal.
-export const substFree = (pairs: readonly [Term, Term][], term: Term): Term => {
-  if (pairs.length === 0) return term;
-  const visit = (current: Term): Term => {
-    const pair = pairs.find(([from]) => aconv(from, current));
-    if (pair) return pair[1];
-    if (current.kind === "Abs") return updateAbs(current, visit(current.body));
-    if (current.kind === "App") return updateApp(current, visit(current.fun), visit(current.arg));
-    return current;
-  };
-  return visit(term);
 };

@@ -30,7 +30,7 @@ import {
   type BlastTerm,
 } from "./term";
 
-export const negate = (state: BlastState, term: BlastTerm) =>
+const negate = (state: BlastState, term: BlastTerm) =>
   mkBlastApp(mkBlastConst(state.context.data.notName), term);
 
 // Converts a *Goal* to an ordinary negation.

@@ -567,12 +567,12 @@ export const forEachBinding = (
   visit: (scope: Scope | undefined) => boolean,
 ) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
-export const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
+const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
   const sets = bounds.map((bound) => evaluate(bound.set, context));
   return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
 };
 
-export const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value) => {
+const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value) => {
   if (bounds.length === 1) return bindPattern(scope, bounds[0].pattern, argument);
   const components = getSequenceElements(argument) ?? [];
   return bounds.reduce<Scope | undefined>(
