@@ -3,16 +3,10 @@
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/ctx";
-import {
-  shiftExpr,
-  type Bound,
-  type Builtin,
-  type Expr,
-  type Hyp,
-  type Sequent,
-} from "../../obligations/expression";
+import type { Bound, Builtin, Expr, Hyp, Sequent } from "../../obligations/expression";
 import { format, formatDelimited, renderDoc, text, type Doc } from "../../obligations/format";
 import { pickle } from "../../obligations/pickle";
+import { getUnprintableError, printFact, splitFirstBound } from "../first-order";
 
 const SPACE = format("@ ");
 
@@ -76,17 +70,6 @@ const OPERATORS: Partial<Record<Builtin, [string, number]>> = {
   ToString: ["TLA.ToString", 1],
 };
 
-// The temporal operators Zenon has no counterpart for, by the name tlapm reports.
-const TEMPORAL_OPERATORS: Partial<Record<Builtin, [string, number]>> = {
-  Leadsto: ["Leadsto", 2],
-  ENABLED: ["ENABLED", 1],
-  Cdot: ["\\cdot", 2],
-  Actplus: ["-+->", 2],
-  BoxTrue: ["[]", 1],
-  BoxFalse: ["[]", 1],
-  Diamond: ["<>", 1],
-};
-
 const getSuccessors = (integer: string) => {
   const count = Number.parseInt(integer, 10);
   return `${"(TLA.fapply TLA.Succ ".repeat(count)}0${")".repeat(count)}`;
@@ -139,12 +122,7 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
       }
     }
     if (builtin === "Unprimable" && args.length === 1) return printExpr(args[0]);
-    const isFrontend = builtin === "Prime" || builtin === "StrongPrime" || builtin === "UNCHANGED";
-    if (isFrontend && args.length === 1) throw new TlapmBugError();
-    const temporal = TEMPORAL_OPERATORS[builtin];
-    if (temporal && temporal[1] === args.length)
-      throw new TlaProverError(`Unsupported operator \`${temporal[0]}\`.\n`);
-    throw new TlaProverError("Backend.Zenon.fmt_apply");
+    throw getUnprintableError(builtin, args.length, "Backend.Zenon.fmt_apply");
   };
 
   const printApply = (operator: Expr, args: Expr[]): Doc => {
@@ -171,41 +149,18 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
     }
   };
 
-  // The first bound binds around a quantifier over the others, which move under it.
   const printQuant = (quantifier: "Forall" | "Exists", bounds: Bound[], body: Expr): Doc => {
     if (bounds.length === 0) return printExpr(body);
-    const bound = bounds[0];
-    const rest = bounds.slice(1);
-    const undittoed =
-      rest[0]?.domain.kind === "Ditto"
-        ? [{ ...rest[0], domain: bound.domain }, ...rest.slice(1)]
-        : rest;
-    const inner: Expr =
-      undittoed.length === 0
-        ? body
-        : {
-            kind: "Quant",
-            quantifier,
-            bounds: undittoed.map((other) =>
-              other.domain.kind === "Domain"
-                ? {
-                    ...other,
-                    domain: { kind: "Domain", expression: shiftExpr(1, other.domain.expression) },
-                  }
-                : other,
-            ),
-            body,
-            location: body.location,
-          };
+    const split = splitFirstBound(quantifier, bounds, body);
     const isForall = quantifier === "Forall";
-    if (bound.domain.kind === "NoDomain")
-      return printBinder(bound.name, text(isForall ? "(A. " : "(E. "), inner, ")");
-    if (bound.domain.kind !== "Domain") throw new TlapmBugError();
-    const domain = printExpr(bound.domain.expression);
+    if (split.first.domain.kind === "NoDomain")
+      return printBinder(split.first.name, text(isForall ? "(A. " : "(E. "), split.inner, ")");
+    if (split.first.domain.kind !== "Domain") throw new TlapmBugError();
+    const domain = printExpr(split.first.domain.expression);
     return printBinder(
-      bound.name,
+      split.first.name,
       format("(%s %a ", isForall ? "TLA.bAll" : "TLA.bEx", domain),
-      inner,
+      split.inner,
       ")",
     );
   };
@@ -385,18 +340,6 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
     }
   };
 
-  // tlapm prints a fact to a formatter that drops its output first, to omit an unsupported one.
-  const getFactDoc = (expression: Expr) => {
-    const depth = context.stack.length;
-    try {
-      return printExpr(expression);
-    } catch (error) {
-      if (!(error instanceof TlaUnsupportedError)) throw error;
-      popNames(context, context.stack.length - depth);
-      return error;
-    }
-  };
-
   const printHyp = (hyp: Hyp): Doc => {
     switch (hyp.kind) {
       case "Fresh": {
@@ -416,7 +359,10 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
       }
       case "Fact": {
         const count = String(context.stack.length);
-        const fact = hyp.visibility === "Visible" ? getFactDoc(hyp.expression) : undefined;
+        const fact =
+          hyp.visibility === "Visible"
+            ? printFact(context, () => printExpr(hyp.expression))
+            : undefined;
         bump();
         if (fact instanceof TlaUnsupportedError)
           return format("; omitted temporal assumption : %s @.", fact.message);

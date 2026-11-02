@@ -3,14 +3,9 @@
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/ctx";
-import {
-  shiftExpr,
-  type Bound,
-  type Builtin,
-  type Expr,
-  type Sequent,
-} from "../../obligations/expression";
+import type { Bound, Builtin, Expr, Sequent } from "../../obligations/expression";
 import { pickle } from "../../obligations/pickle";
+import { getUnprintableError, printFact, splitFirstBound } from "../first-order";
 
 const cook = (name: string) => `is${pickle(name)}`;
 
@@ -85,17 +80,6 @@ const NONFIX: Partial<Record<Builtin, [string, number]>> = {
   ToString: ["ToString", 1],
 };
 
-// The temporal operators Isabelle/TLA+ has no counterpart for, by the name tlapm reports.
-const TEMPORAL: Partial<Record<Builtin, [string, number]>> = {
-  Leadsto: ["Leadsto", 2],
-  ENABLED: ["ENABLED", 1],
-  Cdot: ["\\cdot", 2],
-  Actplus: ["-+->", 2],
-  BoxTrue: ["[]", 1],
-  BoxFalse: ["[]", 1],
-  Diamond: ["<>", 1],
-};
-
 // thy_header's tdoms_table: the operators the theory declares, with their arities.
 const DECLARED: [string, number][] = [
   ["Real", 0],
@@ -162,12 +146,7 @@ const printLemma = (sequent: Sequent) => {
     if (builtin === "Unprimable" && args.length === 1) return printExpr(args[0]);
     // tlapm prints an irregular expression as the hash of its TLA+ text, but never makes one.
     if (builtin === "Irregular" && args.length === 1) throw new TlaUnsupportedError("Irregular");
-    const isFrontend = builtin === "Prime" || builtin === "StrongPrime" || builtin === "UNCHANGED";
-    if (isFrontend && args.length === 1) throw new TlapmBugError();
-    const temporal = TEMPORAL[builtin];
-    if (temporal && temporal[1] === args.length)
-      throw new TlaProverError(`Unsupported operator \`${temporal[0]}\`.\n`);
-    throw new TlaProverError("Backend.Isabelle.pp_apply");
+    throw getUnprintableError(builtin, args.length, "Backend.Isabelle.pp_apply");
   };
 
   const printApply = (operator: Expr, args: Expr[]): string => {
@@ -195,40 +174,17 @@ const printLemma = (sequent: Sequent) => {
     }
   };
 
-  // The first bound binds around a quantifier over the others, which move under it.
   const printQuant = (quantifier: "Forall" | "Exists", bounds: Bound[], body: Expr): string => {
     if (bounds.length === 0) return formatExpr(body);
-    const bound = bounds[0];
-    const rest = bounds.slice(1);
-    const undittoed =
-      rest[0]?.domain.kind === "Ditto"
-        ? [{ ...rest[0], domain: bound.domain }, ...rest.slice(1)]
-        : rest;
-    const inner: Expr =
-      undittoed.length === 0
-        ? body
-        : {
-            kind: "Quant",
-            quantifier,
-            bounds: undittoed.map((other) =>
-              other.domain.kind === "Domain"
-                ? {
-                    ...other,
-                    domain: { kind: "Domain", expression: shiftExpr(1, other.domain.expression) },
-                  }
-                : other,
-            ),
-            body,
-            location: body.location,
-          };
+    const split = splitFirstBound(quantifier, bounds, body);
     const symbol = quantifier === "Forall" ? "\\<forall>" : "\\<exists>";
-    if (bound.domain.kind === "NoDomain")
-      return withBound(bound.name, (name) => `${symbol}${name} : ${printExpr(inner)}`);
-    if (bound.domain.kind !== "Domain") throw new TlapmBugError();
-    const domain = printExpr(bound.domain.expression);
+    if (split.first.domain.kind === "NoDomain")
+      return withBound(split.first.name, (name) => `${symbol}${name} : ${printExpr(split.inner)}`);
+    if (split.first.domain.kind !== "Domain") throw new TlapmBugError();
+    const domain = printExpr(split.first.domain.expression);
     return withBound(
-      bound.name,
-      (name) => `${symbol} ${name} \\<in> ${domain} : ${printExpr(inner)}`,
+      split.first.name,
+      (name) => `${symbol} ${name} \\<in> ${domain} : ${printExpr(split.inner)}`,
     );
   };
 
@@ -394,18 +350,6 @@ const printLemma = (sequent: Sequent) => {
     }
   };
 
-  // tlapm prints a fact to a formatter that drops its output first, to omit an unsupported one.
-  const getFact = (expression: Expr) => {
-    const depth = context.stack.length;
-    try {
-      return printExpr(expression);
-    } catch (error) {
-      if (!(error instanceof TlaUnsupportedError)) throw error;
-      popNames(context, context.stack.length - depth);
-      return error;
-    }
-  };
-
   // pp_print_sequent_outer: the obligation's sequent as the fixes, assumes and shows of a lemma. A
   // pragma's definition ends it, without the goal.
   const printSequent = (sequent: Sequent) => {
@@ -429,7 +373,10 @@ const printLemma = (sequent: Sequent) => {
         }
         case "Fact": {
           const count = context.stack.length;
-          const fact = hyp.visibility === "Visible" ? getFact(hyp.expression) : undefined;
+          const fact =
+            hyp.visibility === "Visible"
+              ? printFact(context, () => printExpr(hyp.expression))
+              : undefined;
           bump();
           if (fact instanceof TlaUnsupportedError) {
             lines.push(`(* omitted temporal assumption : ${fact.message} *)`);
