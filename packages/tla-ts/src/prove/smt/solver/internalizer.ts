@@ -430,19 +430,20 @@ export abstract class Internalizer {
 
   // get_generation: the generation of the congruence root. Equalities have generation 0, since
   // patterns have no equalities.
-  getGeneration(node: Enode) {
-    return node.isEq ? 0 : this.getCgRoot(node).generation;
+  getGeneration(node: number) {
+    return this.enodeStore.isEq(node) ? 0 : this.enodeStore.generation[this.getCgRoot(node)];
   }
 
   // get_cg_root: a node's cg can be stale, so a node that is not a congruence root looks the root up.
-  private getCgRoot(node: Enode) {
-    if (!node.usesCgTable() || node.isCgr()) return node;
-    const found = this.cgTable.findCongruent(node.id);
-    return found === -1 ? node : this.enodeStore.nodes[found];
+  private getCgRoot(node: number) {
+    const store = this.enodeStore;
+    if (store.cg[node] === node || !store.usesCgTable(node)) return node;
+    const found = this.cgTable.findCongruent(node);
+    return found === -1 ? node : found;
   }
 
   private setGeneration(node: Enode, generation: number) {
-    if (!node.isEq) this.getCgRoot(node).generation = generation;
+    if (!node.isEq) this.enodeStore.generation[this.getCgRoot(node.id)] = generation;
   }
 
   private undoMergeCgcGenerations(
@@ -709,7 +710,7 @@ export abstract class Internalizer {
   // undoing a merge of the class keeps it.
   private updateGeneration(node: Enode) {
     if (node.isEq) return;
-    if (this.generation > 0 && this.generation < this.getGeneration(node)) {
+    if (this.generation > 0 && this.generation < this.getGeneration(node.id)) {
       this.setGeneration(node, this.generation);
       if (node.usesCgTable()) this.stickyGenerations.set(node, this.generation);
     }

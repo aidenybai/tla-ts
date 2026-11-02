@@ -762,7 +762,7 @@ export class Context extends Internalizer {
         const node = this.exprToEnode[current];
         if (node !== undefined) {
           if (node.iscopeLevel <= newLevel) continue;
-          this.cachedGeneration.set(current, this.getGeneration(node));
+          this.cachedGeneration.set(current, this.getGeneration(node.id));
         }
         for (let index = 0; index < manager.getNumArgs(current); index++) {
           const arg = manager.getArg(current, index);

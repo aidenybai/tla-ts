@@ -123,7 +123,7 @@ export class QuantifierInfo {
     for (const enode of context.enodesOf(decl))
       if (context.isRelevant(enode.owner)) {
         const arg = enode.getArg(argIndex);
-        node.insert(this.manager, arg.owner, context.getGeneration(arg));
+        node.insert(this.manager, arg.owner, context.getGeneration(arg.id));
       }
   }
 
@@ -148,7 +148,7 @@ export class QuantifierInfo {
                 sJ.insert(
                   manager,
                   solver.rewriter.mkSub(arg.owner, info.offset),
-                  context.getGeneration(arg),
+                  context.getGeneration(arg.id),
                 );
               }
           } else {
@@ -165,7 +165,7 @@ export class QuantifierInfo {
             const node = solver.getUvar(flatQ, info.varIndex);
             for (const enode of context.enodeStore.nodes)
               if (context.isRelevant(enode.owner) && manager.sorts[enode.owner] === sort)
-                node.insert(manager, enode.owner, context.getGeneration(enode));
+                node.insert(manager, enode.owner, context.getGeneration(enode.id));
           }
           break;
         }
@@ -210,7 +210,7 @@ export class QuantifierInfo {
         for (const enode of this.context.enodesOf(info.decl))
           if (this.context.isRelevant(enode.owner)) {
             const arg = enode.getArg(info.argIndex);
-            set.insert(arg.owner, this.context.getGeneration(arg));
+            set.insert(arg.owner, this.context.getGeneration(arg.id));
           }
       }
       for (const set of sets) set?.mkInverse(evaluate);

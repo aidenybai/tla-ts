@@ -125,10 +125,10 @@ export class ModelChecker {
   private getEqEnodeWithMinGen(root: Enode) {
     const context = this.context;
     let result = root;
-    let resultGeneration = context.getGeneration(root);
+    let resultGeneration = context.getGeneration(root.id);
     let current = root;
     do {
-      const generation = context.getGeneration(current);
+      const generation = context.getGeneration(current.id);
       if (generation === 0) return current;
       if (generation < resultGeneration) {
         result = current;

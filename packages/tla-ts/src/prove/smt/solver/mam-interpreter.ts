@@ -65,7 +65,7 @@ export class Interpreter {
   ) {}
 
   private updateMaxGeneration(node: Enode) {
-    this.maxGeneration = Math.max(this.maxGeneration, this.context.getGeneration(node));
+    this.maxGeneration = Math.max(this.maxGeneration, this.context.getGeneration(node.id));
   }
 
   // The point above the top, which pushPoint pushes next.
@@ -305,7 +305,7 @@ export class Interpreter {
   executeCore(tree: CodeTree, node: Enode) {
     const context = this.context;
     const registers = this.registers;
-    this.maxGeneration = context.getGeneration(node);
+    this.maxGeneration = context.getGeneration(node.id);
     registers[0] = node;
     this.top = 0;
     let sinceLastCheck = 0;

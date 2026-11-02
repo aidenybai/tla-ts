@@ -151,6 +151,10 @@ export class EnodeStore {
     return this.isEq(id) && this.root[this.getArg(id, 0)] === this.root[this.getArg(id, 1)];
   }
 
+  usesCgTable(id: number) {
+    return this.getNumArgs(id) > 0 && this.isCgcEnabled(id) && !this.isTrueEq(id);
+  }
+
   // Appends an argument to the node allocated last.
   pushArg(arg: number) {
     if (this.argTop === this.argPool.length) this.argPool = growColumn(this.argPool);
@@ -450,7 +454,7 @@ export class Enode {
   }
 
   usesCgTable() {
-    return this.numArgs > 0 && this.isCgcEnabled && !this.isTrueEq();
+    return this.store.usesCgTable(this.id);
   }
 }
 
