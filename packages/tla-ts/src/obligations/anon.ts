@@ -63,7 +63,7 @@ const ANON_SELECTOR_FAILURES = {
   Instance: "1INST",
   Left: "1",
   Right: "1",
-} as const;
+};
 
 const BAD_EXPRESSION: Expr = { kind: "Opaque", name: "$badexp" };
 
@@ -82,6 +82,8 @@ export const createAnonymizer = (
 ) => {
   // Elab.desugar's current_at: the value @ stands for inside an EXCEPT, and the context size there.
   let currentAt: { expression: Expr; size: number } | undefined;
+
+  const getContext = (scope: Scope | undefined): AnonContext => ({ warnedSteps: [], scope });
 
   const getSize = (context: AnonContext) => context.scope?.size ?? 0;
 
@@ -219,7 +221,7 @@ export const createAnonymizer = (
             mapSelectorArgs(selector, (arg) => expr(context, arg)),
           );
           const args = inner.args.map((arg) => expr(context, arg));
-          const bangContext = { warnedSteps: [], scope: context.scope };
+          const bangContext = getContext(context.scope);
           return resolveBang(bangContext, inner.operator.name, args, selectors, false, expression);
         }
         return expr(context, {
@@ -275,13 +277,15 @@ export const createAnonymizer = (
   const adjoinContext = (context: AnonContext, hyp: Hyp) =>
     withScope(context, adjoin(context.scope, hyp));
 
-  const bounds = (context: AnonContext, items: Bound[]): [AnonContext, Bound[]] => {
-    const mapped = mapBoundDomains(items, (domain) => expr(context, domain));
-    const inner = mapped.reduce(
+  const adjoinBounds = (context: AnonContext, items: Bound[]) =>
+    items.reduce(
       (current, bound) => adjoinContext(current, getFresh(bound.name, bound.level)),
       context,
     );
-    return [inner, mapped];
+
+  const bounds = (context: AnonContext, items: Bound[]): [AnonContext, Bound[]] => {
+    const mapped = mapBoundDomains(items, (domain) => expr(context, domain));
+    return [adjoinBounds(context, mapped), mapped];
   };
 
   // Visit.map, apart from the definitions an ASSUME or a LET binds.
@@ -368,7 +372,7 @@ export const createAnonymizer = (
     scope: context.scope,
   });
 
-  const adjStep = (context: AnonContext, step: StepNumber, body: Expr, from: Step) =>
+  const adjoinStep = (context: AnonContext, step: StepNumber, body: Expr, from: Step) =>
     adjoinContext(context, {
       kind: "Defn",
       definition: { kind: "Operator", name: getStepName(step), body, location: from.location },
@@ -464,22 +468,22 @@ export const createAnonymizer = (
         const [, mapped] = sequent(context, item.sequent);
         const assumptions = mapped.context.reduce(adjoinContext, context);
         const withTuple = bumpContext(
-          adjStep(bumpContext(assumptions, 1), number, at(tupleForm(mapped), item), item),
+          adjoinStep(bumpContext(assumptions, 1), number, at(tupleForm(mapped), item), item),
           1,
         );
         const inner = mapped.context.length === 0 ? pushWarnedStep(withTuple, number) : withTuple;
         const result: Step = { ...item, sequent: mapped, proof: proof(inner, item.proof) };
         return [
-          bumpContext(adjStep(context, number, at(exprifySequent(mapped), item), item), 1),
+          bumpContext(adjoinStep(context, number, at(exprifySequent(mapped), item), item), 1),
           result,
         ];
       }
       case "Pcase": {
         const expression = expr(context, item.expression);
         const tuple = at({ kind: "Tuple", elements: [shiftExpr(2, expression)] }, item);
-        const inner = bumpContext(adjStep(bumpContext(context, 2), number, tuple, item), 1);
+        const inner = bumpContext(adjoinStep(bumpContext(context, 2), number, tuple, item), 1);
         const result: Step = { ...item, expression, proof: proof(inner, item.proof) };
-        const after = adjStep(
+        const after = adjoinStep(
           context,
           number,
           at({ kind: "Tuple", elements: [expression] }, item),
@@ -490,17 +494,20 @@ export const createAnonymizer = (
       case "Suffices": {
         const [, mapped] = sequent(context, item.sequent);
         const fact = at({ kind: "Tuple", elements: [at(exprifySequent(mapped), item)] }, item);
-        const inner = bumpContext(adjStep(context, number, fact, item), 1);
+        const inner = bumpContext(adjoinStep(context, number, fact, item), 1);
         const result: Step = { ...item, sequent: mapped, proof: proof(inner, item.proof) };
         const assumptions = mapped.context.reduce(adjoinContext, context);
         const tuple = at({ kind: "Tuple", elements: [at(tupleForm(mapped), item)] }, item);
-        return [bumpContext(adjStep(bumpContext(assumptions, 1), number, tuple, item), 1), result];
+        return [
+          bumpContext(adjoinStep(bumpContext(assumptions, 1), number, tuple, item), 1),
+          result,
+        ];
       }
       case "Have": {
         const expression = expr(context, item.expression);
         const tuple = at({ kind: "Tuple", elements: [shiftExpr(2, expression)] }, item);
         return [
-          bumpContext(adjStep(bumpContext(context, 2), number, tuple, item), 1),
+          bumpContext(adjoinStep(bumpContext(context, 2), number, tuple, item), 1),
           { ...item, expression },
         ];
       }
@@ -511,7 +518,7 @@ export const createAnonymizer = (
           item,
         );
         return [
-          bumpContext(adjStep(bumpContext(inner, 1), number, universal, item), 1),
+          bumpContext(adjoinStep(bumpContext(inner, 1), number, universal, item), 1),
           { ...item, bounds: mapped },
         ];
       }
@@ -519,7 +526,7 @@ export const createAnonymizer = (
         const expressions = item.expressions.map((expression) => expr(context, expression));
         const tuple = at({ kind: "Tuple", elements: expressions }, item);
         return [
-          bumpContext(adjStep(bumpContext(context, 1), number, tuple, item), 1),
+          bumpContext(adjoinStep(bumpContext(context, 1), number, tuple, item), 1),
           { ...item, expressions },
         ];
       }
@@ -531,7 +538,7 @@ export const createAnonymizer = (
           item,
         );
         const inner = pushWarnedStep(
-          bumpContext(adjStep(bumpContext(context, 1), number, existential, item), 1),
+          bumpContext(adjoinStep(bumpContext(context, 1), number, existential, item), 1),
           number,
         );
         const result: Step = {
@@ -540,12 +547,12 @@ export const createAnonymizer = (
           expression,
           proof: proof(inner, item.proof),
         };
-        const declared = mapped.reduce(
-          (current, bound) => adjoinContext(current, getFresh(bound.name, bound.level)),
-          bumpContext(context, 2),
-        );
+        const declared = adjoinBounds(bumpContext(context, 2), mapped);
         const shifted = shiftExpr(4 + mapped.length, existential);
-        return [bumpContext(adjStep(bumpContext(declared, 2), number, shifted, item), 1), result];
+        return [
+          bumpContext(adjoinStep(bumpContext(declared, 2), number, shifted, item), 1),
+          result,
+        ];
       }
       case "Use": {
         const mapped = usable(context, item.usable);
@@ -563,14 +570,11 @@ export const createAnonymizer = (
   };
 
   return {
-    expr: (scope: Scope | undefined, expression: Expr) =>
-      expr({ warnedSteps: [], scope }, expression),
-    defn: (scope: Scope | undefined, definition: Defn) =>
-      defn({ warnedSteps: [], scope }, definition),
-    sequent: (scope: Scope | undefined, item: Sequent) =>
-      sequent({ warnedSteps: [], scope }, item)[1],
-    usable: (scope: Scope | undefined, item: Usable) => usable({ warnedSteps: [], scope }, item),
-    proof: (scope: Scope | undefined, item: Proof) => proof({ warnedSteps: [], scope }, item),
+    expr: (scope: Scope | undefined, expression: Expr) => expr(getContext(scope), expression),
+    defn: (scope: Scope | undefined, definition: Defn) => defn(getContext(scope), definition),
+    sequent: (scope: Scope | undefined, item: Sequent) => sequent(getContext(scope), item)[1],
+    usable: (scope: Scope | undefined, item: Usable) => usable(getContext(scope), item),
+    proof: (scope: Scope | undefined, item: Proof) => proof(getContext(scope), item),
   };
 };
 
