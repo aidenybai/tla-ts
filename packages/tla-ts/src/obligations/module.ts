@@ -363,7 +363,7 @@ export const getDependencies = (module: Mule) => {
     }
     Object.values(value).forEach(addInstances);
   };
-  // The hypotheses of each unit, leaving out the proofs of theorems.
+  // Leaves out the proofs of theorems.
   const visit = (unit: ModuleUnit) => {
     if (unit.kind === "Theorem") addInstances(unit.sequent);
     else if (unit.kind !== "Submod") addInstances(unit);
@@ -1002,7 +1002,7 @@ export interface ModuleSummary extends ProofSummary {
   theorems: TheoremSummary[];
 }
 
-// Module.Gen.generate: a named theorem binds its name as a proof definition for what follows.
+// Module.Gen.generate.
 export const generate = (
   pipeline: Pipeline,
   context: Hyp[],

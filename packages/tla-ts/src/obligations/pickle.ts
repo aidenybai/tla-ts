@@ -1,6 +1,4 @@
-// tlapm's Tla_parser.pickle, which turns a TLA+ identifier into one every backend accepts: a name
-// with a character other than a letter or digit, one that starts or ends with a non-letter, or one
-// that a prover reserves becomes a_, the name with each special character spelled out, and a.
+// Tla_parser.pickle: renames an identifier that some backend would reject.
 
 import { TlapmBugError } from "../errors";
 
