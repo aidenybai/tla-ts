@@ -1,7 +1,7 @@
 // Decides a theory tlapm writes for Isabelle, as tlapm's Isabelle backend runs it: use_thy on the
 // heap of Isabelle/TLA+ succeeds or fails.
 
-import { TlaIsabelleError } from "../../errors";
+import { isStackOverflow, TlaIsabelleError } from "../../errors";
 import type { DecideOptions, Verdict } from "../verdict";
 import { parseProofText, terminalProof } from "./isar/method";
 import { getFacts, initGoal } from "./isar/proof";
@@ -12,11 +12,6 @@ import { seqHead } from "./pure/seq";
 import { aconv } from "./pure/term";
 import { getProofContext } from "./tla/context";
 import { loadLogic } from "./tla/logic";
-
-// V8's error when a recursion runs out of stack. Poly/ML grows its stack instead, until the
-// recursion ends or Isabelle breaks down for lack of memory, which tlapm counts as a failure.
-const isStackOverflow = (error: unknown) =>
-  error instanceof RangeError && error.message === "Maximum call stack size exceeded";
 
 export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Verdict, "sat"> => {
   const limits = { deadline: Date.now() + options.timeLimitMs, signal: options.signal };
@@ -41,6 +36,8 @@ export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Ve
       ? "unsat"
       : "unknown";
   } catch (error) {
+    // Poly/ML grows its stack instead, until Isabelle runs out of memory, which tlapm counts as a
+    // failure.
     if (error instanceof TlaIsabelleError || isStackOverflow(error)) return "unknown";
     throw error;
   }

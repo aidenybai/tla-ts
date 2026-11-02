@@ -1,8 +1,8 @@
 // Ported from Z3 (src/smt/smt_solver.cpp, src/smt/smt_kernel.cpp, src/smt/smt_setup.cpp), MIT
 // license, see z3-license.txt. Decides an SMT-LIB problem the way `z3 -smt2 AUTO_CONFIG=false
 // smt.MBQI=true` does for tlapm's UFNIA obligations.
-import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
-import { isStackOverflow, type DecideOptions, type Verdict } from "../../verdict";
+import { isStackOverflow, SmtCanceledError, SmtUnsupportedError } from "../../../errors";
+import type { DecideOptions, Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
 import { AstManager } from "./ast";
 import { Context } from "./context";
