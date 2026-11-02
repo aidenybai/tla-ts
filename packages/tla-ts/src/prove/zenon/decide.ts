@@ -1,14 +1,8 @@
 // Ported from Zenon's main.ml, as shipped in tlapm. Copyright 1997 INRIA, see LICENSE.
 //
-// Runs Zenon as tlapm does on a .znn file. A proof counts only once the independent checker
-// accepts it.
-//
-// tlapm passes -max-time 1d, so Zenon's own clock never stops it. The time limit is tlapm's
-// timeout instead: Schedule.run kills Zenon once the wall clock passes its launch time plus the
-// timeout, whether Zenon is still reading the file, searching or printing the proof.
-//
-// tlapm also passes -oisar, so Zenon prints the proof as Isar text. tlapm writes that output,
-// after a comment with Zenon's input, into the module's .thy file for Isabelle to check.
+// Runs Zenon on a .znn file as tlapm does, with -oisar. A proof counts only once the independent
+// checker accepts it. tlapm passes -max-time 1d and kills Zenon at its own timeout instead, whether
+// Zenon is still reading, searching or printing the proof.
 
 import { TlaZenonError } from "../../errors";
 import type { DecideOptions } from "../verdict";
