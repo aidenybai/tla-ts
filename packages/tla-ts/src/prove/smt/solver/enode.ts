@@ -153,6 +153,14 @@ export class EnodeStore {
     this.flags[id] = value ? this.flags[id] | IS_MARKED : this.flags[id] & ~IS_MARKED;
   }
 
+  isMarked2(id: number) {
+    return (this.flags[id] & IS_MARKED2) !== 0;
+  }
+
+  setMarked2(id: number, value: boolean) {
+    this.flags[id] = value ? this.flags[id] | IS_MARKED2 : this.flags[id] & ~IS_MARKED2;
+  }
+
   // The argument, and for a missing first or second argument the node itself, like Z3's m_args.
   getArg(id: number, index: number) {
     return index < this.getNumArgs(id) ? this.argPool[this.argStart[id] + index] : id;
@@ -434,11 +442,11 @@ export class Enode {
   }
 
   get isMarked2() {
-    return (this.flags & IS_MARKED2) !== 0;
+    return this.store.isMarked2(this.id);
   }
 
   set isMarked2(value: boolean) {
-    this.setFlag(IS_MARKED2, value);
+    this.store.setMarked2(this.id, value);
   }
 
   get isInterpreted() {

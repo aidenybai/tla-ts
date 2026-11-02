@@ -33,9 +33,9 @@ interface PathTree {
   code: CodeTree | null;
   firstChild: PathTree | null;
   sibling: PathTree | null;
-  // The roots that collect_parents visits at this node while it walks the tree, and whether the walk
-  // has queued the node. The list is kept for the next walk.
-  todo: Enode[];
+  // The roots that collect_parents visits at this node while it walks the tree, by id, and whether
+  // the walk has queued the node. The list is kept for the next walk.
+  todo: number[];
   isQueued: boolean;
 }
 
@@ -79,11 +79,12 @@ export class Mam implements LabelHasher {
   private pp = new Map<number, (PathTree | null)[]>();
   private plbls = new Set<number>();
   private clbls = new Set<number>();
-  private r1: Enode | null = null;
-  private r2: Enode | null = null;
+  // The roots of the merge that collect_parents follows, or -1.
+  private r1 = -1;
+  private r2 = -1;
   // The nodes that collect_parents marks, to unmark at the end of each level.
-  private visitedParents: Enode[] = [];
-  private queuedRoots: Enode[] = [];
+  private visitedParents: number[] = [];
+  private queuedRoots: number[] = [];
   // The path tree nodes that collect_parents queued, level by level.
   private queuedTrees: PathTree[] = [];
   private labelHashes: (number | undefined)[] = [];
@@ -480,9 +481,9 @@ export class Mam implements LabelHasher {
     if (!isLazy && tree !== undefined) this.addCandidateTo(tree, node);
   }
 
-  private isEqModMerge(first: Enode, second: Enode) {
-    const firstRoot = first.root;
-    const secondRoot = second.root;
+  private isEqModMerge(first: number, second: number) {
+    const firstRoot = this.context.enodeStore.root[first];
+    const secondRoot = this.context.enodeStore.root[second];
     return (
       firstRoot === secondRoot ||
       (firstRoot === this.r1 && secondRoot === this.r2) ||
@@ -493,9 +494,10 @@ export class Mam implements LabelHasher {
   // collect_parents: walks the path tree level by level from the merged class, visiting each parent
   // once per level, and hands the terms where a path ends to that path's code. The mark of a parent
   // says it was visited at this level, and the second mark of a root says it is queued for the next.
-  private collectParents(start: Enode, head: PathTree | null | undefined) {
+  private collectParents(start: number, head: PathTree | null | undefined) {
     if (head === null || head === undefined) return;
     const context = this.context;
+    const store = context.enodeStore;
     const levels = this.queuedTrees;
     const visitedParents = this.visitedParents;
     const queuedRoots = this.queuedRoots;
@@ -508,74 +510,92 @@ export class Mam implements LabelHasher {
       level.isQueued = false;
       const filter = level.filter;
       const filterHigh = level.filterHigh;
-      for (const node of nodes) {
-        const child = node.root;
-        if ((child.plbls & filter) === 0 && (child.plblsHigh & filterHigh) === 0) continue;
-        for (let parentIndex = 0; parentIndex < child.numParents; parentIndex++) {
-          const parent = child.getParent(parentIndex);
-          if (parent.isEq) continue;
-          const label = parent.decl;
-          const parentRoot = parent.root;
+      for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex++) {
+        const child = store.root[nodes[nodeIndex]];
+        if (
+          (store.labels[4 * child + 2] & filter) === 0 &&
+          (store.labels[4 * child + 3] & filterHigh) === 0
+        )
+          continue;
+        const end = store.parentStart[child] + store.parentCount[child];
+        for (let parentIndex = store.parentStart[child]; parentIndex < end; parentIndex++) {
+          const parent = store.parentPool[parentIndex];
+          if (store.isEq(parent)) continue;
+          const label = store.decl[parent];
+          const parentRoot = store.root[parent];
+          const cg = store.cg[parent];
           if (
             !hasHash(filter, filterHigh, this.getLabelHash(label)) ||
-            parent.isMarked ||
-            (parent.cg !== parent && this.isEqModMerge(parent.cg, parentRoot)) ||
-            !context.isRelevant(parent.owner)
+            store.isMarked(parent) ||
+            (cg !== parent && this.isEqModMerge(cg, parentRoot)) ||
+            !context.isRelevant(store.owner[parent])
           )
             continue;
           for (let tree: PathTree | null = level; tree !== null; tree = tree.sibling) {
             if (
               tree.label !== label ||
-              tree.argIndex >= parent.numArgs ||
-              parent.getArg(tree.argIndex).root !== child ||
+              tree.argIndex >= store.getNumArgs(parent) ||
+              store.root[store.getArg(parent, tree.argIndex)] !== child ||
               (tree.groundArg !== null &&
-                !this.isEqModMerge(tree.groundArg, parent.getArg(tree.groundArgIndex)))
+                !this.isEqModMerge(tree.groundArg.id, store.getArg(parent, tree.groundArgIndex)))
             )
               continue;
-            if (tree.code !== null) this.addCandidateTo(tree.code, parent);
+            if (tree.code !== null) this.addCandidateTo(tree.code, store.nodes[parent]);
             const next = tree.firstChild;
             if (next === null) continue;
             if (!next.isQueued) {
               next.isQueued = true;
               levels.push(next);
             }
-            if (!parentRoot.isMarked2) next.todo.push(parentRoot);
+            if (!store.isMarked2(parentRoot)) next.todo.push(parentRoot);
           }
-          parent.isMarked = true;
+          store.setMarked(parent, true);
           visitedParents.push(parent);
-          if (!parentRoot.isMarked2) {
-            parentRoot.isMarked2 = true;
+          if (!store.isMarked2(parentRoot)) {
+            store.setMarked2(parentRoot, true);
             queuedRoots.push(parentRoot);
           }
         }
       }
       shrink(nodes, 0);
-      for (const parent of visitedParents) parent.isMarked = false;
-      for (const root of queuedRoots) root.isMarked2 = false;
+      for (const parent of visitedParents) store.setMarked(parent, false);
+      for (const root of queuedRoots) store.setMarked2(root, false);
       shrink(visitedParents, 0);
       shrink(queuedRoots, 0);
     }
     shrink(levels, 0);
   }
 
-  private processPc(r1: Enode, r2: Enode) {
-    if ((r1.plbls === 0 && r1.plblsHigh === 0) || (r2.lbls === 0 && r2.lblsHigh === 0)) return;
+  // The labels of r2's class, and the parent labels of r1's, do not change while the paths are
+  // followed.
+  private processPc(r1: number, r2: number) {
+    const labels = this.context.enodeStore.labels;
+    const r1Plbls = labels[4 * r1 + 2];
+    const r1PlblsHigh = labels[4 * r1 + 3];
+    const r2Lbls = labels[4 * r2];
+    const r2LblsHigh = labels[4 * r2 + 1];
+    if ((r1Plbls === 0 && r1PlblsHigh === 0) || (r2Lbls === 0 && r2LblsHigh === 0)) return;
     for (let parentHash = 0; parentHash < 64; parentHash++) {
-      if (!hasHash(r1.plbls, r1.plblsHigh, parentHash)) continue;
+      if (!hasHash(r1Plbls, r1PlblsHigh, parentHash)) continue;
       if (this.context.checkCanceled()) return;
       for (let childHash = 0; childHash < 64; childHash++)
-        if (hasHash(r2.lbls, r2.lblsHigh, childHash))
+        if (hasHash(r2Lbls, r2LblsHigh, childHash))
           this.collectParents(r1, this.pc.get(parentHash * 64 + childHash));
     }
   }
 
-  private processPp(r1: Enode, r2: Enode) {
-    if ((r1.plbls === 0 && r1.plblsHigh === 0) || (r2.plbls === 0 && r2.plblsHigh === 0)) return;
+  private processPp(r1: number, r2: number) {
+    const store = this.context.enodeStore;
+    const r1Plbls = store.labels[4 * r1 + 2];
+    const r1PlblsHigh = store.labels[4 * r1 + 3];
+    const r2Plbls = store.labels[4 * r2 + 2];
+    const r2PlblsHigh = store.labels[4 * r2 + 3];
+    if ((r1Plbls === 0 && r1PlblsHigh === 0) || (r2Plbls === 0 && r2PlblsHigh === 0)) return;
     for (let firstHash = 0; firstHash < 64; firstHash++) {
-      if (!hasHash(r1.plbls, r1.plblsHigh, firstHash)) continue;
+      if (!hasHash(r1Plbls, r1PlblsHigh, firstHash)) continue;
       if (this.context.checkCanceled()) return;
       for (let secondHash = 0; secondHash < 64; secondHash++) {
-        if (!hasHash(r2.plbls, r2.plblsHigh, secondHash)) continue;
+        if (!hasHash(r2Plbls, r2PlblsHigh, secondHash)) continue;
         const isSwapped = firstHash > secondHash;
         const lowHash = isSwapped ? secondHash : firstHash;
         const highHash = isSwapped ? firstHash : secondHash;
@@ -583,11 +603,11 @@ export class Mam implements LabelHasher {
         const highRoot = isSwapped ? r1 : r2;
         const entry = this.pp.get(lowHash * 64 + highHash);
         if (entry === undefined) continue;
+        const isLowSmaller = store.parentCount[lowRoot] <= store.parentCount[highRoot];
         if (lowHash === highHash) {
-          if (lowRoot.numParents <= highRoot.numParents) this.collectParents(lowRoot, entry[0]);
+          if (isLowSmaller) this.collectParents(lowRoot, entry[0]);
           else this.collectParents(highRoot, entry[0]);
-        } else if (lowRoot.numParents <= highRoot.numParents)
-          this.collectParents(lowRoot, entry[0]);
+        } else if (isLowSmaller) this.collectParents(lowRoot, entry[0]);
         else this.collectParents(highRoot, entry[1]);
       }
     }
@@ -595,13 +615,13 @@ export class Mam implements LabelHasher {
 
   // add_eq_eh: r2's labels take r1's after the paths are followed.
   addEqEh(r1: Enode, r2: Enode) {
-    this.r1 = r1;
-    this.r2 = r2;
-    this.processPc(r1, r2);
-    this.processPc(r2, r1);
-    this.processPp(r1, r2);
-    this.r1 = null;
-    this.r2 = null;
+    this.r1 = r1.id;
+    this.r2 = r2.id;
+    this.processPc(r1.id, r2.id);
+    this.processPc(r2.id, r1.id);
+    this.processPp(r1.id, r2.id);
+    this.r1 = -1;
+    this.r2 = -1;
     this.pushLabelTrail(TRAIL_ALL_LABELS, r2);
     r2.lbls |= r1.lbls;
     r2.lblsHigh |= r1.lblsHigh;
