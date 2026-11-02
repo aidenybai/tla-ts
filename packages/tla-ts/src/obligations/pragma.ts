@@ -69,10 +69,13 @@ const tokenizePragma = (lines: string[], start: Position) => {
   return undefined;
 };
 
+const isPunct = (token: Token | undefined, text: string) =>
+  token?.kind === "Punct" && token.text === text;
+
 const getValue = (token: Token | undefined): PragmaValue | undefined => {
   if (token?.kind === "String") return { kind: "String", value: token.text };
   if (token?.kind === "Number") return { kind: "Float", value: Number.parseFloat(token.text) };
-  return token?.kind === "Punct" && token.text === "@" ? { kind: "Default" } : undefined;
+  return isPunct(token, "@") ? { kind: "Default" } : undefined;
 };
 
 // The methods of Method_prs's old pragma syntax, by the name Method.prover_meth_of_tac gives them.
@@ -118,7 +121,6 @@ export const readOldMethod = (lines: string[], start: Position) => {
   const tokens = tokenizePragma(lines, start);
   if (!tokens) return undefined;
   let index = 0;
-  const isPunct = (text: string) => tokens[index]?.kind === "Punct" && tokens[index].text === text;
   const readTimeout = () => {
     const token = tokens[index];
     if (token?.kind !== "Number") return {};
@@ -126,7 +128,7 @@ export const readOldMethod = (lines: string[], start: Position) => {
     return { timeout: Number.parseFloat(token.text) };
   };
   const readMethod = (): OldMethod | undefined => {
-    if (!isPunct("(")) return undefined;
+    if (!isPunct(tokens[index], "(")) return undefined;
     index++;
     const name = tokens[index++];
     if (name?.kind !== "Ident") return undefined;
@@ -139,13 +141,13 @@ export const readOldMethod = (lines: string[], start: Position) => {
       }
       if (name.text === "zenon") {
         const timeout = readTimeout();
-        if (isPunct("(") && !readMethod()) return undefined;
+        if (isPunct(tokens[index], "(") && !readMethod()) return undefined;
         return { name: name.text, ...timeout };
       }
       const known = OLD_METHODS.get(name.text);
       return known === undefined ? undefined : { name: known };
     })();
-    if (!method || !isPunct(")")) return undefined;
+    if (!method || !isPunct(tokens[index], ")")) return undefined;
     index++;
     return method;
   };
@@ -160,25 +162,24 @@ export const readNewMethod = (lines: string[], start: Position) => {
   const tokens = tokenizePragma(lines, start);
   if (!tokens) return undefined;
   let index = 0;
-  const isPunct = (text: string) => tokens[index]?.kind === "Punct" && tokens[index].text === text;
   const groups: PragmaSetting[][] = [];
   while (index < tokens.length) {
     const keyword = tokens[index++];
     if (keyword.kind !== "Ident" || (keyword.text !== "by" && keyword.text !== "set")) {
       return undefined;
     }
-    if (!isPunct("(")) return undefined;
+    if (!isPunct(tokens[index], "(")) return undefined;
     index++;
     const settings: PragmaSetting[] = [];
     for (;;) {
       const hint = tokens[index++];
-      if (hint?.kind !== "Ident" || !isPunct(":")) return undefined;
+      if (hint?.kind !== "Ident" || !isPunct(tokens[index], ":")) return undefined;
       index++;
       const value = getValue(tokens[index++]);
       if (!value) return undefined;
       settings.push({ hint: hint.text, value });
-      if (isPunct(")")) break;
-      if (!isPunct(";")) return undefined;
+      if (isPunct(tokens[index], ")")) break;
+      if (!isPunct(tokens[index], ";")) return undefined;
       index++;
     }
     index++;

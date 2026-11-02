@@ -236,26 +236,22 @@ const getUnitHyps = (unit: ModuleUnit): Hyp[] => {
         },
       ];
     case "Axiom":
-      return unit.name === undefined
-        ? [
-            {
-              kind: "Fact",
-              expression: unit.expression,
-              visibility: "Hidden",
-              time: "Always",
-              location,
-            },
-          ]
-        : getNamedFact(unit.name, unit.expression, location);
     case "Theorem": {
-      const sequent = substituteSequent(shift(-unit.axiomCount), {
-        ...unit.sequent,
-        context: unit.sequent.context.slice(unit.axiomCount),
-      });
-      const body = at(exprifySequent(sequent), unit);
+      const expression =
+        unit.kind === "Axiom"
+          ? unit.expression
+          : at(
+              exprifySequent(
+                substituteSequent(shift(-unit.axiomCount), {
+                  ...unit.sequent,
+                  context: unit.sequent.context.slice(unit.axiomCount),
+                }),
+              ),
+              unit,
+            );
       return unit.name === undefined
-        ? [{ kind: "Fact", expression: body, visibility: "Hidden", time: "Always", location }]
-        : getNamedFact(unit.name, body, location);
+        ? [{ kind: "Fact", expression, visibility: "Hidden", time: "Always", location }]
+        : getNamedFact(unit.name, expression, location);
     }
     case "Mutate":
       return unit.mode === "Use"
@@ -365,9 +361,10 @@ export const getDependencies = (module: Mule) => {
   };
   // Leaves out the proofs of theorems.
   const visit = (unit: ModuleUnit) => {
-    if (unit.kind === "Theorem") addInstances(unit.sequent);
-    else if (unit.kind !== "Submod") addInstances(unit);
-    if (unit.kind !== "Submod") return;
+    if (unit.kind !== "Submod") {
+      addInstances(unit.kind === "Theorem" ? unit.sequent : unit);
+      return;
+    }
     locals.add(unit.module.name);
     submodules.set(unit.module.name, unit.module);
     addExtendees(unit.module);

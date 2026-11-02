@@ -10,11 +10,13 @@ import {
   getErrorNote,
   isEqualExpr,
   mapAccumulate,
+  mapChildren,
   normalizeApply,
   shift,
   shiftExpr,
   substituteBounds,
   substituteExpr,
+  stripProps,
   type Bound,
   type Builtin,
   type Expr,
@@ -24,8 +26,6 @@ import {
   type Sequent,
   type Time,
   type Visibility,
-  mapChildren,
-  stripProps,
 } from "./expression";
 import { format, renderDoc, type Doc } from "./format";
 import { printExpression } from "./printer";
@@ -219,7 +219,9 @@ const setExpression = (
     if (hyp.kind === "Fact" && isEqualExpr(hyp.expression, current)) {
       isFound = true;
       result[index] = { ...hyp, visibility };
-    } else if (hyp.kind === "Fresh" && hyp.domain && isDomainMatch(current, hyp.domain)) {
+      continue;
+    }
+    if (hyp.kind === "Fresh" && hyp.domain && isDomainMatch(current, hyp.domain)) {
       isFound = true;
       result[index] = { ...hyp, domainVisibility: visibility };
     }
@@ -722,23 +724,21 @@ export const createGenerator = (
         };
       }
       case "Steps": {
-        let currentContext = context;
-        let currentGoal = goal;
-        let currentTime = time;
-        const steps = proof.steps.flatMap((step) => {
-          const [nextContext, nextGoal, simplified, nextTime] = simplifyStep(
-            currentContext,
-            currentGoal,
-            step,
-            currentTime,
-          );
-          currentContext = nextContext;
-          currentGoal = nextGoal;
-          currentTime = nextTime;
-          return simplified;
-        });
-        const qedProof = simplify(currentContext, currentGoal, proof.qed.proof, currentTime);
-        return { ...proof, steps, qed: { ...proof.qed, proof: qedProof } };
+        const [inner, steps] = mapAccumulate(
+          { context, goal, time },
+          proof.steps,
+          (state, step) => {
+            const [nextContext, nextGoal, simplified, nextTime] = simplifyStep(
+              state.context,
+              state.goal,
+              step,
+              state.time,
+            );
+            return [{ context: nextContext, goal: nextGoal, time: nextTime }, simplified];
+          },
+        );
+        const qedProof = simplify(inner.context, inner.goal, proof.qed.proof, inner.time);
+        return { ...proof, steps: steps.flat(), qed: { ...proof.qed, proof: qedProof } };
       }
     }
   };

@@ -131,7 +131,7 @@ const isConstantHyp = (scope: Scope | undefined, hyp: Hyp) => {
   }
 };
 
-const isConstantBound = (scope: Scope | undefined, names: string[]) =>
+const bindConstants = (scope: Scope | undefined, names: string[]) =>
   names.reduce<Scope | undefined>(
     (inner, name) => adjoin(inner, getFresh(name, "Constant")),
     scope,
@@ -167,7 +167,7 @@ export const isConstant = (scope: Scope | undefined, expression: Expr): boolean 
       return false;
     case "Lambda":
       return isConstant(
-        isConstantBound(
+        bindConstants(
           scope,
           expression.params.map((param) => param.name),
         ),
@@ -221,7 +221,7 @@ export const isConstant = (scope: Scope | undefined, expression: Expr): boolean 
           (bound) => bound.domain.kind !== "Domain" || recurse(bound.domain.expression),
         ) &&
         isConstant(
-          isConstantBound(
+          bindConstants(
             scope,
             expression.bounds.map((bound) => bound.name),
           ),
@@ -233,7 +233,7 @@ export const isConstant = (scope: Scope | undefined, expression: Expr): boolean 
     case "SetSt":
       return (
         (expression.domain === undefined || recurse(expression.domain)) &&
-        isConstant(isConstantBound(scope, [expression.name]), expression.body)
+        isConstant(bindConstants(scope, [expression.name]), expression.body)
       );
     case "If":
       return (

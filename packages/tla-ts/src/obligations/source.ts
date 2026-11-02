@@ -81,9 +81,7 @@ const BUILTINS: Record<string, Builtin> = {
   STRING: "STRING",
 };
 
-// Optable maps each spelling to its canonical name, and a prefix minus is the operator -.
-const getCanonicalName = (name: string, isPrefix = false) =>
-  isPrefix && name === "-" ? "-." : lookupOperator(name).name;
+const getCanonicalName = (name: string) => lookupOperator(name).name;
 
 const STEP_PATTERN = /^<(\d+|\*|\+)>([A-Za-z0-9_]*)\.*$/;
 
@@ -203,6 +201,9 @@ const regroup = (expression: Extract<Expression, { kind: "Apply" }>): Expression
 
 const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
 
+const isDitto = (bounds: QuantifierExpression["bounds"], index: number) =>
+  index > 0 && bounds[index - 1].set === bounds[index].set;
+
 export const createSource = (file: string, text: string, counter: Counter, isExpanded: boolean) => {
   const lines = text.split("\n");
 
@@ -248,24 +249,16 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     return method ? at({ kind: "With", expression, method }, expression) : expression;
   };
 
-  const getNameLocus = (name: string, location: SourceLocation): Locus => ({
+  const getPointLocus = (location: SourceLocation, length: number): Locus => ({
     file,
     startLine: location.line,
     startColumn: location.column,
     endLine: location.line,
-    endColumn: location.column + name.length,
+    endColumn: location.column + length,
   });
 
   const getLocus = (location: SourceLocation): Locus =>
-    location.range
-      ? getRangeLocus(location.range)
-      : {
-          file,
-          startLine: location.line,
-          startColumn: location.column,
-          endLine: location.line,
-          endColumn: location.column + 1,
-        };
+    location.range ? getRangeLocus(location.range) : getPointLocus(location, 1);
 
   const getOperator = (name: string, location: Locus | undefined): Expr => {
     const canonical = getCanonicalName(name);
@@ -321,11 +314,10 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     bounds.map((bound, index) => {
       if (bound.pattern.kind === "Tuple")
         throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
-      const isDitto = index > 0 && bounds[index - 1].set === bound.set;
       return {
         name: bound.pattern.name,
         level: "Constant",
-        domain: isDitto
+        domain: isDitto(bounds, index)
           ? { kind: "Ditto" }
           : { kind: "Domain", expression: convertExpression(bound.set, isExcept) },
       };
@@ -339,18 +331,17 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       const domain = convertExpression(bound.set, isExcept);
       if (bound.pattern.kind === "Tuple")
         return { kind: "Tuple", names: bound.pattern.names, domain };
-      const isDitto = index > 0 && bounds[index - 1].set === bound.set;
       return {
         kind: "Name",
         name: bound.pattern.name,
-        domain: isDitto ? { kind: "Ditto" } : { kind: "Domain", expression: domain },
+        domain: isDitto(bounds, index) ? { kind: "Ditto" } : { kind: "Domain", expression: domain },
       };
     });
 
-  const expandTuples = (expand: () => Expr, location: Locus) => {
+  const expandTuples = (expanded: Expr, location: Locus) => {
     if (!isExpanded)
       throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
-    return at(expand(), { location });
+    return at(expanded, { location });
   };
 
   const hasTuple = (bounds: QuantifierExpression["bounds"]) =>
@@ -493,9 +484,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       case "Forall":
       case "Exists":
         if (hasTuple(expression.bounds)) {
-          const bounds = getTuplyBounds(expression.bounds, isExcept);
-          const body = recurse(expression.body);
-          return expandTuples(() => expandQuant(expression.kind, bounds, body), location);
+          return expandTuples(
+            expandQuant(
+              expression.kind,
+              getTuplyBounds(expression.bounds, isExcept),
+              recurse(expression.body),
+            ),
+            location,
+          );
         }
         return at(
           {
@@ -518,10 +514,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       }
       case "Choose":
         if (expression.pattern.kind === "Tuple") {
-          const names = expression.pattern.names;
-          const domain = expression.set && recurse(expression.set);
-          const body = recurse(expression.body);
-          return expandTuples(() => expandChoose(names, domain, body), location);
+          return expandTuples(
+            expandChoose(
+              expression.pattern.names,
+              expression.set && recurse(expression.set),
+              recurse(expression.body),
+            ),
+            location,
+          );
         }
         return at(
           {
@@ -536,10 +536,14 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         return at({ kind: "SetEnum", elements: expression.elements.map(recurse) }, { location });
       case "SetFilter":
         if (expression.bound.pattern.kind === "Tuple") {
-          const names = expression.bound.pattern.names;
-          const domain = recurse(expression.bound.set);
-          const body = recurse(expression.predicate);
-          return expandTuples(() => expandSetSt(names, domain, body), location);
+          return expandTuples(
+            expandSetSt(
+              expression.bound.pattern.names,
+              recurse(expression.bound.set),
+              recurse(expression.predicate),
+            ),
+            location,
+          );
         }
         return at(
           {
@@ -552,9 +556,13 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         );
       case "SetMap":
         if (hasTuple(expression.bounds)) {
-          const element = recurse(expression.expression);
-          const bounds = getTuplyBounds(expression.bounds, isExcept);
-          return expandTuples(() => expandSetOf(element, bounds), location);
+          return expandTuples(
+            expandSetOf(
+              recurse(expression.expression),
+              getTuplyBounds(expression.bounds, isExcept),
+            ),
+            location,
+          );
         }
         return at(
           {
@@ -579,9 +587,10 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         );
       case "FunctionConstruction":
         if (hasTuple(expression.bounds)) {
-          const bounds = getTuplyBounds(expression.bounds, isExcept);
-          const body = recurse(expression.body);
-          return expandTuples(() => expandFcn(bounds, body), location);
+          return expandTuples(
+            expandFcn(getTuplyBounds(expression.bounds, isExcept), recurse(expression.body)),
+            location,
+          );
         }
         return at(
           {
@@ -768,17 +777,17 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
         location,
       };
     }
-    const name = getCanonicalName(
-      definition.name,
-      definition.kind === "Operator" && definition.params.length === 1 && definition.name === "-",
-    );
+    // A prefix minus is the operator -.
+    const name =
+      definition.kind === "Operator" && definition.params.length === 1 && definition.name === "-"
+        ? "-."
+        : getCanonicalName(definition.name);
     const body = convertExpression(definition.body, isExcept);
     if (definition.kind === "Function" && hasTuple(definition.bounds)) {
-      const bounds = getTuplyBounds(definition.bounds, isExcept);
       return {
         kind: "Operator",
         name,
-        body: expandTuples(() => expandFcn(bounds, body), location),
+        body: expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location),
         location,
       };
     }
@@ -800,7 +809,9 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
               params: definition.params.map((param) => ({
                 name: getCanonicalName(param.name),
                 shape: param.arity,
-                ...(param.location && { location: getNameLocus(param.name, param.location) }),
+                ...(param.location && {
+                  location: getPointLocus(param.location, param.name.length),
+                }),
               })),
               body,
             },
@@ -834,17 +845,13 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     return {
       context: statement.assumptions.map((assumption): Hyp => {
         if (assumption.kind === "NewSymbol") return convertNewSymbol(assumption);
-        if (assumption.kind === "AssumeProve") {
-          const location = getLocus(assumption.location);
-          return {
-            kind: "Fact",
-            expression: at({ kind: "Sequent", sequent: convertSequent(assumption) }, { location }),
-            visibility: "Visible",
-            time: "Now",
-            location,
-          };
-        }
-        const expression = convertFactLabel(assumption);
+        const expression =
+          assumption.kind === "AssumeProve"
+            ? at(
+                { kind: "Sequent", sequent: convertSequent(assumption) },
+                { location: getLocus(assumption.location) },
+              )
+            : convertFactLabel(assumption);
         return {
           kind: "Fact",
           expression,
@@ -897,12 +904,10 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
     defs: use.defs.map(convertDef),
   });
 
-  const getStepNumber = (token: RegExpExecArray | null, level: number): StepNumber => {
-    const label = token ? token[2] : "";
-    return label === ""
-      ? { kind: "Unnamed", level, id: getUnique(counter) }
-      : { kind: "Named", level, label, isAnonymous: false };
-  };
+  const getStepNumber = (token: RegExpExecArray | null, level: number): StepNumber =>
+    token?.[2]
+      ? { kind: "Named", level, label: token[2], isAnonymous: false }
+      : { kind: "Unnamed", level, id: getUnique(counter) };
 
   // to_proof: a missing proof is implicitly omitted where the enclosing step is.
   const convertProof = (
@@ -970,7 +975,6 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       const proof = convertProof(step.proof, level + 1, head);
       return { ...make(proof), location: mergeLoci(head, proof.location), step: number };
     };
-    const plain = (converted: Step): Step => ({ ...converted, location: head, step: number });
     const withStepMethod = (converted: Step): Step => ({
       ...converted,
       ...withMethod(step.head),
@@ -998,10 +1002,12 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
       case "Instance":
         throw new TlaProofError("Unexpected keyword INSTANCE");
       case "Define":
-        return plain({
+        return {
           kind: "Define",
           definitions: body.definitions.map((definition) => convertDefinition(definition)),
-        });
+          location: head,
+          step: number,
+        };
       case "Have":
         return withStepMethod({
           kind: "Have",
