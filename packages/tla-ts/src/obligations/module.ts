@@ -6,6 +6,7 @@ import {
   at,
   exprifySequent,
   getFact,
+  getFresh,
   mapAccumulate,
   type Builtin,
   type Defn,
@@ -171,12 +172,7 @@ export const getUnitHyps = (unit: ModuleUnit): Hyp[] => {
   switch (unit.kind) {
     case "Constants":
       return unit.declarations.map((declaration) => ({
-        kind: "Fresh",
-        name: declaration.name,
-        shape: declaration.shape,
-        level: "Constant",
-        domain: undefined,
-        domainVisibility: "Visible",
+        ...getFresh(declaration.name, "Constant", declaration.shape),
         location,
       }));
     case "Recursives":

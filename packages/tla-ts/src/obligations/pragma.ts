@@ -27,23 +27,33 @@ const PUNCTUATION = ["(", ")", ";", ":", "@", ","];
 const isBlank = (character: string | undefined) =>
   character === " " || character === "\r" || character === "\t";
 
-// The tokens of the pragma that starts at position, after blanks and line ends.
-const tokenizePragma = (lines: string[], start: Position) => {
+const skipBlanks = (lines: string[], position: Position) => {
+  while (position.line < lines.length) {
+    const line = lines[position.line];
+    while (isBlank(line[position.column])) position.column++;
+    if (position.column < line.length) return;
+    position.line++;
+    position.column = 0;
+  }
+};
+
+// Where the pragma after start opens, past blanks and line ends.
+export const findPragma = (lines: string[], start: Position) => {
   const position = { ...start };
-  const skipBlanks = () => {
-    while (position.line < lines.length) {
-      const line = lines[position.line];
-      while (isBlank(line[position.column])) position.column++;
-      if (position.column < line.length) return;
-      position.line++;
-      position.column = 0;
-    }
-  };
-  skipBlanks();
-  if (!(lines[position.line] ?? "").startsWith("(*{", position.column)) return undefined;
-  position.column += 3;
+  skipBlanks(lines, position);
+  return (lines[position.line] ?? "").startsWith("(*{", position.column) ? position : undefined;
+};
+
+const tokenizePragma = (lines: string[], start: Position) => {
+  const open = findPragma(lines, start);
+  if (!open) return undefined;
+  const position = { line: open.line, column: open.column + 3 };
   const tokens: Token[] = [];
-  for (skipBlanks(); position.line < lines.length; skipBlanks()) {
+  for (
+    skipBlanks(lines, position);
+    position.line < lines.length;
+    skipBlanks(lines, position)
+  ) {
     const rest = lines[position.line].slice(position.column);
     if (rest.startsWith("}*)")) return tokens;
     const match =

@@ -10,6 +10,7 @@ import {
   getFact,
   isBuiltinApply,
   mapAccumulate,
+  mapBoundDomains,
   mapChildren,
   stripProps,
   type Bound,
@@ -180,14 +181,7 @@ export const createSimplifier = (counter: Counter) => {
           {
             kind: "Quant",
             quantifier: inner.quantifier,
-            bounds: inner.bounds.map((bound) =>
-              bound.domain.kind === "Domain"
-                ? {
-                    ...bound,
-                    domain: { kind: "Domain", expression: prime(bound.domain.expression) },
-                  }
-                : bound,
-            ),
+            bounds: mapBoundDomains(inner.bounds, prime),
             body: prime(inner.body),
           },
           goal,

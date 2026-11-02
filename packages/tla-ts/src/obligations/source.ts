@@ -30,7 +30,7 @@ import {
   type Sequent,
 } from "./expression";
 import type { ModuleUnit, Mule } from "./module";
-import { readNewMethod, readOldMethod } from "./pragma";
+import { findPragma, readNewMethod, readOldMethod } from "./pragma";
 import {
   expandChoose,
   expandFcn,
@@ -120,18 +120,10 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
   });
 
   const withPragma = (locus: Locus) => {
-    const position = { line: locus.endLine - 1, column: locus.endColumn - 1 };
-    const isBlank = (character: string | undefined) => character === " " || character === "\r";
-    while (position.line < lines.length) {
-      const line = lines[position.line];
-      while (isBlank(line[position.column])) position.column++;
-      if (position.column < line.length) break;
-      position.line++;
-      position.column = 0;
-    }
-    if (!(lines[position.line] ?? "").startsWith("(*{", position.column)) return locus;
-    for (let index = position.line; index < lines.length; index++) {
-      const close = lines[index].indexOf("}*)", index === position.line ? position.column : 0);
+    const open = findPragma(lines, { line: locus.endLine - 1, column: locus.endColumn - 1 });
+    if (!open) return locus;
+    for (let index = open.line; index < lines.length; index++) {
+      const close = lines[index].indexOf("}*)", index === open.line ? open.column : 0);
       if (close !== -1) return { ...locus, endLine: index + 1, endColumn: close + 4 };
     }
     return locus;
