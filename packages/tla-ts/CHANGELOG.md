@@ -1,5 +1,11 @@
 # tla-ts
 
+## 0.0.5
+
+### Patch Changes
+
+- Prove TLAPS proofs without tlapm. `prove` checks each proof obligation of a module with TypeScript ports of tlapm's backends: Zenon, Isabelle, the SMT solver, and the PTL prover. `tla-ts tlapm Module.tla` takes tlapm's options, prints what tlapm prints, and reads and writes tlapm's fingerprints and `.tlacache`. It replaces `tla-ts prove`. Model checking has 16 performance changes, in evaluation, fingerprinting, and liveness checking.
+
 ## 0.0.4
 
 ### Patch Changes
