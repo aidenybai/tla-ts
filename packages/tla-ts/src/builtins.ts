@@ -272,7 +272,7 @@ export const createJavaOverrideError = (signature: string, message: string) =>
 // EvalException that the method raises itself. A method that evaluates its own arguments reports
 // every failure that way.
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
-  const guard =
+  const reportAsJavaFailure =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
     (...args: Arguments) => {
       const depth = setTrace.sets?.length ?? 0;
@@ -290,9 +290,9 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
     };
   return {
     ...builtin,
-    evaluate: guard(builtin.evaluate),
-    evaluateUnary: builtin.evaluateUnary && guard(builtin.evaluateUnary),
-    evaluateBinary: builtin.evaluateBinary && guard(builtin.evaluateBinary),
+    evaluate: reportAsJavaFailure(builtin.evaluate),
+    evaluateUnary: builtin.evaluateUnary && reportAsJavaFailure(builtin.evaluateUnary),
+    evaluateBinary: builtin.evaluateBinary && reportAsJavaFailure(builtin.evaluateBinary),
   };
 };
 

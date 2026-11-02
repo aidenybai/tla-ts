@@ -67,15 +67,15 @@ const findCount = (functionValue: FunctionValue, element: Value) => {
   return position === -1 ? undefined : functionValue.range[position];
 };
 
-const getMethod = (name: string, result: string, arity: number) =>
+const getBagsSignature = (name: string, result: string, arity: number) =>
   `public static ${result} tlc2.module.Bags.${name}(${Array.from({ length: arity }, () => "tlc2.value.impl.Value").join(",")})`;
 
-const BAG_DIFF = getMethod("BagDiff", "tlc2.value.impl.Value", 2);
-const SQ_SUBSETEQ = getMethod("SqSubseteq", "tlc2.value.IBoolValue", 2);
-const BAG_UNION = getMethod("BagUnion", "tlc2.value.impl.Value", 1);
-const BAG_OF_ALL = getMethod("BagOfAll", "tlc2.value.impl.Value", 2);
-const BAG_CUP = getMethod("BagCup", "tlc2.value.impl.Value", 2);
-const BAG_CARDINALITY = getMethod("BagCardinality", "tlc2.value.impl.IntValue", 1);
+const BAG_DIFF_SIGNATURE = getBagsSignature("BagDiff", "tlc2.value.impl.Value", 2);
+const SQ_SUBSETEQ_SIGNATURE = getBagsSignature("SqSubseteq", "tlc2.value.IBoolValue", 2);
+const BAG_UNION_SIGNATURE = getBagsSignature("BagUnion", "tlc2.value.impl.Value", 1);
+const BAG_OF_ALL_SIGNATURE = getBagsSignature("BagOfAll", "tlc2.value.impl.Value", 2);
+const BAG_CUP_SIGNATURE = getBagsSignature("BagCup", "tlc2.value.impl.Value", 2);
+const BAG_CARDINALITY_SIGNATURE = getBagsSignature("BagCardinality", "tlc2.value.impl.IntValue", 1);
 
 // Bags.java casts each count to IntValue, so a count that isn't an integer fails with Java's
 // ClassCastException.
@@ -137,7 +137,7 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
       if (typeof count !== "number" || count <= 0) {
         throw createWrongValueError("BagCardinality", "a bag", bag);
       }
-      return addCounts(total, count, BAG_CARDINALITY);
+      return addCounts(total, count, BAG_CARDINALITY_SIGNATURE);
     }, 0);
   }),
   defineOperator("BagIn", 2, (args) => {
@@ -167,14 +167,14 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
       }
       return functionValue;
     });
-    return mergeBags(bags, BAG_CUP);
+    return mergeBags(bags, BAG_CUP_SIGNATURE);
   }),
   defineOperator("\\ominus", 2, (args) => {
     const left = getBagArgument(args, 0, "(-)");
     const right = getBagArgument(args, 1, "(-)");
     return createFunction(
       left.domain.flatMap((key, index): [Value, Value][] => {
-        const count = subtractCounts(left, index, right, BAG_DIFF);
+        const count = subtractCounts(left, index, right, BAG_DIFF_SIGNATURE);
         return count > 0 ? [[key, count]] : [];
       }),
     );
@@ -194,12 +194,14 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
       }
       return functionValue;
     });
-    return mergeBags(bags, BAG_UNION);
+    return mergeBags(bags, BAG_UNION_SIGNATURE);
   }),
   defineOperator("\\sqsubseteq", 2, (args) => {
     const left = getFunction(args, 0, "\\sqsubseteq");
     const right = getFunction(args, 1, "\\sqsubseteq");
-    return left.domain.every((_, index) => subtractCounts(left, index, right, SQ_SUBSETEQ) <= 0);
+    return left.domain.every(
+      (_, index) => subtractCounts(left, index, right, SQ_SUBSETEQ_SIGNATURE) <= 0,
+    );
   }),
   defineHigherOrderOperator("BagOfAll", 2, (args) => {
     const operator = getOperator(args, 0, "BagOfAll");
@@ -218,7 +220,7 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
       functionValue.domain.map((key, index) =>
         createSortedFunction([operator.call([key])], [functionValue.range[index]]),
       ),
-      BAG_OF_ALL,
+      BAG_OF_ALL_SIGNATURE,
     );
   }),
   defineOperator("SubBag", 1, (args) => {

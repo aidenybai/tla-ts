@@ -234,7 +234,7 @@ const createLocalFunction = (definition: Definition, key: string): Definition =>
   location: definition.location,
 });
 
-const createOperatorConstant = (name: string, arity: number, rows: [Value[], Value][]): Builtin => {
+const createOperatorTable = (name: string, arity: number, rows: [Value[], Value][]): Builtin => {
   const table = `{ ${rows.map((row) => `<${[...row[0], row[1]].map((value) => formatValue(value)).join(", ")}>`).join(", ")}}`;
   return {
     kind: "Builtin",
@@ -318,7 +318,7 @@ export const createEnvironment = (
   const nestedModules = new Map<string, LinkedModule>();
   // Each module by name, from the time its level checks run.
   const checkedModules = new Map<string, LinkedModule>();
-  const linkedList: LinkedModule[] = [];
+  const linkOrder: LinkedModule[] = [];
   const dependencies = new Map<string, Set<string>>();
   const loading: Set<string>[] = [];
   // The top-level modules being linked, to report a cycle of EXTENDS or INSTANCE.
@@ -635,7 +635,7 @@ export const createEnvironment = (
     location,
   });
 
-  const getArguments = (arity: number) =>
+  const createArgumentParams = (arity: number) =>
     Array.from({ length: arity }, (_, index) => ({ name: `argument${index}`, arity: 0 }));
 
   const getSubstitutionBody = (
@@ -650,7 +650,7 @@ export const createEnvironment = (
         body: replacement.body,
       };
     }
-    const params = getArguments(declaration.arity);
+    const params = createArgumentParams(declaration.arity);
     const operator =
       replacement.kind === "Identifier"
         ? replacement.name
@@ -674,7 +674,7 @@ export const createEnvironment = (
     if (standardSymbols) {
       if (instance.name === undefined) return [];
       return [...standardSymbols].map(([name, symbol]) => {
-        const forwarded = getArguments(symbol.arity);
+        const forwarded = createArgumentParams(symbol.arity);
         return createLocalAlias(
           `${instance.name}!${name}`,
           symbol.key,
@@ -686,10 +686,16 @@ export const createEnvironment = (
     }
     const linked = nested ?? getLinkedModule(instance.module, instancer);
     const suffix = `#${copyCount.value++}`;
-    const explicit = new Map(instance.substitutions.map((item) => [item.name, item.expression]));
+    const explicitSubstitutions = new Map(
+      instance.substitutions.map((item) => [item.name, item.expression]),
+    );
     const declarations = getDeclarations(linked);
     const getReplacement = (declaration: OperatorParam): Expression =>
-      explicit.get(declaration.name) ?? { kind: "Identifier", name: declaration.name, location };
+      explicitSubstitutions.get(declaration.name) ?? {
+        kind: "Identifier",
+        name: declaration.name,
+        location,
+      };
     instanceChecks.push({
       module: instance.module,
       instancer,
@@ -699,9 +705,9 @@ export const createEnvironment = (
       ),
       location,
     });
-    const instanceNames = new Set(instance.params.map((param) => param.name));
+    const instanceParamNames = new Set(instance.params.map((param) => param.name));
     const isParameterDependent = (declaration: OperatorParam) =>
-      mentionsName(getReplacement(declaration), instanceNames);
+      mentionsName(getReplacement(declaration), instanceParamNames);
     const substitutionDefinitions = declarations.map((declaration): Definition => {
       const substitution = getSubstitutionBody(getReplacement(declaration), declaration, location);
       return {
@@ -759,13 +765,13 @@ export const createEnvironment = (
       .filter(([name]) => !declared.has(name))
       .map(([name, symbol]) => {
         const key = instantiation.getKey(symbol.key);
-        const own = getArguments(symbol.arity);
-        const params = [...instance.params, ...own];
+        const ownParams = createArgumentParams(symbol.arity);
+        const params = [...instance.params, ...ownParams];
         return createLocalAlias(
           instance.name === undefined ? name : `${instance.name}!${name}`,
           key,
           params,
-          key === symbol.key ? own : params,
+          key === symbol.key ? ownParams : params,
           location,
         );
       });
@@ -891,9 +897,9 @@ export const createEnvironment = (
       return first !== undefined && isBefore(nested.location, first.location);
     };
     const getLetModule = (instance: Instance) => {
-      const own = parsed.modules.find((nested) => nested.name === instance.module);
-      if (!own) return getVisibleModules().get(instance.module);
-      return isInstancedAfterDefinition(own) ? modules.get(own.name) : undefined;
+      const ownModule = parsed.modules.find((nested) => nested.name === instance.module);
+      if (!ownModule) return getVisibleModules().get(instance.module);
+      return isInstancedAfterDefinition(ownModule) ? modules.get(ownModule.name) : undefined;
     };
     const getUnit = (module: Module): ModuleUnit => ({
       imported: visible,
@@ -1052,7 +1058,7 @@ export const createEnvironment = (
         warnings,
       ),
     );
-    linkedList.push(linked);
+    linkOrder.push(linked);
     return linked;
   };
 
@@ -1136,7 +1142,7 @@ export const createEnvironment = (
     getScopedKeys(table).forEach((key) =>
       setOperator(
         key,
-        createOperatorConstant(table.name, getKeyArity(key) || table.rows[0][0].length, table.rows),
+        createOperatorTable(table.name, getKeyArity(key) || table.rows[0][0].length, table.rows),
       ),
     ),
   );
@@ -1250,7 +1256,7 @@ export const createEnvironment = (
     variables,
     variableIndex: getVariableIndex(
       variables,
-      linkedList.flatMap((linked) => linked.module.variables.map((variable) => variable.name)),
+      linkOrder.flatMap((linked) => linked.module.variables.map((variable) => variable.name)),
     ),
     definitionValues: new Map(),
     constantLevels: new Map(),
@@ -1299,7 +1305,7 @@ export const createEnvironment = (
   // TLC computes the constant definitions of each module in the order SANY finishes the modules,
   // except those of a module that an INSTANCE gives parameters to.
   const instantiated = new Set(
-    linkedList.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
+    linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
   );
   const getDefinitionOrder = createTlcDefinitionOrder(options.source, options.loadModule);
   return {
@@ -1307,7 +1313,7 @@ export const createEnvironment = (
     assumptions,
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
-    startupDefinitions: linkedList
+    startupDefinitions: linkOrder
       .filter(
         (linked) => !instantiated.has(linked.module.name) || getDeclarations(linked).length === 0,
       )
@@ -1321,6 +1327,6 @@ export const createEnvironment = (
       ),
     rootConstants: linkedRoot.constants,
     rootSymbols: linkedRoot.visible,
-    javaOverrides: linkedList.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
+    javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
   };
 };

@@ -3,8 +3,8 @@ import {
   bindValue,
   expectBoolean,
   findGlobalName,
-  getConditionError,
-  getJunctionError,
+  createConditionError,
+  createJunctionError,
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
@@ -68,14 +68,14 @@ const GENERATED_KINDS = new Set([
   "Exists",
 ]);
 
-const createRuntime = () => ({
+const createGeneratedHelpers = () => ({
   bool: expectBoolean,
   condition: (value: Value, expression: Expression) => {
-    if (typeof value !== "boolean") throw getConditionError(expression, value);
+    if (typeof value !== "boolean") throw createConditionError(expression, value);
     return value;
   },
   junct: (value: Value, expression: Expression & { kind: "And" | "Or" }, index: number) => {
-    if (typeof value !== "boolean") throw getJunctionError(expression, index, value);
+    if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
     return value;
   },
   apply: applyFunction,
@@ -112,7 +112,9 @@ const createRuntime = () => ({
   }),
 });
 
-const runtime = { value: undefined as ReturnType<typeof createRuntime> | undefined };
+const generatedHelpers = {
+  value: undefined as ReturnType<typeof createGeneratedHelpers> | undefined,
+};
 
 const addReference = (generator: Generator, value: unknown) => {
   generator.references.push(value);
@@ -148,8 +150,8 @@ const generateQuantifier = (
   const isForall = expression.kind === "Forall";
   const description = JSON.stringify(isForall ? "the body of \\A" : "the body of \\E");
   const name = `quantifier${generator.counter++}`;
-  const outer = [...frame.locals.values()];
-  const inner = {
+  const outerLocals = [...frame.locals.values()];
+  const bodyFrame = {
     context: "context",
     state: "state",
     next: "next",
@@ -159,14 +161,14 @@ const generateQuantifier = (
   const lists = expression.bounds.map(() => createLocal(generator));
   const declarations = expression.bounds.map(
     (bound, index) =>
-      `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, inner)}, ${addReference(generator, bound.set)}, ${JSON.stringify(generator.environment.runtime.version)});`,
+      `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, bodyFrame)}, ${addReference(generator, bound.set)}, ${JSON.stringify(generator.environment.runtime.version)});`,
   );
   const elements = expression.bounds.map((bound) => {
     const local = createLocal(generator);
-    if (bound.pattern.kind === "Name") inner.locals.set(bound.pattern.name, local);
+    if (bound.pattern.kind === "Name") bodyFrame.locals.set(bound.pattern.name, local);
     return local;
   });
-  const test = `if (bool(${generateExpression(generator, expression.body, inner)}, ${description}) !== ${isForall}) return ${!isForall};`;
+  const test = `if (bool(${generateExpression(generator, expression.body, bodyFrame)}, ${description}) !== ${isForall}) return ${!isForall};`;
   // enumerate returns an array, or an interval, which has a low end, to step through.
   const loops = elements.reduce((code, element, index) => {
     const position = createLocal(generator);
@@ -175,7 +177,7 @@ const generateQuantifier = (
     const list = lists[index];
     return `for (let ${position} = 0, ${low} = ${list}.low, ${size} = ${low} === undefined ? ${list}.length : ${list}.high - ${low} + 1; ${position} < ${size}; ${position}++) { const ${element} = ${low} === undefined ? ${list}[${position}] : ${low} + ${position}; ${code} }`;
   }, test);
-  const parameters = outer.map((local) => `, ${local}`).join("");
+  const parameters = outerLocals.map((local) => `, ${local}`).join("");
   generator.helpers.push(
     `function ${name}(context, state, next${parameters}) { let primed; let applied; ${declarations.join(" ")} ${loops} return ${isForall}; }`,
   );
@@ -390,8 +392,8 @@ export const generateEvaluator = (
   const body = generateExpression(generator, expression, frame);
   const referenceNames = generator.references.map((_, index) => `reference${index}`);
   const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let applied; return ${body}; };`;
-  runtime.value ??= createRuntime();
-  const helpers = runtime.value;
+  generatedHelpers.value ??= createGeneratedHelpers();
+  const helpers = generatedHelpers.value;
   const helperNames = Object.keys(helpers);
   const factory = new Function(...helperNames, ...referenceNames, source);
   return factory(...Object.values(helpers), ...generator.references);

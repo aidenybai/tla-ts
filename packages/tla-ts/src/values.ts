@@ -189,7 +189,7 @@ const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
 
 export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
   const keys = functionValue.writtenKeys ?? functionValue.domain;
-  return keys.map((key) => [key, functionValue.range[findIndex(functionValue.domain, key)]]);
+  return keys.map((key) => [key, functionValue.range[findSortedIndex(functionValue.domain, key)]]);
 };
 
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
@@ -1069,7 +1069,7 @@ export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue
 
 export const EMPTY_SET = createSortedSet([]);
 
-export const differenceSorted = (left: SetValue, right: SetValue): SetValue => {
+export const getSortedDifference = (left: SetValue, right: SetValue): SetValue => {
   if (left.elements.length === 0 || right.elements.length === 0) return left;
   const leftElements = left.elements;
   const rightElements = right.elements;
@@ -1094,7 +1094,7 @@ export const differenceSorted = (left: SetValue, right: SetValue): SetValue => {
   return kept.length === leftElements.length ? left : createSortedSet(kept);
 };
 
-export const intersectSorted = (left: SetValue, right: SetValue): SetValue => {
+export const getSortedIntersection = (left: SetValue, right: SetValue): SetValue => {
   const leftElements = left.elements;
   const rightElements = right.elements;
   const kept: Value[] = [];
@@ -1117,7 +1117,7 @@ export const intersectSorted = (left: SetValue, right: SetValue): SetValue => {
   return kept.length === leftElements.length ? left : createSortedSet(kept);
 };
 
-export const unionSorted = (left: SetValue, right: SetValue): SetValue => {
+export const getSortedUnion = (left: SetValue, right: SetValue): SetValue => {
   if (left.elements.length === 0) return right;
   if (right.elements.length === 0) return left;
   const leftElements = left.elements;
@@ -1541,7 +1541,7 @@ const enumerateSet = (
         );
       }
       if (value.operator === "\\cup")
-        return unionSorted(toFiniteSet(value.left), toFiniteSet(value.right)).elements;
+        return getSortedUnion(toFiniteSet(value.left), toFiniteSet(value.right)).elements;
       const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
       const other = isLeftEnumerated ? value.right : value.left;
@@ -1865,7 +1865,7 @@ export const isFiniteSet = (value: Value): boolean => {
   }
 };
 
-const findIndex = (sortedValues: Value[], target: Value, compare = compareValues) => {
+const findSortedIndex = (sortedValues: Value[], target: Value, compare = compareValues) => {
   const bounds = { low: 0, high: sortedValues.length - 1 };
   while (bounds.low <= bounds.high) {
     const middle = (bounds.low + bounds.high) >> 1;
@@ -1947,7 +1947,8 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   return isElement;
 };
 
-const isInSortedSet = (element: Value, set: SetValue) => findIndex(set.elements, element) !== -1;
+const isInSortedSet = (element: Value, set: SetValue) =>
+  findSortedIndex(set.elements, element) !== -1;
 
 const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
   normalizedSets.has(set)
@@ -2022,7 +2023,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       return (
         functionValue.domain.length === set.names.length &&
         set.names.every((name, index) => {
-          const position = findIndex(functionValue.domain, name);
+          const position = findSortedIndex(functionValue.domain, name);
           return position !== -1 && isElementOf(functionValue.range[position], set.sets[index]);
         })
       );
@@ -2176,7 +2177,7 @@ const failKeyLikeTlc = (domain: Value[], argument: Value, error: TlaEvaluationEr
   if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
     domain.forEach((key) => equalsLikeTlc(key, argument));
   } else {
-    findIndex(domain, argument, compareLikeTlc);
+    findSortedIndex(domain, argument, compareLikeTlc);
   }
   throw error;
 };
@@ -2203,7 +2204,7 @@ const findKeyIndexLikeTlc = (
   }
   const identical = findIdenticalKey(domain, argument);
   if (identical !== -1) return identical;
-  return computeLikeTlcOnFailure(findIndex, failKeyLikeTlc, domain, argument);
+  return computeLikeTlcOnFailure(findSortedIndex, failKeyLikeTlc, domain, argument);
 };
 
 export const applyFunction = (

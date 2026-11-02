@@ -28,19 +28,19 @@ interface ParseContext {
   source?: string;
 }
 
-const TO_JSON =
+const TO_JSON_SIGNATURE =
   "public static tlc2.value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException";
-const TO_JSON_ARRAY =
+const TO_JSON_ARRAY_SIGNATURE =
   "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonArray(tlc2.value.IValue) throws java.io.IOException";
-const TO_JSON_OBJECT =
+const TO_JSON_OBJECT_SIGNATURE =
   "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonObject(tlc2.value.IValue) throws java.io.IOException";
-const SERIALIZE =
+const SERIALIZE_SIGNATURE =
   "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.serialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException";
-const ND_SERIALIZE =
+const ND_SERIALIZE_SIGNATURE =
   "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException";
-const DESERIALIZE =
+const DESERIALIZE_SIGNATURE =
   "public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException";
-const ND_DESERIALIZE =
+const ND_DESERIALIZE_SIGNATURE =
   "public static tlc2.value.IValue tlc2.module.Json.ndDeserialize(tlc2.value.impl.StringValue) throws java.io.IOException";
 
 const isRecord = (value: Value) => {
@@ -94,15 +94,15 @@ const toJson = (value: Value, method: string): string => {
 };
 
 const toJsonArray = (value: Value) => {
-  if (isSetValue(value)) return toSetJson(value, TO_JSON_ARRAY);
+  if (isSetValue(value)) return toSetJson(value, TO_JSON_ARRAY_SIGNATURE);
   if (!isFunctionValue(value) || isRecord(value))
-    throw createUnsupportedError(TO_JSON_ARRAY, value);
-  return toFunctionJson(value, TO_JSON_ARRAY);
+    throw createUnsupportedError(TO_JSON_ARRAY_SIGNATURE, value);
+  return toFunctionJson(value, TO_JSON_ARRAY_SIGNATURE);
 };
 
 const toJsonObject = (value: Value) => {
-  if (!isFunctionValue(value)) throw createUnsupportedError(TO_JSON_OBJECT, value);
-  return toFunctionJson(value, TO_JSON_OBJECT);
+  if (!isFunctionValue(value)) throw createUnsupportedError(TO_JSON_OBJECT_SIGNATURE, value);
+  return toFunctionJson(value, TO_JSON_OBJECT_SIGNATURE);
 };
 
 // TLC reads a JSON number with Gson's intValue, which truncates the exact decimal toward zero and
@@ -164,7 +164,7 @@ const readText = (files: FileSystem, path: string, method: string) => {
 
 export const createJsonOperators = (files: FileSystem): Builtin[] => [
   defineStateOperator("ToJson", 1, (args) =>
-    rankString(toJson(getValue(args, 0, "ToJson"), TO_JSON)),
+    rankString(toJson(getValue(args, 0, "ToJson"), TO_JSON_SIGNATURE)),
   ),
   defineStateOperator("ToJsonArray", 1, (args) =>
     rankString(toJsonArray(getValue(args, 0, "ToJsonArray"))),
@@ -173,18 +173,18 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
     rankString(toJsonObject(getValue(args, 0, "ToJsonObject"))),
   ),
   defineStateOperator("JsonSerialize", 2, (args) => {
-    const path = getPath(getValue(args, 0, "JsonSerialize"), SERIALIZE);
+    const path = getPath(getValue(args, 0, "JsonSerialize"), SERIALIZE_SIGNATURE);
     const value = getValue(args, 1, "JsonSerialize");
     if (!getSequenceElements(value) && !isRecord(value)) {
       throw new TlaModuleError(
         `The second argument of JsonSerialize should be a sequence or record, but instead it is:\n${formatValue(value)}`,
       );
     }
-    files.writeFile?.(path, toJson(value, SERIALIZE));
+    files.writeFile?.(path, toJson(value, SERIALIZE_SIGNATURE));
     return true;
   }),
   defineStateOperator("ndJsonSerialize", 2, (args) => {
-    const path = getPath(getValue(args, 0, "ndJsonSerialize"), ND_SERIALIZE);
+    const path = getPath(getValue(args, 0, "ndJsonSerialize"), ND_SERIALIZE_SIGNATURE);
     const value = getValue(args, 1, "ndJsonSerialize");
     const elements = getSequenceElements(value);
     if (!elements) {
@@ -194,22 +194,22 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
     }
     files.writeFile?.(
       path,
-      elements.map((element) => `${toJson(element, ND_SERIALIZE)}\n`).join(""),
+      elements.map((element) => `${toJson(element, ND_SERIALIZE_SIGNATURE)}\n`).join(""),
     );
     return true;
   }),
   defineStateOperator("JsonDeserialize", 1, (args) => {
-    const path = getPath(getValue(args, 0, "JsonDeserialize"), DESERIALIZE);
-    return parseJson(readText(files, path, DESERIALIZE), DESERIALIZE);
+    const path = getPath(getValue(args, 0, "JsonDeserialize"), DESERIALIZE_SIGNATURE);
+    return parseJson(readText(files, path, DESERIALIZE_SIGNATURE), DESERIALIZE_SIGNATURE);
   }),
   defineStateOperator("ndJsonDeserialize", 1, (args) => {
-    const path = getPath(getValue(args, 0, "ndJsonDeserialize"), ND_DESERIALIZE);
+    const path = getPath(getValue(args, 0, "ndJsonDeserialize"), ND_DESERIALIZE_SIGNATURE);
     return createTuple(
-      readText(files, path, ND_DESERIALIZE)
+      readText(files, path, ND_DESERIALIZE_SIGNATURE)
         .split(/\r\n|\r|\n/)
         .map((line) => line.trim())
         .filter((line) => line !== "")
-        .map((line) => parseJson(line, ND_DESERIALIZE)),
+        .map((line) => parseJson(line, ND_DESERIALIZE_SIGNATURE)),
     );
   }),
 ];

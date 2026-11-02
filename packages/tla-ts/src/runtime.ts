@@ -45,8 +45,8 @@ export interface CheckerRuntime {
 // its Random with the fingerprint of each state it expands, XORed with the seed, so a state's
 // successors are the same whatever order the workers expand states in.
 export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime => {
-  const startup = createJavaRandom(seed);
-  const worker = { random: createJavaRandom(seed), state: undefined as Value[] | undefined };
+  const startupRandom = createJavaRandom(seed);
+  const worker = { random: createJavaRandom(seed), seededState: undefined as Value[] | undefined };
   const phase = { isStartup: false };
   const runtime: CheckerRuntime = {
     getLevel: () => 0,
@@ -59,10 +59,10 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getFingerprint: getTlcFingerprint,
     getRandom: () => {
       const state = phase.isStartup ? undefined : runtime.getCurrentState();
-      if (state === undefined) return startup;
-      if (state !== worker.state) {
+      if (state === undefined) return startupRandom;
+      if (state !== worker.seededState) {
         worker.random.setSeed(runtime.getFingerprint(state) ^ BigInt.asUintN(64, seed));
-        worker.state = state;
+        worker.seededState = state;
       }
       return worker.random;
     },

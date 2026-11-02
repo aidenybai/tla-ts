@@ -79,7 +79,7 @@ export const mapChildren = (
   expression: Expression,
   map: (child: Expression, bound: string[]) => Expression,
 ): Expression => {
-  const plain = (child: Expression) => map(child, []);
+  const mapUnbound = (child: Expression) => map(child, []);
   switch (expression.kind) {
     case "Number":
     case "Decimal":
@@ -89,33 +89,33 @@ export const mapChildren = (
     case "ExceptAt":
       return expression;
     case "Apply":
-      return { ...expression, args: expression.args.map(plain) };
+      return { ...expression, args: expression.args.map(mapUnbound) };
     case "Lambda":
       return { ...expression, body: map(expression.body, expression.params) };
     case "And":
     case "Or":
-      return { ...expression, operands: expression.operands.map(plain) };
+      return { ...expression, operands: expression.operands.map(mapUnbound) };
     case "Prime":
     case "Unchanged":
     case "Enabled":
     case "Always":
     case "Eventually":
-      return { ...expression, expression: plain(expression.expression) };
+      return { ...expression, expression: mapUnbound(expression.expression) };
     case "If":
       return {
         ...expression,
-        condition: plain(expression.condition),
-        consequent: plain(expression.consequent),
-        alternative: plain(expression.alternative),
+        condition: mapUnbound(expression.condition),
+        consequent: mapUnbound(expression.consequent),
+        alternative: mapUnbound(expression.alternative),
       };
     case "Case":
       return {
         ...expression,
         arms: expression.arms.map((arm) => ({
-          condition: plain(arm.condition),
-          body: plain(arm.body),
+          condition: mapUnbound(arm.condition),
+          body: mapUnbound(arm.body),
         })),
-        other: expression.other ? plain(expression.other) : undefined,
+        other: expression.other ? mapUnbound(expression.other) : undefined,
       };
     case "Let": {
       const names = expression.definitions.map((definition) => definition.name);
@@ -132,7 +132,7 @@ export const mapChildren = (
     case "FunctionConstruction":
       return {
         ...expression,
-        bounds: mapBounds(expression.bounds, plain),
+        bounds: mapBounds(expression.bounds, mapUnbound),
         body: map(expression.body, getBoundNames(expression.bounds)),
       };
     case "UnboundedQuantifier":
@@ -140,76 +140,80 @@ export const mapChildren = (
     case "Choose":
       return {
         ...expression,
-        set: expression.set ? plain(expression.set) : undefined,
+        set: expression.set ? mapUnbound(expression.set) : undefined,
         body: map(expression.body, getPatternNames(expression.pattern)),
       };
     case "SetEnumeration":
     case "Tuple":
-      return { ...expression, elements: expression.elements.map(plain) };
+      return { ...expression, elements: expression.elements.map(mapUnbound) };
     case "SetFilter":
       return {
         ...expression,
-        bound: { pattern: expression.bound.pattern, set: plain(expression.bound.set) },
+        bound: { pattern: expression.bound.pattern, set: mapUnbound(expression.bound.set) },
         predicate: map(expression.predicate, getPatternNames(expression.bound.pattern)),
       };
     case "SetMap":
       return {
         ...expression,
-        bounds: mapBounds(expression.bounds, plain),
+        bounds: mapBounds(expression.bounds, mapUnbound),
         expression: map(expression.expression, getBoundNames(expression.bounds)),
       };
     case "FunctionSet":
-      return { ...expression, domain: plain(expression.domain), range: plain(expression.range) };
+      return {
+        ...expression,
+        domain: mapUnbound(expression.domain),
+        range: mapUnbound(expression.range),
+      };
     case "Record":
     case "RecordSet":
       return {
         ...expression,
-        fields: expression.fields.map((field) => ({ ...field, value: plain(field.value) })),
+        fields: expression.fields.map((field) => ({ ...field, value: mapUnbound(field.value) })),
       };
     case "Except":
       return {
         ...expression,
-        function: plain(expression.function),
+        function: mapUnbound(expression.function),
         updates: expression.updates.map((update) => ({
           path: update.path.map((step) =>
-            step.kind === "Index" ? { kind: "Index", args: step.args.map(plain) } : step,
+            step.kind === "Index" ? { kind: "Index", args: step.args.map(mapUnbound) } : step,
           ),
-          value: plain(update.value),
+          value: mapUnbound(update.value),
         })),
       };
     case "FunctionApplication":
       return {
         ...expression,
-        function: plain(expression.function),
-        args: expression.args.map(plain),
+        function: mapUnbound(expression.function),
+        args: expression.args.map(mapUnbound),
       };
     case "Bracket":
-      return { ...expression, args: expression.args.map(plain) };
+      return { ...expression, args: expression.args.map(mapUnbound) };
     case "FieldAccess":
-      return { ...expression, record: plain(expression.record) };
+      return { ...expression, record: mapUnbound(expression.record) };
     case "Product":
-      return { ...expression, factors: expression.factors.map(plain) };
+      return { ...expression, factors: expression.factors.map(mapUnbound) };
     case "BoxAction":
     case "AngleAction":
       return {
         ...expression,
-        action: plain(expression.action),
-        subscript: plain(expression.subscript),
+        action: mapUnbound(expression.action),
+        subscript: mapUnbound(expression.subscript),
       };
     case "WeakFairness":
     case "StrongFairness":
       return {
         ...expression,
-        subscript: plain(expression.subscript),
-        action: plain(expression.action),
+        subscript: mapUnbound(expression.subscript),
+        action: mapUnbound(expression.action),
       };
     case "Label":
-      return { ...expression, body: plain(expression.body) };
+      return { ...expression, body: mapUnbound(expression.body) };
     case "Subexpression":
       return {
         ...expression,
         selectors: expression.selectors.map((selector) =>
-          "args" in selector ? { ...selector, args: selector.args.map(plain) } : selector,
+          "args" in selector ? { ...selector, args: selector.args.map(mapUnbound) } : selector,
         ),
       };
   }
@@ -443,7 +447,7 @@ const createLocalIdentifier = (name: string, location: SourceLocation): Expressi
   resolution: { kind: "Local" },
 });
 
-const getParamArguments = (params: OperatorParam[], location: SourceLocation) =>
+const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
   params.map((param) => createLocalIdentifier(param.name, location));
 
 const getInstanceOperator = (
@@ -460,7 +464,7 @@ const getInstanceOperator = (
       kind: "Apply",
       operator: key,
       args: [
-        ...getParamArguments(params, location),
+        ...createLocalArguments(params, location),
         ...names.map((name) => createLocalIdentifier(name, location)),
       ],
       location,
@@ -525,7 +529,7 @@ const substitute = (
     return {
       kind: "Apply",
       operator: copy,
-      args: getParamArguments(params, expression.location),
+      args: createLocalArguments(params, expression.location),
       location: expression.location,
     };
   }
@@ -536,13 +540,13 @@ const substitute = (
       instantiation.substitutions.size > 0 ||
       params.length > 0 ||
       contextualApplications.has(expression);
-    const mark = (rewritten: Expression) => {
+    const markContextual = (rewritten: Expression) => {
       if (isContextual) contextualApplications.add(rewritten);
       return rewritten;
     };
     if (replacement?.kind === "Identifier" || replacement?.kind === "OperatorReference") {
       const operator = replacement.kind === "Identifier" ? replacement.name : replacement.operator;
-      return mark({
+      return markContextual({
         ...expression,
         operator,
         args,
@@ -550,7 +554,7 @@ const substitute = (
       });
     }
     if (replacement?.kind === "Apply") {
-      return mark({
+      return markContextual({
         ...expression,
         operator: replacement.operator,
         args: [...replacement.args, ...args],
@@ -586,11 +590,11 @@ const substitute = (
       );
     }
     const copy = getCopy(rewrite, expression.operator);
-    if (copy === undefined) return mark({ ...expression, args });
+    if (copy === undefined) return markContextual({ ...expression, args });
     return {
       ...expression,
       operator: copy,
-      args: [...getParamArguments(params, expression.location), ...args],
+      args: [...createLocalArguments(params, expression.location), ...args],
     };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
@@ -697,15 +701,21 @@ const expandLetInstances = (
   instantiate: (instance: Instance, lets: Definition[]) => Definition[],
   lets: Definition[],
 ): Expression => {
-  const inner = expression.kind === "Let" ? [...lets, ...expression.definitions] : lets;
-  const mapped = mapChildren(expression, (child) => expandLetInstances(child, instantiate, inner));
+  const visibleLets = expression.kind === "Let" ? [...lets, ...expression.definitions] : lets;
+  const mapped = mapChildren(expression, (child) =>
+    expandLetInstances(child, instantiate, visibleLets),
+  );
   if (mapped.kind !== "Let" || !mapped.instances) return mapped;
   const definitions = mapped.instances.reduce((current, instance) => {
     const position = current.findIndex((definition) =>
       isBefore(instance.location, definition.location),
     );
     const index = position === -1 ? current.length : position;
-    return [...current.slice(0, index), ...instantiate(instance, inner), ...current.slice(index)];
+    return [
+      ...current.slice(0, index),
+      ...instantiate(instance, visibleLets),
+      ...current.slice(index),
+    ];
   }, mapped.definitions);
   return { ...mapped, definitions };
 };

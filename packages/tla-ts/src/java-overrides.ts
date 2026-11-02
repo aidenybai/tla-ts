@@ -38,6 +38,38 @@ const ACCESS_PUBLIC = 0x0001;
 const ACCESS_STATIC = 0x0008;
 const VALUE_PACKAGE = "tlc2/value/impl/";
 
+// The constant pool tags of the JVM specification, section 4.4.
+const POOL_TAG = {
+  utf8: 1,
+  integer: 3,
+  float: 4,
+  long: 5,
+  double: 6,
+  class: 7,
+  string: 8,
+  methodHandle: 15,
+  methodType: 16,
+  module: 19,
+  package: 20,
+};
+
+// The JVM opcodes that an override returning a constant value uses.
+const OPCODE = {
+  iconstM1: 0x02,
+  iconst0: 0x03,
+  iconst5: 0x08,
+  bipush: 0x10,
+  sipush: 0x11,
+  ldc: 0x12,
+  ldcW: 0x13,
+  dup: 0x59,
+  areturn: 0xb0,
+  getstatic: 0xb2,
+  invokespecial: 0xb7,
+  invokestatic: 0xb8,
+  new: 0xbb,
+};
+
 const createReader = (bytes: Uint8Array) => {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const cursor = { offset: 0 };
@@ -93,28 +125,34 @@ const getJavaClassName = (pool: PoolEntry[], index: number) =>
 
 // The public static methods of a class file and their bytecode, in the order of the class file.
 // Class#getDeclaredMethods orders them by where HotSpot allocated the symbols of their names.
-const readMethods = (bytes: Uint8Array) => {
+const readClassFile = (bytes: Uint8Array) => {
   const reader = createReader(bytes);
   if (reader.readUint32() !== CLASS_MAGIC)
     throw new TlaSyntaxError("A module override is not a class file");
   reader.readUint16();
   reader.readUint16();
   const pool: PoolEntry[] = [];
-  const count = reader.readUint16();
+  const poolSize = reader.readUint16();
   const decoder = new TextDecoder();
-  for (let index = 1; index < count; index++) {
+  for (let index = 1; index < poolSize; index++) {
     const tag = reader.readUint8();
     const entry = { tag, text: "", value: 0, first: 0, second: 0 };
     pool[index] = entry;
-    if (tag === 1) entry.text = decoder.decode(reader.readBytes(reader.readUint16()));
-    else if (tag === 3) entry.value = reader.readInt32();
-    else if (tag === 4) reader.readUint32();
-    else if (tag === 5 || tag === 6) {
+    if (tag === POOL_TAG.utf8) entry.text = decoder.decode(reader.readBytes(reader.readUint16()));
+    else if (tag === POOL_TAG.integer) entry.value = reader.readInt32();
+    else if (tag === POOL_TAG.float) reader.readUint32();
+    else if (tag === POOL_TAG.long || tag === POOL_TAG.double) {
       reader.readBytes(8);
       index++;
-    } else if (tag === 7 || tag === 8 || tag === 16 || tag === 19 || tag === 20) {
+    } else if (
+      tag === POOL_TAG.class ||
+      tag === POOL_TAG.string ||
+      tag === POOL_TAG.methodType ||
+      tag === POOL_TAG.module ||
+      tag === POOL_TAG.package
+    ) {
       entry.first = reader.readUint16();
-    } else if (tag === 15) {
+    } else if (tag === POOL_TAG.methodHandle) {
       reader.readUint8();
       entry.first = reader.readUint16();
     } else {
@@ -170,7 +208,7 @@ const readMethods = (bytes: Uint8Array) => {
   return { pool, methods };
 };
 
-const getMember = (pool: PoolEntry[], index: number) => {
+const getMemberReference = (pool: PoolEntry[], index: number) => {
   const reference = pool[index];
   const nameAndType = pool[reference.second];
   return {
@@ -188,70 +226,70 @@ const getReturnedLiteral = (
   className: string,
   location: SourceLocation,
 ) => {
-  const unsupported = () =>
+  const createUnsupportedError = () =>
     new TlaUnsupportedError(
       `The Java override ${className}.${method.name} computes its value, which tla-ts cannot run`,
     );
   const code = method.code;
-  if (!code) throw unsupported();
+  if (!code) throw createUnsupportedError();
   const stack: StackItem[] = [];
   const pop = () => {
     const item = stack.pop();
-    if (item === undefined) throw unsupported();
+    if (item === undefined) throw createUnsupportedError();
     return item;
   };
   const getConstant = (index: number) => {
     const entry = pool[index];
-    if (entry.tag === 3) return entry.value;
-    if (entry.tag === 8) return pool[entry.first].text;
-    throw unsupported();
+    if (entry.tag === POOL_TAG.integer) return entry.value;
+    if (entry.tag === POOL_TAG.string) return pool[entry.first].text;
+    throw createUnsupportedError();
   };
   for (let offset = 0; offset < code.length;) {
     const opcode = code[offset];
     const getIndex = () => (code[offset + 1] << 8) | code[offset + 2];
-    if (opcode >= 0x02 && opcode <= 0x08) {
-      stack.push(opcode - 0x03);
+    if (opcode >= OPCODE.iconstM1 && opcode <= OPCODE.iconst5) {
+      stack.push(opcode - OPCODE.iconst0);
       offset += 1;
-    } else if (opcode === 0x10) {
+    } else if (opcode === OPCODE.bipush) {
       stack.push((code[offset + 1] << 24) >> 24);
       offset += 2;
-    } else if (opcode === 0x11) {
+    } else if (opcode === OPCODE.sipush) {
       stack.push((getIndex() << 16) >> 16);
       offset += 3;
-    } else if (opcode === 0x12) {
+    } else if (opcode === OPCODE.ldc) {
       stack.push(getConstant(code[offset + 1]));
       offset += 2;
-    } else if (opcode === 0x13) {
+    } else if (opcode === OPCODE.ldcW) {
       stack.push(getConstant(getIndex()));
       offset += 3;
-    } else if (opcode === 0x59) {
+    } else if (opcode === OPCODE.dup) {
       const top = pop();
       stack.push(top, top);
       offset += 1;
-    } else if (opcode === 0xb2) {
-      const field = getMember(pool, getIndex());
-      if (field.className !== `${VALUE_PACKAGE}BoolValue`) throw unsupported();
-      if (field.name !== "ValTrue" && field.name !== "ValFalse") throw unsupported();
+    } else if (opcode === OPCODE.getstatic) {
+      const field = getMemberReference(pool, getIndex());
+      if (field.className !== `${VALUE_PACKAGE}BoolValue`) throw createUnsupportedError();
+      if (field.name !== "ValTrue" && field.name !== "ValFalse") throw createUnsupportedError();
       stack.push({
         kind: "Identifier",
         name: field.name === "ValTrue" ? "TRUE" : "FALSE",
         location,
       });
       offset += 3;
-    } else if (opcode === 0xb8) {
-      const callee = getMember(pool, getIndex());
+    } else if (opcode === OPCODE.invokestatic) {
+      const callee = getMemberReference(pool, getIndex());
       const value = pop();
       if (callee.className !== `${VALUE_PACKAGE}IntValue` || callee.name !== "gen") {
-        throw unsupported();
+        throw createUnsupportedError();
       }
-      if (typeof value !== "number") throw unsupported();
+      if (typeof value !== "number") throw createUnsupportedError();
       stack.push({ kind: "Number", value, location });
       offset += 3;
-    } else if (opcode === 0xbb) {
+    } else if (opcode === OPCODE.new) {
       stack.push({ className: getClassName(pool, getIndex()), value: undefined });
       offset += 3;
-    } else if (opcode === 0xb7) {
-      const constructor = getMember(pool, getIndex());
+    } else if (opcode === OPCODE.invokespecial) {
+      const constructor = getMemberReference(pool, getIndex());
       const text = pop();
       const instance = pop();
       const isStringValue =
@@ -260,22 +298,22 @@ const getReturnedLiteral = (
         typeof text === "string" &&
         typeof instance === "object" &&
         "className" in instance;
-      if (!isStringValue) throw unsupported();
+      if (!isStringValue) throw createUnsupportedError();
       instance.value = { kind: "String", value: text, location };
       offset += 3;
-    } else if (opcode === 0xb0) {
+    } else if (opcode === OPCODE.areturn) {
       const returned = pop();
-      if (typeof returned !== "object") throw unsupported();
+      if (typeof returned !== "object") throw createUnsupportedError();
       if ("className" in returned) {
-        if (!returned.value) throw unsupported();
+        if (!returned.value) throw createUnsupportedError();
         return returned.value;
       }
       return returned;
     } else {
-      throw unsupported();
+      throw createUnsupportedError();
     }
   }
-  throw unsupported();
+  throw createUnsupportedError();
 };
 
 // TLC loads a class named after each module and replaces each operator of the module that the
@@ -287,7 +325,7 @@ export const overrideDefinitions = (
   isRoot: boolean,
 ): { module: Module; overrides: JavaOverride[] } => {
   if (!bytes) return { module, overrides: [] };
-  const classFile = readMethods(bytes);
+  const classFile = readClassFile(bytes);
   const arities = new Map(
     module.definitions
       .filter((definition) => isRoot || !definition.isLocal)

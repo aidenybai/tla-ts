@@ -29,11 +29,11 @@ import {
   createSet,
   describeKind,
   createTuple,
-  differenceSorted,
+  getSortedDifference,
   formatValue,
   getCardinality,
   getDomain,
-  intersectSorted,
+  getSortedIntersection,
   isElementOf,
   getSequenceElements,
   isEmptySet,
@@ -45,7 +45,7 @@ import {
   markStreamedSet,
   isSetValue,
   toFiniteSet,
-  unionSorted,
+  getSortedUnion,
   isEqualLikeTlc,
   createEnumeratedSet,
   EMPTY_SET,
@@ -71,10 +71,10 @@ const BOOLEAN_SET = createSet([false, true]);
 
 // Merging the sets pairwise in a balanced tree compares each element about log2 of their count
 // times.
-const unionInTree = (sets: SetValue[], start: number, end: number): SetValue => {
+const getBalancedUnion = (sets: SetValue[], start: number, end: number): SetValue => {
   if (end - start === 1) return sets[start];
   const middle = (start + end) >> 1;
-  return unionSorted(unionInTree(sets, start, middle), unionInTree(sets, middle, end));
+  return getSortedUnion(getBalancedUnion(sets, start, middle), getBalancedUnion(sets, middle, end));
 };
 
 const SET_OPERATORS: SetOperationValue["operator"][] = ["\\cup", "\\cap", "\\"];
@@ -156,10 +156,10 @@ export const CORE_OPERATORS: Builtin[] = [
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =
           operator === "\\cup"
-            ? unionSorted
+            ? getSortedUnion
             : operator === "\\cap"
-              ? intersectSorted
-              : differenceSorted;
+              ? getSortedIntersection
+              : getSortedDifference;
         // The merge compares the elements, which TLC tests for membership one by one instead.
         return computeLikeTlcOnFailure(
           (finiteLeft, finiteRight) => merge(toFiniteSet(finiteLeft), toFiniteSet(finiteRight)),
@@ -191,7 +191,7 @@ export const CORE_OPERATORS: Builtin[] = [
       );
       return createEnumeratedSet(union.elements);
     }
-    return sets.length === 0 ? EMPTY_SET : unionInTree(sets.map(toFiniteSet), 0, sets.length);
+    return sets.length === 0 ? EMPTY_SET : getBalancedUnion(sets.map(toFiniteSet), 0, sets.length);
   }),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");

@@ -10,14 +10,14 @@ import {
   type Value,
 } from "./values";
 
-const FALSE = 0;
-const TRUE = 1;
-const INTEGER = 2;
-const STRING = 3;
-const MODEL_VALUE = 4;
-const SET = 5;
-const FUNCTION = 6;
-const INTERVAL_FUNCTION = 7;
+const FALSE_TAG = 0;
+const TRUE_TAG = 1;
+const INTEGER_TAG = 2;
+const STRING_TAG = 3;
+const MODEL_VALUE_TAG = 4;
+const SET_TAG = 5;
+const FUNCTION_TAG = 6;
+const INTERVAL_FUNCTION_TAG = 7;
 
 // A function's TLC class follows its tag, so a worker words errors about it as TLC does.
 const FUNCTION_CLASSES: (FunctionClass | undefined)[] = [undefined, "lambda", "tuple", "record"];
@@ -37,7 +37,7 @@ export const createStateEncoder = (): StateEncoder => {
   const buffer = { words: new Int32Array(1024), length: 0, count: 0 };
   const strings: string[] = [];
   const stringIndexes = new Map<string, number>();
-  const push = (word: number) => {
+  const pushWord = (word: number) => {
     if (buffer.length === buffer.words.length) {
       const words = new Int32Array(buffer.words.length * 2);
       words.set(buffer.words);
@@ -47,49 +47,49 @@ export const createStateEncoder = (): StateEncoder => {
   };
   const pushString = (value: string) => {
     const known = stringIndexes.get(value);
-    if (known !== undefined) return push(known);
+    if (known !== undefined) return pushWord(known);
     stringIndexes.set(value, strings.length);
-    push(strings.length);
+    pushWord(strings.length);
     strings.push(value);
   };
   const encodeValue = (value: Value): boolean => {
     if (typeof value === "boolean") {
-      push(value ? TRUE : FALSE);
+      pushWord(value ? TRUE_TAG : FALSE_TAG);
       return true;
     }
     if (typeof value === "number") {
       if ((value | 0) !== value) return false;
-      push(INTEGER);
-      push(value);
+      pushWord(INTEGER_TAG);
+      pushWord(value);
       return true;
     }
     if (typeof value === "string") {
-      push(STRING);
+      pushWord(STRING_TAG);
       pushString(value);
       return true;
     }
     if (value.kind === "ModelValue") {
-      push(MODEL_VALUE);
+      pushWord(MODEL_VALUE_TAG);
       pushString(value.name);
       return true;
     }
     if (value.kind === "Set") {
-      push(SET);
-      push(value.elements.length);
+      pushWord(SET_TAG);
+      pushWord(value.elements.length);
       return value.elements.every(encodeValue);
     }
     if (value.kind === "Function") {
       const interval = getDomainInterval(value.domain);
       if (interval) {
-        push(INTERVAL_FUNCTION);
-        push(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
-        push(interval.low);
-        push(value.range.length);
+        pushWord(INTERVAL_FUNCTION_TAG);
+        pushWord(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
+        pushWord(interval.low);
+        pushWord(value.range.length);
         return value.range.every(encodeValue);
       }
-      push(FUNCTION);
-      push(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
-      push(value.domain.length);
+      pushWord(FUNCTION_TAG);
+      pushWord(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
+      pushWord(value.domain.length);
       return value.domain.every(encodeValue) && value.range.every(encodeValue);
     }
     return false;
@@ -120,14 +120,14 @@ export const createStateDecoder =
     const decodeElements = (length: number) => Array.from({ length }, () => decodeValue());
     const decodeValue = (): Value => {
       const tag = words[cursor.index++];
-      if (tag === FALSE) return false;
-      if (tag === TRUE) return true;
-      if (tag === INTEGER) return words[cursor.index++];
-      if (tag === STRING) return encoded.strings[words[cursor.index++]];
-      if (tag === MODEL_VALUE) return createModelValue(encoded.strings[words[cursor.index++]]);
-      if (tag === SET) return createSortedSet(decodeElements(words[cursor.index++]));
+      if (tag === FALSE_TAG) return false;
+      if (tag === TRUE_TAG) return true;
+      if (tag === INTEGER_TAG) return words[cursor.index++];
+      if (tag === STRING_TAG) return encoded.strings[words[cursor.index++]];
+      if (tag === MODEL_VALUE_TAG) return createModelValue(encoded.strings[words[cursor.index++]]);
+      if (tag === SET_TAG) return createSortedSet(decodeElements(words[cursor.index++]));
       const functionClass = FUNCTION_CLASSES[words[cursor.index++]];
-      if (tag === INTERVAL_FUNCTION) {
+      if (tag === INTERVAL_FUNCTION_TAG) {
         const low = words[cursor.index++];
         const length = words[cursor.index++];
         const domain = getFunctionDomain({ kind: "Interval", low, high: low + length - 1 });

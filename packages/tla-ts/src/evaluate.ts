@@ -252,14 +252,14 @@ export const describeNode = (expression: Expression) =>
     ? (expression.text ?? String(expression.value))
     : describeRange(expression);
 
-export const getConditionError = (expression: Expression, value: Value) =>
+export const createConditionError = (expression: Expression, value: Value) =>
   new TlaEvaluationError(
     `A non-boolean expression (${getKindString(value)}) was used as the condition of an IF.\n${describeRange(expression)}`,
   );
 
 // TLC parses an infix chain of /\ or \/ as nested binary junctions and a bulleted list as one
 // junction list, and it words the error differently for each.
-export const getJunctionError = (
+export const createJunctionError = (
   expression: Expression & { kind: "And" | "Or" },
   index: number,
   value: Value,
@@ -2086,7 +2086,7 @@ const compileQuantifier = (
   };
 };
 
-const lookupKey = (pattern: BoundPattern, scope: Scope | undefined) => {
+const getBoundValue = (pattern: BoundPattern, scope: Scope | undefined) => {
   if (pattern.kind === "Tuple") {
     return createTuple(
       pattern.names.map((name) => {
@@ -2141,8 +2141,8 @@ const compileFunctionConstruction = (
     forEachBoundElement(bounds, sets, context.scope, (scope) => {
       const key =
         bounds.length === 1
-          ? (lookupKey(bound.pattern, scope) ?? false)
-          : createTuple(bounds.map((item) => lookupKey(item.pattern, scope) ?? false));
+          ? (getBoundValue(bound.pattern, scope) ?? false)
+          : createTuple(bounds.map((item) => getBoundValue(item.pattern, scope) ?? false));
       pairs.push([key, body(withScope(context, scope))]);
       return false;
     });
@@ -2325,7 +2325,7 @@ const compileSetComprehension = (
     someElement(elements, (element) => {
       const scope = bindPattern(context.scope, expression.pattern, element);
       if (!expectBoolean(body(withScope(context, scope)), "the body of CHOOSE")) return false;
-      chosen.value = lookupKey(expression.pattern, scope);
+      chosen.value = getBoundValue(expression.pattern, scope);
       return true;
     });
     if (chosen.value === undefined) {
@@ -2393,7 +2393,7 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
 };
 
 const compile = (expression: Expression, environment: Environment): Evaluator => {
-  const child = (node: Expression) => getEvaluator(node, environment);
+  const getChildEvaluator = (node: Expression) => getEvaluator(node, environment);
   switch (expression.kind) {
     case "Number": {
       const value = expression.value;
@@ -2429,29 +2429,29 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         );
       };
     case "And": {
-      const operands = expression.operands.map(child);
+      const operands = expression.operands.map(getChildEvaluator);
       return (context) => {
         for (let index = 0; index < operands.length; index++) {
           const value = operands[index](context);
-          if (typeof value !== "boolean") throw getJunctionError(expression, index, value);
+          if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
           if (!value) return false;
         }
         return true;
       };
     }
     case "Or": {
-      const operands = expression.operands.map(child);
+      const operands = expression.operands.map(getChildEvaluator);
       return (context) => {
         for (let index = 0; index < operands.length; index++) {
           const value = operands[index](context);
-          if (typeof value !== "boolean") throw getJunctionError(expression, index, value);
+          if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
           if (value) return true;
         }
         return false;
       };
     }
     case "Prime": {
-      const inner = child(expression.expression);
+      const inner = getChildEvaluator(expression.expression);
       return (context) => {
         if (!context.next) throw createPrimeOutsideActionError(expression);
         return inner({
@@ -2464,31 +2464,31 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       };
     }
     case "Unchanged": {
-      const primed = child({
+      const primed = getChildEvaluator({
         kind: "Prime",
         expression: expression.expression,
         location: expression.location,
       });
-      const current = child(expression.expression);
+      const current = getChildEvaluator(expression.expression);
       return (context) => valuesEqual(primed(context), current(context));
     }
     case "If": {
-      const condition = child(expression.condition);
-      const consequent = child(expression.consequent);
-      const alternative = child(expression.alternative);
+      const condition = getChildEvaluator(expression.condition);
+      const consequent = getChildEvaluator(expression.consequent);
+      const alternative = getChildEvaluator(expression.alternative);
       return (context) => {
         const value = condition(context);
-        if (typeof value !== "boolean") throw getConditionError(expression, value);
+        if (typeof value !== "boolean") throw createConditionError(expression, value);
         return value ? consequent(context) : alternative(context);
       };
     }
     case "Case": {
       const arms = expression.arms.map((arm) => ({
         source: arm.condition,
-        condition: child(arm.condition),
-        body: child(arm.body),
+        condition: getChildEvaluator(arm.condition),
+        body: getChildEvaluator(arm.body),
       }));
-      const other = expression.other ? child(expression.other) : undefined;
+      const other = expression.other ? getChildEvaluator(expression.other) : undefined;
       return (context) => {
         for (const arm of arms) {
           const value = arm.condition(context);
@@ -2506,7 +2506,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       };
     }
     case "Let": {
-      const body = child(expression.body);
+      const body = getChildEvaluator(expression.body);
       return (context) =>
         body(withScope(context, bindDefinitions(expression.definitions, context)));
     }
@@ -2524,18 +2524,18 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "SetMap":
       return compileSetComprehension(expression, environment);
     case "SetEnumeration": {
-      const elements = expression.elements.map(child);
+      const elements = expression.elements.map(getChildEvaluator);
       return (context) => createEnumeratedSet(elements.map((element) => element(context)));
     }
     case "Tuple": {
-      const elements = expression.elements.map(child);
+      const elements = expression.elements.map(getChildEvaluator);
       return (context) => createTuple(elements.map((element) => element(context)));
     }
     case "FunctionConstruction":
       return compileFunctionConstruction(expression, environment);
     case "FunctionSet": {
-      const domain = child(expression.domain);
-      const range = child(expression.range);
+      const domain = getChildEvaluator(expression.domain);
+      const range = getChildEvaluator(expression.range);
       return (context) => ({ kind: "FunctionSet", domain: domain(context), range: range(context) });
     }
     case "Record":
@@ -2543,7 +2543,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "RecordSet": {
       const fields = getSortedFields(expression.fields);
       const names = fields.map((field) => field.name);
-      const sets = fields.map((field) => child(field.value));
+      const sets = fields.map((field) => getChildEvaluator(field.value));
       return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
     }
     case "Except":
@@ -2560,10 +2560,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       };
     case "FunctionApplication": {
       keepLazy(expression.function);
-      const evaluated = child(expression.function);
+      const evaluated = getChildEvaluator(expression.function);
       const evaluateFunction = (context: Context) =>
         expectFunction(evaluated(toKeepLazyContext(context)), expression);
-      const args = expression.args.map(child);
+      const args = expression.args.map(getChildEvaluator);
       const describeMissing = getMissingArgumentDescriber(environment.runtime.version);
       if (args.length === 1) {
         const argument = args[0];
@@ -2578,12 +2578,12 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         );
     }
     case "FieldAccess": {
-      const record = child(expression.record);
+      const record = getChildEvaluator(expression.record);
       const select = getFieldSelector(expression);
       return (context) => select(record(context));
     }
     case "Product": {
-      const factors = expression.factors.map(child);
+      const factors = expression.factors.map(getChildEvaluator);
       return (context) => ({
         kind: "ProductSet",
         factors: factors.map((factor) => factor(context)),
@@ -2591,8 +2591,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "BoxAction":
     case "AngleAction": {
-      const action = child(expression.action);
-      const unchanged = child({
+      const action = getChildEvaluator(expression.action);
+      const unchanged = getChildEvaluator({
         kind: "Unchanged",
         expression: expression.subscript,
         location: expression.location,
@@ -2608,7 +2608,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return (context) => isEnabled(action, context);
     }
     case "Label":
-      return child(expression.body);
+      return getChildEvaluator(expression.body);
     case "Subexpression":
       return () => {
         throw new TlaEvaluationError(
