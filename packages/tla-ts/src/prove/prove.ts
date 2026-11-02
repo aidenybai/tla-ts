@@ -17,7 +17,7 @@ import {
   normalizeExpand,
   normalizeSequent,
 } from "./prep/normalize";
-import { findMethods, type Method } from "./prep/pragma";
+import { findMethods, type Method } from "./prep/methods";
 import { encodePtl } from "./ptl/encode";
 import { encodeSmt } from "./smt/encode";
 import type { EncodingSession } from "./smt/rewrite";

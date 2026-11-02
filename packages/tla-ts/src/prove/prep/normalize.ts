@@ -30,7 +30,7 @@ import {
 import type { OldMethod } from "../../obligations/pragma";
 import { implicationToEnabled } from "./enabled-axioms";
 import { checkLevelChange } from "./level-comparison";
-import { findMethods } from "./pragma";
+import { findMethods } from "./methods";
 
 const createDefinitionExpander = (isPragmaExpanded: boolean) =>
   createContextMap(shift(0), (current, hyp) => {

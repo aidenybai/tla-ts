@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { type ProofObligation, TlaError } from "../src";
 import type { PrintedObligation } from "../src/obligations";
 import { DECIDERS } from "../src/prove/deciders";
-import { findMethods, type Method } from "../src/prove/prep/pragma";
+import { findMethods, type Method } from "../src/prove/prep/methods";
 import { encodeForBackend } from "../src/prove/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import { runWithCpuLimit } from "./cpu-limit";
