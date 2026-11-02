@@ -1,9 +1,13 @@
 // The tlapm backend: runs tlapm on a module and reads each obligation's result from its Toolbox
 // messages.
 
-import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
 import { TlaUnsupportedError } from "../../errors";
+
+// Loaded at runtime so browser bundles leave them out. prove loads this module only in Node and Bun.
+const childProcess = process.getBuiltinModule("node:child_process");
+const fs = process.getBuiltinModule("node:fs");
+const os = process.getBuiltinModule("node:os");
+const path = process.getBuiltinModule("node:path");
 
 export type TlapmResult =
   | { status: "proved"; prover: string }
@@ -18,9 +22,9 @@ export interface TlapmOptions {
 // Each tlapm on the PATH, first to last.
 export const getTlapmPaths = () =>
   (process.env.PATH ?? "")
-    .split(delimiter)
-    .map((directory) => join(directory, "tlapm"))
-    .filter((path) => existsSync(path));
+    .split(path.delimiter)
+    .map((directory) => path.join(directory, "tlapm"))
+    .filter((tlapm) => fs.existsSync(tlapm));
 
 // tlapm's Toolbox protocol: each message is @!!BEGIN, then @!!name:value lines, then @!!END.
 const parseToolboxMessages = (text: string) =>
@@ -60,17 +64,14 @@ export const proveWithTlapm = async (
   const tlapm = getTlapmPaths()[0];
   if (tlapm === undefined)
     throw new TlaUnsupportedError("The tlapm backend needs tlapm on your PATH.");
-  const childProcess = await import("node:child_process");
-  const fs = await import("node:fs");
-  const os = await import("node:os");
-  const directory = fs.mkdtempSync(join(os.tmpdir(), "tla-ts-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tla-ts-"));
   modules.forEach((source, moduleName) =>
-    fs.writeFileSync(join(directory, `${moduleName}.tla`), source),
+    fs.writeFileSync(path.join(directory, `${moduleName}.tla`), source),
   );
   const results = new Map<number, TlapmResult>();
   const child = childProcess.spawn(
     tlapm,
-    ["--toolbox", "0", "0", "--cache-dir", join(directory, ".tlacache"), `${name}.tla`],
+    ["--toolbox", "0", "0", "--cache-dir", path.join(directory, ".tlacache"), `${name}.tla`],
     { cwd: directory, stdio: ["ignore", "ignore", "pipe"] },
   );
   const kill = () => child.kill();
