@@ -1085,18 +1085,21 @@ const runEach = async (
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
 
-// tlapm installs its standard library, with modules such as TLAPS, at lib/tlapm/stdlib beside
-// bin/tlapm.
-const getTlapmLibrary = () =>
-  getTlapmPaths()
+// tlapm searches the current directory, then its standard library at lib/tlapm/stdlib beside
+// bin/tlapm, then each -I directory, the last given first.
+const getLibraryDirectories = (parsed: ParsedArgs) => [
+  ".",
+  ...getTlapmPaths()
     .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
-    .find((path) => existsSync(path));
+    .filter((path) => existsSync(path))
+    .slice(0, 1),
+  ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
+];
 
 const expandGlobs = (paths: string[]) =>
   paths.flatMap((path) => (GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path]));
 
-const readModule = (path: string) =>
-  existsSync(path) ? { file: path, source: readFileSync(path, "utf8") } : undefined;
+const getModulePath = (path: string) => (path.endsWith(".tla") ? path : `${path}.tla`);
 
 // A message of tlapm's toolbox protocol, which it writes to stderr.
 const printToolboxMessage = (fields: string[]) =>
@@ -1175,37 +1178,23 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
 const proveModules = (args: string[]) => {
   const parsed = PROVE_COMMAND.parse(args);
   const backend = parsed.get("--backend")?.[0];
+  const modulePaths = expandGlobs(parsed.positionals).map(getModulePath);
   if (
     parsed.unknown[0] !== undefined ||
     parsed.incomplete ||
-    (backend !== undefined && !isProveBackend(backend))
+    (backend !== undefined && !isProveBackend(backend)) ||
+    modulePaths.length === 0
   ) {
     console.error(`Usage: ${PROVE_COMMAND.usage}`);
     return 1;
   }
-  const modulePaths = expandGlobs(parsed.positionals).map((path) =>
-    path.endsWith(".tla") ? path : `${path}.tla`,
-  );
-  if (modulePaths.length === 0) {
-    console.error(`Usage: ${PROVE_COMMAND.usage}`);
-    return 1;
-  }
-  const tlapmLibrary = getTlapmLibrary();
-  const includes = parsed.options.flatMap((option) => (option.name === "-I" ? option.values : []));
+  const libraries = getLibraryDirectories(parsed);
   return runEach(
     modulePaths,
     async (path) => {
-      const directories = [
-        dirname(path),
-        ".",
-        ...(tlapmLibrary ? [tlapmLibrary] : []),
-        ...includes.toReversed(),
-      ];
       const result = await prove({
         source: readFileSync(path, "utf8"),
-        loadModule: (name) =>
-          directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean)
-            ?.source,
+        loadModule: createModuleLoader([dirname(path), ...libraries]),
         backend,
         workers: getWorkerCount(parsed.get("-workers")),
         onObligation: (obligation) =>
@@ -1354,7 +1343,7 @@ const runTlapm = async (args: string[]) => {
     return EXIT_STATUS.success;
   }
   const files = expandGlobs(parsed.positionals);
-  const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
+  const modulePaths = files.map(getModulePath);
   if (modulePaths.length === 0) {
     console.error(USAGE);
     return 1;
@@ -1368,15 +1357,11 @@ const runTlapm = async (args: string[]) => {
     if (option.name === "--line") return start === 0 ? WHOLE_MODULE : { start, end: start };
     return range;
   }, WHOLE_MODULE);
-  // tlapm searches the current directory and each module's, then its library, then each -I
-  // directory, the last given first. Without tlapm, TLAPS is tla-ts's copy.
-  const tlapmLibrary = getTlapmLibrary();
-  const includes = parsed.options.flatMap((option) => (option.name === "-I" ? option.values : []));
+  // tlapm also searches each module's directory. Without tlapm, TLAPS is tla-ts's copy.
   const directories = modulePaths.reduce(
     (found, path) => (found.includes(dirname(path)) ? found : [dirname(path), ...found]),
-    [".", ...(tlapmLibrary ? [tlapmLibrary] : []), ...includes.toReversed()],
+    getLibraryDirectories(parsed),
   );
-  // tlapm names each file it reads by joining a search directory and the name, as in ./Module.tla.
   const moduleNames = new Set<string>();
   const results = generateObligations(() => {
     const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
@@ -1389,10 +1374,13 @@ const runTlapm = async (args: string[]) => {
       modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
       (name) => {
         moduleNames.add(name);
-        return (
-          directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean) ??
-          (name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined)
-        );
+        // tlapm names each file it reads by joining a search directory and the name, as in
+        // ./Module.tla.
+        const file = directories
+          .map((directory) => `${directory}/${name}.tla`)
+          .find((path) => existsSync(path));
+        if (file !== undefined) return { file, source: readFileSync(file, "utf8") };
+        return name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined;
       },
       {
         lines,
@@ -1431,12 +1419,11 @@ const runTlapm = async (args: string[]) => {
     const fingerprintsPath = `${directory}/fingerprints`;
     const loadedPath = parsed.get("--usefp")?.[0] ?? fingerprintsPath;
     mkdirSync(directory, { recursive: true });
-    if (parsed.has("--cleanfp")) {
-      if (existsSync(fingerprintsPath)) {
-        rmSync(fingerprintsPath);
-        console.log(`(* fingerprints file ${JSON.stringify(fingerprintsPath)} removed *)`);
-      }
-    } else if (existsSync(loadedPath) && result.summary.total !== 0) {
+    if (parsed.has("--cleanfp") && existsSync(fingerprintsPath)) {
+      rmSync(fingerprintsPath);
+      console.log(`(* fingerprints file ${JSON.stringify(fingerprintsPath)} removed *)`);
+    }
+    if (!parsed.has("--cleanfp") && existsSync(loadedPath) && result.summary.total !== 0) {
       console.log(
         parsed.has("--nofp")
           ? `(* will not use fingerprints (because of option \`--nofp\`), but will now load fingerprints from the file \`${loadedPath}\`, in order to overwrite with the new fingerprints, and then save the results at the end. *)`
@@ -1472,9 +1459,8 @@ const runTlapm = async (args: string[]) => {
       sources,
       settings,
     );
-    if (!isFailed) continue;
-    if (parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
-    else if (!isToolbox) {
+    if (isFailed && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
+    if (isFailed && !parsed.has("--strict") && !isToolbox) {
       console.error(UNPROVED_ENDING);
       return TLAPM_FAILURE_STATUS;
     }
