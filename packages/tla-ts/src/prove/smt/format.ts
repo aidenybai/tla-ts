@@ -110,8 +110,8 @@ export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
 export const getNames = (prefix: string, count: number) =>
   Array.from({ length: count }, (_value, index) => `${prefix}${index + 1}`);
 
-const getSortedBinders = (variables: [string, string][]) =>
-  variables.map((variable) => `(${variable[0]} ${variable[1]})`).join(" ");
+export const getBinders = (variables: string[], sort = "Idv") =>
+  variables.map((variable) => `(${variable} ${sort})`).join(" ");
 
 export const forall = (
   variables: string[],
@@ -121,7 +121,7 @@ export const forall = (
 ) =>
   variables.length === 0
     ? body
-    : `(forall (${getSortedBinders(variables.map((variable) => [variable, sort]))}) ${
+    : `(forall (${getBinders(variables, sort)}) ${
         patterns.length === 0
           ? body
           : `(! ${body} ${patterns.map((pattern) => `:pattern (${pattern.join(" ")})`).join(" ")})`
@@ -138,6 +138,17 @@ export const call = (symbol: string, args: string[]) =>
 
 export const declare = (symbol: string, arity: number, sort = "Idv", argSort = "Idv") =>
   `(declare-fun ${symbol} (${Array.from({ length: arity }, () => argSort).join(" ")}) ${sort})`;
+
+// The index of the parenthesis that closes the one at from.
+export const getClosing = (text: string, from: number) => {
+  const state = { depth: 0, index: from };
+  for (; state.index < text.length; state.index++) {
+    if (text[state.index] === "(") state.depth++;
+    if (text[state.index] === ")") state.depth--;
+    if (state.depth === 0) return state.index;
+  }
+  return text.length;
+};
 
 export const replaceToken = (text: string, token: string, replacement: string) =>
   text.replace(/[^\s()]+/g, (found) => (found === token ? replacement : found));

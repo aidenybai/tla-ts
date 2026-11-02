@@ -31,6 +31,7 @@ import {
   FUN_APP,
   FUN_EXCEPT,
   FUN_SET,
+  getBinders,
   INT_LTEQ,
   INT_SET,
   MEM,
@@ -64,7 +65,7 @@ export interface EncodingSession {
 
 export interface Mode {
   // Whether the text encodes a fact that tlapm leaves out, which may declare operators.
-  isOmitted?: boolean;
+  isOmitted: boolean;
   polarity: Polarity;
   at: string | undefined;
   depth: number;
@@ -174,9 +175,6 @@ export const createEncoder = (session: EncodingSession) => {
     return { variables, env: inner, mode: { ...mode, depth: mode.depth + names.length } };
   };
 
-  const binders = (variables: string[]) =>
-    variables.map((variable) => `(${variable} Idv)`).join(" ");
-
   const encodeQuantifier = (
     expression: Extract<Expr, { kind: "Quant" }>,
     env: Env | undefined,
@@ -193,8 +191,8 @@ export const createEncoder = (session: EncodingSession) => {
       domains[index] === undefined ? [] : [`(${MEM} ${variable} ${domains[index]})`],
     );
     return expression.quantifier === "Forall"
-      ? `(forall (${binders(bound.variables)}) ${guards.length === 0 ? body : `(=> ${conjoin(guards)} ${body})`})`
-      : `(exists (${binders(bound.variables)}) ${conjoin([...guards, body])})`;
+      ? `(forall (${getBinders(bound.variables)}) ${guards.length === 0 ? body : `(=> ${conjoin(guards)} ${body})`})`
+      : `(exists (${getBinders(bound.variables)}) ${conjoin([...guards, body])})`;
   };
 
   const encodeSetSt = (
@@ -297,21 +295,15 @@ export const createEncoder = (session: EncodingSession) => {
     return idv(call(symbol, free));
   };
 
-  // Standardize.set_extensionality_visitor: an equality of sets where it may need proving
-  // triggers the extensionality axiom.
-  const encodeEquality = (
-    left: Expr,
-    right: Expr,
-    env: Env | undefined,
-    mode: Mode,
-    isNegated: boolean,
-  ) => {
-    // Type.Synthesize compares values of the same sort only above type level 1, so two formulas
-    // are compared as values.
-    const leftText = encodeIdv(left, env, mode);
-    const rightText = encodeIdv(right, env, mode);
-    return getEquality(leftText, rightText, mode.polarity, isNegated);
-  };
+  // Type.Synthesize compares values of the same sort only above type level 1, so two formulas are
+  // compared as values.
+  const encodeEquality = (args: Expr[], env: Env | undefined, mode: Mode, isNegated: boolean) =>
+    getEquality(
+      encodeIdv(args[0], env, mode),
+      encodeIdv(args[1], env, mode),
+      mode.polarity,
+      isNegated,
+    );
 
   // Type.Synthesize: SelectSeq's test becomes the predicate LAMBDA x1 : Test(x1), its body the
   // text Flatten compares.
@@ -351,9 +343,9 @@ export const createEncoder = (session: EncodingSession) => {
       case "Neg":
         return bool(`(not ${encodeBool(args[0], env, invert(mode))})`);
       case "Eq":
-        return bool(encodeEquality(args[0], args[1], env, mode, false));
+        return bool(encodeEquality(args, env, mode, false));
       case "Neq":
-        return bool(encodeEquality(args[0], args[1], env, mode, true));
+        return bool(encodeEquality(args, env, mode, true));
       case "Mem":
         return bool(call(MEM, idvs()));
       // Rewrite.elim_notmem: a \notin S is ~(a \in S).
@@ -405,12 +397,10 @@ export const createEncoder = (session: EncodingSession) => {
   ): Term => {
     switch (binding.kind) {
       case "constant":
-        if (args.length > 0) throw new TlaUnsupportedError("an applied constant");
-        return idv(binding.symbol);
       case "variable":
-        if (args.length > 0) throw new TlaUnsupportedError("an applied variable");
+        if (args.length > 0) throw new TlaUnsupportedError(`an applied ${binding.kind}`);
         return idv(binding.symbol);
-      case "operator": {
+      case "operator":
         if (args.length !== binding.arity)
           throw new TlaUnsupportedError("an operator applied to the wrong number of arguments");
         return idv(
@@ -419,7 +409,6 @@ export const createEncoder = (session: EncodingSession) => {
             args.map((arg) => encodeIdv(arg, env, mode)),
           ),
         );
-      }
       // Flatten: an application of a second-order operator, which has no axioms, is a fresh
       // operator of its first-order arguments and the bound variables its others use.
       case "secondOrder": {

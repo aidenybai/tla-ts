@@ -3,13 +3,16 @@
 
 import { TlaUnsupportedError } from "../../errors";
 import {
-  TYPINGS,
-  getEnumeration,
-  getIntegers,
-  getTupleAxioms,
-  getRecordAxioms,
-  getComponentExcept,
   getComponentSet,
+  getEnumeration,
+  getFieldKeys,
+  getIntegers,
+  getRecordAxioms,
+  getRecordExcepts,
+  getTupleAxioms,
+  getTupleExcepts,
+  getTyping,
+  TYPED_OPERATORS,
 } from "./axioms";
 import {
   APPEND,
@@ -19,7 +22,6 @@ import {
   CAST_INT,
   CAT,
   declare,
-  formatName,
   forall,
   FUN_APP,
   FUN_DOM,
@@ -77,7 +79,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     deps,
     axioms,
   });
-  const symbol = formatName(`TLA__${name}`);
+  const symbol = tla(name);
   const fixed = (arity: number, deps: string[], axioms: Axiom[], sort = "Idv") =>
     spec(declare(symbol, arity, sort), deps, axioms);
   const enumeration = /^SetEnum_(\d+)$/.exec(name);
@@ -154,26 +156,14 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     return fixed(
       fields.length,
       ["Mem", record, "FunApp", ...fields.map((field) => `StrLit_${field}`)],
-      getComponentSet(
-        "RecSet",
-        [fields],
-        symbol,
-        tla(record),
-        fields.map((field) => tla(`StrLit_${field}`)),
-        "r",
-      ),
+      getComponentSet("RecSet", [fields], symbol, tla(record), getFieldKeys(fields), "r"),
     );
   }
   const anonymous = state.anonymous.get(name);
   if (anonymous !== undefined) return fixed(anonymous, [], []);
-  const typing = TYPINGS[name];
-  if (typing)
-    return fixed(
-      name === "IntUminus" ? 1 : 2,
-      ["Cast_Int"],
-      [typing()],
-      name === "IntLteq" ? "Bool" : "Idv",
-    );
+  const typed = TYPED_OPERATORS[name];
+  if (typed)
+    return fixed(typed[1], ["Cast_Int"], [getTyping(name)], name === "IntLteq" ? "Bool" : "Idv");
   switch (name) {
     // SMT-LIB has no exponentiation, so IntExp keeps only its typing.
     case "IntExp":
@@ -409,31 +399,12 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
             [],
             `(forall ((f Idv) (x Idv) (y Idv) (z Idv)) (! (=> (${MEM} z (${FUN_DOM} f)) (and (=> (= z x) (= (${FUN_APP} ${updated} z) y)) (=> (distinct z x) (= (${FUN_APP} ${updated} z) (${FUN_APP} f z))))) :pattern ((${FUN_APP} ${updated} z)) :pattern (${updated} (${FUN_APP} f z))))`,
           ),
-          ...state.tuples.flatMap((count) =>
-            getIntegers(count).map((_key, index) =>
-              getComponentExcept(
-                "TupExcept",
-                [count],
-                tla(`Tuple_${count}`),
-                getIntegers(count),
-                index,
-              ),
-            ),
-          ),
-          ...state.records.flatMap((recordFields) =>
-            recordFields.map((_field, index) =>
-              getComponentExcept(
-                "RecExcept",
-                [recordFields],
-                tla(`Record_${recordFields.join("_")}`),
-                recordFields.map((field) => tla(`StrLit_${field}`)),
-                index,
-              ),
-            ),
-          ),
+          ...state.tuples.flatMap(getTupleExcepts),
+          ...state.records.flatMap(getRecordExcepts),
         ],
       );
     }
+    // tlapm labels SeqSetElim1 and SeqSetElim2 SetSetElim1 and SetSetElim2.
     case "Seq":
       return fixed(
         1,
@@ -656,7 +627,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     case "Tt_Idv":
       return fixed(0, [], []);
     case "TIntLteq":
-      return spec(undefined, ["IntLteq"], [TYPINGS.IntLteq()]);
+      return spec(undefined, ["IntLteq"], [getTyping("IntLteq")]);
     default:
       // The rest are numerals, which SMT-LIB has natively.
       if (name.startsWith("TIntLit_")) return spec(undefined, [], []);

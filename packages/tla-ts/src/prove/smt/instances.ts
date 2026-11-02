@@ -11,6 +11,7 @@ import {
   FUN_DOM,
   FUN_ISAFCN,
   FUN_SET,
+  getBinders,
   getNames,
   IS_SET_OF,
   LEN,
@@ -50,7 +51,6 @@ export const getSetOfAxioms = (name: string, free: string[], element: string, bo
   );
   const set = call(name, [...sets, ...free]);
   const guards = variables.map((variable, index) => `(${MEM} ${variable} ${sets[index]})`);
-  const binders = variables.map((variable) => `(${variable} Idv)`).join(" ");
   // N_axioms.assert_issetof names its one set a.
   const single = count === 1 ? ["a"] : sets;
   return [
@@ -67,7 +67,7 @@ export const getSetOfAxioms = (name: string, free: string[], element: string, bo
       [count],
       forall(
         [...free, ...sets, "x"],
-        `(=> (${MEM} x ${set}) (exists (${binders}) ${conjoin([...guards, `(= x ${value})`])}))`,
+        `(=> (${MEM} x ${set}) (exists (${getBinders(variables)}) ${conjoin([...guards, `(= x ${value})`])}))`,
         [[`(${MEM} x ${set})`]],
       ),
     ),

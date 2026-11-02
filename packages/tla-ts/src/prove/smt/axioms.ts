@@ -16,13 +16,25 @@ import {
   SEQ,
   tla,
 } from "./format";
-import { axiom, TYPED_SYMBOLS, type Axiom, type AxiomArgument } from "./table";
+import { axiom, TYPED_SYMBOLS, type AxiomArgument } from "./table";
 
-export const getTyping = (name: string, operator: string, arity: number, isGuarded = false) => {
-  const symbol = tla(name);
-  const variables = arity === 1 ? ["x1"] : isGuarded ? ["x", "y"] : ["x1", "x2"];
+// The arithmetic symbols with a Typing axiom: each one's SMT-LIB operator and arity.
+export const TYPED_OPERATORS: Record<string, [string, number]> = {
+  IntPlus: ["+", 2],
+  IntMinus: ["-", 2],
+  IntTimes: ["*", 2],
+  IntUminus: ["-", 1],
+  IntQuotient: ["div", 2],
+  IntRemainder: ["mod", 2],
+  IntLteq: ["<=", 2],
+};
+
+export const getTyping = (name: string) => {
+  const operator = TYPED_OPERATORS[name][0];
+  const isGuarded = operator === "div" || operator === "mod";
+  const variables = TYPED_OPERATORS[name][1] === 1 ? ["x1"] : isGuarded ? ["x", "y"] : ["x1", "x2"];
   const left = call(
-    symbol,
+    tla(name),
     variables.map((variable) => `(${CAST_INT} ${variable})`),
   );
   const right =
@@ -36,16 +48,6 @@ export const getTyping = (name: string, operator: string, arity: number, isGuard
     forall(variables, isGuarded ? `(=> (> y 0) ${equality})` : equality, [[left]], "Int"),
     `Typing T${name}`,
   );
-};
-
-export const TYPINGS: Record<string, () => Axiom> = {
-  IntPlus: () => getTyping("IntPlus", "+", 2),
-  IntMinus: () => getTyping("IntMinus", "-", 2),
-  IntTimes: () => getTyping("IntTimes", "*", 2),
-  IntUminus: () => getTyping("IntUminus", "-", 1),
-  IntQuotient: () => getTyping("IntQuotient", "div", 2, true),
-  IntRemainder: () => getTyping("IntRemainder", "mod", 2, true),
-  IntLteq: () => getTyping("IntLteq", "<=", 2),
 };
 
 export const getEnumeration = (count: number) => {
@@ -75,23 +77,37 @@ export const getEnumeration = (count: number) => {
 export const getIntegers = (count: number) =>
   Array.from({ length: count }, (_value, index) => `(${CAST_INT} ${index + 1})`);
 
+export const getFieldKeys = (fields: string[]) => fields.map((field) => tla(`StrLit_${field}`));
+
 // TupExcept and RecExcept: updating one component of a tuple or record.
-export const getComponentExcept = (
+const getComponentExcepts = (
   name: string,
   args: AxiomArgument[],
   symbol: string,
   keys: string[],
-  index: number,
 ) => {
   const elements = getNames("x", keys.length);
-  const updated = `(${FUN_EXCEPT} ${call(symbol, elements)} ${keys[index]} x)`;
-  const replaced = elements.map((element, position) => (position === index ? "x" : element));
-  return axiom(
-    name,
-    [...args, index + 1],
-    forall([...elements, "x"], `(= ${updated} ${call(symbol, replaced)})`, [[updated]]),
-  );
+  return keys.map((key, index) => {
+    const updated = `(${FUN_EXCEPT} ${call(symbol, elements)} ${key} x)`;
+    const replaced = elements.map((element, position) => (position === index ? "x" : element));
+    return axiom(
+      name,
+      [...args, index + 1],
+      forall([...elements, "x"], `(= ${updated} ${call(symbol, replaced)})`, [[updated]]),
+    );
+  });
 };
+
+export const getTupleExcepts = (count: number) =>
+  getComponentExcepts("TupExcept", [count], tla(`Tuple_${count}`), getIntegers(count));
+
+export const getRecordExcepts = (fields: string[]) =>
+  getComponentExcepts(
+    "RecExcept",
+    [fields],
+    tla(`Record_${fields.join("_")}`),
+    getFieldKeys(fields),
+  );
 
 export const getTupleAxioms = (count: number, isExcept: boolean) => {
   const symbol = tla(`Tuple_${count}`);
@@ -138,15 +154,13 @@ export const getTupleAxioms = (count: number, isExcept: boolean) => {
       [count],
       forall(elements, `(= (${LEN} ${value}) (${CAST_INT} ${count}))`, [[value]]),
     ),
-    ...(isExcept
-      ? keys.map((_key, index) => getComponentExcept("TupExcept", [count], symbol, keys, index))
-      : []),
+    ...(isExcept ? getTupleExcepts(count) : []),
   ];
 };
 
 export const getRecordAxioms = (fields: string[], isExcept: boolean) => {
   const symbol = tla(`Record_${fields.join("_")}`);
-  const keys = fields.map((field) => tla(`StrLit_${field}`));
+  const keys = getFieldKeys(fields);
   const elements = getNames("x", fields.length);
   const value = call(symbol, elements);
   return [
@@ -167,9 +181,7 @@ export const getRecordAxioms = (fields: string[], isExcept: boolean) => {
         [[value]],
       ),
     ),
-    ...(isExcept
-      ? keys.map((_key, index) => getComponentExcept("RecExcept", [fields], symbol, keys, index))
-      : []),
+    ...(isExcept ? getRecordExcepts(fields) : []),
   ];
 };
 

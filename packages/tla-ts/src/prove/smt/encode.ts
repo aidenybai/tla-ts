@@ -20,7 +20,7 @@ import { compareAxioms } from "./table";
 
 type Encoder = ReturnType<typeof createEncoder>;
 
-const HYPOTHESIS: Mode = { polarity: "Negative", at: undefined, depth: 0 };
+const HYPOTHESIS: Mode = { isOmitted: false, polarity: "Negative", at: undefined, depth: 0 };
 
 // Prep.expand_defs substitutes visible definitions and pragmas, so they declare nothing.
 const isExpanded = (hyp: Extract<Hyp, { kind: "Defn" }>) =>
@@ -33,7 +33,6 @@ const isSecondOrder = (expression: Expr) =>
   expression.sequent.context.some((hyp) => hyp.kind === "Fresh" && hyp.shape > 0);
 
 // Declares each hypothesis's names and asserts its facts, in order, as Smtlib.pp_print_obligation.
-// Visible definitions and TLAPS's pragmas are expanded, so they declare nothing.
 const encodeContext = (context: Hyp[], encoder: Encoder) =>
   context.reduce<{ env: Env | undefined; scope: Scope | undefined; entries: Entry[] }>(
     (state, hyp) => {
@@ -50,10 +49,9 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
               ? { kind: "constant", symbol }
               : { kind: "operator", symbol, arity: hyp.shape };
           const declaration = declare(symbol, hyp.shape);
-          const domain = hyp.domain;
-          if (!domain || hyp.domainVisibility === "Hidden") return next(binding, [declaration]);
+          if (!hyp.domain || hyp.domainVisibility === "Hidden") return next(binding, [declaration]);
           // Rewrite.elim_bounds: NEW x \in S is NEW x and the fact x \in S.
-          const fact = `(assert (${MEM} ${symbol} ${encoder.encodeIdv(domain, state.env, HYPOTHESIS)}))`;
+          const fact = `(assert (${MEM} ${symbol} ${encoder.encodeIdv(hyp.domain, state.env, HYPOTHESIS)}))`;
           return next(binding, [declaration, ...encoder.getEntries(fact)]);
         }
         // Rewrite.elim_flex: a variable is two constants, the second for its primed value.
@@ -95,16 +93,15 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
         case "Fact": {
           const binding: Binding = { kind: "unsupported", reason: "a reference to a fact" };
           if (hyp.visibility === "Hidden") return next(binding);
-          if (!isSecondOrder(hyp.expression)) {
-            const fact = `(assert ${encoder.encodeBool(hyp.expression, state.env, HYPOTHESIS)})`;
-            return next(binding, encoder.getEntries(fact));
-          }
-          const fact = `(assert ${encoder.encodeBool(hyp.expression, state.env, { ...HYPOTHESIS, isOmitted: true })})`;
+          const isOmitted = isSecondOrder(hyp.expression);
+          const entries = encoder.getEntries(
+            `(assert ${encoder.encodeBool(hyp.expression, state.env, { ...HYPOTHESIS, isOmitted })})`,
+          );
           return next(
             binding,
-            encoder
-              .getEntries(fact)
-              .map((entry) => (typeof entry === "string" ? { omitted: entry } : entry)),
+            isOmitted
+              ? entries.map((entry) => (typeof entry === "string" ? { omitted: entry } : entry))
+              : entries,
           );
         }
       }

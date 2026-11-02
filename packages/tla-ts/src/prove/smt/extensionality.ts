@@ -1,7 +1,18 @@
 // Standardize.set_extensionality_visitor: an equality of sets where it may need proving triggers
 // the set extensionality axiom, through TrigEq.
 
-import { CAP, CUP, FUN_SET, INT_RANGE, SEQ, SET_MINUS, SUBSET, TRIG_EQ, UNION } from "./format";
+import {
+  CAP,
+  CUP,
+  FUN_SET,
+  getClosing,
+  INT_RANGE,
+  SEQ,
+  SET_MINUS,
+  SUBSET,
+  TRIG_EQ,
+  UNION,
+} from "./format";
 
 export type Polarity = "Positive" | "Negative" | "Neither";
 
@@ -27,18 +38,9 @@ const isSetTerm = (text: string) => {
 export const resolveTriggers = (text: string, isTriggered: boolean): string => {
   const start = text.indexOf(`(${UNRESOLVED_TRIGGER} `);
   if (start === -1) return text;
-  const getEnd = (from: number) => {
-    const end = { depth: 0, index: from };
-    for (; end.index < text.length; end.index++) {
-      if (text[end.index] === "(") end.depth++;
-      if (text[end.index] === ")") end.depth--;
-      if (end.depth === 0) return end.index + 1;
-    }
-    return text.length;
-  };
   const triggeredStart = start + UNRESOLVED_TRIGGER.length + 2;
-  const triggeredEnd = getEnd(triggeredStart);
-  const keptEnd = getEnd(triggeredEnd + 1);
+  const triggeredEnd = getClosing(text, triggeredStart) + 1;
+  const keptEnd = getClosing(text, triggeredEnd + 1) + 1;
   const chosen = isTriggered
     ? text.slice(triggeredStart, triggeredEnd)
     : text.slice(triggeredEnd + 1, keptEnd);

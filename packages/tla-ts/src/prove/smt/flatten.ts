@@ -1,7 +1,7 @@
 // encode/n_flatten.ml: each application of a second-order construct becomes a fresh first-order
 // symbol, declared with its axioms before the fact that uses it.
 
-import { declare, formatName } from "./format";
+import { declare, formatName, getClosing } from "./format";
 import type { Axiom } from "./table";
 
 // A symbol that Flatten introduces, with the text tlapm's collect pass visits for its
@@ -14,7 +14,7 @@ export interface Flattened {
 }
 
 // A fact that tlapm encodes, so its symbols bring their axioms, but leaves out of the text.
-export interface OmittedFact {
+interface OmittedFact {
   omitted: string;
 }
 
@@ -29,20 +29,6 @@ export const getDepth = (variable: string) => Number(variable.slice(variable.las
 // (?unprimable term). Flatten.compare_expr tells it apart, and the printed text drops it.
 export const UNPRIMABLE = "?unprimable";
 
-const getClosing = (text: string, from: number) => {
-  const state = { depth: 0 };
-  for (const index of Array.from(
-    { length: text.length - from },
-    (_value, offset) => from + offset,
-  )) {
-    if (text[index] === "(") state.depth++;
-    if (text[index] === ")") state.depth--;
-    if (state.depth === 0) return index;
-  }
-  return text.length;
-};
-
-// The text with each Unprimable mark dropped.
 export const removeUnprimable = (text: string): string => {
   const start = text.indexOf(`(${UNPRIMABLE} `);
   if (start === -1) return text;
@@ -68,7 +54,7 @@ const getFlatKey = (text: string, depth: number) =>
 // Smtlib leaves out, which Flatten doesn't enter.
 interface Site {
   depth: number;
-  isOmitted?: boolean;
+  isOmitted: boolean;
 }
 
 // The state of Flatten.main over one obligation: its blueprint count, which init_bp_count resets
@@ -120,7 +106,6 @@ export const createFlattener = () => {
     return symbol;
   };
 
-  // The symbols introduced since the last call, in order.
   const takeIntroduced = () => introduced.splice(0);
 
   return { flattened, flatten, takeIntroduced };
