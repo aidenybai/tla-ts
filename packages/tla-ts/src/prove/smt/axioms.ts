@@ -81,7 +81,7 @@ export const getFieldKeys = (fields: string[]) => fields.map((field) => tla(`Str
 
 // TupExcept and RecExcept: updating one component of a tuple or record.
 const getComponentExcepts = (
-  name: string,
+  prefix: string,
   args: AxiomArgument[],
   symbol: string,
   keys: string[],
@@ -91,7 +91,7 @@ const getComponentExcepts = (
     const updated = `(${FUN_EXCEPT} ${call(symbol, elements)} ${key} x)`;
     const replaced = elements.map((element, position) => (position === index ? "x" : element));
     return axiom(
-      name,
+      `${prefix}Except`,
       [...args, index + 1],
       forall([...elements, "x"], `(= ${updated} ${call(symbol, replaced)})`, [[updated]]),
     );
@@ -99,45 +99,54 @@ const getComponentExcepts = (
 };
 
 export const getTupleExcepts = (count: number) =>
-  getComponentExcepts("TupExcept", [count], tla(`Tuple_${count}`), getIntegers(count));
+  getComponentExcepts("Tup", [count], tla(`Tuple_${count}`), getIntegers(count));
 
 export const getRecordExcepts = (fields: string[]) =>
-  getComponentExcepts(
-    "RecExcept",
-    [fields],
-    tla(`Record_${fields.join("_")}`),
-    getFieldKeys(fields),
+  getComponentExcepts("Rec", [fields], tla(`Record_${fields.join("_")}`), getFieldKeys(fields));
+
+// TupIsafcn, TupDomDef and TupAppDef, or their Rec counterparts: a tuple or record is the
+// function from its keys to its components. The empty tuple has no domain or components to define.
+const getComponentFunction = (
+  prefix: string,
+  args: AxiomArgument[],
+  symbol: string,
+  keys: string[],
+) => {
+  const elements = getNames("x", keys.length);
+  const value = call(symbol, elements);
+  const isafcn = axiom(
+    `${prefix}Isafcn`,
+    args,
+    forall(elements, `(${FUN_ISAFCN} ${value})`, [[value]]),
   );
+  if (keys.length === 0) return [isafcn];
+  return [
+    isafcn,
+    axiom(
+      `${prefix}DomDef`,
+      args,
+      forall(elements, `(= (${FUN_DOM} ${value}) ${call(tla(`SetEnum_${keys.length}`), keys)})`, [
+        [value],
+      ]),
+    ),
+    axiom(
+      `${prefix}AppDef`,
+      args,
+      forall(
+        elements,
+        conjoin(keys.map((key, index) => `(= (${FUN_APP} ${value} ${key}) ${elements[index]})`)),
+        [[value]],
+      ),
+    ),
+  ];
+};
 
 export const getTupleAxioms = (count: number, isExcept: boolean) => {
   const symbol = tla(`Tuple_${count}`);
   const elements = getNames("x", count);
   const value = call(symbol, elements);
-  const keys = getIntegers(count);
   return [
-    axiom("TupIsafcn", [count], forall(elements, `(${FUN_ISAFCN} ${value})`, [[value]])),
-    ...(count === 0
-      ? []
-      : [
-          axiom(
-            "TupDomDef",
-            [count],
-            forall(elements, `(= (${FUN_DOM} ${value}) ${call(tla(`SetEnum_${count}`), keys)})`, [
-              [value],
-            ]),
-          ),
-          axiom(
-            "TupAppDef",
-            [count],
-            forall(
-              elements,
-              conjoin(
-                keys.map((key, index) => `(= (${FUN_APP} ${value} ${key}) ${elements[index]})`),
-              ),
-              [[value]],
-            ),
-          ),
-        ]),
+    ...getComponentFunction("Tup", [count], symbol, getIntegers(count)),
     axiom(
       "SeqTupTyping",
       [count],
@@ -158,32 +167,10 @@ export const getTupleAxioms = (count: number, isExcept: boolean) => {
   ];
 };
 
-export const getRecordAxioms = (fields: string[], isExcept: boolean) => {
-  const symbol = tla(`Record_${fields.join("_")}`);
-  const keys = getFieldKeys(fields);
-  const elements = getNames("x", fields.length);
-  const value = call(symbol, elements);
-  return [
-    axiom("RecIsafcn", [fields], forall(elements, `(${FUN_ISAFCN} ${value})`, [[value]])),
-    axiom(
-      "RecDomDef",
-      [fields],
-      forall(elements, `(= (${FUN_DOM} ${value}) ${call(tla(`SetEnum_${fields.length}`), keys)})`, [
-        [value],
-      ]),
-    ),
-    axiom(
-      "RecAppDef",
-      [fields],
-      forall(
-        elements,
-        conjoin(keys.map((key, index) => `(= (${FUN_APP} ${value} ${key}) ${elements[index]})`)),
-        [[value]],
-      ),
-    ),
-    ...(isExcept ? getRecordExcepts(fields) : []),
-  ];
-};
+export const getRecordAxioms = (fields: string[], isExcept: boolean) => [
+  ...getComponentFunction("Rec", [fields], tla(`Record_${fields.join("_")}`), getFieldKeys(fields)),
+  ...(isExcept ? getRecordExcepts(fields) : []),
+];
 
 // The set of tuples or records whose components are in the given sets.
 export const getComponentSet = (
