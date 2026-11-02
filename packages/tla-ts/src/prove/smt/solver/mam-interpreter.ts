@@ -139,10 +139,10 @@ export class Interpreter {
     const store = this.context.enodeStore;
     return (
       store.decl[parent] === decl &&
-      argIndex < store.getNumArgs(parent) &&
-      this.context.isRelevant(store.owner[parent]) &&
       store.cg[parent] === parent &&
-      store.root[store.argPool[store.argStart[parent] + argIndex]] === child
+      argIndex < store.getNumArgs(parent) &&
+      store.root[store.argPool[store.argStart[parent] + argIndex]] === child &&
+      this.context.isRelevant(store.owner[parent])
     );
   }
 
@@ -159,9 +159,11 @@ export class Interpreter {
   private collectDepth1(node: number, decl: number, argIndex: number, limit: number) {
     const store = this.context.enodeStore;
     const root = store.root[node];
+    const parentPool = store.parentPool;
+    const end = store.parentStart[root] + store.parentCount[root];
     let count = 0;
-    for (let parentIndex = 0; parentIndex < store.parentCount[root]; parentIndex++) {
-      const parent = store.parentPool[store.parentStart[root] + parentIndex];
+    for (let parentIndex = store.parentStart[root]; parentIndex < end; parentIndex++) {
+      const parent = parentPool[parentIndex];
       if (!this.isRelevantParent(parent, decl, argIndex, root)) continue;
       if (count + 1 >= limit) return -1;
       this.pushSpare(count, parent);
@@ -177,13 +179,16 @@ export class Interpreter {
     const store = this.context.enodeStore;
     const root = store.root[node];
     if (store.parentCount[root] === 0) return -1;
+    const parentPool = store.parentPool;
+    const end = store.parentStart[root] + store.parentCount[root];
     let count = 0;
-    for (let parentIndex = 0; parentIndex < store.parentCount[root]; parentIndex++) {
-      const parent = store.parentPool[store.parentStart[root] + parentIndex];
+    for (let parentIndex = store.parentStart[root]; parentIndex < end; parentIndex++) {
+      const parent = parentPool[parentIndex];
       if (!this.isRelevantParent(parent, joint.decl, joint.argPos, root)) continue;
       const parentRoot = store.root[parent];
-      for (let index = 0; index < store.parentCount[parentRoot]; index++) {
-        const grandparent = store.parentPool[store.parentStart[parentRoot] + index];
+      const parentEnd = store.parentStart[parentRoot] + store.parentCount[parentRoot];
+      for (let index = store.parentStart[parentRoot]; index < parentEnd; index++) {
+        const grandparent = parentPool[index];
         if (!this.isRelevantParent(grandparent, decl, argIndex, parentRoot)) continue;
         if (count + 1 >= limit) return -1;
         this.pushSpare(count, grandparent);
@@ -202,8 +207,10 @@ export class Interpreter {
 
   // SET_VAR's filter: whether the class of each input register has a parent with the label.
   private hasParentLabels(instr: Instruction) {
-    for (const reg of instr.regs)
-      if (!this.hasParentLabel(this.registers[reg], instr.lblLow, instr.lblHigh)) return false;
+    const regs = instr.regs;
+    for (let index = 0; index < regs.length; index++)
+      if (!this.hasParentLabel(this.registers[regs[index]], instr.lblLow, instr.lblHigh))
+        return false;
     return true;
   }
 
