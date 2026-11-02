@@ -495,75 +495,91 @@ export class Context extends Internalizer {
     this.invertTrans(n1);
     n1.transTarget = n2;
     n1.transJustification = justification;
-    this.removeParentsFromCgTable(r1);
-    let current = r1;
+    const store = this.enodeStore;
+    this.removeParentsFromCgTable(r1.id);
+    const root = store.root;
+    const next = store.next;
+    let current = r1.id;
     do {
-      current.root = r2;
-      current = current.next;
-    } while (current !== r1);
-    this.reinsertParentsIntoCgTable(r1, r2, n1, n2, justification);
+      root[current] = r2.id;
+      current = next[current];
+    } while (current !== r1.id);
+    this.reinsertParentsIntoCgTable(r1.id, r2.id, n1, n2, justification);
     this.trailInts.push(r2NumParents);
     this.trailNodes.push(r1, n1);
     this.trailKinds.push(UNDO_ADD_EQ);
     if (n2.isBool) this.propagateBoolEnodeAssignment(r1, r2, n1, n2);
-    const savedNext = r1.next;
-    r1.next = r2.next;
-    r2.next = savedNext;
-    r2.classSize += r1.classSize;
+    const savedNext = next[r1.id];
+    next[r1.id] = next[r2.id];
+    next[r2.id] = savedNext;
+    store.classSize[r2.id] += store.classSize[r1.id];
   }
 
-  private removeParentsFromCgTable(r1: Enode) {
-    for (let index = 0; index < r1.numParents; index++) {
-      const parent = r1.getParent(index);
-      if (parent.isMarked || !parent.isCgr() || parent.isTrueEq()) continue;
-      parent.isMarked = true;
-      if (parent.isCgcEnabled) this.cgTable.erase(parent.id);
+  private removeParentsFromCgTable(r1: number) {
+    const store = this.enodeStore;
+    const start = store.parentStart[r1];
+    const end = start + store.parentCount[r1];
+    for (let index = start; index < end; index++) {
+      const parent = store.parentPool[index];
+      if (store.isMarked(parent) || store.cg[parent] !== parent || store.isTrueEq(parent)) continue;
+      store.setMarked(parent, true);
+      if (store.isCgcEnabled(parent)) this.cgTable.erase(parent);
     }
   }
 
   // n1 = n2, justified by the justification, implied r1 = r2. A congruence that makes a false
   // equality true is the root of a conflict, which dynamic Ackermannization counts.
+  // The pool of parents can move when r2 gains one, so each parent of r1 is read through its start.
   private reinsertParentsIntoCgTable(
-    r1: Enode,
-    r2: Enode,
+    r1: number,
+    r2: number,
     n1: Enode,
     n2: Enode,
     justification: EqJustification,
   ) {
-    for (let index = 0; index < r1.numParents; index++) {
-      const parent = r1.getParent(index);
-      if (!parent.isMarked) continue;
-      parent.isMarked = false;
-      if (parent.isEq) {
-        const lhs = parent.getArg(0);
-        const rhs = parent.getArg(1);
-        if (lhs.root === rhs.root) {
-          const literal = mkLiteral(this.getBoolVar(parent.owner));
-          const value = this.assignment[literal];
-          if (value !== L_TRUE) {
-            if (value === L_FALSE && justification.kind === "congruence")
-              this.dynAck.cgConflictEh(n1.owner, n2.owner);
-            this.assign(literal, new EqPropagationJustification(lhs, rhs));
-          }
-          continue;
+    const store = this.enodeStore;
+    for (let index = 0; index < store.parentCount[r1]; index++) {
+      const parent = store.parentPool[store.parentStart[r1] + index];
+      if (!store.isMarked(parent)) continue;
+      store.setMarked(parent, false);
+      if (store.isTrueEq(parent)) {
+        const literal = mkLiteral(this.getBoolVar(store.owner[parent]));
+        const value = this.assignment[literal];
+        if (value !== L_TRUE) {
+          if (value === L_FALSE && justification.kind === "congruence")
+            this.dynAck.cgConflictEh(n1.owner, n2.owner);
+          this.assign(
+            literal,
+            new EqPropagationJustification(
+              store.nodes[store.getArg(parent, 0)],
+              store.nodes[store.getArg(parent, 1)],
+            ),
+          );
         }
-      }
-      if (!parent.isCgcEnabled) {
-        r2.addParent(parent);
         continue;
       }
-      const congruent = this.enodeStore.nodes[this.cgTable.insert(parent.id)];
+      if (!store.isCgcEnabled(parent)) {
+        store.addParent(r2, parent);
+        continue;
+      }
+      const congruent = this.cgTable.insert(parent);
       if (congruent === parent) {
-        r2.addParent(parent);
+        store.addParent(r2, parent);
         continue;
       }
-      parent.cg = congruent;
-      this.mergeCgcGenerations(parent, parent.isEq ? 0 : parent.generation, congruent);
-      if (congruent.root !== parent.root)
+      store.cg[parent] = congruent;
+      const parentNode = store.nodes[parent];
+      const congruentNode = store.nodes[congruent];
+      this.mergeCgcGenerations(
+        parentNode,
+        store.isEq(parent) ? 0 : store.generation[parent],
+        congruentNode,
+      );
+      if (store.root[congruent] !== store.root[parent])
         this.pushEq(
-          parent,
-          congruent,
-          getCongruenceJustification(this.enodeStore, parent.id, congruent.id),
+          parentNode,
+          congruentNode,
+          getCongruenceJustification(store, parent, congruent),
         );
     }
   }
@@ -587,46 +603,53 @@ export class Context extends Internalizer {
     }
   }
 
-  private undoAddEq(r1: Enode, n1: Enode, r2NumParents: number) {
-    const r2 = r1.root;
-    r2.classSize -= r1.classSize;
-    const savedNext = r1.next;
-    r1.next = r2.next;
-    r2.next = savedNext;
-    for (let index = r2NumParents; index < r2.numParents; index++) {
-      const parent = r2.getParent(index);
-      if (parent.isCgcEnabled) {
-        parent.isMarked = !parent.isEq;
-        this.cgTable.erase(parent.id);
-      }
+  private undoAddEq(r1Node: Enode, n1: Enode, r2NumParents: number) {
+    const store = this.enodeStore;
+    const root = store.root;
+    const next = store.next;
+    const parentPool = store.parentPool;
+    const r1 = r1Node.id;
+    const r2 = root[r1];
+    store.classSize[r2] -= store.classSize[r1];
+    const savedNext = next[r1];
+    next[r1] = next[r2];
+    next[r2] = savedNext;
+    const r2Start = store.parentStart[r2];
+    for (let index = r2Start + r2NumParents; index < r2Start + store.parentCount[r2]; index++) {
+      const parent = parentPool[index];
+      if (!store.isCgcEnabled(parent)) continue;
+      store.setMarked(parent, !store.isEq(parent));
+      this.cgTable.erase(parent);
     }
     let current = r1;
     do {
-      current.root = r1;
-      current = current.next;
+      root[current] = r1;
+      current = next[current];
     } while (current !== r1);
-    r2.shrinkParents(r2NumParents);
-    for (let index = 0; index < r1.numParents; index++) {
-      const parent = r1.getParent(index);
-      if (!parent.isCgcEnabled) continue;
-      const isErased = parent.isMarked;
-      parent.isMarked = false;
-      const cg = parent.cg;
-      if (parent.isTrueEq() || (parent !== cg && isCongruent(this.enodeStore, parent.id, cg.id)))
-        continue;
+    store.parentCount[r2] = r2NumParents;
+    const r1Start = store.parentStart[r1];
+    const r1End = r1Start + store.parentCount[r1];
+    for (let index = r1Start; index < r1End; index++) {
+      const parent = parentPool[index];
+      if (!store.isCgcEnabled(parent)) continue;
+      const isErased = store.isMarked(parent);
+      store.setMarked(parent, false);
+      const cg = store.cg[parent];
+      if (store.isTrueEq(parent) || (parent !== cg && isCongruent(store, parent, cg))) continue;
       let generation = 100000;
-      if (parent.isEq) generation = 0;
+      if (store.isEq(parent)) generation = 0;
       else if (parent === cg) {
         if (!isErased) continue;
-        generation = parent.generation;
+        generation = store.generation[parent];
       }
-      const congruent = this.enodeStore.nodes[this.cgTable.insert(parent.id)];
-      parent.cg = congruent;
-      if (congruent === parent) parent.generation = generation;
+      const congruent = this.cgTable.insert(parent);
+      store.cg[parent] = congruent;
+      if (congruent === parent) store.generation[parent] = generation;
     }
-    if (r2.thVar >= 0 && this.theory.getEnode(r2.thVar).root !== r2) r2.thVar = -1;
+    if (store.thVar[r2] >= 0 && this.theory.getEnode(store.thVar[r2]).root.id !== r2)
+      store.thVar[r2] = -1;
     n1.transTarget = null;
-    this.invertTrans(r1);
+    this.invertTrans(r1Node);
   }
 
   private propagateBoolEnodeAssignment(r1: Enode, r2: Enode, n1: Enode, n2: Enode) {

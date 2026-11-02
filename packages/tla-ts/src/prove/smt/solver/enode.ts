@@ -126,9 +126,26 @@ export class EnodeStore {
     return (this.flags[id] & IS_EQ) !== 0;
   }
 
+  isCgcEnabled(id: number) {
+    return (this.flags[id] & IS_CGC_ENABLED) !== 0;
+  }
+
+  isMarked(id: number) {
+    return (this.flags[id] & IS_MARKED) !== 0;
+  }
+
+  setMarked(id: number, value: boolean) {
+    this.flags[id] = value ? this.flags[id] | IS_MARKED : this.flags[id] & ~IS_MARKED;
+  }
+
   // The argument, and for a missing first or second argument the node itself, like Z3's m_args.
   getArg(id: number, index: number) {
     return index < this.getNumArgs(id) ? this.argPool[this.argStart[id] + index] : id;
+  }
+
+  // An equality whose sides are in one class.
+  isTrueEq(id: number) {
+    return this.isEq(id) && this.root[this.getArg(id, 0)] === this.root[this.getArg(id, 1)];
   }
 
   // Appends an argument to the node allocated last.
@@ -371,7 +388,7 @@ export class Enode {
   }
 
   get isCgcEnabled() {
-    return (this.flags & IS_CGC_ENABLED) !== 0;
+    return this.store.isCgcEnabled(this.id);
   }
 
   get isMergeTf() {
@@ -383,11 +400,11 @@ export class Enode {
   }
 
   get isMarked() {
-    return (this.flags & IS_MARKED) !== 0;
+    return this.store.isMarked(this.id);
   }
 
   set isMarked(value: boolean) {
-    this.setFlag(IS_MARKED, value);
+    this.store.setMarked(this.id, value);
   }
 
   get isMarked2() {
@@ -423,16 +440,12 @@ export class Enode {
     this.store.parentCount[this.id]--;
   }
 
-  shrinkParents(count: number) {
-    this.store.parentCount[this.id] = count;
-  }
-
   isCgr() {
     return this.cg === this;
   }
 
   isTrueEq() {
-    return this.isEq && this.getArg(0).root === this.getArg(1).root;
+    return this.store.isTrueEq(this.id);
   }
 
   usesCgTable() {
