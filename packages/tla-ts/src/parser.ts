@@ -1037,26 +1037,16 @@ const parse = (source: string, mode: ParseMode): Module => {
         ? { kind: "Subexpression", selectors, selectorRanges, argumentRanges, location }
         : qualifiedArgs.length === 0
           ? { kind: "Identifier", name: operator, selectorRanges, location }
-          : argumentCounts.slice(0, -1).some((count) => count > 0)
-            ? {
-                kind: "Apply",
-                operator,
-                args: qualifiedArgs,
-                argumentCounts,
-                argumentsRange,
-                selectorRanges,
-                argumentRanges,
-                location,
-              }
-            : {
-                kind: "Apply",
-                operator,
-                args: qualifiedArgs,
-                argumentsRange,
-                selectorRanges,
-                argumentRanges,
-                location,
-              };
+          : {
+              kind: "Apply",
+              operator,
+              args: qualifiedArgs,
+              ...(argumentCounts.slice(0, -1).some((count) => count > 0) && { argumentCounts }),
+              argumentsRange,
+              selectorRanges,
+              argumentRanges,
+              location,
+            };
     }
     // SANY reads an infix or postfix operator as a primary expression, with or without arguments.
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
@@ -1935,20 +1925,22 @@ const parse = (source: string, mode: ParseMode): Module => {
 
   const parseAssumption = (): Assumption => {
     const start = cursor.index;
-    return withRange(parseAssumptionUnit(), start);
-  };
-
-  const parseAssumptionUnit = (): Assumption => {
     const keyword = advance();
-    const location = getLocation(keyword);
-    const isAxiom = keyword.text === "AXIOM";
-    if (peek().kind === "Identifier" && isAt("==", 1)) {
-      const name = expectIdentifier();
+    const isNamed = peek().kind === "Identifier" && isAt("==", 1);
+    const name = isNamed ? expectIdentifier() : undefined;
+    if (name !== undefined) {
       factNames.add(name);
       advance();
-      return { name, expression: parseExpression(), isAxiom, location };
     }
-    return { name: undefined, expression: parseExpression(), isAxiom, location };
+    return withRange(
+      {
+        name,
+        expression: parseExpression(),
+        isAxiom: keyword.text === "AXIOM",
+        location: getLocation(keyword),
+      },
+      start,
+    );
   };
 
   const parseModuleBody = (): Module => {

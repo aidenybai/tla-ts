@@ -5,10 +5,10 @@ import {
   analyzeAssumeProve,
   createLevelAnalyzer,
   getArgumentKey,
-  MAX_LEVEL,
   parseArgumentParamKey,
   putArgConstraint,
   putConstraint,
+  TEMPORAL_LEVEL,
   type OperatorLevels,
   type Scope,
 } from "./levels";
@@ -47,7 +47,7 @@ interface Substituted {
 }
 
 const getMaxLevel = (operator: OperatorLevels, index: number) =>
-  operator.maxLevels[index] ?? MAX_LEVEL;
+  operator.maxLevels[index] ?? TEMPORAL_LEVEL;
 
 export const createInstanceChecker = (getModule: (name: string) => ModuleContext) => {
   const analyzers = new Map<string, ReturnType<typeof createLevelAnalyzer>>();

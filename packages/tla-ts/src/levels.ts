@@ -61,7 +61,11 @@ interface Operand {
   declared?: OperatorParam;
 }
 
-export const MAX_LEVEL = 3;
+// The levels of tla2sany.semantic.LevelConstants.
+export const CONSTANT_LEVEL = 0;
+export const VARIABLE_LEVEL = 1;
+export const ACTION_LEVEL = 2;
+export const TEMPORAL_LEVEL = 3;
 
 const SEPARATOR = "\u0000";
 
@@ -88,7 +92,7 @@ const createData = (level = 0): LevelData => ({
 });
 
 export const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
-  constraints.set(name, Math.min(level, constraints.get(name) ?? MAX_LEVEL));
+  constraints.set(name, Math.min(level, constraints.get(name) ?? TEMPORAL_LEVEL));
 
 export const putArgConstraint = (constraints: Map<string, number>, key: string, level: number) =>
   constraints.set(key, Math.max(level, constraints.get(key) ?? 0));
@@ -112,7 +116,7 @@ const createSignature = (
 const getMaxLevel = (operator: OperatorLevels, index: number) =>
   operator.formals.length === 0 && operator.maxLevels.length > 0
     ? operator.maxLevels[Math.min(index, operator.maxLevels.length - 1)]
-    : (operator.maxLevels[index] ?? MAX_LEVEL);
+    : (operator.maxLevels[index] ?? TEMPORAL_LEVEL);
 
 const getWeight = (operator: OperatorLevels, index: number) =>
   operator.formals.length === 0 && operator.weights.length > 0
@@ -180,12 +184,6 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
       ]);
 
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
-
-// The levels of tla2sany.semantic.LevelConstants.
-export const CONSTANT_LEVEL = 0;
-export const VARIABLE_LEVEL = 1;
-export const ACTION_LEVEL = 2;
-export const TEMPORAL_LEVEL = 3;
 
 // SANY reports a level error at the range of the expression it rejects.
 const createLevelError = (message: string, expression: Expression) =>
@@ -788,7 +786,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         formals.flatMap((formal, index) => (nonLeibnizNames.has(formal.name) ? [index] : [])),
       ),
       maxLevels: formals.map((formal) =>
-        Math.min(MAX_LEVEL, data.constraints.get(formal.name) ?? MAX_LEVEL),
+        Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
       ),
       weights: formals.map((formal) => (data.params.has(formal.name) ? 1 : 0)),
       minMaxLevels: formals.map((formal) =>
@@ -833,7 +831,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ...createData(),
       name: definition.name,
       formals,
-      maxLevels: formals.map(() => MAX_LEVEL),
+      maxLevels: formals.map(() => TEMPORAL_LEVEL),
       weights: formals.map(() => 0),
       minMaxLevels: formals.map(() => []),
       conditions: new Set(),

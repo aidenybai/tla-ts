@@ -271,6 +271,15 @@ const isInternalInstance = (module: Module, name: string) => {
   return false;
 };
 
+type LetUnit =
+  | { kind: "Recursive"; declarations: Declaration[] }
+  | { kind: "Instance"; instance: Instance }
+  | { kind: "Definition"; definition: Definition };
+
+// The decimal digits of a numeral such as \hFF, which SANY keeps at any size.
+const getNumeralDigits = (text: string) =>
+  BigInt(text.startsWith("\\") ? `0${text.slice(1).replace(/^h/i, "x")}` : text).toString();
+
 // An entry of SANY's LS stack: the labels of a definition, theorem or label and the parameters
 // bound within it around the expression being generated.
 interface LabelScope {
@@ -1399,7 +1408,7 @@ export const generateSanySpecification = (
           return {
             ...createLevelFields(getId()),
             kind: "Numeral",
-            value: getNumeralValue(expression.text ?? String(expression.value)),
+            value: getNumeralDigits(expression.text ?? String(expression.value)),
             location,
           };
         case "Decimal": {
@@ -2212,8 +2221,8 @@ export const generateSanySpecification = (
           return symbol;
         };
         const isOriginParameterFree = symbol.module === undefined || isParameterFree(symbol.module);
-        const node = !isInstanceeParameterFree
-          ? isOriginParameterFree
+        const node =
+          isInstanceeParameterFree || isOriginParameterFree
             ? isLocal
               ? copyFrom(symbol.module, symbol.body)
               : reuse()
@@ -2221,10 +2230,7 @@ export const generateSanySpecification = (
                 currentModule,
                 symbol.body &&
                   createSubstIn("SubstIn", substs, symbol.body, instanceeModule, location),
-              )
-          : isLocal
-            ? copyFrom(symbol.module, symbol.body)
-            : reuse();
+              );
         currentModule.definitions.push(node);
         setRecursionFields(node);
       });
@@ -3102,24 +3108,4 @@ export const generateSanySpecification = (
     return module;
   });
   return { root: modules[modules.length - 1], modules, messages };
-};
-
-type LetUnit =
-  | { kind: "Recursive"; declarations: Declaration[] }
-  | { kind: "Instance"; instance: Instance }
-  | { kind: "Definition"; definition: Definition };
-
-const getNumeralValue = (text: string) => {
-  const lower = text.toLowerCase();
-  const radix = lower.startsWith("\\b")
-    ? 2
-    : lower.startsWith("\\o")
-      ? 8
-      : lower.startsWith("\\h")
-        ? 16
-        : 10;
-  const digits = radix === 10 ? lower : lower.slice(2);
-  return [...digits]
-    .reduce((value, digit) => value * BigInt(radix) + BigInt(parseInt(digit, radix)), 0n)
-    .toString();
 };

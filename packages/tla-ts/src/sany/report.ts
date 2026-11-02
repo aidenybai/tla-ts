@@ -118,7 +118,7 @@ export const getSanyModuleName = (text: string, version?: TlcVersion) =>
 // in the rest.
 export const getSanyReport = (
   rootPath: string,
-  loadModule: (name: string) => string | undefined = () => undefined,
+  loadModule: (name: string) => string | undefined,
   options: SanyReportOptions = {},
 ): SanyReport => {
   const rootName = basename(rootPath, ".tla");

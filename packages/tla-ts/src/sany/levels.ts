@@ -840,26 +840,6 @@ const checkTemporalProof = (proof: ProofNode | undefined, check: LevelCheck) => 
   });
 };
 
-// Subst.getSubLCSet, getSubALCSet and getSubALPSet for the body of an instantiation.
-const constrainSubstitution = (
-  node: LevelFields,
-  body: ConstraintSource,
-  substs: Subst[],
-  isConstant: boolean,
-  iteration: number,
-  check: LevelCheck,
-) => {
-  node.levelConstraints = getSubstitutedLevelConstraints(
-    body,
-    substs,
-    isConstant,
-    iteration,
-    check,
-  );
-  node.argLevelConstraints = getSubstitutedArgLevelConstraints(body, substs, iteration, check);
-  node.argLevelParams = getSubstitutedArgLevelParams(body.argLevelParams, substs);
-};
-
 // InstanceNode.levelCheck.
 const checkInstance = (node: InstanceNode, iteration: number, check: LevelCheck) => {
   if (node.levelChecked >= iteration) return node.levelCorrect;
@@ -1118,7 +1098,20 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
         });
       }
       const isConstant = isConstantModule(node.instantiatedModule, check);
-      constrainSubstitution(node, body, node.substs, isConstant, iteration, check);
+      node.levelConstraints = getSubstitutedLevelConstraints(
+        body,
+        node.substs,
+        isConstant,
+        iteration,
+        check,
+      );
+      node.argLevelConstraints = getSubstitutedArgLevelConstraints(
+        body,
+        node.substs,
+        iteration,
+        check,
+      );
+      node.argLevelParams = getSubstitutedArgLevelParams(body.argLevelParams, node.substs);
       return node.levelCorrect;
     }
     case "Instance":
