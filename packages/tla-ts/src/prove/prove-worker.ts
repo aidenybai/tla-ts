@@ -1,6 +1,6 @@
 // A worker of the decide pool: it decides each request with the backend its prover selects.
 
-import { TlaProverError, TlaUnsupportedError } from "../errors";
+import { TlaProverError } from "../errors";
 import { getParentPort } from "../worker";
 import { decide } from "./deciders";
 import type { DecideRequest, DecideResponse } from "./decide-pool";
@@ -9,10 +9,7 @@ const getResponse = (request: DecideRequest): DecideResponse => {
   try {
     return decide(request.prover, request.text, { timeLimitMs: request.timeLimitMs });
   } catch (error) {
-    if (error instanceof TlaProverError)
-      return { error: { name: "TlaProverError", message: error.message } };
-    if (error instanceof TlaUnsupportedError)
-      return { error: { name: "TlaUnsupportedError", message: error.message } };
+    if (error instanceof TlaProverError) return { error: error.message };
     throw error;
   }
 };

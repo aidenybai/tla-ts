@@ -1,6 +1,6 @@
 // Worker threads that decide the obligations prove sends them, the earliest obligation first.
 
-import { TlaProverError, TlaUnsupportedError } from "../errors";
+import { TlaProverError } from "../errors";
 import { spawnWorker, type WorkerHandle } from "../worker";
 import type { DecideOptions, Decision } from "./verdict";
 
@@ -10,10 +10,9 @@ export interface DecideRequest {
   timeLimitMs: number;
 }
 
-// A backend's decision, or the error that prove turns into a result.
-export type DecideResponse =
-  | Decision
-  | { error: { name: "TlaProverError" | "TlaUnsupportedError"; message: string } };
+// A backend's decision, or the message of the TlaProverError it threw, which prove turns into a
+// result.
+export type DecideResponse = Decision | { error: string };
 
 interface PendingDecision {
   request: DecideRequest;
@@ -57,11 +56,7 @@ export const createDecidePool = async (count: number): Promise<DecidePool> => {
     running.delete(index);
     idle.push(index);
     if ("verdict" in response) decision?.resolve(response);
-    if ("error" in response) {
-      const ErrorClass =
-        response.error.name === "TlaProverError" ? TlaProverError : TlaUnsupportedError;
-      decision?.reject(new ErrorClass(response.error.message));
-    }
+    if ("error" in response) decision?.reject(new TlaProverError(response.error));
     dispatch();
   };
   const terminate = (reason: unknown) => {
