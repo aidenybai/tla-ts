@@ -239,18 +239,6 @@ export interface LineRange {
   end: number;
 }
 
-export interface Generator {
-  generate: (sequent: Sequent, proof: Proof, time: Time) => Proof;
-  collect: (proof: Proof) => Obligation[];
-  mutate: (
-    context: Hyp[],
-    mode: "Use" | "Hide",
-    usable: Usable,
-    location: Locus | undefined,
-  ) => [Hyp[], Obligation[]];
-  simplify: (context: Hyp[], goal: Expr, proof: Proof, time: Time) => Proof;
-}
-
 // The bounds after a witnessed one, where a ditto takes the witnessed domain.
 const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
   const shifted = substituteBounds(shift(1), rest)[1];
@@ -362,7 +350,7 @@ export const createGenerator = (
   inputFiles: Set<string>,
   lines: LineRange,
   onWarning: (warning: ObligationWarning) => void,
-): Generator => {
+) => {
   const generate = (sequent: Sequent, proof: Proof, time: Time): Proof => {
     const location = proof.location;
     if (
@@ -1139,3 +1127,5 @@ export const createGenerator = (
 
   return { generate, collect, mutate, simplify };
 };
+
+export type Generator = ReturnType<typeof createGenerator>;
