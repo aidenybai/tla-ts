@@ -650,7 +650,8 @@ export abstract class Internalizer {
   }
 
   private undoMkEnode() {
-    const node = this.enodeStore.nodes.pop();
+    const nodes = this.enodeStore.nodes;
+    const node = nodes[nodes.length - 1];
     if (node === undefined) return;
     this.exprToEnode[node.owner] = undefined;
     if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node);
@@ -658,6 +659,8 @@ export abstract class Internalizer {
     for (let index = 0; index < node.numArgs; index++) node.getArg(index).root.parents.pop();
     this.manager.decRef(node.owner);
     this.stickyGenerations.delete(node);
+    // The node leaves the stack last, since its data are found through its place there.
+    nodes.pop();
   }
 
   protected mergeCgcGenerations(first: Enode, firstGeneration: number, second: Enode) {

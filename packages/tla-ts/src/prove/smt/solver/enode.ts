@@ -52,6 +52,9 @@ export class EnodeStore {
   root = new Int32Array(1024);
   next = new Int32Array(1024);
   classSize = new Int32Array(1024);
+  cg = new Int32Array(1024);
+  // The Boolean fields of each node, one bit each, and its number of arguments in the bits above.
+  flags = new Int32Array(1024);
 
   // The id of a new node, which goes on the stack, with columns of room for it.
   allocate(node: Enode) {
@@ -61,10 +64,13 @@ export class EnodeStore {
       this.root = growColumn(this.root);
       this.next = growColumn(this.next);
       this.classSize = growColumn(this.classSize);
+      this.cg = growColumn(this.cg);
+      this.flags = growColumn(this.flags);
     }
     this.root[id] = id;
     this.next[id] = id;
     this.classSize[id] = 1;
+    this.cg[id] = id;
     return id;
   }
 }
@@ -77,7 +83,6 @@ const growColumn = (column: Int32Array) => {
 
 export class Enode {
   readonly id: number;
-  cg: Enode = this;
   parents: Enode[] = NO_ENODES;
   // m_trans: the next node on the transitivity branch toward the root of the proof tree, and why the
   // two are equal.
@@ -90,8 +95,6 @@ export class Enode {
   plbls = 0;
   plblsHigh = 0;
   lblHash = -1;
-  // The Boolean fields, one bit each, so a node takes 48 bytes less, and the number of arguments.
-  private flags: number;
   // m_args: the first two arguments inline, like Z3's arguments after the node, and the rest in an
   // array. A missing argument is the node itself.
   private readonly arg0: Enode;
@@ -118,7 +121,7 @@ export class Enode {
     this.arg0 = arg0 ?? this;
     this.arg1 = arg1 ?? this;
     this.moreArgs = moreArgs;
-    this.flags =
+    store.flags[this.id] =
       (numArgs << NUM_ARGS_SHIFT) |
       (isEq ? IS_EQ : 0) |
       (isBool ? IS_BOOL : 0) |
@@ -150,8 +153,21 @@ export class Enode {
     this.store.classSize[this.id] = value;
   }
 
+  get cg() {
+    return this.store.nodes[this.store.cg[this.id]];
+  }
+
+  set cg(value: Enode) {
+    this.store.cg[this.id] = value.id;
+  }
+
+  private get flags() {
+    return this.store.flags[this.id];
+  }
+
   private setFlag(flag: number, value: boolean) {
-    this.flags = value ? this.flags | flag : this.flags & ~flag;
+    const flags = this.store.flags;
+    flags[this.id] = value ? flags[this.id] | flag : flags[this.id] & ~flag;
   }
 
   get numArgs() {
