@@ -1085,11 +1085,6 @@ const getLibraryDirectories = (parsed: ParsedArgs) => [
   ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
 ];
 
-const expandGlobs = (paths: string[]) =>
-  paths.flatMap((path) => (GLOB_CHARACTERS.test(path) ? globSync(path).sort() : [path]));
-
-const getModulePath = (path: string) => (path.endsWith(".tla") ? path : `${path}.tla`);
-
 // A message of tlapm's toolbox protocol, which it writes to stderr.
 const printToolboxMessage = (fields: string[]) =>
   console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
@@ -1290,8 +1285,8 @@ const runTlapm = async (args: string[]) => {
     console.log(TLAPM_VERSION);
     return EXIT_STATUS.success;
   }
-  const files = expandGlobs(parsed.positionals);
-  const modulePaths = files.map(getModulePath);
+  const files = getInputPaths(parsed.positionals).map((input) => input.path);
+  const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
   if (modulePaths.length === 0) {
     console.error(USAGE);
     return 1;
