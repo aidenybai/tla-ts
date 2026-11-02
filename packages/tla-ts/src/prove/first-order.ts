@@ -2,9 +2,9 @@
 // has shipped.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../errors";
-import { popNames, type Context } from "../obligations/ctx";
+import { popNames, type Context } from "../obligations/printer";
 import { shiftExpr } from "../obligations/substitution";
-import { type Bound, type Builtin, type Expr } from "../obligations/expression";
+import type { Bound, Builtin, Expr } from "../obligations/expression";
 
 // The temporal operators neither backend has a counterpart for, by the name tlapm reports.
 const TEMPORAL_OPERATORS: Partial<Record<Builtin, [string, number]>> = {

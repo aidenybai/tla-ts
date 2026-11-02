@@ -2,7 +2,7 @@
 // An obligation as the Isabelle/TLA+ theory tlapm writes for Isabelle to prove with a tactic.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
-import { createContext, getBoundName, popNames, pushName } from "../../obligations/ctx";
+import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
 import type { Bound, Builtin, Expr, Sequent } from "../../obligations/expression";
 import { pickle } from "../../obligations/pickle";
 import { getUnprintableError, printFact, splitFirstBound } from "../first-order";

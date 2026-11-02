@@ -2,7 +2,7 @@
 // each visible fact and a $goal, naming identifiers as Isabelle does.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
-import { createContext, getBoundName, popNames, pushName } from "../../obligations/ctx";
+import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
 import type { Bound, Builtin, Expr, Hyp, Sequent } from "../../obligations/expression";
 import { format, formatDelimited, renderDoc, text, type Doc } from "../../obligations/format";
 import { pickle } from "../../obligations/pickle";
