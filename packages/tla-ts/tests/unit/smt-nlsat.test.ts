@@ -770,6 +770,18 @@ describe("nlsat univariate factorization", () => {
   it.each(cases)("%s", (input, expected) => {
     expect(runFactorCommand(input)).toBe(expected);
   });
+
+  // A double's square root of a 60-digit discriminant is off by about 2^44, so a search from it
+  // does not end.
+  it("factors a quadratic whose discriminant is past the precision of a double", () => {
+    const root = 1234567890123456789012345678901n;
+    expect(runFactorCommand(`factor ${5n * root} ${-(root + 5n)} 1`)).toBe(
+      `factor 1 1 [${-root} 1]^1 [-5 1]^1`,
+    );
+    expect(runFactorCommand(`factor ${5n * root + 1n} ${-(root + 5n)} 1`)).toBe(
+      `factor 1 1 [${5n * root + 1n} ${-(root + 5n)} 1]^1`,
+    );
+  });
 });
 
 describe("nlsat univariate polynomials", () => {

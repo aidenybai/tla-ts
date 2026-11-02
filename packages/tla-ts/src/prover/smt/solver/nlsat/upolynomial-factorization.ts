@@ -97,10 +97,7 @@ const getSquareRoot = (value: bigint) => {
 // mpz_manager::is_perfect_square: the nonnegative square root, or null.
 export const getExactSquareRoot = (value: bigint) => {
   if (value < 0n) return null;
-  if (value < 2n) return value;
-  let root = BigInt(Math.floor(Math.sqrt(Number(value))));
-  while (root * root > value) root--;
-  while ((root + 1n) * (root + 1n) <= value) root++;
+  const root = getSquareRoot(value);
   return root * root === value ? root : null;
 };
 
