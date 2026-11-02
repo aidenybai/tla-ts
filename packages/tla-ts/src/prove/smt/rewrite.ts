@@ -83,6 +83,14 @@ export interface Env {
   rest: Env | undefined;
 }
 
+// A nested ASSUME's declarations and facts so far: each wraps the goal in a quantifier or an
+// implication.
+interface NestedContext {
+  env: Env | undefined;
+  mode: Mode;
+  wrappers: ((body: string) => string)[];
+}
+
 export const createEncoder = (session: EncodingSession) => {
   const flattener = createFlattener();
   const flatten = flattener.flatten;
@@ -548,11 +556,7 @@ export const createEncoder = (session: EncodingSession) => {
   };
 
   const encodeSequent = (sequent: Sequent, env: Env | undefined, mode: Mode): string => {
-    const steps = sequent.context.reduce<{
-      env: Env | undefined;
-      mode: Mode;
-      wrappers: ((body: string) => string)[];
-    }>(
+    const steps = sequent.context.reduce<NestedContext>(
       (state, hyp) => {
         switch (hyp.kind) {
           case "Fresh": {
@@ -562,10 +566,7 @@ export const createEncoder = (session: EncodingSession) => {
               return {
                 env: push(state.env, { kind: "operator", symbol: variable, arity: hyp.shape }),
                 mode: { ...state.mode, depth: state.mode.depth + 1 },
-                wrappers: [
-                  ...state.wrappers,
-                  (body: string) => `(forall ((${variable} Idv)) ${body})`,
-                ],
+                wrappers: [...state.wrappers, (body) => `(forall ((${variable} Idv)) ${body})`],
               };
             }
             if (hyp.level !== "Constant")
@@ -579,8 +580,7 @@ export const createEncoder = (session: EncodingSession) => {
               mode: bound.mode,
               wrappers: [
                 ...state.wrappers,
-                (body: string) =>
-                  `(forall ((${variable} Idv)) ${guard ? `(=> ${guard} ${body})` : body})`,
+                (body) => `(forall ((${variable} Idv)) ${guard ? `(=> ${guard} ${body})` : body})`,
               ],
             };
           }
@@ -593,7 +593,7 @@ export const createEncoder = (session: EncodingSession) => {
               env: push(state.env, { kind: "unsupported", reason: "a reference to a fact" }),
               mode: state.mode,
               wrappers: fact
-                ? [...state.wrappers, (body: string) => `(=> ${fact} ${body})`]
+                ? [...state.wrappers, (body) => `(=> ${fact} ${body})`]
                 : state.wrappers,
             };
           }
@@ -639,7 +639,7 @@ export const createEncoder = (session: EncodingSession) => {
         if (operator.kind === "Opaque")
           return encodeOpaque(operator.name, expression.args, env, mode);
         if (operator.kind === "Lambda")
-          return encode({ ...normalizeApply(operator, expression.args) }, env, mode);
+          return encode(normalizeApply(operator, expression.args), env, mode);
         throw new TlaUnsupportedError(`an application of ${operator.kind}`);
       }
       case "Sequent":
@@ -712,15 +712,14 @@ export const createEncoder = (session: EncodingSession) => {
         );
       case "Record":
       case "Rect": {
-        const fields = expression.fields;
-        const names = fields.map((field) => field.name);
-        recordFields.set(`Record_${names.join("_")}`, names);
-        recordFields.set(`RecordSet_${names.join("_")}`, names);
-        const name = `${expression.kind === "Record" ? "Record" : "RecordSet"}_${names.join("_")}`;
+        const names = expression.fields.map((field) => field.name);
+        const suffix = names.join("_");
+        recordFields.set(`Record_${suffix}`, names);
+        recordFields.set(`RecordSet_${suffix}`, names);
         return idv(
           call(
-            tla(name),
-            fields.map((field) => encodeIdv(field.value, env, mode)),
+            tla(`${expression.kind === "Record" ? "Record" : "RecordSet"}_${suffix}`),
+            expression.fields.map((field) => encodeIdv(field.value, env, mode)),
           ),
         );
       }
