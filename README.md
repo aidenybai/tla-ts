@@ -32,155 +32,48 @@ npm install tla-ts
 
 ## Command line
 
-### Check a spec
-
 ```shell
-npx tla-ts Spec.tla
+npx tla-ts Spec.tla          # check a spec with TLC's options
+npx tla-ts prove Module.tla  # prove a module's obligations
 ```
 
-tla-ts reads `Spec.cfg`, takes TLC's options and exits with TLC's exit codes. You can pass several specs or a glob.
-
-- `-config <Spec.cfg>`: read the configuration from this file.
-- `-deadlock`: don't report deadlocks.
-- `-dump [dot[,colorize][,actionlabels][,snapshot]] <file>`: write every reachable state, or the state graph with `dot`.
-- `-lncheck final`: check liveness once, after the search ends.
-- `-seed <num>`: seed `RandomElement` and the `Randomization` module. The default is 0.
-- `-workers <count|auto>`: the number of worker threads. The default is 1.
-
-### Generate proof obligations
-
-```shell
-npx tla-ts prove -N --toolbox 0 0 --printallobs Module.tla
-```
-
-`tla-ts prove -N` prints a module's proof obligations, as `tlapm -N` does.
-
-- `--toolbox <start> <end>`: print Toolbox messages for the proofs in these lines. `0 0` selects the whole module.
-- `--line <num>`: print Toolbox messages for the proof at this line.
-- `--printallobs`: print the text of each obligation.
-- `--summary`: print the number of obligations, and list missing and omitted proofs.
-- `--strict`: report missing and omitted proofs as errors.
-- `-I <directory>`: search this directory for modules.
-
-### Prove
-
-```shell
-npx tla-ts prove --backend tla-ts Module.tla
-```
-
-`tla-ts prove --backend` proves each module with [`prove`](#prove) and prints each obligation's status.
-
-- `--backend <tla-ts|tlapm>`: prove with tla-ts's own provers, or with tlapm from your `PATH`.
-- `-I <directory>`: search this directory for modules.
-- `-workers <count|auto>`: the number of worker threads. The default is 1.
-
-Without `-N`, `--summary` or `--backend`, `tla-ts prove` runs [tlapm](https://github.com/tlaplus/tlapm) with your arguments.
-
-## API reference
+## API
 
 ### `check`
 
-Checks a spec against a TLC configuration.
-
 ```ts
-import { check } from "tla-ts";
-
-const result = await check({
-  source: specSource,
-  config: configSource,
-  loadModule: (name) => modules[name],
-});
+const result = await check({ source, config });
+result.status; // "success", "deadlock", "invariant-violation", ...
+result.violation?.trace;
 ```
 
-| Option                  | Description                                                       |
-| ----------------------- | ----------------------------------------------------------------- |
-| `source`                | The TLA+ module to check                                          |
-| `config`                | A TLC configuration, as text or as the result of `parseConfig`    |
-| `loadModule`            | Returns the source of a module that isn't a standard module       |
-| `loadClass`             | Returns a compiled Java class that overrides a module's operators |
-| `onPrint`               | Receives the output of `Print` and `PrintT`                       |
-| `onPause`               | Runs when `TLCSet("pause", TRUE)` pauses checking                 |
-| `readFile`, `writeFile` | Read and write files for the Json module and `dump`               |
-| `seed`                  | A `bigint` seed. Defaults to `0n`                                 |
-| `workers`               | The number of worker threads. Defaults to 1                       |
-| `dump`                  | Writes the reachable states or the state graph                    |
-
-The result has these fields:
-
-- `status`: `"success"`, `"deadlock"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, `"postcondition-violation"`, or `"error"`.
-- `violation`: the `name` of what failed and the `trace` that reaches it.
-- `failure`: the message and trace when `status` is `"error"`.
-- `generatedStates`, `distinctStates`, and `depth`: TLC's state counts.
+| Option       | Description                                 |
+| ------------ | ------------------------------------------- |
+| `source`     | The TLA+ module                             |
+| `config`     | A TLC configuration                         |
+| `loadModule` | Returns the source of an imported module    |
+| `workers`    | The number of worker threads. Defaults to 1 |
 
 ### `prove`
 
-Proves the obligations of a TLAPS proof.
-
 ```ts
-import { prove } from "tla-ts";
-
-const result = await prove({
-  source: moduleSource,
-  loadModule: (name) => modules[name],
-  onObligation: (obligation) => console.log(obligation.location, obligation.status),
-});
+const result = await prove({ source });
+result.obligations; // each with a status: "proved", "trivial", "failed", or "unsupported"
 ```
 
-| Option         | Description                                                               |
-| -------------- | ------------------------------------------------------------------------- |
-| `source`       | The TLA+ module to prove                                                  |
-| `loadModule`   | Returns the source of a module it extends or instantiates                 |
-| `backend`      | `"tla-ts"` for tla-ts's own provers, or `"tlapm"`. Defaults to `"tla-ts"` |
-| `signal`       | An `AbortSignal` that stops proving                                       |
-| `onObligation` | Receives each obligation as soon as its status is known                   |
-| `workers`      | The number of worker threads. Defaults to 1                               |
+| Option         | Description                                      |
+| -------------- | ------------------------------------------------ |
+| `source`       | The TLA+ module                                  |
+| `loadModule`   | Returns the source of an imported module         |
+| `onObligation` | Receives each obligation as soon as it's decided |
+| `workers`      | The number of worker threads. Defaults to 1      |
 
-The result has these fields:
+### Other exports
 
-- `obligations`: each obligation's `id`, `location`, `text`, and `status`: `"proved"`, `"trivial"`, `"failed"`, or `"unsupported"`.
-- `missingProofCount` and `omittedProofCount`: the numbers of missing and omitted proofs.
-
-### `parseModule`
-
-Parses a TLA+ module into its syntax tree.
-
-```ts
-import { parseModule } from "tla-ts";
-
-const module = parseModule(specSource);
-module.name; // "Counter"
-```
-
-### `parseConfig`
-
-Parses a TLC configuration file.
-
-```ts
-import { check, parseConfig } from "tla-ts";
-
-const config = parseConfig(configSource);
-config.checkDeadlock = false;
-await check({ source: specSource, config });
-```
-
-### `formatValue`
-
-Prints a value in TLA+ syntax.
-
-```ts
-import { formatValue } from "tla-ts";
-
-formatValue(value); // "<<1, 2>>"
-```
-
-### Errors
-
-Every error extends `TlaError`:
-
-- `TlaSyntaxError`: the module doesn't parse.
-- `TlaConfigError`: the configuration is invalid.
-- `TlaEvaluationError`: evaluation failed.
-- `TlaUnsupportedError`: the spec uses a feature tla-ts doesn't support yet.
+- `parseModule(source)`: the module's syntax tree.
+- `parseConfig(source)`: a TLC configuration you can change before passing it to `check`.
+- `formatValue(value)`: a value in TLA+ syntax.
+- `TlaError` and its subclasses `TlaSyntaxError`, `TlaConfigError`, `TlaEvaluationError` and `TlaUnsupportedError`.
 
 ## Benchmarks
 
