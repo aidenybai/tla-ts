@@ -188,9 +188,10 @@ const getUnproved = (
 const normalizeExpand = (sequent: Sequent, frontends: Set<string>) =>
   expandEnabledCdot(normalizeSequent(expandDefs(sequent)), frontends);
 
-// The obligation as tlapm prints it in a toolbox message about a failure.
-export const formatNormalized = (obligation: PrintedObligation) =>
-  `${formatObligation(normalizeExpand(obligation.sequent, findMethods(obligation).frontends))}\n`;
+// The obligation as tlapm prints it in a toolbox message about a failure: Prep.normalize_expand
+// for a new one, and Toolbox.normalize, which keeps pragmas, for one it reused.
+export const formatNormalized = (obligation: PrintedObligation, isReused: boolean) =>
+  `${formatObligation(isReused ? normalizeSequent(expandDefs(obligation.sequent, false)) : normalizeExpand(obligation.sequent, findMethods(obligation).frontends))}\n`;
 
 // The text one backend receives for an obligation, for comparing with tlapm's.
 export const encodeForBackend = (

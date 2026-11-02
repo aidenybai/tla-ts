@@ -1371,6 +1371,20 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
   });
 
+  it("prints a failure it reuses for an obligation with the same fingerprint", () => {
+    const result = runCliWith("tlapm-cli", [
+      "tlapm",
+      "--threads",
+      "1",
+      "--toolbox",
+      "0",
+      "0",
+      "Twice.tla",
+    ]);
+    expect(result.status).toBe(0);
+    expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Twice.toolbox")));
+  });
+
   it("rejects the tlapm options it doesn't support", () => {
     const result = runCliWith("obligations", ["tlapm", "-C", "Proofs.tla"]);
     expect(result.status).toBe(1);

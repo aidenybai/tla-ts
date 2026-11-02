@@ -1244,7 +1244,9 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
     `already:${attempt.isReused}`,
     ...(attempt.isProved
       ? []
-      : [`obl:${attempt.isReused ? "" : `\n${note}`}${formatNormalized(obligation)}`]),
+      : [
+          `obl:${attempt.isReused ? "" : `\n${note}`}${formatNormalized(obligation, attempt.isReused)}`,
+        ]),
   ]);
 };
 

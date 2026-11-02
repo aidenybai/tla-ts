@@ -1,0 +1,91 @@
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:6:4:11
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:6:6:11
+@!!status:to be proved
+@!!END
+
+@!!BEGIN
+@!!type:obligationsnumber
+@!!count:4
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:1
+@!!loc:4:3:4:5
+@!!status:failed
+@!!prover:zenon
+@!!meth:time-limit: 10; time-used: 0.0 (0%)
+@!!reason:false
+@!!already:false
+@!!obl:
+ASSUME TRUE 
+PROVE  1 + 1 = 2
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:2
+@!!loc:4:6:4:11
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:3
+@!!loc:6:3:6:5
+@!!status:failed
+@!!prover:zenon
+@!!meth:time-limit: 10
+@!!reason:false
+@!!already:true
+@!!obl:ASSUME Zenon 
+PROVE  1 + 1 = 2
+
+@!!END
+
+@!!BEGIN
+@!!type:obligation
+@!!id:4
+@!!loc:6:6:6:11
+@!!status:trivial
+@!!prover:tlapm
+@!!already:false
+@!!END
+
+File "./Twice.tla", line 6, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME Zenon 
+           PROVE  1 + 1 = 2
+File "./Twice.tla", line 4, characters 3-4:
+[ERROR]: Could not prove or check:
+           ASSUME Zenon 
+           PROVE  1 + 1 = 2
+File "./Twice.tla", line 1, character 1 to line 7, character 4:
+[ERROR]: 2/4 obligations failed.
+There were backend errors processing module `"Twice"`.
