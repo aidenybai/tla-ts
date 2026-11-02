@@ -9,13 +9,15 @@ import { decide } from "./deciders";
 import { createDecidePool, type DecidePool } from "./decide-pool";
 import { encodeIsabelle, encodeIsabelleTheory } from "./isabelle/encode";
 import { processObligation } from "./prep/action";
-import { expandDefs } from "./prep/defs";
-import { normalizeSequent } from "./prep/elab";
-import { expandEnabledCdot } from "./prep/enabled";
 import { getFingerprint } from "./prep/fingerprint";
-import { flatten } from "./prep/flatten";
+import {
+  expandDefs,
+  flatten,
+  isTrivial,
+  normalizeExpand,
+  normalizeSequent,
+} from "./prep/normalize";
 import { findMethods, type Method } from "./prep/pragma";
-import { isTrivial } from "./prep/trivial";
 import { encodePtl } from "./ptl/encode";
 import { encodeSmt } from "./smt/encode";
 import type { EncodingSession } from "./smt/rewrite";
@@ -171,10 +173,6 @@ const getUnproved = (
   reason: string,
   attempts: ProofAttempt[] = [],
 ): ProofReport => ({ obligation: { ...getBase(obligation), status, reason }, attempts });
-
-// Prep.normalize_expand: expand_defs, Elab.normalize, then the frontends the step cites.
-const normalizeExpand = (obligation: PrintedObligation, methods = findMethods(obligation)) =>
-  expandEnabledCdot(normalizeSequent(expandDefs(obligation.sequent)), methods.frontends);
 
 // A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, and
 // Toolbox.normalize, which keeps pragmas, for a reused one.
