@@ -15,12 +15,16 @@ export const App = () => (
         <a href="https://lamport.azurewebsites.net/tla/tools.html" className={LINK_CLASS_NAME}>
           TLC
         </a>{" "}
-        that's 2× faster.
+        and{" "}
+        <a href="https://github.com/tlaplus/tlapm" className={LINK_CLASS_NAME}>
+          TLAPM
+        </a>
+        . It model checks 2× faster than TLC.
       </p>
       <p>
-        TLA+ lets you write formal models of a system, and TLC model checks them. But TLC is written
-        in Java and needs the JVM. tla-ts runs anywhere JavaScript runs, such as the browser, Node
-        and Bun.
+        TLA+ lets you write formal models of a system. TLC model checks them, and TLAPM checks their
+        proofs. But TLC needs the JVM, and TLAPM runs separate provers, such as Zenon, Isabelle, and
+        Z3. tla-ts runs anywhere JavaScript runs, such as the browser, Node, and Bun.
       </p>
       <p>
         <a href="https://github.com/aidenybai/tla-ts" className={LINK_CLASS_NAME}>
