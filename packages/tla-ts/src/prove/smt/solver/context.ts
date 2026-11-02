@@ -517,7 +517,7 @@ export class Context extends Internalizer {
       const parent = r1.getParent(index);
       if (parent.isMarked || !parent.isCgr() || parent.isTrueEq()) continue;
       parent.isMarked = true;
-      if (parent.isCgcEnabled) this.cgTable.erase(parent);
+      if (parent.isCgcEnabled) this.cgTable.erase(parent.id);
     }
   }
 
@@ -552,7 +552,7 @@ export class Context extends Internalizer {
         r2.addParent(parent);
         continue;
       }
-      const congruent = this.cgTable.insert(parent);
+      const congruent = this.enodeStore.nodes[this.cgTable.insert(parent.id)];
       if (congruent === parent) {
         r2.addParent(parent);
         continue;
@@ -560,7 +560,11 @@ export class Context extends Internalizer {
       parent.cg = congruent;
       this.mergeCgcGenerations(parent, parent.isEq ? 0 : parent.generation, congruent);
       if (congruent.root !== parent.root)
-        this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
+        this.pushEq(
+          parent,
+          congruent,
+          getCongruenceJustification(this.enodeStore, parent.id, congruent.id),
+        );
     }
   }
 
@@ -593,7 +597,7 @@ export class Context extends Internalizer {
       const parent = r2.getParent(index);
       if (parent.isCgcEnabled) {
         parent.isMarked = !parent.isEq;
-        this.cgTable.erase(parent);
+        this.cgTable.erase(parent.id);
       }
     }
     let current = r1;
@@ -608,14 +612,15 @@ export class Context extends Internalizer {
       const isErased = parent.isMarked;
       parent.isMarked = false;
       const cg = parent.cg;
-      if (parent.isTrueEq() || (parent !== cg && isCongruent(parent, cg))) continue;
+      if (parent.isTrueEq() || (parent !== cg && isCongruent(this.enodeStore, parent.id, cg.id)))
+        continue;
       let generation = 100000;
       if (parent.isEq) generation = 0;
       else if (parent === cg) {
         if (!isErased) continue;
         generation = parent.generation;
       }
-      const congruent = this.cgTable.insert(parent);
+      const congruent = this.enodeStore.nodes[this.cgTable.insert(parent.id)];
       parent.cg = congruent;
       if (congruent === parent) parent.generation = generation;
     }
@@ -650,7 +655,11 @@ export class Context extends Internalizer {
       const boolVar = this.getBoolVar(target.owner);
       const targetValue = this.assignment[mkLiteral(boolVar)];
       if (targetValue !== value) {
-        if (targetValue !== L_UNDEF && isCongruent(source, target) && source.numArgs > 0)
+        if (
+          targetValue !== L_UNDEF &&
+          isCongruent(this.enodeStore, source.id, target.id) &&
+          source.numArgs > 0
+        )
           this.dynAck.cgConflictEh(source.owner, target.owner);
         this.assign(mkLiteral(boolVar, value === L_FALSE), this.mkMpIff(source, target));
       }

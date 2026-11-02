@@ -118,6 +118,19 @@ export class EnodeStore {
     return id;
   }
 
+  getNumArgs(id: number) {
+    return this.flags[id] >>> NUM_ARGS_SHIFT;
+  }
+
+  isEq(id: number) {
+    return (this.flags[id] & IS_EQ) !== 0;
+  }
+
+  // The argument, and for a missing first or second argument the node itself, like Z3's m_args.
+  getArg(id: number, index: number) {
+    return index < this.getNumArgs(id) ? this.argPool[this.argStart[id] + index] : id;
+  }
+
   // Appends an argument to the node allocated last.
   pushArg(arg: number) {
     if (this.argTop === this.argPool.length) this.argPool = growColumn(this.argPool);

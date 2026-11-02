@@ -65,7 +65,7 @@ class Checker {
   // The owner of the node found, or -1 for none, so that the cache holds no objects.
   private enodeResults = new Int32Array(1024);
   // The ptr_buffer of each level of get_enode_eq_to_core, which Z3 keeps on the stack.
-  private argBuffers: Enode[][] = [];
+  private argBuffers: number[][] = [];
   private argDepth = 0;
 
   constructor(private context: Context) {}
@@ -231,7 +231,7 @@ class Checker {
         this.enodeResults[expr] = -1;
         return null;
       }
-      argNodes.push(node);
+      argNodes.push(node.id);
     }
     this.argDepth = depth;
     const found = context.findCongruent(manager.decls[expr], argNodes);

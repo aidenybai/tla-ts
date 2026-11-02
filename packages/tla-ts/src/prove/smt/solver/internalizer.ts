@@ -120,7 +120,6 @@ export abstract class Internalizer {
   readonly rewriter: Rewriter;
   readonly relevancy: RelevancyPropagator;
   readonly caseSplitQueue: CaseSplitQueue;
-  readonly cgTable = new CgTable();
   private stickyGenerations = new StickyGenerations();
   abstract readonly theory: TheoryLra;
   abstract readonly qmanager: DefaultQuantifierManager;
@@ -177,6 +176,7 @@ export abstract class Internalizer {
   protected conflict: Conflict | null = null;
   protected eqPropagationQueue: NewEq[] = [];
   readonly enodeStore = new EnodeStore();
+  readonly cgTable = new CgTable(this.enodeStore);
   protected decl2enodes = new Map<number, Enode[]>();
   trueEnode: Enode;
   private isDiseqTmp = -1;
@@ -347,8 +347,9 @@ export abstract class Internalizer {
     return this.exprToEnode[expr] !== undefined;
   }
 
-  findCongruent(decl: number, args: Enode[]) {
-    return this.cgTable.findFor(decl, args, decl === OP_EQ);
+  findCongruent(decl: number, args: number[]) {
+    const found = this.cgTable.findFor(decl, args, decl === OP_EQ);
+    return found === -1 ? undefined : this.enodeStore.nodes[found];
   }
 
   // is_diseq_core: the roots are distinct values, or an equality between the two classes is false.
@@ -363,8 +364,10 @@ export abstract class Internalizer {
       this.isDiseqTmp = manager.mkEq(first.owner, second.owner);
       manager.incRef(this.isDiseqTmp);
     }
-    const root = this.cgTable.findFor(OP_EQ, [first, second], true)?.root;
-    if (root === undefined || root === this.trueEnode) return false;
+    const found = this.cgTable.findFor(OP_EQ, [first.id, second.id], true);
+    if (found === -1) return false;
+    const root = this.enodeStore.nodes[found].root;
+    if (root === this.trueEnode) return false;
     return (
       root === this.falseEnode ||
       (this.isRelevant(root.owner) && this.getAssignmentOfExpr(root.owner) === L_FALSE)
@@ -434,7 +437,8 @@ export abstract class Internalizer {
   // get_cg_root: a node's cg can be stale, so a node that is not a congruence root looks the root up.
   private getCgRoot(node: Enode) {
     if (!node.usesCgTable() || node.isCgr()) return node;
-    return this.cgTable.findCongruent(node) ?? node;
+    const found = this.cgTable.findCongruent(node.id);
+    return found === -1 ? node : this.enodeStore.nodes[found];
   }
 
   private setGeneration(node: Enode, generation: number) {
@@ -471,13 +475,17 @@ export abstract class Internalizer {
       if (node === null) continue;
       const generation = group.generations[index];
       const root = node.getArg(0).root;
-      if (generation < firstGeneration && root === firstRoot && isCongruent(node, first))
+      if (
+        generation < firstGeneration &&
+        root === firstRoot &&
+        isCongruent(this.enodeStore, node.id, first.id)
+      )
         this.setGeneration(first, generation);
       else if (
         second !== null &&
         generation < secondGeneration &&
         root === secondRoot &&
-        isCongruent(node, second)
+        isCongruent(this.enodeStore, node.id, second.id)
       )
         this.setGeneration(second, generation);
     }
@@ -626,11 +634,15 @@ export abstract class Internalizer {
         );
         this.pushEq(node, this.trueEnode, AXIOM_EQ_JUSTIFICATION);
       } else if (isCgcEnabled) {
-        const congruent = this.cgTable.insert(node);
+        const congruent = this.enodeStore.nodes[this.cgTable.insert(node.id)];
         if (congruent !== node) {
           node.cg = congruent;
           if (!isEq) this.mergeCgcGenerations(node, generation, congruent);
-          this.pushEq(node, congruent, getCongruenceJustification(node, congruent));
+          this.pushEq(
+            node,
+            congruent,
+            getCongruenceJustification(this.enodeStore, node.id, congruent.id),
+          );
         }
       }
       if (!isEq) {
@@ -654,7 +666,7 @@ export abstract class Internalizer {
     const node = nodes[nodes.length - 1];
     if (node === undefined) return;
     this.exprToEnode[node.owner] = undefined;
-    if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node);
+    if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node.id);
     if (node.numArgs > 0 && !node.isEq) this.decl2enodes.get(node.decl)?.pop();
     for (let index = 0; index < node.numArgs; index++) node.getArg(index).root.popParent();
     this.manager.decRef(node.owner);

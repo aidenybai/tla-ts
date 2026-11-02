@@ -54,7 +54,7 @@ export class Interpreter {
   private backtrackStack: BacktrackPoint[] = [];
   private spareVector: Enode[] = [];
   // The arguments of IS_CGR and GET_CGR.
-  private argBuffer: Enode[] = [];
+  private argBuffer: number[] = [];
   private top = 0;
   // m_max_generation: the largest generation of a term the match went through.
   private maxGeneration = 0;
@@ -115,7 +115,7 @@ export class Interpreter {
     for (const reg of instr.regs) {
       const node = registers[reg];
       if (node === null || node === undefined) return false;
-      args.push(node.root);
+      args.push(node.root.id);
     }
     const first = registers[instr.reg];
     if (first === null || first === undefined) return false;
@@ -123,7 +123,7 @@ export class Interpreter {
     do {
       let isMatch = node.decl === instr.label && node.numArgs === instr.numArgs;
       for (let index = 0; index < args.length && isMatch; index++)
-        isMatch = node.getArg(index).root === args[index];
+        isMatch = node.getArg(index).root.id === args[index];
       if (isMatch) {
         this.updateMaxGeneration(node);
         return true;
@@ -403,7 +403,7 @@ export class Interpreter {
           if (instr.numArgs <= MAX_FILTERED_GET_CGR_ARGS && !this.hasParentLabels(instr)) break;
           const args = this.argBuffer;
           shrink(args, 0);
-          for (const reg of instr.regs) args.push(registers[reg] as Enode);
+          for (const reg of instr.regs) args.push((registers[reg] as Enode).id);
           const found = context.findCongruent(instr.label, args);
           if (found === undefined || !context.isRelevant(found.owner)) break;
           this.updateMaxGeneration(found);
