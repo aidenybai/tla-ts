@@ -1266,10 +1266,8 @@ const proveModule = async (
   result: ModuleObligations,
   theoryPath: string,
   fingerprintsPath: string,
-  sources: string[],
   settings: ProvingSettings,
 ) => {
-  saveHistory(fingerprintsPath, sources);
   const known = getKnownResults(settings.fingerprints);
   const reports = await proveObligations(result.obligations, {
     workers: settings.workers,
@@ -1448,15 +1446,16 @@ const runTlapm = async (args: string[]) => {
       );
     if (!isProcessing) continue;
     // tlapm's history holds the source of each module read so far.
-    const sources = [
-      ...moduleNames,
-      ...results.slice(0, index + 1).map((innerResult) => innerResult.name),
-    ].map((name) => `${name}.tla`);
+    saveHistory(
+      fingerprintsPath,
+      [...moduleNames, ...results.slice(0, index + 1).map((innerResult) => innerResult.name)].map(
+        (name) => `${name}.tla`,
+      ),
+    );
     const isFailed = await proveModule(
       result,
       `${directory}/${result.name}.thy`,
       fingerprintsPath,
-      sources,
       settings,
     );
     if (isFailed && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
