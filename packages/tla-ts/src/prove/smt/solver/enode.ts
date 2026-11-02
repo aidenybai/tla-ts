@@ -54,6 +54,9 @@ export class EnodeStore {
   next = new Int32Array(1024);
   classSize = new Int32Array(1024);
   cg = new Int32Array(1024);
+  // m_trans: the next node on each node's transitivity branch toward the root of the proof tree, or
+  // -1.
+  transTarget = new Int32Array(1024);
   // The Boolean fields of each node, one bit each, and its number of arguments in the bits above.
   flags = new Int32Array(1024);
   generation = new Int32Array(1024);
@@ -90,6 +93,7 @@ export class EnodeStore {
       this.next = growColumn(this.next);
       this.classSize = growColumn(this.classSize);
       this.cg = growColumn(this.cg);
+      this.transTarget = growColumn(this.transTarget);
       this.flags = growColumn(this.flags);
       this.generation = growColumn(this.generation);
       this.thVar = growColumn(this.thVar);
@@ -107,6 +111,7 @@ export class EnodeStore {
     this.next[id] = id;
     this.classSize[id] = 1;
     this.cg[id] = id;
+    this.transTarget[id] = -1;
     this.thVar[id] = -1;
     this.labels.fill(0, 4 * id, 4 * id + 4);
     this.lblHash[id] = -1;
@@ -180,9 +185,7 @@ const growColumn = (column: Int32Array) => {
 
 export class Enode {
   readonly id: number;
-  // m_trans: the next node on the transitivity branch toward the root of the proof tree, and why the
-  // two are equal.
-  transTarget: Enode | null = null;
+  // Why the node equals its transitivity target.
   transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
 
   // moreArgs are the arguments past the second, and arg0 and arg1 are null when there are fewer.
@@ -239,6 +242,15 @@ export class Enode {
 
   set classSize(value: number) {
     this.store.classSize[this.id] = value;
+  }
+
+  get transTarget(): Enode | null {
+    const target = this.store.transTarget[this.id];
+    return target === -1 ? null : this.store.nodes[target];
+  }
+
+  set transTarget(value: Enode | null) {
+    this.store.transTarget[this.id] = value === null ? -1 : value.id;
   }
 
   get cg() {
