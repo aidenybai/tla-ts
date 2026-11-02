@@ -1,56 +1,31 @@
 import { PcalError, PcalBugError } from "../errors";
 import { createNormalizedPcalExpr, createPcalToken, PCAL_TOKEN, type PcalToken } from "./ast";
 
-// PcalCharReader: reads the algorithm's characters from the lines between a start and an end
-// position, returning "\n" at the end of each line and "\t" at the end of the input. Columns count
-// code points, and getColumnNumber counts tabs as reaching the next multiple of 8.
+// PcalCharReader: reads the algorithm's characters from a start position to the end of the lines,
+// returning "\n" at the end of each line and "\t" at the end of the input. Columns count code
+// points. The lines come without tabs, as trans.removeTabs replaced them.
 export interface PcalCharReader {
   lines: string[];
   currentLine: string[] | undefined;
   line: number;
   column: number;
   vcolumn: number;
-  lastLine: number;
-  lastColumn: number;
-  isTabToSpaces: boolean;
 }
 
 export const createPcalCharReader = (
   lines: string[],
   firstLine: number,
   firstColumn: number,
-  lastLine: number,
-  lastColumn: number,
 ): PcalCharReader => ({
   lines,
   currentLine: firstLine < lines.length ? Array.from(lines[firstLine]) : undefined,
   line: firstLine,
   column: firstColumn,
-  vcolumn:
-    firstLine < lines.length
-      ? Array.from(lines[firstLine].slice(0, firstColumn)).reduce(
-          (vcolumn, char) => (char === "\t" ? (Math.floor(vcolumn / 8) + 1) * 8 : vcolumn + 1),
-          0,
-        )
-      : 0,
-  lastLine,
-  lastColumn,
-  isTabToSpaces: false,
+  vcolumn: firstLine < lines.length ? Array.from(lines[firstLine].slice(0, firstColumn)).length : 0,
 });
 
 const getNextPcalChar = (reader: PcalCharReader) => {
   if (reader.currentLine === undefined) return "\t";
-  if (reader.isTabToSpaces) {
-    reader.vcolumn += 1;
-    if (reader.vcolumn % 8 === 0) reader.isTabToSpaces = false;
-    return " ";
-  }
-  if (
-    reader.line > reader.lastLine ||
-    (reader.line === reader.lastLine && reader.column >= reader.lastColumn)
-  ) {
-    return "\t";
-  }
   if (reader.currentLine.length === reader.column) {
     reader.line += 1;
     reader.column = 0;
@@ -62,9 +37,7 @@ const getNextPcalChar = (reader: PcalCharReader) => {
   const char = reader.currentLine[reader.column];
   reader.column += 1;
   reader.vcolumn += 1;
-  if (char !== "\t") return char;
-  if (reader.vcolumn % 8 !== 0) reader.isTabToSpaces = true;
-  return " ";
+  return char;
 };
 
 const backspacePcalReader = (reader: PcalCharReader) => {
@@ -77,11 +50,9 @@ const backspacePcalReader = (reader: PcalCharReader) => {
     throw new PcalBugError("PcalCharReader.backspace trying to move past beginning of reader");
   }
   reader.line -= 1;
-  const currentLine = Array.from(reader.lines[reader.line]);
-  reader.currentLine = currentLine;
-  reader.column = 0;
-  reader.vcolumn = 0;
-  while (reader.column < currentLine.length - 1) getNextPcalChar(reader);
+  reader.currentLine = Array.from(reader.lines[reader.line]);
+  reader.column = Math.max(reader.currentLine.length - 1, 0);
+  reader.vcolumn = reader.column;
 };
 
 // PcalCharReader.peek: the rest of the line from the next character that is not white space, with

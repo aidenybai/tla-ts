@@ -159,7 +159,6 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
           );
           return;
         }
-        params.specFile = argument;
         index += 1;
         continue;
       }
@@ -168,14 +167,9 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
         params.checkTermination = true;
         continue;
       case "-noold":
-        params.noOld = true;
-        continue;
       case "-nocfg":
-        params.nocfg = true;
-        continue;
       case "-noDoneDisjunct":
       case "noDoneDisjunct":
-        params.noDoneDisjunct = true;
         continue;
       case "-wf":
       case "wf":
@@ -361,7 +355,6 @@ export const validatePcalModule = (
     const rest = line.slice(searchLocation.column);
     const idEnd = Array.from(rest).findIndex((char) => !isIdChar(char));
     if (rest.startsWith("options") && (idEnd === -1 ? rest.length : idEnd) === 7) {
-      session.params.optionsInFile = true;
       processOptions(session, lines, searchLocation);
       break;
     }
@@ -405,14 +398,11 @@ export const validatePcalModule = (
   // HACK: Validator reports the exceptions of ParseAlgorithm.getAlgorithm and PCalTLAGenerator
   // and goes on to compare the checksums.
   try {
-    const reader = createPcalCharReader(
-      lines,
-      begin.line,
-      begin.column,
-      specificationText.length,
-      0,
+    const result = parsePcalAlgorithm(
+      session,
+      createPcalCharReader(lines, begin.line, begin.column),
+      begin.isFair,
     );
-    const result = parsePcalAlgorithm(session, reader, begin.isFair);
     parsed.ast = result.ast;
     translatePcalAlgorithm(result.ast, result.omitPC, result.hasDefaultInitialization, session.log);
   } catch (error) {

@@ -28,18 +28,11 @@ interface PcalCoord {
 // resets, so options one module sets carry over to the modules SANY validates after it.
 export interface PcalParams {
   labelFlag: boolean;
-  reportLabelsFlag: boolean;
   labelRoot: string;
   fairnessOption: string;
-  fairAlgorithm: boolean;
   checkTermination: boolean;
-  noOld: boolean;
-  nocfg: boolean;
-  noDoneDisjunct: boolean;
   specOption: boolean;
   myspecOption: boolean;
-  specFile: string;
-  optionsInFile: boolean;
   inputVersionNumber: number;
 }
 
@@ -48,18 +41,11 @@ export const PCAL_VERSION_WEIGHT = 1903;
 
 export const createPcalParams = (): PcalParams => ({
   labelFlag: false,
-  reportLabelsFlag: false,
   labelRoot: "Lbl_",
   fairnessOption: "",
-  fairAlgorithm: false,
   checkTermination: false,
-  noOld: false,
-  nocfg: false,
-  noDoneDisjunct: false,
   specOption: false,
   myspecOption: false,
-  specFile: "",
-  optionsInFile: false,
   inputVersionNumber: PCAL_VERSION_WEIGHT,
 });
 

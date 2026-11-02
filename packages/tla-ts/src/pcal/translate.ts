@@ -66,14 +66,10 @@ interface PcalSymbol {
   type: number;
   id: string;
   context: string;
-  contextType: string;
-  line: number;
-  col: number;
   useThis: string;
 }
 
-// PcalSymTab.ProcedureEntry and ProcessEntry. initialPC is the first label, which a body with no
-// statements lacks.
+// PcalSymTab.ProcedureEntry. initialPC is the first label, which a body with no statements lacks.
 interface PcalProcedureEntry {
   name: string;
   params: PcalPVarDecl[];
@@ -81,18 +77,11 @@ interface PcalProcedureEntry {
   initialPC: string | undefined;
 }
 
-interface PcalProcessEntry {
-  name: string;
-  initialPC: string | undefined;
-}
-
 interface PcalSymbolTable {
   symbols: PcalSymbol[];
   procedures: PcalProcedureEntry[];
-  processes: PcalProcessEntry[];
-  disambiguateReport: string[];
+  processNames: string[];
   errorReport: string;
-  initialPC: string | undefined;
 }
 
 // A Return or CallReturn outside a procedure has no from, and PcalSymTab.FindSym never matches a
@@ -116,20 +105,7 @@ const findProcedureIndex = (table: PcalSymbolTable, name: string) => {
   return index === -1 ? table.procedures.length : index;
 };
 
-const findProcessIndex = (table: PcalSymbolTable, name: string) => {
-  const index = table.processes.findIndex((process) => process.name === name);
-  return index === -1 ? table.processes.length : index;
-};
-
-const insertSymbol = (
-  table: PcalSymbolTable,
-  type: number,
-  id: string,
-  context: string,
-  contextType: string,
-  line: number,
-  col: number,
-) => {
+const insertSymbol = (table: PcalSymbolTable, type: number, id: string, context: string) => {
   const isVariable =
     type === PCAL_SYMBOL.procedureVar ||
     type === PCAL_SYMBOL.processVar ||
@@ -139,7 +115,7 @@ const insertSymbol = (
       findSymbolInContext(table, id, context) !== undefined
     : findSymbol(table, type, id, context) !== undefined;
   if (isDefined) return false;
-  table.symbols.push({ type, id, context, contextType, line, col, useThis: id });
+  table.symbols.push({ type, id, context, useThis: id });
   return true;
 };
 
@@ -158,38 +134,22 @@ const createPcalSymbolTable = (ast: PcalAlgorithm) => {
   const table: PcalSymbolTable = {
     symbols: [],
     procedures: [],
-    processes: [],
-    disambiguateReport: [],
+    processNames: [],
     errorReport: "",
-    initialPC: undefined,
   };
 
-  const extractLabeledStmt = (
-    labeledStmt: PcalLabeledStmt,
-    context: string,
-    contextType: string,
-  ) => {
-    if (
-      !insertSymbol(
-        table,
-        PCAL_SYMBOL.label,
-        labeledStmt.label,
-        context,
-        contextType,
-        labeledStmt.line,
-        labeledStmt.col,
-      )
-    ) {
+  const extractLabeledStmt = (labeledStmt: PcalLabeledStmt, context: string) => {
+    if (!insertSymbol(table, PCAL_SYMBOL.label, labeledStmt.label, context)) {
       table.errorReport += `\nLabel ${labeledStmt.label} redefined at line ${labeledStmt.line}, column ${labeledStmt.col}`;
     }
-    labeledStmt.stmts.forEach((stmt) => extractStmt(stmt, context, contextType));
+    labeledStmt.stmts.forEach((stmt) => extractStmt(stmt, context));
   };
 
-  const extractStmt = (stmt: PcalStmt, context: string, contextType: string): void => {
+  const extractStmt = (stmt: PcalStmt, context: string): void => {
     const extractStmts = (stmts: PcalStmt[]) =>
-      stmts.forEach((innerStmt) => extractStmt(innerStmt, context, contextType));
+      stmts.forEach((innerStmt) => extractStmt(innerStmt, context));
     const extractLabeledStmts = (stmts: PcalLabeledStmt[]) =>
-      stmts.forEach((innerStmt) => extractLabeledStmt(innerStmt, context, contextType));
+      stmts.forEach((innerStmt) => extractLabeledStmt(innerStmt, context));
     switch (stmt.kind) {
       case "While":
         extractStmts(stmt.unlabDo);
@@ -236,10 +196,9 @@ const createPcalSymbolTable = (ast: PcalAlgorithm) => {
   const extractVarDecl = (
     decl: PcalVarDecl | PcalPVarDecl,
     context: string,
-    contextType = "process",
     type: number = context === "" ? PCAL_SYMBOL.global : PCAL_SYMBOL.processVar,
   ) => {
-    if (!insertSymbol(table, type, decl.var, context, contextType, decl.line, decl.col)) {
+    if (!insertSymbol(table, type, decl.var, context)) {
       table.errorReport += `\n${PCAL_SYMBOL_TYPE_NAMES[type]} ${decl.var} redefined at line ${decl.line}, column ${decl.col}`;
     }
   };
@@ -257,70 +216,45 @@ const createPcalSymbolTable = (ast: PcalAlgorithm) => {
         initialPC: procedure.body.length === 0 ? undefined : toLabeledStmt(procedure.body[0]).label,
       });
     }
-    insertSymbol(
-      table,
-      PCAL_SYMBOL.procedure,
-      procedure.name,
-      "",
-      "procedure",
-      procedure.line,
-      procedure.col,
-    );
+    insertSymbol(table, PCAL_SYMBOL.procedure, procedure.name, "");
     procedure.decls.forEach((decl) =>
-      extractVarDecl(decl, procedure.name, "procedure", PCAL_SYMBOL.procedureVar),
+      extractVarDecl(decl, procedure.name, PCAL_SYMBOL.procedureVar),
     );
     procedure.params.forEach((param) =>
-      extractVarDecl(param, procedure.name, "procedure", PCAL_SYMBOL.parameter),
+      extractVarDecl(param, procedure.name, PCAL_SYMBOL.parameter),
     );
-    procedure.body.forEach((stmt) =>
-      extractLabeledStmt(toLabeledStmt(stmt), procedure.name, "procedure"),
-    );
+    procedure.body.forEach((stmt) => extractLabeledStmt(toLabeledStmt(stmt), procedure.name));
   };
 
   const extractProcess = (process: PcalProcess) => {
-    const isRedefined = findProcessIndex(table, process.name) < table.processes.length;
+    const isRedefined = table.processNames.includes(process.name);
     if (isRedefined) {
       table.errorReport += `\nProcess ${process.name} redefined at line ${process.line}, column ${process.col}`;
     }
-    if (!isRedefined) {
-      table.processes.push({
-        name: process.name,
-        initialPC: process.body.length === 0 ? undefined : toLabeledStmt(process.body[0]).label,
-      });
-    }
-    insertSymbol(
-      table,
-      PCAL_SYMBOL.process,
-      process.name,
-      "",
-      "process",
-      process.line,
-      process.col,
-    );
+    if (!isRedefined) table.processNames.push(process.name);
+    insertSymbol(table, PCAL_SYMBOL.process, process.name, "");
     process.decls.forEach((decl) => extractVarDecl(decl, process.name));
-    process.body.forEach((stmt) =>
-      extractLabeledStmt(toLabeledStmt(stmt), process.name, "process"),
-    );
+    process.body.forEach((stmt) => extractLabeledStmt(toLabeledStmt(stmt), process.name));
   };
 
-  insertSymbol(table, PCAL_SYMBOL.global, "pc", "", "", 0, 0);
-  if (ast.prcds.length > 0) insertSymbol(table, PCAL_SYMBOL.global, "stack", "", "", 0, 0);
+  insertSymbol(table, PCAL_SYMBOL.global, "pc", "");
+  if (ast.prcds.length > 0) insertSymbol(table, PCAL_SYMBOL.global, "stack", "");
   ast.decls.forEach((decl) => extractVarDecl(decl, ""));
   ast.prcds.forEach(extractProcedure);
   if (ast.kind === "Multiprocess") ast.procs.forEach(extractProcess);
   if (ast.kind === "Uniprocess") {
-    if (ast.body.length > 0) table.initialPC = toLabeledStmt(ast.body[0]).label;
-    ast.body.forEach((stmt) => extractLabeledStmt(toLabeledStmt(stmt), "", ""));
+    ast.body.forEach((stmt) => extractLabeledStmt(toLabeledStmt(stmt), ""));
   }
   if (table.errorReport.length > 0) throw new PcalError(table.errorReport);
   return table;
 };
 
 // PcalSymTab.Disambiguate: renames each symbol whose name another symbol already uses, by
-// appending "_", then the letters of its context, then its type.
+// appending "_", then the letters of its context, then its type. Returns whether it renamed any.
 const disambiguatePcalSymbols = (table: PcalSymbolTable) => {
   const isAmbiguous = (id: string) =>
     table.symbols.filter((symbol) => symbol.useThis === id).length > 1;
+  const renamed = { isAny: false };
   for (let type = 0; type <= PCAL_SYMBOL_TYPE_COUNT; type += 1) {
     table.symbols.forEach((symbol) => {
       if (symbol.type !== type) return;
@@ -329,14 +263,10 @@ const disambiguatePcalSymbols = (table: PcalSymbolTable) => {
         symbol.useThis +=
           suffixLength === 1 ? "_" : (symbol.context[suffixLength - 2] ?? String(type));
       }
-      if (symbol.id === symbol.useThis) return;
-      const context =
-        symbol.context.length === 0 ? "" : ` of ${symbol.contextType} ${symbol.context}`;
-      table.disambiguateReport.push(
-        `\\* ${PCAL_SYMBOL_TYPE_NAMES[symbol.type]} ${symbol.id}${context} at line ${symbol.line} col ${symbol.col} changed to ${symbol.useThis}`,
-      );
+      if (symbol.id !== symbol.useThis) renamed.isAny = true;
     });
   }
+  return renamed.isAny;
 };
 
 // PcalSymTab.CheckForDefaultInitValue.
@@ -490,14 +420,9 @@ const fixPcalIds = (ast: PcalAlgorithm, table: PcalSymbolTable, log: (line: stri
   const fixProcess = (process: PcalProcess) => {
     process.decls.forEach((decl) => fixVarDecl(decl, process.name));
     process.body.forEach((stmt) => fixLabeledStmt(toLabeledStmt(stmt), process.name));
-    const entry = getElement(table.processes, findProcessIndex(table, process.name));
     fixLabels(process.plusLabels, process.name);
     fixLabels(process.minusLabels, process.name);
-    if (entry.initialPC !== undefined) {
-      entry.initialPC = useThis(table, PCAL_SYMBOL.label, entry.initialPC, process.name);
-    }
     process.name = useThis(table, PCAL_SYMBOL.process, process.name, "");
-    entry.name = process.name;
   };
 
   // PcalFixIDs.FixMultiprocess: a process calling an unknown procedure stops the fixing of the
@@ -545,9 +470,6 @@ const fixPcalIds = (ast: PcalAlgorithm, table: PcalSymbolTable, log: (line: stri
   if (ast.kind === "Uniprocess") {
     ast.prcds.forEach(fixProcedure);
     ast.body.forEach((stmt) => fixLabeledStmt(toLabeledStmt(stmt), ""));
-  }
-  if (table.initialPC !== undefined) {
-    table.initialPC = useThis(table, PCAL_SYMBOL.label, table.initialPC, "");
   }
 };
 
@@ -1222,8 +1144,7 @@ export const translatePcalAlgorithm = (
   log: (line: string) => void,
 ) => {
   const table = createPcalSymbolTable(ast);
-  disambiguatePcalSymbols(table);
-  if (table.disambiguateReport.length > 0) log("Warning: symbols were renamed.");
+  if (disambiguatePcalSymbols(table)) log("Warning: symbols were renamed.");
   fixPcalIds(ast, table, log);
   checkPcalTlaGen(explodePcalAlgorithm(ast, table, omitPC), omitPC);
   if (hasDefaultInitialization) checkForDefaultInitValue(table);

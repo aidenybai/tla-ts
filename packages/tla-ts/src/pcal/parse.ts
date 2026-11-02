@@ -92,13 +92,11 @@ interface PcalParserState {
   gotoUsed: boolean;
   gotoDoneUsed: boolean;
   omitPC: boolean;
-  omitStutteringWhenDone: boolean;
 }
 
 interface PcalParseResult {
   ast: PcalAlgorithm;
   omitPC: boolean;
-  omitStutteringWhenDone: boolean;
   hasDefaultInitialization: boolean;
 }
 
@@ -150,7 +148,6 @@ export const parsePcalAlgorithm = (
     gotoUsed: false,
     gotoDoneUsed: false,
     omitPC: params.inputVersionNumber >= 1500,
-    omitStutteringWhenDone: params.inputVersionNumber >= 1500,
   };
 
   // ParseAlgorithm.ParsingError.
@@ -1339,7 +1336,6 @@ export const parsePcalAlgorithm = (
     if (body.length === 0) return;
     const clear = () => {
       state.omitPC = false;
-      state.omitStutteringWhenDone = false;
     };
     const labeled = body[0];
     if (body.length > 1 || labeled.kind !== "LabeledStmt") return clear();
@@ -1365,22 +1361,6 @@ export const parsePcalAlgorithm = (
     throw new PcalError([header, ...state.addedLabelsLocs].join("\n     "));
   };
 
-  // ParseAlgorithm.ReportLabels.
-  const reportLabels = () => {
-    if (!params.reportLabelsFlag) {
-      session.log("Labels added.");
-      return;
-    }
-    session.log(
-      state.addedLabels.length > 1
-        ? "The following labels were added:"
-        : "The following label was added:",
-    );
-    state.addedLabels.forEach((label, index) =>
-      session.log(`  ${label} at ${state.addedLabelsLocs[index]}`),
-    );
-  };
-
   const fixProcedures = (macros: PcalMacro[]) =>
     state.procedures.forEach((procedure) => {
       state.currentProcedure = procedure.name;
@@ -1391,7 +1371,6 @@ export const parsePcalAlgorithm = (
   const parse = (): PcalAlgorithm => {
     if (isFairAlgorithm) {
       if (getAlgToken() !== "algorithm") throwParsingError("`--fair' not followed by `algorithm'");
-      params.fairAlgorithm = true;
     }
     const name = getAlgToken();
     state.cSyntax = peekAtAlgToken(1) === "{";
@@ -1435,24 +1414,17 @@ export const parsePcalAlgorithm = (
       }
       gobbleEndOrRightBrace("algorithm");
       checkForDuplicateMacros(macros);
-      const omitsStutteringWhenDone = procs.map((proc) => {
+      procs.forEach((proc) => {
         expandMacrosInStmtSeq(proc.body, macros);
         proc.body = makeLabeledStmtSeq(proc.body);
-        state.omitStutteringWhenDone = true;
         checkBody(proc.body);
-        return state.omitStutteringWhenDone;
       });
-      state.omitStutteringWhenDone = omitsStutteringWhenDone.includes(true);
       fixProcedures(macros);
       if (state.addedLabels.length > 0) {
         if (!params.labelFlag) throwAddedLabels();
-        reportLabels();
+        session.log("Labels added.");
       }
-      if (state.gotoDoneUsed) {
-        state.omitPC = false;
-        state.omitStutteringWhenDone = false;
-      }
-      if (state.gotoUsed) state.omitPC = false;
+      if (state.gotoDoneUsed || state.gotoUsed) state.omitPC = false;
       return {
         ...createPcalBase(),
         kind: "Multiprocess",
@@ -1486,14 +1458,10 @@ export const parsePcalAlgorithm = (
     const labeledBody = makeLabeledStmtSeq(body);
     if (state.addedLabels.length > 0) {
       if (state.hasLabel && !params.labelFlag) throwAddedLabels();
-      reportLabels();
+      session.log("Labels added.");
     }
-    if (state.gotoUsed) state.omitPC = false;
-    if (!state.gotoDoneUsed) checkBody(labeledBody);
-    if (state.gotoDoneUsed) {
-      state.omitPC = false;
-      state.omitStutteringWhenDone = false;
-    }
+    if (state.gotoUsed || state.gotoDoneUsed) state.omitPC = false;
+    checkBody(labeledBody);
     return {
       ...createPcalBase(),
       kind: "Uniprocess",
@@ -1513,7 +1481,6 @@ export const parsePcalAlgorithm = (
     return {
       ast,
       omitPC: state.omitPC,
-      omitStutteringWhenDone: state.omitStutteringWhenDone,
       hasDefaultInitialization: state.hasDefaultInitialization,
     };
   } catch (error) {
