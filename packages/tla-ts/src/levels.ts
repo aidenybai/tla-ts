@@ -885,7 +885,6 @@ export const analyzeAssumeProve = (
   return data;
 };
 
-// SANY checks the level of every definition, assumption, theorem, and instance of a module.
 export const checkModuleLevels = (
   module: Module,
   context: LevelContext,

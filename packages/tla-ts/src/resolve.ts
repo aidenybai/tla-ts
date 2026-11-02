@@ -74,14 +74,7 @@ interface ModuleBinding extends Binding {
   isPending?: boolean;
 }
 
-// errors and warnings collect what SANY reports while it goes on analyzing the unit, and bindings
-// holds the names the module binds. A label may appear where hasLabelScope holds, in a definition, a
-// named theorem, or a numbered step, except where isLabelForbidden holds, in the scope of a NEW in a
-// nested ASSUME, or where isInExcept holds, in the new value of an EXCEPT. labelParams holds the
-// names bound since the innermost definition, label, or step, which a label must take as parameters,
-// and labels the labels there. isGenerated holds in a definition tla-ts generates for a LET INSTANCE,
-// and in a subexpression that a name selects, which SANY analyzes where it is defined.
-// getInstance gives what an INSTANCE in a LET or a proof instantiates.
+// What SANY reports while it goes on analyzing a unit of a module, and the scope it analyzes it in.
 interface Unit {
   imported: Symbols;
   getInstance: (instance: Instance) => InstancedModule;
@@ -94,11 +87,15 @@ interface Unit {
   bindings: Map<string, ModuleBinding>;
   errors: SanyError[];
   warnings: SanyError[];
+  // In a definition, a named theorem, or a numbered step.
   hasLabelScope: boolean;
+  // In the scope of a NEW in a nested ASSUME.
   isLabelForbidden: boolean;
   isInExcept: boolean;
+  // The names bound since the innermost definition, label, or step, which a label must take.
   labelParams: string[];
   labels: Set<string>;
+  // In a definition generated for a LET INSTANCE, or a subexpression analyzed where it is defined.
   isGenerated: boolean;
 }
 
@@ -168,10 +165,8 @@ const getModuleBinding = (name: string, unit: Unit, range: SourceRange | undefin
 const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefined) =>
   left !== undefined && right !== undefined && formatRange(left) === formatRange(right);
 
-// SymbolTable.addSymbol binds a name nothing binds yet. It rejects a built-in operator, a parameter
-// or bound name already in use, and a symbol of another kind or arity than the one bound, and warns
-// of any other duplicate. tla-ts binds a symbol SANY never sees, such as one it generates. Tells
-// whether to bind the added symbol.
+// SymbolTable.addSymbol: rejects redefining a built-in, a bound name, or a symbol of another kind
+// or arity, and warns of any other duplicate. A symbol SANY never sees, such as a generated one, binds.
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
   if (isSameRange(current.range, added.range)) return false;
@@ -1461,18 +1456,16 @@ export interface ModuleReport {
   warnings: SanyError[];
 }
 
-// bound holds the names in scope where the module starts: the built-in operators, the names of the
-// module that encloses it, and those of the modules it extends. instanced holds the names each
-// INSTANCE adds, getInstance what an INSTANCE in a LET or a proof instantiates, facts the theorems
-// and assumptions the modules it extends or instantiates export, and warnings the warnings SANY
-// reports for the spec.
 export interface ModuleUnit {
   imported: Symbols;
   getInstance: (instance: Instance) => InstancedModule;
+  // The built-in operators and the names of the enclosing and extended modules.
   bound: Symbols;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
+  // The names each INSTANCE adds.
   instanced: Map<Instance, Symbols>;
+  // The theorems and assumptions the extended and instantiated modules export.
   facts: Set<string>;
   reports: ModuleReport[];
   warnings: SanyError[];

@@ -228,8 +228,7 @@ const KIND_INDEXES = new Map(
   KIND_NAMES.map((name, kind): [string, number] => [name, kind]).reverse(),
 );
 
-// The kind named name. The anonymous infix operators share the name "infix", which no caller
-// looks up.
+// The anonymous infix operators share the name "infix", which no caller looks up.
 export const getKind = (name: string) => {
   const kind = KIND_INDEXES.get(name);
   if (kind === undefined) throw new TlaError(`Unknown SANY token kind ${name}`);

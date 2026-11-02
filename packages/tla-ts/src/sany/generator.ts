@@ -542,11 +542,8 @@ export const generateSanySpecification = (
     path.pop();
     order.push(name);
   };
-  // SpecObj.loadSpec: SANY resolves the first name it finds unresolved searching from the root,
-  // each module's extended modules before the modules they import, and the instantiated modules
-  // only once it has resolved every extended module. SANY resolves a name in the context of the
-  // module that names it, so a module another module loaded is unresolved until SANY reaches it
-  // from this one.
+  // SpecObj.loadSpec: SANY resolves the first unresolved name it finds from the root, every
+  // extended module before any instantiated one, each in the context of the module that names it.
   const resolutions = new Set<string>();
   const isResolved = (importer: string, name: string) => resolutions.has(`${importer} ${name}`);
   const findUnresolved = (
@@ -1913,7 +1910,6 @@ export const generateSanySpecification = (
       if (node.operator.name === "$NonRecursiveFcnSpec") node.unbounded = undefined;
     };
 
-    // The module's operators declared in RECURSIVE statements.
     const recursiveDeclarations: OpDefNode[] = [];
     const processRecursive = (declarations: Declaration[]) => {
       if (state.unresolvedSum === 0) state.recursiveSectionCount++;

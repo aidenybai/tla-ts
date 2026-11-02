@@ -35,7 +35,6 @@ export interface SanyReportOptions {
   // tla2sany.xml.XMLExporter runs SANY with its validAstSettings, which neither lint the modules
   // nor validate their PlusCal, and prints only SANY's errors.
   isXmlExport?: boolean;
-  // The TLC whose SANY to reproduce.
   version?: TlcVersion;
   // The modules TLC adds to the root module's EXTENDS for its post conditions.
   rootExtendees?: string[];

@@ -86,7 +86,6 @@ const getNameParts = (name: string) => {
   return parts.some((part) => part.length === 0) ? [name] : parts;
 };
 
-// The selector of a name, an application of a name or a subexpression reference.
 export const getSelectorItems = (expression: Expression): SelectorItem[] | undefined => {
   switch (expression.kind) {
     case "Identifier":
@@ -174,7 +173,6 @@ const isSymbol = (node: LevelNode | SymbolNode): node is SymbolNode =>
   node.kind === "ThmOrAssumpDef" ||
   node.kind === "Module";
 
-// The symbols a quantifier binds: its bounded ones if it has any, else its unbounded ones.
 const getQuantifierSymbols = (node: OpApplNode) =>
   (node.bounded?.length ?? 0) > 0 ? (node.bounded ?? []).flat() : (node.unbounded ?? []);
 

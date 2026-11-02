@@ -230,7 +230,6 @@ export const getPreComments = (file: SourceFile, index: number) => {
   return comments;
 };
 
-// The identifier tokens with the given names, in order, between two token indexes.
 export const findNameTokens = (file: SourceFile, start: number, end: number, names: string[]) => {
   const found: number[] = [];
   for (let index = start; index < end && found.length < names.length; index++) {

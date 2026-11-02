@@ -386,7 +386,6 @@ const unboxBackslashStarComment = (text: string) => {
 };
 
 export interface XmlExportOptions {
-  // The TLC whose XMLExporter to reproduce.
   version: TlcVersion;
   // -r: only the root module, and only the declarations and definitions a module makes itself.
   isRestricted: boolean;
