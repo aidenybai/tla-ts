@@ -102,7 +102,7 @@ const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options
   { flag: "-workers <count|auto>" },
 ]);
 
-const OBLIGATIONS_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
+const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|glob>...", [
   { flag: "-N", isRequired: true },
   { flag: "--toolbox <start> <end>" },
   { flag: "--line <num>" },
@@ -173,7 +173,7 @@ const XML_EXPORT_USAGE = (() => {
 const USAGE = [
   `Usage: ${CHECK_COMMAND.usage}`,
   `       ${PROVE_COMMAND.usage}`,
-  `       ${OBLIGATIONS_COMMAND.usage}`,
+  `       ${TLAPM_COMMAND.usage}`,
   "       tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>",
   "       (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)",
   "       tla-ts [<JVM option>]... tla2sany.xml.XMLExporter [-I <directory>]... [-o] [-t] [-r] [-u] <Module.tla>",
@@ -1072,7 +1072,7 @@ const quoteArgument = (arg: string) =>
 
 const printToolboxHeader = (args: string[]) =>
   console.log(
-    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "prove", ...args].map(quoteArgument).join(" ")}\n`,
+    `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteArgument).join(" ")}\n`,
   );
 
 const STRICT_EXIT_STATUS = { incomplete: 11, emptyTarget: 12 };
@@ -1166,12 +1166,12 @@ const proveModules = (args: string[]) => {
   );
 };
 
-const runProve = (args: string[]) => {
-  if (!args.includes("-N") && !args.includes("--summary")) return proveModules(args);
-  const parsed = OBLIGATIONS_COMMAND.parse(args);
+// tla-ts tlapm: tlapm's command line, which generates the obligations with -N or --summary.
+const runTlapm = (args: string[]) => {
+  const parsed = TLAPM_COMMAND.parse(args);
   const unsupported = parsed.unknown[0];
   if (unsupported !== undefined) {
-    console.error(`Error: tla-ts prove does not support the tlapm option ${unsupported}.`);
+    console.error(`Error: tla-ts tlapm does not support the tlapm option ${unsupported}.`);
     return 1;
   }
   if (parsed.incomplete) {
@@ -1187,7 +1187,7 @@ const runProve = (args: string[]) => {
   }
   const files = expandGlobs(parsed.positionals);
   const modulePaths = files.map((path) => (path.endsWith(".tla") ? path : `${path}.tla`));
-  if (modulePaths.length === 0) {
+  if (modulePaths.length === 0 || (!parsed.has("-N") && !parsed.has("--summary"))) {
     console.error(USAGE);
     return 1;
   }
@@ -1577,7 +1577,8 @@ const runJavaClass = (launch: JavaLaunch) => {
 };
 
 const run = async (args: string[]) => {
-  if (args[0] === "prove") return reportErrors(() => runProve(args.slice(1)));
+  if (args[0] === "prove") return reportErrors(() => proveModules(args.slice(1)));
+  if (args[0] === "tlapm") return reportErrors(() => runTlapm(args.slice(1)));
   const launch = getJavaLaunch(args);
   if (launch === undefined) return checkSpecs(args, { libraries: [] });
   // The TLC that -Dtla-ts.tlc names, or else the one of the jar on the class path.

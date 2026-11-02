@@ -1181,14 +1181,14 @@ describe("the CLI takes several specs and globs", () => {
   });
 });
 
-describe("prove prints obligations as tlapm -N does", () => {
+describe("tlapm -N prints obligations as tlapm does", () => {
   // Each .toolbox file is what tlapm -N writes to stderr for the same arguments.
   const readToolbox = (name: string) =>
     readFileSync(join(FIXTURES, "obligations", `${name}.toolbox`), "utf8");
 
   it("prints each obligation with its text", () => {
     const result = runCliWith("obligations", [
-      "prove",
+      "tlapm",
       "-N",
       "--toolbox",
       "0",
@@ -1201,20 +1201,20 @@ describe("prove prints obligations as tlapm -N does", () => {
   });
 
   it("numbers omitted proofs but doesn't print them", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "--toolbox", "0", "0", "Omit.tla"]);
+    const result = runCliWith("obligations", ["tlapm", "-N", "--toolbox", "0", "0", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe(readToolbox("Omit"));
   });
 
   it("generates only the proofs within the lines", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "--toolbox", "6", "7", "Omit.tla"]);
+    const result = runCliWith("obligations", ["tlapm", "-N", "--toolbox", "6", "7", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe(readToolbox("Omit-6-7"));
   });
 
   it("warns when a module's name differs from its file's", () => {
     const result = runCliWith("obligations", [
-      "prove",
+      "tlapm",
       "-N",
       "--toolbox",
       "0",
@@ -1228,7 +1228,7 @@ describe("prove prints obligations as tlapm -N does", () => {
 
   it("reports the warnings tlapm reports", () => {
     const result = runCliWith("obligations", [
-      "prove",
+      "tlapm",
       "-N",
       "--toolbox",
       "0",
@@ -1242,7 +1242,7 @@ describe("prove prints obligations as tlapm -N does", () => {
 
   // Each .strict file is what tlapm -N --strict writes to stderr.
   it("reports incomplete proofs under --strict", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "--strict", "Incomplete.tla"]);
+    const result = runCliWith("obligations", ["tlapm", "-N", "--strict", "Incomplete.tla"]);
     expect(result.status).toBe(11);
     expect(result.stderr).toBe(
       readFileSync(join(FIXTURES, "obligations", "Incomplete.strict"), "utf8"),
@@ -1251,7 +1251,7 @@ describe("prove prints obligations as tlapm -N does", () => {
 
   it("reports a target without obligations under --strict", () => {
     const result = runCliWith("obligations", [
-      "prove",
+      "tlapm",
       "-N",
       "--strict",
       "--line",
@@ -1266,26 +1266,72 @@ describe("prove prints obligations as tlapm -N does", () => {
 
   // Notes.stdout and Notes.stderr are what tlapm -N writes.
   it("prints the notes tlapm prints outside toolbox mode", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "Notes.tla"]);
+    const result = runCliWith("obligations", ["tlapm", "-N", "Notes.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stdout"), "utf8"));
     expect(result.stderr).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stderr"), "utf8"));
   });
 
   it("prints tlapm's header in toolbox mode", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "--line", "3", "Omit.tla"]);
+    const result = runCliWith("obligations", ["tlapm", "-N", "--line", "3", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 5f5037f\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts prove -N --line 3 Omit\.tla\n\n$/,
+      /^\n\\\* TLAPM version 5f5037f\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
     );
   });
 
   it("prints nothing outside toolbox mode", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "Proofs.tla"]);
+    const result = runCliWith("obligations", ["tlapm", "-N", "Proofs.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout + result.stderr).toBe("");
   });
 
+  it("rejects the tlapm options it doesn't support", () => {
+    const result = runCliWith("obligations", ["tlapm", "-N", "-C", "Proofs.tla"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Error: tla-ts tlapm does not support the tlapm option -C.\n");
+  });
+
+  // Each .summary file is what tlapm --summary writes to stdout.
+  it("summarizes the missing and omitted proofs of each theorem", () => {
+    const result = runCliWith("obligations", ["tlapm", "--summary", "Incomplete.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(
+      readFileSync(join(FIXTURES, "obligations", "Incomplete.summary"), "utf8"),
+    );
+    expect(result.stderr).toBe("");
+  });
+
+  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace.
+  it.each([
+    "Declaration",
+    "Hide",
+    "Label",
+    "NotFound",
+    "Recursive",
+    "Tab",
+    "Unexpected",
+    "UnknownModule",
+  ])("prints the error tlapm prints for %s", (name) => {
+    const result = runCliWith("obligation-errors", ["tlapm", "-N", `${name}.tla`]);
+    expect(result.status).toBe(3);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      readFileSync(join(FIXTURES, "obligation-errors", `${name}.stderr`), "utf8"),
+    );
+  });
+
+  it("names a module it cannot find", () => {
+    const result = runCliWith("obligations", ["tlapm", "-N", "Missing.tla"]);
+    expect(result.status).toBe(3);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
+    );
+  });
+});
+
+describe("prove proves each module with tla-ts's own provers", () => {
   // Bun's directory alone, so tlapm isn't on the PATH.
   const proveWithoutTlapm = (args: string[]) =>
     spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "prove", ...args], {
@@ -1318,50 +1364,6 @@ describe("prove prints obligations as tlapm -N does", () => {
     const result = proveWithoutTlapm(["--backend", "tlapm", "Proofs.tla"]);
     expect(result.stderr).toBe(
       "TlaUnsupportedError: The tlapm backend needs tlapm on your PATH.\n",
-    );
-  });
-
-  it("rejects the tlapm options it doesn't support", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "-C", "Proofs.tla"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts prove does not support the tlapm option -C.\n");
-  });
-
-  // Each .summary file is what tlapm --summary writes to stdout.
-  it("summarizes the missing and omitted proofs of each theorem", () => {
-    const result = runCliWith("obligations", ["prove", "--summary", "Incomplete.tla"]);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe(
-      readFileSync(join(FIXTURES, "obligations", "Incomplete.summary"), "utf8"),
-    );
-    expect(result.stderr).toBe("");
-  });
-
-  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace.
-  it.each([
-    "Declaration",
-    "Hide",
-    "Label",
-    "NotFound",
-    "Recursive",
-    "Tab",
-    "Unexpected",
-    "UnknownModule",
-  ])("prints the error tlapm prints for %s", (name) => {
-    const result = runCliWith("obligation-errors", ["prove", "-N", `${name}.tla`]);
-    expect(result.status).toBe(3);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe(
-      readFileSync(join(FIXTURES, "obligation-errors", `${name}.stderr`), "utf8"),
-    );
-  });
-
-  it("names a module it cannot find", () => {
-    const result = runCliWith("obligations", ["prove", "-N", "Missing.tla"]);
-    expect(result.status).toBe(3);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe(
-      'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
     );
   });
 });
