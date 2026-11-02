@@ -87,9 +87,9 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
   const nonatomic = (name: string, args: Expr[]) => format("(%s %a)", name, delimited(args));
 
   // A binder's name binds in the body, and what comes before prints outside it.
-  const printBinder = (name: string, before: Doc, body: Expr, after: string) => {
+  const printBinder = (name: string, before: Doc, body: Expr) => {
     const bound = adjoin(name);
-    const doc = format("%a((%s) %a)%s", before, bound, printExpr(body), after);
+    const doc = format("%a((%s) %a))", before, bound, printExpr(body));
     popNames(context, 1);
     return doc;
   };
@@ -154,14 +154,13 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
     const split = splitFirstBound(quantifier, bounds, body);
     const isForall = quantifier === "Forall";
     if (split.first.domain.kind === "NoDomain")
-      return printBinder(split.first.name, text(isForall ? "(A. " : "(E. "), split.inner, ")");
+      return printBinder(split.first.name, text(isForall ? "(A. " : "(E. "), split.inner);
     if (split.first.domain.kind !== "Domain") throw new TlapmBugError();
     const domain = printExpr(split.first.domain.expression);
     return printBinder(
       split.first.name,
       format("(%s %a ", isForall ? "TLA.bAll" : "TLA.bEx", domain),
       split.inner,
-      ")",
     );
   };
 
@@ -174,7 +173,6 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
       bound.name,
       format("(%s %a ", name, printExpr(bound.domain.expression)),
       body,
-      ")",
     );
   };
 
@@ -248,15 +246,13 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
               expression.name,
               format("(TLA.bChoice %a ", printExpr(expression.domain)),
               expression.body,
-              ")",
             )
-          : printBinder(expression.name, text("(t. "), expression.body, ")");
+          : printBinder(expression.name, text("(t. "), expression.body);
       case "SetSt":
         return printBinder(
           expression.name,
           format("(TLA.subsetOf %a ", printExpr(expression.domain)),
           expression.body,
-          ")",
         );
       case "SetOf":
         return printOneBound("TLA.setOfAll", expression.bounds, expression.element, "Setof");
