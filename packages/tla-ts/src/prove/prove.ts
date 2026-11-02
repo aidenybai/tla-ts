@@ -7,7 +7,7 @@ import { formatObligation } from "../obligations/printer";
 import { isWorkerSupported } from "../worker";
 import { decide } from "./deciders";
 import { createDecidePool } from "./decide-pool";
-import { encodeIsabelle } from "./isabelle/encode";
+import { encodeIsabelle, encodeIsabelleTheory } from "./isabelle/encode";
 import { processObligation } from "./prep/action";
 import { expandDefs } from "./prep/defs";
 import { normalizeSequent } from "./prep/elab";
@@ -104,6 +104,8 @@ interface ObligationTask {
 interface ProveRun {
   tasks: ObligationTask[];
   results: Map<string, Map<string, ProofAttempt>>;
+  isFingerprinted: (obligation: PrintedObligation) => boolean;
+  isProving: boolean;
   lastByFingerprint: Map<string, Promise<void>>;
   decide: (
     prover: string,
@@ -193,6 +195,31 @@ const normalizeExpand = (sequent: Sequent, frontends: Set<string>) =>
 export const formatNormalized = (obligation: PrintedObligation, isReused: boolean) =>
   `${formatObligation(isReused ? normalizeSequent(expandDefs(obligation.sequent, false)) : normalizeExpand(obligation.sequent, findMethods(obligation).frontends))}\n`;
 
+// The theory tlapm writes of the proofs Isabelle found for a module's obligations, in the order
+// it found them. tlapm also writes there each proof Zenon found, which tla-ts leaves out.
+export const encodeProofTheory = (
+  name: string,
+  reports: ProofReport[],
+  obligations: PrintedObligation[],
+) =>
+  encodeIsabelleTheory(
+    name,
+    reports.flatMap((report, index) =>
+      report.attempts
+        .filter(
+          (attempt) =>
+            attempt.method.prover === "isabelle" && attempt.isProved && !attempt.isReused,
+        )
+        .map((attempt) => ({
+          id: report.obligation.id,
+          sequent: shipFirstOrder(
+            normalizeExpand(obligations[index].sequent, findMethods(obligations[index]).frontends),
+          ),
+          tactic: attempt.method.tactic ?? "auto",
+        })),
+    ),
+  );
+
 // The text one backend receives for an obligation, for comparing with tlapm's.
 export const encodeForBackend = (
   obligation: PrintedObligation,
@@ -248,17 +275,19 @@ const proveWithBackends = async (
   const earlier = run.lastByFingerprint.get(fingerprint);
   run.lastByFingerprint.set(fingerprint, run.tasks[index].done);
   await earlier;
-  const results = run.results.get(fingerprint) ?? new Map<string, ProofAttempt>();
-  run.results.set(fingerprint, results);
   const attempts: ProofAttempt[] = [];
   const getProved = (prover: string): ProofReport => ({
     obligation: { ...getBase(obligation), status: "proved", prover },
     attempts,
   });
+  // Prep.already_processed: --nofp forgets the fingerprint's results before each method.
   const getPrior = (method: Method) => {
-    const prior = results.get(method.prover);
+    if (!run.isFingerprinted(obligation)) run.results.delete(fingerprint);
+    const prior = run.results.get(fingerprint)?.get(method.prover);
     return prior?.method.tactic === method.tactic ? prior : undefined;
   };
+  // Fpfile.get_timeout: a method with an rlimit stores it in place of its time limit.
+  const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
   const reuse = (prior: ProofAttempt) =>
     attempts.push({ ...prior, isReused: true, timeUsedMs: undefined });
   const firstPrior = getPrior(methods.provers[0]);
@@ -267,13 +296,19 @@ const proveWithBackends = async (
     return getProved(firstPrior.method.prover);
   }
   const sequent = normalizeExpand(obligation.sequent, methods.frontends);
-  if (obligation.kind.kind === "Support" && isTrivial(sequent))
+  // Fpfile.fp_writes keeps no trivial result, but adds the fingerprint.
+  if (obligation.kind.kind === "Support" && isTrivial(sequent)) {
+    run.results.set(fingerprint, run.results.get(fingerprint) ?? new Map());
     return { obligation: { ...getBase(obligation), status: "trivial" }, attempts };
+  }
   const reasons: string[] = [];
   const state = { isDecided: false };
   const decideAttempt = (attempt: ProofAttempt) => {
     attempts.push(attempt);
-    results.set(attempt.method.prover, attempt);
+    run.results.set(
+      fingerprint,
+      (run.results.get(fingerprint) ?? new Map()).set(attempt.method.prover, attempt),
+    );
     state.isDecided = true;
   };
   for (const method of methods.provers) {
@@ -282,12 +317,14 @@ const proveWithBackends = async (
       reuse(prior);
       return getProved(method.prover);
     }
-    if (prior && prior.method.timeLimitMs >= method.timeLimitMs) {
+    if (prior && getBudget(prior.method) >= getBudget(method)) {
       reuse(prior);
       state.isDecided = true;
       reasons.push(`${method.prover} failed on an obligation with the same fingerprint`);
       continue;
     }
+    // Prep.really_ship: --noproving sends nothing to a backend.
+    if (!run.isProving) continue;
     // Prep.prove_with: the Trivial method proves anything.
     if (method.prover === "trivial") return getProved(method.prover);
     const backend = BACKENDS[method.prover];
@@ -365,6 +402,13 @@ interface ObligationsOptions {
   workers?: number;
   signal?: AbortSignal;
   onReport?: (report: ProofReport, obligation: PrintedObligation) => void;
+  // What each prover concluded for each fingerprint, which tla-ts tlapm loads from tlapm's
+  // fingerprints file and saves back, as the run updates it.
+  results?: Map<string, Map<string, ProofAttempt>>;
+  // tlapm's --nofp and --nofpl: whether to reuse what was concluded for an obligation.
+  isFingerprinted?: (obligation: PrintedObligation) => boolean;
+  // tlapm's --noproving: reuse what was concluded, and run no backend.
+  isProving?: boolean;
 }
 
 // Proves obligations generated elsewhere, as tla-ts tlapm generates them like tlapm, reporting each
@@ -379,7 +423,9 @@ export const proveObligations = async (
   options.signal?.addEventListener("abort", onAbort);
   const run: ProveRun = {
     tasks: [],
-    results: new Map(),
+    results: options.results ?? new Map(),
+    isFingerprinted: options.isFingerprinted ?? (() => true),
+    isProving: options.isProving ?? true,
     lastByFingerprint: new Map(),
     decide:
       pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),

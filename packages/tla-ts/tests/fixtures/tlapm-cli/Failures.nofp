@@ -1,0 +1,5 @@
+(* will not use fingerprints (because of option `--nofp`), but will now load fingerprints from the file `.tlacache/Failures.tlaps/fingerprints`, in order to overwrite with the new fingerprints, and then save the results at the end. *)
+Zenon error: exhausted search space without finding a proof
+Zenon error: exhausted search space without finding a proof
+(* created new ".tlacache/Failures.tlaps/Failures.thy" *)
+(* fingerprints written in ".tlacache/Failures.tlaps/fingerprints" *)

@@ -5,6 +5,7 @@ import {
   readFileSync,
   readSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
@@ -55,6 +56,7 @@ import { printSequent } from "./obligations/printer";
 import { check } from "./parallel";
 import { parseModule } from "./parser";
 import {
+  encodeProofTheory,
   formatNormalized,
   isProveBackend,
   prove,
@@ -72,6 +74,14 @@ import {
   getOutDegreeSummary,
 } from "./tlc-summary";
 import { getTlapmPaths } from "./prove/tlapm/tlapm";
+import {
+  getKnownResults,
+  loadFingerprints,
+  saveFingerprints,
+  saveHistory,
+  updateFingerprints,
+  type FingerprintTable,
+} from "./tlapm-cache";
 import type { SanySpecification } from "./sany-generator";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "./sany-modules";
 import { getSanyModuleName, getSanyReport, type SanyModuleOrigin } from "./sany-report";
@@ -119,8 +129,7 @@ const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options
   { flag: "-workers <count|auto>" },
 ]);
 
-// tla-ts keeps no fingerprints, so the options for them change nothing, as -k changes nothing in
-// tlapm.
+// -k changes nothing, as in tlapm.
 const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|glob>...", [
   { flag: "-N" },
   { flag: "--summary" },
@@ -132,6 +141,7 @@ const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|glob>...
   { flag: "--version" },
   { flag: "-I <directory>", isRepeatable: true },
   { flag: "-k" },
+  { flag: "--noproving" },
   { flag: "--nofp" },
   { flag: "--nofpl <start> <end>" },
   { flag: "--safefp" },
@@ -1260,23 +1270,49 @@ const printFailure = (obligation: PrintedObligation, reason: string) =>
     `obl:${obligation.text}`,
   ]);
 
-// Tlapm_lib.process_obs: proves a module's obligations, printing each result in toolbox mode,
-// then those tlapm couldn't prove, the last first. Returns whether some obligation failed.
-const proveModule = async (result: ModuleObligations, isToolbox: boolean, workers: number) => {
+interface ProvingSettings {
+  isToolbox: boolean;
+  isProving: boolean;
+  workers: number;
+  isFingerprinted: (obligation: PrintedObligation) => boolean;
+  fingerprints: FingerprintTable;
+}
+
+// Tlapm_lib.process_obs: proves a module's obligations, printing each result in toolbox mode, and
+// writes the theory of their proofs and the fingerprints. Unless --noproving, it then prints those
+// tlapm couldn't prove, the last first. Returns whether some obligation failed.
+const proveModule = async (
+  result: ModuleObligations,
+  theoryPath: string,
+  fingerprintsPath: string,
+  sources: string[],
+  settings: ProvingSettings,
+) => {
+  saveHistory(fingerprintsPath, sources);
+  const results = getKnownResults(settings.fingerprints);
   const reports = await proveObligations(result.obligations, {
-    workers,
+    workers: settings.workers,
+    results,
+    isFingerprinted: settings.isFingerprinted,
+    isProving: settings.isProving,
     onReport: (report, obligation) => {
-      if (!isToolbox) return;
+      if (!settings.isToolbox) return;
       if (report.obligation.status === "trivial")
         return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
       if (obligation.kind.kind === "Error") return printFailure(obligation, "user error");
       report.attempts.forEach((attempt) => printAttempt(obligation, attempt));
     },
   });
+  writeFileSync(theoryPath, encodeProofTheory(result.name, reports, result.obligations));
+  console.log(`(* created new ${JSON.stringify(theoryPath)} *)`);
+  updateFingerprints(settings.fingerprints, results);
+  saveFingerprints(settings.fingerprints, fingerprintsPath);
+  console.log(`(* fingerprints written in ${JSON.stringify(fingerprintsPath)} *)`);
+  if (!settings.isProving) return false;
   const unproved = reports.flatMap((report, index) =>
     "reason" in report.obligation ? [{ report, obligation: result.obligations[index] }] : [],
   );
-  if (isToolbox) {
+  if (settings.isToolbox) {
     unproved
       .filter(
         (entry) => entry.report.attempts.length === 0 && entry.obligation.kind.kind !== "Error",
@@ -1303,9 +1339,10 @@ const proveModule = async (result: ModuleObligations, isToolbox: boolean, worker
 // generate the obligations.
 const runTlapm = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
-  const isProving = !parsed.has("-N") && !parsed.has("--summary");
+  const isProcessing = !parsed.has("-N") && !parsed.has("--summary");
   const unsupported =
-    parsed.unknown[0] ?? (isProving && parsed.has("--printallobs") ? "--printallobs" : undefined);
+    parsed.unknown[0] ??
+    (isProcessing && parsed.has("--printallobs") ? "--printallobs" : undefined);
   if (unsupported !== undefined) {
     console.error(`Error: tla-ts tlapm does not support the tlapm option ${unsupported}.`);
     return 1;
@@ -1351,6 +1388,7 @@ const runTlapm = async (args: string[]) => {
     [".", ...(tlapmLibrary ? [tlapmLibrary] : []), ...includes.toReversed()],
   );
   // tlapm names each file it reads by joining a search directory and the name, as in ./Module.tla.
+  const moduleNames = new Set<string>();
   const results = generateObligations(() => {
     const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
     if (missingIndex !== -1) {
@@ -1360,9 +1398,13 @@ const runTlapm = async (args: string[]) => {
     }
     return getObligations(
       modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
-      (name) =>
-        directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean) ??
-        (name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined),
+      (name) => {
+        moduleNames.add(name);
+        return (
+          directories.map((directory) => readModule(`${directory}/${name}.tla`)).find(Boolean) ??
+          (name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined)
+        );
+      },
       {
         lines,
         onWarning: (warning) => {
@@ -1377,9 +1419,43 @@ const runTlapm = async (args: string[]) => {
     );
   });
   if (!results) return TLAPM_FAILURE_STATUS;
-  const workers = Math.max(1, Number(parsed.get("--threads")?.[0] ?? availableParallelism()));
+  const cacheDirectory =
+    parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
+  const forgottenLines = parsed.get("--nofpl")?.map(Number) ?? [0, 0];
+  const settings: ProvingSettings = {
+    isToolbox,
+    isProving: !parsed.has("--noproving"),
+    workers: Math.max(1, Number(parsed.get("--threads")?.[0] ?? availableParallelism())),
+    isFingerprinted: (obligation) =>
+      !parsed.has("--nofp") &&
+      !(
+        obligation.locus &&
+        obligation.locus.startLine >= forgottenLines[0] &&
+        obligation.locus.endLine <= forgottenLines[1]
+      ),
+    fingerprints: new Map(),
+  };
   const statuses: number[] = [];
-  for (const result of results) {
+  for (const [index, result] of results.entries()) {
+    // Tlapm_lib.mkdir_tlaps, then --cleanfp removes the fingerprints file or tlapm loads the one
+    // --usefp names, the module's own by default.
+    const directory = `${cacheDirectory}/${result.name}.tlaps`;
+    const fingerprintsPath = `${directory}/fingerprints`;
+    const loadedPath = parsed.get("--usefp")?.[0] ?? fingerprintsPath;
+    mkdirSync(directory, { recursive: true });
+    if (parsed.has("--cleanfp")) {
+      if (existsSync(fingerprintsPath)) {
+        rmSync(fingerprintsPath);
+        console.log(`(* fingerprints file ${JSON.stringify(fingerprintsPath)} removed *)`);
+      }
+    } else if (existsSync(loadedPath) && result.summary.total !== 0) {
+      console.log(
+        parsed.has("--nofp")
+          ? `(* will not use fingerprints (because of option \`--nofp\`), but will now load fingerprints from the file \`${loadedPath}\`, in order to overwrite with the new fingerprints, and then save the results at the end. *)`
+          : `(* loading fingerprints in ${JSON.stringify(loadedPath)} *)`,
+      );
+      loadFingerprints(settings.fingerprints, loadedPath, parsed.has("--safefp"));
+    }
     if (parsed.has("--summary")) console.log(formatSummary(result));
     if (isToolbox) {
       result.obligations.forEach((obligation) =>
@@ -1395,7 +1471,21 @@ const runTlapm = async (args: string[]) => {
       statuses.push(
         ...checkStrictly(result, lines.start > 0 || lines.end < Infinity, parsed.has("--summary")),
       );
-    if (!isProving || !(await proveModule(result, isToolbox, workers))) continue;
+    if (!isProcessing) continue;
+    // tlapm copies into the history the source in the current directory of each module it has
+    // read so far.
+    const sources = [
+      ...moduleNames,
+      ...results.slice(0, index + 1).map((innerResult) => innerResult.name),
+    ].map((name) => `${name}.tla`);
+    const isFailed = await proveModule(
+      result,
+      `${directory}/${result.name}.thy`,
+      fingerprintsPath,
+      sources,
+      settings,
+    );
+    if (!isFailed) continue;
     if (parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
     else if (!isToolbox) {
       console.error(UNPROVED_ENDING);

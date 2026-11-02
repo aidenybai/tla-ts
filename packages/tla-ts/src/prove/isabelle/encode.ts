@@ -128,14 +128,18 @@ const getSuccessors = (integer: string) => {
   return `${"succ[".repeat(count)}0${"]".repeat(count)}`;
 };
 
-// thy_temp: the theory tlapm writes for Isabelle to prove obligation id, after Backend.Prep has
-// shipped it, with the tactic of the method that selects Isabelle.
-export const encodeIsabelle = (
-  id: number,
-  sequent: Sequent,
-  tactic: string,
-  theoryName: string,
-): string => {
+// thy_header: the theory's first lines, which in the theory of a module's proofs include one for
+// Isabelle to print once it parses the theory.
+const getTheoryHeader = (name: string, isVerbose: boolean) => [
+  "(* automatically generated -- do not edit manually *)",
+  `theory ${name} imports Constant Zenon begin`,
+  ...(isVerbose ? ['ML_command \\<open> writeln ("*** TLAPS PARSED\\n"); \\<close>'] : []),
+  HEADER,
+];
+
+// pp_print_expr on an obligation, after Backend.Prep has shipped it: the lemma, and whether it
+// assumes anything.
+const printLemma = (sequent: Sequent) => {
   const context = createContext();
   const adjoin = (name: string) => pushName(context, pickle(name));
   const bump = () => pushName(context, "");
@@ -411,7 +415,7 @@ export const encodeIsabelle = (
 
   // pp_print_sequent_outer: the obligation's sequent as the fixes, assumes and shows of a lemma. A
   // pragma's definition ends it, without the goal.
-  const printLemma = (sequent: Sequent) => {
+  const printSequent = (sequent: Sequent) => {
     const lines: string[] = [];
     for (const hyp of sequent.context) {
       switch (hyp.kind) {
@@ -453,25 +457,56 @@ export const encodeIsabelle = (
     return [...lines, `shows "${printExpr(sequent.active)}"`].join("\n");
   };
 
-  const lemma = (() => {
-    try {
-      return printLemma(sequent);
-    } catch (error) {
-      if (!(error instanceof TlaUnsupportedError)) throw error;
-      throw new TlaProverError(`isabelle : unsupported operator ${error.message}`);
-    }
-  })();
+  try {
+    return { text: printSequent(sequent), isAssumed: state.isAssumed };
+  } catch (error) {
+    if (!(error instanceof TlaUnsupportedError)) throw error;
+    throw new TlaProverError(`isabelle : unsupported operator ${error.message}`);
+  }
+};
+
+// thy_temp: the theory tlapm writes for Isabelle to prove obligation id, with the tactic of the
+// method that selects Isabelle.
+export const encodeIsabelle = (
+  id: number,
+  sequent: Sequent,
+  tactic: string,
+  theoryName: string,
+): string => {
+  const lemma = printLemma(sequent);
   return [
-    "(* automatically generated -- do not edit manually *)",
-    `theory ${theoryName} imports Constant Zenon begin`,
-    HEADER,
+    ...getTheoryHeader(theoryName, false),
     `lemma ob'${id}:`,
-    `${lemma}(is "PROP ?ob'${id}")`,
+    `${lemma.text}(is "PROP ?ob'${id}")`,
     "proof -",
     `show "PROP ?ob'${id}"`,
-    `${state.isAssumed ? "using assms " : ""}by ${tactic}`,
+    `${lemma.isAssumed ? "using assms " : ""}by ${tactic}`,
     "qed",
     "end",
     "",
   ].join("\n");
 };
+
+interface IsabelleProof {
+  id: number;
+  sequent: Sequent;
+  tactic: string;
+}
+
+// Isabelle.thy_init, thy_write and thy_close: the theory of the proofs Isabelle found for a
+// module's obligations, which tlapm writes beside its fingerprints for -C to check.
+export const encodeIsabelleTheory = (name: string, proofs: IsabelleProof[]) =>
+  [
+    ...getTheoryHeader(name, true),
+    ...proofs.flatMap((proof) => [
+      `lemma ob'${proof.id}:`,
+      `${printLemma(proof.sequent).text}(is "PROP ?ob'${proof.id}")`,
+      "proof -",
+      `ML_command \\<open> writeln "*** TLAPS ENTER ${proof.id}"; \\<close>`,
+      `show "PROP ?ob'${proof.id}"`,
+      `using assms by ${proof.tactic}`,
+      `ML_command \\<open> writeln "*** TLAPS EXIT ${proof.id}"; \\<close> qed`,
+    ]),
+    "end",
+    "",
+  ].join("\n");

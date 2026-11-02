@@ -1,16 +1,34 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+import { readMarshaled } from "../../src/ocaml-marshal";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
+const CLI = join(import.meta.dirname, "../../src/cli.ts");
+
 const runCliWith = (directory: string, args: string[]) =>
-  spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), ...args], {
-    cwd: join(FIXTURES, directory),
-    encoding: "utf8",
-  });
+  spawnSync("bun", [CLI, ...args], { cwd: join(FIXTURES, directory), encoding: "utf8" });
+
+const copies: string[] = [];
+
+afterAll(() => copies.forEach((copy) => rmSync(copy, { recursive: true, force: true })));
+
+// tlapm keeps its cache in the directory it runs in, so each run works in a copy of the fixtures.
+const copyFixtures = (directory: string) => {
+  const copy = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+  copies.push(copy);
+  cpSync(join(FIXTURES, directory), copy, { recursive: true });
+  return copy;
+};
+
+const runTlapmIn = (directory: string, args: string[]) =>
+  spawnSync("bun", [CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
+
+const runTlapm = (directory: string, args: string[]) => runTlapmIn(copyFixtures(directory), args);
 
 const runCli = (directory: string, name: string, args: string[] = []) =>
   runCliWith(directory, [`${name}.tla`, ...args]);
@@ -1187,8 +1205,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     readFileSync(join(FIXTURES, "obligations", `${name}.toolbox`), "utf8");
 
   it("prints each obligation with its text", () => {
-    const result = runCliWith("obligations", [
-      "tlapm",
+    const result = runTlapm("obligations", [
       "-N",
       "--toolbox",
       "0",
@@ -1201,20 +1218,19 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   });
 
   it("numbers omitted proofs but doesn't print them", () => {
-    const result = runCliWith("obligations", ["tlapm", "-N", "--toolbox", "0", "0", "Omit.tla"]);
+    const result = runTlapm("obligations", ["-N", "--toolbox", "0", "0", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe(readToolbox("Omit"));
   });
 
   it("generates only the proofs within the lines", () => {
-    const result = runCliWith("obligations", ["tlapm", "-N", "--toolbox", "6", "7", "Omit.tla"]);
+    const result = runTlapm("obligations", ["-N", "--toolbox", "6", "7", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe(readToolbox("Omit-6-7"));
   });
 
   it("warns when a module's name differs from its file's", () => {
-    const result = runCliWith("obligations", [
-      "tlapm",
+    const result = runTlapm("obligations", [
       "-N",
       "--toolbox",
       "0",
@@ -1227,8 +1243,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   });
 
   it("reports the warnings tlapm reports", () => {
-    const result = runCliWith("obligations", [
-      "tlapm",
+    const result = runTlapm("obligations", [
       "-N",
       "--toolbox",
       "0",
@@ -1242,7 +1257,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
 
   // Each .strict file is what tlapm -N --strict writes to stderr.
   it("reports incomplete proofs under --strict", () => {
-    const result = runCliWith("obligations", ["tlapm", "-N", "--strict", "Incomplete.tla"]);
+    const result = runTlapm("obligations", ["-N", "--strict", "Incomplete.tla"]);
     expect(result.status).toBe(11);
     expect(result.stderr).toBe(
       readFileSync(join(FIXTURES, "obligations", "Incomplete.strict"), "utf8"),
@@ -1250,14 +1265,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   });
 
   it("reports a target without obligations under --strict", () => {
-    const result = runCliWith("obligations", [
-      "tlapm",
-      "-N",
-      "--strict",
-      "--line",
-      "2",
-      "Proofs.tla",
-    ]);
+    const result = runTlapm("obligations", ["-N", "--strict", "--line", "2", "Proofs.tla"]);
     expect(result.status).toBe(12);
     expect(result.stderr).toBe(
       readFileSync(join(FIXTURES, "obligations", "Proofs-2.strict"), "utf8"),
@@ -1266,14 +1274,14 @@ describe("tlapm -N prints obligations as tlapm does", () => {
 
   // Notes.stdout and Notes.stderr are what tlapm -N writes.
   it("prints the notes tlapm prints outside toolbox mode", () => {
-    const result = runCliWith("obligations", ["tlapm", "-N", "Notes.tla"]);
+    const result = runTlapm("obligations", ["-N", "Notes.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stdout"), "utf8"));
     expect(result.stderr).toBe(readFileSync(join(FIXTURES, "obligations", "Notes.stderr"), "utf8"));
   });
 
   it("prints tlapm's header in toolbox mode", () => {
-    const result = runCliWith("obligations", ["tlapm", "-N", "--line", "3", "Omit.tla"]);
+    const result = runTlapm("obligations", ["-N", "--line", "3", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
       /^\n\\\* TLAPM version 9ed0376\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
@@ -1281,14 +1289,14 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   });
 
   it("prints nothing outside toolbox mode", () => {
-    const result = runCliWith("obligations", ["tlapm", "-N", "Proofs.tla"]);
+    const result = runTlapm("obligations", ["-N", "Proofs.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout + result.stderr).toBe("");
   });
 
   // Each .summary file is what tlapm --summary writes to stdout.
   it("summarizes the missing and omitted proofs of each theorem", () => {
-    const result = runCliWith("obligations", ["tlapm", "--summary", "Incomplete.tla"]);
+    const result = runTlapm("obligations", ["--summary", "Incomplete.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(
       readFileSync(join(FIXTURES, "obligations", "Incomplete.summary"), "utf8"),
@@ -1307,7 +1315,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     "Unexpected",
     "UnknownModule",
   ])("prints the error tlapm prints for %s", (name) => {
-    const result = runCliWith("obligation-errors", ["tlapm", "-N", `${name}.tla`]);
+    const result = runTlapm("obligation-errors", ["-N", `${name}.tla`]);
     expect(result.status).toBe(3);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
@@ -1316,7 +1324,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   });
 
   it("names a module it cannot find", () => {
-    const result = runCliWith("obligations", ["tlapm", "-N", "Missing.tla"]);
+    const result = runTlapm("obligations", ["-N", "Missing.tla"]);
     expect(result.status).toBe(3);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
@@ -1325,38 +1333,101 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   });
 });
 
-describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () => {
-  // Each file in tlapm-cli is what tlapm 9ed0376 wrote to stderr: .stderr without options, .strict
-  // with --strict, and .toolbox with --threads 1 --toolbox 0 0.
-  const readRecording = (name: string) => readFileSync(join(FIXTURES, "tlapm-cli", name), "utf8");
+// Each file in tlapm-cli is what tlapm 9ed0376 wrote: .stdout and .stderr without options, .strict
+// to stderr with --strict, .toolbox to stderr with --threads 1 --toolbox 0 0, and .thy and
+// .fingerprints to its cache. .reused is what it wrote to stderr with --threads 1 --toolbox 0 0
+// over that cache, and .nofp and .cleanfp to stdout with --nofp and --cleanfp.
+const readRecording = (name: string) => readFileSync(join(FIXTURES, "tlapm-cli", name), "utf8");
 
+// tlapm copies to stdout what Zenon writes to stderr, which tla-ts's Zenon doesn't write.
+const withoutZenonOutput = (output: string) => output.replaceAll(/^Zenon error: .*\n/gm, "");
+
+describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () => {
   // The time each backend took varies from run to run.
   const withoutTimeUsed = (output: string) =>
     output.replaceAll(/time-used: [\d.]+ \(\d+%\)/g, "time-used: <time>");
 
   it("reports that every obligation is proved", () => {
-    const result = runCliWith("obligations", ["tlapm", "Proofs.tla"]);
+    const result = runTlapm("obligations", ["Proofs.tla"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("");
+    expect(result.stdout).toBe(readRecording("Proofs.stdout"));
     expect(result.stderr).toBe(readRecording("Proofs.stderr"));
   });
 
   it("prints the obligations it couldn't prove and ends abnormally", () => {
-    const result = runCliWith("tlapm-cli", ["tlapm", "Failures.tla"]);
+    const result = runTlapm("tlapm-cli", ["Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe("");
+    expect(result.stdout).toBe(withoutZenonOutput(readRecording("Failures.stdout")));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
   it("exits with --strict's status for a failed obligation", () => {
-    const result = runCliWith("tlapm-cli", ["tlapm", "--strict", "Failures.tla"]);
+    const result = runTlapm("tlapm-cli", ["--strict", "Failures.tla"]);
     expect(result.status).toBe(10);
     expect(result.stderr).toBe(readRecording("Failures.strict"));
   });
 
   it("prints each prover's result in toolbox mode", () => {
-    const result = runCliWith("tlapm-cli", [
-      "tlapm",
+    const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(
+      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
+    );
+    expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
+  });
+
+  it("prints a failure it reuses for an obligation with the same fingerprint", () => {
+    const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Twice.tla"]);
+    expect(result.status).toBe(0);
+    expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Twice.toolbox")));
+  });
+
+  it("rejects the tlapm options it doesn't support", () => {
+    const result = runTlapm("obligations", ["-C", "Proofs.tla"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Error: tla-ts tlapm does not support the tlapm option -C.\n");
+  });
+});
+
+describe("tlapm shares its cache with tlapm", () => {
+  const TLAPM = process.env.TLAPM;
+
+  // A copy of the fixtures whose cache holds the fingerprints tlapm wrote.
+  const copyWithCache = () => {
+    const directory = copyFixtures("tlapm-cli");
+    mkdirSync(join(directory, ".tlacache/Failures.tlaps"), { recursive: true });
+    cpSync(
+      join(directory, "Failures.fingerprints"),
+      join(directory, ".tlacache/Failures.tlaps/fingerprints"),
+    );
+    return directory;
+  };
+
+  // The fingerprints file without the date and the versions stored with each result.
+  const readFingerprints = (path: string) => {
+    const bytes = readFileSync(path);
+    const table = readMarshaled(bytes, readMarshaled(bytes, 0).next).value;
+    return JSON.stringify(table, (_, value) =>
+      /^(9ed0376|Zenon version \[268\]|Isabelle2025|tla-ts .*)$/.test(value) ||
+      (value?.fields?.length === 6 && value.fields.every(Number.isInteger))
+        ? "<stored>"
+        : value,
+    );
+  };
+
+  it("writes the theory and the fingerprints tlapm writes", () => {
+    const directory = copyFixtures("tlapm-cli");
+    runTlapmIn(directory, ["Failures.tla"]);
+    expect(readFileSync(join(directory, ".tlacache/Failures.tlaps/Failures.thy"), "utf8")).toBe(
+      readRecording("Failures.thy"),
+    );
+    expect(readFingerprints(join(directory, ".tlacache/Failures.tlaps/fingerprints"))).toBe(
+      readFingerprints(join(directory, "Failures.fingerprints")),
+    );
+  });
+
+  it("reuses what tlapm concluded", () => {
+    const result = runTlapmIn(copyWithCache(), [
       "--threads",
       "1",
       "--toolbox",
@@ -1365,30 +1436,29 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
       "Failures.tla",
     ]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n$/,
+    expect(result.stdout).toContain(
+      '(* loading fingerprints in ".tlacache/Failures.tlaps/fingerprints" *)\n',
     );
-    expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
+    expect(result.stderr).toBe(readRecording("Failures.reused"));
   });
 
-  it("prints a failure it reuses for an obligation with the same fingerprint", () => {
-    const result = runCliWith("tlapm-cli", [
-      "tlapm",
-      "--threads",
-      "1",
-      "--toolbox",
-      "0",
-      "0",
-      "Twice.tla",
-    ]);
-    expect(result.status).toBe(0);
-    expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Twice.toolbox")));
+  it.each(["--nofp", "--cleanfp"])("proves again under %s", (option) => {
+    const result = runTlapmIn(copyWithCache(), [option, "Failures.tla"]);
+    expect(result.status).toBe(3);
+    expect(result.stdout).toBe(withoutZenonOutput(readRecording(`Failures.${option.slice(2)}`)));
+    expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
-  it("rejects the tlapm options it doesn't support", () => {
-    const result = runCliWith("obligations", ["tlapm", "-C", "Proofs.tla"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts tlapm does not support the tlapm option -C.\n");
+  // Set TLAPM to the path of tlapm to check it against the cache tla-ts writes.
+  it.runIf(TLAPM !== undefined)("writes fingerprints tlapm reuses", () => {
+    const directory = copyFixtures("tlapm-cli");
+    runTlapmIn(directory, ["Failures.tla"]);
+    const result = spawnSync(
+      TLAPM ?? "tlapm",
+      ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"],
+      { cwd: directory, encoding: "utf8" },
+    );
+    expect(result.stderr).toBe(readRecording("Failures.reused"));
   });
 });
 
