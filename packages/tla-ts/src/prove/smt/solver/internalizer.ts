@@ -618,32 +618,35 @@ export abstract class Internalizer {
       isCgcEnabled,
       this.scopeLevel,
     );
-    for (let index = 0; index < numArgs; index++) node.getArg(index).root.addParent(node);
+    const store = this.enodeStore;
+    const id = node.id;
+    for (let index = 0; index < numArgs; index++)
+      store.addParent(store.root[store.getArg(id, index)], id);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
     setAt(this.exprToEnode, expr, node);
     // m_e_internalized_stack holds a reference to the expression until the enode is deleted.
     manager.incRef(expr);
     this.trailKinds.push(UNDO_MK_ENODE);
     if (numArgs > 0) {
-      if (node.isTrueEq()) {
+      if (store.isTrueEq(id)) {
         this.assign(
           mkLiteral(this.getBoolVar(expr)),
           new EqPropagationJustification(node.getArg(0), node.getArg(1)),
         );
         this.pushEq(node, this.trueEnode, AXIOM_EQ_JUSTIFICATION);
       } else if (isCgcEnabled) {
-        const congruent = this.enodeStore.nodes[this.cgTable.insert(node.id)];
-        if (congruent !== node) {
-          node.cg = congruent;
-          if (!isEq) this.mergeCgcGenerations(node.id, generation, congruent.id);
+        const congruent = this.cgTable.insert(id);
+        if (congruent !== id) {
+          store.cg[id] = congruent;
+          if (!isEq) this.mergeCgcGenerations(id, generation, congruent);
           this.pushEq(
             node,
-            congruent,
-            getCongruenceJustification(this.enodeStore, node.id, congruent.id),
+            store.nodes[congruent],
+            getCongruenceJustification(store, id, congruent),
           );
         }
       }
-      if (!isEq) this.enodeStore.addDeclNode(node.decl, node.id);
+      if (!isEq) store.addDeclNode(store.decl[id], id);
     }
     return node;
   }
@@ -656,17 +659,20 @@ export abstract class Internalizer {
   }
 
   private undoMkEnode() {
-    const nodes = this.enodeStore.nodes;
-    const node = nodes[nodes.length - 1];
-    if (node === undefined) return;
-    this.exprToEnode[node.owner] = undefined;
-    if (node.isCgr() && node.usesCgTable()) this.cgTable.erase(node.id);
-    if (node.numArgs > 0 && !node.isEq) this.enodeStore.declCount[node.decl]--;
-    for (let index = 0; index < node.numArgs; index++) node.getArg(index).root.popParent();
-    this.manager.decRef(node.owner);
-    this.stickyGenerations.delete(node.id, node.decl);
+    const store = this.enodeStore;
+    const id = store.nodes.length - 1;
+    if (id === -1) return;
+    const owner = store.owner[id];
+    const numArgs = store.getNumArgs(id);
+    this.exprToEnode[owner] = undefined;
+    if (store.cg[id] === id && store.usesCgTable(id)) this.cgTable.erase(id);
+    if (numArgs > 0 && !store.isEq(id)) store.declCount[store.decl[id]]--;
+    for (let index = 0; index < numArgs; index++)
+      store.parentCount[store.root[store.getArg(id, index)]]--;
+    this.manager.decRef(owner);
+    this.stickyGenerations.delete(id, store.decl[id]);
     // The node leaves the stack last, since its data are found through its place there.
-    this.enodeStore.pop();
+    store.pop();
   }
 
   protected mergeCgcGenerations(first: number, firstGeneration: number, second: number) {

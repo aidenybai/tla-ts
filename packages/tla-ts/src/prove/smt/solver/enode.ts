@@ -466,14 +466,6 @@ export class Enode {
     return store.nodes[store.parentPool[store.parentStart[this.id] + index]];
   }
 
-  addParent(parent: Enode) {
-    this.store.addParent(this.id, parent.id);
-  }
-
-  popParent() {
-    this.store.parentCount[this.id]--;
-  }
-
   isCgr() {
     return this.cg === this;
   }
