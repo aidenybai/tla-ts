@@ -70,7 +70,7 @@ type ModuleUnitCore =
       proof: Proof;
     }
   | { kind: "Submod"; module: Mule }
-  | { kind: "Mutate"; mode: "Use" | "Hide"; isSuppressed: boolean; usable: Usable }
+  | { kind: "Mutate"; mode: "Use" | "Hide"; usable: Usable }
   | { kind: "Anoninst"; instance: InstanceDefinition; isLocal: boolean };
 
 // depth is the size of the context the module was normalized in, which instantiation shifts

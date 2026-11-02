@@ -36,7 +36,6 @@ export interface Obligation {
 interface ProofProps {
   location?: Locus;
   step?: StepNumber;
-  isSuppressed?: boolean;
   obligations?: Obligation[];
   method?: OldMethod;
   useLocation?: Locus;

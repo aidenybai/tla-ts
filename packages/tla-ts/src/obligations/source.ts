@@ -1133,7 +1133,6 @@ export const createSource = (file: string, text: string, counter: Counter, isExp
           return {
             kind: "Mutate",
             mode: unit.use.kind,
-            isSuppressed: false,
             usable: convertUsable(unit.use),
             location: getUseLocus(unit.use),
           };

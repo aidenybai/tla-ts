@@ -50,7 +50,6 @@ const AT_NOWHERE: Expr = { kind: "At", isExcept: false };
 const getProps = (from: Step) => ({
   location: from.location,
   step: from.step,
-  isSuppressed: from.isSuppressed,
   method: from.method,
 });
 
@@ -268,7 +267,7 @@ const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
 
 // A WITNESS proves each membership and subset it relies on, then the goal from them.
 const getWitnessProof = (step: Step, aux: Expr[]): Proof => {
-  if (step.isSuppressed || aux.length === 0) return { kind: "Obvious", ...getProps(step) };
+  if (aux.length === 0) return { kind: "Obvious", ...getProps(step) };
   const steps = aux.map((item, index): Step => {
     const active = shiftExpr(2 * index + 2, item);
     return {
@@ -544,11 +543,10 @@ export const createGenerator = (
         item.steps.forEach(visitStep);
         return;
       }
-      if (item.obligations && !item.isSuppressed) obligations.push(...item.obligations);
+      if (item.obligations) obligations.push(...item.obligations);
     };
     const visitStep = (step: Step) => {
-      if (step.kind === "Use" && step.obligations && !step.isSuppressed)
-        obligations.push(...step.obligations);
+      if (step.kind === "Use" && step.obligations) obligations.push(...step.obligations);
       if (
         step.kind === "Assert" ||
         step.kind === "Suffices" ||
@@ -696,7 +694,6 @@ export const createGenerator = (
           usable: { facts: [shiftExpr(index, fact)], defs: [] },
           isOnly: false,
           location: fact.location,
-          isSuppressed: proof.isSuppressed,
           useLocation: proof.location,
         }));
         const forget: Step[] = proof.isOnly
@@ -711,7 +708,6 @@ export const createGenerator = (
           kind: "Obvious",
           location: proof.location,
           step: getAnonymous(level),
-          isSuppressed: proof.isSuppressed,
           method: proof.method,
         };
         return {
@@ -720,7 +716,6 @@ export const createGenerator = (
           qed: { proof: qedProof, location: qedProof.location, step: qedProof.step },
           location: proof.location,
           step: proof.step,
-          isSuppressed: proof.isSuppressed,
         };
       }
       case "Steps": {
@@ -778,7 +773,6 @@ export const createGenerator = (
           isOnly: step.isOnly,
           location: step.location,
           step: step.step,
-          isSuppressed: step.isSuppressed,
           method: step.method,
         };
         const simplified = simplify(context, goal, byProof, time);
