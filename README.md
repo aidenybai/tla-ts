@@ -32,84 +32,55 @@ npm install tla-ts
 
 ## Command line
 
-The `tla-ts` command takes TLC's options and prints TLC's output. `tla-ts prove` takes tlapm's options and prints tlapm's output.
-
 ### Check a spec
-
-To check a spec, pass its path:
 
 ```shell
 npx tla-ts Spec.tla
 ```
 
-tla-ts reads the configuration from `Spec.cfg` next to the spec. It exits with the exit code TLC uses for the same result.
+tla-ts reads `Spec.cfg`, takes TLC's options and exits with TLC's exit codes. You can pass several specs or a glob.
 
-You can pass several paths, or a glob such as `"specs/*.tla"`. tla-ts checks each spec in turn and exits with the exit code of the first spec that fails. A glob skips each module that has no `.cfg` next to it, so it doesn't check helper modules that other specs import. tla-ts never skips a path that you pass by name. If you pass a `.cfg` path, tla-ts checks the `.tla` file with the same name.
-
-The options are:
-
-- `-config <Spec.cfg>`: read the configuration from this file. You can use it only when you check one spec.
+- `-config <Spec.cfg>`: read the configuration from this file.
 - `-deadlock`: don't report deadlocks.
-- `-dump [dot[,colorize][,actionlabels][,snapshot]] <file>`: write every reachable state to `<file>.dump`, or with `dot`, the state graph to `<file>.dot`. The output matches TLC run with `-fp 0`. tla-ts doesn't support the `constrained`, `stuttering`, or `strict` formats.
+- `-dump [dot[,colorize][,actionlabels][,snapshot]] <file>`: write every reachable state, or the state graph with `dot`.
 - `-lncheck final`: check liveness once, after the search ends.
 - `-seed <num>`: seed `RandomElement` and the `Randomization` module. The default is 0.
-- `-workers <count|auto>`: search with this number of worker threads. `auto` uses one thread per core. The default is 1.
-
-TLC can replace a module's operators with Java methods, and tla-ts reads the same files. If the spec's directory has `Module.class`, tla-ts replaces each operator in `Module` with the public static method that has the same name and arity.
+- `-workers <count|auto>`: the number of worker threads. The default is 1.
 
 ### Generate proof obligations
-
-A proof obligation is one claim that a backend prover must prove. `tla-ts prove -N` prints the obligations of a module, as `tlapm -N` does. It doesn't run a prover. For example, this command prints every obligation in `Module.tla` with its text:
 
 ```shell
 npx tla-ts prove -N --toolbox 0 0 --printallobs Module.tla
 ```
 
-With `--toolbox` or `--line`, tla-ts writes the messages of the TLA+ Toolbox protocol to stderr, as tlapm does. If you pass a tlapm option that isn't in this list, tla-ts prints an error:
+`tla-ts prove -N` prints a module's proof obligations, as `tlapm -N` does.
 
-- `--toolbox <start> <end>`: print Toolbox messages for the proofs from line `start` to line `end`. `0 0` selects the whole module.
+- `--toolbox <start> <end>`: print Toolbox messages for the proofs in these lines. `0 0` selects the whole module.
 - `--line <num>`: print Toolbox messages for the proof at this line.
 - `--printallobs`: print the text of each obligation.
-- `--summary`: print the number of obligations in each module, and list its missing and omitted proofs. You don't need `-N` with `--summary`.
-- `--strict`: report missing proofs, omitted proofs and a selected range with no obligations as errors.
+- `--summary`: print the number of obligations, and list missing and omitted proofs.
+- `--strict`: report missing and omitted proofs as errors.
 - `-I <directory>`: search this directory for modules.
 
-tla-ts searches for modules in the same order as tlapm:
-
-1. The directory of each module you pass, the last one first.
-2. The current directory.
-3. The standard library of tlapm, which has the `TLAPS` module. tla-ts searches it only if `tlapm` is on your `PATH`.
-4. The `-I` directories, the last one first.
-
-### Prove with tlapm
-
-Without `-N`, `--summary` or `--backend`, `tla-ts prove` runs [tlapm](https://github.com/tlaplus/tlapm) from your `PATH`:
-
-```shell
-npx tla-ts prove Module.tla
-```
-
-tla-ts expands the globs and passes every argument to tlapm, so all of tlapm's options work. tlapm sends the obligations to its provers, and tla-ts exits with the exit code of tlapm. If `tlapm` isn't on your `PATH`, tla-ts prints an error and exits with code 1.
-
-### Prove with a backend
-
-`tla-ts prove --backend` proves each module with [`prove`](#prove) and prints each obligation's status as it finishes:
+### Prove
 
 ```shell
 npx tla-ts prove --backend tla-ts Module.tla
 ```
 
+`tla-ts prove --backend` proves each module with [`prove`](#prove) and prints each obligation's status.
+
 - `--backend <tla-ts|tlapm>`: prove with tla-ts's own provers, or with tlapm from your `PATH`.
 - `-I <directory>`: search this directory for modules.
-- `-workers <count|auto>`: run tla-ts's provers on this number of worker threads. `auto` uses one thread per core. The default is 1.
+- `-workers <count|auto>`: the number of worker threads. The default is 1.
 
-tla-ts exits with code 1 if an obligation fails or isn't supported.
+Without `-N`, `--summary` or `--backend`, `tla-ts prove` runs [tlapm](https://github.com/tlaplus/tlapm) with your arguments.
 
 ## API reference
 
 ### `check`
 
-Checks a spec against a TLC configuration and resolves to the result.
+Checks a spec against a TLC configuration.
 
 ```ts
 import { check } from "tla-ts";
@@ -118,51 +89,32 @@ const result = await check({
   source: specSource,
   config: configSource,
   loadModule: (name) => modules[name],
-  onPrint: (text) => console.log(text),
 });
 ```
 
-| Option                  | Description                                                                                                                              |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `source`                | The TLA+ module to check                                                                                                                 |
-| `config`                | A TLC configuration, as text or as the result of `parseConfig`                                                                           |
-| `loadModule`            | Returns the source of a module that isn't a standard module, or of Bags, Json, Randomization, or TLCExt to read in place of tla-ts's own |
-| `loadClass`             | Returns a compiled Java class that overrides a module's operators with constants                                                         |
-| `onPrint`               | Receives the output of `Print` and `PrintT`. Defaults to `console.log`                                                                   |
-| `onPause`               | Runs when `TLCSet("pause", TRUE)` pauses checking, which resumes when it returns                                                         |
-| `readFile`, `writeFile` | Read and write files for the Json module and `dump`                                                                                      |
-| `seed`                  | A `bigint` seed. Defaults to `0n`, and matches TLC run with the same `-seed` and `-fp 0`                                                 |
-| `workers`               | The number of worker threads. Defaults to 1                                                                                              |
-| `dump`                  | Writes the reachable states or the state graph, as TLC's `-dump` does                                                                    |
-
-`dump` takes the `path` that `check` passes to `writeFile` before it returns. Set `dot` to write the state graph in the DOT language of Graphviz, and `colorize`, `actionLabels`, or `snapshot` for TLC's formats of the same names. A dump checks the spec on the calling thread, as one TLC worker does.
+| Option                  | Description                                                       |
+| ----------------------- | ----------------------------------------------------------------- |
+| `source`                | The TLA+ module to check                                          |
+| `config`                | A TLC configuration, as text or as the result of `parseConfig`    |
+| `loadModule`            | Returns the source of a module that isn't a standard module       |
+| `loadClass`             | Returns a compiled Java class that overrides a module's operators |
+| `onPrint`               | Receives the output of `Print` and `PrintT`                       |
+| `onPause`               | Runs when `TLCSet("pause", TRUE)` pauses checking                 |
+| `readFile`, `writeFile` | Read and write files for the Json module and `dump`               |
+| `seed`                  | A `bigint` seed. Defaults to `0n`                                 |
+| `workers`               | The number of worker threads. Defaults to 1                       |
+| `dump`                  | Writes the reachable states or the state graph                    |
 
 The result has these fields:
 
 - `status`: `"success"`, `"deadlock"`, `"assumption-violation"`, `"invariant-violation"`, `"property-violation"`, `"liveness-violation"`, `"postcondition-violation"`, or `"error"`.
-- `violation`: the `name` of what failed and the `trace` that reaches it. `loopStart` marks where a liveness counterexample loops back.
+- `violation`: the `name` of what failed and the `trace` that reaches it.
 - `failure`: the message and trace when `status` is `"error"`.
 - `generatedStates`, `distinctStates`, and `depth`: TLC's state counts.
 
-Workers run in Node, Bun, Deno, and cross-origin isolated pages in the browser. Like TLC's workers, they share one table of 64-bit fingerprints. `check` runs on the calling thread in these cases:
-
-- `SharedArrayBuffer` is unavailable, as on a page without cross-origin isolation.
-- The spec has liveness properties.
-- The spec uses impure operators such as `Print`.
-- The configuration has `VIEW`, `POSTCONDITION`, or `_POSSIBLE`.
-
-After a violation or an error, `check` reruns on the calling thread to return TLC's exact trace.
-
-`check` supports:
-
-- **Modules**: the standard modules, TLCExt, Json, and Randomization, plus `EXTENDS`, `INSTANCE`, and `LAMBDA`.
-- **Configuration**: `CONSTANTS`, `INIT`, `NEXT`, `SPECIFICATION`, invariants, properties, constraints, `SYMMETRY`, `VIEW`, `ALIAS`, `POSTCONDITION`, `CHECK_DEADLOCK`, and `_POSSIBLE`.
-- **Properties**: invariants and every temporal formula TLC accepts, checked through TLC's tableau construction.
-- **TLC semantics**: 32-bit integer overflow, `TLCGet` and `TLCSet`, subexpression references such as `Op!2`, and TLC's enumeration order for `CHOOSE` and quantifiers.
-
 ### `prove`
 
-Proves the obligations of a TLAPS proof and resolves to their statuses.
+Proves the obligations of a TLAPS proof.
 
 ```ts
 import { prove } from "tla-ts";
@@ -174,25 +126,23 @@ const result = await prove({
 });
 ```
 
-| Option         | Description                                                                               |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| `source`       | The TLA+ module to prove                                                                  |
-| `loadModule`   | Returns the source of a module it extends or instantiates                                 |
-| `backend`      | `"tla-ts"` proves with tla-ts's own provers. `"tlapm"` runs tlapm. Defaults to `"tla-ts"` |
-| `signal`       | An `AbortSignal` that stops proving                                                       |
-| `onObligation` | Receives each obligation as soon as its status is known                                   |
-| `workers`      | The number of worker threads that run tla-ts's provers. Defaults to 1                     |
-
-The `"tla-ts"` backend tries each obligation in tlapm's default order. It checks whether the obligation is trivial, then tries the provers its step cites, or tlapm's defaults: SMT, Zenon, then Isabelle. Each prover receives the same input as tlapm's, and `PTL` decides as LS4 does. `SMTT(n)` gives the solver `n` seconds, and the default is 5 s. With `workers`, the provers run on worker threads. Each obligation gets the result it would get on one thread, and `onObligation` still receives them in tlapm's order. The `"tlapm"` backend runs `tlapm --toolbox 0 0` from your `PATH`, so it works only in Node and Bun. It throws `TlaUnsupportedError` in a browser or when tlapm is missing.
+| Option         | Description                                                               |
+| -------------- | ------------------------------------------------------------------------- |
+| `source`       | The TLA+ module to prove                                                  |
+| `loadModule`   | Returns the source of a module it extends or instantiates                 |
+| `backend`      | `"tla-ts"` for tla-ts's own provers, or `"tlapm"`. Defaults to `"tla-ts"` |
+| `signal`       | An `AbortSignal` that stops proving                                       |
+| `onObligation` | Receives each obligation as soon as its status is known                   |
+| `workers`      | The number of worker threads. Defaults to 1                               |
 
 The result has these fields:
 
-- `obligations`: each obligation's `id`, `location`, `text`, and `status`. The status is `"proved"`, `"trivial"`, `"failed"`, or `"unsupported"`. A proved obligation names its `prover`, and a failed or unsupported one has a `reason`.
-- `missingProofCount` and `omittedProofCount`: the numbers of missing and omitted proofs, as `tlapm --summary` counts them.
+- `obligations`: each obligation's `id`, `location`, `text`, and `status`: `"proved"`, `"trivial"`, `"failed"`, or `"unsupported"`.
+- `missingProofCount` and `omittedProofCount`: the numbers of missing and omitted proofs.
 
 ### `parseModule`
 
-Parses a TLA+ module into its syntax tree. Throws `TlaSyntaxError` on invalid input.
+Parses a TLA+ module into its syntax tree.
 
 ```ts
 import { parseModule } from "tla-ts";
@@ -203,7 +153,7 @@ module.name; // "Counter"
 
 ### `parseConfig`
 
-Parses a TLC configuration file into a `ModelConfig`. Pass the result to `check` to change it before checking.
+Parses a TLC configuration file.
 
 ```ts
 import { check, parseConfig } from "tla-ts";
@@ -215,24 +165,22 @@ await check({ source: specSource, config });
 
 ### `formatValue`
 
-Prints a value in TLA+ syntax, as TLC prints it in traces.
+Prints a value in TLA+ syntax.
 
 ```ts
 import { formatValue } from "tla-ts";
 
-result.violation?.trace.forEach((step) => {
-  Object.entries(step.state).forEach(([name, value]) => console.log(name, formatValue(value)));
-});
+formatValue(value); // "<<1, 2>>"
 ```
 
 ### Errors
 
 Every error extends `TlaError`:
 
-- `TlaSyntaxError`: the module does not parse
-- `TlaConfigError`: the configuration is invalid or refers to an unknown name
-- `TlaEvaluationError`: evaluation failed, as when TLC reports an error
-- `TlaUnsupportedError`: the spec uses a feature tla-ts does not support yet
+- `TlaSyntaxError`: the module doesn't parse.
+- `TlaConfigError`: the configuration is invalid.
+- `TlaEvaluationError`: evaluation failed.
+- `TlaUnsupportedError`: the spec uses a feature tla-ts doesn't support yet.
 
 ## Benchmarks
 
