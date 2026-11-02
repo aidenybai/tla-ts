@@ -6,21 +6,21 @@ import { describe, expect, it } from "vite-plus/test";
 const DIRECTORY = join(import.meta.dirname, "../fixtures/prove");
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
-const loadPackage = (): Promise<typeof import("../../src")> => import(DIST);
+const tlaTs: typeof import("../../src") = await import(DIST);
 
 const loadModule = (name: string) => {
   const path = join(DIRECTORY, `${name}.tla`);
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 };
 
+const SOURCE = loadModule("HourClock_proof") ?? "";
+
 describe("prove with workers matches one thread", () => {
   it.each([2, 3])("proves HourClock with %i workers, reporting in order", async (workers) => {
-    const tlaTs = await loadPackage();
-    const source = loadModule("HourClock_proof") ?? "";
-    const sequential = await tlaTs.prove({ source, loadModule });
+    const sequential = await tlaTs.prove({ source: SOURCE, loadModule });
     const reported: number[] = [];
     const result = await tlaTs.prove({
-      source,
+      source: SOURCE,
       loadModule,
       workers,
       onObligation: (obligation) => reported.push(obligation.id),
@@ -30,10 +30,9 @@ describe("prove with workers matches one thread", () => {
   });
 
   it("stops when its signal aborts", async () => {
-    const tlaTs = await loadPackage();
     const controller = new AbortController();
     const proving = tlaTs.prove({
-      source: loadModule("HourClock_proof") ?? "",
+      source: SOURCE,
       loadModule,
       workers: 2,
       signal: controller.signal,

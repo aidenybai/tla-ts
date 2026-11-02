@@ -9,15 +9,17 @@ import { decideZenon, runZenon } from "../../src/prove/zenon/decide";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/zenon");
 
+const readFixture = (path: string) => readFileSync(join(FIXTURES, path), "utf8");
+
 // Real .znn files that tlapm wrote, and in rules/ small true goals that need the rule in their name,
 // which no corpus proof uses. Each comes with what tlapm's Zenon reports for it under -stats.
 const statistics: Record<string, { nodesSearched: number; proofNodes: number }> = JSON.parse(
-  readFileSync(join(FIXTURES, "statistics.json"), "utf8"),
+  readFixture("statistics.json"),
 );
 const fixtures = Object.entries(statistics).map((entry) => ({
   path: entry[0],
   expected: entry[1],
-  text: readFileSync(join(FIXTURES, entry[0]), "utf8"),
+  text: readFixture(entry[0]),
 }));
 
 // tlapm runs Zenon with -oisar and writes the Isar proof it prints into the module's .thy file. An
@@ -26,7 +28,7 @@ const isarFixtures = fixtures
   .filter((fixture) => !fixture.path.startsWith("unknown/"))
   .map((fixture) => ({
     ...fixture,
-    isar: readFileSync(join(FIXTURES, fixture.path.replace(/\.znn$/, ".isar")), "utf8"),
+    isar: readFixture(fixture.path.replace(/\.znn$/, ".isar")),
   }));
 
 // Zenon shares alpha-equivalent formulas through a weak hash table, so a formula takes the names of
@@ -154,7 +156,7 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     "runs out of memory where tlapm's Zenon does",
     () => {
       // Zenon gives up on this file once its heap passes 1 GB, after 12559 nodes.
-      const text = readFileSync(join(FIXTURES, "memory/PaxosCommit_proof-253.znn"), "utf8");
+      const text = readFixture("memory/PaxosCommit_proof-253.znn");
       expect(runZenon(text, { timeLimitMs: TIME_LIMIT_MS }).failure).toBe("memory limit");
     },
     2 * TIME_LIMIT_MS,
@@ -162,7 +164,7 @@ describe("Zenon agrees with tlapm's Zenon", () => {
 
   // The search runs for seconds before it runs out of memory, so it gives up at the deadline first.
   it("stops at the deadline, where tlapm kills Zenon", () => {
-    const text = readFileSync(join(FIXTURES, "memory/PaxosCommit_proof-253.znn"), "utf8");
+    const text = readFixture("memory/PaxosCommit_proof-253.znn");
     expect(runZenon(text, { timeLimitMs: 200 }).failure).toBe("time limit");
   });
 });
@@ -230,6 +232,7 @@ describe("Zenon's input", () => {
 describe("the proof checker", () => {
   const UNLIMITED = { deadline: Infinity, signal: undefined };
   const exprs = createExpressions();
+  const getContext = (hypotheses: Expr[]) => ({ hypotheses, definitions: [] });
   const first = exprs.evar("p");
   const second = exprs.evar("q");
   const getClosure = (formula: Expr): Proof => ({
@@ -247,14 +250,14 @@ describe("the proof checker", () => {
   });
 
   it("accepts a closure on a formula and its negation", () => {
-    const hypotheses = [first, exprs.enot(first)];
-    expect(checkProof(getClosure(first), { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
+    const context = getContext([first, exprs.enot(first)]);
+    expect(checkProof(getClosure(first), context, UNLIMITED)).toBe(true);
   });
 
   // tlapm kills Zenon at its deadline, so a proof that the checker hasn't accepted by then doesn't
   // count.
   it("stops at the deadline or once the signal aborts", () => {
-    const context = { hypotheses: [first, exprs.enot(first)], definitions: [] };
+    const context = getContext([first, exprs.enot(first)]);
     const passed = { deadline: Date.now() - 1, signal: undefined };
     const aborted = { deadline: Infinity, signal: AbortSignal.abort() };
     expect(checkProof(getClosure(first), context, passed)).toBe(false);
@@ -262,24 +265,22 @@ describe("the proof checker", () => {
   });
 
   it("rejects a closure without the negation", () => {
-    expect(checkProof(getClosure(first), { hypotheses: [first], definitions: [] }, UNLIMITED)).toBe(
-      false,
-    );
+    expect(checkProof(getClosure(first), getContext([first]), UNLIMITED)).toBe(false);
   });
 
   it("accepts a conjunction split into its conjuncts", () => {
-    const hypotheses = [conjunction, exprs.enot(first)];
-    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
+    const context = getContext([conjunction, exprs.enot(first)]);
+    expect(checkProof(getSplit("and"), context, UNLIMITED)).toBe(true);
   });
 
   it("rejects a rule whose premise isn't a hypothesis", () => {
-    const hypotheses = [exprs.eand(second, first), exprs.enot(first)];
-    expect(checkProof(getSplit("and"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
+    const context = getContext([exprs.eand(second, first), exprs.enot(first)]);
+    expect(checkProof(getSplit("and"), context, UNLIMITED)).toBe(false);
   });
 
   it("rejects a disjunction rule on a conjunction", () => {
-    const hypotheses = [conjunction, exprs.enot(first)];
-    expect(checkProof(getSplit("or"), { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
+    const context = getContext([conjunction, exprs.enot(first)]);
+    expect(checkProof(getSplit("or"), context, UNLIMITED)).toBe(false);
   });
 
   describe("on a relation other than =", () => {
@@ -307,13 +308,13 @@ describe("the proof checker", () => {
     };
 
     it("accepts a symmetric closure when a hypothesis makes the relation symmetric", () => {
-      const hypotheses = [getSymmetry("R"), ...relates];
-      expect(checkProof(swapped, { hypotheses, definitions: [] }, UNLIMITED)).toBe(true);
+      expect(checkProof(swapped, getContext([getSymmetry("R"), ...relates]), UNLIMITED)).toBe(true);
     });
 
     it("rejects a symmetric closure without that hypothesis", () => {
-      const hypotheses = [getSymmetry("S"), ...relates];
-      expect(checkProof(swapped, { hypotheses, definitions: [] }, UNLIMITED)).toBe(false);
+      expect(checkProof(swapped, getContext([getSymmetry("S"), ...relates]), UNLIMITED)).toBe(
+        false,
+      );
     });
   });
 });

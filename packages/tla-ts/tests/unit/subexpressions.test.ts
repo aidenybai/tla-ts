@@ -43,10 +43,7 @@ describe("subexpression references into theorems match SANY", () => {
 
   const getSanyError = (errors: string[][], module: string) =>
     createSanyError(
-      errors.map(([location, message]) => ({
-        location: `${location} of module ${module}`,
-        message,
-      })),
+      errors.map((error) => ({ location: `${error[0]} of module ${module}`, message: error[1] })),
     );
 
   const checkModule = (definitions: string) =>
@@ -104,16 +101,13 @@ describe("subexpression references into theorems match SANY", () => {
       [
         [
           "line 5, col 24 to line 5, col 27",
-          "Accessing subexpression labeled `labz' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+          `Accessing subexpression labeled \`labz' of ASSUME/PROVE clause ${SCOPE}`,
         ],
         [
           "line 6, col 8 to line 6, col 12",
           "Selected a NEW declaration as an expression or operator.",
         ],
-        [
-          "line 6, col 21 to line 6, col 21",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
+        ["line 6, col 21 to line 6, col 21", `Accessing ASSUME/PROVE clause ${SCOPE}`],
       ],
     ],
     [
@@ -122,12 +116,9 @@ describe("subexpression references into theorems match SANY", () => {
       [
         [
           "line 6, col 14 to line 6, col 17",
-          "Accessing subexpression labeled `laba' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+          `Accessing subexpression labeled \`laba' of ASSUME/PROVE clause ${SCOPE}`,
         ],
-        [
-          "line 6, col 29 to line 6, col 29",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
+        ["line 6, col 29 to line 6, col 29", `Accessing ASSUME/PROVE clause ${SCOPE}`],
         [
           "line 11, col 12 to line 11, col 12",
           "Nonexistent operand specified by `argument selector 2'.",
@@ -142,33 +133,18 @@ describe("subexpression references into theorems match SANY", () => {
       "facts that select clauses and labels in the scope of a NEW",
       "LEGAL == TRUE\nTHEOREM foo == ASSUME NEW v, lab :: LEGAL, ASSUME NEW y PROVE LEGAL PROVE LEGAL\nTHEOREM TRUE\nBY foo!2, foo!1, foo!3, foo!lab, foo!4\nTHEOREM TRUE\nBY foo!3!1, foo!3!2\nUSE foo!lab",
       [
-        [
-          "line 6, col 8 to line 6, col 8",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
-        [
-          "line 6, col 22 to line 6, col 22",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
+        ["line 6, col 8 to line 6, col 8", `Accessing ASSUME/PROVE clause ${SCOPE}`],
+        ["line 6, col 22 to line 6, col 22", `Accessing ASSUME/PROVE clause ${SCOPE}`],
         [
           "line 6, col 29 to line 6, col 31",
-          "Accessing subexpression labeled `lab' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+          `Accessing subexpression labeled \`lab' of ASSUME/PROVE clause ${SCOPE}`,
         ],
-        [
-          "line 6, col 38 to line 6, col 38",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
-        [
-          "line 8, col 8 to line 8, col 8",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
-        [
-          "line 8, col 17 to line 8, col 17",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
+        ["line 6, col 38 to line 6, col 38", `Accessing ASSUME/PROVE clause ${SCOPE}`],
+        ["line 8, col 8 to line 8, col 8", `Accessing ASSUME/PROVE clause ${SCOPE}`],
+        ["line 8, col 17 to line 8, col 17", `Accessing ASSUME/PROVE clause ${SCOPE}`],
         [
           "line 9, col 9 to line 9, col 11",
-          "Accessing subexpression labeled `lab' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+          `Accessing subexpression labeled \`lab' of ASSUME/PROVE clause ${SCOPE}`,
         ],
       ],
     ],
@@ -176,15 +152,9 @@ describe("subexpression references into theorems match SANY", () => {
       "a NEW declaration, an ASSUME/PROVE, and a missing operand or label",
       "LEGAL == TRUE\nTHEOREM foo == ASSUME LEGAL, ASSUME NEW y, LEGAL PROVE LEGAL PROVE LEGAL\nA == foo!2!2\nB == foo!2\nC == foo!2!3!1\nD == foo!4\nTHEOREM bar == ASSUME NEW v, LEGAL PROVE LEGAL\nE == bar!1!1\nF == bar!3\nG == bar!nolab",
       [
-        [
-          "line 5, col 12 to line 5, col 12",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
+        ["line 5, col 12 to line 5, col 12", `Accessing ASSUME/PROVE clause ${SCOPE}`],
         ["line 6, col 6 to line 6, col 10", "Selected ASSUME/PROVE instead of expression."],
-        [
-          "line 7, col 12 to line 7, col 12",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
+        ["line 7, col 12 to line 7, col 12", `Accessing ASSUME/PROVE clause ${SCOPE}`],
         [
           "line 8, col 10 to line 8, col 10",
           "Nonexistent operand specified by `argument selector 4'.",
@@ -193,10 +163,7 @@ describe("subexpression references into theorems match SANY", () => {
           "line 10, col 10 to line 10, col 10",
           "Selected a subexpression of a NEW clause of an ASSUME.",
         ],
-        [
-          "line 11, col 10 to line 11, col 10",
-          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
-        ],
+        ["line 11, col 10 to line 11, col 10", `Accessing ASSUME/PROVE clause ${SCOPE}`],
         ["line 12, col 10 to line 12, col 14", "Cannot find label `nolab'."],
       ],
     ],

@@ -31,31 +31,24 @@ const getInput = (theorem: string[]) => {
 // tlapm proves exactly the obligations expected to be unsat.
 const getVerdict = (theorem: string[]) => decidePtl(getInput(theorem), OPTIONS);
 
+const INDUCTION = [
+  "THEOREM Spec => []Inv",
+  "<1>1. Init => Inv",
+  "  BY DEF Init, Inv",
+  "<1>2. Inv /\\ [Next]_vars => Inv'",
+  "  BY DEF Inv, Next, vars",
+  "<1>. QED  BY <1>1, <1>2, PTL DEF Spec",
+];
+
 describe("PTL backend matches tlapm with LS4", () => {
   it("prints the LS4 input tlapm sends, with its atom names", () => {
-    const input = getInput([
-      "THEOREM Spec => []Inv",
-      "<1>1. Init => Inv",
-      "  BY DEF Init, Inv",
-      "<1>2. Inv /\\ [Next]_vars => Inv'",
-      "  BY DEF Inv, Next, vars",
-      "<1>. QED  BY <1>1, <1>2, PTL DEF Spec",
-    ]);
-    expect(input).toBe(
+    expect(getInput(INDUCTION)).toBe(
       "not (((always (h8828a -> h2f89a)) & (always ((h2f89a & (hfc35e | h18388)) -> (next h2f89a))) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always h2f89a))))",
     );
   });
 
   it("proves an invariant by induction", () => {
-    const verdict = getVerdict([
-      "THEOREM Spec => []Inv",
-      "<1>1. Init => Inv",
-      "  BY DEF Init, Inv",
-      "<1>2. Inv /\\ [Next]_vars => Inv'",
-      "  BY DEF Inv, Next, vars",
-      "<1>. QED  BY <1>1, <1>2, PTL DEF Spec",
-    ]);
-    expect(verdict).toBe("unsat");
+    expect(getVerdict(INDUCTION)).toBe("unsat");
   });
 
   it("fails an induction without its base case", () => {

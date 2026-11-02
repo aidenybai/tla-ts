@@ -15,9 +15,16 @@ const verdicts: Record<string, RecordedVerdict> = JSON.parse(
   readFileSync(join(DIRECTORY, "verdicts.json"), "utf8"),
 );
 
+const OPTIONS = { timeLimitMs: 5000 };
+
 const read = (name: string) => readFileSync(join(DIRECTORY, name), "utf8");
 
-const decide = (name: string) => decideSmt(read(name), { timeLimitMs: 5000 });
+const decide = (text: string) => decideSmt(text, OPTIONS);
+
+const getRecorded = (z3: string) =>
+  Object.entries(verdicts)
+    .filter((entry) => entry[1].z3 === z3)
+    .map((entry) => ({ name: entry[0], source: entry[1].source }));
 
 // (g x) is f applied depth times to x, and (g 0) is not: unsat after one instance.
 const getDeepProblem = (depth: number) => {
@@ -32,26 +39,22 @@ const getDeepProblem = (depth: number) => {
 };
 
 describe("decideSmt proves what Z3 proves", () => {
-  for (const name of Object.keys(verdicts).filter(
-    (innerName) => verdicts[innerName].z3 === "unsat",
-  ))
-    it(`proves ${verdicts[name].source}`, () => {
-      expect(decide(name)).toBe("unsat");
-    });
+  it.each(getRecorded("unsat"))("proves $source", (recorded) => {
+    expect(decide(read(recorded.name))).toBe("unsat");
+  });
 });
 
 describe("decideSmt never proves what Z3 refutes", () => {
-  for (const name of Object.keys(verdicts).filter((innerName) => verdicts[innerName].z3 === "sat"))
-    it(`does not prove ${verdicts[name].source}`, () => {
-      expect(decide(name)).not.toBe("unsat");
-    });
+  it.each(getRecorded("sat"))("does not prove $source", (recorded) => {
+    expect(decide(read(recorded.name))).not.toBe("unsat");
+  });
 });
 
 describe("decideSmt", () => {
   it("answers the same way with the same instances when run twice", () => {
     const text = read("Barriers-63.smt");
-    const first = checkSmt(text, { timeLimitMs: 5000 });
-    const second = checkSmt(text, { timeLimitMs: 5000 });
+    const first = checkSmt(text, OPTIONS);
+    const second = checkSmt(text, OPTIONS);
     expect(first.numInstances).toBeGreaterThan(0);
     expect(second).toEqual(first);
   });
@@ -59,17 +62,17 @@ describe("decideSmt", () => {
   it("gives up when the signal aborts", () => {
     const controller = new AbortController();
     controller.abort();
-    expect(
-      decideSmt(read("Barriers-63.smt"), { timeLimitMs: 5000, signal: controller.signal }),
-    ).toBe("unknown");
+    expect(decideSmt(read("Barriers-63.smt"), { ...OPTIONS, signal: controller.signal })).toBe(
+      "unknown",
+    );
   });
 
   it("proves a problem whose terms are nested thousands deep", () => {
-    expect(decideSmt(getDeepProblem(2500), { timeLimitMs: 5000 })).toBe("unsat");
+    expect(decide(getDeepProblem(2500))).toBe("unsat");
   });
 
   it("answers instead of throwing when a recursion exhausts the stack", () => {
-    expect(["unsat", "unknown"]).toContain(decideSmt(getDeepProblem(20000), { timeLimitMs: 5000 }));
+    expect(["unsat", "unknown"]).toContain(decide(getDeepProblem(20000)));
   });
 
   // Doubles round 2^53 + 1 to 2^53 and 2^54 + 3 to 2^54 + 4, which flips each verdict.
@@ -80,7 +83,7 @@ describe("decideSmt", () => {
       "(assert (not (= x 9007199254740992)))",
       "(check-sat)",
     ].join("\n");
-    expect(decideSmt(problem, { timeLimitMs: 5000 })).toBe("sat");
+    expect(decide(problem)).toBe("sat");
   });
 
   it("computes exactly with numerals past 2^53", () => {
@@ -88,7 +91,7 @@ describe("decideSmt", () => {
       "(assert (= (* 2 x) 18014398509481987))",
       "(assert (= x 1180591620717411303424))\n(assert (not (= (div (- 1180591620717411303425) x) (- 2))))",
     ].map((assertions) => `(declare-fun x () Int)\n${assertions}\n(check-sat)\n`);
-    for (const problem of problems) expect(decideSmt(problem, { timeLimitMs: 5000 })).toBe("unsat");
+    for (const problem of problems) expect(decide(problem)).toBe("unsat");
   });
 
   // Z3: unsat. The 2 of (* 2 a) is nested in a sum before the equality needs it as a term.
@@ -100,32 +103,27 @@ describe("decideSmt", () => {
       "(assert (= (+ (* 2 a) (* (- 3) b)) 2))",
       "(check-sat)",
     ].join("\n");
-    expect(decideSmt(problem, { timeLimitMs: 5000 })).toBe("unsat");
+    expect(decide(problem)).toBe("unsat");
   });
 
   // Z3 answers both without the smt tactic, since the preprocessing decides them.
   it("decides a problem that the preprocessing reduces to false or to nothing", () => {
     const decideAssertion = (assertion: string) =>
-      decideSmt(`(declare-fun x () Int)\n(assert ${assertion})\n(check-sat)\n`, {
-        timeLimitMs: 5000,
-      });
+      decide(`(declare-fun x () Int)\n(assert ${assertion})\n(check-sat)\n`);
     expect(decideAssertion("(> x x)")).toBe("unsat");
     expect(decideAssertion("(= x x)")).toBe("sat");
   });
 
   it("rejects an ill-sorted application", () => {
-    expect(() =>
-      decideSmt("(declare-fun p (Int) Bool)\n(assert (p true))\n(check-sat)\n", {
-        timeLimitMs: 5000,
-      }),
-    ).toThrow(SmtParseError);
+    expect(() => decide("(declare-fun p (Int) Bool)\n(assert (p true))\n(check-sat)\n")).toThrow(
+      SmtParseError,
+    );
   });
 });
 
 // Each verdict is Z3's on the same problem.
 describe("decideSmt on real arithmetic", () => {
-  const decideLines = (...lines: string[]) =>
-    decideSmt([...lines, "(check-sat)"].join("\n"), { timeLimitMs: 5000 });
+  const decideLines = (...lines: string[]) => decide([...lines, "(check-sat)"].join("\n"));
 
   it("finds a real strictly between 0 and 1", () => {
     expect(decideLines("(declare-fun x () Real)", "(assert (< 0.0 x))", "(assert (< x 1.0))")).toBe(

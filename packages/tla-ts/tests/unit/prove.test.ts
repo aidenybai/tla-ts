@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { prove, type ProofObligation, TlaUnsupportedError } from "../../src";
+import { prove, type ProofObligation, type ProveOptions, TlaUnsupportedError } from "../../src";
 import { getObligations } from "../../src/obligations";
 import { encodeForBackend } from "../../src/prove/prove";
 import { TLAPS_MODULE } from "../../src/prove/tlaps-module";
@@ -15,10 +15,8 @@ const loadModule = (name: string) => {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 };
 
-const proveFixture = (
-  name: string,
-  options: { signal?: AbortSignal; backend?: "tla-ts" | "tlapm" } = {},
-) => prove({ source: loadModule(name) ?? "", loadModule, ...options });
+const proveFixture = (name: string, options: Partial<ProveOptions> = {}) =>
+  prove({ source: loadModule(name) ?? "", loadModule, ...options });
 
 // tlapm's comments name its version and the obligation, so only the commands are compared.
 const getCommands = (script: string) =>
@@ -68,9 +66,7 @@ describe("prove follows tlapm's default method", () => {
 
   it("reports each obligation as it finishes", async () => {
     const reported: ProofObligation[] = [];
-    const result = await prove({
-      source: loadModule("HourClock_proof") ?? "",
-      loadModule,
+    const result = await proveFixture("HourClock_proof", {
       onObligation: (obligation) => reported.push(obligation),
     });
     expect(reported).toEqual(result.obligations);
@@ -79,9 +75,7 @@ describe("prove follows tlapm's default method", () => {
 
   it("stops when its signal aborts", async () => {
     const controller = new AbortController();
-    const proving = prove({
-      source: loadModule("HourClock_proof") ?? "",
-      loadModule,
+    const proving = proveFixture("HourClock_proof", {
       signal: controller.signal,
       onObligation: () => controller.abort(),
     });
