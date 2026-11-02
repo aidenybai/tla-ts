@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import { readMarshaled } from "../../src/ocaml-marshal";
@@ -1452,43 +1452,6 @@ describe("tlapm shares its cache with tlapm", () => {
       { cwd: directory, encoding: "utf8" },
     );
     expect(result.stderr).toBe(readRecording("Failures.reused"));
-  });
-});
-
-describe("prove proves each module with tla-ts's own provers", () => {
-  // Bun's directory alone, so tlapm isn't on the PATH.
-  const proveWithoutTlapm = (args: string[]) =>
-    spawnSync("bun", [CLI, "prove", ...args], {
-      cwd: join(FIXTURES, "obligations"),
-      encoding: "utf8",
-      env: {
-        PATH: dirname(
-          spawnSync("bun", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim(),
-        ),
-      },
-    });
-
-  it("proves with tla-ts's own provers by default", () => {
-    const result = proveWithoutTlapm(["Proofs.tla"]);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe(
-      [
-        "Proofs.tla:7:3:7:5: proved by smt",
-        "Proofs.tla:7:6:7:11: trivial",
-        "Proofs.tla:11:9:11:16: proved by smt",
-        "Proofs.tla:10:1:10:19: proved by smt",
-        "Proofs.tla:10:1:10:19: trivial",
-        "5 obligations: 3 proved, 2 trivial, 0 failed, 0 unsupported",
-        "",
-      ].join("\n"),
-    );
-  });
-
-  it("explains that the tlapm backend needs tlapm on the PATH", () => {
-    const result = proveWithoutTlapm(["--backend", "tlapm", "Proofs.tla"]);
-    expect(result.stderr).toBe(
-      "TlaUnsupportedError: The tlapm backend needs tlapm on your PATH.\n",
-    );
   });
 });
 

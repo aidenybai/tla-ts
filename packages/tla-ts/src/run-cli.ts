@@ -58,12 +58,8 @@ import { parseModule } from "./parser";
 import {
   encodeProofTheory,
   formatNormalized,
-  isProveBackend,
-  prove,
   proveObligations,
-  PROVE_BACKENDS,
   type ProofAttempt,
-  type ProofStatus,
 } from "./prove/prove";
 import { TLAPS_MODULE } from "./prove/tlaps-module";
 import type { StateDump } from "./state-graph";
@@ -149,12 +145,6 @@ const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|glob>...
 
 const TLAPM_INTEGER_OPTIONS = new Set(["--toolbox", "--line", "--threads", "--nofpl"]);
 
-const PROVE_COMMAND = defineCommand("tla-ts prove {options} <Module.tla|glob>...", [
-  { flag: `--backend <${PROVE_BACKENDS.join("|")}>` },
-  { flag: "-I <directory>", isRepeatable: true },
-  { flag: "-workers <count|auto>" },
-]);
-
 const XML_EXPORT_FLAGS = new Set(["-o", "-t", "-r", "-u"]);
 
 const XML_EXPORT_174_FLAGS = new Set(["-o"]);
@@ -209,7 +199,6 @@ const XML_EXPORT_USAGE = (() => {
 
 const USAGE = [
   `Usage: ${CHECK_COMMAND.usage}`,
-  `       ${PROVE_COMMAND.usage}`,
   `       ${TLAPM_COMMAND.usage}`,
   "       tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>",
   "       (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)",
@@ -1174,45 +1163,6 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   }
 };
 
-// tla-ts prove: proves each module with prove, printing each obligation as it ends.
-const proveModules = (args: string[]) => {
-  const parsed = PROVE_COMMAND.parse(args);
-  const backend = parsed.get("--backend")?.[0];
-  const modulePaths = expandGlobs(parsed.positionals).map(getModulePath);
-  if (
-    parsed.unknown[0] !== undefined ||
-    parsed.incomplete ||
-    (backend !== undefined && !isProveBackend(backend)) ||
-    modulePaths.length === 0
-  ) {
-    console.error(`Usage: ${PROVE_COMMAND.usage}`);
-    return 1;
-  }
-  const libraries = getLibraryDirectories(parsed);
-  return runEach(
-    modulePaths,
-    async (path) => {
-      const result = await prove({
-        source: readFileSync(path, "utf8"),
-        loadModule: createModuleLoader([dirname(path), ...libraries]),
-        backend,
-        workers: getWorkerCount(parsed.get("-workers")),
-        onObligation: (obligation) =>
-          console.log(
-            `${path}:${obligation.location}: ${obligation.status}${obligation.status === "proved" ? ` by ${obligation.prover}` : ""}${obligation.status === "failed" || obligation.status === "unsupported" ? ` (${obligation.reason})` : ""}`,
-          ),
-      });
-      const counts = Map.groupBy(result.obligations, (obligation) => obligation.status);
-      const getCount = (status: ProofStatus) => counts.get(status)?.length ?? 0;
-      console.log(
-        `${result.obligations.length} obligations: ${getCount("proved")} proved, ${getCount("trivial")} trivial, ${getCount("failed")} failed, ${getCount("unsupported")} unsupported`,
-      );
-      return getCount("failed") + getCount("unsupported") === 0 ? EXIT_STATUS.success : 1;
-    },
-    () => createMessagePrinter(false),
-  );
-};
-
 // Toolbox.print_res_aux.
 const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
   const limit = attempt.method.timeLimitMs;
@@ -1791,7 +1741,6 @@ const runJavaClass = (launch: JavaLaunch) => {
 };
 
 const run = async (args: string[]) => {
-  if (args[0] === "prove") return reportErrors(() => proveModules(args.slice(1)));
   if (args[0] === "tlapm") return reportErrors(() => runTlapm(args.slice(1)));
   const launch = getJavaLaunch(args);
   if (launch === undefined) return checkSpecs(args, { libraries: [] });

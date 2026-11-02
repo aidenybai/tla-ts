@@ -54,17 +54,10 @@ export interface ProveResult {
   omittedProofCount: number;
 }
 
-export const PROVE_BACKENDS = ["tla-ts", "tlapm"] as const;
-
-type ProveBackend = (typeof PROVE_BACKENDS)[number];
-
-export const isProveBackend = (name: string | undefined): name is ProveBackend =>
-  PROVE_BACKENDS.some((backend) => backend === name);
-
 export interface ProveOptions {
   source: string;
   loadModule?: (name: string) => string | undefined;
-  backend?: ProveBackend;
+  backend?: "tla-ts" | "tlapm";
   signal?: AbortSignal;
   onObligation?: (obligation: ProofObligation) => void;
   workers?: number;
