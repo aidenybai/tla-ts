@@ -1,5 +1,13 @@
 # tla-ts
 
+## 0.0.7
+
+### Patch Changes
+
+- Check actions faster when other guards come before their label guard, as in `turn = self /\ pc[self] = "a"` (#342).
+- Fingerprint stored states faster by keeping the fingerprints of shared values from one level to the next (#341).
+- Check `UNCHANGED` faster on specs with many variables. It copies the state once instead of once for each variable it names (#340).
+
 ## 0.0.6
 
 ### Patch Changes
