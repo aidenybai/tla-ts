@@ -4,6 +4,7 @@ import {
   isModelValue,
   toFiniteFunction,
   toFiniteSet,
+  type ModelValue,
   type Value,
 } from "../values";
 
@@ -53,24 +54,37 @@ const SET_ENUM_VALUE = 5;
 const FCN_RCD_VALUE = 9;
 const MODEL_VALUE = 21;
 
-// Value#fingerPrint for each of TLC's value classes. A model value extends the fingerprint with
-// its UniqueString token, and TLC numbers tokens from 1 in intern order.
-const extendValue = (value: Value) => {
+// Value#fingerPrint for TLC's booleans, integers, strings, and model values, which returns how
+// many bytes it extends the fingerprint by. A model value extends the fingerprint with its
+// UniqueString token, and TLC numbers tokens from 1 in intern order.
+const extendScalar = (value: boolean | number | string | ModelValue) => {
   if (typeof value === "boolean") {
     extendByte(BOOL_VALUE);
     extendByte(value ? 116 : 102);
-  } else if (typeof value === "number") {
+    return 2;
+  }
+  if (typeof value === "number") {
     extendByte(INT_VALUE);
     extendInt(value);
-  } else if (typeof value === "string") {
+    return 5;
+  }
+  if (typeof value === "string") {
     extendByte(STRING_VALUE);
     extendInt(value.length);
     for (let index = 0; index < value.length; index++) {
       extendByte(value.charCodeAt(index));
     }
-  } else if (isModelValue(value)) {
-    extendByte(MODEL_VALUE);
-    extendInt(getStringRank(value.name) + 1);
+    return 5 + value.length;
+  }
+  extendByte(MODEL_VALUE);
+  extendInt(getStringRank(value.name) + 1);
+  return 5;
+};
+
+// Value#fingerPrint for each of TLC's value classes.
+const extendValue = (value: Value) => {
+  if (typeof value !== "object" || isModelValue(value)) {
+    extendScalar(value);
   } else if (isFunctionValue(value)) {
     const functionValue = toFiniteFunction(value);
     extendByte(FCN_RCD_VALUE);
@@ -100,24 +114,6 @@ export const getTlcFingerprint = (state: Value[]) => {
   return fingerprint;
 };
 
-const getFingerprintLength = (value: Value): number => {
-  if (typeof value === "boolean") return 2;
-  if (typeof value === "number" || isModelValue(value)) return 5;
-  if (typeof value === "string") return 5 + value.length;
-  if (isFunctionValue(value)) {
-    const functionValue = toFiniteFunction(value);
-    return functionValue.domain.reduce<number>(
-      (length, key, index) =>
-        length + getFingerprintLength(key) + getFingerprintLength(functionValue.range[index]),
-      5,
-    );
-  }
-  return toFiniteSet(value).elements.reduce<number>(
-    (length, element) => length + getFingerprintLength(element),
-    5,
-  );
-};
-
 // The fingerprint after `length` zero bytes, as one table per byte of the fingerprint it shifts.
 const createShiftTable = (length: number) => {
   const table = new Int32Array(8 * 256 * 2);
@@ -137,16 +133,22 @@ const createShiftTable = (length: number) => {
   return table;
 };
 
+// The functions and sets a fingerprinter caches before it starts over, which bounds the values it
+// keeps alive.
+const CACHED_VALUE_LIMIT = 1 << 22;
+
 // Extending a fingerprint by a byte is linear over GF(2), so extending it by a value's bytes
 // XORs the value's own fingerprint from zero into the fingerprint shifted by their length.
-// The fingerprinter caches each distinct function or set it meets, nested ones included, for one
-// pass over the stored states, as states share most of their values. It reads a state's variables
-// in `order` and writes each fingerprint's low and high words into `words`, an Int32Array over a
-// little-endian BigInt64Array.
-export const createTlcFingerprinter = (order: number[], words: Int32Array) => {
+// The fingerprinter caches each distinct function or set it meets, nested ones included, across
+// every batch of states it fingerprints, as states share most of their values, even states of
+// different levels. It reads a state's variables in `order`.
+export const createTlcFingerprinter = (order: number[], limit = CACHED_VALUE_LIMIT) => {
   const shiftTables = new Map<number, Int32Array>();
-  const indices = new Map<Value, number>();
+  const ids = new Map<Value, number>();
+  // The byte count and fingerprint from zero of each cached value, three numbers per id, and the
+  // shift table for its byte count.
   const contributions: number[] = [];
+  const contributionShiftTables: Int32Array[] = [];
   const getShiftTable = (length: number) => {
     const cached = shiftTables.get(length);
     if (cached) return cached;
@@ -156,27 +158,26 @@ export const createTlcFingerprinter = (order: number[], words: Int32Array) => {
   };
   // Extends the fingerprint by a value's bytes and returns how many there are.
   const extendElement = (value: Value): number => {
-    if (typeof value !== "object" || isModelValue(value)) {
-      extendValue(value);
-      return getFingerprintLength(value);
-    }
-    const contribution = getContribution(value);
-    const shifted = { high, low };
-    const table = getShiftTable(contributions[contribution]);
-    high = contributions[contribution + 1];
-    low = contributions[contribution + 2];
+    if (typeof value !== "object" || isModelValue(value)) return extendScalar(value);
+    const id = getId(value);
+    const table = contributionShiftTables[id];
+    const shiftedHigh = high;
+    const shiftedLow = low;
+    high = contributions[3 * id + 1];
+    low = contributions[3 * id + 2];
     for (let position = 0; position < 8; position++) {
-      const word = position < 4 ? shifted.low : shifted.high;
+      const word = position < 4 ? shiftedLow : shiftedHigh;
       const entry = (position * 256 + ((word >>> ((position & 3) * 8)) & 0xff)) * 2;
       high ^= table[entry];
       low ^= table[entry + 1];
     }
-    return contributions[contribution];
+    return contributions[3 * id];
   };
-  const getContribution = (value: Value) => {
-    const cached = indices.get(value);
+  const getId = (value: Value) => {
+    const cached = ids.get(value);
     if (cached !== undefined) return cached;
-    const outer = { high, low };
+    const outerHigh = high;
+    const outerLow = low;
     high = 0;
     low = 0;
     const length = { value: 5 };
@@ -194,21 +195,35 @@ export const createTlcFingerprinter = (order: number[], words: Int32Array) => {
       extendInt(elements.length);
       for (const element of elements) length.value += extendElement(element);
     }
-    const contribution = contributions.length;
-    indices.set(value, contribution);
+    const id = contributionShiftTables.length;
+    ids.set(value, id);
     contributions.push(length.value, high, low);
-    high = outer.high;
-    low = outer.low;
-    return contribution;
+    contributionShiftTables.push(getShiftTable(length.value));
+    high = outerHigh;
+    low = outerLow;
+    return id;
   };
-  return (state: Value[], position: number) => {
-    const outer = { high, low };
-    high = INITIAL_HIGH;
-    low = INITIAL_LOW;
-    for (const index of order) extendElement(state[index]);
-    words[2 * position] = low;
-    words[2 * position + 1] = high;
-    high = outer.high;
-    low = outer.low;
+  return (states: Value[][]) => {
+    const fingerprints = new BigInt64Array(states.length);
+    // Each fingerprint's low and high words, as a BigInt64Array is little-endian.
+    const words = new Int32Array(fingerprints.buffer);
+    const outerHigh = high;
+    const outerLow = low;
+    states.forEach((state, position) => {
+      if (ids.size >= limit) {
+        shiftTables.clear();
+        ids.clear();
+        contributions.length = 0;
+        contributionShiftTables.length = 0;
+      }
+      high = INITIAL_HIGH;
+      low = INITIAL_LOW;
+      for (const index of order) extendElement(state[index]);
+      words[2 * position] = low;
+      words[2 * position + 1] = high;
+    });
+    high = outerHigh;
+    low = outerLow;
+    return fingerprints;
   };
 };
