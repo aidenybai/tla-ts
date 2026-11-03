@@ -29,6 +29,8 @@ export type SanyModuleOrigin = "file" | "root file" | "standard";
 export interface SanyReportOptions {
   // The file name SANY's caller gives it, which it prints in its messages about the specification.
   fileName?: string;
+  // The root module's source, when it has no file, such as a spec tla-ts compiles from TypeScript.
+  rootSource?: string;
   // TLC runs SANY to print the file it parses each module from, as describeFile names it, and each
   // module it analyzes and lints.
   describeFile?: (moduleName: string, origin: SanyModuleOrigin) => string;
@@ -125,9 +127,9 @@ export const getSanyReport = (
   const standardModules = getSanyStandardModules(options.version);
   const name = options.fileName ?? rootName;
   // SANY looks for the root module where it looks for the others, its standard modules among them.
-  const source = existsSync(rootPath)
-    ? readFileSync(rootPath, "utf8")
-    : standardModules.get(rootName);
+  const source =
+    options.rootSource ??
+    (existsSync(rootPath) ? readFileSync(rootPath, "utf8") : standardModules.get(rootName));
   const lines: string[] = [];
   const write = (text: string) => {
     lines.push(text);
@@ -142,7 +144,7 @@ export const getSanyReport = (
   };
   const describeFile = options.describeFile;
   const origins = new Map<string, SanyModuleOrigin>([
-    [rootName, existsSync(rootPath) ? "file" : "standard"],
+    [rootName, options.rootSource !== undefined || existsSync(rootPath) ? "file" : "standard"],
   ]);
   const isFailed = { value: false };
   // The messages of SANY's parsing phase, which come from its validation of PlusCal, and whether
