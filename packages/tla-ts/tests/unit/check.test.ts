@@ -343,6 +343,45 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("reports a name that is not a boolean before a label that doesn't match like TLC", async () => {
+    const result = await check({
+      source: [
+        "---- MODULE M ----",
+        "VARIABLES pc, x",
+        'A(self) == x /\\ pc[self] = "z" /\\ UNCHANGED <<pc, x>>',
+        'B(self) == pc[self] = "a" /\\ pc\' = [pc EXCEPT ![self] = "b"] /\\ UNCHANGED x',
+        'Init == pc = [p \\in {1} |-> "a"] /\\ x = 0',
+        "Next == \\E self \\in {1} : A(self) \\/ B(self)",
+        "====",
+      ].join("\n"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 0.\nline 3, col 12 to line 3, col 12 of module M`,
+    ]);
+  });
+
+  it("runs every disjunct of an action before a label that doesn't match like TLC", async () => {
+    const result = await check({
+      source: [
+        "---- MODULE M ----",
+        "VARIABLES pc, x",
+        'Ready == x = 0 \\/ x = "s"',
+        'A(self) == Ready /\\ pc[self] = "z" /\\ UNCHANGED <<pc, x>>',
+        'B(self) == pc[self] = "a" /\\ pc\' = [pc EXCEPT ![self] = "b"] /\\ UNCHANGED x',
+        'Init == pc = [p \\in {1} |-> "a"] /\\ x = 0',
+        "Next == \\E self \\in {1} : A(self) \\/ B(self)",
+        "====",
+      ].join("\n"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 0 with non-integer:\n"s"`,
+    ]);
+  });
+
   it("reports a label that is not a string where the first action compares it like TLC", async () => {
     const result = await check({
       source: [

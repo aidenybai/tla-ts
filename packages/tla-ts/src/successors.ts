@@ -684,35 +684,24 @@ const toLabelGuard = (expression: Expression, environment: Environment) => {
 const getConjuncts = (expression: Expression): Expression[] =>
   expression.kind === "And" ? expression.operands.flatMap(getConjuncts) : [expression];
 
-// What may come before the label's guard: a comparison or a name.
-const isLeadingGuard = (expression: Expression) =>
-  expression.kind === "Identifier" ||
-  (expression.kind === "Apply" && (expression.operator === "=" || expression.operator === "#"));
+// What may come before the label's guard: a comparison or a name that a conjunction checks as a
+// guard. An operand with another conjunct first, such as an assignment or a name defined as an
+// action that may branch, runs in full.
+const isLeadingGuard = (expression: Expression, environment: Environment) =>
+  (expression.kind === "Identifier" ||
+    (expression.kind === "Apply" &&
+      (expression.operator === "=" || expression.operator === "#"))) &&
+  isGuard(expression, environment, false);
 
-const ignoreSuccessor: Continuation = () => {};
-
-// Runs the conjuncts before a label's guard for their errors. Their evaluator is the fast way. Where
-// it fails, such as on a primed variable, the runner does what the action would, TLC's error too.
-const compileLeadingGuards = (
-  guards: Expression[],
-  location: Expression["location"],
-  environment: Environment,
-) => {
-  const runner = compileConjunction(guards, environment, false);
-  const expression: Expression =
-    guards.length === 1 ? guards[0] : { kind: "And", operands: guards, location };
-  const evaluator = { value: undefined as Evaluator | undefined };
+// Checks the guards before a label's guard as a conjunction does, for TLC's errors.
+const compileLeadingGuards = (guards: Expression[]) => {
+  const evaluators: (Evaluator | undefined)[] = [];
   return (run: Run, scope: Scope | undefined, partial: State) => {
-    if (!run.environment.callStack) {
-      try {
-        evaluator.value ??= getEntryEvaluator(expression, run.environment);
-        evaluator.value(getContext(run, scope, partial));
-        return;
-      } catch {
-        // The runner raises the error the action would.
-      }
+    const context = getContext(run, scope, partial);
+    for (let index = 0; index < guards.length; index++) {
+      const guard = guards[index];
+      if (!holdsValue(run, guard, evaluateCached(evaluators, index, guard, context))) return;
     }
-    runner(run, scope, partial, undefined, false, ignoreSuccessor);
   };
 };
 
@@ -726,17 +715,13 @@ const getLabelGuard = (
   if (expression.kind === "And") {
     const conjuncts = getConjuncts(expression);
     const position = conjuncts.findIndex(
-      (conjunct) => !isLeadingGuard(conjunct) || toLabelGuard(conjunct, environment),
+      (conjunct) => !isLeadingGuard(conjunct, environment) || toLabelGuard(conjunct, environment),
     );
     const guard = position === -1 ? undefined : toLabelGuard(conjuncts[position], environment);
     if (!guard) return undefined;
-    const before = conjuncts.slice(0, position);
     return {
       ...guard,
-      before:
-        before.length === 0
-          ? undefined
-          : compileLeadingGuards(before, expression.location, environment),
+      before: position === 0 ? undefined : compileLeadingGuards(conjuncts.slice(0, position)),
     };
   }
   if (expression.kind === "Or") {
