@@ -662,12 +662,53 @@ const compileIdentifier = (
 
 // A PlusCal action starts with a guard such as pc[self] = "L1", and a process is a disjunction of
 // its actions. The labels an expression requires of one variable at one bound name let a
-// disjunction skip the operands whose guard is false without evaluating them.
+// disjunction skip the operands whose guard is false without evaluating them. A hand-written
+// action often puts other guards first, such as running = self /\ pc[self] = "L1". TLC evaluates
+// those before the label's guard, so a skipped operand still runs them, for their errors.
 interface LabelGuard {
   variable: number;
   argument: string;
   labels: Set<string>;
+  before: ((run: Run, scope: Scope | undefined, partial: State) => void) | undefined;
 }
+
+const toLabelGuard = (expression: Expression, environment: Environment) => {
+  if (expression.kind !== "Apply" || expression.operator !== "=" || isLocallyResolved(expression)) {
+    return undefined;
+  }
+  const target = expression.args[0];
+  const label = expression.args[1];
+  if (target.kind !== "FunctionApplication" || label.kind !== "String") return undefined;
+  const argument = target.args.length === 1 ? target.args[0] : undefined;
+  if (argument?.kind !== "Identifier" || !isLocallyResolved(argument)) return undefined;
+  const variable = getStaticVariableIndex(target.function, environment, false);
+  if (variable === undefined) return undefined;
+  return { variable, argument: argument.name, labels: new Set([label.value]) };
+};
+
+const getConjuncts = (expression: Expression): Expression[] =>
+  expression.kind === "And" ? expression.operands.flatMap(getConjuncts) : [expression];
+
+// What may come before the label's guard: a comparison or a name that a conjunction checks as a
+// guard. An operand with another conjunct first, such as an assignment or a name defined as an
+// action that may branch, runs in full.
+const isLeadingGuard = (expression: Expression, environment: Environment) =>
+  (expression.kind === "Identifier" ||
+    (expression.kind === "Apply" &&
+      (expression.operator === "=" || expression.operator === "#"))) &&
+  isGuard(expression, environment, false);
+
+// Checks the guards before a label's guard as a conjunction does, for TLC's errors.
+const compileLeadingGuards = (guards: Expression[]) => {
+  const evaluators: (Evaluator | undefined)[] = [];
+  return (run: Run, scope: Scope | undefined, partial: State) => {
+    const context = getContext(run, scope, partial);
+    for (let index = 0; index < guards.length; index++) {
+      const guard = guards[index];
+      if (!holdsValue(run, guard, evaluateCached(evaluators, index, guard, context))) return;
+    }
+  };
+};
 
 const getLabelGuard = (
   expression: Expression,
@@ -677,18 +718,16 @@ const getLabelGuard = (
   if (visited.has(expression)) return undefined;
   visited.add(expression);
   if (expression.kind === "And") {
-    const first = expression.operands[0];
-    if (first.kind !== "Apply" || first.operator !== "=" || isLocallyResolved(first)) {
-      return undefined;
-    }
-    const target = first.args[0];
-    const label = first.args[1];
-    if (target.kind !== "FunctionApplication" || label.kind !== "String") return undefined;
-    const argument = target.args.length === 1 ? target.args[0] : undefined;
-    if (argument?.kind !== "Identifier" || !isLocallyResolved(argument)) return undefined;
-    const variable = getStaticVariableIndex(target.function, environment, false);
-    if (variable === undefined) return undefined;
-    return { variable, argument: argument.name, labels: new Set([label.value]) };
+    const conjuncts = getConjuncts(expression);
+    const position = conjuncts.findIndex(
+      (conjunct) => !isLeadingGuard(conjunct, environment) || toLabelGuard(conjunct, environment),
+    );
+    const guard = position === -1 ? undefined : toLabelGuard(conjuncts[position], environment);
+    if (!guard) return undefined;
+    return {
+      ...guard,
+      before: position === 0 ? undefined : compileLeadingGuards(conjuncts.slice(0, position)),
+    };
   }
   if (expression.kind === "Or") {
     const guards = expression.operands.map((operand) =>
@@ -698,12 +737,13 @@ const getLabelGuard = (
     const isShared = guards.every(
       (guard) =>
         guard !== undefined &&
+        guard.before === undefined &&
         guard.variable === first?.variable &&
         guard.argument === first.argument,
     );
     if (!first || !isShared) return undefined;
     const labels = new Set(guards.flatMap((guard) => [...(guard?.labels ?? [])]));
-    return { variable: first.variable, argument: first.argument, labels };
+    return { variable: first.variable, argument: first.argument, labels, before: undefined };
   }
   if (expression.kind !== "Apply" || isLocallyResolved(expression)) return undefined;
   const closure = resolveGlobalOperator(expression.operator, environment);
@@ -716,7 +756,18 @@ const getLabelGuard = (
   if (!guard || argument?.kind !== "Identifier" || !isLocallyResolved(argument)) {
     return undefined;
   }
-  return { variable: guard.variable, argument: argument.name, labels: guard.labels };
+  const before = guard.before;
+  const bindArguments = before && compileArgumentScope(closure, expression.args, environment);
+  return {
+    variable: guard.variable,
+    argument: argument.name,
+    labels: guard.labels,
+    before:
+      before &&
+      bindArguments &&
+      ((run, scope, partial) =>
+        before(run, bindArguments(getContext(run, scope, partial)), partial)),
+  };
 };
 
 const getLabel = (run: Run, scope: Scope | undefined, guard: LabelGuard) => {
@@ -744,15 +795,19 @@ const compileDisjunction = (
     ? []
     : operands.map((operand) => getLabelGuard(operand, environment, new Set()));
   const dispatch = guards.find((guard) => guard !== undefined);
-  const labels = guards.map((guard) =>
+  const dispatched = guards.map((guard) =>
     guard?.variable === dispatch?.variable && guard?.argument === dispatch?.argument
-      ? guard?.labels
+      ? guard
       : undefined,
   );
   return (run, scope, partial, action, isFixed, onComplete) => {
     const label = dispatch && getLabel(run, scope, dispatch);
     for (let index = 0; index < runners.length && !run.isStopped; index++) {
-      if (label !== undefined && labels[index]?.has(label) === false) continue;
+      const guard = dispatched[index];
+      if (label !== undefined && guard?.labels.has(label) === false) {
+        guard.before?.(run, scope, partial);
+        continue;
+      }
       runners[index](run, scope, partial, action, isFixed, onComplete);
     }
   };
