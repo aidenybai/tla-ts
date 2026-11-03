@@ -40,7 +40,7 @@ npx tla-ts tlapm Module.tla  # tlapm's command line, with tla-ts's provers
 
 ## Check TypeScript
 
-tla-ts compiles a TypeScript file to a TLA+ spec and config, writes them beside the file, and checks them. Variables become state, exported functions that change state become actions, and exported functions that return a boolean become invariants.
+tla-ts compiles a TypeScript file to a TLA+ spec and config in memory, and checks them. Variables become state, exported functions that change state become actions, and exported functions that return a boolean become invariants.
 
 ```ts
 // bank.ts

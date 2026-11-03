@@ -1,6 +1,6 @@
 # Check TypeScript
 
-tla-ts checks a TypeScript file as it checks a TLA+ spec. It compiles the file to a TLA+ spec and config, writes them beside the file, and model checks every reachable state.
+tla-ts checks a TypeScript file as it checks a TLA+ spec. It compiles the file to a TLA+ spec and config in memory, and model checks every reachable state. It writes no files.
 
 ```ts
 // bank.ts
@@ -35,13 +35,11 @@ balances = [alice |-> 21, bob |-> -1]
 
 Add `if (balances[from] < amount) return;` at the top of `transfer`, and all 21 reachable states pass.
 
-## The files tla-ts writes
+## The spec tla-ts checks
 
-tla-ts names the module after the file, so `bank.ts` writes `Bank.tla` and `Bank.cfg` and `die-hard.ts` writes `DieHard.tla` and `DieHard.cfg`. Open them to read the spec, or check them with TLC.
+tla-ts names the module after the file, so `bank.ts` compiles to the module `Bank` and `die-hard.ts` to `DieHard`. TLC's output names that module, and the lines and columns in a trace are in the compiled spec, not the TypeScript file. A `Bank.tla` or `Bank.cfg` beside `bank.ts` stays as it is, and tla-ts doesn't read it.
 
-Each file starts with a comment that names its TypeScript source. tla-ts overwrites a file with that comment, and stops with an error on any other file of that name. A hand-written `Bank.tla` stays as it is.
-
-Pass TypeScript and TLA+ files in one command, as in `npx tla-ts bank.ts Spec.tla`. TLC's options, such as `-workers`, `-deadlock` and `-config`, apply to both.
+Pass TypeScript and TLA+ files in one command, as in `npx tla-ts bank.ts Spec.tla`. TLC's options, such as `-workers` and `-deadlock`, apply to both. `-config` replaces the config tla-ts compiles.
 
 ## How TypeScript maps to TLA+
 
@@ -165,7 +163,7 @@ export const add = (item: "apple" | "pear") => {
 };
 ```
 
-The generated spec names each such call in a comment:
+The compiled spec names each such call in a comment:
 
 ```tla
 \* cart.ts:7:12 fetchPrice(item) isn't compiled, so fetchPrice is any value of its type
@@ -212,11 +210,7 @@ export const isWaiting = (proc: Proc) => waiting.has(proc);
 
 ## Errors
 
-tla-ts stops with a `TlaTypeScriptError` at the file, line, and column of the problem:
-
-- **Type errors**: the file doesn't type check.
-- **No TLA+ equivalent**: the file uses TypeScript that tla-ts can't compile, such as a loop, `/`, or `typeof`.
-- **Existing file**: a `.tla` or `.cfg` file of the module's name exists, and tla-ts didn't write it.
+tla-ts stops with a `TlaTypeScriptError` at the file, line, and column of the problem. That happens when the file doesn't type check, or when it uses TypeScript that tla-ts can't compile, such as a loop, `/`, or `typeof`.
 
 ```
 TlaTypeScriptError: division.ts:4:11 Write division as Math.floor(a / b) or Math.trunc(a / b)
