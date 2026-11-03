@@ -299,6 +299,50 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("runs only the actions whose label guard after other guards matches, with TLC's counts", async () => {
+    const result = await check({
+      source: [
+        "---- MODULE M ----",
+        "EXTENDS Integers",
+        "VARIABLES pc, count, turn",
+        'A(self) == turn = self /\\ pc[self] = "a" /\\ count < 3 /\\ pc\' = [pc EXCEPT ![self] = "b"] /\\ count\' = count + 1 /\\ UNCHANGED turn',
+        'B(self) == turn = self /\\ pc[self] = "b" /\\ pc\' = [pc EXCEPT ![self] = "c"] /\\ UNCHANGED <<count, turn>>',
+        'C(self) == turn = self /\\ pc[self] = "c" /\\ pc\' = [pc EXCEPT ![self] = "a"] /\\ UNCHANGED count /\\ turn\' = 3 - self',
+        "Reset(self) == count > 2 /\\ count' = 0 /\\ UNCHANGED <<pc, turn>>",
+        "Proc(self) == A(self) \\/ B(self) \\/ C(self)",
+        'Init == pc = [p \\in {1, 2} |-> "a"] /\\ count = 0 /\\ turn \\in {1, 2}',
+        "Next == \\E self \\in {1, 2} : Proc(self) \\/ Reset(self)",
+        "====",
+      ].join("\n"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      36,
+      24,
+      10,
+    ]);
+  });
+
+  it("reports an error in a guard before a label that doesn't match like TLC", async () => {
+    const result = await check({
+      source: [
+        "---- MODULE M ----",
+        "VARIABLES pc, x",
+        'A(self) == x = "s" /\\ pc[self] = "b" /\\ UNCHANGED <<pc, x>>',
+        'B(self) == pc[self] = "a" /\\ pc\' = [pc EXCEPT ![self] = "b"] /\\ UNCHANGED x',
+        'Init == pc = [p \\in {1} |-> "a"] /\\ x = 0',
+        "Next == \\E self \\in {1} : A(self) \\/ B(self)",
+        "====",
+      ].join("\n"),
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 0 with non-integer:\n"s"`,
+    ]);
+  });
+
   it("reports a label that is not a string where the first action compares it like TLC", async () => {
     const result = await check({
       source: [
