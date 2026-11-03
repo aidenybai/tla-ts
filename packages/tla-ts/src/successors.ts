@@ -417,14 +417,19 @@ const compileConjunction = (
       if (conjunct.kind === "Unchanged") {
         const state = run.current;
         if (!state) return;
+        let unchanged: State | undefined;
         for (const variable of conjunct.indices) {
-          const assigned = current[variable];
+          const assigned = (unchanged ?? current)[variable];
           if (assigned === undefined) {
-            current = assign(current, variable, state[variable]);
-            context = undefined;
+            unchanged ??= current.slice();
+            unchanged[variable] = state[variable];
           } else if (!valuesEqual(assigned, state[variable])) {
             return;
           }
+        }
+        if (unchanged) {
+          current = unchanged;
+          context = undefined;
         }
         continue;
       }

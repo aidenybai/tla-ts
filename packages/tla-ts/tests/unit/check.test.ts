@@ -1489,6 +1489,22 @@ describe("evaluation errors match TLC", () => {
     expect(names).toEqual(["a", "b", "c"]);
   });
 
+  // Tool.processUnchangedImplVar binds each unassigned variable and compares each assigned one, so a
+  // later variable that changed drops the variables bound before it.
+  it("keeps nested tuples and operators in an UNCHANGED as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y, z\nvars == <<x, y>>\nInit == x = 0 /\\ y = 0 /\\ z = 0\nNext ==\n  \\/ z' = (z + 1) % 3 /\\ UNCHANGED <<vars, <<x>>>>\n  \\/ y' \\in {y, 1} /\\ UNCHANGED <<<<z>>, vars>>\n  \\/ x < 2 /\\ x' = x + 1 /\\ UNCHANGED <<z, <<y>>, x>>\n  \\/ x < 2 /\\ x' = x + 1 /\\ UNCHANGED <<z, y>>\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      undefined,
+      25,
+      9,
+      5,
+    ]);
+  });
+
   it("applies a function without computing the values it isn't applied to as TLC does", async () => {
     const result = await checkSteps(
       "G(n) == [k \\in {1, 2} |-> 10 \\div (k - n)]\nStep == x' = G(2)[1]",
