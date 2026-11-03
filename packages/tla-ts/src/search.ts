@@ -761,6 +761,8 @@ export const createSearch = (
     );
   };
   const isFingerprintedLikeTlc = hasWideString(config, environment);
+  // One fingerprinter for every level keeps the values it cached for the states of earlier levels.
+  let storedFingerprinter: ReturnType<typeof createTlcFingerprinter> | undefined;
   runtime.getFingerprint = getTlcStateFingerprint;
   const findUnwitnessedPossible = () => {
     const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
@@ -784,13 +786,8 @@ export const createSearch = (
       if (view !== undefined || isFingerprintedLikeTlc) {
         return BigInt64Array.from(states, getTlcStateFingerprint);
       }
-      const fingerprints = new BigInt64Array(fingerprintStates.length);
-      const fingerprint = createTlcFingerprinter(
-        getTlcOrder(),
-        new Int32Array(fingerprints.buffer),
-      );
-      fingerprintStates.forEach(fingerprint);
-      return fingerprints;
+      storedFingerprinter ??= createTlcFingerprinter(getTlcOrder());
+      return storedFingerprinter(fingerprintStates);
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
