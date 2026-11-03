@@ -1,6 +1,7 @@
 // A port of TLC's -dump writers, tlc2.util.StateWriter and tlc2.util.DotStateWriter.
 
 import type { TlcVersion } from "./tlc/version";
+import { formatState, type Value } from "./values";
 
 export interface StateDump {
   path: string;
@@ -10,12 +11,30 @@ export interface StateDump {
   snapshot?: boolean;
 }
 
+// A distinct state of the graph -dump writes, numbered from 0 in the order onState receives it.
 export interface GraphState {
+  // The state, or the record its ALIAS evaluates to, which -dump labels the state with.
+  state: Record<string, Value>;
+  // The state and the action of the step that first reached this state, or undefined for an
+  // initial state.
+  parent: number | undefined;
+  action: string | undefined;
+}
+
+// A step between two states of the graph -dump writes, in the order -dump writes it.
+export interface GraphStep {
+  from: number;
+  to: number;
+  // Undefined for the stuttering step of a state that TLC 1.7.4 adds to the behavior graph.
+  action: string | undefined;
+}
+
+export interface WrittenState {
   fingerprint: bigint;
   level: number;
-  // The state as TLC prints it after evaluating the alias, and as it prints it without the alias.
-  getLabel: () => string;
-  getText: () => string;
+  // The state after TLC evaluates the alias, and the state without the alias.
+  getAliased: () => Record<string, Value>;
+  getState: () => Record<string, Value>;
 }
 
 interface GraphAction {
@@ -24,19 +43,27 @@ interface GraphAction {
 }
 
 export interface StateWriter {
-  writeInitialState: (state: GraphState) => void;
+  writeInitialState: (state: WrittenState) => void;
   writeSuccessor: (
-    state: GraphState,
-    successor: GraphState,
+    state: WrittenState,
+    successor: WrittenState,
     isSeen: boolean,
     action: GraphAction | undefined,
   ) => void;
   // The stuttering step of a state that TLC 1.7.4 adds to the behavior graph.
-  writeStuttering: (state: GraphState) => void;
+  writeStuttering: (state: WrittenState) => void;
   close: () => void;
 }
 
-type WriteFile = ((path: string, content: string) => void) | undefined;
+interface StateWriterOptions {
+  dump?: StateDump;
+  writeFile?: (path: string, content: string) => void;
+  version?: TlcVersion;
+  onState?: (state: GraphState) => void;
+  onStep?: (step: GraphStep) => void;
+}
+
+type WriteFile = StateWriterOptions["writeFile"];
 
 const COLOR_SCHEME = "paired12";
 const LOAD_FACTOR = 0.75;
@@ -75,8 +102,8 @@ const toDotLabel = (text: string) => escapeDotString(text).replaceAll("\n", "\\n
 
 const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter => {
   const states: string[] = [];
-  const writeState = (state: GraphState) =>
-    states.push(`State ${states.length + 1}:\n${state.getText()}\n`);
+  const writeState = (state: WrittenState) =>
+    states.push(`State ${states.length + 1}:\n${formatState(state.getState())}\n`);
   return {
     writeInitialState: writeState,
     writeSuccessor: (_state, successor, isSeen) => {
@@ -106,7 +133,7 @@ const createDotWriter = (
   ];
   const ranks = new Map<number, Set<bigint>>();
   const colors = new Map<string, number>();
-  const addRank = (state: GraphState) => {
+  const addRank = (state: WrittenState) => {
     const rank = ranks.get(state.level) ?? new Set();
     ranks.set(state.level, rank.add(state.fingerprint));
   };
@@ -145,7 +172,9 @@ const createDotWriter = (
   };
   return {
     writeInitialState: (state) => {
-      lines.push(`${state.fingerprint} [label="${toDotLabel(state.getLabel())}",style = filled]\n`);
+      lines.push(
+        `${state.fingerprint} [label="${toDotLabel(formatState(state.getAliased()))}",style = filled]\n`,
+      );
       addRank(state);
       writeSnapshot();
     },
@@ -157,9 +186,9 @@ const createDotWriter = (
         `${state.fingerprint} -> ${successor.fingerprint} [label="${label}",color="${color}",fontcolor="${color}"];\n`,
       );
       if (!isSeen) {
-        const tooltip = is174 ? "" : `,tooltip="${toDotLabel(successor.getText())}"`;
+        const tooltip = is174 ? "" : `,tooltip="${toDotLabel(formatState(successor.getState()))}"`;
         lines.push(
-          `${successor.fingerprint} [label="${toDotLabel(successor.getLabel())}"${tooltip}];\n`,
+          `${successor.fingerprint} [label="${toDotLabel(formatState(successor.getAliased()))}"${tooltip}];\n`,
         );
       }
       addRank(state);
@@ -174,8 +203,52 @@ const createDotWriter = (
   };
 };
 
-export const createStateWriter = (
-  dump: StateDump,
-  writeFile: WriteFile,
-  version: TlcVersion | undefined,
-) => (dump.dot ? createDotWriter(dump, writeFile, version) : createPlainWriter(dump, writeFile));
+// The graph -dump writes, as data: a state the first time a step reaches its fingerprint, as -dump
+// writes a node, and every step -dump writes as an edge.
+const createGraphWriter = (options: StateWriterOptions): StateWriter => {
+  const indexes = new Map<bigint, number>();
+  const getIndex = (state: WrittenState) => indexes.get(state.fingerprint) ?? -1;
+  const addState = (
+    state: WrittenState,
+    parent: number | undefined,
+    action: string | undefined,
+  ) => {
+    indexes.set(state.fingerprint, indexes.size);
+    options.onState?.({ state: state.getAliased(), parent, action });
+  };
+  return {
+    writeInitialState: (state) => addState(state, undefined, undefined),
+    writeSuccessor: (state, successor, _isSeen, action) => {
+      const from = getIndex(state);
+      if (!indexes.has(successor.fingerprint)) addState(successor, from, action?.name);
+      options.onStep?.({ from, to: getIndex(successor), action: action?.name });
+    },
+    writeStuttering: (state) => {
+      const index = getIndex(state);
+      options.onStep?.({ from: index, to: index, action: undefined });
+    },
+    close: () => {},
+  };
+};
+
+export const createStateWriter = (options: StateWriterOptions): StateWriter | undefined => {
+  const dump = options.dump;
+  const writers = [
+    ...(dump
+      ? [
+          dump.dot
+            ? createDotWriter(dump, options.writeFile, options.version)
+            : createPlainWriter(dump, options.writeFile),
+        ]
+      : []),
+    ...(options.onState || options.onStep ? [createGraphWriter(options)] : []),
+  ];
+  if (writers.length < 2) return writers[0];
+  return {
+    writeInitialState: (state) => writers.forEach((writer) => writer.writeInitialState(state)),
+    writeSuccessor: (state, successor, isSeen, action) =>
+      writers.forEach((writer) => writer.writeSuccessor(state, successor, isSeen, action)),
+    writeStuttering: (state) => writers.forEach((writer) => writer.writeStuttering(state)),
+    close: () => writers.forEach((writer) => writer.close()),
+  };
+};

@@ -19,6 +19,7 @@ export {
 export { check } from "./parallel";
 export { parseModule } from "./parser";
 export { prove } from "./prover/prove";
+export type { GraphState, GraphStep } from "./state-graph";
 export type {
   ProofObligation,
   ProofStatus,

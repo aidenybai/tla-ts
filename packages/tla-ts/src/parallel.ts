@@ -109,11 +109,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   const workerCount = options.workers ?? 1;
   // TLC's workers write the -dump state graph in whichever order they find it, so one worker
-  // writes the graph a single TLC worker does.
+  // writes the graph a single TLC worker does, and reports it the same way.
   const isSequential =
     workerCount < 2 ||
     typeof SharedArrayBuffer !== "function" ||
     options.dump !== undefined ||
+    options.onState !== undefined ||
+    options.onStep !== undefined ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||
     config.possible.length > 0;
