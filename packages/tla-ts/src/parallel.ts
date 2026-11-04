@@ -25,7 +25,7 @@ import {
   reportStartup,
 } from "./search";
 import { getInitialStates } from "./successors";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
+import { createTlcOrder } from "./tlc/order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import type { TlcVersion } from "./tlc/version";
@@ -130,12 +130,14 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     classes.set(name, bytes);
     return bytes;
   };
-  setStringOrder(getTlcStringOrder(options.source, config, loadModule));
+  const order = createTlcOrder(options.source, loadModule);
+  setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule,
+    order,
     loadClass,
     print: (text) => {
       printed.count++;
@@ -153,7 +155,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const search = createSearch(
     config,
     environment,
-    () => getTlcVariableOrder(options.source, loadModule),
+    () => order.getDeclarationOrder("variable"),
     report,
   );
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();

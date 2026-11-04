@@ -75,7 +75,7 @@ import {
   withUnexpectedException,
   type FailureMessage,
 } from "./tlc/messages";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
+import { createTlcOrder } from "./tlc/order";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
@@ -406,11 +406,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       capturedOutput.lines = outer;
     }
   };
-  setStringOrder(getTlcStringOrder(options.source, config, options.loadModule));
+  const order = createTlcOrder(options.source, options.loadModule);
+  setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,
+    order,
     loadClass: options.loadClass,
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
@@ -482,7 +484,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const search = createSearch(
     config,
     environment,
-    () => getTlcVariableOrder(options.source, options.loadModule),
+    () => order.getDeclarationOrder("variable"),
     options.onProgress,
   );
   const findViolatedAssumption = () =>

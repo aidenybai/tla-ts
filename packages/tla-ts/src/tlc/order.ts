@@ -248,6 +248,33 @@ const findModule = (modules: Module[], name: string): Module | undefined =>
   modules.find((module) => module.name === name) ??
   modules.map((module) => findModule(module.modules, name)).find(Boolean);
 
+interface ModuleText {
+  tokens: Token[];
+  ranges: Map<string, { start: number; end: number }>;
+  getModule: () => Module;
+}
+
+const readModuleText = (text: string | undefined): ModuleText => {
+  const tokens = text === undefined ? [] : tokenize(text);
+  const parsed = { module: undefined as Module | undefined };
+  return {
+    tokens,
+    ranges: getRanges(tokens),
+    getModule: () => (parsed.module ??= parseModule(text ?? "")),
+  };
+};
+
+// TLC's own module sources never change, so every check shares their tokens and parse.
+const tlcModuleTexts = new Map<string, ModuleText>();
+
+const getTlcModuleText = (name: string, text: string): ModuleText => {
+  const known = tlcModuleTexts.get(name);
+  if (known) return known;
+  const read = readModuleText(text);
+  tlcModuleTexts.set(name, read);
+  return read;
+};
+
 // The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
 // returns, the modules that follow the root module, and the modules nested in any of these. A
 // module without a source has no tokens.
@@ -264,15 +291,12 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
           TLC_MODULE_SOURCES.get(name) ??
           loadModule?.(name) ??
           extractModule(source, name));
-    const tokens = text === undefined ? [] : tokenize(text);
-    const ranges = getRanges(tokens);
+    const { tokens, ranges, getModule } =
+      name !== undefined && text !== undefined && text === TLC_MODULE_SOURCES.get(name)
+        ? getTlcModuleText(name, text)
+        : readModuleText(text);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const parsed = { module: undefined as Module | undefined };
-    const file = {
-      tokens,
-      ...range,
-      getModule: () => (parsed.module ??= parseModule(text ?? "")),
-    };
+    const file = { tokens, ...range, getModule };
     files.set(name ?? "", file);
     ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
@@ -290,8 +314,9 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
 };
 
 // SANY's Context of each module, which the root module has under undefined.
-const createContexts = (source: string, loadModule: ModuleLoader) => {
-  const getParsed = createModuleSet(source, loadModule);
+type ModuleSet = ReturnType<typeof createModuleSet>;
+
+const createContexts = (getParsed: ModuleSet) => {
   const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
     const module = unit.getModule();
@@ -420,49 +445,10 @@ const createContexts = (source: string, loadModule: ModuleLoader) => {
   };
 };
 
-// The variables or constants of the root module in the reverse of its context enumeration, as
-// ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
-// order, and checks that the configuration assigns each constant in it.
-export const getTlcDeclarationOrder = (
-  source: string,
-  loadModule: ModuleLoader,
-  kind: "variable" | "constant",
-): string[] =>
-  createContexts(source, loadModule)
-    .getContext(undefined)
-    .enumerate()
-    .filter((entry) => entry.kind === kind)
-    .map((entry) => entry.name)
-    .reverse();
-
-// The names of the definitions each module adds to its context, in the order of
-// ModuleNode.getOpDefs, in which TLC computes the constant definitions as it starts. An INSTANCE
-// adds the definitions of the module it instantiates in the order that module's Hashtable
-// enumerates them.
-export const createTlcDefinitionOrder = (source: string, loadModule: ModuleLoader) => {
-  const contexts = createContexts(source, loadModule);
-  // The root module's context reads every file of the spec, and so finds the modules nested in
-  // the files it extends or instantiates.
-  contexts.getContext(undefined);
-  return (name: string | undefined) =>
-    contexts
-      .getOwnEntries(name)
-      .filter((entry) => entry.kind === "definition")
-      .map((entry) => entry.name);
-};
-
-export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader) =>
-  getTlcDeclarationOrder(source, loadModule, "variable");
-
 // Every string TLC interns before model checking starts, in order: values in the config, TLC's
 // startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, string
 // literals in semantic analysis order, and the names TLC interns for TLCGet.
-export const getTlcStringOrder = (
-  source: string,
-  config: ModelConfig,
-  loadModule: ModuleLoader,
-): string[] => {
-  const getParsed = createModuleSet(source, loadModule);
+const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => {
   const order = new Set<string>();
   const intern = (text: string) => {
     order.add(text);
@@ -562,4 +548,46 @@ export const getTlcStringOrder = (
   analyze(undefined);
   TLC_RUNTIME_STRINGS.forEach(intern);
   return [...order];
+};
+
+export interface TlcOrder {
+  // Every string TLC interns before model checking starts.
+  getStringOrder: (config: ModelConfig) => string[];
+  // The variables or constants of the root module in the reverse of its context enumeration, as
+  // ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
+  // order, and checks that the configuration assigns each constant in it.
+  getDeclarationOrder: (kind: "variable" | "constant") => string[];
+  // The names of the definitions each module adds to its context, in the order of
+  // ModuleNode.getOpDefs, in which TLC computes the constant definitions as it starts. An INSTANCE
+  // adds the definitions of the module it instantiates in the order that module's Hashtable
+  // enumerates them.
+  createDefinitionOrder: () => (name: string | undefined) => string[];
+}
+
+// One check reads the spec's modules once, and every order shares their tokens, parses and
+// contexts.
+export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrder => {
+  const getParsed = createModuleSet(source, loadModule);
+  let contexts: ReturnType<typeof createContexts> | undefined;
+  const getContexts = () => (contexts ??= createContexts(getParsed));
+  return {
+    getStringOrder: (config) => getStringOrder(getParsed, config),
+    getDeclarationOrder: (kind) =>
+      getContexts()
+        .getContext(undefined)
+        .enumerate()
+        .filter((entry) => entry.kind === kind)
+        .map((entry) => entry.name)
+        .reverse(),
+    createDefinitionOrder: () => {
+      const { getContext, getOwnEntries } = getContexts();
+      // The root module's context reads every file of the spec, and so finds the modules nested
+      // in the files it extends or instantiates.
+      getContext(undefined);
+      return (name) =>
+        getOwnEntries(name)
+          .filter((entry) => entry.kind === "definition")
+          .map((entry) => entry.name);
+    },
+  };
 };
