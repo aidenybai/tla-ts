@@ -4,7 +4,7 @@ import type { Module, SourceLocation } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
 import { tokenize, type Token } from "../lexer";
-import { extractModule, parseModule } from "../parser";
+import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
 import {
   SANY_BUILTINS,
@@ -274,7 +274,8 @@ const readModuleText = (text: string | undefined): ModuleText => {
   return {
     tokens,
     ranges: getRanges(tokens),
-    getModule: () => (parsed.module ??= parseModule(text ?? "")),
+    getModule: () =>
+      (parsed.module ??= text === undefined ? parseModule("") : parseModuleTokens(text, tokens)),
   };
 };
 
