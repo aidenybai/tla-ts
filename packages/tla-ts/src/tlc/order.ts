@@ -21,6 +21,7 @@ type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem"
 interface SymbolEntry {
   key: string;
   name: string;
+  hash: number;
   kind: SymbolKind;
   isLocal: boolean;
 }
@@ -64,38 +65,47 @@ const getJavaHash = (text: string) => {
 };
 
 // java.util.Hashtable as SANY's Context uses it: default capacity 11, load factor 0.75, new
-// entries at the head of their bucket, and enumeration from the last bucket to the first.
+// entries at the head of their bucket, and enumeration from the last bucket to the first. Each
+// bucket lists its entries from tail to head, so a new entry goes at the end.
 const createSymbolTable = (): SymbolTable => {
-  const table = { buckets: Array.from({ length: 11 }, (): SymbolEntry[] => []), threshold: 8 };
+  let buckets: SymbolEntry[][] = Array.from({ length: 11 }, () => []);
+  let threshold = 8;
   const keys = new Set<string>();
   const inserted: SymbolEntry[] = [];
-  const getBucket = (entry: SymbolEntry, capacity: number) =>
-    (getJavaHash(entry.name) & 0x7fffffff) % capacity;
-  const rehash = () => {
-    const capacity = table.buckets.length * 2 + 1;
-    const buckets = Array.from({ length: capacity }, (): SymbolEntry[] => []);
-    for (let index = table.buckets.length - 1; index >= 0; index--) {
-      for (const entry of table.buckets[index]) buckets[getBucket(entry, capacity)].unshift(entry);
+  const forEachEntry = (visit: (entry: SymbolEntry) => void) => {
+    for (let index = buckets.length - 1; index >= 0; index--) {
+      const bucket = buckets[index];
+      for (let position = bucket.length - 1; position >= 0; position--) visit(bucket[position]);
     }
-    table.buckets = buckets;
-    table.threshold = Math.floor(capacity * 0.75);
+  };
+  const rehash = () => {
+    const capacity = buckets.length * 2 + 1;
+    const rehashed: SymbolEntry[][] = Array.from({ length: capacity }, () => []);
+    forEachEntry((entry) => rehashed[entry.hash % capacity].push(entry));
+    buckets = rehashed;
+    threshold = Math.floor(capacity * 0.75);
   };
   return {
     put: (entry) => {
       if (keys.has(entry.key)) return;
-      if (inserted.length >= table.threshold) rehash();
-      table.buckets[getBucket(entry, table.buckets.length)].unshift(entry);
+      if (inserted.length >= threshold) rehash();
+      buckets[entry.hash % buckets.length].push(entry);
       keys.add(entry.key);
       inserted.push(entry);
     },
     inserted,
-    enumerate: () => table.buckets.toReversed().flat(),
+    enumerate: () => {
+      const entries: SymbolEntry[] = [];
+      forEachEntry((entry) => entries.push(entry));
+      return entries;
+    },
   };
 };
 
-const createEntry = (name: string, kind: SymbolKind, isLocal: boolean) => ({
+const createEntry = (name: string, kind: SymbolKind, isLocal: boolean): SymbolEntry => ({
   key: kind === "module" ? `module ${name}` : name,
   name,
+  hash: getJavaHash(name) & 0x7fffffff,
   kind,
   isLocal,
 });
