@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import {
   check,
@@ -24,6 +26,7 @@ import { getExitCode } from "../../src/exit-codes";
 import type { TlcVersion } from "../../src/tlc/version";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
+const DIST = join(import.meta.dirname, "../../dist/index.js");
 
 const checkModule = (body: string, config = "") =>
   check({
@@ -5148,4 +5151,22 @@ describe("check matches TLC 1.7.4", () => {
       await expect(result).rejects.toThrow(new TlaEvaluationError(message));
     },
   );
+});
+
+describe("check without code generation from strings", () => {
+  it("checks a spec like it does with code generation", async () => {
+    const options = {
+      source:
+        "---- MODULE M ----\nVARIABLE present\nInit == present = FALSE\nNext == UNCHANGED present\nInv == ~present \\/ present\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    };
+    const script = `const tlaTs = await import(${JSON.stringify(pathToFileURL(DIST).href)});
+console.log(JSON.stringify(await tlaTs.check(${JSON.stringify(options)})));`;
+    const output = execFileSync(
+      process.execPath,
+      ["--disallow-code-generation-from-strings", "--input-type=module", "--eval", script],
+      { encoding: "utf8" },
+    );
+    expect(JSON.parse(output)).toEqual(JSON.parse(JSON.stringify(await check(options))));
+  });
 });
