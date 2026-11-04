@@ -301,9 +301,8 @@ export const createEnvironment = (
   config: ModelConfig,
   options: EnvironmentOptions,
 ): Specification => {
-  const root = parseModule(options.source);
-  let order = options.order;
-  const getOrder = () => (order ??= createTlcOrder(options.source, options.loadModule));
+  const order = options.order ?? createTlcOrder(options.source, options.loadModule);
+  const root = order.getRootModule();
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
   // The definition each instance copy came from, and the instance parameters the copy adds.
@@ -1226,9 +1225,8 @@ export const createEnvironment = (
   if (unassigned.length > 0 && !options.isUnconfigured) {
     // TLC reports the first constant it finds unassigned in SANY's order of declarations.
     const name =
-      getOrder()
-        .getDeclarationOrder("constant")
-        .find((constant) => unassigned.includes(constant)) ?? unassigned[0];
+      order.getDeclarationOrder("constant").find((constant) => unassigned.includes(constant)) ??
+      unassigned[0];
     throw new TlaConfigError(
       `The constant parameter ${name} is not assigned a value by the configuration file.`,
     );
@@ -1302,7 +1300,7 @@ export const createEnvironment = (
   const instantiated = new Set(
     linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
   );
-  const getDefinitionOrder = getOrder().createDefinitionOrder();
+  const getDefinitionOrder = order.createDefinitionOrder();
   return {
     environment,
     assumptions,

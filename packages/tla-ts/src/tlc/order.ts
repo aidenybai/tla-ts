@@ -561,6 +561,8 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
 };
 
 export interface TlcOrder {
+  // The root module, parsed once for the order and the environment.
+  getRootModule: () => Module;
   // Every string TLC interns before model checking starts.
   getStringOrder: (config: ModelConfig) => string[];
   // The variables or constants of the root module in the reverse of its context enumeration, as
@@ -581,6 +583,7 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));
   return {
+    getRootModule: () => getParsed(undefined).getModule(),
     getStringOrder: (config) => getStringOrder(getParsed, config),
     getDeclarationOrder: (kind) =>
       getContexts()
