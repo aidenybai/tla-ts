@@ -7,6 +7,16 @@ export interface ModelValue {
   name: string;
   type: string | undefined;
   rank: number;
+  hash: number;
+  fingerprint: number;
+}
+
+// What TLC keeps on a set it builds lazily: the enumeration it converted to and cached, as
+// SetPredValue#convertAndCache does, whether it has cached it, and whether it has fingerprinted it.
+interface LazySet {
+  enumerated?: SetValue;
+  isCached?: boolean;
+  isFingerprinted?: boolean;
 }
 
 export interface SetValue {
@@ -19,7 +29,7 @@ export interface SetValue {
 
 // A set enumeration whose elements TLC can't sort, such as {1, "a"}. TLC sorts a set enumeration
 // only when it has to, so it still checks membership in one element by element.
-export interface MixedSetValue {
+export interface MixedSetValue extends LazySet {
   kind: "MixedSet";
   elements: Value[];
 }
@@ -46,34 +56,34 @@ export interface InfiniteSetValue {
   name: "Nat" | "Int" | "STRING" | "Any";
 }
 
-export interface SubsetValue {
+export interface SubsetValue extends LazySet {
   kind: "Subset";
   base: Value;
 }
 
-export interface FunctionSetValue {
+export interface FunctionSetValue extends LazySet {
   kind: "FunctionSet";
   domain: Value;
   range: Value;
 }
 
-export interface RecordSetValue {
+export interface RecordSetValue extends LazySet {
   kind: "RecordSet";
   names: string[];
   sets: Value[];
 }
 
-export interface ProductSetValue {
+export interface ProductSetValue extends LazySet {
   kind: "ProductSet";
   factors: Value[];
 }
 
-export interface SequenceSetValue {
+export interface SequenceSetValue extends LazySet {
   kind: "SequenceSet";
   base: Value;
 }
 
-export interface SetOperationValue {
+export interface SetOperationValue extends LazySet {
   kind: "SetOperation";
   operator: "\\cup" | "\\cap" | "\\";
   left: Value;
@@ -86,7 +96,7 @@ interface FilteredSetSource {
   predicate: string;
 }
 
-export interface FilteredSetValue {
+export interface FilteredSetValue extends LazySet {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value) => boolean;
@@ -94,7 +104,7 @@ export interface FilteredSetValue {
 }
 
 // UNION S when some element of S isn't a set enumeration. TLC enumerates it only when it has to.
-export interface UnionValue {
+export interface UnionValue extends LazySet {
   kind: "Union";
   base: Value;
 }
@@ -109,12 +119,16 @@ export interface LazyFunctionSource {
   body: string;
 }
 
+// enumerated is the FcnRcdValue TLC converts the function to and keeps, as FcnLambdaValue#toFcnRcd
+// does, from the first time it compares or fingerprints the function.
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
   apply: (argument: Value) => Value;
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
+  enumerated?: FunctionValue;
+  isFingerprinted?: boolean;
 }
 
 export type Value =
@@ -138,6 +152,26 @@ export type Value =
   | LazyFunctionValue;
 
 export type ObjectValue = Exclude<Value, boolean | number | string>;
+
+// The sets TLC builds lazily, which it converts and caches as it uses them.
+type ConvertibleSetValue =
+  | MixedSetValue
+  | SubsetValue
+  | FunctionSetValue
+  | RecordSetValue
+  | ProductSetValue
+  | SequenceSetValue
+  | SetOperationValue
+  | FilteredSetValue
+  | UnionValue;
+
+const isLazySet = (value: ObjectValue): value is ConvertibleSetValue =>
+  value.kind !== "ModelValue" &&
+  value.kind !== "Set" &&
+  value.kind !== "Function" &&
+  value.kind !== "Interval" &&
+  value.kind !== "InfiniteSet" &&
+  value.kind !== "LazyFunction";
 
 export const MAXIMUM_INTEGER = 2147483647;
 export const MINIMUM_INTEGER = -2147483648;
@@ -430,6 +464,8 @@ export const createModelValue = (name: string): ModelValue => {
     name,
     type: name.length > 2 && name[1] === "_" ? name[0] : undefined,
     rank: getStringRank(name),
+    hash: finalizeHash(combineHash(hashString(name), 0x6d)),
+    fingerprint: finalizeFingerprint(fingerprintString(name) ^ 0x3c),
   };
   modelValues.set(name, value);
   return value;
@@ -480,12 +516,9 @@ export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunc
   functionValue: FunctionLike,
 ) => setFunctionClass(functionValue, "lambda");
 
-const fingerprintedValues = new WeakSet<ObjectValue>();
-
-// The lazy sets TLC has cached the elements of. TLC caches a set as the receiver of compareTo,
-// equals, size, and fingerPrint, not as their argument, and enumerates the sets an uncached one
-// combines, duplicates and all.
-const cachedSets = new WeakSet<ObjectValue>();
+// TLC caches a lazy set as the receiver of compareTo, equals, size, and fingerPrint, not as their
+// argument, and enumerates the sets an uncached one combines, duplicates and all.
+const isCachedSet = (value: ObjectValue) => isLazySet(value) && value.isCached === true;
 
 // Whether the spec has built a UNION or \cup set, the sets that stream duplicates, so that a spec
 // without one skips tracking what TLC caches.
@@ -512,9 +545,10 @@ const cacheSet = (value: Value) => {
   if (
     streamedSetPresence.isPresent &&
     typeof value === "object" &&
+    isLazySet(value) &&
     STREAMING_KINDS.has(value.kind)
   ) {
-    cachedSets.add(value);
+    value.isCached = true;
   }
 };
 
@@ -524,13 +558,11 @@ export const markFingerprinted = (value: Value): void => {
   if ((!lambdaPresence.isPresent && !streamedSetPresence.isPresent) || typeof value !== "object") {
     return;
   }
-  if (value.kind === "Function" || value.kind === "Set") {
-    if (value.isFingerprinted) return;
-    value.isFingerprinted = true;
-  } else {
-    if (fingerprintedValues.has(value)) return;
-    fingerprintedValues.add(value);
+  if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
+    return;
   }
+  if (value.isFingerprinted) return;
+  value.isFingerprinted = true;
   if (value.kind === "Function") {
     if (value.functionClass === "lambda") value.functionClass = undefined;
     value.domain.forEach(markFingerprinted);
@@ -1565,15 +1597,13 @@ const enumerateSet = (
   }
 };
 
-const finiteSets = new WeakMap<ObjectValue, SetValue>();
-
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
   if (typeof value === "object" && value.kind === "Interval") {
     return createSortedSet(enumerateSet(value));
   }
-  const cached = typeof value === "object" ? finiteSets.get(value) : undefined;
-  if (cached) return cached;
+  const lazy = typeof value === "object" && isLazySet(value) ? value : undefined;
+  if (lazy?.enumerated) return lazy.enumerated;
   const sets = setTrace.sets;
   sets?.push(value);
   const elements = enumerateSet(value);
@@ -1588,14 +1618,14 @@ export const toFiniteSet = (value: Value): SetValue => {
       value.kind === "FunctionSet" ||
       value.kind === "Subset");
   const set = isSorted ? createSortedSet(elements) : createSet(elements);
-  if (typeof value === "object") finiteSets.set(value, set);
+  if (lazy) lazy.enumerated = set;
   return set;
 };
 
 // TLC's Enumerator for a lazy set streams the sets it combines until the set caches its elements,
 // so an element that two of them share comes up once for each.
 export const getStreamedElements = (value: Value): Value[] => {
-  if (typeof value !== "object" || cachedSets.has(value)) return toFiniteSet(value).elements;
+  if (typeof value !== "object" || isCachedSet(value)) return toFiniteSet(value).elements;
   const sets = setTrace.sets;
   sets?.push(value);
   const elements = streamElements(value);
@@ -1647,7 +1677,7 @@ export const isSettledValue = (value: Value): boolean => {
 // Whether a set streams its elements in another order than the normalized set, so that a set of
 // tuples, records, or functions it is a component of has to stream too.
 const isStreamedApart = (value: Value): boolean => {
-  if (typeof value !== "object" || cachedSets.has(value)) return false;
+  if (typeof value !== "object" || isCachedSet(value)) return false;
   if (value.kind === "Union") return true;
   if (value.kind === "FilteredSet") return isStreamedApart(value.base);
   if (value.kind === "SetOperation") {
@@ -2102,15 +2132,17 @@ export const isUpdatedElementOf = (element: Value, member: Value, set: Value): b
 export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "Function") return value;
   if (typeof value === "object" && value.kind === "LazyFunction") {
+    if (value.enumerated) return value.enumerated;
     if (!isEnumerable(value.domain)) getCardinality(value.domain);
     const domain = getFunctionDomain(value.domain);
-    return setFunctionClass(
+    value.enumerated = setFunctionClass(
       createSortedFunction(
         domain,
         domain.map((key) => value.apply(key)),
       ),
       getFunctionClass(value),
     );
+    return value.enumerated;
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
 };
@@ -2315,8 +2347,6 @@ export const updateFunction = (
   return updated;
 };
 
-const valueHashes = new WeakMap<ObjectValue, number>();
-
 const HASH_SEED = 0x811c9dc5;
 
 const finalizeHash = (hash: number) => {
@@ -2348,11 +2378,9 @@ const getEntryContribution = (keyHash: number, valueHash: number) =>
 // when TLC fingerprints it.
 const UNFINGERPRINTABLE_HASH = 0x2f6b1c4d;
 
-const computeValueHash = (value: ObjectValue) => {
-  if (value.kind === "ModelValue") return finalizeHash(combineHash(hashString(value.name), 0x6d));
-  if (isSetValue(value)) {
-    if (!isEnumerable(value)) return UNFINGERPRINTABLE_HASH;
-    const elements = toFiniteSet(value).elements;
+const computeValueHash = (value: SetValue | FunctionValue) => {
+  if (value.kind === "Set") {
+    const elements = value.elements;
     let hash = SET_HASH_SEED;
     for (let index = 0; index < elements.length; index++) {
       const elementHash = getValueHash(elements[index]);
@@ -2361,12 +2389,10 @@ const computeValueHash = (value: ObjectValue) => {
     }
     return hash;
   }
-  if (value.kind === "LazyFunction" && !isEnumerable(value.domain)) return UNFINGERPRINTABLE_HASH;
-  const functionValue = toFiniteFunction(value);
   let hash = FUNCTION_HASH_SEED;
-  for (let index = 0; index < functionValue.domain.length; index++) {
-    const keyHash = getValueHash(functionValue.domain[index]);
-    const itemHash = getValueHash(functionValue.range[index]);
+  for (let index = 0; index < value.domain.length; index++) {
+    const keyHash = getValueHash(value.domain[index]);
+    const itemHash = getValueHash(value.range[index]);
     if (keyHash === UNFINGERPRINTABLE_HASH || itemHash === UNFINGERPRINTABLE_HASH) {
       return UNFINGERPRINTABLE_HASH;
     }
@@ -2442,14 +2468,14 @@ export const getValueHash = (value: Value): number => {
     if (value.hash === 0) value.hash = computeValueHash(value);
     return value.hash;
   }
-  const cached = valueHashes.get(value);
-  if (cached !== undefined) return cached;
-  const hash = computeValueHash(value);
-  valueHashes.set(value, hash);
-  return hash;
+  if (value.kind === "ModelValue") return value.hash;
+  if (value.kind === "LazyFunction") {
+    return isEnumerable(value.domain)
+      ? getValueHash(toFiniteFunction(value))
+      : UNFINGERPRINTABLE_HASH;
+  }
+  return isEnumerable(value) ? getValueHash(toFiniteSet(value)) : UNFINGERPRINTABLE_HASH;
 };
-
-const valueFingerprints = new WeakMap<ObjectValue, number>();
 
 const finalizeFingerprint = (hash: number) => {
   const first = Math.imul(hash ^ (hash >>> 15), 0x2c1b3c6d);
@@ -2472,23 +2498,18 @@ const getEntryFingerprint = (key: Value, value: Value) =>
     (Math.imul(getValueFingerprint(key), 0x165667b1) + getValueFingerprint(value)) | 0,
   );
 
-const computeValueFingerprint = (value: ObjectValue) => {
-  if (value.kind === "ModelValue") return finalizeFingerprint(fingerprintString(value.name) ^ 0x3c);
-  if (isSetValue(value)) {
-    if (!isEnumerable(value)) return fingerprintString(getValueKey(value));
-    const elements = toFiniteSet(value).elements;
+const computeValueFingerprint = (value: SetValue | FunctionValue) => {
+  if (value.kind === "Set") {
+    const elements = value.elements;
     let fingerprint = 0x1b873593;
     for (let index = 0; index < elements.length; index++) {
       fingerprint = (fingerprint + getElementFingerprint(elements[index])) | 0;
     }
     return fingerprint;
   }
-  const functionValue = toFiniteFunction(value);
   let fingerprint = 0x4cf5ad43;
-  for (let index = 0; index < functionValue.domain.length; index++) {
-    fingerprint =
-      (fingerprint + getEntryFingerprint(functionValue.domain[index], functionValue.range[index])) |
-      0;
+  for (let index = 0; index < value.domain.length; index++) {
+    fingerprint = (fingerprint + getEntryFingerprint(value.domain[index], value.range[index])) | 0;
   }
   return fingerprint;
 };
@@ -2501,24 +2522,18 @@ export const getValueFingerprint = (value: Value): number => {
     if (value.fingerprint === 0) value.fingerprint = computeValueFingerprint(value);
     return value.fingerprint;
   }
-  const cached = valueFingerprints.get(value);
-  if (cached !== undefined) return cached;
-  const fingerprint = computeValueFingerprint(value);
-  valueFingerprints.set(value, fingerprint);
-  return fingerprint;
+  if (value.kind === "ModelValue") return value.fingerprint;
+  if (value.kind === "LazyFunction") return getValueFingerprint(toFiniteFunction(value));
+  return isEnumerable(value)
+    ? getValueFingerprint(toFiniteSet(value))
+    : fingerprintString(getValueKey(value));
 };
-
-const valueKeys = new WeakMap<ObjectValue, string>();
 
 export const getValueKey = (value: Value): string => {
   if (typeof value === "boolean") return value ? "T" : "F";
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return JSON.stringify(value);
-  const cached = valueKeys.get(value);
-  if (cached !== undefined) return cached;
-  const key = computeValueKey(value);
-  valueKeys.set(value, key);
-  return key;
+  return computeValueKey(value);
 };
 
 const computeValueKey = (value: ObjectValue) => {

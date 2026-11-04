@@ -38,7 +38,6 @@ interface ParsedModule {
   tokens: Token[];
   start: number;
   end: number;
-  isTlcSource: boolean;
   getModule: () => Module;
 }
 
@@ -126,7 +125,8 @@ const getDeclaredName = (tokens: Token[], start: number) => {
     return { name: first.text === "-" ? "-." : getCanonicalName(first.text), end: start + 2 };
   }
   if (second?.text !== "(") return { name: first.text, end: start + 1 };
-  const close = tokens.findIndex((token, index) => index > start && token.text === ")");
+  let close = start + 2;
+  while (close < tokens.length && tokens[close].text !== ")") close++;
   return { name: first.text, end: close + 1 };
 };
 
@@ -268,6 +268,8 @@ interface ModuleText {
   getModule: () => Module;
 }
 
+// A module's source is read into tokens once, and parsed from them once, for every order and for
+// the environment that evaluates it.
 const readModuleText = (text: string | undefined): ModuleText => {
   const tokens = text === undefined ? [] : tokenize(text);
   const parsed = { module: undefined as Module | undefined };
@@ -279,23 +281,21 @@ const readModuleText = (text: string | undefined): ModuleText => {
   };
 };
 
-// TLC's own module sources never change, so every check shares their tokens and parse.
-const tlcModuleTexts = new Map<string, ModuleText>();
-
-const getTlcModuleText = (name: string, text: string): ModuleText => {
-  const known = tlcModuleTexts.get(name);
-  if (known) return known;
-  const read = readModuleText(text);
-  tlcModuleTexts.set(name, read);
-  return read;
-};
-
 // The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
 // returns, the modules that follow the root module, and the modules nested in any of these. A
 // module without a source has no tokens.
 const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   const files = new Map<string, ParsedModule>();
   const nestedModules = new Map<string, ParsedModule>();
+  // The read of each module text, so that the environment parses a text the order read only once.
+  const texts = new Map<string, ModuleText>();
+  const readText = (text: string | undefined) => {
+    const known = text === undefined ? undefined : texts.get(text);
+    if (known) return known;
+    const read = readModuleText(text);
+    if (text !== undefined) texts.set(text, read);
+    return read;
+  };
   const getFile = (name: string | undefined) => {
     const cached = files.get(name ?? "");
     if (cached) return cached;
@@ -306,52 +306,32 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
           TLC_MODULE_SOURCES.get(name) ??
           loadModule?.(name) ??
           extractModule(source, name));
-    const isTlcSource =
-      name !== undefined && text !== undefined && text === TLC_MODULE_SOURCES.get(name);
-    const { tokens, ranges, getModule } = isTlcSource
-      ? getTlcModuleText(name, text)
-      : readModuleText(text);
+    const { tokens, ranges, getModule } = readText(text);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const file = { tokens, ...range, isTlcSource, getModule };
+    const file = { tokens, ...range, getModule };
     files.set(name ?? "", file);
     ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
       nestedModules.set(nestedName, {
         tokens,
         ...nestedRange,
-        isTlcSource: false,
         getModule: () => findModule(file.getModule().modules, nestedName) ?? file.getModule(),
       });
     });
     return file;
   };
   getFile(undefined);
-  return (name: string | undefined): ParsedModule =>
-    (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name);
+  return {
+    getParsed: (name: string | undefined): ParsedModule =>
+      (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name),
+    parseText: (text: string) => readText(text).getModule(),
+  };
 };
 
 // SANY's Context of each module, which the root module has under undefined.
-type ModuleSet = ReturnType<typeof createModuleSet>;
-
-// The Context of one of TLC's own modules is the same in every check when every module it extends
-// or instantiates is also TLC's own.
-const tlcContexts = new Map<string, SymbolTable>();
+type ModuleSet = ReturnType<typeof createModuleSet>["getParsed"];
 
 const createContexts = (getParsed: ModuleSet) => {
-  const sharedModules = new Map<string, boolean>();
-  const isShared = (name: string): boolean => {
-    const known = sharedModules.get(name);
-    if (known !== undefined) return known;
-    sharedModules.set(name, false);
-    const unit = getParsed(name);
-    const module = unit.isTlcSource ? unit.getModule() : undefined;
-    const shared =
-      module !== undefined &&
-      module.extends.every((extended) => isShared(extended)) &&
-      module.instances.every((instance) => isShared(instance.module));
-    sharedModules.set(name, shared);
-    return shared;
-  };
   const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
     const module = unit.getModule();
@@ -452,8 +432,7 @@ const createContexts = (getParsed: ModuleSet) => {
 
   const contexts = new Map<string, SymbolTable>();
   const getContext = (name: string | undefined): SymbolTable => {
-    const isTlcContext = name !== undefined && isShared(name);
-    const cached = contexts.get(name ?? "") ?? (isTlcContext ? tlcContexts.get(name) : undefined);
+    const cached = contexts.get(name ?? "");
     if (cached) return cached;
     const table = createSymbolTable();
     contexts.set(name ?? "", table);
@@ -468,7 +447,6 @@ const createContexts = (getParsed: ModuleSet) => {
     );
     table.ownStart = table.inserted.length;
     getUnits(unit).forEach((item) => item.apply(table));
-    if (isTlcContext) tlcContexts.set(name, table);
     return table;
   };
   return {
@@ -586,8 +564,6 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
 };
 
 export interface TlcOrder {
-  // The root module, parsed once for the order and the environment.
-  getRootModule: () => Module;
   // Every string TLC interns before model checking starts.
   getStringOrder: (config: ModelConfig) => string[];
   // The variables or constants of the root module in the reverse of its context enumeration, as
@@ -599,16 +575,18 @@ export interface TlcOrder {
   // adds the definitions of the module it instantiates in the order that module's Hashtable
   // enumerates them.
   createDefinitionOrder: () => (name: string | undefined) => string[];
+  // Parses a module's source, once for the order and the environment.
+  parseModule: (source: string) => Module;
 }
 
 // One check reads the spec's modules once, and every order shares their tokens, parses and
 // contexts.
 export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrder => {
-  const getParsed = createModuleSet(source, loadModule);
+  const modules = createModuleSet(source, loadModule);
+  const getParsed = modules.getParsed;
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));
   return {
-    getRootModule: () => getParsed(undefined).getModule(),
     getStringOrder: (config) => getStringOrder(getParsed, config),
     getDeclarationOrder: (kind) =>
       getContexts()
@@ -617,6 +595,7 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
         .filter((entry) => entry.kind === kind)
         .map((entry) => entry.name)
         .reverse(),
+    parseModule: modules.parseText,
     createDefinitionOrder: () => {
       const { getContext, getOwnEntries } = getContexts();
       // The root module's context reads every file of the spec, and so finds the modules nested

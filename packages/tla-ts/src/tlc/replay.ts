@@ -1,5 +1,6 @@
 import type { Expression, SourceLocation } from "../ast";
 import { TlaEvaluationError } from "../errors";
+import { isConstantLevel } from "../dependencies";
 import {
   bindDefinitions,
   bindLazyArguments,
@@ -9,7 +10,6 @@ import {
   freezeCallStack,
   getLazyFunction,
   toKeepLazyContext,
-  isConstantLevel,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,

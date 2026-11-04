@@ -13,40 +13,15 @@ import {
   isEnumerable,
   isFunctionValue,
   isModelValue,
-  isSameValue,
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
   type ModelValue,
-  type ObjectValue,
   type Value,
 } from "./values";
 
+// The image of each model value a permutation moves, by name.
 type Images = Map<string, ModelValue>;
-
-const CACHE_LIMIT = 1 << 22;
-const CACHED_SIZE_LIMIT = 64;
-
-interface Permutation {
-  images: Images;
-  cache: WeakMap<ObjectValue, Value>;
-  cacheSize: number;
-  cacheLimit: number;
-}
-
-// The images of one value under every permutation, the identity first, and how each image compares
-// with the image of each permutation the search has held as the smallest.
-interface Orbit {
-  images: Value[];
-  comparisons: (Int8Array | undefined)[];
-}
-
-interface SymmetryGroup {
-  permutations: Permutation[];
-  orbits: WeakMap<ObjectValue, Orbit>;
-  orbitCount: number;
-  orbitLimit: number;
-}
 
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
@@ -104,7 +79,7 @@ export const getSymmetryGroup = (
   name: string,
   environment: Environment,
   substitutions: Substitution[],
-): SymmetryGroup | undefined => {
+): Images[] | undefined => {
   const definition = environment.definitions.get(name);
   if (definition === undefined && !environment.constants.has(name)) {
     throw new TlaConfigError(
@@ -187,29 +162,18 @@ export const getSymmetryGroup = (
     }),
   );
   if (group.size === 0) return undefined;
-  const cacheLimit = Math.max(256, Math.floor(CACHE_LIMIT / group.size));
-  return {
-    permutations: [...group.values()].map((images) => ({
-      images,
-      cache: new WeakMap<ObjectValue, Value>(),
-      cacheSize: 0,
-      cacheLimit,
-    })),
-    orbits: new WeakMap(),
-    orbitCount: 0,
-    orbitLimit: cacheLimit,
-  };
+  return [...group.values()];
 };
 
-const permuteElements = (elements: Value[], permutation: Permutation) => {
+const permuteElements = (elements: Value[], images: Images) => {
   for (let index = 0; index < elements.length; index++) {
     const element = elements[index];
-    const permuted = permuteValue(element, permutation);
+    const permuted = permuteValue(element, images);
     if (permuted === element) continue;
     const result = elements.slice(0, index);
     result.push(permuted);
     for (let rest = index + 1; rest < elements.length; rest++) {
-      result.push(permuteValue(elements[rest], permutation));
+      result.push(permuteValue(elements[rest], images));
     }
     return result;
   }
@@ -218,11 +182,11 @@ const permuteElements = (elements: Value[], permutation: Permutation) => {
 
 // A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
 // in order, so it sorts only the moved ones and merges them back.
-const permuteSortedElements = (elements: Value[], permutation: Permutation) => {
+const permuteSortedElements = (elements: Value[], images: Images) => {
   const kept: Value[] = [];
   const moved: Value[] = [];
   for (const element of elements) {
-    const permuted = permuteValue(element, permutation);
+    const permuted = permuteValue(element, images);
     if (permuted === element) kept.push(element);
     else moved.push(permuted);
   }
@@ -243,43 +207,20 @@ const permuteSortedElements = (elements: Value[], permutation: Permutation) => {
   return merged;
 };
 
-const getSize = (value: ObjectValue) =>
-  value.kind === "Set"
-    ? value.elements.length
-    : value.kind === "Function"
-      ? value.domain.length
-      : 0;
-
-const permuteValue = (value: Value, permutation: Permutation): Value => {
+// Value#permute: the value with each model value replaced by its image. A value the permutation
+// doesn't move is returned itself, so that comparing it with itself stops at identity.
+const permuteValue = (value: Value, images: Images): Value => {
   if (typeof value !== "object") return value;
-  if (value.kind === "ModelValue") return permutation.images.get(value.name) ?? value;
-  const size = getSize(value);
-  if (size === 0 || size > CACHED_SIZE_LIMIT) return computePermutedValue(value, permutation);
-  const cached = permutation.cache.get(value);
-  if (cached !== undefined) return cached;
-  const computed = computePermutedValue(value, permutation);
-  // A permutation often maps a value to an equal one. Keeping the original lets the comparison
-  // with the smallest state so far stop at identity.
-  const permuted = computed !== value && isSameValue(computed, value) ? value : computed;
-  if (permutation.cacheSize >= permutation.cacheLimit) {
-    permutation.cache = new WeakMap();
-    permutation.cacheSize = 0;
-  }
-  permutation.cache.set(value, permuted);
-  permutation.cacheSize++;
-  return permuted;
-};
-
-const computePermutedValue = (value: ObjectValue, permutation: Permutation) => {
   const kind = value.kind;
+  if (kind === "ModelValue") return images.get(value.name) ?? value;
   if (kind === "Set") {
-    const elements = permuteSortedElements(value.elements, permutation);
+    const elements = permuteSortedElements(value.elements, images);
     return elements ? createSortedSet(elements) : value;
   }
   if (kind === "Function" || (kind === "LazyFunction" && isEnumerable(value.domain))) {
     const functionValue = toFiniteFunction(value);
-    const domain = permuteElements(functionValue.domain, permutation);
-    const range = permuteElements(functionValue.range, permutation) ?? functionValue.range;
+    const domain = permuteElements(functionValue.domain, images);
+    const range = permuteElements(functionValue.range, images) ?? functionValue.range;
     if (domain) {
       const permuted = createFunction(
         domain.map((key, index): [Value, Value] => [key, range[index]]),
@@ -297,80 +238,28 @@ const computePermutedValue = (value: ObjectValue, permutation: Permutation) => {
   }
   if (kind === "Interval" || !isSetValue(value) || !isEnumerable(value)) return value;
   const set = toFiniteSet(value);
-  const elements = permuteElements(set.elements, permutation);
+  const elements = permuteElements(set.elements, images);
   return elements ? createSet(elements) : set;
 };
 
-const getOrbit = (value: ObjectValue, group: SymmetryGroup) => {
-  const cached = group.orbits.get(value);
-  if (cached !== undefined) return cached;
-  if (group.orbitCount >= group.orbitLimit) {
-    group.orbits = new WeakMap();
-    group.orbitCount = 0;
-  }
-  const orbit: Orbit = { images: [value], comparisons: [] };
-  group.orbits.set(value, orbit);
-  group.orbitCount++;
-  return orbit;
-};
-
-const getImage = (orbit: Orbit, permutation: number, group: SymmetryGroup) =>
-  (orbit.images[permutation] ??= permuteValue(
-    orbit.images[0],
-    group.permutations[permutation - 1],
-  ));
-
-// Two images of a value compare the same way every time, and comparing them again changes nothing,
-// so an orbit compares each pair once.
-const compareImages = (
-  value: ObjectValue,
-  permutation: number,
-  minimum: number,
-  group: SymmetryGroup,
-) => {
-  const orbit = getOrbit(value, group);
-  const comparisons = (orbit.comparisons[minimum] ??= new Int8Array(group.permutations.length + 1));
-  if (comparisons[permutation] === 0) {
-    const comparison = compareValues(
-      getImage(orbit, permutation, group),
-      getImage(orbit, minimum, group),
-    );
-    comparisons[permutation] = Math.sign(comparison) + 2;
-  }
-  return comparisons[permutation] - 2;
-};
-
-const isSmallerImage = (
-  state: Value[],
-  permutation: number,
-  minimum: number,
-  group: SymmetryGroup,
-  order: number[],
-) => {
-  for (const index of order) {
-    const value = state[index];
-    const comparison =
-      typeof value === "object" ? compareImages(value, permutation, minimum, group) : 0;
-    if (comparison !== 0) return comparison < 0;
-  }
-  return false;
-};
-
-// TLC keeps the smallest image of the state in its variable order, replacing it only with a
-// strictly smaller one.
+// TLCStateMut#fingerPrint: the smallest image of the state under the group in TLC's variable
+// order. TLC permutes the state under each permutation, variable by variable, and moves on to the
+// next permutation as soon as a variable's image is larger than the smallest state's.
 export const getRepresentative = (
   state: Value[],
-  group: SymmetryGroup,
+  permutations: Images[],
   order: number[],
 ): Value[] => {
-  const minimum = group.permutations.reduce(
-    (smallest, _, index) =>
-      isSmallerImage(state, index + 1, smallest, group, order) ? index + 1 : smallest,
-    0,
-  );
-  return minimum === 0
-    ? state
-    : state.map((value) =>
-        typeof value === "object" ? getImage(getOrbit(value, group), minimum, group) : value,
-      );
+  let smallest = state;
+  for (const images of permutations) {
+    const permuted = state.slice();
+    let comparison = 0;
+    for (const index of order) {
+      permuted[index] = permuteValue(state[index], images);
+      if (comparison === 0) comparison = compareValues(permuted[index], smallest[index]);
+      if (comparison > 0) break;
+    }
+    if (comparison < 0) smallest = permuted;
+  }
+  return smallest;
 };

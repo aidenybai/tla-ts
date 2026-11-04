@@ -11,9 +11,7 @@ import {
   getFieldSelector,
   getMissingArgumentDescriber,
   getQuantifierElements,
-  isClosedConstant,
   isValueArgument,
-  isWorthCaching,
   keepLazy,
   resolveGlobalOperator,
   expectFunction,
@@ -281,9 +279,6 @@ const isReadOnly = (expression: Expression): boolean => {
 const generateExpression = (generator: Generator, expression: Expression, frame: Frame): string => {
   const generate = (node: Expression, nodeFrame = frame) =>
     generateExpression(generator, node, nodeFrame);
-  if (isWorthCaching(expression) && isClosedConstant(expression, generator.environment)) {
-    return generateDelegate(generator, expression, frame);
-  }
   switch (expression.kind) {
     case "Number":
       if (isTlcInteger(expression.value)) {

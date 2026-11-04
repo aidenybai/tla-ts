@@ -1056,15 +1056,9 @@ const compileAction = (
   }
 };
 
-const emptyStates = new WeakMap<Environment, State>();
-
-const getEmptyState = (environment: Environment) => {
-  const cached = emptyStates.get(environment);
-  if (cached) return cached;
-  const state = environment.variables.map((): Value | undefined => undefined);
-  emptyStates.set(environment, state);
-  return state;
-};
+// A partial state that assigns no variable, which a run fills in as it assigns them.
+const getEmptyState = (environment: Environment): State =>
+  environment.variables.map((): Value | undefined => undefined);
 
 const isComplete = (partial: State): partial is Value[] => {
   for (let index = 0; index < partial.length; index++) {
