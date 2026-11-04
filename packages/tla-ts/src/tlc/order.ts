@@ -290,8 +290,9 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
 };
 
 // SANY's Context of each module, which the root module has under undefined.
-const createContexts = (source: string, loadModule: ModuleLoader) => {
-  const getParsed = createModuleSet(source, loadModule);
+type ModuleSet = ReturnType<typeof createModuleSet>;
+
+const createContexts = (getParsed: ModuleSet) => {
   const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
     const module = unit.getModule();
@@ -420,49 +421,10 @@ const createContexts = (source: string, loadModule: ModuleLoader) => {
   };
 };
 
-// The variables or constants of the root module in the reverse of its context enumeration, as
-// ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
-// order, and checks that the configuration assigns each constant in it.
-export const getTlcDeclarationOrder = (
-  source: string,
-  loadModule: ModuleLoader,
-  kind: "variable" | "constant",
-): string[] =>
-  createContexts(source, loadModule)
-    .getContext(undefined)
-    .enumerate()
-    .filter((entry) => entry.kind === kind)
-    .map((entry) => entry.name)
-    .reverse();
-
-// The names of the definitions each module adds to its context, in the order of
-// ModuleNode.getOpDefs, in which TLC computes the constant definitions as it starts. An INSTANCE
-// adds the definitions of the module it instantiates in the order that module's Hashtable
-// enumerates them.
-export const createTlcDefinitionOrder = (source: string, loadModule: ModuleLoader) => {
-  const contexts = createContexts(source, loadModule);
-  // The root module's context reads every file of the spec, and so finds the modules nested in
-  // the files it extends or instantiates.
-  contexts.getContext(undefined);
-  return (name: string | undefined) =>
-    contexts
-      .getOwnEntries(name)
-      .filter((entry) => entry.kind === "definition")
-      .map((entry) => entry.name);
-};
-
-export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader) =>
-  getTlcDeclarationOrder(source, loadModule, "variable");
-
 // Every string TLC interns before model checking starts, in order: values in the config, TLC's
 // startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, string
 // literals in semantic analysis order, and the names TLC interns for TLCGet.
-export const getTlcStringOrder = (
-  source: string,
-  config: ModelConfig,
-  loadModule: ModuleLoader,
-): string[] => {
-  const getParsed = createModuleSet(source, loadModule);
+const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => {
   const order = new Set<string>();
   const intern = (text: string) => {
     order.add(text);
@@ -562,4 +524,46 @@ export const getTlcStringOrder = (
   analyze(undefined);
   TLC_RUNTIME_STRINGS.forEach(intern);
   return [...order];
+};
+
+export interface TlcOrder {
+  // Every string TLC interns before model checking starts.
+  getStringOrder: (config: ModelConfig) => string[];
+  // The variables or constants of the root module in the reverse of its context enumeration, as
+  // ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
+  // order, and checks that the configuration assigns each constant in it.
+  getDeclarationOrder: (kind: "variable" | "constant") => string[];
+  // The names of the definitions each module adds to its context, in the order of
+  // ModuleNode.getOpDefs, in which TLC computes the constant definitions as it starts. An INSTANCE
+  // adds the definitions of the module it instantiates in the order that module's Hashtable
+  // enumerates them.
+  createDefinitionOrder: () => (name: string | undefined) => string[];
+}
+
+// One check reads the spec's modules once, and every order shares their tokens, parses and
+// contexts.
+export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrder => {
+  const getParsed = createModuleSet(source, loadModule);
+  let contexts: ReturnType<typeof createContexts> | undefined;
+  const getContexts = () => (contexts ??= createContexts(getParsed));
+  return {
+    getStringOrder: (config) => getStringOrder(getParsed, config),
+    getDeclarationOrder: (kind) =>
+      getContexts()
+        .getContext(undefined)
+        .enumerate()
+        .filter((entry) => entry.kind === kind)
+        .map((entry) => entry.name)
+        .reverse(),
+    createDefinitionOrder: () => {
+      const { getContext, getOwnEntries } = getContexts();
+      // The root module's context reads every file of the spec, and so finds the modules nested
+      // in the files it extends or instantiates.
+      getContext(undefined);
+      return (name) =>
+        getOwnEntries(name)
+          .filter((entry) => entry.kind === "definition")
+          .map((entry) => entry.name);
+    },
+  };
 };

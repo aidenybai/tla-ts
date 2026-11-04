@@ -73,7 +73,7 @@ import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./su
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
-import { createTlcDefinitionOrder, getTlcDeclarationOrder } from "./tlc/order";
+import { createTlcOrder, type TlcOrder } from "./tlc/order";
 import {
   isTlcInteger,
   createModelValue,
@@ -88,6 +88,8 @@ import type { TlcVersion } from "./tlc/version";
 interface EnvironmentOptions {
   source: string;
   loadModule: ((name: string) => string | undefined) | undefined;
+  // The TLC orders of the same spec, when the caller already reads them.
+  order?: TlcOrder;
   loadClass?: (name: string) => Uint8Array | undefined;
   print: (text: string) => void;
   files: FileSystem;
@@ -300,6 +302,8 @@ export const createEnvironment = (
   options: EnvironmentOptions,
 ): Specification => {
   const root = parseModule(options.source);
+  let order = options.order;
+  const getOrder = () => (order ??= createTlcOrder(options.source, options.loadModule));
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
   // The definition each instance copy came from, and the instance parameters the copy adds.
@@ -1222,9 +1226,9 @@ export const createEnvironment = (
   if (unassigned.length > 0 && !options.isUnconfigured) {
     // TLC reports the first constant it finds unassigned in SANY's order of declarations.
     const name =
-      getTlcDeclarationOrder(options.source, options.loadModule, "constant").find((constant) =>
-        unassigned.includes(constant),
-      ) ?? unassigned[0];
+      getOrder()
+        .getDeclarationOrder("constant")
+        .find((constant) => unassigned.includes(constant)) ?? unassigned[0];
     throw new TlaConfigError(
       `The constant parameter ${name} is not assigned a value by the configuration file.`,
     );
@@ -1298,7 +1302,7 @@ export const createEnvironment = (
   const instantiated = new Set(
     linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
   );
-  const getDefinitionOrder = createTlcDefinitionOrder(options.source, options.loadModule);
+  const getDefinitionOrder = getOrder().createDefinitionOrder();
   return {
     environment,
     assumptions,

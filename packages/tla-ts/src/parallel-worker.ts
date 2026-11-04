@@ -8,7 +8,7 @@ import {
 import type { CoordinatorMessage, LevelMessage, StartMessage, WorkerMessage } from "./parallel";
 import { createSearch } from "./search";
 import { getSuccessors, type Successor } from "./successors";
-import { getTlcStringOrder, getTlcVariableOrder } from "./tlc/order";
+import { createTlcOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import {
@@ -39,12 +39,14 @@ const runWorker = (start: StartMessage, parent: Port) => {
   const modules = new Map(start.modules);
   const loadModule = (name: string) => modules.get(name);
   const classes = new Map(start.classes);
-  setStringOrder(getTlcStringOrder(start.source, start.config, loadModule));
+  const order = createTlcOrder(start.source, loadModule);
+  setStringOrder(order.getStringOrder(start.config));
   setValueVersion(start.version);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(start.config, {
     source: start.source,
     loadModule,
+    order,
     loadClass: (name) => classes.get(name),
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
@@ -55,7 +57,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   });
   const environment = specification.environment;
   const search = createSearch(start.config, environment, () =>
-    getTlcVariableOrder(start.source, loadModule),
+    order.getDeclarationOrder("variable"),
   );
   const nextAction = search?.spec.next;
   if (!search || nextAction === undefined)
