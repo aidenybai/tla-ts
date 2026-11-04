@@ -347,9 +347,9 @@ export const extractModule = (source: string, name: string) => {
 // generator.
 type ParseMode = "tlc" | "tlapm" | "sany";
 
-const parse = (source: string, mode: ParseMode): Module => {
+const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source)): Module => {
   const isTlapm = mode === "tlapm";
-  const tokens = isTlapm ? tokenize(source) : tokenize(source).map(readAtAsIdentifier);
+  const tokens = isTlapm ? sourceTokens : sourceTokens.map(readAtAsIdentifier);
   const cursor = { index: 0, offsideColumns: [] as number[] };
   const operators: OperatorContext = {};
   // A RECURSIVE declaration covers the definitions of its own LET or module.
@@ -2101,6 +2101,9 @@ const parse = (source: string, mode: ParseMode): Module => {
 };
 
 export const parseModule = (source: string) => parse(source, "tlc");
+
+// Parses a module the caller has tokenized already.
+export const parseModuleTokens = (source: string, tokens: Token[]) => parse(source, "tlc", tokens);
 
 export const parseTlapmModule = (source: string) => parse(source, "tlapm");
 

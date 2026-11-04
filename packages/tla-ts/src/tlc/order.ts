@@ -4,7 +4,7 @@ import type { Module, SourceLocation } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
 import { tokenize, type Token } from "../lexer";
-import { extractModule, parseModule } from "../parser";
+import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
 import {
   SANY_BUILTINS,
@@ -21,6 +21,7 @@ type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem"
 interface SymbolEntry {
   key: string;
   name: string;
+  hash: number;
   kind: SymbolKind;
   isLocal: boolean;
 }
@@ -28,6 +29,8 @@ interface SymbolEntry {
 interface SymbolTable {
   put: (entry: SymbolEntry) => void;
   inserted: SymbolEntry[];
+  // Where the entries the module adds itself start, after those of the modules it extends.
+  ownStart: number;
   enumerate: () => SymbolEntry[];
 }
 
@@ -35,6 +38,7 @@ interface ParsedModule {
   tokens: Token[];
   start: number;
   end: number;
+  isTlcSource: boolean;
   getModule: () => Module;
 }
 
@@ -64,38 +68,48 @@ const getJavaHash = (text: string) => {
 };
 
 // java.util.Hashtable as SANY's Context uses it: default capacity 11, load factor 0.75, new
-// entries at the head of their bucket, and enumeration from the last bucket to the first.
+// entries at the head of their bucket, and enumeration from the last bucket to the first. Each
+// bucket lists its entries from tail to head, so a new entry goes at the end.
 const createSymbolTable = (): SymbolTable => {
-  const table = { buckets: Array.from({ length: 11 }, (): SymbolEntry[] => []), threshold: 8 };
+  let buckets: SymbolEntry[][] = Array.from({ length: 11 }, () => []);
+  let threshold = 8;
   const keys = new Set<string>();
   const inserted: SymbolEntry[] = [];
-  const getBucket = (entry: SymbolEntry, capacity: number) =>
-    (getJavaHash(entry.name) & 0x7fffffff) % capacity;
-  const rehash = () => {
-    const capacity = table.buckets.length * 2 + 1;
-    const buckets = Array.from({ length: capacity }, (): SymbolEntry[] => []);
-    for (let index = table.buckets.length - 1; index >= 0; index--) {
-      for (const entry of table.buckets[index]) buckets[getBucket(entry, capacity)].unshift(entry);
+  const forEachEntry = (visit: (entry: SymbolEntry) => void) => {
+    for (let index = buckets.length - 1; index >= 0; index--) {
+      const bucket = buckets[index];
+      for (let position = bucket.length - 1; position >= 0; position--) visit(bucket[position]);
     }
-    table.buckets = buckets;
-    table.threshold = Math.floor(capacity * 0.75);
+  };
+  const rehash = () => {
+    const capacity = buckets.length * 2 + 1;
+    const rehashed: SymbolEntry[][] = Array.from({ length: capacity }, () => []);
+    forEachEntry((entry) => rehashed[entry.hash % capacity].push(entry));
+    buckets = rehashed;
+    threshold = Math.floor(capacity * 0.75);
   };
   return {
     put: (entry) => {
       if (keys.has(entry.key)) return;
-      if (inserted.length >= table.threshold) rehash();
-      table.buckets[getBucket(entry, table.buckets.length)].unshift(entry);
+      if (inserted.length >= threshold) rehash();
+      buckets[entry.hash % buckets.length].push(entry);
       keys.add(entry.key);
       inserted.push(entry);
     },
     inserted,
-    enumerate: () => table.buckets.toReversed().flat(),
+    ownStart: 0,
+    enumerate: () => {
+      const entries: SymbolEntry[] = [];
+      forEachEntry((entry) => entries.push(entry));
+      return entries;
+    },
   };
 };
 
-const createEntry = (name: string, kind: SymbolKind, isLocal: boolean) => ({
+const createEntry = (name: string, kind: SymbolKind, isLocal: boolean): SymbolEntry => ({
   key: kind === "module" ? `module ${name}` : name,
   name,
+  hash: getJavaHash(name) & 0x7fffffff,
   kind,
   isLocal,
 });
@@ -260,7 +274,8 @@ const readModuleText = (text: string | undefined): ModuleText => {
   return {
     tokens,
     ranges: getRanges(tokens),
-    getModule: () => (parsed.module ??= parseModule(text ?? "")),
+    getModule: () =>
+      (parsed.module ??= text === undefined ? parseModule("") : parseModuleTokens(text, tokens)),
   };
 };
 
@@ -291,18 +306,20 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
           TLC_MODULE_SOURCES.get(name) ??
           loadModule?.(name) ??
           extractModule(source, name));
-    const { tokens, ranges, getModule } =
-      name !== undefined && text !== undefined && text === TLC_MODULE_SOURCES.get(name)
-        ? getTlcModuleText(name, text)
-        : readModuleText(text);
+    const isTlcSource =
+      name !== undefined && text !== undefined && text === TLC_MODULE_SOURCES.get(name);
+    const { tokens, ranges, getModule } = isTlcSource
+      ? getTlcModuleText(name, text)
+      : readModuleText(text);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const file = { tokens, ...range, getModule };
+    const file = { tokens, ...range, isTlcSource, getModule };
     files.set(name ?? "", file);
     ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
       nestedModules.set(nestedName, {
         tokens,
         ...nestedRange,
+        isTlcSource: false,
         getModule: () => findModule(file.getModule().modules, nestedName) ?? file.getModule(),
       });
     });
@@ -316,7 +333,25 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
 // SANY's Context of each module, which the root module has under undefined.
 type ModuleSet = ReturnType<typeof createModuleSet>;
 
+// The Context of one of TLC's own modules is the same in every check when every module it extends
+// or instantiates is also TLC's own.
+const tlcContexts = new Map<string, SymbolTable>();
+
 const createContexts = (getParsed: ModuleSet) => {
+  const sharedModules = new Map<string, boolean>();
+  const isShared = (name: string): boolean => {
+    const known = sharedModules.get(name);
+    if (known !== undefined) return known;
+    sharedModules.set(name, false);
+    const unit = getParsed(name);
+    const module = unit.isTlcSource ? unit.getModule() : undefined;
+    const shared =
+      module !== undefined &&
+      module.extends.every((extended) => isShared(extended)) &&
+      module.instances.every((instance) => isShared(instance.module));
+    sharedModules.set(name, shared);
+    return shared;
+  };
   const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
     const module = unit.getModule();
@@ -416,10 +451,9 @@ const createContexts = (getParsed: ModuleSet) => {
   };
 
   const contexts = new Map<string, SymbolTable>();
-  // Where the entries a module adds itself start, after those of the modules it extends.
-  const ownStarts = new Map<SymbolTable, number>();
   const getContext = (name: string | undefined): SymbolTable => {
-    const cached = contexts.get(name ?? "");
+    const isTlcContext = name !== undefined && isShared(name);
+    const cached = contexts.get(name ?? "") ?? (isTlcContext ? tlcContexts.get(name) : undefined);
     if (cached) return cached;
     const table = createSymbolTable();
     contexts.set(name ?? "", table);
@@ -432,15 +466,16 @@ const createContexts = (getParsed: ModuleSet) => {
         if (!entry.isLocal) table.put(entry);
       }),
     );
-    ownStarts.set(table, table.inserted.length);
+    table.ownStart = table.inserted.length;
     getUnits(unit).forEach((item) => item.apply(table));
+    if (isTlcContext) tlcContexts.set(name, table);
     return table;
   };
   return {
     getContext,
     getOwnEntries: (name: string | undefined) => {
       const table = getContext(name);
-      return table.inserted.slice(ownStarts.get(table));
+      return table.inserted.slice(table.ownStart);
     },
   };
 };
@@ -551,6 +586,8 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
 };
 
 export interface TlcOrder {
+  // The root module, parsed once for the order and the environment.
+  getRootModule: () => Module;
   // Every string TLC interns before model checking starts.
   getStringOrder: (config: ModelConfig) => string[];
   // The variables or constants of the root module in the reverse of its context enumeration, as
@@ -571,6 +608,7 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));
   return {
+    getRootModule: () => getParsed(undefined).getModule(),
     getStringOrder: (config) => getStringOrder(getParsed, config),
     getDeclarationOrder: (kind) =>
       getContexts()
