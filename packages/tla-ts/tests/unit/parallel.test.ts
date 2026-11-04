@@ -114,6 +114,19 @@ describe("check with workers matches TLC", () => {
     expect(getCounts(result)).toEqual([19801, 10000, 199]);
   });
 
+  it("explores a level long enough for workers to take breaks like one worker", async () => {
+    const tlaTs = await loadPackage();
+    const options = {
+      source:
+        "---- MODULE Slow ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..4000\nNext == x <= 4000 /\\ (\\A i \\in 1..2000 : i > 0) /\\ x' = x + 4000\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    };
+    const sequential = await tlaTs.check(options);
+    const parallel = await tlaTs.check({ ...options, workers: 3 });
+    expect(parallel.status).toBe("success");
+    expect(getCounts(parallel)).toEqual(getCounts(sequential));
+  });
+
   it("explores a queue that only grows to its bound", async () => {
     const result = await checkFixtureInParallel("queue", "Queue", 3);
     expect(result.status).toBe("success");

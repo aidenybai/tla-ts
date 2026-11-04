@@ -18,9 +18,10 @@ import {
   setValueVersion,
   type Value,
 } from "./values";
-import { getParentPort, type Port } from "./worker";
+import { createBreak, getParentPort, type Port } from "./worker";
 
 const LOCKED = -1;
+const BREAK_INTERVAL = 100;
 
 interface Expansion {
   states: Value[][];
@@ -33,6 +34,7 @@ interface Expansion {
   outDegrees: number[];
   next: Value[][];
   fingerprintStates: Value[][];
+  breakAt: number;
 }
 
 const runWorker = (start: StartMessage, parent: Port) => {
@@ -78,6 +80,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
     port?.start?.();
   });
   const frontier = { states: decode(start.seed).map(canonicalize) };
+  const takeBreak = createBreak();
 
   // A worker that runs out of states asks a peer for some by writing its index + 1 to the peer's
   // request word. The peer sends half of the states it hasn't started, keeps expanding, and wakes
@@ -113,6 +116,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
     for (; expansion.origin < expansion.end; expansion.origin++) {
       const state = expansion.states[expansion.origin];
       if (!expansion.successors) {
+        if (performance.now() >= expansion.breakAt) return "break";
         if (Atomics.load(requests, workerIndex) > 0) answerRequest(expansion, 0);
         Atomics.store(remaining, workerIndex, expansion.end - expansion.origin - 1);
         expansion.successors = getSuccessors(nextAction, state, environment, search.spec.scope);
@@ -196,10 +200,18 @@ const runWorker = (start: StartMessage, parent: Port) => {
       outDegrees: Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0),
       next: [],
       fingerprintStates: [],
+      breakAt: performance.now() + BREAK_INTERVAL,
     };
     for (;;) {
       const status = expand(expansion);
       if (status === undefined) return undefined;
+      // HACK: Bun runs its garbage collection timers on the event loop, so a worker that expands a
+      // long level without returning to the loop holds on to memory it no longer uses.
+      if (status === "break") {
+        await takeBreak();
+        expansion.breakAt = performance.now() + BREAK_INTERVAL;
+        continue;
+      }
       lockRequests(expansion);
       if (status === "paused") {
         const resumed = new Promise<void>((resolve) => (waiters.resume = resolve));
