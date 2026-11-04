@@ -116,6 +116,18 @@ const generatedHelpers = {
   value: undefined as ReturnType<typeof createGeneratedHelpers> | undefined,
 };
 
+const codeGeneration = { isAllowed: undefined as boolean | undefined };
+
+// Hosts such as Cloudflare Workers, or a page whose CSP lacks 'unsafe-eval', throw an EvalError.
+const getIsCodeGenerationAllowed = () => {
+  try {
+    return Boolean(new Function(""));
+  } catch (error) {
+    if (error instanceof EvalError) return false;
+    throw error;
+  }
+};
+
 const addReference = (generator: Generator, value: unknown) => {
   generator.references.push(value);
   return `reference${generator.references.length - 1}`;
@@ -381,6 +393,8 @@ export const generateEvaluator = (
   environment: Environment,
 ): Evaluator | undefined => {
   if (!GENERATED_KINDS.has(expression.kind)) return undefined;
+  codeGeneration.isAllowed ??= getIsCodeGenerationAllowed();
+  if (!codeGeneration.isAllowed) return undefined;
   const generator: Generator = { environment, references: [], helpers: [], counter: 0 };
   const frame: Frame = {
     context: "context",
