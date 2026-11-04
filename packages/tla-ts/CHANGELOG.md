@@ -1,5 +1,14 @@
 # tla-ts
 
+## 0.0.8
+
+### Patch Changes
+
+- Start checking small specs faster. TLC's orders reuse the parse of the root module, the contexts of TLC's own modules are built once per process, and SANY's context tables hash each name once (#353).
+- Let Bun collect garbage during parallel model checking. Each worker now takes a short break about every 100 ms of a level, so ten workers on a large model no longer use more memory than the machine has (#352).
+- Check specs in hosts that disallow code generation from strings, such as Cloudflare Workers or a page whose CSP lacks `'unsafe-eval'`. `check()` used to throw an `EvalError` there. It now evaluates with the interpreter instead of generated code (#351).
+- Check specs with less CPU time. The checker reads and parses a spec's modules once instead of once for each order TLC uses, and parses TLC's own modules once per process (#350).
+
 ## 0.0.7
 
 ### Patch Changes
