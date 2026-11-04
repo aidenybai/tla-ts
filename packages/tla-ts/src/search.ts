@@ -14,7 +14,7 @@ import type {
   Violation,
 } from "./check";
 import type { ConfigValue, ModelConfig } from "./config";
-import { getReadVariables } from "./dependencies";
+import { getReadVariables, isConstantLevel } from "./dependencies";
 import {
   isStackOverflow,
   TlaConfigError,
@@ -27,10 +27,10 @@ import {
   describeRange,
   evaluate,
   evaluateStartupDefinitions,
+  getStartupValue,
   expectBoolean,
   formatRange,
   getDefinition,
-  isConstantLevel,
   type Context,
   type Environment,
   type Scope,
@@ -49,7 +49,7 @@ import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
-import { createTlcFingerprinter, getTlcFingerprint } from "./tlc/fingerprint";
+import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
 import { formatValue, isUpdatedElementOf, type Value } from "./values";
 
 interface NamedExpression {
@@ -761,8 +761,6 @@ export const createSearch = (
     );
   };
   const isFingerprintedLikeTlc = hasWideString(config, environment);
-  // One fingerprinter for every level keeps the values it cached for the states of earlier levels.
-  let storedFingerprinter: ReturnType<typeof createTlcFingerprinter> | undefined;
   runtime.getFingerprint = getTlcStateFingerprint;
   const findUnwitnessedPossible = () => {
     const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
@@ -786,8 +784,7 @@ export const createSearch = (
       if (view !== undefined || isFingerprintedLikeTlc) {
         return BigInt64Array.from(states, getTlcStateFingerprint);
       }
-      storedFingerprinter ??= createTlcFingerprinter(getTlcOrder());
-      return storedFingerprinter(fingerprintStates);
+      return getTlcFingerprints(fingerprintStates, getTlcOrder());
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
@@ -925,7 +922,7 @@ export const createSearch = (
       // a postcondition before it checks any of them.
       const constant = config.postconditions.find((name) => {
         const definition = getDefinition(name, environment);
-        return definition !== undefined && environment.definitionValues.has(definition);
+        return definition !== undefined && getStartupValue(definition, environment) !== undefined;
       });
       if (constant !== undefined) {
         if (isAfterViolation) return undefined;

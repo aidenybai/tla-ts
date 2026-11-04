@@ -1,4 +1,5 @@
 import { isLocallyResolved, type Bound, type Definition, type Expression } from "./ast";
+import { getDefinitionLevel } from "./dependencies";
 import {
   createStackOverflowError,
   TlaEvaluationError,
@@ -65,8 +66,6 @@ export const createTautologyError = () =>
   );
 
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
-
-const definitionLevels = new WeakMap<Definition, number>();
 
 const definitionThunks = new WeakSet<Thunk>();
 
@@ -157,19 +156,6 @@ export const getLevel = (
     default:
       return getChildrenLevel(expression);
   }
-};
-
-const getDefinitionLevel = (definition: Definition, environment: Environment) => {
-  const cached = definitionLevels.get(definition);
-  if (cached !== undefined) return cached;
-  definitionLevels.set(definition, 0);
-  const bounds = definition.kind === "Function" ? definition.bounds : [];
-  const level = Math.max(
-    getLevel(definition.body, undefined, environment),
-    ...bounds.map((bound) => getLevel(bound.set, undefined, environment)),
-  );
-  definitionLevels.set(definition, level);
-  return level;
 };
 
 // TLC leaves a formula whose sets it fails to enumerate, and doesn't expect an EvalException.

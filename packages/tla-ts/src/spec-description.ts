@@ -1,3 +1,4 @@
+import { isConstantLevel } from "./dependencies";
 import {
   isLocallyResolved,
   type Definition,
@@ -14,7 +15,6 @@ import {
   evaluate,
   forEachBinding,
   getDefinition,
-  isConstantLevel,
   lookupScope,
   resolveGlobalOperator,
   type Closure,

@@ -41,7 +41,7 @@ import {
   withLetInstances,
 } from "./instances";
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
-import { extractModule, parseModule } from "./parser";
+import { extractModule } from "./parser";
 import {
   getArity,
   getParamArities,
@@ -73,6 +73,7 @@ import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./su
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
+import { createDefinitionFacts } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
 import {
   isTlcInteger,
@@ -179,9 +180,9 @@ const getDeclarations = (linked: LinkedModule): Declaration[] => [
 
 // Parses the module SANY reads from the file name.tla. A module SANY's parser rejects fails as it
 // does in TLC: SANY's message, then a fatal error that names the module.
-const parseModuleFile = (source: string, name: string) => {
+const parseModuleFile = (source: string, name: string, order: TlcOrder) => {
   try {
-    return parseModule(source);
+    return order.parseModule(source);
   } catch (error) {
     if (!(error instanceof TlaSyntaxError)) throw error;
     const parseError = getSanyParseError(source);
@@ -302,7 +303,7 @@ export const createEnvironment = (
   options: EnvironmentOptions,
 ): Specification => {
   const order = options.order ?? createTlcOrder(options.source, options.loadModule);
-  const root = order.getRootModule();
+  const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
   // The definition each instance copy came from, and the instance parameters the copy adds.
@@ -420,7 +421,7 @@ export const createEnvironment = (
       BUNDLED_MODULES.get(name) ??
       extractModule(options.source, name);
     if (source === undefined) throw createMissingModuleError(name, importer);
-    const module = parseModuleFile(source, name);
+    const module = parseModuleFile(source, name, order);
     if (module.name !== name) {
       throw createSanyError(
         [
@@ -1239,6 +1240,18 @@ export const createEnvironment = (
     });
   }
 
+  const variableIndex = getVariableIndex(
+    variables,
+    linkOrder.flatMap((linked) => linked.module.variables.map((variable) => variable.name)),
+  );
+  const facts = createDefinitionFacts({
+    definitions,
+    substitutions,
+    constants,
+    variableIndex,
+    builtins,
+    variables,
+  });
   const environment: Environment = {
     runtime,
     definitions,
@@ -1247,14 +1260,13 @@ export const createEnvironment = (
     substitutions,
     instanceNames,
     variables,
-    variableIndex: getVariableIndex(
-      variables,
-      linkOrder.flatMap((linked) => linked.module.variables.map((variable) => variable.name)),
-    ),
-    definitionValues: new Map(),
-    constantLevels: new Map(),
+    variableIndex,
+    facts,
+    startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     substitutedDefinitions,
     evaluators: new WeakMap(),
+    entryEvaluators: new WeakMap(),
+    definitionEvaluators: new WeakMap(),
   };
   // TLC evaluates a substitute at startup and rejects it only when that fails and the level bound it
   // computes is above constant. The bound counts the operators that TLC's Java code overrides with
