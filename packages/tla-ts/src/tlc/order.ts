@@ -248,6 +248,33 @@ const findModule = (modules: Module[], name: string): Module | undefined =>
   modules.find((module) => module.name === name) ??
   modules.map((module) => findModule(module.modules, name)).find(Boolean);
 
+interface ModuleText {
+  tokens: Token[];
+  ranges: Map<string, { start: number; end: number }>;
+  getModule: () => Module;
+}
+
+const readModuleText = (text: string | undefined): ModuleText => {
+  const tokens = text === undefined ? [] : tokenize(text);
+  const parsed = { module: undefined as Module | undefined };
+  return {
+    tokens,
+    ranges: getRanges(tokens),
+    getModule: () => (parsed.module ??= parseModule(text ?? "")),
+  };
+};
+
+// TLC's own module sources never change, so every check shares their tokens and parse.
+const tlcModuleTexts = new Map<string, ModuleText>();
+
+const getTlcModuleText = (name: string, text: string): ModuleText => {
+  const known = tlcModuleTexts.get(name);
+  if (known) return known;
+  const read = readModuleText(text);
+  tlcModuleTexts.set(name, read);
+  return read;
+};
+
 // The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
 // returns, the modules that follow the root module, and the modules nested in any of these. A
 // module without a source has no tokens.
@@ -264,15 +291,12 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
           TLC_MODULE_SOURCES.get(name) ??
           loadModule?.(name) ??
           extractModule(source, name));
-    const tokens = text === undefined ? [] : tokenize(text);
-    const ranges = getRanges(tokens);
+    const { tokens, ranges, getModule } =
+      name !== undefined && text !== undefined && text === TLC_MODULE_SOURCES.get(name)
+        ? getTlcModuleText(name, text)
+        : readModuleText(text);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const parsed = { module: undefined as Module | undefined };
-    const file = {
-      tokens,
-      ...range,
-      getModule: () => (parsed.module ??= parseModule(text ?? "")),
-    };
+    const file = { tokens, ...range, getModule };
     files.set(name ?? "", file);
     ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
