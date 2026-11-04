@@ -29,6 +29,8 @@ interface SymbolEntry {
 interface SymbolTable {
   put: (entry: SymbolEntry) => void;
   inserted: SymbolEntry[];
+  // Where the entries the module adds itself start, after those of the modules it extends.
+  ownStart: number;
   enumerate: () => SymbolEntry[];
 }
 
@@ -36,6 +38,7 @@ interface ParsedModule {
   tokens: Token[];
   start: number;
   end: number;
+  isTlcSource: boolean;
   getModule: () => Module;
 }
 
@@ -94,6 +97,7 @@ const createSymbolTable = (): SymbolTable => {
       inserted.push(entry);
     },
     inserted,
+    ownStart: 0,
     enumerate: () => {
       const entries: SymbolEntry[] = [];
       forEachEntry((entry) => entries.push(entry));
@@ -301,18 +305,20 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
           TLC_MODULE_SOURCES.get(name) ??
           loadModule?.(name) ??
           extractModule(source, name));
-    const { tokens, ranges, getModule } =
-      name !== undefined && text !== undefined && text === TLC_MODULE_SOURCES.get(name)
-        ? getTlcModuleText(name, text)
-        : readModuleText(text);
+    const isTlcSource =
+      name !== undefined && text !== undefined && text === TLC_MODULE_SOURCES.get(name);
+    const { tokens, ranges, getModule } = isTlcSource
+      ? getTlcModuleText(name, text)
+      : readModuleText(text);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const file = { tokens, ...range, getModule };
+    const file = { tokens, ...range, isTlcSource, getModule };
     files.set(name ?? "", file);
     ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
       nestedModules.set(nestedName, {
         tokens,
         ...nestedRange,
+        isTlcSource: false,
         getModule: () => findModule(file.getModule().modules, nestedName) ?? file.getModule(),
       });
     });
@@ -326,7 +332,25 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
 // SANY's Context of each module, which the root module has under undefined.
 type ModuleSet = ReturnType<typeof createModuleSet>;
 
+// The Context of one of TLC's own modules is the same in every check when every module it extends
+// or instantiates is also TLC's own.
+const tlcContexts = new Map<string, SymbolTable>();
+
 const createContexts = (getParsed: ModuleSet) => {
+  const sharedModules = new Map<string, boolean>();
+  const isShared = (name: string): boolean => {
+    const known = sharedModules.get(name);
+    if (known !== undefined) return known;
+    sharedModules.set(name, false);
+    const unit = getParsed(name);
+    const module = unit.isTlcSource ? unit.getModule() : undefined;
+    const shared =
+      module !== undefined &&
+      module.extends.every((extended) => isShared(extended)) &&
+      module.instances.every((instance) => isShared(instance.module));
+    sharedModules.set(name, shared);
+    return shared;
+  };
   const getUnits = (unit: ParsedModule) => {
     const tokens = unit.tokens;
     const module = unit.getModule();
@@ -426,10 +450,9 @@ const createContexts = (getParsed: ModuleSet) => {
   };
 
   const contexts = new Map<string, SymbolTable>();
-  // Where the entries a module adds itself start, after those of the modules it extends.
-  const ownStarts = new Map<SymbolTable, number>();
   const getContext = (name: string | undefined): SymbolTable => {
-    const cached = contexts.get(name ?? "");
+    const isTlcContext = name !== undefined && isShared(name);
+    const cached = contexts.get(name ?? "") ?? (isTlcContext ? tlcContexts.get(name) : undefined);
     if (cached) return cached;
     const table = createSymbolTable();
     contexts.set(name ?? "", table);
@@ -442,15 +465,16 @@ const createContexts = (getParsed: ModuleSet) => {
         if (!entry.isLocal) table.put(entry);
       }),
     );
-    ownStarts.set(table, table.inserted.length);
+    table.ownStart = table.inserted.length;
     getUnits(unit).forEach((item) => item.apply(table));
+    if (isTlcContext) tlcContexts.set(name, table);
     return table;
   };
   return {
     getContext,
     getOwnEntries: (name: string | undefined) => {
       const table = getContext(name);
-      return table.inserted.slice(ownStarts.get(table));
+      return table.inserted.slice(table.ownStart);
     },
   };
 };
