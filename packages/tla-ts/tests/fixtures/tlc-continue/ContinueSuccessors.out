@@ -1,0 +1,97 @@
+Starting... (_)
+Computing initial states...
+Error: Invariant YPositive is violated by the initial state:
+/\ x = 0
+/\ y = 0
+
+Finished computing initial states: 1 distinct state generated at _.
+Error: Invariant YPositive is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 1
+/\ y = 0
+
+Error: Invariant NotTwo is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 1
+/\ y = 0
+
+State 3: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 2
+/\ y = 0
+
+Error: Invariant NotTwo is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 1
+/\ y = 0
+
+State 3: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 2
+/\ y = 0
+
+State 4: <Next line 7, col 12 to line 7, col 54 of module ContinueSuccessors>
+/\ x = 2
+/\ y = 1
+
+Error: Action property line 13, col 27 to line 13, col 38 of module ContinueSuccessors is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 1
+/\ y = 0
+
+State 3: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 2
+/\ y = 0
+
+State 4: <Next line 7, col 12 to line 7, col 54 of module ContinueSuccessors>
+/\ x = 2
+/\ y = 1
+
+Error: Invariant NotTwo is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 1
+/\ y = 0
+
+State 3: <Next line 6, col 12 to line 6, col 45 of module ContinueSuccessors>
+/\ x = 2
+/\ y = 0
+
+State 4: <Next line 7, col 12 to line 7, col 54 of module ContinueSuccessors>
+/\ x = 2
+/\ y = 1
+
+State 5: <Next line 7, col 12 to line 7, col 54 of module ContinueSuccessors>
+/\ x = 2
+/\ y = 2
+
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 0.0
+5 states generated, 5 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 5.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in _ at (_)
