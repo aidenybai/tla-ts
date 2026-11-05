@@ -87,6 +87,7 @@
     "fflate": "^0.8.3"
   },
   "devDependencies": {
+    "@engine262/engine262": "0.0.1-d553e7b52501fbc47eae981c8d0fa7a5c26d0171",
     "@types/node": "^22",
     "publint": "^0.3.0",
     "typescript": "^7.0.2",

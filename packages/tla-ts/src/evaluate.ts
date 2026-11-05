@@ -118,6 +118,8 @@ export interface Thunk {
   // Whether the expression may build a set that streams until TLC caches it, so that the thunk
   // caches only a settled value.
   isStreamed: boolean;
+  // Whether the thunk dropped its scope after caching a value that holds in every state.
+  isReleased?: boolean;
 }
 
 type Binding = { kind: "Value"; value: Value } | Thunk | { kind: "Operator"; operator: Operator };
@@ -817,9 +819,15 @@ export const evaluateStartupDefinitions = (definitions: Definition[], environmen
 
 const forceThunk = (thunk: Thunk, context: Context) => {
   const isSameState = thunk.state === context.state && thunk.next === context.next;
-  if (isSameState && thunk.cache !== undefined) return thunk.cache;
+  if (thunk.cache !== undefined && (isSameState || thunk.isReleased)) return thunk.cache;
   const value = evaluate(thunk.expression, withScope(context, thunk.scope));
   if (isSameState && (!thunk.isStreamed || isSettledValue(value))) thunk.cache = value;
+  // A value a thunk cached with no state read no variable, so it holds in every state. Releasing
+  // its scope frees the evaluations the scope's bindings cached, which a long script keeps alive.
+  if (thunk.cache !== undefined && thunk.state === undefined && thunk.next === undefined) {
+    thunk.scope = undefined;
+    thunk.isReleased = true;
+  }
   return value;
 };
 
@@ -1528,6 +1536,39 @@ export const keepLazy = (expression: Expression) => {
   }
 };
 
+// The names an expression may look up in its scope, or undefined when a subexpression selector may
+// look up others.
+const scopeNames = new WeakMap<Expression, string[] | undefined>();
+
+const getScopeNames = (expression: Expression) => {
+  if (scopeNames.has(expression)) return scopeNames.get(expression);
+  const names = new Set<string>();
+  const visit = (node: Expression): boolean => {
+    if (node.kind === "Subexpression") return false;
+    if (node.kind === "Identifier") names.add(node.name);
+    if (node.kind === "Apply" || node.kind === "OperatorReference") names.add(node.operator);
+    if (node.kind === "ExceptAt") names.add(EXCEPT_AT);
+    return getChildren(node).every(visit);
+  };
+  const result = visit(expression) ? [...names] : undefined;
+  scopeNames.set(expression, result);
+  return result;
+};
+
+// The bindings of a scope that names look up, so that a lazy function keeps only those alive and
+// not the values its other bindings cached. An unnamed node ends the chain, since a TLCEval in the
+// body sorts its value only where no context binds a name.
+const trimScope = (scope: Scope | undefined, names: string[] | undefined) =>
+  names === undefined || scope === undefined
+    ? scope
+    : names.reduce<Scope>(
+        (trimmed, name) => {
+          const binding = lookupScope(scope, name);
+          return binding ? { name, binding, parent: trimmed } : trimmed;
+        },
+        { name: "", binding: { kind: "Value", value: false }, parent: undefined },
+      );
+
 const compileFunctionConstruction = (
   expression: Expression & { kind: "FunctionConstruction" },
   environment: Environment,
@@ -1568,12 +1609,14 @@ const compileFunctionConstruction = (
     return createFunction(pairs);
   };
   const template = getLazyFunctionTemplate(bounds, expression.body);
+  const bodyNames = getScopeNames(expression.body);
   const createLazy = (domain: Value, context: Context) => {
-    const scope = context.scope;
+    const scope = trimScope(context.scope, bodyNames);
+    const lambdaContext = withScope(context, scope);
     const functionValue = keepLambda({
       value: createLazyFunction(
         domain,
-        (argument) => body(withScope(context, bindArgument(bounds, scope, argument))),
+        (argument) => body(withScope(lambdaContext, bindArgument(bounds, scope, argument))),
         getLazyFunctionSource(template, bounds, domain),
       ),
       bounds,

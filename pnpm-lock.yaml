@@ -27,6 +27,9 @@ importers:
         specifier: ^0.8.3
         version: 0.8.3
     devDependencies:
+      '@engine262/engine262':
+        specifier: 0.0.1-d553e7b52501fbc47eae981c8d0fa7a5c26d0171
+        version: 0.0.1-d553e7b52501fbc47eae981c8d0fa7a5c26d0171(ws@8.22.0)
       '@types/node':
         specifier: ^22
         version: 22.20.5
@@ -267,6 +270,15 @@ packages:
 
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
+
+  '@engine262/engine262@0.0.1-d553e7b52501fbc47eae981c8d0fa7a5c26d0171':
+    resolution: {integrity: sha512-ozSg4swYTTRiQsoXzk7xFKeqNZiL1/ZHtsXn+DgggHFa8RaQGvYi26d5XEpRrqXdCsj/89VH8jYRjdiEpwMvsQ==}
+    hasBin: true
+    peerDependencies:
+      ws: ^8.18.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -2377,6 +2389,10 @@ snapshots:
       fs-extra: 7.0.1
       human-id: 4.2.2
       prettier: 2.8.8
+
+  '@engine262/engine262@0.0.1-d553e7b52501fbc47eae981c8d0fa7a5c26d0171(ws@8.22.0)':
+    optionalDependencies:
+      ws: 8.22.0
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true
