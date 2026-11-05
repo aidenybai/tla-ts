@@ -214,7 +214,9 @@ const createBinaryChecks = (
     expected: getExpected(left, right),
   }));
 
-describe("ESNumber matches JavaScript's Number semantics", () => {
+// The host is the reference, so the checks need Node 24 or later, whose V8 rounds ** correctly and
+// has Math.f16round. Each check evaluates hundreds of Numbers in TLA+, which takes seconds on CI.
+describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, () => {
   it("encodes constants and integers in the canonical form", async () => {
     const failures = await getFailures([
       { name: "NaN", actual: "NaN", expected: encodeNumber(NaN) },
