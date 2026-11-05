@@ -76,6 +76,42 @@ const createRandom = (seed: number) => {
   };
 };
 
+// The Number nearest a positive numerator / denominator, ties to even, subnormals included.
+const roundQuotient = (numerator: bigint, denominator: bigint) => {
+  const magnitude = numerator.toString(2).length - denominator.toString(2).length;
+  // The quotient in units of 2 ** shift has at least 54 bits, or reaches 2 ** -1076 if smaller.
+  const shift = Math.max(magnitude - 55, -1076);
+  const scaledNumerator = shift < 0 ? numerator << BigInt(-shift) : numerator;
+  const scaledDenominator = shift > 0 ? denominator << BigInt(shift) : denominator;
+  const quotient = scaledNumerator / scaledDenominator;
+  const isExact = quotient * scaledDenominator === scaledNumerator;
+  const dropped = Math.max(quotient.toString(2).length - 53, -1074 - shift);
+  const kept = quotient >> BigInt(dropped);
+  const rest = quotient - (kept << BigInt(dropped));
+  const half = 1n << BigInt(dropped - 1);
+  const isRoundedUp = rest > half || (rest === half && (!isExact || kept % 2n === 1n));
+  return Number(kept + (isRoundedUp ? 1n : 0n)) * 2 ** (shift + dropped);
+};
+
+// The correctly rounded base ** exponent for a finite base and a small integral exponent, which
+// V8 computes with the platform's pow: Linux gives 10 ** 23 as 1.0000000000000001e23.
+const getExactPower = (base: number, exponent: number) => {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, Math.abs(base));
+  const bits = view.getBigUint64(0);
+  const biasedExponent = Number(bits >> 52n);
+  const significand = (bits & ((1n << 52n) - 1n)) | (biasedExponent === 0 ? 0n : 1n << 52n);
+  const binaryExponent = Math.max(biasedExponent, 1) - 1075;
+  const numerator = significand << BigInt(Math.max(binaryExponent, 0));
+  const denominator = 1n << BigInt(Math.max(-binaryExponent, 0));
+  const power = BigInt(Math.abs(exponent));
+  const magnitude =
+    exponent >= 0
+      ? roundQuotient(numerator ** power, denominator ** power)
+      : roundQuotient(denominator ** power, numerator ** power);
+  return base < 0 && exponent % 2 !== 0 ? -magnitude : magnitude;
+};
+
 const random = createRandom(262);
 
 const getRandomDouble = () => {
@@ -506,7 +542,12 @@ describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, 
     const failures = await getFailures(
       createBinaryChecks(
         "NumExponentiate",
-        (left, right) => encodeNumber(left ** right),
+        (left, right) =>
+          encodeNumber(
+            Number.isInteger(right) && Math.abs(right) <= 300 && Number.isFinite(left) && left !== 0
+              ? getExactPower(left, right)
+              : left ** right,
+          ),
         bases.flatMap((base) => exponents.map((exponent) => [base, exponent] as const)),
       ),
     );
