@@ -75,6 +75,7 @@ import {
   toLibraryPath,
   type JavaProperties,
 } from "./shared";
+import { writeTypeScriptSpec } from "./typescript";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -873,19 +874,21 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const inputs = getInputPaths(parsed.positionals);
   const isConfigured = parsed.has("-config");
   // Like TLC, a spec named without an extension is the .tla file of that name. A glob also matches
-  // modules that only other specs import, which have no configuration.
+  // modules that only other specs import, which have no configuration. A TypeScript file compiles
+  // to a spec.
   const specPaths = inputs
     .map((input) => ({
       ...input,
       path:
-        input.isGlobbed || /\.(tla|cfg)$/.test(input.path)
+        input.isGlobbed || /\.(tla|cfg|ts)$/.test(input.path)
           ? input.path.replace(/\.cfg$/, ".tla")
           : `${input.path}.tla`,
     }))
     .filter(
       (input) =>
-        input.path.endsWith(".tla") &&
-        (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg"))),
+        input.path.endsWith(".ts") ||
+        (input.path.endsWith(".tla") &&
+          (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg")))),
     )
     .map((input) => input.path);
   if (specPaths.length === 0) {
@@ -907,15 +910,21 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const exitCodes: number[] = [];
   for (const [index, path] of paths.entries()) {
     if (index > 0) console.log("");
-    // TLC checks one spec, so tla-ts names each of several it checks.
-    if (paths.length > 1)
-      console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
     const printer = createMessagePrinter(
       parsed.has("-tool"),
       !parsed.has("-nowarning"),
       java.tlcVersion ?? "master",
     );
-    exitCodes.push(await reportErrors(() => checkSpec(path, parsed, java, printer), printer));
+    exitCodes.push(
+      await reportErrors(async () => {
+        const specPath = path.endsWith(".ts") ? await writeTypeScriptSpec(path) : path;
+        // TLC checks one spec, so tla-ts names each of several it checks.
+        if (paths.length > 1) {
+          console.log(`Checking ${basename(specPath)} with ${basename(specPath, ".tla")}.cfg`);
+        }
+        return checkSpec(specPath, parsed, java, printer);
+      }, printer),
+    );
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
