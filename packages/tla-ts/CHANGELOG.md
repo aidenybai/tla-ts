@@ -1,5 +1,12 @@
 # tla-ts
 
+## 0.0.9
+
+### Patch Changes
+
+- d9bffda: Compile specs faster and evaluate them as TLC does. One pass over the definitions computes their levels, effects and read variables, and the evaluator's value caches are gone, so operators and lazy functions evaluate again at each use. State checking is 5–15% slower without the fingerprinter's value cache, and a check no longer shares TLC's own modules with earlier checks in the process.
+- aa7b562: Read TLA+ source faster. The lexer classifies characters by code through one table instead of testing them with regular expressions, and tries only the operators that start with the current character.
+
 ## 0.0.8
 
 ### Patch Changes
