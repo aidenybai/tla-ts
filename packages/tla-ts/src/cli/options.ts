@@ -65,6 +65,7 @@ export const defineCommand = (usage: string, specs: OptionSpec[]) => {
 
 export const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options}", [
   { flag: "-config <Spec.cfg>" },
+  { flag: "-continue" },
   { flag: "-deadlock" },
   // Like TLC, -dump takes a format only when the next argument starts with dot and a file follows.
   {

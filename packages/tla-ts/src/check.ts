@@ -114,6 +114,9 @@ export interface CheckOptions {
   dump?: StateDump;
   // TLC's -tool, which changes the messages of TLC's errors.
   isTool?: boolean;
+  // TLC's -continue: the search reports each violated invariant and action property through
+  // onProgress and goes on.
+  isContinued?: boolean;
   // Whether TLC records a binary trace for its trace exploration spec, for which it loads Integers.
   isTraceRecorded?: boolean;
   // Whether the caller printed SANY's report, its warnings included, before the check.
@@ -165,6 +168,8 @@ export type CheckProgress =
   | { kind: "liveness-finished" }
   // A warning TLC prints as it evaluates the spec, with its message code.
   | { kind: "warning"; code: number; text: string }
+  // A violation that the search goes on past with -continue.
+  | { kind: "violation"; status: CheckStatus; violation: Violation }
   // A method of the class named after a module, which TLC reports as it loads the class.
   | ({ kind: "java-override" } & JavaOverride);
 
@@ -551,6 +556,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ...(checked.postcondition && { postcondition: checked.postcondition }),
     });
   };
+  // With -continue, TLC prints the trace of a violation without checking the postconditions.
+  const reportContinuedViolation = (status: CheckStatus, violation: Omit<Violation, "loopStart">) =>
+    options.onProgress?.({
+      kind: "violation",
+      status,
+      violation: { ...violation, loopStart: undefined },
+    });
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
   const specNextActions = { value: undefined as SpecAction[] | undefined };
@@ -1164,7 +1176,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       liveness?.addInitialState(states.length, state);
       stateWriter?.writeInitialState(getGraphState(state, 1));
     }
-    const violated = search.findViolatedInvariant(state);
+    if (options.isContinued) {
+      search.getViolatedInvariants(state).forEach((invariant) =>
+        reportContinuedViolation("invariant-violation", {
+          name: invariant.name,
+          ...toTrace([{ action: undefined, state }], []),
+        }),
+      );
+    }
+    const violated = options.isContinued ? undefined : search.findViolatedInvariant(state);
     if (violated) {
       return reportViolation("invariant-violation", {
         name: violated.name,
@@ -1231,14 +1251,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (existing === -1) {
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
-        if (violated) {
-          return withOutDegrees(
-            reportViolation("invariant-violation", {
-              name: violated.name,
-              ...getTrace(index, successor),
-            }),
-          );
+        const violation = violated && { name: violated.name, ...getTrace(index, successor) };
+        if (violation && !options.isContinued) {
+          return withOutDegrees(reportViolation("invariant-violation", violation));
         }
+        if (violation) reportContinuedViolation("invariant-violation", violation);
       } catch (error) {
         if (isStackOverflow(error)) throw error;
         // TLC replays the expansion and skips the invariants of a state it has seen, the failed one
@@ -1253,14 +1270,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }
     }
     const violatedProperty = search.findViolatedActionProperty(state, successor.state);
-    if (violatedProperty) {
-      return withOutDegrees(
-        reportViolation("liveness-violation", {
-          name: violatedProperty.name,
-          ...getTrace(index, successor),
-        }),
-      );
+    const propertyViolation = violatedProperty && {
+      name: violatedProperty.name,
+      ...getTrace(index, successor),
+    };
+    if (propertyViolation && !options.isContinued) {
+      return withOutDegrees(reportViolation("liveness-violation", propertyViolation));
     }
+    if (propertyViolation) reportContinuedViolation("liveness-violation", propertyViolation);
     if (!isNew) return undefined;
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
     markSeen(hash, states.length);

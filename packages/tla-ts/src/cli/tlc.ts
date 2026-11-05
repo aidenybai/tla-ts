@@ -353,6 +353,9 @@ const printCheckProgress = (
       return;
     case "warning":
       print(progress.code, MESSAGE_LEVEL.warning, progress.text);
+      return;
+    case "violation":
+      printViolation(progress.status, progress.violation, printer);
   }
 };
 
@@ -823,6 +826,7 @@ const checkSpec = async (
       seed: BigInt(seed),
       dump: dumpValues && getStateDump(dumpValues),
       isTool: printer.isTool,
+      isContinued: args.has("-continue"),
       isTraceRecorded: isRecorded,
       isSanyReported: true,
       isWarningEnabled: !args.has("-nowarning"),
