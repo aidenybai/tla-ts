@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, type CheckOptions } from "../../src";
+import { check, formatValue, type CheckOptions, type GraphState, type GraphStep } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -133,6 +133,130 @@ describe("check dumps the state graph like TLC's -dump", () => {
       snapshot: true,
     });
     expect(dump.written.get("WaterJugs_snapshot.dot")).toBe(readTlcDump("WaterJugs.dot"));
+  });
+});
+
+const readGraph = async (
+  directory: string,
+  name: string,
+  dump: NonNullable<CheckOptions["dump"]>,
+  options: Partial<CheckOptions> = {},
+) => {
+  const states: GraphState[] = [];
+  const steps: GraphStep[] = [];
+  const dumped = await dumpFixture(directory, name, dump, {
+    onState: (state) => states.push(state),
+    onStep: (step) => steps.push(step),
+    ...options,
+  });
+  return { ...dumped, states, steps };
+};
+
+describe("check reports the state graph -dump writes", () => {
+  it("reports each state with the step that first reached it", async () => {
+    const graph = await readGraph("counter", "Counter", {
+      path: "Counter.dot",
+      dot: true,
+      actionLabels: true,
+    });
+    expect(graph.result.status).toBe("deadlock");
+    expect(graph.states).toEqual([
+      { state: { count: 0 }, parent: undefined, action: undefined },
+      { state: { count: 1 }, parent: 0, action: "Increment" },
+      { state: { count: 2 }, parent: 1, action: "Increment" },
+      { state: { count: 3 }, parent: 2, action: "Increment" },
+    ]);
+    expect(graph.steps).toEqual([
+      { from: 0, to: 1, action: "Increment" },
+      { from: 1, to: 2, action: "Increment" },
+      { from: 2, to: 3, action: "Increment" },
+    ]);
+    expect(graph.written.get("Counter.dot")).toBe(readTlcDump("Counter.dot"));
+  });
+
+  it("reports the alias of each state and every step, back edges included", async () => {
+    const graph = await readGraph("state-graph", "Labels", {
+      path: "Labels.dot",
+      dot: true,
+      colorize: true,
+      actionLabels: true,
+    });
+    expect(graph.written.get("Labels.dot")).toBe(readTlcDump("Labels.dot"));
+    expect(graph.states).toHaveLength(21);
+    expect(graph.steps).toHaveLength(50);
+    expect(
+      graph.states.slice(0, 3).map((state) => ({ ...state, state: formatValue(state.state.seq) })),
+    ).toEqual([
+      { state: "<<>>", parent: undefined, action: undefined },
+      { state: "<<>>", parent: 0, action: "Next" },
+      { state: '<<"a\\"b">>', parent: 0, action: "Push" },
+    ]);
+    expect(graph.states.slice(0, 3).map((state) => [state.state.vee, state.state.len])).toEqual([
+      [0, 0],
+      [1, 0],
+      [0, 1],
+    ]);
+    expect(graph.steps.filter((step) => step.to === 0).map((step) => step.from)).toEqual([
+      2, 3, 7, 8, 9, 10,
+    ]);
+  });
+
+  it("reports the graph of a single worker without a dump", async () => {
+    const states: GraphState[] = [];
+    const steps: GraphStep[] = [];
+    await check({
+      source: readFileSync(join(FIXTURES, "state-graph", "Labels.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "state-graph", "Labels.cfg"), "utf8"),
+      loadModule: (module) => readFileSync(join(FIXTURES, "state-graph", `${module}.tla`), "utf8"),
+      onPrint: () => {},
+      onState: (state) => states.push(state),
+      onStep: (step) => steps.push(step),
+      workers: 2,
+    });
+    const dumped = await readGraph("state-graph", "Labels", {
+      path: "Labels.dot",
+      dot: true,
+      actionLabels: true,
+    });
+    expect(states).toEqual(dumped.states);
+    expect(steps).toEqual(dumped.steps);
+  });
+
+  it("reports the stuttering steps of TLC 1.7.4 without an action", async () => {
+    const graph = await readGraph(
+      "state-graph",
+      "Picks",
+      { path: "Picks174.dot", dot: true, actionLabels: true },
+      { version: "1.7.4" },
+    );
+    expect(graph.written.get("Picks174.dot")).toBe(readTlcDump("Picks174.dot"));
+    expect(graph.states.map((state) => state.parent)).toEqual([undefined, 0]);
+    expect(graph.steps).toEqual([
+      { from: 0, to: 1, action: "Pick" },
+      { from: 0, to: 1, action: "Pick" },
+      { from: 0, to: 0, action: undefined },
+      { from: 1, to: 1, action: undefined },
+    ]);
+  });
+
+  it("reports the steps TLC writes again as it replays a state an invariant fails in", async () => {
+    const graph = await readGraph("state-graph", "FailedInvariant", {
+      path: "FailedInvariant.dot",
+      dot: true,
+      actionLabels: true,
+    });
+    expect(graph.result.status).toBe("error");
+    expect(graph.written.get("FailedInvariant.dot")).toBe(readTlcDump("FailedInvariant.dot"));
+    expect(graph.states).toEqual([
+      { state: { x: 0 }, parent: undefined, action: undefined },
+      { state: { x: 1 }, parent: 0, action: "A" },
+      { state: { x: 2 }, parent: 0, action: "B" },
+      { state: { x: 3 }, parent: 1, action: "B" },
+    ]);
+    expect(graph.steps.slice(-2)).toEqual([
+      { from: 1, to: 2, action: "A" },
+      { from: 1, to: 3, action: "B" },
+    ]);
   });
 });
 

@@ -54,8 +54,10 @@ import {
 import {
   createStateWriter,
   type GraphState,
+  type GraphStep,
   type StateDump,
   type StateWriter,
+  type WrittenState,
 } from "./state-graph";
 import {
   forEachInitialState,
@@ -84,7 +86,6 @@ import {
   combineHash,
   createCanonicalizer,
   createModelValue,
-  formatState,
   getFingerprintError,
   getHeldValues,
   getValueHash,
@@ -112,6 +113,10 @@ export interface CheckOptions {
   livenessCheck?: "default" | "final";
   // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
   dump?: StateDump;
+  // The graph -dump writes, as the search finds it: each distinct state, numbered from 0 in the
+  // order onState receives it, and each step between states in the model.
+  onState?: (state: GraphState) => void;
+  onStep?: (step: GraphStep) => void;
   // TLC's -tool, which changes the messages of TLC's errors.
   isTool?: boolean;
   // Whether TLC records a binary trace for its trace exploration spec, for which it loads Integers.
@@ -365,8 +370,7 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
 
 // TLC finishes the -dump file whether or not the search finds a violation.
 export const checkSequentially = (options: CheckOptions): CheckResult => {
-  const stateWriter =
-    options.dump && createStateWriter(options.dump, options.writeFile, options.version);
+  const stateWriter = createStateWriter(options);
   try {
     return searchStates(options, stateWriter);
   } catch (error) {
@@ -1129,17 +1133,22 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
-  const getGraphState = (state: Value[], level: number): GraphState => ({
-    fingerprint: BigInt.asIntN(64, runtime.getFingerprint(state)),
-    level,
-    getLabel: () =>
-      formatState(
-        config.alias === undefined
-          ? toRecord(state)
-          : evaluateAlias(config.alias, state, undefined),
-      ),
-    getText: () => formatState(toRecord(state)),
-  });
+  // TLC evaluates the alias once for each state it writes, so -dump and onState share one result.
+  const getGraphState = (state: Value[], level: number): WrittenState => {
+    const aliased = { record: undefined as Record<string, Value> | undefined };
+    return {
+      fingerprint: BigInt.asIntN(64, runtime.getFingerprint(state)),
+      level,
+      getAliased: () => {
+        aliased.record ??=
+          config.alias === undefined
+            ? toRecord(state)
+            : evaluateAlias(config.alias, state, undefined);
+        return aliased.record;
+      },
+      getState: () => toRecord(state),
+    };
+  };
 
   const visitInitialState = (state: Value[]) => {
     canonicalizeState(state);
@@ -1187,7 +1196,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     index: number,
     successor: Successor,
     liveSuccessors: LiveSuccessor[],
-    source: GraphState | undefined,
+    source: WrittenState | undefined,
     action: SpecAction | undefined,
   ) => {
     const state = states[index];
@@ -1344,7 +1353,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // TLC labels and colors an edge of the -dump state graph by the action that generated it. When
   // the graph names its edges, the search generates successors action by action, as TLC does.
   const isNamingEdges = Boolean(
-    options.dump?.dot && (options.dump.actionLabels || options.dump.colorize),
+    (options.dump?.dot && (options.dump.actionLabels || options.dump.colorize)) ||
+    options.onState ||
+    options.onStep,
   );
   const forEachActionSuccessor = (
     state: Value[],
