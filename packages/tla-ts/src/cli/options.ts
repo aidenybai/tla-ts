@@ -99,6 +99,12 @@ export const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|g
   { flag: "--cleanfp" },
   { flag: "--usefp <file>" },
   { flag: "--cache-dir <directory>" },
+  { flag: "--debug <flags>", isRepeatable: true },
+  { flag: "--method <methods>" },
+  { flag: "--solver <command>" },
+  { flag: "--smt-logic <logic>" },
+  { flag: "--stretch <factor>" },
+  { flag: "--noflatten" },
 ]);
 
 export const USAGE = [

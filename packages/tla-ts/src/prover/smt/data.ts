@@ -51,6 +51,7 @@ import {
 } from "./format";
 import { axiom, type Axiom } from "./table";
 
+// A symbol's declaration, or the comment that stands for it. SMT-LIB's own symbols have neither.
 export interface SymbolSpec {
   declaration: string | undefined;
   deps: string[];
@@ -69,6 +70,11 @@ export interface CollectState {
   records: string[][];
   anonymous: Map<string, number>;
 }
+
+// Smtlib.pp_print_obligation leaves out a second-order symbol, which Flatten replaces with a
+// first-order one for each use.
+const getOmittedDeclaration = (name: string) =>
+  `; omitted declaration of 'TLA__${name}' (second-order)`;
 
 const SEQUENCE_DEPS = ["Mem", "Seq", "Len", "FunApp", "NatSet", "Cast_Int", "Proj_Int"];
 
@@ -89,7 +95,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   if (setOf) {
     const count = Number(setOf[1]);
     return spec(
-      undefined,
+      getOmittedDeclaration(name),
       ["Mem", "IsSetOf"],
       [
         axiom("SetOfIntro", [count], undefined),
@@ -180,7 +186,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     case "SelectSeq":
       return spec(
-        undefined,
+        getOmittedDeclaration(name),
         [
           "Mem",
           "Seq",
@@ -202,7 +208,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "Choose":
-      return spec(undefined, [], [axiom("ChooseDef", [], undefined)]);
+      return spec(getOmittedDeclaration(name), [], [axiom("ChooseDef", [], undefined)]);
     case "Mem":
       return fixed(
         2,
@@ -293,7 +299,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     }
     case "SetSt":
       return spec(
-        undefined,
+        getOmittedDeclaration(name),
         ["Mem", "SetEnum_0", "SetExtTrigger"],
         [axiom("SetStDef", [], undefined), axiom("EmptyComprehensionTrigger", [], undefined)],
       );
@@ -361,7 +367,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     case "FunFcn":
       state.isFunConstr = true;
       return spec(
-        undefined,
+        getOmittedDeclaration(name),
         ["FunIsafcn"],
         [
           axiom("FunConstrIsafcn", [], undefined),

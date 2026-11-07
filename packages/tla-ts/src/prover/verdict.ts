@@ -2,8 +2,11 @@
 // proves it.
 export type Verdict = "unsat" | "sat" | "unknown";
 
+// What tlapm reads of a backend's output beyond its verdict: Zenon's proof, or the SMT solver's
+// answer.
 export interface Decision {
   verdict: Verdict;
+  output?: string;
   timeUsedMs: number;
 }
 

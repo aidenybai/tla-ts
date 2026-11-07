@@ -1,9 +1,17 @@
 // Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
 
 import { TlaProverError, TlaUnsupportedError } from "../errors";
-import { getChildren, mapHyp, type Expr, type Hyp, type Sequent } from "../obligations/expression";
+import {
+  getChildren,
+  getLocusPosition,
+  mapHyp,
+  type Expr,
+  type Hyp,
+  type Sequent,
+} from "../obligations/expression";
 import { getObligations, type PrintedObligation } from "../obligations";
-import { formatObligation } from "../obligations/printer";
+import { renderDoc } from "../obligations/format";
+import { formatObligation, printSequent } from "../obligations/printer";
 import { isWorkerSupported } from "../worker";
 import { decide } from "./deciders";
 import { createDecidePool, type DecidePool } from "./decide-pool";
@@ -24,7 +32,7 @@ import type { EncodingSession } from "./smt/rewrite";
 import { encodeZenon } from "./zenon/encode";
 import type { TlapmResult } from "./tlapm/tlapm";
 import { TLAPS_MODULE } from "./tlaps-module";
-import type { Verdict } from "./verdict";
+import type { Decision } from "./verdict";
 
 interface ObligationBase {
   id: number;
@@ -65,13 +73,15 @@ export interface ProveOptions {
   workers?: number;
 }
 
-// What one method concluded about an obligation, as tlapm's toolbox messages report it.
+// What one method concluded about an obligation, as tlapm's toolbox messages report it: the proof
+// it writes in the module's theory, or the note it prepends to the obligation.
 export interface ProofAttempt {
   method: Method;
   isProved: boolean;
   isReused: boolean;
   reason?: string;
-  verdict?: Verdict;
+  proof?: string;
+  note?: string;
   timeUsedMs?: number;
 }
 
@@ -102,31 +112,105 @@ interface ProveRun {
   isProving: boolean;
   lastByFingerprint: Map<string, Promise<void>>;
   decide: DecidePool["decide"];
+  settings: ProverSettings;
 }
 
-// The text Prep.ship sends a backend after Prep.normalize_expand. It throws a TlaUnsupportedError
-// for what tla-ts can't encode.
-type Encoder = (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
+// The version tlapm names in the files it writes.
+export const TLAPM_VERSION = "b91fb6c";
+
+// What Prep.ship writes to a backend's temporary file, after Prep.normalize_expand.
+interface BackendInput {
+  obligation: PrintedObligation;
+  sequent: Sequent;
+  fingerprint: string;
+  method: Method;
+  session: EncodingSession;
+  name: string;
+  settings: ProverSettings;
+  write: (text: string) => void;
+}
+
+// An encoder writes what it encodes. It throws a TlaUnsupportedError for what tla-ts can't encode.
+type Encoder = (input: BackendInput) => void;
 
 // Action.process_obligation, the frontend for every backend but LS4, Isabelle included, then
-// Prep.flatten.
-const shipFirstOrder = (sequent: Sequent) => flatten(processObligation(sequent));
+// Prep.flatten unless --noflatten.
+const shipFirstOrder = (sequent: Sequent, isFlattened = true) => {
+  const processed = processObligation(sequent);
+  return isFlattened ? flatten(processed) : processed;
+};
 
-// Prep.gen_smt_solve writes the resource budget before the encoding.
-const encodeSmtProblem: Encoder = (_id, sequent, method, session) =>
-  (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
-  encodeSmt(shipFirstOrder(sequent), session);
+// Util.location ~cap:false.
+const getLocation = (obligation: PrintedObligation) =>
+  obligation.locus
+    ? `file ${JSON.stringify(obligation.locus.file)}, ${getLocusPosition(obligation.locus)}`
+    : "<unknown location>";
+
+// Prep.gen_smt_solve: the obligation as comments, the resource budget, then the encoding.
+const encodeSmtProblem: Encoder = (input) => {
+  const shipped = shipFirstOrder(input.sequent, input.settings.isFlattened);
+  const encoding = encodeSmt(shipped, input.session, {
+    version: TLAPM_VERSION,
+    id: input.obligation.id,
+    location: getLocation(input.obligation),
+    logic: input.settings.smtLogic,
+  });
+  input.write(
+    `;; Proof obligation:\n${renderDoc(printSequent(shipped)).replace(/^/gm, ";;\t")}\n${
+      input.method.rlimit === undefined ? "" : `(set-option :rlimit ${input.method.rlimit})\n`
+    }${encoding}`,
+  );
+};
 
 const ENCODERS: Record<string, Encoder> = {
   smt: encodeSmtProblem,
   z3: encodeSmtProblem,
-  zenon: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
-  // tlapm names the theory after its temporary file, and tla-ts after the obligation.
-  isabelle: (id, sequent, method) =>
-    encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
+  zenon: (input) =>
+    input.write(
+      encodeZenon(input.obligation.id, shipFirstOrder(input.sequent, input.settings.isFlattened)),
+    ),
+  isabelle: (input) =>
+    encodeIsabelle(
+      input.obligation.id,
+      shipFirstOrder(input.sequent, input.settings.isFlattened),
+      input.method.tactic ?? "auto",
+      input.name,
+      { location: getLocation(input.obligation), fingerprint: input.fingerprint },
+      input.write,
+    ),
   // Pltl.process_obligation is LS4's frontend.
-  ls4: (_id, sequent) => encodePtl(sequent),
+  ls4: (input) => input.write(encodePtl(input.sequent)),
 };
+
+// The suffix of the temporary file Prep.mk_temps writes each backend's input to.
+const SUFFIXES: Record<string, string> = {
+  smt: ".smt",
+  z3: ".smt2",
+  zenon: ".znn",
+  isabelle: ".thy",
+  ls4: ".ls4",
+};
+
+// Filename.open_temp_file names a file tlapm_ and six random hexadecimal digits.
+const getTemporaryName = () =>
+  `tlapm_${Math.floor(Math.random() * 0x1000000)
+    .toString(16)
+    .padStart(6, "0")}`;
+
+// Method.Proved: what tlapm writes after the lemma in the module's theory.
+const getProof = (method: Method, input: string, decision: Decision) => {
+  if (method.prover === "isabelle") return `using assms by ${method.tactic ?? "auto"}\n`;
+  if (method.prover !== "zenon") return "";
+  return `\n(* BEGIN ZENON INPUT\n;; zenon -p0 -x tla -oisar -max-time 1d\n${input}\nEND ZENON  INPUT *)\n${decision.output ?? ""}`;
+};
+
+// Method.Failed: what tlapm prepends to an SMT failure that answered sat or unknown.
+const getNote = (method: Method, decision: Decision) =>
+  (method.prover === "smt" || method.prover === "z3") &&
+  decision.output !== undefined &&
+  /^(sat|unknown)/.test(decision.output)
+    ? `(* SMT failed with status = ${decision.output} *)\n`
+    : undefined;
 
 // The frontends and Prep.flatten add no CASE without OTHER, so the SMT encoder standardizes one
 // only in an obligation that has one after Prep.normalize_expand.
@@ -177,7 +261,7 @@ export const formatNormalized = (obligation: PrintedObligation, isReused: boolea
       : normalizeExpand(obligation),
   )}\n`;
 
-// The theory of the proofs Isabelle found. tlapm also writes Zenon's proofs there.
+// The theory of the proofs Isabelle and Zenon found.
 export const encodeProofTheory = (
   name: string,
   reports: ProofReport[],
@@ -187,14 +271,11 @@ export const encodeProofTheory = (
     name,
     reports.flatMap((report, index) =>
       report.attempts
-        .filter(
-          (attempt) =>
-            attempt.method.prover === "isabelle" && attempt.isProved && !attempt.isReused,
-        )
+        .filter((attempt) => attempt.proof && !attempt.isReused)
         .map((attempt) => ({
           id: report.obligation.id,
           sequent: shipFirstOrder(normalizeExpand(obligations[index])),
-          tactic: attempt.method.tactic ?? "auto",
+          proof: attempt.proof ?? "",
         })),
     ),
   );
@@ -212,7 +293,18 @@ export const encodeForBackend = (
     prover,
     timeLimitMs: Infinity,
   };
-  return encode(obligation.id, normalizeExpand(obligation, methods), method, session);
+  const chunks: string[] = [];
+  encode({
+    obligation,
+    sequent: normalizeExpand(obligation, methods),
+    fingerprint: getFingerprint(obligation.sequent),
+    method,
+    session,
+    name: getTemporaryName(),
+    settings: DEFAULT_SETTINGS,
+    write: (text) => chunks.push(text),
+  });
+  return chunks.join("");
 };
 
 // The SMT encoder's session for an obligation, from the count of CASE errors every earlier
@@ -244,7 +336,15 @@ const proveWithBackends = async (
 ): Promise<ProofReport> => {
   if (obligation.kind.kind === "Error")
     return getUnprovedReport(obligation, "failed", obligation.kind.message);
-  const methods = findMethods(obligation);
+  const found = findMethods(obligation, run.settings.defaultMethods);
+  // Prep.ship scales each prover's time by --stretch.
+  const methods = {
+    ...found,
+    provers: found.provers.map((method) => ({
+      ...method,
+      timeLimitMs: method.timeLimitMs * run.settings.stretch,
+    })),
+  };
   const fingerprint = getFingerprint(obligation.sequent);
   const earlier = run.lastByFingerprint.get(fingerprint);
   run.lastByFingerprint.set(fingerprint, run.tasks[index].done);
@@ -302,8 +402,12 @@ const proveWithBackends = async (
       continue;
     }
     if (!run.isProving) continue;
-    // Prep.prove_with: the Trivial method proves anything.
+    // Prep.prove_with: the Trivial method proves anything, and the Fail method nothing.
     if (method.prover === "trivial") return getProvedReport(method.prover);
+    if (method.prover === "fail") {
+      failures.push({ reason: "the fail method", isDecided: true });
+      continue;
+    }
     const encode = ENCODERS[method.prover];
     if (!encode) {
       skip(method, `tla-ts has no ${method.prover} backend`);
@@ -314,22 +418,61 @@ const proveWithBackends = async (
         encode === encodeSmtProblem &&
         (sequent.context.some(isIncompleteCaseHyp) || hasIncompleteCase(sequent.active));
       const session = isCaseNumbered ? await getSession(run, index) : { caseErrors: 0 };
-      const text = encode(obligation.id, sequent, method, session);
-      const decision = await run.decide(
-        method.prover,
-        text,
-        { timeLimitMs: method.timeLimitMs, signal },
-        index,
-      );
+      const name = getTemporaryName();
+      const file = `${name}${SUFFIXES[method.prover]}`;
+      const chunks: string[] = [];
+      // Prep.mk_temps creates the file before the encoder writes to it. A backend that fails to
+      // encode the obligation leaves the file as far as it got, and doesn't try the obligation.
+      const encodingError = (() => {
+        try {
+          encode({
+            obligation,
+            sequent,
+            fingerprint,
+            method,
+            session,
+            name,
+            settings: run.settings,
+            write: (text) => chunks.push(text),
+          });
+          return undefined;
+        } catch (error) {
+          if (error instanceof TlaProverError) return error;
+          throw error;
+        } finally {
+          run.settings.onInput?.(file, chunks.join(""));
+        }
+      })();
+      if (encodingError) {
+        record({ method, isProved: false, isReused: false, reason: encodingError.message });
+        failures.push({
+          reason: `${method.prover} failed: ${encodingError.message}`,
+          isDecided: true,
+        });
+        continue;
+      }
+      const text = chunks.join("");
+      const decision =
+        method.prover === "smt" && run.settings.solveSmt
+          ? await run.settings.solveSmt(file, text, method.timeLimitMs)
+          : await run.decide(
+              method.prover,
+              text,
+              { timeLimitMs: method.timeLimitMs, signal },
+              index,
+            );
       const isProved = decision.verdict === "unsat";
+      const isTimedOut = decision.timeUsedMs >= method.timeLimitMs;
       record({
         method,
         isProved,
         isReused: false,
-        ...(!isProved && {
-          reason: decision.timeUsedMs >= method.timeLimitMs ? "timeout" : "false",
-        }),
-        verdict: decision.verdict,
+        ...(isProved
+          ? { proof: getProof(method, text, decision) }
+          : {
+              reason: isTimedOut ? "timeout" : "false",
+              ...(!isTimedOut && { note: getNote(method, decision) }),
+            }),
         timeUsedMs: decision.timeUsedMs,
       });
       if (isProved) return getProvedReport(method.prover);
@@ -362,7 +505,25 @@ const getErrorReport = (obligation: PrintedObligation, error: unknown) => {
   throw error;
 };
 
-interface ObligationsOptions {
+// tlapm's options for its backends.
+interface ProverSettings {
+  // --method.
+  defaultMethods?: Method[];
+  // --stretch.
+  stretch: number;
+  // --noflatten clears it.
+  isFlattened: boolean;
+  // --smt-logic.
+  smtLogic: string;
+  // Receives each temporary file a backend reads, by name, as tlapm writes it.
+  onInput?: (file: string, text: string) => void;
+  // --solver: decides the temporary file of the smt method in place of tla-ts's Z3.
+  solveSmt?: (file: string, text: string, timeLimitMs: number) => Promise<Decision>;
+}
+
+const DEFAULT_SETTINGS: ProverSettings = { stretch: 1, isFlattened: true, smtLogic: "UFNIA" };
+
+interface ObligationsOptions extends Partial<ProverSettings> {
   workers?: number;
   signal?: AbortSignal;
   onReport?: (report: ProofReport, obligation: PrintedObligation) => void;
@@ -390,6 +551,14 @@ export const proveObligations = async (
     lastByFingerprint: new Map(),
     decide:
       pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),
+    settings: {
+      defaultMethods: options.defaultMethods,
+      stretch: options.stretch ?? DEFAULT_SETTINGS.stretch,
+      isFlattened: options.isFlattened ?? DEFAULT_SETTINGS.isFlattened,
+      smtLogic: options.smtLogic ?? DEFAULT_SETTINGS.smtLogic,
+      onInput: options.onInput,
+      solveSmt: options.solveSmt,
+    },
   };
   // A few obligations per worker prove at once, and each reports once every earlier one has.
   const limit = pool ? workerCount * 4 : 1;

@@ -1292,7 +1292,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     const result = runTlapm("obligations", ["-N", "--line", "3", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
+      /^\n\\\* TLAPM version b91fb6c\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
     );
   });
 
@@ -1377,7 +1377,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
+      /^\n\\\* TLAPM version b91fb6c\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
     );
     expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
   });
