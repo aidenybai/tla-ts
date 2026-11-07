@@ -44,13 +44,47 @@ jobs:
         run: pnpm run publint
 
   conformance:
-    name: conformance ${{ matrix.shard }}/8
+    name: conformance ${{ matrix.shard }}/32
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard:
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+          ]
 
     steps:
       - uses: actions/checkout@v4
@@ -62,4 +96,10 @@ jobs:
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: pnpm --filter @tla-ts/conformance conformance --shard ${{ matrix.shard }}/8
+      # Four tests run at once, so the memory limit keeps them within the runner's 16 GB.
+      - run: pnpm --filter @tla-ts/conformance conformance --time-limit 300 --memory-limit 3072 --shard ${{ matrix.shard }}/32
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tla-ts-results-${{ matrix.shard }}
+          path: packages/conformance/.results/tla-ts.json

@@ -39,6 +39,8 @@ pnpm conformance --host tlc
 pnpm conformance --host "./my-checker --flag" tlc
 ```
 
+`pnpm fetch-tlc` builds TLC at the suite's revision from source, since tlaplus publishes TLC only as a rolling release. It needs git, a JDK and Ant.
+
 A command host runs every test the filters select. It gets TLC's flags for a TLC test and tlapm's flags for a tlapm test. For a backend test, it gets the backend's name and the input file, and must print the verdict, as described below.
 
 `pnpm fetch-tlapm` needs Z3 5.3.2 on `PATH` as `z3`. tlapm's release bundles an x86_64 Z3 4.8.9, so the script links tlapm to the system Z3.
