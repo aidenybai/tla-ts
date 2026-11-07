@@ -234,24 +234,25 @@ const permuteSortedElements = (elements: Value[], images: ImageTable) => {
   return merged;
 };
 
-// A permutation often maps a function's domain of model values to itself, as with a function over
-// the symmetric set. Then each value moves to where its key's image is, without sorting. The domain
-// is sorted by rank, and undefined means the images aren't that same domain.
+// Model values order by rank, which can't fail on their types.
+const compareKeys = (key: Value, image: Value) =>
+  isModelValue(key) && isModelValue(image) ? key.rank - image.rank : compareValues(key, image);
+
+// A permutation often maps a function's domain to itself, as with a function over the symmetric set
+// or over pairs of it. Then each value moves to where its key's image is, without sorting. The
+// domain is sorted, and undefined means the images aren't that same domain.
 const permuteRangeOverDomain = (domain: Value[], images: Value[], range: Value[]) => {
   const permuted = range.slice();
   for (let index = 0; index < images.length; index++) {
     const image = images[index];
-    if (!isModelValue(image)) return undefined;
     let low = 0;
     let high = domain.length - 1;
     while (low < high) {
       const middle = (low + high) >> 1;
-      const key = domain[middle];
-      if (!isModelValue(key)) return undefined;
-      if (key.rank < image.rank) low = middle + 1;
+      if (compareKeys(domain[middle], image) < 0) low = middle + 1;
       else high = middle;
     }
-    if (domain[low] !== image) return undefined;
+    if (compareKeys(domain[low], image) !== 0) return undefined;
     permuted[low] = range[index];
   }
   return permuted;
