@@ -1,0 +1,31 @@
+(*---
+description: The syntax corpus case "Verbose Bounded Quantification" in quantification.txt, which tlapm's parser tests read.
+ref: test/parser/syntax_corpus/quantification.txt
+features:
+  - tlapm-test
+  - syntax-corpus
+mode: obligations
+outcome: rejected
+---*)
+---- MODULE quantification_verbose_bounded_quantification ----
+EXTENDS TestPrelude
+op1 == \forall x, y \in Nat, z \in Int, a, b, c \in Real : FALSE
+op2 == \exists x, y \in Nat, a, b \in Int : TRUE
+====
+---- MODULE TestPrelude ----
+CONSTANTS Nat, Real, Int
+====
+
+(*--- recorded
+all:
+  exit: 3
+  transcript: |-
+    @type: warning
+    @msg: File "./quantification_verbose_bounded_quantification.tla", line 11, characters 9-19
+
+    Unknown module "TestPrelude"
+
+    File "./quantification_verbose_bounded_quantification.tla", line 11, characters 9-19:
+    Error: Unknown module "TestPrelude"
+     tlapm ending abnormally with Failure("Module.Parser.load_module")
+---*)

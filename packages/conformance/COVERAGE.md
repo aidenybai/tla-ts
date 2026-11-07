@@ -1,8 +1,8 @@
 # What the suite covers
 
-This page lists how much of TLC the suite reaches, what it leaves out on purpose and the TLC bugs it pins. All figures are for the oracle, TLC 1.8.0 at revision 309e489.
+This page lists, for each oracle, how much the suite reaches, what it leaves out on purpose and the bugs it pins. The TLC figures are for TLC 1.8.0 at revision 309e489. The tlapm figures are for tlapm at revision b91fb6c, with Z3 5.3.2.
 
-## Coverage
+## TLC coverage
 
 A run of the suite with the JaCoCo agent attached to TLC reaches:
 
@@ -25,7 +25,7 @@ These figures come from a run of every hand-written and imported test with a sam
 
 To measure coverage yourself, run TLC with `-javaagent:jacocoagent.jar=destfile=tlc.exec,append=true` through `--host`, then build a report from `tlc.exec` with `jacococli.jar report`.
 
-## What the suite leaves out
+## What the TLC tests leave out
 
 A test must give the same transcript on every run and every machine. TLC behavior that cannot meet that rule is left out, grouped below by reason.
 
@@ -145,3 +145,58 @@ Some TLC messages misname their operator. The suite pins them as ordinary tests,
 - `RandomSubset` says "a a finite set".
 - `RandomSubsetSet` says `RandomSubsetSetProbability`.
 - `IOUtils` `Serialize` says `ndJsonSerialize`.
+
+## tlapm coverage
+
+The tlapm half has 1,637 tests under `test/tlapm`:
+
+| Directory     | Tests | Contents                                                                                          |
+| ------------- | ----- | ------------------------------------------------------------------------------------------------- |
+| `imported`    | 467   | tlapm's own harness, soundness, SANY and parser corpus tests, ported by `scripts/import-tlapm.ts` |
+| `obligations` | 372   | The obligations tlapm generates for each proof construct, and which facts PTL may box             |
+| `backends`    | 315   | Inputs fed to each backend directly: 112 for Z3, 90 for Zenon, 54 for Isabelle and 55 for LS4     |
+| `encodings`   | 235   | The input tlapm writes for Z3, Zenon, Isabelle and LS4                                            |
+| `proofs`      | 166   | Proof methods, command line flags, Isabelle tactics, statuses, `ENABLED` and the proof library    |
+| `errors`      | 80    | Parse, name, step, level, arity and `--line` selection errors                                     |
+| `smoke`       | 2     | One proof and one parse error                                                                     |
+
+tlapm isn't built with coverage instrumentation, so the suite has no line or branch figure for it. The tests instead cover each proof construct in `src/proof`, each backend that tlapm's release ships, and each exit status of `--strict`.
+
+## What the tlapm tests leave out
+
+A tlapm test must not depend on time, so no test may pass or fail because a backend reaches its time limit. The tlapm half also leaves out:
+
+- **Backends the release doesn't ship**: CVC4, Yices, veriT, Zipperposition and Spass, and so `AllProvers` and `AllSMT`.
+- **`BY Z3` and Yices encodings**: tlapm writes these inputs as `.smt2` and `.ys` files, which the harness doesn't capture yet.
+- **Goals that only time out**: Z3 on `2^3 = 8` and on `ChooseExt`, Isabelle's `auto` on a `CASE`, LS4 on `[](p \/ q) => []p \/ []q`, and the library module `GeneralNatInduction`.
+- **Z3 giving up**: on a false goal, the axioms `SetExt`, `CupDef` and `CastInjAlt` make Z3's model based quantifier instantiation run until the time limit. No test found a Z3 `unknown` that isn't a timeout.
+- **Level errors**: tlapm doesn't check levels, and it leaves arity to SANY. Tests of `c'`, `ENABLED x''` and wrong arity record that tlapm accepts them.
+- **`RECURSIVE`**: TLAPS doesn't support it, so the suite pins only its rejection.
+- **The library module `BagsTheorems`**: it doesn't load, because tlapm can't find `Range`.
+- **7 of tlapm's own tests**: 4 run tlapm twice, pipe its output through a shell or name a file that doesn't exist. 3 don't reproduce here: `smt_rlimit_bad_test` exits 10, not 3, `INSTANCE_shift_due_to_omitted_modunits_test` fails an obligation, and `SnapShot_test` gives different results on two runs.
+
+The runner removes what differs between machines from a transcript: the OCaml backtrace and the configuration tlapm prints when it crashes, the `PATH` it prints for a missing backend, and the command line that ran Zenon, which tlapm copies into each Isabelle theory.
+
+## tlapm bugs the suite pins
+
+Each test that pins a tlapm bug has `features: [tlapm-bug]`. Test paths are relative to `test/tlapm`, and the cited source is relative to tlapm's repository.
+
+| Bug                                                                                                             | Cause                                                                                                                     | Tests                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `BY AutoBlast` fails even on a tautology                                                                        | `library/TLAPS.tla` writes the tactic `auto, blast` without parentheses, and `src/backend/isabelle.ml#thy_temp` copies it | `proofs/isabelle/auto_blast`, `backends/isabelle/tactics/auto_then_blast.thy`                                              |
+| Z3 rejects the axiom for a function of two arguments as ill sorted                                              | `src/encode/n_rewrite.ml#elim_multiarg` binds the wrong terms                                                             | `encodings/smt/functions/multiple_arguments`, `backends/z3/functions/fcn_two_args.smt`                                     |
+| A set map over two bound variables, `{F(a, b) : a \in S, b \in T}`, crashes the SMT backend                     | `List.combine` in `src/encode/n_flatten.ml`, line 444, so tlapm hands Z3 an empty file                                    | `backends/z3/sets/setof_two_bounds.smt`                                                                                    |
+| Under `--debug smarter_types`, `\A a, b \in Int` leaves `b` without a cast                                      | `src/type/t_synth.ml#expr`, line 347                                                                                      | `encodings/smt/arithmetic/smarter_types_shared_bound`                                                                      |
+| Under `--debug rwsetext`, `\subseteq` stops with "Encode.Rewrite: internal error"                               | `src/encode/n_rewrite.ml`, line 738                                                                                       | `encodings/smt/sets/rewrite_subseteq`                                                                                      |
+| "x is not a definition" doesn't fail the run, so `--strict` exits 0                                             | `src/proof/p_anon.ml#usable` reports it with `Errors.err`                                                                 | `obligations/by/by_def_*_reported`, `errors/use_hide/hide_def_of_constant`                                                 |
+| A module level suppress pragma is ignored                                                                       | `src/module/m_gen.ml#generate`                                                                                            | `obligations/use_hide/module_use_suppressed`                                                                               |
+| After an error in `HAVE` or `TAKE`, the `QED` goal is garbled                                                   | The error branches of `src/proof/p_simplify.ml#simplify_step` add a fact to the context without shifting the goal         | `obligations/have/have_not_implication`, `obligations/take/take_{unbounded_on_bounded,bounded_on_unbounded,not_universal}` |
+| The `LOCAL` definitions of an extended module stay in scope                                                     | `src/module/m_flatten.ml#exports`                                                                                         | `obligations/definitions/local_definition_extended`                                                                        |
+| A module instantiated only inside a proof step is never loaded, so tlapm crashes                                | `src/module/m_dep.ml#external_deps`                                                                                       | `obligations/instances/step_instance_not_loaded`                                                                           |
+| `USE` of a named axiom in a `Now` scope gives it the time `Now`, so PTL can't box it                            | `src/proof/p_gen.ml#gen_step`                                                                                             | `obligations/time/use_fact_name_keeps_time`                                                                                |
+| Applying a variable to an argument, `x(1)`, fails an assertion instead of reporting an error                    | `src/expr/e_anon.ml`, line 224                                                                                            | `errors/arity_level/variable_applied`                                                                                      |
+| Without `-s`, `ptl_to_trp` prints `False` inside a clause as an atom, so LS4 finds `sometime False` satisfiable | `translate/fofunctions.ml#string_of_formula`. tlapm itself writes `FALSE` as `(cc & ~ cc)`, so a proof never reaches this | `backends/ls4/syntax/sometime_false.ls4`                                                                                   |
+
+The 14 soundness tests under `imported/soundness_tests` with `tlapm-bug` are false theorems that tlapm still proves. tlapm's own tests list them with a `known:` line.
+
+The Isabelle theory that tlapm writes declares `\div` as a fresh constant, `isa_bksl_diva`, so Isabelle can't prove anything about `\div`. `backends/isabelle/arithmetic/numeral_div.thy` pins this. It may be deliberate, so the test isn't tagged as a bug.
