@@ -22,3 +22,7 @@ packages/tla-ts/tests/conformance/.isabelle-encode-results.json
 packages/tla-ts/tests/conformance/.prove-results.json
 packages/tla-ts/tests/conformance/.prove-benchmark.json
 packages/tla-ts/.scripts
+
+packages/conformance/.oracles
+packages/conformance/.results
+packages/conformance/.scripts

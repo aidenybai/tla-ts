@@ -1,0 +1,40 @@
+name: Conformance recordings
+
+on:
+  push:
+    branches: [main]
+    paths: ["packages/conformance/**"]
+  pull_request:
+    paths: ["packages/conformance/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-oracles-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tlc:
+    name: recordings match TLC ${{ matrix.shard }}/8
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tla-ts/conformance fetch-tlc
+      - run: pnpm --filter @tla-ts/conformance conformance --host tlc --shard ${{ matrix.shard }}/8

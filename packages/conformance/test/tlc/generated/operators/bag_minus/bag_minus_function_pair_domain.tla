@@ -1,0 +1,31 @@
+(*---
+description: bag_minus applied to function_pair_domain, a FcnRcdValue.
+ref: tlc2/module/Bags.java#BagDiff
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE bag_minus_function_pair_domain ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT([x \in {1}, y \in {2} |-> x + y] (-) SetToBag({1}))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.Bags.BagDiff(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
+    Attempted to check equality of the function <<1, 2>> with the value:
+    1
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.Bags.BagDiff(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
+    Attempted to check equality of the function <<1, 2>> with the value:
+    1
+---*)

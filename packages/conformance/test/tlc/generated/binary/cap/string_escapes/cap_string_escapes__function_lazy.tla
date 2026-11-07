@@ -1,0 +1,37 @@
+(*---
+description: cap of string_escapes, a StringValue, and function_lazy, a FcnLambdaValue.
+ref: tlc2/value/impl/SetCapValue.java
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE cap_string_escapes__function_lazy ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT(("a\"b\\c\n") \cap ([x \in Nat |-> x]))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
+    but it produced the following error:
+    Attempted to enumerate S \cap T when neither S:
+    "a\"b\\c\n"
+    nor T:
+    [x \in Nat |-> <expression line 14, col 51 to line 14, col 51 of module cap_string_escapes__function_lazy>]
+    is enumerable
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
+    but it produced the following error:
+    Attempted to enumerate S \cap T when neither S:
+    "a\"b\\c\n"
+    nor T:
+    [x \in Nat |-> <expression line 14, col 51 to line 14, col 51 of module cap_string_escapes__function_lazy>]
+    is enumerable
+---*)

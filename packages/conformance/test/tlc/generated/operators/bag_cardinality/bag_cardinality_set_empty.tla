@@ -1,0 +1,27 @@
+(*---
+description: bag_cardinality applied to set_empty, a SetEnumValue.
+ref: tlc2/module/Bags.java#BagCardinality
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE bag_cardinality_set_empty ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT(BagCardinality({}))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2176:0 Applying BagCardinality to the following value,
+    which is not a function with a finite domain:
+    {}
+    2176:0 Applying BagCardinality to the following value,
+    which is not a function with a finite domain:
+    {}
+---*)

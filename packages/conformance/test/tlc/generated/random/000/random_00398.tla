@@ -1,0 +1,23 @@
+(*---
+description: Evaluates a random int expression, seed 262, number 398.
+ref: tlc2/tool/impl/Tool.java#evalImpl
+features:
+  - random-expression
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE random_00398 ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT(Head((SortSeq(<<0, 1>>, LAMBDA p, q : p < q) \o Append((<<3, 1, 2>> \o <<1>>), (2147483647 * 2147483647)))))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2178:0 Overflow when computing 2147483647*2147483647
+    2178:0 Overflow when computing 2147483647*2147483647
+---*)
