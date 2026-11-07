@@ -9,6 +9,8 @@ const VOLATILE_CODES = new Set([2185, 2186, 2187, 2188, 2189, 2200, 2219, 2220, 
 const VOLATILE_LINE = /^(Parsing file |Semantic processing of module |Linting of module )/;
 const STACK_FRAME = /^\s+at [\w.$<>]+\(.*\)$/;
 const TIMESTAMP = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/g;
+// The usage text names the build by the time it was built.
+const BUILD_VERSION = /\bVersion \d{4}\.\d{2}\.\d{2}\.\d{6}\b/g;
 const DURATION = /\b(in) (\d+h )?(\d+min )?\d+(s|ms)\b/g;
 // TLC names a temporary invariant or a negated property after the clock.
 // Java's default toString prints an identity hash, such as UnionValue$Enumerator@1b2c3d.
@@ -30,6 +32,7 @@ const cleanLine = (line: string, directories: string[]) =>
   directories
     .reduce((text, directory) => text.replaceAll(`${directory}/`, ""), line)
     .replace(TIMESTAMP, "<date>")
+    .replace(BUILD_VERSION, "Version <build>")
     .replace(DURATION, "$1 <time>")
     .replace(GENERATED_NAME, "$1<id>")
     .replace(OBJECT_IDENTITY, "$1@<id>");

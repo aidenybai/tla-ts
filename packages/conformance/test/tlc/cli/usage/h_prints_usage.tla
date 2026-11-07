@@ -15,7 +15,7 @@ all:
   exit: 1
   transcript: "| \e[1mNAME\e[0m
 
-    | \tTLC - provides model checking and simulation of TLA+ specifications - Version 2026.11.03.180953
+    | \tTLC - provides model checking and simulation of TLA+ specifications - Version <build>
 
     | \e[1mSYNOPSIS\e[0m
 
