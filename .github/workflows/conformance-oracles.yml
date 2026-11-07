@@ -44,13 +44,13 @@ jobs:
       - run: pnpm --filter @tla-ts/conformance conformance --host tlc --shard ${{ matrix.shard }}/8
 
   tlapm:
-    name: recordings match tlapm ${{ matrix.shard }}/4
+    name: recordings match tlapm ${{ matrix.shard }}/2
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -68,6 +68,6 @@ jobs:
       - run: pnpm --filter @tla-ts/conformance fetch-tlapm
       # The importer kept tests within 120 seconds and 4 GB. Isabelle can grow past 6 GB, so the
       # limits stop a regression, and three tests at once stay within the runner's 16 GB.
-      - run: pnpm --filter @tla-ts/conformance conformance --host tlapm --time-limit 300 --memory-limit 4096 --shard ${{ matrix.shard }}/4
+      - run: pnpm --filter @tla-ts/conformance conformance --host tlapm --time-limit 300 --memory-limit 4096 --shard ${{ matrix.shard }}/2
         env:
           CONFORMANCE_WORKERS: 3
