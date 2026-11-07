@@ -101,15 +101,14 @@ export const useAssertion = (
   };
 };
 
-// A cited step or definition keeps the scope it was proved in, and any other fact takes the
-// current one.
+// A cited fact or step keeps the scope it was proved in, and any other fact takes the current one.
 const getFactTime = (context: Hyp[], fact: Expr, time: Time): Time => {
   if (fact.kind !== "Ix") return time;
   const hyp = context[context.length - fact.index];
   if (hyp?.kind === "Fact") return hyp.time;
   return hyp?.kind === "Defn" && typeof hyp.whereDefined === "object"
     ? hyp.whereDefined.time
-    : "Always";
+    : time;
 };
 
 const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
