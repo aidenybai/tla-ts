@@ -19,6 +19,7 @@ import {
   allTac,
   appendGoal,
   condTac,
+  depthSolve,
   firstGoal,
   firstGoalTac,
   hasFewerPrems,
@@ -372,6 +373,13 @@ const stepTac =
       safeTac(context),
       appWrappers(context, orElseGoal(instStepTac(context), unsafeStepTac(context)))(index),
     );
+
+// fast_tac: depth-first search with step_tac on the first goal.
+export const fastTac = (context: ClassicalContext, atomizeRules: readonly Thm[]): GoalTactic =>
+  thenGoal(
+    atomizePremsTac(context.limits, atomizeRules),
+    selectGoal(depthSolve(stepTac(context)(1))),
+  );
 
 // Drule.size_of_thm, the sizef of Isabelle/TLA+'s Classical: the size of the proposition with its
 // flex-flex pairs.

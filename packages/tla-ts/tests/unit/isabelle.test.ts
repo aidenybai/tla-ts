@@ -21,6 +21,9 @@ describe("decideIsabelle gives Isabelle's verdict on tlapm's theories", () => {
     ["NaturalsInduction_proofs-1", "(intro natInduct, auto)", "unsat"],
     ["AtomicBakeryWithoutSMT-6", "(auto dest: int_leq_less_trans)", "unsat"],
     ["AtomicBakeryWithoutSMT-465", "clarsimp auto?", "unsat"],
+    ["plus_zero-1", "simp", "unsat"],
+    ["fast_forall_instance-1", "fast", "unsat"],
+    ["choose_witness_rule-1", "(rule chooseI)", "unsat"],
     ["function_except_tuple_soundness_gh201_test-1", "auto", "unknown"],
     ["constantfcn_test-1", "auto", "unknown"],
   ])("%s by %s: %s", (name, method, verdict) => {
@@ -47,6 +50,7 @@ describe("decideIsabelle doesn't prove what doesn't follow", () => {
     "AllocatorImplementation_proof-127",
     "FiniteSetTheorems_proofs-453",
     "Sets-183",
+    "choose_witness_rule-1",
   ])("%s without its assumptions", (name) => {
     const text = readTheory(name);
     expect(text).toContain("using assms by");
