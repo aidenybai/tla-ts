@@ -42,3 +42,8 @@ jobs:
           key: tlc-${{ hashFiles('packages/conformance/scripts/fetch-tlc.ts') }}
       - run: pnpm --filter @tla-ts/conformance fetch-tlc
       - run: pnpm --filter @tla-ts/conformance conformance --host tlc --shard ${{ matrix.shard }}/8
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlc-results-${{ matrix.shard }}
+          path: packages/conformance/.results/tlc.json
