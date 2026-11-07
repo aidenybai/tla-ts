@@ -1,0 +1,64 @@
+(*---
+description: Zenon's own test zenon/test/test27.znn, which Zenon must prove.
+ref: zenon/test/test27.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test27.znn,v 1.6 2011-12-28 16:43:33 doligez Exp $
+
+$sig abst_T () "Type"
+$sig not_b ("bool") "bool"
+$sig abst_equal ("abst_T" "abst_T") "bool"
+
+$hyp "h" (A. ((x "bool") (<=> (Is_true (not_b x)) (-. (Is_true x)))))
+
+$def "d" (abst_different x y) (not_b (abst_equal x y))
+
+$goal (A. ((x "abst_T") (A. ((y "abst_T")
+         (=> (Is_true (abst_equal x y)) (-. (Is_true (abst_different x y))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Ha:"(\\A x:(Is_true(not_b(x))<=>(~Is_true(x))))" (is "\\A x : ?z_hi(x)")
+     using h by blast
+     assume z_Hb:"(~(\\A x:(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y)))))))" (is "~(\\A x : ?z_hs(x))")
+     have z_Ht: "(\\E x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y)))))))" (is "\\E x : ?z_hv(x)")
+     by (rule zenon_notallex_0 [of "?z_hs", OF z_Hb])
+     have z_Hw: "?z_hv((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))))" (is "~(\\A x : ?z_hy(x))")
+     by (rule zenon_ex_choose_0 [of "?z_hv", OF z_Ht])
+     have z_Hz: "(\\E y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y))=>(~Is_true(abst_different((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y))))))" (is "\\E x : ?z_hbh(x)")
+     by (rule zenon_notallex_0 [of "?z_hy", OF z_Hw])
+     have z_Hbi: "?z_hbh((CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y))=>(~Is_true(abst_different((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y)))))))" (is "~(?z_hbk=>?z_hbl)")
+     by (rule zenon_ex_choose_0 [of "?z_hbh", OF z_Hz])
+     have z_Hbk: "?z_hbk"
+     by (rule zenon_notimply_0 [OF z_Hbi])
+     have z_Hbm: "(~?z_hbl)" (is "~~?z_hbn")
+     by (rule zenon_notimply_1 [OF z_Hbi])
+     have z_Hbn: "?z_hbn"
+     by (rule zenon_notnot_0 [OF z_Hbm])
+     have z_Hbo_z_Hbn: "Is_true(not_b(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), (CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y))=>(~Is_true(abst_different((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y))))))))) == ?z_hbn" (is "?z_hbo == _")
+     by (unfold d)
+     have z_Hbo: "?z_hbo"
+     by (unfold z_Hbo_z_Hbn, fact z_Hbn)
+     have z_Hbr: "?z_hi(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), (CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y))=>(~Is_true(abst_different((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y))))))))" (is "_<=>?z_hbs")
+     by (rule zenon_all_0 [of "?z_hi" "abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), (CHOOSE y:(~(Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y))=>(~Is_true(abst_different((CHOOSE x:(~(\\A y:(Is_true(abst_equal(x, y))=>(~Is_true(abst_different(x, y))))))), y)))))))", OF z_Ha])
+     show FALSE
+     proof (rule zenon_equiv [OF z_Hbr])
+      assume z_Hbt:"(~?z_hbo)"
+      assume z_Hbu:"(~?z_hbs)"
+      show FALSE
+      by (rule notE [OF z_Hbt z_Hbo])
+     next
+      assume z_Hbo:"?z_hbo"
+      assume z_Hbs:"?z_hbs"
+      show FALSE
+      by (rule notE [OF z_Hbs z_Hbk])
+     qed
+    qed
+---*)

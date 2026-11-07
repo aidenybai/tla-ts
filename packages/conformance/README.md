@@ -140,6 +140,8 @@ A tlapm test's `mode` decides how far tlapm goes:
 
 A backend test is a backend's input, such as `test/tlapm/backends/z3/<name>.smt`, with the metadata on top. The oracle runs the backend from tlapm's release with tlapm's own command line. The recording is the verdict, followed by the proof for Zenon. An Isabelle theory's name must equal its file name.
 
+A `.smt2` test is one of [z3test](https://github.com/Z3Prover/z3test)'s regressions, a whole SMT-LIB script. The oracle runs it the way z3test does, with `z3 model_validate=true`, and the recording is everything Z3 prints. A host gets `z3` and the file, and must print what Z3 prints.
+
 A proof result must not depend on time. A test that proves must prove far below its time limit, and a test that fails must fail because the backend gives up or refutes the goal, never because it runs out of time.
 
 ## Run an expression in every context
@@ -193,8 +195,8 @@ A baseline entry says what fails, not what is right. When an oracle has a bug, k
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `test/tlc/imported`                    | Tests ported from TLC and SANY by `scripts/import-tlc.ts`.                                                                                                    |
 | `test/tlc/generated`                   | Matrices written by `scripts/generate*.ts`. Don't edit these by hand. Regenerating keeps the recording of every test whose metadata and module are unchanged. |
-| `test/tlapm/imported`                  | Tests ported from tlapm's own test tree by `scripts/import-tlapm.ts`.                                                                                         |
-| `test/tlapm/backends`                  | Backend tests, one directory per backend.                                                                                                                     |
+| `test/tlapm/imported`                  | Tests ported from tlapm's own test tree, and from the Zenon and Isabelle trees in tlapm's checkout, by `scripts/import-tlapm.ts`.                             |
+| `test/tlapm/backends`                  | Backend tests, one directory per backend. `z3/z3test` holds z3test's regressions, ported by `scripts/import-z3test.ts`.                                       |
 | `test/tlc/<area>`, `test/tlapm/<area>` | Tests written by hand.                                                                                                                                        |
 | `baselines`                            | Known failures per host.                                                                                                                                      |
 | `scripts`                              | The runner, recorder, importers and generators. `scripts/run.ts` bundles each with Bun and runs it with Node.                                                 |

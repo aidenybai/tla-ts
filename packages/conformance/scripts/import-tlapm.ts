@@ -1,5 +1,6 @@
-// Ports tlapm's own tests into test/tlapm/imported, recorded from the pinned tlapm. Each test
-// declares the outcome its tlapm harness checks. A test that needs what the suite can't express, such
+// Ports tlapm's own tests, and those of Zenon and Isabelle in tlapm's checkout, into
+// test/tlapm/imported, recorded from the pinned tlapm. Each test declares the outcome its harness
+// checks. A test that needs what the suite can't express, such
 // as two runs or a shell pipeline, is skipped, and so is one that doesn't reproduce here.
 // Usage: bun scripts/run.ts import-tlapm <tlapm checkout>
 
@@ -15,7 +16,7 @@ import {
 import { availableParallelism } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { getHost, runPool, runTest } from "./hosts";
-import { TLAPM_OUTCOME_EXITS } from "./tlapm";
+import { getBackend, TLAPM_OUTCOME_EXITS } from "./tlapm";
 import {
   formatYaml,
   parseTest,
@@ -29,10 +30,14 @@ const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(2, availableP
 // An Isabelle proof can run for minutes and use gigabytes, so the importer leaves out such tests.
 const LIMITS = { milliseconds: 120_000, memoryBytes: 4 * 1024 ** 3 };
 const IMPORT_DIRECTORY = join(SUITE_DIRECTORY, "tlapm/imported");
+// Zenon can write a proof of tens of megabytes for a short input, too large to keep in the repository.
+const MAX_RECORDING_BYTES = 1024 ** 2;
 
 interface PendingTest {
+  // Where the test goes, relative to test/tlapm/imported, and where its fixtures come from.
   directory: string;
-  moduleName: string;
+  sourceDirectory: string;
+  fileName: string;
   metadata: TestMetadata;
   module: string;
   // Fixture modules beside the test that it EXTENDS or INSTANCEs.
@@ -43,7 +48,7 @@ interface PendingTest {
 }
 
 const checkout = process.argv[2];
-if (!checkout || !existsSync(join(checkout, "test"))) {
+if (!checkout || !existsSync(join(checkout, "test")) || !existsSync(join(checkout, "zenon"))) {
   console.error("Usage: bun scripts/run.ts import-tlapm <tlapm checkout>");
   process.exit(1);
 }
@@ -134,7 +139,8 @@ const getHarnessTest = (path: string): PendingTest | string => {
   const directory = relative(testDirectory, dirname(path));
   return {
     directory,
-    moduleName: basename(path, ".tla"),
+    sourceDirectory: dirname(path),
+    fileName: basename(path),
     metadata: {
       description: `tlapm's own test ${relative(testDirectory, path)}${checks.length > 0 ? `, which checks ${checks.map((check) => `${check.key} ${check.value}`).join("; ")}` : ""}.`,
       ref: `test/${relative(testDirectory, path)}`,
@@ -161,7 +167,8 @@ const getSoundnessTest = (path: string): PendingTest => {
   const known = trailer.directives.find((directive) => directive.key === "known");
   return {
     directory: "soundness_tests",
-    moduleName: basename(path, ".tla"),
+    sourceDirectory: dirname(path),
+    fileName: basename(path),
     metadata: {
       description: known
         ? `tlapm's soundness test ${basename(path)} states a false theorem, and tlapm still proves it: ${known.value}.`
@@ -199,7 +206,8 @@ const getCorpusTests = (path: string): PendingTest[] => {
     return [
       {
         directory: `parser/${toSnakeCase(corpus)}`,
-        moduleName,
+        sourceDirectory: dirname(path),
+        fileName: `${moduleName}.tla`,
         metadata: {
           description: `The syntax corpus case "${match[1]}" in ${corpus}.txt, which tlapm's parser tests read.`,
           ref: `test/parser/syntax_corpus/${basename(path)}`,
@@ -217,7 +225,8 @@ const getCorpusTests = (path: string): PendingTest[] => {
 // SANY's equivalence modules, which tlapm's tests parse with both parsers.
 const getSanyTest = (path: string): PendingTest => ({
   directory: relative(testDirectory, dirname(path)),
-  moduleName: basename(path, ".tla"),
+  sourceDirectory: dirname(path),
+  fileName: basename(path),
   metadata: {
     description: `The module ${relative(testDirectory, path)}, which tlapm's tests parse with tlapm's parser and with SANY.`,
     ref: `test/${relative(testDirectory, path)}`,
@@ -228,6 +237,60 @@ const getSanyTest = (path: string): PendingTest => ({
   module: readFileSync(path, "utf8"),
   fixtures: getFixtures(dirname(path), readFileSync(path, "utf8")),
 });
+
+// A test from the backends' own trees, in tlapm's checkout, goes to the same path under the import
+// directory.
+const getBackendTreeTest = (path: string, metadata: TestMetadata, acceptedOutcome: string) => ({
+  directory: relative(checkout, dirname(path)),
+  sourceDirectory: dirname(path),
+  fileName: basename(path),
+  metadata,
+  module: readFileSync(path, "utf8"),
+  fixtures: path.endsWith(".tla") ? getFixtures(dirname(path), readFileSync(path, "utf8")) : [],
+  acceptedOutcomes: [acceptedOutcome],
+});
+
+// Zenon must prove each of its own tests (zenon/test/Makefile). The suite runs Zenon with tlapm's
+// command line, so the recording also holds the Isar proof tlapm hands to Isabelle.
+const getZenonTest = (path: string) =>
+  getBackendTreeTest(
+    path,
+    {
+      description: `Zenon's own test ${relative(checkout, path)}, which Zenon must prove.`,
+      ref: relative(checkout, path),
+      features: ["zenon-test"],
+      outcome: "unsat",
+    },
+    "unsat",
+  );
+
+// tlapm must check every proof in Zenon's regression tests with Zenon (zenon/regression/test.sh).
+const getZenonRegressionTest = (path: string) =>
+  getBackendTreeTest(
+    path,
+    {
+      description: `Zenon's regression test ${relative(checkout, path)}, whose proofs tlapm must check with Zenon.`,
+      ref: relative(checkout, path),
+      features: ["zenon-test"],
+      mode: "proof",
+      outcome: "proved",
+      args: ["--method", "zenon"],
+    },
+    "proved",
+  );
+
+// Isabelle's TLA+ sessions must check these theories (isabelle/ROOT).
+const getIsabelleTest = (path: string) =>
+  getBackendTreeTest(
+    path,
+    {
+      description: `The theory ${relative(checkout, path)}, which a session in isabelle/ROOT checks.`,
+      ref: relative(checkout, path),
+      features: ["isabelle-test"],
+      outcome: "unsat",
+    },
+    "unsat",
+  );
 
 const files = listFiles(testDirectory).filter((path) => !path.includes(".tlaps/"));
 const skipped: string[] = [];
@@ -244,10 +307,22 @@ const pendingTests: PendingTest[] = [
   ...files
     .filter((path) => path.includes("/syntax_corpus/") && path.endsWith(".txt"))
     .flatMap(getCorpusTests),
+  // Zenon's Focal tests (.coz) are left out, since tlapm never gives Zenon Focal input.
+  ...listFiles(join(checkout, "zenon/test"))
+    .filter((path) => path.endsWith(".znn"))
+    .map(getZenonTest),
+  ...listFiles(join(checkout, "zenon/regression"))
+    .filter((path) => path.endsWith(".tla"))
+    .map(getZenonRegressionTest),
+  ...["tests", "examples"].flatMap((directory) =>
+    listFiles(join(checkout, "isabelle", directory))
+      .filter((path) => path.endsWith(".thy"))
+      .map(getIsabelleTest),
+  ),
 ];
 
 const getTestPath = (pending: PendingTest) =>
-  join(IMPORT_DIRECTORY, pending.directory, `${pending.moduleName}.tla`);
+  join(IMPORT_DIRECTORY, pending.directory, pending.fileName);
 
 const writePending = (pending: PendingTest, outcome: string) => {
   const metadata = {
@@ -275,7 +350,7 @@ pendingTests.forEach((pending) => {
     .forEach((fixture) =>
       writeFileSync(
         join(IMPORT_DIRECTORY, pending.directory, fixture),
-        readFileSync(join(testDirectory, pending.directory, fixture)),
+        readFileSync(join(pending.sourceDirectory, fixture)),
       ),
     );
 });
@@ -292,16 +367,21 @@ await runPool(pendingTests, WORKERS, async (pending) => {
   const context = { name: "model", source: test.source, config: "" };
   const first = await runTest(host, test, context, LIMITS);
   const second = first.exceeded ? first : await runTest(host, test, context, LIMITS);
-  const observed = Object.entries(TLAPM_OUTCOME_EXITS).find(
-    (entry) => entry[0] !== "any" && entry[1].includes(first.exit),
-  )?.[0];
+  // A backend test's outcome is its verdict, and a tlapm test's is its exit status.
+  const observed = getBackend(path)
+    ? first.transcript.split("\n")[0]
+    : Object.entries(TLAPM_OUTCOME_EXITS).find(
+        (entry) => entry[0] !== "any" && entry[1].includes(first.exit),
+      )?.[0];
   const reason = first.exceeded
     ? `exceeds the importer's ${first.exceeded} limit`
     : first.exit !== second.exit || first.transcript !== second.transcript
       ? "gives different results on two runs"
-      : !observed || (pending.acceptedOutcomes && !pending.acceptedOutcomes.includes(observed))
-        ? `exits ${first.exit} here, not ${(pending.acceptedOutcomes ?? ["a tlapm outcome"]).join(" or ")}`
-        : undefined;
+      : Buffer.byteLength(first.transcript) > MAX_RECORDING_BYTES
+        ? "records more than 1 MB"
+        : !observed || (pending.acceptedOutcomes && !pending.acceptedOutcomes.includes(observed))
+          ? `${getBackend(path) ? `gives ${observed}` : `exits ${first.exit}`} here, not ${(pending.acceptedOutcomes ?? ["a tlapm outcome"]).join(" or ")}`
+          : undefined;
   if (reason || !observed) {
     skipped.push(`${test.id}: ${reason}`);
     return;

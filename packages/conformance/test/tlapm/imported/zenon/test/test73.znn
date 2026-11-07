@@ -1,0 +1,214 @@
+(*---
+description: Zenon's own test zenon/test/test73.znn, which Zenon must prove.
+ref: zenon/test/test73.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test73.znn,v 1.5 2011-12-28 16:43:34 doligez Exp $
+
+;$hyp (A. ((y) (<=> (= y (f (g y))) (= x0 y))))
+;$goal (E. ((x1) (A. ((y1) (=> (= y1 (g (f y1))) (= x1 y1))))))
+
+;$hyp (= x (f y))
+;$hyp (-. (= z (g (f y))))
+;$hyp (= z (g x))
+
+$hyp "h" (E. ((x) (A. ((y) (<=> (= y (f (g y))) (= x y))))))
+;$goal (E. ((x) (A. ((y) (=> (= y (g (f y))) (= x y))))))
+$goal (E. ((x) (A. ((y) (<=> (= x y) (= y (g (f y))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Ha:"(\\E x:(\\A y:((y=f(g(y)))<=>(x=y))))" (is "\\E x : ?z_hk(x)")
+     using h by blast
+     have zenon_L1_: "(g(f((CHOOSE y:(~((g((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y)))))=y)<=>(y=g(f(y))))))))~=g((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y)))))) ==> ((CHOOSE y:(~((g((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y)))))=y)<=>(y=g(f(y))))))=g(f((CHOOSE y:(~((g((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y)))))=y)<=>(y=g(f(y))))))))) ==> (\\A y:((y=f(g(y)))<=>((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y))))=y))) ==> FALSE" (is "?z_hl ==> ?z_hx ==> ?z_hy ==> FALSE")
+     proof -
+      assume z_Hl:"?z_hl" (is "?z_hm~=?z_hs")
+      assume z_Hx:"?z_hx" (is "?z_ho=_")
+      assume z_Hy:"?z_hy" (is "\\A x : ?z_hbb(x)")
+      show FALSE
+      proof (rule zenon_noteq [of "?z_hs"])
+       have z_Hbc: "(f(?z_ho)=(CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y)))))" (is "?z_hn=?z_ht")
+       proof (rule zenon_nnpp [of "(?z_hn=?z_ht)"])
+        assume z_Hbd:"(?z_hn~=?z_ht)"
+        have z_Hbe: "?z_hbb(?z_hn)" (is "?z_hbf<=>?z_hbg")
+        by (rule zenon_all_0 [of "?z_hbb" "?z_hn", OF z_Hy])
+        show FALSE
+        proof (rule zenon_equiv [OF z_Hbe])
+         assume z_Hbh:"(?z_hn~=f(?z_hm))" (is "_~=?z_hbi")
+         assume z_Hbj:"(?z_ht~=?z_hn)"
+         show FALSE
+         proof (rule zenon_noteq [of "?z_hbi"])
+          have z_Hbk: "(?z_hbi~=?z_hbi)"
+          by (rule subst [where P="(\<lambda>zenon_Vzw. (f(zenon_Vzw)~=?z_hbi))", OF z_Hx], fact z_Hbh)
+          thus "(?z_hbi~=?z_hbi)" .
+         qed
+        next
+         assume z_Hbf:"?z_hbf" (is "_=?z_hbi")
+         assume z_Hbg:"?z_hbg"
+         show FALSE
+         by (rule zenon_eqsym [OF z_Hbg z_Hbd])
+        qed
+       qed
+       have z_Hbp: "(?z_hs~=?z_hs)"
+       by (rule subst [where P="(\<lambda>zenon_Vax. (g(zenon_Vax)~=?z_hs))", OF z_Hbc], fact z_Hl)
+       thus "(?z_hs~=?z_hs)" .
+      qed
+     qed
+     assume z_Hb:"(~(\\E x:(\\A y:((x=y)<=>(y=g(f(y)))))))" (is "~(\\E x : ?z_hbx(x))")
+     have z_Hy: "?z_hk((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y)))))" (is "\\A x : ?z_hbb(x)")
+     by (rule zenon_ex_choose_0 [of "?z_hk", OF z_Ha])
+     have z_Hby: "?z_hbb((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y)))))" (is "?z_hbz<=>?z_hca")
+     by (rule zenon_all_0 [of "?z_hbb" "(CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y))))", OF z_Hy])
+     show FALSE
+     proof (rule zenon_equiv [OF z_Hby])
+      assume z_Hcb:"((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y))))~=f(g((CHOOSE x:(\\A y:((y=f(g(y)))<=>(x=y)))))))" (is "?z_ht~=?z_hcc")
+      assume z_Hcd:"(?z_ht~=?z_ht)"
+      show FALSE
+      by (rule zenon_noteq [OF z_Hcd])
+     next
+      assume z_Hbz:"?z_hbz" (is "?z_ht=?z_hcc")
+      assume z_Hca:"?z_hca"
+      have z_Hce: "~?z_hbx(g(?z_ht))" (is "~(\\A x : ?z_hcf(x))")
+      by (rule zenon_notex_0 [of "?z_hbx" "g(?z_ht)", OF z_Hb])
+      have z_Hcg: "(\\E y:(~((g(?z_ht)=y)<=>(y=g(f(y))))))" (is "\\E x : ?z_hch(x)")
+      by (rule zenon_notallex_0 [of "?z_hcf", OF z_Hce])
+      have z_Hci: "?z_hch((CHOOSE y:(~((g(?z_ht)=y)<=>(y=g(f(y)))))))" (is "~(?z_hcj<=>?z_hx)")
+      by (rule zenon_ex_choose_0 [of "?z_hch", OF z_Hcg])
+      show FALSE
+      proof (rule zenon_notequiv [OF z_Hci])
+       assume z_Hck:"(g(?z_ht)~=(CHOOSE y:(~((g(?z_ht)=y)<=>(y=g(f(y)))))))" (is "?z_hs~=?z_ho")
+       assume z_Hx:"?z_hx" (is "_=?z_hm")
+       show FALSE
+       proof (rule zenon_em [of "(?z_ho=?z_ho)"])
+        assume z_Hcl:"(?z_ho=?z_ho)"
+        show FALSE
+        proof (rule notE [OF z_Hck])
+         have z_Hcm: "(?z_ho=?z_hs)"
+         proof (rule zenon_nnpp [of "(?z_ho=?z_hs)"])
+          assume z_Hcn:"(?z_ho~=?z_hs)"
+          show FALSE
+          proof (rule notE [OF z_Hcn])
+           have z_Hco: "(?z_hm=?z_hs)"
+           proof (rule zenon_nnpp [of "(?z_hm=?z_hs)"])
+            assume z_Hl:"(?z_hm~=?z_hs)"
+            show FALSE
+            by (rule zenon_L1_ [OF z_Hl z_Hx z_Hy])
+           qed
+           have z_Hcm: "(?z_ho=?z_hs)"
+           by (rule subst [where P="(\<lambda>zenon_Vbx. (?z_ho=zenon_Vbx))", OF z_Hco], fact z_Hx)
+           thus "(?z_ho=?z_hs)" .
+          qed
+         qed
+         have z_Hcj: "?z_hcj"
+         by (rule subst [where P="(\<lambda>zenon_Vcx. (zenon_Vcx=?z_ho))", OF z_Hcm], fact z_Hcl)
+         thus "?z_hcj" .
+        qed
+       next
+        assume z_Hcv:"(?z_ho~=?z_ho)"
+        show FALSE
+        by (rule zenon_noteq [OF z_Hcv])
+       qed
+      next
+       assume z_Hcj:"?z_hcj" (is "?z_hs=?z_ho")
+       assume z_Hcw:"(?z_ho~=g(f(?z_ho)))" (is "_~=?z_hm")
+       show FALSE
+       proof (rule zenon_em [of "(?z_hm=?z_hm)"])
+        assume z_Hcx:"(?z_hm=?z_hm)"
+        show FALSE
+        proof (rule notE [OF z_Hcw])
+         have z_Hcy: "(?z_hm=?z_ho)"
+         proof (rule zenon_nnpp [of "(?z_hm=?z_ho)"])
+          assume z_Hcz:"(?z_hm~=?z_ho)"
+          show FALSE
+          proof (rule notE [OF z_Hcz])
+           have z_Hda: "(?z_hs=?z_hm)"
+           proof (rule zenon_nnpp [of "(?z_hs=?z_hm)"])
+            assume z_Hdb:"(?z_hs~=?z_hm)"
+            show FALSE
+            proof (rule zenon_em [of "(?z_hm=?z_hm)"])
+             assume z_Hcx:"(?z_hm=?z_hm)"
+             show FALSE
+             proof (rule notE [OF z_Hdb])
+              have z_Hco: "(?z_hm=?z_hs)"
+              proof (rule zenon_nnpp [of "(?z_hm=?z_hs)"])
+               assume z_Hl:"(?z_hm~=?z_hs)"
+               show FALSE
+               proof (rule zenon_noteq [of "?z_hs"])
+                have z_Hbc: "(f(?z_ho)=?z_ht)" (is "?z_hn=_")
+                proof (rule zenon_nnpp [of "(?z_hn=?z_ht)"])
+                 assume z_Hbd:"(?z_hn~=?z_ht)"
+                 show FALSE
+                 proof (rule zenon_em [of "?z_hca"])
+                  assume z_Hca:"?z_hca"
+                  show FALSE
+                  proof (rule notE [OF z_Hbd])
+                   have z_Hbg: "(?z_ht=?z_hn)"
+                   proof (rule zenon_nnpp [of "(?z_ht=?z_hn)"])
+                   assume z_Hbj:"(?z_ht~=?z_hn)"
+                   show FALSE
+                   proof (rule notE [OF z_Hbj])
+                   have z_Hdc: "(?z_hcc=?z_hn)"
+                   proof (rule zenon_nnpp [of "(?z_hcc=?z_hn)"])
+                   assume z_Hdd:"(?z_hcc~=?z_hn)"
+                   show FALSE
+                   proof (rule zenon_noteq [of "?z_hn"])
+                   have z_Hde: "(?z_hn~=?z_hn)"
+                   by (rule subst [where P="(\<lambda>zenon_Vdx. (f(zenon_Vdx)~=?z_hn))", OF z_Hcj], fact z_Hdd)
+                   thus "(?z_hn~=?z_hn)" .
+                   qed
+                   qed
+                   have z_Hbg: "(?z_ht=?z_hn)"
+                   by (rule subst [where P="(\<lambda>zenon_Vex. (?z_ht=zenon_Vex))", OF z_Hdc], fact z_Hbz)
+                   thus "(?z_ht=?z_hn)" .
+                   qed
+                   qed
+                   have z_Hbc: "(?z_hn=?z_ht)"
+                   by (rule subst [where P="(\<lambda>zenon_Vfx. (zenon_Vfx=?z_ht))", OF z_Hbg], fact z_Hca)
+                   thus "(?z_hn=?z_ht)" .
+                  qed
+                 next
+                  assume z_Hcd:"(?z_ht~=?z_ht)"
+                  show FALSE
+                  by (rule zenon_noteq [OF z_Hcd])
+                 qed
+                qed
+                have z_Hbp: "(?z_hs~=?z_hs)"
+                by (rule subst [where P="(\<lambda>zenon_Vax. (g(zenon_Vax)~=?z_hs))", OF z_Hbc], fact z_Hl)
+                thus "(?z_hs~=?z_hs)" .
+               qed
+              qed
+              have z_Hda: "(?z_hs=?z_hm)"
+              by (rule subst [where P="(\<lambda>zenon_Vhx. (zenon_Vhx=?z_hm))", OF z_Hco], fact z_Hcx)
+              thus "(?z_hs=?z_hm)" .
+             qed
+            next
+             assume z_Hds:"(?z_hm~=?z_hm)"
+             show FALSE
+             by (rule zenon_noteq [OF z_Hds])
+            qed
+           qed
+           have z_Hcy: "(?z_hm=?z_ho)"
+           by (rule subst [where P="(\<lambda>zenon_Vcx. (zenon_Vcx=?z_ho))", OF z_Hda], fact z_Hcj)
+           thus "(?z_hm=?z_ho)" .
+          qed
+         qed
+         have z_Hx: "?z_hx"
+         by (rule subst [where P="(\<lambda>zenon_Vhx. (zenon_Vhx=?z_hm))", OF z_Hcy], fact z_Hcx)
+         thus "?z_hx" .
+        qed
+       next
+        assume z_Hds:"(?z_hm~=?z_hm)"
+        show FALSE
+        by (rule zenon_noteq [OF z_Hds])
+       qed
+      qed
+     qed
+    qed
+---*)

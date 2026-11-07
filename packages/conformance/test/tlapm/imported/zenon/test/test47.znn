@@ -1,0 +1,99 @@
+(*---
+description: Zenon's own test zenon/test/test47.znn, which Zenon must prove.
+ref: zenon/test/test47.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test47.znn,v 1.7 2011-12-28 16:43:33 doligez Exp $
+
+; file: species_general_additive_law.foc
+; species: partially_ordered_additive_monoid
+; property: add_absorbes_sup / __lemma_1_1_2
+
+;     (* to be proved *)
+; (Is_true ((abst_equal x (abst_inf (abst_plus x y ) x ) ))
+; )
+; By
+;   abst_equal_transitive: (x: abst_T) (y: abst_T) (z: abst_T)
+;   ((Is_true ((abst_equal  x y)) ))-> 
+;     ((Is_true ((abst_equal  y z)) ))-> 
+;       (Is_true ((abst_equal  x z)) )
+;   abst_add_keeps_inf: (x: abst_T) (y: abst_T) (Is_true
+;   ((abst_order_inf  x (abst_plus  x y))) ) abst_inf_commutes: (x: abst_T)
+;   (y: abst_T) (Is_true ((abst_equal  (abst_inf  x y) (abst_inf  y x))) )
+; By def abst_order_inf:= [x: abst_T][y: abst_T](abst_equal  x (abst_inf  x y))
+; (* Qed *).
+
+$sig abst_equal ("zenon_U" "zenon_U") "bool"
+
+$def "d" (abst_order_inf x y) (abst_equal x (abst_inf x y))
+
+$hyp "abst_equal_transitive"
+(A. ((x) (A. ((y) (A. ((z)
+  (=> (Is_true (abst_equal x y))
+      (=> (Is_true (abst_equal y z))
+          (Is_true (abst_equal x z))))))))))
+
+$hyp "abst_add_keeps_inf"
+(A. ((x) (A. ((y) (Is_true (abst_order_inf x (abst_plus x y)))))))
+
+$hyp "abst_inf_commutes"
+(A. ((x) (A. ((y)
+     (Is_true (abst_equal (abst_inf x y) (abst_inf y x)))))))
+
+$goal
+(Is_true (abst_equal x (abst_inf (abst_plus x y) x)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hc:"(\\A x:(\\A y:Is_true(abst_equal(abst_inf(x, y), abst_inf(y, x)))))" (is "\\A x : ?z_hl(x)")
+     using abst_inf_commutes by blast
+     have z_Ha:"(\\A x:(\\A y:(\\A z:(Is_true(abst_equal(x, y))=>(Is_true(abst_equal(y, z))=>Is_true(abst_equal(x, z)))))))" (is "\\A x : ?z_hx(x)")
+     using abst_equal_transitive by blast
+     have z_Hb:"(\\A x:(\\A y:Is_true(abst_order_inf(x, abst_plus(x, y)))))" (is "\\A x : ?z_hbc(x)")
+     using abst_add_keeps_inf by blast
+     assume z_Hd:"(~Is_true(abst_equal(x, abst_inf(abst_plus(x, y), x))))" (is "~?z_hbd")
+     have z_He: "?z_hl(x)" (is "\\A x : ?z_hbg(x)")
+     by (rule zenon_all_0 [of "?z_hl" "x", OF z_Hc])
+     have z_Hbh: "?z_hbg(abst_plus(x, y))" (is "?z_hbh")
+     by (rule zenon_all_0 [of "?z_hbg" "abst_plus(x, y)", OF z_He])
+     have z_Hm: "?z_hx(x)" (is "\\A x : ?z_hbi(x)")
+     by (rule zenon_all_0 [of "?z_hx" "x", OF z_Ha])
+     have z_Hy: "?z_hbc(x)" (is "\\A x : ?z_hbj(x)")
+     by (rule zenon_all_0 [of "?z_hbc" "x", OF z_Hb])
+     have z_Hbk: "?z_hbi(abst_inf(x, abst_plus(x, y)))" (is "\\A x : ?z_hbm(x)")
+     by (rule zenon_all_0 [of "?z_hbi" "abst_inf(x, abst_plus(x, y))", OF z_Hm])
+     have z_Hbn: "?z_hbm(abst_inf(abst_plus(x, y), x))" (is "?z_hbo=>?z_hbp")
+     by (rule zenon_all_0 [of "?z_hbm" "abst_inf(abst_plus(x, y), x)", OF z_Hbk])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hbn])
+      assume z_Hbq:"(~?z_hbo)"
+      have z_Hz: "?z_hbj(y)" (is "?z_hz")
+      by (rule zenon_all_0 [of "?z_hbj" "y", OF z_Hy])
+      have z_Hbo_z_Hz: "?z_hbo == ?z_hz" (is "_ == _")
+      by (unfold d)
+      have z_Hbo: "?z_hbo"
+      by (unfold z_Hbo_z_Hz, fact z_Hz)
+      show FALSE
+      by (rule notE [OF z_Hbq z_Hbo])
+     next
+      assume z_Hbp:"?z_hbp"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hbp])
+       assume z_Hbr:"(~?z_hbh)"
+       show FALSE
+       by (rule notE [OF z_Hbr z_Hbh])
+      next
+       assume z_Hbd:"?z_hbd"
+       show FALSE
+       by (rule notE [OF z_Hd z_Hbd])
+      qed
+     qed
+    qed
+---*)

@@ -17,6 +17,7 @@ import {
   getBackendVerdict,
   getEncodings,
   getTlapmArguments,
+  isSmtScript,
   normalizeTlapmTranscript,
   TLAPM_BINARY,
 } from "./tlapm";
@@ -264,9 +265,11 @@ const runBackend = async (
   return {
     exit: result.exceeded ? -1 : 0,
     exceeded: result.exceeded,
-    transcript: isOracle
-      ? getBackendVerdict(backend, `${result.stdout}${result.stderr}`, result.exit)
-      : result.stdout.trimEnd(),
+    transcript: !isOracle
+      ? result.stdout.trimEnd()
+      : isSmtScript(test.path)
+        ? `${result.stdout}${result.stderr}`.trimEnd()
+        : getBackendVerdict(backend, `${result.stdout}${result.stderr}`, result.exit),
   };
 };
 

@@ -49,12 +49,17 @@ export const getTlapmArguments = (mode: string, cacheDirectory: string) => [
 // The backend a test file feeds, by the extension of the temporary file tlapm writes for it.
 export const BACKEND_EXTENSIONS: Record<string, string> = {
   ".smt": "z3",
+  ".smt2": "z3",
   ".znn": "zenon",
   ".thy": "isabelle",
   ".ls4": "ls4",
 };
 
 export const getBackend = (path: string) => BACKEND_EXTENSIONS[extname(path)];
+
+// A .smt2 test is one of z3test's regressions, a whole SMT-LIB script. It runs the way z3test runs
+// it (scripts/util.py#test_benchmark), and its recording is everything Z3 prints.
+export const isSmtScript = (path: string) => extname(path) === ".smt2";
 
 const quoteShell = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 
@@ -74,6 +79,7 @@ const quoteMl = (text: string) =>
 
 // tlapm's command line for each backend (src/params.ml).
 export const getBackendOracleCommand = (backend: string, file: string) => {
+  if (isSmtScript(file)) return [join(TLAPM_BACKENDS, "z3"), "model_validate=true", file];
   if (backend === "z3")
     return [
       join(TLAPM_BACKENDS, "z3"),

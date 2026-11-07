@@ -148,17 +148,17 @@ Some TLC messages misname their operator. The suite pins them as ordinary tests,
 
 ## tlapm coverage
 
-The tlapm half has 1,639 tests under `test/tlapm`:
+The tlapm half has 2,754 tests under `test/tlapm`:
 
-| Directory     | Tests | Contents                                                                                          |
-| ------------- | ----- | ------------------------------------------------------------------------------------------------- |
-| `imported`    | 469   | tlapm's own harness, soundness, SANY and parser corpus tests, ported by `scripts/import-tlapm.ts` |
-| `obligations` | 372   | The obligations tlapm generates for each proof construct, and which facts PTL may box             |
-| `backends`    | 315   | Inputs fed to each backend directly: 112 for Z3, 90 for Zenon, 54 for Isabelle and 55 for LS4     |
-| `encodings`   | 235   | The input tlapm writes for Z3, Zenon, Isabelle and LS4                                            |
-| `proofs`      | 166   | Proof methods, command line flags, Isabelle tactics, statuses, `ENABLED` and the proof library    |
-| `errors`      | 80    | Parse, name, step, level, arity and `--line` selection errors                                     |
-| `smoke`       | 2     | One proof and one parse error                                                                     |
+| Directory     | Tests | Contents                                                                                                                                                   |
+| ------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `imported`    | 542   | tlapm's own harness, soundness, SANY and parser corpus tests, and the tests of Zenon and Isabelle in tlapm's checkout, ported by `scripts/import-tlapm.ts` |
+| `obligations` | 372   | The obligations tlapm generates for each proof construct, and which facts PTL may box                                                                      |
+| `backends`    | 1,357 | Inputs fed to each backend directly: 1,155 for Z3, of which 1,042 are z3test's regressions, 91 for Zenon, 55 for Isabelle and 56 for LS4                   |
+| `encodings`   | 235   | The input tlapm writes for Z3, Zenon, Isabelle and LS4                                                                                                     |
+| `proofs`      | 166   | Proof methods, command line flags, Isabelle tactics, statuses, `ENABLED` and the proof library                                                             |
+| `errors`      | 80    | Parse, name, step, level, arity and `--line` selection errors                                                                                              |
+| `smoke`       | 2     | One proof and one parse error                                                                                                                              |
 
 tlapm isn't built with coverage instrumentation, so the suite has no line or branch figure for it. The tests instead cover each proof construct in `src/proof`, each backend that tlapm's release ships, and each exit status of `--strict`.
 
@@ -174,6 +174,11 @@ A tlapm test must not depend on time, so no test may pass or fail because a back
 - **`RECURSIVE`**: TLAPS doesn't support it, so the suite pins only its rejection.
 - **The library module `BagsTheorems`**: it doesn't load, because tlapm can't find `Range`.
 - **8 of tlapm's own tests**: 4 run tlapm twice, pipe its output through a shell or name a file that doesn't exist. 2 don't reproduce here: `smt_rlimit_bad_test` exits 10, not 3, and `INSTANCE_shift_due_to_omitted_modunits_test` fails an obligation. `GFX_test` and `SnapShot_test` run longer than the importer's limit of 120 seconds.
+- **13 of Zenon's 54 tests**: 7 run longer than 120 seconds. 4 come from Focal and use definitions that need Zenon's Focal and induction extensions, which tlapm's command line doesn't load. Zenon proves `test03` and `test15`, but writes proofs of over 1 MB, 33 MB for `test03`. The 23 Focal tests in `.coz` files are left out, since tlapm never gives Zenon Focal input.
+- **19 of Zenon's 47 regression tests**: they date from 2008. tlapm rejects 9, for example because they cite an operator the module doesn't define, such as `Inv1`, or use syntax tlapm no longer parses. With only Zenon, 2 fail an obligation and 5 are incomplete. 1 gives different results on two runs, and `AtomicBakeryG` and `AtomicBakeryGInitialized` run longer than 120 seconds.
+- **Isabelle's `AtomicBakeryG.thy`**: it takes longer than 120 seconds to check.
+- **292 of z3test's 1,334 SMT-LIB regressions**: Z3 5.3.2 prints other output than z3test expects for 283. Those in `old-regressions` were written for an older Z3's output, and `bounded_q` and `mcsat_smt2` test features newer than 5.3.2. 7 run longer than 60 seconds, z3test's own limit, or differ between runs, and 2 set a time limit. z3test's C++, C# and Python tests use Z3's API, and its other SMT-LIB files are benchmarks with no expected output, so the suite leaves both out.
+- **LS4**: it has no tests of its own.
 
 The runner removes what differs between machines from a transcript: the OCaml backtrace and the configuration tlapm prints when it crashes, the `PATH` it prints for a missing backend, and the command line that ran Zenon, which tlapm copies into each Isabelle theory.
 
