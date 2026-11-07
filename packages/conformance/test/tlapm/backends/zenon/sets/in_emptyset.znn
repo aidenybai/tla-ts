@@ -1,0 +1,22 @@
+(*---
+description: Zenon closes a branch on x \in {} with the in_emptyset rule.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_xunde_a TLA.emptyset)
+F.)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_xunde_a \\in {})=>FALSE))" (is "~(?z_hc=>?z_hf)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     show FALSE
+     by (rule zenon_in_emptyset [of "a_CONSTANTunde_xunde_a", OF z_Hc])
+    qed
+---*)

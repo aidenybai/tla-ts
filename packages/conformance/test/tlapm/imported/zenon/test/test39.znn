@@ -1,0 +1,60 @@
+(*---
+description: Zenon's own test zenon/test/test39.znn, which Zenon must prove.
+ref: zenon/test/test39.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test39.znn,v 1.7 2011-12-28 16:43:33 doligez Exp $
+
+; file: species_general_additive_law.foc
+; species: partially_ordered_additive_monoid
+; property: min_is_min / __lemma_1_1
+
+;     (* to be proved *)
+; (Is_true ((abst_equal (abst_plus abst_min x ) x ))
+; )
+; By
+;   abst_zero_is_neutral: (x: abst_T)
+;   (and (Is_true ((abst_equal  (abst_plus  x abst_zero) x)) ) (Is_true
+;   ((abst_equal  (abst_plus  abst_zero x) x)) ))
+; By def abst_min:= abst_zero
+; (* Qed *).
+
+$sig abst_equal ("zenon_U" "zenon_U") "bool"
+
+$def "d" (abst_min) abst_zero
+
+$hyp "abst_zero_is_neutral"
+(A. ((x) (/\ (Is_true (abst_equal (abst_plus x abst_zero) x))
+             (Is_true (abst_equal (abst_plus abst_zero x) x)))))
+
+$goal
+(A. ((x) (Is_true (abst_equal (abst_plus abst_min x) x))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Ha:"(\\A x:(Is_true(abst_equal(abst_plus(x, abst_zero), x))&Is_true(abst_equal(abst_plus(abst_zero, x), x))))" (is "\\A x : ?z_hl(x)")
+     using abst_zero_is_neutral by blast
+     assume z_Hb:"(~(\\A x:Is_true(abst_equal(abst_plus(abst_min, x), x))))" (is "~(\\A x : ?z_hr(x))")
+     have z_Hs: "(\\E x:(~Is_true(abst_equal(abst_plus(abst_min, x), x))))" (is "\\E x : ?z_hu(x)")
+     by (rule zenon_notallex_0 [of "?z_hr", OF z_Hb])
+     have z_Hv: "?z_hu((CHOOSE x:(~Is_true(abst_equal(abst_plus(abst_min, x), x)))))" (is "~?z_hx")
+     by (rule zenon_ex_choose_0 [of "?z_hu", OF z_Hs])
+     have z_Hy_z_Hv: "(~Is_true(abst_equal(abst_plus(abst_zero, (CHOOSE x:(~Is_true(abst_equal(abst_plus(abst_min, x), x))))), (CHOOSE x:(~Is_true(abst_equal(abst_plus(abst_min, x), x))))))) == (~?z_hx)" (is "?z_hy == ?z_hv")
+     by (unfold d)
+     have z_Hy: "?z_hy" (is "~?z_hz")
+     by (unfold z_Hy_z_Hv, fact z_Hv)
+     have z_Hbc: "?z_hl((CHOOSE x:(~Is_true(abst_equal(abst_plus(abst_min, x), x)))))" (is "?z_hbd&_")
+     by (rule zenon_all_0 [of "?z_hl" "(CHOOSE x:(~Is_true(abst_equal(abst_plus(abst_min, x), x))))", OF z_Ha])
+     have z_Hz: "?z_hz"
+     by (rule zenon_and_1 [OF z_Hbc])
+     show FALSE
+     by (rule notE [OF z_Hy z_Hz])
+    qed
+---*)

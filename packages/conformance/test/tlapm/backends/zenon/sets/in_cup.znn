@@ -1,0 +1,38 @@
+(*---
+description: Zenon splits x \in S \cup T into two branches with in_cup.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_xunde_a (TLA.cup a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Tunde_a)) (TLA.in a_CONSTANTunde_xunde_a
+(TLA.cup a_CONSTANTunde_Tunde_a
+a_CONSTANTunde_Sunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_xunde_a \\in (a_CONSTANTunde_Sunde_a \\cup a_CONSTANTunde_Tunde_a))=>(a_CONSTANTunde_xunde_a \\in (a_CONSTANTunde_Tunde_a \\cup a_CONSTANTunde_Sunde_a))))" (is "~(?z_hc=>?z_hh)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hj: "(~?z_hh)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hk: "(~(a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Tunde_a))" (is "~?z_hl")
+     by (rule zenon_notin_cup_0 [of "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_Tunde_a" "a_CONSTANTunde_Sunde_a", OF z_Hj])
+     have z_Hm: "(~(a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Sunde_a))" (is "~?z_hn")
+     by (rule zenon_notin_cup_1 [of "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_Tunde_a" "a_CONSTANTunde_Sunde_a", OF z_Hj])
+     show FALSE
+     proof (rule zenon_in_cup [of "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_Sunde_a" "a_CONSTANTunde_Tunde_a", OF z_Hc])
+      assume z_Hn:"?z_hn"
+      show FALSE
+      by (rule notE [OF z_Hm z_Hn])
+     next
+      assume z_Hl:"?z_hl"
+      show FALSE
+      by (rule notE [OF z_Hk z_Hl])
+     qed
+    qed
+---*)

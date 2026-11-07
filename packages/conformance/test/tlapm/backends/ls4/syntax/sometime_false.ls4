@@ -1,0 +1,18 @@
+(*---
+description: >-
+  ptl_to_trp, run without -s, renames sometime False and prints the False inside the clause or([not
+  NVV2, False]) as the atom False, so LS4 finds a model of sometime False. tlapm avoids this by
+  writing FALSE as (cc & ~ cc). The bug is in translate/fofunctions.ml#string_of_formula, which
+  prints False as a name.
+ref: translate/fofunctions.ml#string_of_formula
+outcome: sat
+features:
+  - tlapm-bug
+---*)
+sometime False
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

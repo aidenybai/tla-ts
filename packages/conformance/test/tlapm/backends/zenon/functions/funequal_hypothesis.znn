@@ -1,0 +1,45 @@
+(*---
+description: Zenon uses a function equality hypothesis with the funequal rule.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (= a_CONSTANTunde_funde_a
+(TLA.Fcn a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Funde_a a_CONSTANTunde_aunde_a))))
+(TLA.in a_CONSTANTunde_xunde_a a_CONSTANTunde_Sunde_a))
+(= (TLA.fapply a_CONSTANTunde_funde_a a_CONSTANTunde_xunde_a)
+(a_CONSTANTunde_Funde_a a_CONSTANTunde_xunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((a_CONSTANTunde_funde_a=Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))))&(a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Sunde_a))=>((a_CONSTANTunde_funde_a[a_CONSTANTunde_xunde_a])=a_CONSTANTunde_Funde_a(a_CONSTANTunde_xunde_a))))" (is "~(?z_hc=>?z_hm)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hk")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hp: "((a_CONSTANTunde_funde_a[a_CONSTANTunde_xunde_a])~=a_CONSTANTunde_Funde_a(a_CONSTANTunde_xunde_a))" (is "?z_hn~=?z_ho")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd" (is "_=?z_hf")
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hk: "?z_hk"
+     by (rule zenon_and_1 [OF z_Hc])
+     have z_Hq: "(((isAFcn(a_CONSTANTunde_funde_a)<=>isAFcn(?z_hf))&(DOMAIN(a_CONSTANTunde_funde_a)=DOMAIN(?z_hf)))&(\\A zenon_Vk:((a_CONSTANTunde_funde_a[zenon_Vk])=(?z_hf[zenon_Vk]))))" (is "?z_hr&?z_hy")
+     by (rule zenon_funequal_0 [of "a_CONSTANTunde_funde_a" "?z_hf", OF z_Hd])
+     have z_Hy: "?z_hy" (is "\\A x : ?z_hbd(x)")
+     by (rule zenon_and_1 [OF z_Hq])
+     have z_Hbe: "?z_hbd(a_CONSTANTunde_xunde_a)" (is "_=?z_hbf")
+     by (rule zenon_all_0 [of "?z_hbd" "a_CONSTANTunde_xunde_a", OF z_Hy])
+     show FALSE
+     proof (rule zenon_fapplyfcn [of "(\<lambda>zenon_Vqa. (?z_hn=zenon_Vqa))" "a_CONSTANTunde_Sunde_a" "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))" "a_CONSTANTunde_xunde_a", OF z_Hbe])
+      assume z_Hbj:"(~?z_hk)"
+      show FALSE
+      by (rule notE [OF z_Hbj z_Hk])
+     next
+      assume z_Hm:"?z_hm"
+      show FALSE
+      by (rule notE [OF z_Hp z_Hm])
+     qed
+    qed
+---*)

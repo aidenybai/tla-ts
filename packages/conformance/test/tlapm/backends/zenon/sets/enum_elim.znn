@@ -1,0 +1,47 @@
+(*---
+description: Zenon proves a member of {x, y} is x or y with in_addElt and in_emptyset.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_zunde_a
+(TLA.set a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a))
+(\/ (= a_CONSTANTunde_zunde_a a_CONSTANTunde_xunde_a)
+(= a_CONSTANTunde_zunde_a
+a_CONSTANTunde_yunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_zunde_a \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})=>((a_CONSTANTunde_zunde_a=a_CONSTANTunde_xunde_a)|(a_CONSTANTunde_zunde_a=a_CONSTANTunde_yunde_a))))" (is "~(?z_hc=>?z_hh)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hk: "(~?z_hh)" (is "~(?z_hi|?z_hj)")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hl: "(a_CONSTANTunde_zunde_a~=a_CONSTANTunde_xunde_a)"
+     by (rule zenon_notor_0 [OF z_Hk])
+     have z_Hm: "(a_CONSTANTunde_zunde_a~=a_CONSTANTunde_yunde_a)"
+     by (rule zenon_notor_1 [OF z_Hk])
+     show FALSE
+     proof (rule zenon_in_addElt [of "a_CONSTANTunde_zunde_a" "a_CONSTANTunde_xunde_a" "{a_CONSTANTunde_yunde_a}", OF z_Hc])
+      assume z_Hi:"?z_hi"
+      show FALSE
+      by (rule notE [OF z_Hl z_Hi])
+     next
+      assume z_Ho:"(a_CONSTANTunde_zunde_a \\in {a_CONSTANTunde_yunde_a})" (is "?z_ho")
+      show FALSE
+      proof (rule zenon_in_addElt [of "a_CONSTANTunde_zunde_a" "a_CONSTANTunde_yunde_a" "{}", OF z_Ho])
+       assume z_Hj:"?z_hj"
+       show FALSE
+       by (rule notE [OF z_Hm z_Hj])
+      next
+       assume z_Hq:"(a_CONSTANTunde_zunde_a \\in {})" (is "?z_hq")
+       show FALSE
+       by (rule zenon_in_emptyset [of "a_CONSTANTunde_zunde_a", OF z_Hq])
+      qed
+     qed
+    qed
+---*)

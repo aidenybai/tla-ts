@@ -1,0 +1,31 @@
+(*---
+description: Zenon's own test zenon/test/test09.znn, which Zenon must prove.
+ref: zenon/test/test09.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test09.znn,v 1.3 2006-03-01 14:39:03 doligez Exp $
+
+$goal
+  (=> (P a)
+      (E. ((x) (P x))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(P(a)=>(\\E x:P(x))))" (is "~(?z_hc=>?z_he)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hh: "(~?z_he)" (is "~(\\E x : ?z_hi(x))")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hj: "~?z_hi(a)"
+     by (rule zenon_notex_0 [of "?z_hi" "a", OF z_Hh])
+     show FALSE
+     by (rule notE [OF z_Hj z_Hc])
+    qed
+---*)

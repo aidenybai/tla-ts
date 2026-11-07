@@ -1,0 +1,27 @@
+(*---
+description: >-
+  Zenon rewrites <<x, y>>[2] with tuple_access, which lltoisar prints as an auto step followed by a
+  substitution.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (= (TLA.fapply (TLA.tuple a_CONSTANTunde_xunde_a
+a_CONSTANTunde_yunde_a) (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0)))
+a_CONSTANTunde_yunde_a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"((<<a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a>>[2])~=a_CONSTANTunde_yunde_a)" (is "?z_hb~=_")
+     have z_Hg: "(?z_hb=a_CONSTANTunde_yunde_a)"
+     by auto
+     have z_Hh: "(a_CONSTANTunde_yunde_a~=a_CONSTANTunde_yunde_a)"
+     by (rule subst [where P="(\<lambda>zenon_Vf. (zenon_Vf~=a_CONSTANTunde_yunde_a))", OF z_Hg z_Ha])
+     show FALSE
+     by (rule zenon_noteq [OF z_Hh])
+    qed
+---*)

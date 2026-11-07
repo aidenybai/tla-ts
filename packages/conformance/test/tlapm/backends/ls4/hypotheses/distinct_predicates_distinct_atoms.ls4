@@ -1,0 +1,14 @@
+(*---
+description: >-
+  LS4 finds a model of the negation of [](x = 1) => [](x = 2), because tlapm coalesces the two
+  predicates into unrelated atoms.
+ref: src/backend/ls4.ml#visitor
+outcome: sat
+---*)
+not (((always (cc | ~ cc)) -> ((always h7fe4a) -> (always hda924))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

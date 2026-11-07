@@ -1,0 +1,22 @@
+(*---
+description: Zenon proves two CHOOSEs with alpha-equivalent bodies are equal by reflexivity.
+ref: zenon/prove.ml#newnodes_refl
+outcome: unsat
+---*)
+;; obligation #1
+$goal (= (TLA.bChoice a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (= a_CONSTANTunde_aunde_a
+a_CONSTANTunde_xunde_a)))
+(TLA.bChoice a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_bunde_a) (= a_CONSTANTunde_bunde_a
+a_CONSTANTunde_xunde_a))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(bChoice(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. (a_CONSTANTunde_aunde_a=a_CONSTANTunde_xunde_a)))~=bChoice(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. (a_CONSTANTunde_aunde_a=a_CONSTANTunde_xunde_a))))" (is "?z_hb~=_")
+     show FALSE
+     by (rule zenon_noteq [OF z_Ha])
+    qed
+---*)

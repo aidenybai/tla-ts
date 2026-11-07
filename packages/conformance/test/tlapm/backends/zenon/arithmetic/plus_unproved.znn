@@ -1,0 +1,15 @@
+(*---
+description: Zenon has no arithmetic decision procedure and finds no proof of x + 0 = x.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unknown
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_xunde_a arith.N)
+(= (arith.add a_CONSTANTunde_xunde_a 0)
+a_CONSTANTunde_xunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

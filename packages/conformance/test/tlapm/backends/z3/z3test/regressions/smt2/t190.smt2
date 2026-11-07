@@ -1,0 +1,48 @@
+(*---
+description: z3test's regression regressions/smt2/t190.smt2.
+ref: regressions/smt2/t190.smt2
+features:
+  - z3test
+outcome: any
+---*)
+
+; Copyright (c) 2015 Microsoft Corporation
+(set-option :pp.max-depth 100)
+(declare-fun p (Int) Bool)
+(declare-fun f (Int Real) Bool)
+(declare-fun q (Int Bool) Bool)
+(declare-fun a () Int)
+
+(push)
+(assert (= (ite (> (ite (! (p 0) :lblneg baa) 20 30) a) 0 1) a))
+(apply snf)
+(echo "----")
+(pop)
+
+(push)
+(assert (= (ite (> (ite (! (p 0) :lblpos baa) 20 30) a) 0 1) a))
+(apply snf)
+(echo "----")
+(pop)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    (goals
+    (goal
+      (= (ite (> (ite z3name!0 20 30) a) 0 1) a)
+      (or (not z3name!0) (p 0))
+      (or z3name!0 (and (not (p 0)) (! true :lblpos baa)))
+      :precision precise :depth 1)
+    )
+    ----
+    (goals
+    (goal
+      (= (ite (> (ite z3name!1 20 30) a) 0 1) a)
+      (or (not z3name!1) (and (p 0) (! true :lblpos baa)))
+      (or z3name!1 (not (p 0)))
+      :precision precise :depth 1)
+    )
+    ----
+---*)

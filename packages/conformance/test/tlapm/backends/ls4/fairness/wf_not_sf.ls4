@@ -1,0 +1,12 @@
+(*---
+description: LS4 finds a model of the negation of WF_p(q') => SF_p(q').
+ref: src/backend/ls4.ml#visitor
+outcome: sat
+---*)
+not (((always (cc | ~ cc)) -> (((sometime (always hf9c3a)) -> (always (sometime ((next hb593a) & (~ h718b8))))) -> ((always (sometime hf9c3a)) -> (always (sometime ((next hb593a) & (~ h718b8))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

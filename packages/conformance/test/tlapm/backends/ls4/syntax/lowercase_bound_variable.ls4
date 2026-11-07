@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp rejects a lowercase bound variable, so LS4 gets no clauses and reaches no verdict.
+ref: translate/foyacc.mly#connective
+outcome: unknown
+---*)
+(! [x] p(x)) & ~p(a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

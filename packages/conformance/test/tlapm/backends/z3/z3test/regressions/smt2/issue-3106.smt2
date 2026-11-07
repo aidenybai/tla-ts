@@ -1,0 +1,17 @@
+(*---
+description: z3test's regression regressions/smt2/issue-3106.smt2.
+ref: regressions/smt2/issue-3106.smt2
+features:
+  - z3test
+outcome: sat
+---*)
+(declare-fun a () Real)
+(declare-fun b () Real)
+(assert (not (<= (* (- a b) (- a b) (* a a b b)) 0)))
+(check-sat-using nlsat)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

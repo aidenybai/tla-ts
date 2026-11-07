@@ -1,0 +1,33 @@
+(*---
+description: Zenon rewrites P(x) to P(y) with x = y by substitution.
+ref: zenon/prove.ml#newnodes_match
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (= a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a)
+(a_CONSTANTunde_Punde_a a_CONSTANTunde_xunde_a))
+(a_CONSTANTunde_Punde_a a_CONSTANTunde_yunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((a_CONSTANTunde_xunde_a=a_CONSTANTunde_yunde_a)&a_CONSTANTunde_Punde_a(a_CONSTANTunde_xunde_a))=>a_CONSTANTunde_Punde_a(a_CONSTANTunde_yunde_a)))" (is "~(?z_hc=>?z_hh)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hg")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hi: "(~?z_hh)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd"
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hg: "?z_hg"
+     by (rule zenon_and_1 [OF z_Hc])
+     show FALSE
+     proof (rule notE [OF z_Hi])
+      have z_Hh: "?z_hh"
+      by (rule subst [where P="(\<lambda>zenon_Vh. a_CONSTANTunde_Punde_a(zenon_Vh))", OF z_Hd], fact z_Hg)
+      thus "?z_hh" .
+     qed
+    qed
+---*)

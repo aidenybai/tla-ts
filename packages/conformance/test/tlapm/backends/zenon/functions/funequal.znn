@@ -1,0 +1,22 @@
+(*---
+description: >-
+  Zenon proves two alpha-equivalent function constructors equal by reflexivity, closing with
+  zenon_noteq.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (= (TLA.Fcn a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Funde_a a_CONSTANTunde_aunde_a)))
+(TLA.Fcn a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_bunde_a) (a_CONSTANTunde_Funde_a a_CONSTANTunde_bunde_a))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))~=Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))))" (is "?z_hb~=_")
+     show FALSE
+     by (rule zenon_noteq [OF z_Ha])
+    qed
+---*)

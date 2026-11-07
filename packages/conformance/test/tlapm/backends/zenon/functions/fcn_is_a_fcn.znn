@@ -1,0 +1,62 @@
+(*---
+description: Zenon proves isAFcn of a function constructor with notisafcn_fcn.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (TLA.in (TLA.Fcn a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Funde_a a_CONSTANTunde_aunde_a)))
+(TLA.FuncSet a_CONSTANTunde_Sunde_a (TLA.setOfAll a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Funde_a a_CONSTANTunde_aunde_a)))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))) \\in FuncSet(a_CONSTANTunde_Sunde_a, setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))))))" (is "~?z_hb")
+     show FALSE
+     proof (rule zenon_notin_funcset [of "Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))" "a_CONSTANTunde_Sunde_a" "setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))", OF z_Ha])
+      assume z_Hj:"(~isAFcn(Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))" (is "~?z_hk")
+      show FALSE
+      by (rule zenon_notisafcn_fcn [of "a_CONSTANTunde_Sunde_a" "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))", OF z_Hj])
+     next
+      assume z_Hl:"(DOMAIN(Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))))~=a_CONSTANTunde_Sunde_a)" (is "?z_hm~=_")
+      have z_Hn: "(a_CONSTANTunde_Sunde_a~=a_CONSTANTunde_Sunde_a)"
+      by (rule zenon_domain_fcn_0 [of "(\<lambda>zenon_Vga. (zenon_Vga~=a_CONSTANTunde_Sunde_a))" "a_CONSTANTunde_Sunde_a" "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))", OF z_Hl])
+      show FALSE
+      by (rule zenon_noteq [OF z_Hn])
+     next
+      assume z_Hr:"(~(\\A zenon_Vh:((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))))" (is "~(\\A x : ?z_hy(x))")
+      have z_Hz: "(\\E zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))))" (is "\\E x : ?z_hbb(x)")
+      by (rule zenon_notallex_0 [of "?z_hy", OF z_Hr])
+      have z_Hbc: "?z_hbb((CHOOSE zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))))))))" (is "~(?z_hbe=>?z_hbf)")
+      by (rule zenon_ex_choose_0 [of "?z_hbb", OF z_Hz])
+      have z_Hbe: "?z_hbe"
+      by (rule zenon_notimply_0 [OF z_Hbc])
+      have z_Hbg: "(~?z_hbf)"
+      by (rule zenon_notimply_1 [OF z_Hbc])
+      have z_Hbh: "(~(\\E zenon_Vn:((zenon_Vn \\in a_CONSTANTunde_Sunde_a)&((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[(CHOOSE zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))))])=a_CONSTANTunde_Funde_a(zenon_Vn)))))" (is "~(\\E x : ?z_hbp(x))")
+      by (rule zenon_notin_setofall_0 [of "(Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[(CHOOSE zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))))])" "a_CONSTANTunde_Sunde_a" "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))", OF z_Hbg])
+      have z_Hbq: "~?z_hbp((CHOOSE zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))))))))" (is "~(_&?z_hbr)")
+      by (rule zenon_notex_0 [of "?z_hbp" "(CHOOSE zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))))", OF z_Hbh])
+      show FALSE
+      proof (rule zenon_notand [OF z_Hbq])
+       assume z_Hbs:"(~?z_hbe)"
+       show FALSE
+       by (rule notE [OF z_Hbs z_Hbe])
+      next
+       assume z_Hbt:"((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[(CHOOSE zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))))])~=a_CONSTANTunde_Funde_a((CHOOSE zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))))))" (is "?z_hbn~=?z_hbu")
+       show FALSE
+       proof (rule zenon_fapplyfcn [of "(\<lambda>zenon_Vda. (zenon_Vda~=?z_hbu))" "a_CONSTANTunde_Sunde_a" "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))" "(CHOOSE zenon_Vh:(~((zenon_Vh \\in a_CONSTANTunde_Sunde_a)=>((Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))[zenon_Vh]) \\in setOfAll(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a)))))))", OF z_Hbt])
+        assume z_Hbs:"(~?z_hbe)"
+        show FALSE
+        by (rule notE [OF z_Hbs z_Hbe])
+       next
+        assume z_Hby:"(?z_hbu~=?z_hbu)"
+        show FALSE
+        by (rule zenon_noteq [OF z_Hby])
+       qed
+      qed
+     qed
+    qed
+---*)

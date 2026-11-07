@@ -1,0 +1,35 @@
+(*---
+description: >-
+  Zenon proves (CHOOSE a : a = x) = x by instantiating the CHOOSE with zenon_ex_choose_0 and a case
+  split with zenon_em.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (= (t. ((a_CONSTANTunde_aunde_a) (= a_CONSTANTunde_aunde_a
+a_CONSTANTunde_xunde_a)))
+a_CONSTANTunde_xunde_a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"((CHOOSE a_CONSTANTunde_aunde_a:(a_CONSTANTunde_aunde_a=a_CONSTANTunde_xunde_a))~=a_CONSTANTunde_xunde_a)" (is "?z_hb~=_")
+     show FALSE
+     proof (rule zenon_em [of "(\\E a_CONSTANTunde_aunde_a:(a_CONSTANTunde_aunde_a=a_CONSTANTunde_xunde_a))"])
+      assume z_Hf:"(\\E a_CONSTANTunde_aunde_a:(a_CONSTANTunde_aunde_a=a_CONSTANTunde_xunde_a))" (is "\\E x : ?z_hg(x)")
+      have z_Hh: "?z_hg(?z_hb)"
+      by (rule zenon_ex_choose_0 [of "?z_hg", OF z_Hf])
+      show FALSE
+      by (rule notE [OF z_Ha z_Hh])
+     next
+      assume z_Hi:"(~(\\E a_CONSTANTunde_aunde_a:(a_CONSTANTunde_aunde_a=a_CONSTANTunde_xunde_a)))" (is "~(\\E x : ?z_hg(x))")
+      have z_Hj: "~?z_hg(a_CONSTANTunde_xunde_a)"
+      by (rule zenon_notex_0 [of "?z_hg" "a_CONSTANTunde_xunde_a", OF z_Hi])
+      show FALSE
+      by (rule zenon_noteq [OF z_Hj])
+     qed
+    qed
+---*)

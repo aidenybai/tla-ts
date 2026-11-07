@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp reads until; LS4 refutes p until q together with never q.
+ref: translate/foyacc.mly#connective
+outcome: unsat
+---*)
+(p until q) & always ~q
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

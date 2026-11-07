@@ -1,0 +1,14 @@
+(*---
+description: >-
+  ptl_to_trp reads ! [X] as a universal over an uppercase variable and writes the literal p(X),
+  which LS4 rejects with a syntax error.
+ref: translate/foyacc.mly#connective
+outcome: unknown
+---*)
+(! [X] p(X)) & ~p(a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

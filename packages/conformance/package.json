@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "conformance": "bun scripts/run.ts conformance",
+    "fetch-tlapm": "bun scripts/fetch-tlapm.ts",
     "fetch-tlc": "bun scripts/fetch-tlc.ts",
     "record": "bun scripts/run.ts record",
     "test": "vp test",

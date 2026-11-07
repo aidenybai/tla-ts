@@ -1,0 +1,24 @@
+(*---
+description: >-
+  Zenon refutes an equality of tuples of different lengths with tuple_eq_mismatch, which lltoisar
+  prints as an auto step.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (-. (= (TLA.tuple a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a)
+(TLA.tuple a_CONSTANTunde_zunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(<<a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a>>~=<<a_CONSTANTunde_zunde_a>>))" (is "~~?z_hh")
+     have z_Hh: "?z_hh" (is "?z_hc=?z_hf")
+     by (rule zenon_notnot_0 [OF z_Ha])
+     show FALSE
+     using z_Hh by auto
+    qed
+---*)

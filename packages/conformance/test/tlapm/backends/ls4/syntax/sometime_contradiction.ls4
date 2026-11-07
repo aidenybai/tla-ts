@@ -1,0 +1,12 @@
+(*---
+description: LS4 refutes sometime (a & ~a), which ptl_to_trp renames into a fresh eventuality.
+ref: translate/fofunctions.ml#dsnf
+outcome: unsat
+---*)
+sometime (a & ~a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)
