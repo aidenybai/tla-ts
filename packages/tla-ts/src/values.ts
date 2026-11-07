@@ -1111,8 +1111,13 @@ export const markNormalized = (value: Value): void => {
   }
 };
 
-export const isEqualLikeTlc = (left: Value, right: Value) =>
-  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
+// Two scalars of one type, or two model values of one type, which are interned, are equal when
+// they're identical, which can't fail.
+export const isEqualLikeTlc = (left: Value, right: Value) => {
+  if (typeof left !== "object" && typeof left === typeof right) return left === right;
+  if (isModelValue(left) && isModelValue(right) && left.type === right.type) return left === right;
+  return computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
+};
 
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
