@@ -1,0 +1,25 @@
+(*---
+description: Evaluates a random function expression, seed 262, number 9924.
+ref: tlc2/tool/impl/Tool.java#evalImpl
+features:
+  - random-expression
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE random_09924 ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT((((<<7, 2>> \o (<<3, 1, 2>> \o [a |-> 1, b |-> TRUE])) \o SubSeq(SortSeq(<<3, 1, 2>>, LAMBDA p, q : p < q), (CHOOSE b15439 \in 1..3 : TRUE), ([x \in Nat |-> x + 1])[FALSE])) :> Cardinality((CASE FALSE -> 2147483647 [] OTHER -> 7 .. (2 \div 2147483647)))))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
+    [a |-> 1, b |-> TRUE]
+    2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
+    [a |-> 1, b |-> TRUE]
+---*)

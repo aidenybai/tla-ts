@@ -1,0 +1,3 @@
+---- MODULE FixUndefined ----
+A == DoesNotExist
+====

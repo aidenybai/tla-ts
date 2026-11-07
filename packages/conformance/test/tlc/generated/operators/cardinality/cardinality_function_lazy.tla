@@ -1,0 +1,25 @@
+(*---
+description: cardinality applied to function_lazy, a FcnLambdaValue.
+ref: tlc2/module/FiniteSets.java#Cardinality
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE cardinality_function_lazy ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT(Cardinality([x \in Nat |-> x]))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2181:0 Attempted to compute cardinality of the value
+    [x \in Nat |-> <expression line 14, col 43 to line 14, col 43 of module cardinality_function_lazy>]
+    2181:0 Attempted to compute cardinality of the value
+    [x \in Nat |-> <expression line 14, col 43 to line 14, col 43 of module cardinality_function_lazy>]
+---*)

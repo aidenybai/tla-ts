@@ -1,0 +1,24 @@
+(*---
+description: Checks equivalence on the reset machine under weak fairness.
+ref: tlc2/tool/liveness/LiveCheck.java; tlc2/tool/liveness/Liveness.java
+features:
+  - liveness
+outcome: any
+config: |
+  SPECIFICATION Spec
+  PROPERTY Prop
+  CHECK_DEADLOCK FALSE
+---*)
+---- MODULE live_reset__weak__equivalence ----
+EXTENDS Integers
+VARIABLE x
+Next == x' = IF x = 0 THEN 2 ELSE x - 1
+Spec == x = 2 /\ [][Next]_x /\ WF_x(Next)
+Prop == <>(x = 1) <=> <>(x = 2)
+====
+
+(*--- recorded
+all:
+  exit: 255
+  transcript: 2213:1 TLC cannot handle the temporal formula line 17, col 9 to line 17, col 31 of module live_reset__weak__equivalence
+---*)

@@ -1,0 +1,72 @@
+(*---
+description: "The empty string and the empty tuple are incomparable."
+ref: "tlc2/value/impl/StringValue.java#equals"
+flags: [expression]
+outcome: evaluation-failure
+---*)
+---- MODULE empty_not_equal_to_empty_tuple ----
+EXTENDS Integers
+Test == "" = <<>>
+====
+
+(*--- recorded
+assume:
+  exit: 10
+  transcript: |-
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module empty_not_equal_to_empty_tuple failed.
+    Attempted to check equality of string "" with non-string:
+    <<>>
+init:
+  exit: 75
+  transcript: |-
+    1000:1 Attempted to check equality of string "" with non-string:
+    <<>>
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 11, column 9 to line 11, column 32 in empty_not_equal_to_empty_tuple
+    1. Line 11, column 29 to line 11, column 32 in empty_not_equal_to_empty_tuple
+    2. Line 9, column 9 to line 9, column 17 in empty_not_equal_to_empty_tuple
+next:
+  exit: 75
+  transcript: |-
+    1000:1 TLC threw an unexpected exception.
+    This was probably caused by an error in the spec or model.
+    See the User Output or TLC Console for clues to what happened.
+    The exception was a java.lang.RuntimeException
+    : Attempted to check equality of string "" with non-string:
+    <<>>
+    2121:1 The behavior up to this point is:
+    2217:4 1: <Initial predicate>
+    conformance_state = TRUE
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 12, column 9 to line 12, column 33 in empty_not_equal_to_empty_tuple
+    1. Line 12, column 30 to line 12, column 33 in empty_not_equal_to_empty_tuple
+    2. Line 9, column 9 to line 9, column 17 in empty_not_equal_to_empty_tuple
+invariant:
+  exit: 75
+  transcript: |-
+    2102:1 Attempted to check equality of string "" with non-string:
+    <<>>
+    While working on the initial state:
+    conformance_state = TRUE
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 11, column 9 to line 11, column 32 in empty_not_equal_to_empty_tuple
+    1. Line 13, column 8 to line 13, column 32 in empty_not_equal_to_empty_tuple
+    2. Line 13, column 29 to line 13, column 32 in empty_not_equal_to_empty_tuple
+    3. Line 9, column 9 to line 9, column 17 in empty_not_equal_to_empty_tuple
+property:
+  exit: 75
+  transcript: |-
+    2102:1 Attempted to check equality of string "" with non-string:
+    <<>>
+    While working on the initial state:
+    conformance_state = TRUE
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 11, column 9 to line 11, column 32 in empty_not_equal_to_empty_tuple
+    1. Line 12, column 12 to line 12, column 36 in empty_not_equal_to_empty_tuple
+    2. Line 12, column 33 to line 12, column 36 in empty_not_equal_to_empty_tuple
+    3. Line 9, column 9 to line 9, column 17 in empty_not_equal_to_empty_tuple
+---*)

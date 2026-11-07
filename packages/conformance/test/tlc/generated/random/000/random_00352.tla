@@ -1,0 +1,29 @@
+(*---
+description: Evaluates a random bool expression, seed 262, number 352.
+ref: tlc2/tool/impl/Tool.java#evalImpl
+features:
+  - random-expression
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE random_00352 ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT((\E b583 \in ((([a |-> 1]).a % (0 * <<>>)) .. ([b584 \in SUBSET {1} |-> b584])[([a |-> 1]).a]) : (([[a |-> 1, b |-> TRUE] EXCEPT !.a = <<5, 6>>]).a = LET b585 == (-1 \div 2) IN (<<5, 6>>)[b583])))
+====
+
+(*--- recorded
+all:
+  exit: 10
+  transcript: |-
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.IntValue tlc2.module.Integers.Times(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
+    but it produced the following error:
+    Cannot cast tlc2.value.impl.TupleValue to tlc2.value.impl.IntValue
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.IntValue tlc2.module.Integers.Times(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
+    but it produced the following error:
+    Cannot cast tlc2.value.impl.TupleValue to tlc2.value.impl.IntValue
+---*)

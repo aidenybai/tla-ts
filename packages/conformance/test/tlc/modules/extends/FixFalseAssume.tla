@@ -1,0 +1,3 @@
+---- MODULE FixFalseAssume ----
+ASSUME FALSE
+====

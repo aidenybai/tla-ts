@@ -1,0 +1,22 @@
+(*---
+description: "UNCHANGED in an invariant is rejected as action-level with the invariant level message."
+ref: tlc2/tool/impl/SpecProcessor.java#processConfigInvariants
+outcome: evaluation-failure
+config: |
+  INIT Init
+  NEXT Next
+  INVARIANT Inv
+---*)
+---- MODULE unchanged_in_invariant_level_error ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = 1
+Inv == UNCHANGED x
+====
+
+(*--- recorded
+all:
+  exit: 76
+  transcript: 2146:1 The invariant Inv is not a state predicate (one with no primes or temporal operators).
+---*)
