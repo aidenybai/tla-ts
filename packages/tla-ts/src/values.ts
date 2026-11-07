@@ -2180,22 +2180,33 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
 };
 
 // A function that agrees with a member of a function set outside some entries is a member when
-// those entries are.
+// those entries are. A set that shares a member of a power set's elements, in order, is a member
+// when its other elements are in the base.
 export const isUpdatedElementOf = (element: Value, member: Value, set: Value): boolean => {
   if (element === member) return true;
-  if (
-    typeof element !== "object" ||
-    typeof member !== "object" ||
-    typeof set !== "object" ||
-    element.kind !== "Function" ||
-    member.kind !== "Function" ||
-    set.kind !== "FunctionSet" ||
-    element.domain !== member.domain
-  )
+  if (typeof element !== "object" || typeof member !== "object" || typeof set !== "object") {
     return isElementOf(element, set);
-  return element.range.every((item, index) =>
-    isUpdatedElementOf(item, member.range[index], set.range),
-  );
+  }
+  if (
+    element.kind === "Function" &&
+    member.kind === "Function" &&
+    set.kind === "FunctionSet" &&
+    element.domain === member.domain
+  ) {
+    return element.range.every((item, index) =>
+      isUpdatedElementOf(item, member.range[index], set.range),
+    );
+  }
+  if (element.kind !== "Set" || member.kind !== "Set" || set.kind !== "Subset") {
+    return isElementOf(element, set);
+  }
+  const shared = member.elements;
+  let position = 0;
+  return element.elements.every((item) => {
+    if (item !== shared[position]) return isElementOf(item, set.base);
+    position++;
+    return true;
+  });
 };
 
 export const toFiniteFunction = (value: Value): FunctionValue => {
