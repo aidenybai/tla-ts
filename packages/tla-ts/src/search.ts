@@ -48,9 +48,16 @@ import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty 
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
-import { MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
+import { formatNestedMessage, MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
 import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
-import { formatValue, isUpdatedElementOf, type Value } from "./values";
+import type { TlcVersion } from "./tlc/version";
+import {
+  formatValue,
+  isFunctionValue,
+  isUpdatedElementOf,
+  toFiniteFunction,
+  type Value,
+} from "./values";
 
 interface NamedExpression {
   name: string;
@@ -555,6 +562,16 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
 
 interface Search {
   properties: Properties;
+  // A state as TLC prints it, its variables in TLC's order.
+  toRecord: (state: Value[]) => Record<string, Value>;
+  // The state TLC prints for an ALIAS, which names the fields of the record the alias is, or reports
+  // why TLC fails to evaluate it.
+  evaluateAlias: (
+    alias: string,
+    state: Value[],
+    next: Value[] | undefined,
+    isTool: boolean,
+  ) => Record<string, Value>;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
@@ -591,6 +608,33 @@ interface Search {
   // After a counterexample, TLC skips the postconditions when one of them is constant.
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
+
+const toAliasRecord = (value: Value, fieldOrder: string[]) => {
+  if (!isFunctionValue(value)) return undefined;
+  const record = toFiniteFunction(value);
+  if (!record.domain.every((key) => typeof key === "string")) return undefined;
+  const entries = record.domain.map((key, index): [string, Value] => [
+    String(key),
+    record.range[index],
+  ]);
+  return Object.fromEntries(
+    entries.sort((left, right) => fieldOrder.indexOf(left[0]) - fieldOrder.indexOf(right[0])),
+  );
+};
+
+// TLC names the action that leaves a successor incomplete when the next-state relation has several.
+export const getIncompleteSuccessorMessage = (
+  missing: string[],
+  action: string | undefined,
+  actionCount: number,
+  version: TlcVersion | undefined,
+) => {
+  const subject =
+    actionCount === 1 ? "the next-state action" : `action ${action} of the next-state relation`;
+  // TLC 1.7.4 says a variable is not assigned rather than not defined.
+  const verb = version === "1.7.4" ? "assigned" : "defined";
+  return `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
+};
 
 export const getContext = (
   environment: Environment,
@@ -802,9 +846,23 @@ export const createSearch = (
       counts: prettyPrint(formatValue(getPossibleCounts(runtime), true)),
     };
   };
+  const toRecord = (state: Value[]): Record<string, Value> =>
+    Object.fromEntries(getTlcOrder().map((index) => [environment.variables[index], state[index]]));
   return {
     properties,
     spec,
+    toRecord,
+    evaluateAlias: (alias, state, next, isTool) => {
+      try {
+        const body = getConfigDefinition("alias", alias, environment).body;
+        const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
+        const fieldOrder = body.kind === "Record" ? body.fields.map((field) => field.name) : [];
+        return toAliasRecord(value, fieldOrder) ?? toRecord(state);
+      } catch (error) {
+        if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
+        return { ...toRecord(state), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
+      }
+    },
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,

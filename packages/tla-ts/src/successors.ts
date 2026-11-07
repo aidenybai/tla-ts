@@ -1098,11 +1098,14 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
   return run.isStopped;
 };
 
+// TLC's simulator checks that each initial state is complete only after it computes them all, so
+// it takes the incomplete ones too.
 export const forEachInitialState = (
   expression: Expression,
   environment: Environment,
   onState: (state: Value[]) => boolean,
   scope?: Scope,
+  onIncomplete?: (state: State) => boolean,
 ) => {
   const run: Run = {
     environment,
@@ -1120,6 +1123,10 @@ export const forEachInitialState = (
     (partial) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
+        if (onIncomplete) {
+          run.isStopped = onIncomplete([...partial]);
+          return;
+        }
         // TLC reports an initial state that isn't completely specified as an illegal state, not as
         // an evaluation failure.
         throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);

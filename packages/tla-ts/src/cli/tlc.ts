@@ -16,6 +16,7 @@ import { version } from "../../package.json";
 import type { Expression } from "../ast";
 import { describeRange } from "../evaluate";
 import type {
+  CheckOptions,
   CheckProgress,
   InitialStateViolation,
   OutputLine,
@@ -40,6 +41,7 @@ import {
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { check } from "../parallel";
 import { parseModule } from "../parser";
+import { simulate, type SimulationOutput, type SimulationStatistics } from "../simulate";
 import type { StateDump } from "../state-graph";
 import {
   formatProbability,
@@ -640,11 +642,73 @@ const printCommandLineError = (printer: MessagePrinter, message: string) => {
 
 // TLC.printStartupBanner, with what runs tla-ts in place of the JVM. tla-ts keeps its fingerprints
 // and its queue of states in memory.
-const printStartupBanner = (printer: MessagePrinter, seed: bigint, workers: number) =>
+const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
+  const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
+  if (args.mode === "model-check") {
+    printer.print(
+      MESSAGE_CODE.modelChecking,
+      MESSAGE_LEVEL.none,
+      `Running breadth-first search Model-Checking with fp 0 and seed ${args.seed} with ${workers}, MemFPSet, MemStateQueue).`,
+    );
+    return;
+  }
   printer.print(
-    MESSAGE_CODE.modelChecking,
+    MESSAGE_CODE.simulating,
     MESSAGE_LEVEL.none,
-    `Running breadth-first search Model-Checking with fp 0 and seed ${seed} with ${workers} worker${workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit, MemFPSet, MemStateQueue).`,
+    `Running Random Simulation with seed ${args.seed} with ${workers}).`,
+  );
+};
+
+const printSimulation = (printer: MessagePrinter, output: SimulationOutput) => {
+  const print = printer.print;
+  switch (output.kind) {
+    case "message":
+      print(
+        output.code,
+        output.isError ? MESSAGE_LEVEL.error : MESSAGE_LEVEL.none,
+        printer.isTool ? output.toolMessage : output.message,
+      );
+      return;
+    case "behavior": {
+      const last = output.trace[output.trace.length - 1];
+      if (!output.isLastStateOnly) {
+        printTrace(printer, output.trace);
+        return;
+      }
+      print(MESSAGE_CODE.errorState, MESSAGE_LEVEL.none, "The error state is:\n");
+      print(MESSAGE_CODE.statePrint1, MESSAGE_LEVEL.state, `:\n${formatState(last.state)}`);
+      return;
+    }
+    case "progress": {
+      const statistics = output.statistics;
+      if (printer.isTool) {
+        printSimulationProgress(printer, statistics);
+        return;
+      }
+      const variance = statistics.levelM2 / (statistics.traces + 1);
+      print(
+        MESSAGE_CODE.simulationProgress,
+        MESSAGE_LEVEL.none,
+        `Progress: ${statistics.generatedStates} states checked, ${statistics.traces} traces generated (trace length: mean=${statistics.levelMean}, var(x)=${Math.round(variance)}, sd=${Math.round(Math.sqrt(variance))})`,
+      );
+      return;
+    }
+    case "summary":
+      if (printer.isTool) printSimulationProgress(printer, output.statistics);
+      print(
+        MESSAGE_CODE.simulationStats,
+        MESSAGE_LEVEL.none,
+        `The number of states generated: ${output.statistics.generatedStates}\nSimulation using seed ${output.statistics.seed} and aril ${output.statistics.aril}`,
+      );
+  }
+};
+
+// With -tool, TLC reports the progress of a simulation as it reports that of model checking.
+const printSimulationProgress = (printer: MessagePrinter, statistics: SimulationStatistics) =>
+  printer.print(
+    MESSAGE_CODE.simulationProgress,
+    MESSAGE_LEVEL.none,
+    `Progress(${statistics.traces}) at ${formatTlcDate(new Date())}: ${statistics.generatedStates} states generated, -1 distinct states found, -1 states left on queue.`,
   );
 
 // TLC loads Integers for the binary trace that its trace exploration spec records. -generateSpecTE
@@ -677,7 +741,7 @@ const checkSpec = async (
   const seed = args.seed;
   const version = printer.version;
   printWelcome(printer);
-  printStartupBanner(printer, seed, workers);
+  printStartupBanner(printer, args);
   const configPath = args.configPath ?? specPath.replace(/\.tla$/, ".cfg");
   if (!existsSync(configPath)) {
     printer.print(
@@ -791,7 +855,7 @@ const checkSpec = async (
         undefined,
       );
     }
-    const result = await check({
+    const options: CheckOptions = {
       workers,
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
       seed,
@@ -816,7 +880,19 @@ const checkSpec = async (
         mkdirSync(dirname(resolve(path)), { recursive: true });
         writeFileSync(path, content);
       },
-    });
+    };
+    if (args.mode === "simulate") {
+      const status = simulate({
+        ...options,
+        traceDepth: args.traceDepth,
+        traceCount: args.traceCount,
+        aril: args.aril,
+        onSimulation: (output) => printSimulation(printer, output),
+      });
+      printFinished();
+      return status;
+    }
+    const result = await check(options);
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
