@@ -33,6 +33,8 @@ pnpm conformance --host tlc
 pnpm conformance --host "./my-checker --flag" tlc
 ```
 
+`pnpm fetch-tlc` builds TLC at the suite's revision from source, since tlaplus publishes TLC only as a rolling release. It needs git, a JDK and Ant.
+
 A command host runs every test the filters select, with TLC's flags.
 
 `--shard 2/8` runs every eighth test, starting with the third. CI uses it to split the suite into parallel jobs.

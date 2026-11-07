@@ -36,5 +36,9 @@ jobs:
           distribution: temurin
           java-version: 21
       - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: packages/conformance/.oracles/tla2tools.jar
+          key: tlc-${{ hashFiles('packages/conformance/scripts/fetch-tlc.ts') }}
       - run: pnpm --filter @tla-ts/conformance fetch-tlc
       - run: pnpm --filter @tla-ts/conformance conformance --host tlc --shard ${{ matrix.shard }}/8
