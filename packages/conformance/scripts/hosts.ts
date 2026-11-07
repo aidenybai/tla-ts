@@ -97,8 +97,18 @@ interface Run {
   limits: Limits;
 }
 
-// kill fails when the group has already exited, which is the usual case after a run.
-const killGroup = (groupId: number) => spawnSync("kill", ["-9", `-${groupId}`]);
+// The signal goes through Node, not the kill command: procps's kill reads `kill -9 -12345` as
+// `kill -9 -1`, which kills every process the user owns. The group has usually exited by the end of
+// a run, which Linux reports as ESRCH and macOS as EPERM. A child that failed to spawn has no group.
+const killGroup = (groupId: number | undefined) => {
+  if (groupId === undefined) return;
+  try {
+    process.kill(-groupId, "SIGKILL");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && code !== "EPERM") throw error;
+  }
+};
 
 // The resident memory of every process in a group.
 const getGroupMemoryBytes = (groupId: number) =>
@@ -118,7 +128,7 @@ const spawnRun = (run: Run) =>
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       });
-      const groupId = child.pid ?? 0;
+      const groupId = child.pid;
       const state: { exceeded?: "time" | "memory" } = {};
       const stop = (reason: "time" | "memory") => {
         state.exceeded ??= reason;
@@ -130,7 +140,7 @@ const spawnRun = (run: Run) =>
       const memoryBytes = run.limits.memoryBytes;
       const poll = memoryBytes
         ? setInterval(() => {
-            if (getGroupMemoryBytes(groupId) > memoryBytes) stop("memory");
+            if (groupId && getGroupMemoryBytes(groupId) > memoryBytes) stop("memory");
           }, 1000)
         : undefined;
       const stdout: Buffer[] = [];
