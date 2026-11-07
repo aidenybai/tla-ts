@@ -335,14 +335,13 @@ const createSequencesOperators = (version: TlcVersion) =>
       return rankString(left + right);
     }),
     defineOperator("Append", 2, (args) =>
-      createTuple([
-        ...getSequenceArgument(
+      createTuple(
+        getSequenceArgument(
           args,
           0,
           getEvaluatingMessage(version === "1.7.4" ? "Append(v, s)" : "Append(s, v)", "sequence"),
-        ),
-        getValue(args, 1, "Append"),
-      ]),
+        ).concat([getValue(args, 1, "Append")]),
+      ),
     ),
     defineOperator("Head", 1, (args) => {
       const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));

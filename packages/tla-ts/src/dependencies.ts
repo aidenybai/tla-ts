@@ -326,6 +326,10 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
   return row;
 };
 
+// Whether evaluating the expressions can show, through the definitions they call.
+export const isExpressionImpure = (expressions: Expression[], environment: Environment) =>
+  (getExpressionsRow(expressions, environment)[0] & IMPURE) !== 0;
+
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
   (getRow(definition, environment)[0] & NONCONSTANT) === 0;
 

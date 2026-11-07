@@ -14,7 +14,12 @@ import type {
   Violation,
 } from "./check";
 import type { ConfigValue, ModelConfig } from "./config";
-import { getReadVariables, isConstantLevel } from "./dependencies";
+import {
+  getReadVariables,
+  isConstantLevel,
+  isExpressionImpure,
+  isImpureDefinition,
+} from "./dependencies";
 import {
   isStackOverflow,
   TlaConfigError,
@@ -49,7 +54,7 @@ import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
-import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
+import { getTlcFingerprint } from "./tlc/fingerprint";
 import { formatValue, isUpdatedElementOf, type Value } from "./values";
 
 interface NamedExpression {
@@ -557,12 +562,28 @@ interface Search {
   properties: Properties;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
-  getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
+  // The TLC fingerprint of each stored state, which getFingerprints finds from their fingerprint
+  // states in the variable order it is given.
+  getStoredFingerprints: (
+    count: number,
+    getState: (index: number) => Value[],
+    getFingerprints: (order: number[]) => BigInt64Array,
+  ) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
+  // Whether a state's fingerprint state takes work to find and is the same each time.
+  isFingerprintStateReusable: boolean;
+  // Whether what the search evaluates, or a definition TLC computes as it starts, can show.
+  isImpure: () => boolean;
   // TLC drops a constraint that is a true constant formula.
   isConstrained: boolean;
-  findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
+  // With -continue, TLC goes on to the successors of a state that violates an invariant, whose
+  // successors it checks in full.
+  findViolatedInvariant: (
+    state: Value[],
+    parent?: Value[],
+    isParentViolating?: boolean,
+  ) => StateCheck | undefined;
   // Every invariant an initial state violates, which TLC reports with -continue.
   getViolatedInvariants: (state: Value[]) => StateCheck[];
   // The checks of a state that TLC evaluates when it replays the computation of the initial states
@@ -762,11 +783,14 @@ export const createSearch = (
         : [getViewValue(view.expression, representative)],
     );
   };
-  // With -continue, TLC goes on to the successors of a state that violates an invariant.
-  const violatingStates = new WeakSet<Value[]>();
-  const isViolated = (invariant: StateCheck, state: Value[], parent: Value[] | undefined) => {
+  const isViolated = (
+    invariant: StateCheck,
+    state: Value[],
+    parent: Value[] | undefined,
+    isParentViolating: boolean,
+  ) => {
     // A parent that satisfies every invariant leaves only what the step changed to fail.
-    const checkedParent = parent && !violatingStates.has(parent) ? parent : undefined;
+    const checkedParent = isParentViolating ? undefined : parent;
     if (isUnchangedFor(invariant, state, checkedParent)) return false;
     try {
       const context = getContext(environment, state, undefined, invariant.scope);
@@ -806,14 +830,42 @@ export const createSearch = (
     properties,
     spec,
     isSymmetric: symmetryGroup !== undefined,
+    isFingerprintStateReusable:
+      view === undefined
+        ? symmetryGroup !== undefined
+        : !isExpressionImpure([view.expression], environment),
+    isImpure: () => {
+      const named = [...invariants, ...constraints, ...actionConstraints];
+      const isScoped =
+        spec.scope !== undefined ||
+        named.some((item) => item.scope !== undefined) ||
+        actionProperties.some((property) => property.scope !== undefined);
+      const definitions = [...environment.facts.ids.keys()];
+      return isScoped
+        ? definitions.some((definition) => isImpureDefinition(definition, environment))
+        : definitions.some(
+            (definition) =>
+              isConstantLevel(definition, environment) &&
+              isImpureDefinition(definition, environment),
+          ) ||
+            isExpressionImpure(
+              [
+                ...(spec.init ? [spec.init] : []),
+                ...(spec.next ? [spec.next] : []),
+                ...named.map((item) => item.expression),
+                ...actionProperties.flatMap((property) => [property.action, property.subscript]),
+              ],
+              environment,
+            );
+    },
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,
-    getStoredFingerprints: (states, fingerprintStates) => {
-      if (view !== undefined || isFingerprintedLikeTlc) {
-        return BigInt64Array.from(states, getTlcStateFingerprint);
-      }
-      return getTlcFingerprints(fingerprintStates, getTlcOrder());
-    },
+    getStoredFingerprints: (count, getState, getFingerprints) =>
+      view !== undefined || isFingerprintedLikeTlc
+        ? BigInt64Array.from({ length: count }, (_, index) =>
+            getTlcStateFingerprint(getState(index)),
+          )
+        : getFingerprints(getTlcOrder()),
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
       // A representative in TLC's variable order is the one whose fingerprint TLC reports.
@@ -823,21 +875,16 @@ export const createSearch = (
           : getRepresentative(state, symmetryGroup, getTlcOrder());
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
-    findViolatedInvariant: (state, parent) => {
-      const violated = invariants.find((invariant) => isViolated(invariant, state, parent));
-      if (violated) violatingStates.add(state);
-      return violated;
-    },
-    getViolatedInvariants: (state) => {
-      const violated = invariantPredicates.filter((predicate) =>
+    findViolatedInvariant: (state, parent, isParentViolating = false) =>
+      invariants.find((invariant) => isViolated(invariant, state, parent, isParentViolating)),
+    getViolatedInvariants: (state) =>
+      invariantPredicates.filter((predicate) =>
         invariants.some(
           (invariant) =>
-            invariant.predicate === predicate.predicate && isViolated(invariant, state, undefined),
+            invariant.predicate === predicate.predicate &&
+            isViolated(invariant, state, undefined, false),
         ),
-      );
-      if (violated.length > 0) violatingStates.add(state);
-      return violated;
-    },
+      ),
     checkReplayedInitialState: (state, tracing, addFingerprint) => {
       const holdsIn = (expression: Expression, scope: Scope | undefined) =>
         holdsLikeTlc(expression, getContext(tracing, state, undefined, scope));

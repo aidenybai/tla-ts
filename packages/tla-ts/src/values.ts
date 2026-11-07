@@ -1,3 +1,4 @@
+import { createHashIndex } from "./hash-index";
 import { TlaEvaluationError } from "./errors";
 import { prettyPrint } from "./pretty-print";
 import type { TlcVersion } from "./tlc/version";
@@ -238,6 +239,11 @@ const forgetWrittenOrder = (value: Value): void => {
   value.range.forEach(forgetWrittenOrder);
 };
 
+// Value#permute sorts the value it permutes, and every value inside it.
+export const sortWrittenOrder = (value: Value) => {
+  if (writtenOrderUse.isUsed) forgetWrittenOrder(value);
+};
+
 const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
 
 // TLC compares a record only with another record, so comparing one with a function of another size
@@ -345,6 +351,9 @@ export const rankString = (text: string) => {
 export const getRankedStringCount = () => stringOrder.size;
 
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
+
+// The rank of a string the check has already ranked. Comparing strings doesn't rank them.
+export const findStringRank = (text: string): number | undefined => stringOrder.ranks[text];
 
 const compareStrings = (left: string, right: string) => {
   if (left === right) return 0;
@@ -479,16 +488,27 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   isFingerprinted: false,
 });
 
-export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue => ({
-  kind: "Function",
-  domain,
-  range,
-  hash: 0,
-  fingerprint: 0,
-  writtenKeys: undefined,
-  functionClass: undefined,
-  isFingerprinted: false,
-});
+// HACK: a class, since V8 watches how long the objects of an object literal live. Once enough function
+// values survive, it allocates every later one in old space, where short-lived ones wait for a
+// major collection.
+class SortedFunction implements FunctionValue {
+  readonly kind = "Function";
+  domain: Value[];
+  range: Value[];
+  hash = 0;
+  fingerprint = 0;
+  writtenKeys: Value[] | undefined = undefined;
+  functionClass: FunctionClass | undefined = undefined;
+  isFingerprinted = false;
+
+  constructor(domain: Value[], range: Value[]) {
+    this.domain = domain;
+    this.range = range;
+  }
+}
+
+export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue =>
+  new SortedFunction(domain, range);
 
 // TLC words a failed function application by the Java class of the function: FcnLambdaValue for
 // [x \in S |-> e], TupleValue for <<...>> and what the sequence operators build, RecordValue for
@@ -685,38 +705,65 @@ const canonicalizeElements = (elements: Value[], canonicalize: (value: Value) =>
   }
 };
 
-// Replaces each set and function in a state with the first interchangeable one it has seen, so that
-// the states it keeps share their values.
-export const createCanonicalizer = () => {
-  const canonicalValues = new Map<number, Value | Value[]>();
+const isInlineInteger = (value: Value) => typeof value === "number" && value === (value << 1) >> 1;
+
+// The distinct values of the states a check keeps. A cell names one of them in an integer: twice an
+// integer that fits, or else twice its position in the table plus one. canonicalizeState replaces
+// each set and function in a state with the first interchangeable one it has seen, so that the
+// states share their values.
+export const createValueTable = () => {
+  const values: Value[] = [];
+  const otherIds = new Map<Value, number>();
+  const canonical = createHashIndex();
+  const isCanonicalMatch = (position: number, value: Value) => {
+    const candidate = values[position];
+    return candidate === value || isInterchangeableValue(candidate, value);
+  };
+  const isCanonicalIdentity = (position: number, value: Value) => values[position] === value;
   const canonicalize = (value: Value): Value => {
     if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function")) {
       return value;
     }
     const hash = getValueHash(value);
-    const bucket = canonicalValues.get(hash);
-    if (bucket !== undefined && !Array.isArray(bucket)) {
-      if (bucket === value || isInterchangeableValue(bucket, value)) return bucket;
-    }
-    if (Array.isArray(bucket)) {
-      for (let index = 0; index < bucket.length; index++) {
-        if (bucket[index] === value || isInterchangeableValue(bucket[index], value))
-          return bucket[index];
-      }
-    }
-    if (value.kind === "Set") canonicalizeElements(value.elements, canonicalize);
-    else {
+    const position = canonical.find(hash, isCanonicalMatch, value);
+    if (position !== -1) return values[position];
+    // An array built by pushing keeps at least 17 slots, and a stored value keeps its array for the
+    // rest of the run, so a stored value gets an array of its exact length.
+    if (value.kind === "Set") {
+      canonicalizeElements(value.elements, canonicalize);
+      value.elements = value.elements.slice();
+    } else {
       canonicalizeElements(value.domain, canonicalize);
       canonicalizeElements(value.range, canonicalize);
+      value.range = value.range.slice();
     }
-    if (bucket === undefined) canonicalValues.set(hash, value);
-    else if (Array.isArray(bucket)) bucket.push(value);
-    else canonicalValues.set(hash, [bucket, value]);
+    values.push(value);
+    canonical.add(hash, values.length - 1);
     return value;
   };
-  return (state: Value[]) => {
-    for (let index = 0; index < state.length; index++) state[index] = canonicalize(state[index]);
-    return state;
+  const getOtherId = (value: Value) => {
+    const existing = otherIds.get(value);
+    if (existing !== undefined) return existing;
+    values.push(value);
+    otherIds.set(value, values.length - 1);
+    return values.length - 1;
+  };
+  return {
+    canonicalizeState: (state: Value[]) => {
+      for (let index = 0; index < state.length; index++) state[index] = canonicalize(state[index]);
+      return state;
+    },
+    getCell: (value: Value) => {
+      if (isInlineInteger(value)) return (value as number) << 1;
+      if (typeof value === "object" && (value.kind === "Set" || value.kind === "Function")) {
+        const id = canonical.find(getValueHash(value), isCanonicalIdentity, value);
+        return ((id === -1 ? getOtherId(value) : id) << 1) | 1;
+      }
+      return (getOtherId(value) << 1) | 1;
+    },
+    getValue: (cell: number) => ((cell & 1) === 0 ? cell >> 1 : values[cell >>> 1]),
+    // Every cell of a value that isn't an inline integer is below this.
+    getCellBound: () => values.length * 2,
   };
 };
 
@@ -1077,6 +1124,11 @@ const isStrictlySorted = (elements: Value[]) => {
 export const createSet = (elements: Value[]): SetValue => {
   // ValueVec.sort compares each element after the first with those before it.
   for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
+  if (elements.length === 2) {
+    const comparison = compareValues(elements[0], elements[1]);
+    if (comparison === 0) return createSortedSet([elements[0]]);
+    return createSortedSet(comparison < 0 ? elements : [elements[1], elements[0]]);
+  }
   if (elements.length < 2 || isStrictlySorted(elements)) return createSortedSet(elements);
   const sorted = [...elements].sort(compareValues);
   const unique = [sorted[0]];
@@ -1194,6 +1246,7 @@ export const getSortedUnion = (left: SetValue, right: SetValue): SetValue => {
 };
 
 export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
+  if (pairs.length === 1) return createSortedFunction([pairs[0][0]], [pairs[0][1]]);
   const sorted =
     pairs.length < 2 ? pairs : [...pairs].sort((left, right) => compareValues(left[0], right[0]));
   const domain: Value[] = [];
@@ -1203,7 +1256,8 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
     domain.push(pair[0]);
     range.push(pair[1]);
   }
-  return createSortedFunction(domain, range);
+  // V8 leaves a pushed array room for 17 elements, which a function keeps as long as it lives.
+  return createSortedFunction(domain.slice(), range.slice());
 };
 
 export const createWrittenFunction = (pairs: [Value, Value][]) => {
@@ -1893,7 +1947,27 @@ export const isFiniteSet = (value: Value): boolean => {
   }
 };
 
+// Reads the rank of the key once, instead of in every comparison of a search of a sorted domain.
+const findStringIndex = (sortedValues: Value[], target: string, targetRank: number) => {
+  const ranks = stringOrder.ranks;
+  const bounds = { low: 0, high: sortedValues.length - 1 };
+  while (bounds.low <= bounds.high) {
+    const middle = (bounds.low + bounds.high) >> 1;
+    const element = sortedValues[middle];
+    const rank = typeof element === "string" ? ranks[element] : undefined;
+    const comparison = rank === undefined ? compareValues(element, target) : rank - targetRank;
+    if (comparison === 0) return middle;
+    if (comparison < 0) bounds.low = middle + 1;
+    else bounds.high = middle - 1;
+  }
+  return -1;
+};
+
 const findSortedIndex = (sortedValues: Value[], target: Value, compare = compareValues) => {
+  if (compare === compareValues && typeof target === "string") {
+    const targetRank = stringOrder.ranks[target];
+    if (targetRank !== undefined) return findStringIndex(sortedValues, target, targetRank);
+  }
   const bounds = { low: 0, high: sortedValues.length - 1 };
   while (bounds.low <= bounds.high) {
     const middle = (bounds.low + bounds.high) >> 1;
@@ -1908,7 +1982,8 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
   const functionValue = toFiniteFunction(value);
-  return functionValue.domain.every((key, index) => key === index + 1)
+  return functionValue.functionClass === "tuple" ||
+    functionValue.domain.every((key, index) => key === index + 1)
     ? functionValue.range
     : undefined;
 };
@@ -2184,6 +2259,9 @@ const describeExceptKey = (functionValue: FunctionValue, argument: Value) => {
     : `Attempted to apply record to a non-string argument ${shown}.`;
 };
 
+// Scanning this many keys for the same object costs less than the comparisons of a binary search.
+const IDENTITY_SEARCH_LIMIT = 64;
+
 // A key the domain holds itself, which TLC finds without a comparison that can fail.
 const findIdenticalKey = (domain: Value[], argument: Value) => {
   const first = domain[0];
@@ -2191,7 +2269,11 @@ const findIdenticalKey = (domain: Value[], argument: Value) => {
     const offset = argument - first;
     if (domain[offset] === argument) return offset;
   }
-  return domain.length <= 8 ? domain.indexOf(argument) : -1;
+  if (domain.length > IDENTITY_SEARCH_LIMIT) return -1;
+  for (let index = 0; index < domain.length; index++) {
+    if (domain[index] === argument) return index;
+  }
+  return -1;
 };
 
 export const createNonIntegerKeyError = (argument: Value) =>
