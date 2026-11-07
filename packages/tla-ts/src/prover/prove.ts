@@ -11,7 +11,7 @@ import {
 } from "../obligations/expression";
 import { getObligations, type PrintedObligation } from "../obligations";
 import { renderDoc } from "../obligations/format";
-import { formatObligation, printSequent } from "../obligations/printer";
+import { formatObligation, printSequent, type PrinterOptions } from "../obligations/printer";
 import { isWorkerSupported } from "../worker";
 import { decide } from "./deciders";
 import { createDecidePool, type DecidePool } from "./decide-pool";
@@ -259,13 +259,13 @@ const getUnprovedReport = (
 export const formatNormalized = (
   obligation: PrintedObligation,
   isReused: boolean,
-  isTemporal: boolean,
+  options: PrinterOptions,
 ) =>
   `${formatObligation(
     isReused
       ? normalizeSequent(expandDefs(obligation.sequent, false))
       : normalizeExpand(obligation),
-    isTemporal,
+    options,
   )}\n`;
 
 // The theory of the proofs Isabelle and Zenon found.

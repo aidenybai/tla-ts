@@ -14,7 +14,7 @@ import {
   type PrintedObligation,
 } from "../obligations";
 import { format, renderDoc } from "../obligations/format";
-import { printSequent } from "../obligations/printer";
+import { printSequent, type PrinterOptions } from "../obligations/printer";
 import { parseDefaultMethods, type Method } from "../prover/prep/methods";
 import {
   encodeProofTheory,
@@ -116,7 +116,11 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
 };
 
 // Toolbox.print_res_aux.
-const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
+const printAttempt = (
+  obligation: PrintedObligation,
+  attempt: ProofAttempt,
+  printing: PrinterOptions,
+) => {
   const timeLimitMs = attempt.method.timeLimitMs;
   const used =
     attempt.timeUsedMs === undefined
@@ -135,7 +139,7 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
     ...(attempt.isProved
       ? []
       : [
-          `obl:${attempt.isReused ? "" : `\n${attempt.note ?? ""}`}${formatNormalized(obligation, attempt.isReused, attempt.method.prover === "ls4")}`,
+          `obl:${attempt.isReused ? "" : `\n${attempt.note ?? ""}`}${formatNormalized(obligation, attempt.isReused, { ...printing, isTemporal: attempt.method.prover === "ls4" })}`,
         ]),
   ]);
 };
@@ -157,6 +161,7 @@ interface ProvingSettings {
   isFingerprinted: (obligation: PrintedObligation) => boolean;
   fingerprints: FingerprintTable;
   backends: BackendSettings;
+  printing: PrinterOptions;
   // --debug tempfiles: Util.rm_temp_file keeps each backend's temporary files.
   isKeepingFiles: boolean;
   solver: string | undefined;
@@ -233,7 +238,7 @@ const proveModule = async (
       if (report.obligation.status === "trivial")
         return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
       if (obligation.kind.kind === "Error") return printFailedObligation(obligation, "user error");
-      report.attempts.forEach((attempt) => printAttempt(obligation, attempt));
+      report.attempts.forEach((attempt) => printAttempt(obligation, attempt, settings.printing));
     },
   });
   const theoryPath = `${directory}/${module.name}.thy`;
@@ -256,7 +261,7 @@ const proveModule = async (
     .toReversed()
     .forEach((entry) =>
       console.error(
-        `${getAtPrefix(entry.obligation.locus)}${renderDoc(format("[ERROR]: @[<v2>Could not prove or check:@,%a@]", printSequent(entry.obligation.sequent)), 35)}`,
+        `${getAtPrefix(entry.obligation.locus)}${renderDoc(format("[ERROR]: @[<v2>Could not prove or check:@,%a@]", printSequent(entry.obligation.sequent, settings.printing)), 35)}`,
       ),
     );
   const total = `${module.obligations.length} obligation${module.obligations.length > 1 ? "s" : ""}`;
@@ -270,7 +275,7 @@ const proveModule = async (
 
 // The --debug flags that tla-ts follows. Every other flag changes what tlapm prints or how it
 // encodes obligations.
-const DEBUG_FLAGS = new Set(["tempfiles"]);
+const DEBUG_FLAGS = new Set(["tempfiles", "hidden", "alldefs"]);
 
 export const runTlapm = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
@@ -285,6 +290,10 @@ export const runTlapm = async (args: string[]) => {
           : new Set([...flags, flag]),
       new Set<string>(),
     );
+  const printing = {
+    isShowingHidden: debugFlags.has("hidden"),
+    isShowingAllDefinitions: debugFlags.has("alldefs"),
+  };
   const unsupportedFlag = [...debugFlags].find((flag) => !DEBUG_FLAGS.has(flag));
   const unsupported =
     parsed.unknown[0] ??
@@ -360,6 +369,7 @@ export const runTlapm = async (args: string[]) => {
       },
       {
         lines,
+        printing,
         onWarning: (warning) => {
           if (warning.channel === "stdout") return console.log(warning.text);
           const isToolboxMessage =
@@ -394,6 +404,7 @@ export const runTlapm = async (args: string[]) => {
       isFlattened: !parsed.has("--noflatten"),
       smtLogic: parsed.get("--smt-logic")?.[0] ?? "UFNIA",
     },
+    printing,
     isKeepingFiles: debugFlags.has("tempfiles"),
     solver: parsed.get("--solver")?.[0] ?? process.env.TLAPM_SMT_SOLVER,
   };

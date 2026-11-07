@@ -19,7 +19,7 @@ import {
 } from "./generate";
 import { compareNames, flatten, getDependencies, STANDARD_MODULES, type Mule } from "./module";
 import { expandInstance, normalize, type Pipeline } from "./normalize";
-import { formatObligation } from "./printer";
+import { formatObligation, type PrinterOptions } from "./printer";
 import type { Counter, ObligationKind } from "./proof";
 import type { OldMethod } from "./pragma";
 import { createSimplifier } from "./simplify";
@@ -55,6 +55,7 @@ export const WHOLE_MODULE: LineRange = { start: 0, end: Infinity };
 interface ObligationOptions {
   lines?: LineRange;
   onWarning?: Warn;
+  printing?: PrinterOptions;
 }
 
 const MODULE_HEADER = /-{4,} *MODULE/;
@@ -310,7 +311,7 @@ export const getObligations = (
       const text =
         obligation.kind.kind === "Error"
           ? obligation.kind.message
-          : `${formatObligation(obligation.sequent)}\n`;
+          : `${formatObligation(obligation.sequent, options.printing)}\n`;
       return [
         {
           id: index + 1,
