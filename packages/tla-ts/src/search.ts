@@ -946,10 +946,8 @@ export const createSearch = (
       if (constant !== undefined) {
         if (isAfterViolation) return undefined;
         throw setExitCode(
-          new TlaEvaluationError(
-            `${UNEXPECTED_EXCEPTION}The post condition ${constant} cannot be a constant.`,
-          ),
-          EXIT_STATUS.error,
+          new TlaEvaluationError(`The post condition ${constant} cannot be a constant.`),
+          EXIT_STATUS.configParseError,
         );
       }
       const unwitnessed = findUnwitnessedPossible();

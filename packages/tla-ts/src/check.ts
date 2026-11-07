@@ -1706,7 +1706,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       });
     }
   } catch (error) {
-    return createFailureResult(error, { trace: [] });
+    // ModelChecker reports that a postcondition is constant as an exception it did not expect.
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return createFailureResult(
+      setExitCode(
+        new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
+        EXIT_STATUS.error,
+      ),
+      { trace: [] },
+    );
   }
   return createSuccess();
 };

@@ -454,7 +454,13 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
     violation.unwitnessed ??
     (status === "postcondition-violation" ? undefined : violation.postcondition);
   if (postcondition?.counts) console.log(postcondition.counts);
-  if (postcondition) print(postcondition.code, MESSAGE_LEVEL.error, postcondition.message);
+  if (postcondition) {
+    print(
+      postcondition.code,
+      MESSAGE_LEVEL.error,
+      formatInnerMessage(postcondition.code, postcondition.message, printer.isTool),
+    );
+  }
   // TLC checks assumptions before it starts the search, so it has no statistics to print.
   return !isInitial && status !== "assumption-violation";
 };
@@ -524,7 +530,13 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     printTraceOutput(printer, failure.traceOutput);
     const postcondition = failure.postcondition;
     if (postcondition?.counts) console.log(postcondition.counts);
-    if (postcondition) print(postcondition.code, MESSAGE_LEVEL.error, postcondition.message);
+    if (postcondition) {
+      print(
+        postcondition.code,
+        MESSAGE_LEVEL.error,
+        formatInnerMessage(postcondition.code, postcondition.message, printer.isTool),
+      );
+    }
     if (!failure.isCallStackFirst) printCallStack();
   } else if (result.violation) {
     if (!printViolation(result.status, result.violation, printer)) return;

@@ -300,6 +300,7 @@ const INNER_MESSAGE_PREFIXES = new Map([
   [2154, "but it produced the following error:\n"],
   [2213, ":\n"],
   [2281, " - specifically: "],
+  [2405, "failed.\n"],
 ]);
 
 // The text of a coded message with the message of the error it reports marked in -tool output, as
