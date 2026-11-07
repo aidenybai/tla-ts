@@ -14,6 +14,9 @@ const DURATION = /\b(in) (\d+h )?(\d+min )?\d+(s|ms)\b/g;
 // Java's default toString prints an identity hash, such as UnionValue$Enumerator@1b2c3d.
 const OBJECT_IDENTITY = /\b([\w.$]+)@[0-9a-f]{5,8}\b/g;
 const GENERATED_NAME = /\b(__DebuggerExpr__|__DebuggerModule__|_PossibleModule_|neg_prop_)\d+/g;
+// TLCGet("config").install is the path of the checker's own jar, and its length decides where TLC
+// breaks the line.
+const INSTALL_FIELD = /install \|->\s+"[^"]*"/g;
 
 // The harness's own bookkeeping for a state-space wrapper, which only the checker prints.
 const STATE_SPACE_CODES = new Set([2190, 2192, 2193, 2194, 2199, 2267, 2268]);
@@ -54,6 +57,7 @@ export const normalizeTranscript = (output: string, options: TranscriptOptions) 
           .filter((inner) => !STACK_FRAME.test(inner))
           .map((inner) => cleanLine(inner, directories))
           .join("\n")
+          .replace(INSTALL_FIELD, 'install |-> "<install>"')
           .trimEnd();
         kept.push(`${message.code}:${message.severity} ${body}`);
       }

@@ -23,8 +23,7 @@ all:
       worker |-> 1,
       seed |-> "4",
       fingerprint |-> "-7992595565342442794",
-      install |->
-          "/Users/aidenybai/Developer/tla-ts/.claude/worktrees/tlc-conformance/packages/tlc-conformance/.tlc/tla2tools.jar" ]
+      install |-> "<install>" ]
     line 12, col 27 to line 12, col 48 of module config_depth_traces_bfs
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
