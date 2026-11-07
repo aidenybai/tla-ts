@@ -4,7 +4,6 @@ import {
   isModelValue,
   toFiniteFunction,
   toFiniteSet,
-  type ModelValue,
   type Value,
 } from "../values";
 
@@ -94,89 +93,117 @@ const SET_ENUM_VALUE = 5;
 const FCN_RCD_VALUE = 9;
 const MODEL_VALUE = 21;
 
-// Value#fingerPrint for TLC's booleans, integers, strings, and model values, which returns how
-// many bytes it extends the fingerprint by. A model value extends the fingerprint with its
-// UniqueString token, and TLC numbers tokens from 1 in intern order.
-const extendScalar = (value: boolean | number | string | ModelValue) => {
-  if (typeof value === "boolean") {
-    extendByte(BOOL_VALUE);
-    extendByte(value ? 116 : 102);
-    return 2;
-  }
-  if (typeof value === "number") {
-    extendByte(INT_VALUE);
-    extendInt(value);
-    return 5;
-  }
-  if (typeof value === "string") {
-    extendByte(STRING_VALUE);
-    extendInt(value.length);
-    const whole = value.length & ~3;
-    for (let index = 0; index < whole; index += 4) {
-      extendInt(
-        (value.charCodeAt(index) & 0xff) |
-          ((value.charCodeAt(index + 1) & 0xff) << 8) |
-          ((value.charCodeAt(index + 2) & 0xff) << 16) |
-          ((value.charCodeAt(index + 3) & 0xff) << 24),
-      );
-    }
-    for (let index = whole; index < value.length; index++) extendByte(value.charCodeAt(index));
-    return 5 + value.length;
-  }
-  extendByte(MODEL_VALUE);
-  extendInt(getStringRank(value.name) + 1);
-  return 5;
+const writeInt = (word: number, bytes: number[]) => {
+  bytes.push(word & 0xff, (word >>> 8) & 0xff, (word >>> 16) & 0xff, word >>> 24);
 };
 
-// Value#fingerPrint for each of TLC's value classes.
-const extendValue = (value: Value) => {
-  if (typeof value !== "object" || isModelValue(value)) {
-    extendScalar(value);
+// Value#fingerPrint for each of TLC's value classes, as the bytes it extends a fingerprint by. A
+// model value writes its UniqueString token, and TLC numbers tokens from 1 in intern order.
+const writeValue = (value: Value, bytes: number[]) => {
+  if (typeof value === "boolean") {
+    bytes.push(BOOL_VALUE, value ? 116 : 102);
+  } else if (typeof value === "number") {
+    bytes.push(INT_VALUE);
+    writeInt(value, bytes);
+  } else if (typeof value === "string") {
+    bytes.push(STRING_VALUE);
+    writeInt(value.length, bytes);
+    for (let index = 0; index < value.length; index++) bytes.push(value.charCodeAt(index) & 0xff);
+  } else if (isModelValue(value)) {
+    bytes.push(MODEL_VALUE);
+    writeInt(getStringRank(value.name) + 1, bytes);
   } else if (isFunctionValue(value)) {
     const functionValue = toFiniteFunction(value);
-    extendByte(FCN_RCD_VALUE);
-    extendInt(functionValue.domain.length);
+    bytes.push(FCN_RCD_VALUE);
+    writeInt(functionValue.domain.length, bytes);
     for (let index = 0; index < functionValue.domain.length; index++) {
-      extendValue(functionValue.domain[index]);
-      extendValue(functionValue.range[index]);
+      writeValue(functionValue.domain[index], bytes);
+      writeValue(functionValue.range[index], bytes);
     }
   } else {
     const elements = toFiniteSet(value).elements;
-    extendByte(SET_ENUM_VALUE);
-    extendInt(elements.length);
-    for (const element of elements) extendValue(element);
+    bytes.push(SET_ENUM_VALUE);
+    writeInt(elements.length, bytes);
+    for (const element of elements) writeValue(element, bytes);
   }
 };
 
-// TLCStateMut#fingerPrint of variable values in TLC's variable order. Evaluating a lazy value can
-// fingerprint another, so this restores the fingerprint it interrupts.
-export const getTlcFingerprint = (state: Value[]) => {
-  const outer = { high, low };
-  high = INITIAL_HIGH;
-  low = INITIAL_LOW;
-  for (const value of state) extendValue(value);
-  const fingerprint = (BigInt(high >>> 0) << 32n) | BigInt(low >>> 0);
-  high = outer.high;
-  low = outer.low;
-  return fingerprint;
+const extendBytes = (bytes: number[], start: number, end: number) => {
+  const whole = start + ((end - start) & ~3);
+  for (let index = start; index < whole; index += 4) {
+    extendInt(
+      bytes[index] | (bytes[index + 1] << 8) | (bytes[index + 2] << 16) | (bytes[index + 3] << 24),
+    );
+  }
+  for (let index = whole; index < end; index++) extendByte(bytes[index]);
 };
 
-// TLCStateMut#fingerPrint of each state's variables in TLC's variable order, as the fingerprint
-// store reads them.
-export const getTlcFingerprints = (states: Value[][], order: number[]) => {
-  const fingerprints = new BigInt64Array(states.length);
+// TLCStateMut#fingerPrint of variable values in TLC's variable order. Writing a lazy value can
+// evaluate it and fingerprint another value, so every value is written before any is extended.
+export const getTlcFingerprint = (state: Value[]) => {
+  const bytes: number[] = [];
+  for (const value of state) writeValue(value, bytes);
+  high = INITIAL_HIGH;
+  low = INITIAL_LOW;
+  extendBytes(bytes, 0, bytes.length);
+  return (BigInt(high >>> 0) << 32n) | BigInt(low >>> 0);
+};
+
+export interface StoredCells {
+  count: number;
+  // Each cell names one value and is below the bound.
+  cellBound: number;
+  getCells: (index: number) => Int32Array;
+  getValue: (cell: number) => Value;
+}
+
+// TLCStateMut#fingerPrint of each stored state, whose cells are its variables in the order the
+// store keeps them. Extending is linear, so extending by a value's bytes is extending by as many
+// zero bytes and adding the value's fingerprint from zero. Stored states share their values, so
+// each is written once, and only its length and that fingerprint are kept.
+export const getTlcFingerprints = (stored: StoredCells, order: number[]) => {
+  const fingerprints = new BigInt64Array(stored.count);
   // Each fingerprint's low and high words, as a BigInt64Array is little-endian.
   const words = new Int32Array(fingerprints.buffer);
-  const outerHigh = high;
-  const outerLow = low;
-  states.forEach((state, position) => {
+  // Each cell's length in bytes, 0 until it is written, and its fingerprint from zero.
+  const lengths = new Int32Array(stored.cellBound);
+  const highs = new Int32Array(stored.cellBound);
+  const lows = new Int32Array(stored.cellBound);
+  const bytes: number[] = [];
+  for (let position = 0; position < stored.count; position++) {
+    const cells = stored.getCells(position);
     high = INITIAL_HIGH;
     low = INITIAL_LOW;
-    for (const index of order) extendValue(state[index]);
+    for (const index of order) {
+      const cell = cells[index];
+      const value = stored.getValue(cell);
+      if (typeof value === "number") {
+        extendByte(INT_VALUE);
+        extendInt(value);
+        continue;
+      }
+      if (lengths[cell] === 0) {
+        // Writing evaluates lazy values, which can fingerprint others.
+        const outer = { high, low };
+        bytes.length = 0;
+        writeValue(value, bytes);
+        high = 0;
+        low = 0;
+        extendBytes(bytes, 0, bytes.length);
+        lengths[cell] = bytes.length;
+        highs[cell] = high;
+        lows[cell] = low;
+        high = outer.high;
+        low = outer.low;
+      }
+      const length = lengths[cell];
+      for (let step = 4; step <= length; step += 4) extendInt(0);
+      for (let step = length & ~3; step < length; step++) extendByte(0);
+      high ^= highs[cell];
+      low ^= lows[cell];
+    }
     words[2 * position] = low;
     words[2 * position + 1] = high;
-  });
-  high = outerHigh;
-  low = outerLow;
+  }
   return fingerprints;
 };

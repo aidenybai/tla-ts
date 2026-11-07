@@ -35,6 +35,7 @@ import {
   createNonIntegerKeyError,
   createRecord,
   createEnumeratedSet,
+  findStringRank,
   createSortedFunction,
   createSortedRecord,
   createSortedSet,
@@ -120,7 +121,16 @@ export interface Thunk {
   isStreamed: boolean;
 }
 
-type Binding = { kind: "Value"; value: Value } | Thunk | { kind: "Operator"; operator: Operator };
+export type Binding =
+  | { kind: "Value"; value: Value }
+  | Thunk
+  | { kind: "Operator"; operator: Operator };
+
+// An operator's body as generated code, which compiles when it's first called.
+export interface GeneratedBody {
+  evaluate: ((...args: never[]) => Value) | undefined;
+  compile: () => (...args: never[]) => Value;
+}
 
 export interface Scope {
   name: string;
@@ -151,6 +161,8 @@ export interface Environment {
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
+  // The generated code of each operator body, for the kinds of arguments it takes.
+  generatedBodies: WeakMap<Expression, Map<string, GeneratedBody>>;
   // The expressions being evaluated, outermost first, when the environment replays an error to
   // find where it occurred, as TLC's CallStackTool does.
   callStack?: CallStack;
@@ -264,6 +276,16 @@ export const createConditionError = (expression: Expression, value: Value) =>
     `A non-boolean expression (${getKindString(value)}) was used as the condition of an IF.\n${describeRange(expression)}`,
   );
 
+export const createCaseConditionError = (condition: Expression, value: Value) =>
+  new TlaEvaluationError(
+    `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(condition)}`,
+  );
+
+export const createCaseFailureError = (expression: Expression) =>
+  new TlaEvaluationError(
+    `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
+  );
+
 // TLC parses an infix chain of /\ or \/ as nested binary junctions and a bulleted list as one
 // junction list, and it words the error differently for each.
 export const createJunctionError = (
@@ -295,6 +317,12 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
   const describeNotInDomain = (functionValue: Value) =>
     `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument "${field}", which is not in the domain of the function.`;
   return (value: Value) => {
+    if (typeof value === "object" && value.kind === "Function" && value.functionClass !== "tuple") {
+      const domain = value.domain;
+      for (let index = 0; index < domain.length; index++) {
+        if (domain[index] === field) return value.range[index];
+      }
+    }
     if (!isFunctionValue(value)) {
       throw new TlaEvaluationError(
         `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(value))}\n${describeRange(expression)}`,
@@ -815,7 +843,7 @@ export const evaluateStartupDefinitions = (definitions: Definition[], environmen
     }
   });
 
-const forceThunk = (thunk: Thunk, context: Context) => {
+export const forceThunk = (thunk: Thunk, context: Context) => {
   const isSameState = thunk.state === context.state && thunk.next === context.next;
   if (isSameState && thunk.cache !== undefined) return thunk.cache;
   const value = evaluate(thunk.expression, withScope(context, thunk.scope));
@@ -918,7 +946,7 @@ const isOperatorArgument = (expression: Expression, context: Context) => {
   return operator !== undefined && getArity(operator) > 0;
 };
 
-const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
+export const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
   args.map((arg) =>
     isOperatorArgument(arg, context)
       ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
@@ -956,7 +984,10 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   return undefined;
 };
 
-const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
+export const compileArgumentBinder = (
+  argument: Expression,
+  environment: Environment,
+): ArgumentBinder => {
   const isLiteral =
     argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
   if (isLiteral) {
@@ -1079,7 +1110,11 @@ export const bindDefinitions = (
     return node;
   }, context.scope);
 
-const evaluateLocalIdentifier = (name: string, expression: Expression, context: Context): Value => {
+export const evaluateLocalIdentifier = (
+  name: string,
+  expression: Expression,
+  context: Context,
+): Value => {
   const binding = lookupScope(context.scope, name);
   if (binding?.kind === "Value") return binding.value;
   if (binding?.kind === "Thunk") return forceThunk(binding, context);
@@ -1459,7 +1494,7 @@ const compileQuantifier = (
 ): Evaluator => {
   const isForall = expression.kind === "Forall";
   const description = isForall ? "the body of \\A" : "the body of \\E";
-  const body = getEvaluator(expression.body, environment);
+  const body = getEntryEvaluator(expression.body, environment);
   const bound = expression.bounds[0];
   if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
     const name = bound.pattern.name;
@@ -1533,7 +1568,7 @@ const compileFunctionConstruction = (
   environment: Environment,
 ): Evaluator => {
   const isKeptLazy = keptLazyExpressions.has(expression);
-  const body = getEvaluator(expression.body, environment);
+  const body = getEntryEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
   const isSingleName = bounds.length === 1 && bound.pattern.kind === "Name";
@@ -1677,7 +1712,7 @@ const compileSetComprehension = (
   environment: Environment,
 ): Evaluator => {
   if (expression.kind === "SetFilter") {
-    const predicate = getEvaluator(expression.predicate, environment);
+    const predicate = getEntryEvaluator(expression.predicate, environment);
     const set = getEvaluator(expression.bound.set, environment);
     const pattern = expression.bound.pattern;
     const range = expression.predicate.location.range;
@@ -1714,7 +1749,7 @@ const compileSetComprehension = (
     };
   }
   if (expression.kind === "SetMap") {
-    const mapped = getEvaluator(expression.expression, environment);
+    const mapped = getEntryEvaluator(expression.expression, environment);
     return (context) => {
       const elements: Value[] = [];
       forEachBinding(expression.bounds, context, (scope) => {
@@ -1732,7 +1767,7 @@ const compileSetComprehension = (
       );
     };
   }
-  const body = getEvaluator(expression.body, environment);
+  const body = getEntryEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
   return (context) => {
     const base = evaluateSet(context);
@@ -1758,12 +1793,55 @@ const compileSetComprehension = (
   };
 };
 
+const isRankedLiteral = (expression: Expression) =>
+  expression.kind === "Number"
+    ? isTlcInteger(expression.value)
+    : expression.kind === "String" && findStringRank(expression.value) !== undefined;
+
+const getLiteralValues = (expressions: Expression[]) =>
+  expressions.map((expression) =>
+    expression.kind === "Number" || expression.kind === "String" ? expression.value : false,
+  );
+
+// A set of integers and ranked strings is known before the check starts, as a string's rank never
+// changes. TLC evaluates a set it can't sort only when it is used, so that stays at runtime.
+export const getLiteralSet = (expression: Expression & { kind: "SetEnumeration" }) => {
+  if (!expression.elements.every(isRankedLiteral)) return undefined;
+  const set = createEnumeratedSet(getLiteralValues(expression.elements));
+  return set.kind === "Set" ? set : undefined;
+};
+
 // TLC orders a record's fields by name.
 export const getSortedFields = (fields: RecordField[]) =>
   [...fields].sort((left, right) => compareValues(left.name, right.name));
 
 export const hasDuplicateFields = (sortedFields: RecordField[]) =>
   sortedFields.some((field, index) => index > 0 && sortedFields[index - 1].name === field.name);
+
+const isPlainLiteral = (expression: Expression) =>
+  expression.kind === "String" || (expression.kind === "Number" && isTlcInteger(expression.value));
+
+// TLC builds a tuple or record of literals on each evaluation, but no spec can tell one such value
+// from another. Only sorting a record written out of its sorted order changes a value, so that one
+// stays at runtime.
+export const getLiteralValue = (expression: Expression) => {
+  if (expression.kind === "Tuple") {
+    return expression.elements.every(isPlainLiteral)
+      ? createTuple(getLiteralValues(expression.elements))
+      : undefined;
+  }
+  if (expression.kind !== "Record") return undefined;
+  const fields = getSortedFields(expression.fields);
+  const isWrittenSorted = expression.fields.every((field, index) => field === fields[index]);
+  return isWrittenSorted &&
+    !hasDuplicateFields(fields) &&
+    fields.every((field) => isPlainLiteral(field.value))
+    ? createSortedRecord(
+        fields.map((field) => field.name),
+        getLiteralValues(fields.map((field) => field.value)),
+      )
+    : undefined;
+};
 
 const compileRecord = (recordFields: RecordField[], environment: Environment): Evaluator => {
   const fields = getSortedFields(recordFields);
@@ -1892,21 +1970,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return (context) => {
         for (const arm of arms) {
           const value = arm.condition(context);
-          if (typeof value !== "boolean") {
-            throw new TlaEvaluationError(
-              `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(arm.source)}`,
-            );
-          }
+          if (typeof value !== "boolean") throw createCaseConditionError(arm.source, value);
           if (value) return arm.body(context);
         }
         if (other) return other(context);
-        throw new TlaEvaluationError(
-          `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
-        );
+        throw createCaseFailureError(expression);
       };
     }
     case "Let": {
-      const body = getChildEvaluator(expression.body);
+      const body = getEntryEvaluator(expression.body, environment);
       return (context) =>
         body(withScope(context, bindDefinitions(expression.definitions, context)));
     }
@@ -1924,10 +1996,14 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "SetMap":
       return compileSetComprehension(expression, environment);
     case "SetEnumeration": {
+      const literalSet = getLiteralSet(expression);
+      if (literalSet) return () => literalSet;
       const elements = expression.elements.map(getChildEvaluator);
       return (context) => createEnumeratedSet(elements.map((element) => element(context)));
     }
     case "Tuple": {
+      const literal = getLiteralValue(expression);
+      if (literal !== undefined) return () => literal;
       const elements = expression.elements.map(getChildEvaluator);
       return (context) => createTuple(elements.map((element) => element(context)));
     }
@@ -1938,8 +2014,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const range = getChildEvaluator(expression.range);
       return (context) => ({ kind: "FunctionSet", domain: domain(context), range: range(context) });
     }
-    case "Record":
-      return compileRecord(expression.fields, environment);
+    case "Record": {
+      const literal = getLiteralValue(expression);
+      return literal === undefined ? compileRecord(expression.fields, environment) : () => literal;
+    }
     case "RecordSet": {
       const fields = getSortedFields(expression.fields);
       const names = fields.map((field) => field.name);

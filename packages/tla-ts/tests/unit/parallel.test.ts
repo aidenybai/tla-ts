@@ -29,6 +29,15 @@ describe("check with workers matches TLC", () => {
     expect(getCounts(result)).toEqual([890, 251, 11]);
   });
 
+  it.each([2, 4])(
+    "doesn't fingerprint a state outside the model with %i workers",
+    async (workers) => {
+      const result = await checkFixtureInParallel("symmetry", "AsymmetricConstraint", workers);
+      expect(result.status).toBe("success");
+      expect(getCounts(result)).toEqual([10, 5, 5]);
+    },
+  );
+
   it("reports an invariant that fails to evaluate on an initial state like one worker", async () => {
     const tlaTs = await loadPackage();
     const result = await tlaTs.check({
@@ -54,6 +63,8 @@ describe("check with workers matches TLC", () => {
     ]);
     expect(parallel.fingerprintDistance).toBe(sequential.fingerprintDistance);
     expect(parallel.fingerprintDistance).toBeDefined();
+    const skipped = await tlaTs.check({ ...options, isFingerprintDistanceSkipped: true });
+    expect(skipped.fingerprintDistance).toBeUndefined();
     const getTotals = (outDegrees: number[] | undefined = []) => [
       outDegrees.reduce((sum, count) => sum + count, 0),
       outDegrees.reduce((sum, count, degree) => sum + count * degree, 0),

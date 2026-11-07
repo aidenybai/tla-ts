@@ -576,8 +576,6 @@ export const evaluateLive = (
   environment: Environment,
   stateCache: Map<LiveExpression, boolean>,
 ): boolean => {
-  const recurse = (operand: LiveExpression) =>
-    evaluateLive(operand, state, next, environment, stateCache);
   switch (expression.kind) {
     case "Boolean":
       return expression.value;
@@ -604,11 +602,17 @@ export const evaluateLive = (
       return expectBoolean(evaluate(expression.expression, context), "an action predicate");
     }
     case "Not":
-      return !recurse(expression.body);
+      return !evaluateLive(expression.body, state, next, environment, stateCache);
     case "And":
-      return expression.operands.every(recurse);
+      for (const operand of expression.operands) {
+        if (!evaluateLive(operand, state, next, environment, stateCache)) return false;
+      }
+      return true;
     case "Or":
-      return expression.operands.some(recurse);
+      for (const operand of expression.operands) {
+        if (evaluateLive(operand, state, next, environment, stateCache)) return true;
+      }
+      return false;
     case "Next":
       return evaluateLive(expression.body, next ?? state, undefined, environment, new Map());
     case "Always":

@@ -9,7 +9,6 @@ import {
 import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
-import { isImpure } from "./evaluate";
 import {
   createSharedFingerprints,
   growSharedFingerprints,
@@ -30,7 +29,7 @@ import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import type { TlcVersion } from "./tlc/version";
 import {
-  createCanonicalizer,
+  createValueTable,
   getRankedStringCount,
   setStringOrder,
   setValueVersion,
@@ -165,12 +164,12 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     search.spec.init === undefined ||
     search.spec.next === undefined ||
     search.properties.liveness.length > 0 ||
-    isImpure(environment)
+    search.isImpure()
   ) {
     return fallBack();
   }
 
-  const canonicalize = createCanonicalizer();
+  const canonicalize = createValueTable().canonicalizeState;
   const shared = { fingerprints: createSharedFingerprints() };
   const fingerprint = new Int32Array(2);
   const seeds = Array.from({ length: workerCount }, createStateEncoder);
@@ -188,34 +187,36 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     violation: undefined,
     failure: undefined,
     ...statistics,
-    fingerprintDistance: getFingerprintDistance(
-      statistics.distinctStates,
-      statistics.generatedStates,
-      () => {
-        const fingerprints = new BigInt64Array(statistics.distinctStates);
-        tlcFingerprints.reduce((offset, level) => {
-          fingerprints.set(level, offset);
-          return offset + level.length;
-        }, 0);
-        return fingerprints;
-      },
-    ),
+    fingerprintDistance: options.isFingerprintDistanceSkipped
+      ? undefined
+      : getFingerprintDistance(statistics.distinctStates, statistics.generatedStates, () => {
+          const fingerprints = new BigInt64Array(statistics.distinctStates);
+          tlcFingerprints.reduce((offset, level) => {
+            fingerprints.set(level, offset);
+            return offset + level.length;
+          }, 0);
+          return fingerprints;
+        }),
   });
   const seedInitialStates = (init: Expression) => {
     const seeded: Value[][] = [];
     for (const state of getInitialStates(init, environment, search.spec.scope)) {
       reportInitialStatesProgress(statistics.generatedStates, report);
-      canonicalize(state);
       statistics.generatedStates++;
-      writeStateFingerprint(search.getFingerprintState(state), fingerprint);
-      if (isSharedFingerprintsFull(shared.fingerprints)) {
-        shared.fingerprints = growSharedFingerprints(shared.fingerprints);
+      // TLC fingerprints only a state inside the model.
+      const isInModel = search.satisfiesConstraints(state);
+      if (isInModel) {
+        canonicalize(state);
+        writeStateFingerprint(search.getFingerprintState(state), fingerprint);
+        if (isSharedFingerprintsFull(shared.fingerprints)) {
+          shared.fingerprints = growSharedFingerprints(shared.fingerprints);
+        }
+        if (!insertSharedFingerprint(shared.fingerprints, fingerprint[0], fingerprint[1])) continue;
       }
-      if (!insertSharedFingerprint(shared.fingerprints, fingerprint[0], fingerprint[1])) continue;
       if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
         return false;
       }
-      if (!search.satisfiesConstraints(state)) continue;
+      if (!isInModel) continue;
       if (!seeds[seeded.length % workerCount].encode(state)) return false;
       seeded.push(state);
       statistics.distinctStates++;

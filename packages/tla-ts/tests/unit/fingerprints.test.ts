@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { createStateStore } from "../../src/state-store";
 import { getTlcFingerprint, getTlcFingerprints } from "../../src/tlc/fingerprint";
 import {
   createModelValue,
@@ -32,8 +33,13 @@ describe("the fingerprints of stored states", () => {
     const states = values.flatMap((first) =>
       values.map((second, index) => [first, second, values[(index * 7) % values.length], first]),
     );
+    const store = createStateStore(false);
+    for (const state of states) {
+      const stored = store.canonicalizeState([...state]);
+      store.add(stored, stored, -1, undefined, false);
+    }
     const order = [2, 0, 1, 3];
-    expect([...getTlcFingerprints(states, order)]).toEqual(
+    expect([...getTlcFingerprints(store.getFingerprintCells(), order)]).toEqual(
       states.map((state) =>
         BigInt.asIntN(64, getTlcFingerprint(order.map((index) => state[index]))),
       ),

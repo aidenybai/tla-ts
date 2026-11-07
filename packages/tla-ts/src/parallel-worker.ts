@@ -8,11 +8,12 @@ import {
 import type { CoordinatorMessage, LevelMessage, StartMessage, WorkerMessage } from "./parallel";
 import { createSearch } from "./search";
 import { getSuccessors, type Successor } from "./successors";
+import { getTlcFingerprint } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import {
-  createCanonicalizer,
+  createValueTable,
   getRankedStringCount,
   setStringOrder,
   setValueVersion,
@@ -65,7 +66,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   if (!search || nextAction === undefined)
     return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
   const workerIndex = start.index;
-  const canonicalize = createCanonicalizer();
+  const canonicalize = createValueTable().canonicalizeState;
   const decode = createStateDecoder(environment.variables.length);
   const shared = { fingerprints: start.fingerprints };
   const requests = start.requests;
@@ -137,12 +138,16 @@ const runWorker = (start: StartMessage, parent: Port) => {
           writeStateFingerprint(successor.state, fingerprint);
           if (!generatedStates.insert(fingerprint[0], fingerprint[1])) continue;
         }
+        // TLC fingerprints only a state inside the model.
+        if (!search.satisfiesConstraints(successor.state, state)) {
+          if (search.findViolatedInvariant(successor.state, state)) return undefined;
+          continue;
+        }
         canonicalize(successor.state);
         const fingerprintState = search.getFingerprintState(successor.state);
         writeStateFingerprint(fingerprintState, fingerprint);
         if (!insertSharedFingerprint(shared.fingerprints, fingerprint[0], fingerprint[1])) continue;
         if (search.findViolatedInvariant(successor.state, state)) return undefined;
-        if (!search.satisfiesConstraints(successor.state, state)) continue;
         expansion.next.push(successor.state);
         expansion.fingerprintStates.push(fingerprintState);
         expansion.added++;
@@ -230,7 +235,14 @@ const runWorker = (start: StartMessage, parent: Port) => {
       generated: expansion.generated,
       added: expansion.next.length,
       outDegrees: expansion.outDegrees,
-      fingerprints: search.getStoredFingerprints(expansion.next, expansion.fingerprintStates),
+      fingerprints: search.getStoredFingerprints(
+        expansion.next.length,
+        (index) => expansion.next[index],
+        (order) =>
+          BigInt64Array.from(expansion.fingerprintStates, (state) =>
+            getTlcFingerprint(order.map((index) => state[index])),
+          ),
+      ),
     };
   };
 

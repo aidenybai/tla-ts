@@ -871,6 +871,146 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([641, 80, 9]);
   });
 
+  it("reduces sets, functions over symmetric keys, and records of different sizes", async () => {
+    const result = await checkFixture("symmetry", "SymmetricShapes");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      79425, 7312, 15,
+    ]);
+  });
+
+  it("orders records with different keys under symmetry", async () => {
+    const result = await checkFixture("symmetry", "SymmetricRecords");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([19156, 6131, 4]);
+  });
+
+  it("reduces a set of model values and records", async () => {
+    const result = await checkFixture("symmetry", "SymmetricKinds");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([79, 13, 7]);
+  });
+
+  it("reduces a state that holds an interval", async () => {
+    const result = await checkFixture("symmetry", "SymmetricRange");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([21, 10, 7]);
+  });
+
+  it("fails on images of a state that it can't compare", async () => {
+    const result = await checkFixture("symmetry", "SymmetricMismatch");
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toContain("Attempted to compare integer 1");
+    expect([result.generatedStates, result.distinctStates]).toEqual([1, 0]);
+  });
+
+  it.each(["SymmetricSortFailure", "SymmetricSortFailureValues"])(
+    "doesn't sort the image of a permutation that a smaller one replaces in %s",
+    async (name) => {
+      const result = await checkFixture("symmetry", name);
+      expect(result.status).toBe("success");
+      expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
+    },
+  );
+
+  it.each([
+    ["ViewImpure", [5, 5, 5]],
+    ["ViewPureDuplicates", [7, 3, 3]],
+    ["ViewOutOfModel", [4, 3, 3]],
+  ])("counts the states of %s like TLC", async (name, counts) => {
+    const result = await checkFixture("view", name);
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual(counts);
+  });
+
+  it("normalizes a variable that the view doesn't read", async () => {
+    const result = await checkFixture("view", "ViewLazyFailure");
+    expect(result.failure?.message).toContain('Attempted to compare string "a" with non-string:');
+    expect([result.generatedStates, result.distinctStates]).toEqual([3, 2]);
+  });
+
+  it("doesn't fingerprint a symmetric state outside the model", async () => {
+    const result = await checkFixture("symmetry", "AsymmetricConstraint");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([10, 5, 5]);
+  });
+
+  it("calls operators in generated code with the arguments TLC evaluates", async () => {
+    const result = await checkFixture("codegen", "GeneratedCalls");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
+  });
+
+  it.each([
+    [
+      "TupleField",
+      'Attempted to apply function with integer domain to the non-integer argument "a"',
+    ],
+    ["MissingRecordField", 'Attempted to select nonexistent field "b" from the record'],
+    ["MissingFunctionField", 'to argument "b", which is not in the domain of the function.'],
+    ["NonRecordField", 'Attempted to select field "a" from a non-record value 5'],
+  ])("fails to select a field in %s like TLC", async (name, message) => {
+    const result = await checkFixture("codegen", name);
+    expect(result.failure?.message).toContain(message);
+  });
+
+  it("evaluates CASE arms, OTHER, and bound names in generated code", async () => {
+    const result = await checkFixture("codegen", "CaseArms");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates]).toEqual([7, 5]);
+  });
+
+  it.each([
+    [
+      "CaseNoArm",
+      "Attempted to evaluate a CASE with no conditions true.\nline 6, col 12 to line 7, col 26 of module CaseNoArm",
+      [3, 3],
+    ],
+    [
+      "CaseNonBoolean",
+      "A non-boolean expression (an integer) was used as a condition of a CASE. line 7, col 17 to line 7, col 21 of module CaseNonBoolean",
+      [2, 2],
+    ],
+  ])("fails a CASE in %s like TLC", async (name, message, counts) => {
+    const result = await checkFixture("codegen", name);
+    expect(result.failure?.message).toContain(message);
+    expect([result.generatedStates, result.distinctStates]).toEqual(counts);
+  });
+
+  it("keeps tuples and records of literals the same across uses", async () => {
+    const result = await checkFixture("codegen", "LiteralValues");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates]).toEqual([4, 3]);
+  });
+
+  it.each([
+    [
+      "LiteralMismatch",
+      "Attempted to check equality of record:\n[a |-> 1, b |-> 2]\nwith non-record\n<<1, 2>>",
+      [2, 2],
+    ],
+  ])("fails to compare values of different types in %s like TLC", async (name, message, counts) => {
+    const result = await checkFixture("codegen", name);
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toContain(message);
+    expect([result.generatedStates, result.distinctStates]).toEqual(counts);
+  });
+
+  it("evaluates operator parameters, literal sets, and pairs in generated code", async () => {
+    const result = await checkFixture("codegen", "GeneratedBindings");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
+  });
+
+  it("fails only when it uses a literal set whose elements it can't compare", async () => {
+    const result = await checkFixture("codegen", "GeneratedMixed");
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toContain(
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+    );
+    expect([result.generatedStates, result.distinctStates]).toEqual([2, 2]);
+  });
+
   it.each([
     ["EqualStoredRecord", 'Attempted to compare an integer with non-integer:\n"a"'],
     ["EqualStoredNested", 'Attempted to compare an integer with non-integer:\n"a"'],

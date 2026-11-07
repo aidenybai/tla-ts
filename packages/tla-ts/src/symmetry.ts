@@ -16,29 +16,51 @@ import {
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
+  sortWrittenOrder,
   type ModelValue,
   type Value,
 } from "./values";
+import { createStateImages, type StateImages } from "./symmetry-images";
 
-// The image of each model value a permutation moves, by name.
-type Images = Map<string, ModelValue>;
+// The image of each model value a permutation moves, by rank.
+type Images = Map<number, ModelValue>;
+
+// The image of each model value by rank, or nothing for one the permutation doesn't move.
+type ImageTable = (ModelValue | undefined)[];
+
+export interface SymmetryGroup {
+  images: ImageTable[];
+  // Tries the group on integers, unless comparing images can fail on the types of model values.
+  stateImages: StateImages | undefined;
+}
 
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
-    .map(([name, image]) => `${name}>${image.name}`)
+    .map(([rank, image]) => `${rank}>${image.rank}`)
     .sort()
     .join(",");
 
 const composePermutations = (first: Images, second: Images) => {
   const composed: Images = new Map();
-  const names = new Set([...first.keys(), ...second.keys()]);
-  names.forEach((name) => {
-    const image = first.get(name);
-    const result = image ? (second.get(image.name) ?? image) : second.get(name);
-    if (result && result.name !== name) composed.set(name, result);
+  const ranks = new Set([...first.keys(), ...second.keys()]);
+  ranks.forEach((rank) => {
+    const image = first.get(rank);
+    const result = image ? (second.get(image.rank) ?? image) : second.get(rank);
+    if (result && result.rank !== rank) composed.set(rank, result);
   });
   return composed;
 };
+
+const toImageTable = (images: Images) => {
+  const table: ImageTable = Array.from({ length: Math.max(...images.keys()) + 1 });
+  images.forEach((image, rank) => {
+    table[rank] = image;
+  });
+  return table;
+};
+
+const toRankTable = (table: ImageTable) =>
+  Int32Array.from(table, (image, rank) => image?.rank ?? rank);
 
 // Tool#getSymmetryPerms fails with a RuntimeException as TLC starts, which TLC reports as one it
 // did not expect.
@@ -53,7 +75,7 @@ const toImages = (value: Value) => {
     if (!isModelValue(key) || !isModelValue(image)) {
       throw createSymmetryError("Symmetry function must have model values as domain and range.");
     }
-    if (key.name !== image.name) permutation.set(key.name, image);
+    if (key.rank !== image.rank) permutation.set(key.rank, image);
   });
   return permutation;
 };
@@ -79,7 +101,7 @@ export const getSymmetryGroup = (
   name: string,
   environment: Environment,
   substitutions: Substitution[],
-): Images[] | undefined => {
+): SymmetryGroup | undefined => {
   const definition = environment.definitions.get(name);
   if (definition === undefined && !environment.constants.has(name)) {
     throw new TlaConfigError(
@@ -142,8 +164,8 @@ export const getSymmetryGroup = (
     );
     frontier.start = end;
   }
-  const movedNames = new Set(
-    [...group.values()].flatMap((images) => [...images.values()].map((image) => image.name)),
+  const movedRanks = new Set(
+    [...group.values()].flatMap((images) => [...images.values()].map((image) => image.rank)),
   );
   // Only a permutation of a constant that TLC holds as an enumerated set is checked. TLC binds a
   // constant the config substitutes with <- to the definition, which it skips.
@@ -157,23 +179,28 @@ export const getSymmetryGroup = (
       return (
         typeof set === "object" &&
         set.kind === "Set" &&
-        !set.elements.some((element) => isModelValue(element) && movedNames.has(element.name))
+        !set.elements.some((element) => isModelValue(element) && movedRanks.has(element.rank))
       );
     }),
   );
   if (group.size === 0) return undefined;
-  return [...group.values()];
+  const images = [...group.values()].map(toImageTable);
+  const isUntyped = images.every((table) => table.every((image) => image?.type === undefined));
+  return {
+    images,
+    stateImages: isUntyped ? createStateImages(images.map(toRankTable)) : undefined,
+  };
 };
 
-const permuteElements = (elements: Value[], images: Images) => {
+const permuteElements = (elements: Value[], images: ImageTable) => {
   for (let index = 0; index < elements.length; index++) {
     const element = elements[index];
     const permuted = permuteValue(element, images);
     if (permuted === element) continue;
-    const result = elements.slice(0, index);
-    result.push(permuted);
+    const result = elements.slice();
+    result[index] = permuted;
     for (let rest = index + 1; rest < elements.length; rest++) {
-      result.push(permuteValue(elements[rest], images));
+      result[rest] = permuteValue(elements[rest], images);
     }
     return result;
   }
@@ -182,7 +209,7 @@ const permuteElements = (elements: Value[], images: Images) => {
 
 // A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
 // in order, so it sorts only the moved ones and merges them back.
-const permuteSortedElements = (elements: Value[], images: Images) => {
+const permuteSortedElements = (elements: Value[], images: ImageTable) => {
   const kept: Value[] = [];
   const moved: Value[] = [];
   for (const element of elements) {
@@ -207,12 +234,35 @@ const permuteSortedElements = (elements: Value[], images: Images) => {
   return merged;
 };
 
+// A permutation often maps a function's domain of model values to itself, as with a function over
+// the symmetric set. Then each value moves to where its key's image is, without sorting. The domain
+// is sorted by rank, and undefined means the images aren't that same domain.
+const permuteRangeOverDomain = (domain: Value[], images: Value[], range: Value[]) => {
+  const permuted = range.slice();
+  for (let index = 0; index < images.length; index++) {
+    const image = images[index];
+    if (!isModelValue(image)) return undefined;
+    let low = 0;
+    let high = domain.length - 1;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const key = domain[middle];
+      if (!isModelValue(key)) return undefined;
+      if (key.rank < image.rank) low = middle + 1;
+      else high = middle;
+    }
+    if (domain[low] !== image) return undefined;
+    permuted[low] = range[index];
+  }
+  return permuted;
+};
+
 // Value#permute: the value with each model value replaced by its image. A value the permutation
 // doesn't move is returned itself, so that comparing it with itself stops at identity.
-const permuteValue = (value: Value, images: Images): Value => {
+const permuteValue = (value: Value, images: ImageTable): Value => {
   if (typeof value !== "object") return value;
   const kind = value.kind;
-  if (kind === "ModelValue") return images.get(value.name) ?? value;
+  if (kind === "ModelValue") return images[value.rank] ?? value;
   if (kind === "Set") {
     const elements = permuteSortedElements(value.elements, images);
     return elements ? createSortedSet(elements) : value;
@@ -222,11 +272,12 @@ const permuteValue = (value: Value, images: Images): Value => {
     const domain = permuteElements(functionValue.domain, images);
     const range = permuteElements(functionValue.range, images) ?? functionValue.range;
     if (domain) {
+      const permutedRange = permuteRangeOverDomain(functionValue.domain, domain, range);
+      // Sharing the original domain array lets comparisons with other images skip the domain.
+      if (permutedRange) return createSortedFunction(functionValue.domain, permutedRange);
       const permuted = createFunction(
         domain.map((key, index): [Value, Value] => [key, range[index]]),
       );
-      // A permutation often maps the domain to itself, such as a function over the symmetric set.
-      // Sharing the original domain array lets comparisons with other images skip the domain.
       const isSameDomain = permuted.domain.every(
         (key, index) => key === functionValue.domain[index],
       );
@@ -245,21 +296,50 @@ const permuteValue = (value: Value, images: Images): Value => {
 // TLCStateMut#fingerPrint: the smallest image of the state under the group in TLC's variable
 // order. TLC permutes the state under each permutation, variable by variable, and moves on to the
 // next permutation as soon as a variable's image is larger than the smallest state's.
+const getRepresentativeOfValues = (state: Value[], group: SymmetryGroup, order: number[]) => {
+  const smallest = { state, images: undefined as ImageTable | undefined, end: order.length };
+  const permuteSmallest = (position: number) => {
+    if (smallest.images === undefined) return;
+    smallest.state[order[position]] = permuteValue(state[order[position]], smallest.images);
+    smallest.end = position + 1;
+  };
+  for (const images of group.images) {
+    const permuted = state.slice();
+    for (let position = 0; position < order.length; position++) {
+      const index = order[position];
+      if (position >= smallest.end) permuteSmallest(position);
+      permuted[index] = permuteValue(state[index], images);
+      const comparison = compareValues(permuted[index], smallest.state[index]);
+      if (comparison > 0) break;
+      if (comparison === 0) continue;
+      smallest.state = permuted;
+      smallest.images = images;
+      smallest.end = position + 1;
+      // TLC permutes the rest of a smaller image, and sorts it only if it compares or fingerprints it.
+      for (let rest = position + 1; rest < order.length; rest++) {
+        sortWrittenOrder(state[order[rest]]);
+      }
+      break;
+    }
+  }
+  for (let position = smallest.end; position < order.length; position++) permuteSmallest(position);
+  return smallest.state;
+};
+
 export const getRepresentative = (
   state: Value[],
-  permutations: Images[],
+  group: SymmetryGroup,
   order: number[],
 ): Value[] => {
-  let smallest = state;
-  for (const images of permutations) {
-    const permuted = state.slice();
-    let comparison = 0;
-    for (const index of order) {
-      permuted[index] = permuteValue(state[index], images);
-      if (comparison === 0) comparison = compareValues(permuted[index], smallest[index]);
-      if (comparison > 0) break;
-    }
-    if (comparison < 0) smallest = permuted;
+  const stateImages = group.stateImages;
+  const smallest = stateImages?.findSmallest(state, order, sortWrittenOrder);
+  if (stateImages === undefined || smallest === undefined) {
+    return getRepresentativeOfValues(state, group, order);
   }
-  return smallest;
+  if (smallest === -1) return state;
+  return state.map((value, variable) =>
+    stateImages.isVariableMoved(variable, smallest)
+      ? permuteValue(value, group.images[smallest])
+      : value,
+  );
 };

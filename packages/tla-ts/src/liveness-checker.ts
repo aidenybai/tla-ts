@@ -283,11 +283,14 @@ export const createLivenessChecker = (
       isShared ? getStateCache(state) : new Map(),
     );
   const checkState = (behavior: BehaviorGraph, source: number, state: Value[]) =>
-    evaluateFrom(source, () =>
-      Uint8Array.from(behavior.solution.stateChecks, (predicate) =>
-        evaluateState(predicate, state) ? 1 : 0,
-      ),
-    );
+    evaluateFrom(source, () => {
+      const predicates = behavior.solution.stateChecks;
+      const results = new Uint8Array(predicates.length);
+      for (let position = 0; position < predicates.length; position++) {
+        results[position] = evaluateState(predicates[position], state) ? 1 : 0;
+      }
+      return results;
+    });
   const checkAction = (
     behavior: BehaviorGraph,
     source: number,
@@ -296,17 +299,29 @@ export const createLivenessChecker = (
   ) =>
     evaluateFrom(source, () => {
       const predicates = behavior.solution.actionChecks;
+      const checks = new Uint8Array(predicates.length);
       if (!isShared) {
-        return Uint8Array.from(predicates, (predicate) =>
-          evaluateLive(predicate, state, successor, evaluation.environment, new Map()) ? 1 : 0,
-        );
+        for (let position = 0; position < predicates.length; position++) {
+          checks[position] = evaluateLive(
+            predicates[position],
+            state,
+            successor,
+            evaluation.environment,
+            new Map(),
+          )
+            ? 1
+            : 0;
+        }
+        return checks;
       }
       const stateCache = getStateCache(state);
       const results = shared.actions.get(state) ?? new Map<Value[], Int8Array>();
       shared.actions.set(state, results);
       const known = results.get(successor) ?? new Int8Array(actionIds.size).fill(-1);
       results.set(successor, known);
-      return Uint8Array.from(behavior.actionIds, (id, position) => {
+      const ids = behavior.actionIds;
+      for (let position = 0; position < predicates.length; position++) {
+        const id = ids[position];
         if (known[id] === -1) {
           known[id] = evaluateLive(
             predicates[position],
@@ -318,8 +333,9 @@ export const createLivenessChecker = (
             ? 1
             : 0;
         }
-        return known[id];
-      });
+        checks[position] = known[id];
+      }
+      return checks;
     });
   const isConsistent = (
     tableau: Tableau,
