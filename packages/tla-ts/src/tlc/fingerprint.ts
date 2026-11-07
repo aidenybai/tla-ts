@@ -149,6 +149,72 @@ export const getTlcFingerprint = (state: Value[]) => {
   return (BigInt(high >>> 0) << 32n) | BigInt(low >>> 0);
 };
 
+// Extending by zero bytes is linear too, so it adds what each byte of the fingerprint becomes. A
+// jump holds, for each of the 8 bytes, the image of each of its 256 values after 4 << level zero
+// bytes, so extending by n zero words takes a jump for each bit of n.
+interface ZeroJump {
+  highs: Int32Array;
+  lows: Int32Array;
+}
+
+const jumpZeros = (jump: ZeroJump) => {
+  const highs = jump.highs;
+  const lows = jump.lows;
+  const first = low & 0xff;
+  const second = 256 + ((low >>> 8) & 0xff);
+  const third = 512 + ((low >>> 16) & 0xff);
+  const fourth = 768 + (low >>> 24);
+  const fifth = 1024 + (high & 0xff);
+  const sixth = 1280 + ((high >>> 8) & 0xff);
+  const seventh = 1536 + ((high >>> 16) & 0xff);
+  const eighth = 1792 + (high >>> 24);
+  low =
+    lows[first] ^
+    lows[second] ^
+    lows[third] ^
+    lows[fourth] ^
+    lows[fifth] ^
+    lows[sixth] ^
+    lows[seventh] ^
+    lows[eighth];
+  high =
+    highs[first] ^
+    highs[second] ^
+    highs[third] ^
+    highs[fourth] ^
+    highs[fifth] ^
+    highs[sixth] ^
+    highs[seventh] ^
+    highs[eighth];
+};
+
+// Builds a jump with the fingerprint being extended, which it leaves as it was.
+const createJump = (extend: () => void): ZeroJump => {
+  const outer = { high, low };
+  const highs = new Int32Array(2048);
+  const lows = new Int32Array(2048);
+  for (let place = 0; place < 8; place++) {
+    for (let byte = 0; byte < 256; byte++) {
+      low = place < 4 ? byte << (8 * place) : 0;
+      high = place < 4 ? 0 : byte << (8 * (place - 4));
+      extend();
+      highs[place * 256 + byte] = high;
+      lows[place * 256 + byte] = low;
+    }
+  }
+  high = outer.high;
+  low = outer.low;
+  return { highs, lows };
+};
+
+const createFirstJump = () => createJump(() => extendInt(0));
+
+const createDoubledJump = (jump: ZeroJump) =>
+  createJump(() => {
+    jumpZeros(jump);
+    jumpZeros(jump);
+  });
+
 export interface StoredCells {
   count: number;
   // Each cell names one value and is below the bound.
@@ -170,6 +236,7 @@ export const getTlcFingerprints = (stored: StoredCells, order: number[]) => {
   const highs = new Int32Array(stored.cellBound);
   const lows = new Int32Array(stored.cellBound);
   const bytes: number[] = [];
+  const jumps = [createFirstJump()];
   for (let position = 0; position < stored.count; position++) {
     const cells = stored.getCells(position);
     high = INITIAL_HIGH;
@@ -197,7 +264,10 @@ export const getTlcFingerprints = (stored: StoredCells, order: number[]) => {
         low = outer.low;
       }
       const length = lengths[cell];
-      for (let step = 4; step <= length; step += 4) extendInt(0);
+      for (let words = length >>> 2, level = 0; words !== 0; words >>>= 1, level++) {
+        if (level === jumps.length) jumps.push(createDoubledJump(jumps[level - 1]));
+        if ((words & 1) !== 0) jumpZeros(jumps[level]);
+      }
       for (let step = length & ~3; step < length; step++) extendByte(0);
       high ^= highs[cell];
       low ^= lows[cell];
