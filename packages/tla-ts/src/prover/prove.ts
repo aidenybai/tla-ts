@@ -254,12 +254,18 @@ const getUnprovedReport = (
 ): ProofReport => ({ obligation: { ...getObligationBase(obligation), status, reason }, attempts });
 
 // A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, and
-// Toolbox.normalize, which keeps pragmas, for a reused one.
-export const formatNormalized = (obligation: PrintedObligation, isReused: boolean) =>
+// Toolbox.normalize, which keeps pragmas, for a reused one. After a temporal method, it marks the
+// facts that hold only now.
+export const formatNormalized = (
+  obligation: PrintedObligation,
+  isReused: boolean,
+  isTemporal: boolean,
+) =>
   `${formatObligation(
     isReused
       ? normalizeSequent(expandDefs(obligation.sequent, false))
       : normalizeExpand(obligation),
+    isTemporal,
   )}\n`;
 
 // The theory of the proofs Isabelle and Zenon found.

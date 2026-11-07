@@ -181,7 +181,8 @@ const LEVEL_NAMES = {
 };
 
 // hyps names the indices beyond the printer's own context, as the hypothesis deque does in E_fmt.
-const createPrinter = (hyps: Hyp[] = []) => {
+// For a temporal method, pp_print_time marks each fact that holds only now.
+const createPrinter = (hyps: Hyp[] = [], isTemporal = false) => {
   const context = createContext();
   const printExpr = (expression: Expr): Doc => printMinimal(formatExpr(expression));
 
@@ -688,7 +689,11 @@ const createPrinter = (hyps: Hyp[] = []) => {
       case "Defn":
         return printDefinition(hyp.definition);
       case "Fact": {
-        const doc = format("@[<h>%a @]", printExpr(hyp.expression));
+        const doc = format(
+          "@[<h>%a %s@]",
+          printExpr(hyp.expression),
+          isTemporal && hyp.time === "Now" ? "(* non-[] *)" : "",
+        );
         pushName(context, "");
         return doc;
       }
@@ -720,5 +725,5 @@ export const printExpression = (hyps: Hyp[], expression: Expr) =>
 
 export const printSequent = (sequent: Sequent) => createPrinter().printSequent(sequent);
 
-export const formatObligation = (sequent: Sequent) =>
-  renderDoc(format("@[<b0>%a@]", printSequent(sequent))).trimEnd();
+export const formatObligation = (sequent: Sequent, isTemporal = false) =>
+  renderDoc(format("@[<b0>%a@]", createPrinter([], isTemporal).printSequent(sequent))).trimEnd();

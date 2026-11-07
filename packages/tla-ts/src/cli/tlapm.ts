@@ -135,7 +135,7 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
     ...(attempt.isProved
       ? []
       : [
-          `obl:${attempt.isReused ? "" : `\n${attempt.note ?? ""}`}${formatNormalized(obligation, attempt.isReused)}`,
+          `obl:${attempt.isReused ? "" : `\n${attempt.note ?? ""}`}${formatNormalized(obligation, attempt.isReused, attempt.method.prover === "ls4")}`,
         ]),
   ]);
 };
