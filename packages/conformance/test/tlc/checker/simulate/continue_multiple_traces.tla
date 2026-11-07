@@ -30,22 +30,22 @@ all:
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
     2110:1 Invariant Inv is violated.
     2121:1 The behavior up to this point is:
-    2217:4 1: <Init line 19, col 9 to line 19, col 13 of module continue_multiple_traces>
+    2217:4 1: <Init line 20, col 9 to line 20, col 13 of module continue_multiple_traces>
     x = 0
-    2217:4 2: <Next line 20, col 9 to line 20, col 18 of module continue_multiple_traces>
+    2217:4 2: <Next line 21, col 9 to line 21, col 18 of module continue_multiple_traces>
     x = 1
-    2217:4 3: <Next line 20, col 9 to line 20, col 18 of module continue_multiple_traces>
+    2217:4 3: <Next line 21, col 9 to line 21, col 18 of module continue_multiple_traces>
     x = 2
     2209:0 Progress(2) at <date>: 5 states generated, -1 distinct states found, -1 states left on queue.
     2210:0 The number of states generated: 5
     Simulation using seed 4 and aril 0
     2110:1 Invariant Inv is violated.
     2121:1 The behavior up to this point is:
-    2217:4 1: <Init line 19, col 9 to line 19, col 13 of module continue_multiple_traces>
+    2217:4 1: <Init line 20, col 9 to line 20, col 13 of module continue_multiple_traces>
     x = 0
-    2217:4 2: <Next line 20, col 9 to line 20, col 18 of module continue_multiple_traces>
+    2217:4 2: <Next line 21, col 9 to line 21, col 18 of module continue_multiple_traces>
     x = 1
-    2217:4 3: <Next line 20, col 9 to line 20, col 18 of module continue_multiple_traces>
+    2217:4 3: <Next line 21, col 9 to line 21, col 18 of module continue_multiple_traces>
     x = 2
     2209:0 Progress(2) at <date>: 5 states generated, -1 distinct states found, -1 states left on queue.
     2210:0 The number of states generated: 5

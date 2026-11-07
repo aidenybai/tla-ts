@@ -175,7 +175,7 @@ The runner compares a host's output with the recording after it removes what dif
 | `crash`            | A signal killed the host.                         |
 | `unrecorded`       | The test has no recording yet.                    |
 
-`exit-only` tests compare only the exit status and run without `-tool`. Use this flag when a test calls `TLCExt!AssertError`. That operator compares against the message text, and `-tool` wraps that text, so true assertions become false.
+`exit-only` tests compare only the exit status and run without `-tool`. Use this flag when a test calls `TLCExt!AssertError`. That operator compares against the message text, and `-tool` wraps that text, so true assertions become false. Also use it when the transcript depends on how deep the JVM's stack lets TLC recurse, such as the positions TLC lists after it overflows the stack.
 
 ## Track known failures
 

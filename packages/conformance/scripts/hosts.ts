@@ -65,6 +65,9 @@ export const HOSTS: Record<string, Host> = {
       "-XX:+UseSerialGC",
       "-XX:TieredStopAtLevel=1",
       "-Xmx1g",
+      // How deep TLC can recurse depends on the thread stack, which the JVM sizes per platform: 2 MB
+      // on macOS arm64, where the recordings come from, and 1 MB on Linux x64.
+      "-Xss2m",
       "-cp",
       TLC_JAR,
       "tlc2.TLC",
