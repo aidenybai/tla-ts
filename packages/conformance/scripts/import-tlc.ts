@@ -352,7 +352,7 @@ await runPool(pendingTests, WORKERS, async (pending) => {
     command,
     test,
     { name: "model", source: test.source, config: test.metadata.config ?? "" },
-    LIMIT_MILLISECONDS,
+    { milliseconds: LIMIT_MILLISECONDS },
   );
   if (result.exit === -1) {
     skipped.push(`${test.id}: takes longer than ${LIMIT_MILLISECONDS} ms`);
