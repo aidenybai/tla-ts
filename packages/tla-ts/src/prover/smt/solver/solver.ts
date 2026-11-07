@@ -21,36 +21,40 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   const manager = new AstManager(
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
-  // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites it
-  // when it is asserted and keeps it, though check-sat then runs the tactic on the assertions. The
-  // kernel's model finder counts a step of the resource limit when it is made, and
-  // solver::assert_expr counts one for each assertion.
-  const incremental = new AssertedFormulas(manager);
-  manager.limit.inc();
-  const problem = parseSmtlib(text, manager, (assertion) => {
+  // The limit stops watching the collector however the check ends, as an unsupported input or a
+  // problem without check-sat ends it early.
+  try {
+    // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites it
+    // when it is asserted and keeps it, though check-sat then runs the tactic on the assertions. The
+    // kernel's model finder counts a step of the resource limit when it is made, and
+    // solver::assert_expr counts one for each assertion.
+    const incremental = new AssertedFormulas(manager);
     manager.limit.inc();
-    incremental.assertExpr(assertion);
-  });
-  if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
-  const goal = applyUfniaTactic(manager, problem.assertions);
-  // and_then runs smt_tactic only on a goal that the preprocessing left undecided.
-  if (goal.isInconsistent || goal.forms.size === 0) {
+    const problem = parseSmtlib(text, manager, (assertion) => {
+      manager.limit.inc();
+      incremental.assertExpr(assertion);
+    });
+    if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
+    const goal = applyUfniaTactic(manager, problem.assertions);
+    // and_then runs smt_tactic only on a goal that the preprocessing left undecided.
+    if (goal.isInconsistent || goal.forms.size === 0) {
+      return { verdict: goal.isInconsistent ? "unsat" : "sat", numInstances: 0 };
+    }
+    // smt_tactic makes the context, which makes its asserted formulas first, and asserts the goal.
+    // setup_context then makes the theories, before the formulas are reduced.
+    const asserted = new AssertedFormulas(manager);
+    const context = new Context(manager, { isMbqi: true, relevancyLevel: 2 });
+    for (const assertion of goal.forms.items) asserted.assertExpr(assertion);
+    context.setupContext();
+    context.internalizeAssertions(asserted);
+    const result = context.search();
+    return {
+      verdict: result === L_FALSE ? "unsat" : result === L_TRUE ? "sat" : "unknown",
+      numInstances: context.qmanager.getNumInstances(),
+    };
+  } finally {
     manager.limit.release();
-    return { verdict: goal.isInconsistent ? "unsat" : "sat", numInstances: 0 };
   }
-  // smt_tactic makes the context, which makes its asserted formulas first, and asserts the goal.
-  // setup_context then makes the theories, before the formulas are reduced.
-  const asserted = new AssertedFormulas(manager);
-  const context = new Context(manager, { isMbqi: true, relevancyLevel: 2 });
-  for (const assertion of goal.forms.items) asserted.assertExpr(assertion);
-  context.setupContext();
-  context.internalizeAssertions(asserted);
-  const result = context.search();
-  manager.limit.release();
-  return {
-    verdict: result === L_FALSE ? "unsat" : result === L_TRUE ? "sat" : "unknown",
-    numInstances: context.qmanager.getNumInstances(),
-  };
 };
 
 // Throws SmtParseError on malformed input. Input outside the subset the solver supports is unknown,
