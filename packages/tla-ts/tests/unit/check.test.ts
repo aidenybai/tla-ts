@@ -771,6 +771,18 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([22, 16, 4]);
   });
 
+  it("reports a power set invariant that an element added after a removed one violates", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE s\nInit == s = {1, 2}\nNext == s' = (s \\ {1}) \\cup {3}\nTypeOK == s \\in SUBSET {1, 2}\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT TypeOK",
+    });
+    expect(result.violation?.name).toBe("TypeOK");
+    const trace = result.violation?.trace ?? [];
+    expect(formatValue(trace[trace.length - 1].state.s)).toBe("{2, 3}");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 2, 2]);
+  });
+
   it("labels each step with the action TLC splits the next-state relation into", async () => {
     const getLabels = async (definitions: string, config = "INIT Init\nNEXT Next") => {
       const result = await check({
