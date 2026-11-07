@@ -766,14 +766,22 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     position: number,
     loopStart: number | undefined,
   ) => {
-    // TLC evaluates TLCGet("level") and Trace in an alias at the state's position in the trace.
+    // TLC evaluates TLCGet("level") and Trace in an alias at the state's position in the trace. The
+    // search reads them again once the alias is evaluated, as it goes on with -continue.
+    const searchLevel = runtime.getLevel;
+    const searchBehavior = runtime.getBehavior;
     runtime.getLevel = () => position + 1;
     runtime.getBehavior = () => steps.slice(0, position + 1).map((step) => step.state);
-    return evaluateAlias(
-      alias,
-      steps[position].state,
-      (steps[position + 1] ?? steps[loopStart ?? position]).state,
-    );
+    try {
+      return evaluateAlias(
+        alias,
+        steps[position].state,
+        (steps[position + 1] ?? steps[loopStart ?? position]).state,
+      );
+    } finally {
+      runtime.getLevel = searchLevel;
+      runtime.getBehavior = searchBehavior;
+    }
   };
   const evaluateAlias = (alias: string, state: Value[], next: Value[] | undefined) => {
     try {
