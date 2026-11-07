@@ -38,3 +38,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @tla-ts/conformance fetch-tlc
       - run: pnpm --filter @tla-ts/conformance conformance --host tlc --shard ${{ matrix.shard }}/8
+
+  tlapm:
+    name: recordings match tlapm ${{ matrix.shard }}/2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+      # The recordings come from Z3 5.3.2, the version tla-ts's SMT solver ports.
+      - run: |
+          curl -sSL -o z3.zip https://github.com/Z3Prover/z3/releases/download/z3-5.3.2/z3-5.3.2-x64-glibc-2.39.zip
+          unzip -q z3.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/z3-5.3.2-x64-glibc-2.39/bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tla-ts/conformance fetch-tlapm
+      - run: pnpm --filter @tla-ts/conformance conformance --host tlapm --shard ${{ matrix.shard }}/2

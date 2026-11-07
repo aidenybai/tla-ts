@@ -1,0 +1,22 @@
+(*---
+description: Zenon rewrites DOMAIN [a \in S |-> F(a)] to S with domain_fcn.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (= (TLA.DOMAIN (TLA.Fcn a_CONSTANTunde_Sunde_a ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Funde_a a_CONSTANTunde_aunde_a))))
+a_CONSTANTunde_Sunde_a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(DOMAIN(Fcn(a_CONSTANTunde_Sunde_a, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))))~=a_CONSTANTunde_Sunde_a)" (is "?z_hb~=_")
+     have z_Hh: "(a_CONSTANTunde_Sunde_a~=a_CONSTANTunde_Sunde_a)"
+     by (rule zenon_domain_fcn_0 [of "(\<lambda>zenon_Vf. (zenon_Vf~=a_CONSTANTunde_Sunde_a))" "a_CONSTANTunde_Sunde_a" "(\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Funde_a(a_CONSTANTunde_aunde_a))", OF z_Ha])
+     show FALSE
+     by (rule zenon_noteq [OF z_Hh])
+    qed
+---*)

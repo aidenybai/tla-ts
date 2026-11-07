@@ -1,0 +1,48 @@
+(*---
+description: Zenon proves the value of a CASE whose first guard holds.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ a_CONSTANTunde_punde_a (-. a_CONSTANTunde_qunde_a))
+(= (TLA.CASE a_CONSTANTunde_punde_a a_CONSTANTunde_xunde_a
+a_CONSTANTunde_qunde_a a_CONSTANTunde_yunde_a )
+a_CONSTANTunde_xunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_punde_a&(~a_CONSTANTunde_qunde_a))=>((CASE a_CONSTANTunde_punde_a -> a_CONSTANTunde_xunde_a [] a_CONSTANTunde_qunde_a -> a_CONSTANTunde_yunde_a)=a_CONSTANTunde_xunde_a)))" (is "~(?z_hc=>?z_hg)")
+     have z_Hc: "?z_hc" (is "_&?z_he")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hk: "((CASE a_CONSTANTunde_punde_a -> a_CONSTANTunde_xunde_a [] a_CONSTANTunde_qunde_a -> a_CONSTANTunde_yunde_a)~=a_CONSTANTunde_xunde_a)" (is "?z_hh~=_")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "a_CONSTANTunde_punde_a"
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_He: "?z_he"
+     by (rule zenon_and_1 [OF z_Hc])
+     show FALSE
+     proof (rule zenon_case2 [of "(\<lambda>zenon_Vg. (zenon_Vg~=a_CONSTANTunde_xunde_a))", OF z_Hk])
+      assume z_Hd:"a_CONSTANTunde_punde_a"
+      assume z_Ho:"(a_CONSTANTunde_xunde_a~=a_CONSTANTunde_xunde_a)"
+      show FALSE
+      by (rule zenon_noteq [OF z_Ho])
+     next
+      assume z_Hf:"a_CONSTANTunde_qunde_a"
+      assume z_Hp:"(a_CONSTANTunde_yunde_a~=a_CONSTANTunde_xunde_a)"
+      show FALSE
+      by (rule notE [OF z_He z_Hf])
+     next
+      assume z_Hq:"(?z_he&((~a_CONSTANTunde_punde_a)&TRUE))" (is "_&?z_hr")
+      have z_Hr: "?z_hr" (is "?z_hs&?z_ht")
+      by (rule zenon_and_1 [OF z_Hq])
+      have z_Hs: "?z_hs"
+      by (rule zenon_and_0 [OF z_Hr])
+      show FALSE
+      by (rule notE [OF z_Hs z_Hd])
+     qed
+    qed
+---*)

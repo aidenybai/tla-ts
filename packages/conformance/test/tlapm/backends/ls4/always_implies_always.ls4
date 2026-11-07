@@ -1,0 +1,11 @@
+(*---
+description: LS4 finds the negation of []P => []P unsatisfiable, the input tlapm writes for BY PTL.
+outcome: unsat
+---*)
+not (((always (cc | ~ cc)) -> (always (cc | ~ cc))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

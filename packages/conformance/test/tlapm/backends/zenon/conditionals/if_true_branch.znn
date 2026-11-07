@@ -1,0 +1,35 @@
+(*---
+description: Zenon proves (IF p THEN x ELSE y) = x under p with the ifthenelse rule.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> a_CONSTANTunde_punde_a
+(= (TLA.cond a_CONSTANTunde_punde_a a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a)
+a_CONSTANTunde_xunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(a_CONSTANTunde_punde_a=>(cond(a_CONSTANTunde_punde_a, a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a)=a_CONSTANTunde_xunde_a)))" (is "~(_=>?z_hd)")
+     have z_Hc: "a_CONSTANTunde_punde_a"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hh: "(cond(a_CONSTANTunde_punde_a, a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a)~=a_CONSTANTunde_xunde_a)" (is "?z_he~=_")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     show FALSE
+     proof (rule zenon_ifthenelse [of "(\<lambda>zenon_Vg. (zenon_Vg~=a_CONSTANTunde_xunde_a))" "a_CONSTANTunde_punde_a" "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_yunde_a", OF z_Hh])
+      assume z_Hc:"a_CONSTANTunde_punde_a"
+      assume z_Hl:"(a_CONSTANTunde_xunde_a~=a_CONSTANTunde_xunde_a)"
+      show FALSE
+      by (rule zenon_noteq [OF z_Hl])
+     next
+      assume z_Hm:"(~a_CONSTANTunde_punde_a)"
+      assume z_Hn:"(a_CONSTANTunde_yunde_a~=a_CONSTANTunde_xunde_a)"
+      show FALSE
+      by (rule notE [OF z_Hm z_Hc])
+     qed
+    qed
+---*)

@@ -1,0 +1,63 @@
+(*---
+description: Zenon expands a negated existential over an enumerated set with notex_in.
+ref: zenon/ext_tla.ml#newnodes_inst_bounded
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.bEx (TLA.set a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a) ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a)))
+(\/ (a_CONSTANTunde_Punde_a a_CONSTANTunde_xunde_a)
+(a_CONSTANTunde_Punde_a a_CONSTANTunde_yunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(bEx({a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a}, (\<lambda>a_CONSTANTunde_aunde_a. a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a)))=>(a_CONSTANTunde_Punde_a(a_CONSTANTunde_xunde_a)|a_CONSTANTunde_Punde_a(a_CONSTANTunde_yunde_a))))" (is "~(?z_hc=>?z_hj)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hm: "(~?z_hj)" (is "~(?z_hk|?z_hl)")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hn: "(~?z_hk)"
+     by (rule zenon_notor_0 [OF z_Hm])
+     have z_Ho: "(~?z_hl)"
+     by (rule zenon_notor_1 [OF z_Hm])
+     have z_Hp_z_Hc: "(\\E x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x))) == ?z_hc" (is "?z_hp == _")
+     by (unfold bEx_def)
+     have z_Hp: "?z_hp" (is "\\E x : ?z_hu(x)")
+     by (unfold z_Hp_z_Hc, fact z_Hc)
+     have z_Hv: "?z_hu((CHOOSE x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x))))" (is "?z_hx&?z_hy")
+     by (rule zenon_ex_choose_0 [of "?z_hu", OF z_Hp])
+     have z_Hx: "?z_hx"
+     by (rule zenon_and_0 [OF z_Hv])
+     have z_Hy: "?z_hy"
+     by (rule zenon_and_1 [OF z_Hv])
+     show FALSE
+     proof (rule zenon_in_addElt [of "(CHOOSE x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x)))" "a_CONSTANTunde_xunde_a" "{a_CONSTANTunde_yunde_a}", OF z_Hx])
+      assume z_Hba:"((CHOOSE x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x)))=a_CONSTANTunde_xunde_a)" (is "?z_hw=_")
+      show FALSE
+      proof (rule notE [OF z_Hn])
+       have z_Hk: "?z_hk"
+       by (rule subst [where P="(\<lambda>zenon_Vl. a_CONSTANTunde_Punde_a(zenon_Vl))", OF z_Hba], fact z_Hy)
+       thus "?z_hk" .
+      qed
+     next
+      assume z_Hbe:"((CHOOSE x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x))) \\in {a_CONSTANTunde_yunde_a})" (is "?z_hbe")
+      show FALSE
+      proof (rule zenon_in_addElt [of "(CHOOSE x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x)))" "a_CONSTANTunde_yunde_a" "{}", OF z_Hbe])
+       assume z_Hbg:"((CHOOSE x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x)))=a_CONSTANTunde_yunde_a)" (is "?z_hw=_")
+       show FALSE
+       proof (rule notE [OF z_Ho])
+        have z_Hl: "?z_hl"
+        by (rule subst [where P="(\<lambda>zenon_Vl. a_CONSTANTunde_Punde_a(zenon_Vl))", OF z_Hbg], fact z_Hy)
+        thus "?z_hl" .
+       qed
+      next
+       assume z_Hbh:"((CHOOSE x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x))) \\in {})" (is "?z_hbh")
+       show FALSE
+       by (rule zenon_in_emptyset [of "(CHOOSE x:((x \\in {a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a})&a_CONSTANTunde_Punde_a(x)))", OF z_Hbh])
+      qed
+     qed
+    qed
+---*)

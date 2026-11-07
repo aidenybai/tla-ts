@@ -1,0 +1,15 @@
+(*---
+description: Zenon has no rule for the DOMAIN of a tuple and exhausts the search on DOMAIN <<x, y>> = {1, 2}.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unknown
+---*)
+;; obligation #1
+$goal (= (TLA.DOMAIN (TLA.tuple a_CONSTANTunde_xunde_a
+a_CONSTANTunde_yunde_a))
+(TLA.set (TLA.fapply TLA.Succ 0) (TLA.fapply TLA.Succ (TLA.fapply TLA.Succ 0))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

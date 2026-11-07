@@ -1,0 +1,28 @@
+(*---
+description: 'Zenon proves "a" # "b" for distinct string literals.'
+ref: zenon/prove.ml#newnodes_eq_str
+outcome: unsat
+---*)
+;; obligation #1
+$goal (-. (= "a"
+"b"))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(''a''~=''b''))" (is "~~?z_he")
+     have z_He: "?z_he" (is "?z_hc=?z_hd")
+     by (rule zenon_notnot_0 [OF z_Ha])
+     have z_Hb: "(?z_hc~=?z_hd)"
+     by (simp only: zenon_sa_1 zenon_sa_2,
+         ((rule zenon_sa_diff_2)+)?,
+         (rule zenon_sa_diff_3, auto)?,
+         (rule zenon_sa_diff_1, auto)?,
+         (rule zenon_sa_diff_0a)?, (rule zenon_sa_diff_0b)?)
+     show FALSE
+     by (rule notE [OF z_Hb z_He])
+    qed
+---*)

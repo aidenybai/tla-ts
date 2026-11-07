@@ -1,12 +1,21 @@
 // Runs the suite against a host and compares each result with the oracle's recording.
-// Usage: pnpm conformance [--host tla-ts|tlc|"<command>"] [--shard <i>/<n>] [--update-baseline]
-// [--verbose] [path filter]...
+// Usage: pnpm conformance [--host tla-ts|tlc|tlapm|"<command>"] [--shard <i>/<n>]
+// [--update-baseline] [--verbose] [path filter]...
+// The tlc and tlapm hosts are the oracles, and each runs only its own suite.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { getHost, getSuiteCommand, HOSTS, runPool, runTest, type HostResult } from "./hosts";
-import { findTests, getContexts, getRecording, getShard, type Recording } from "./test-file";
+import {
+  findTests,
+  getContexts,
+  getRecording,
+  getShard,
+  type Recording,
+  type SuiteTest,
+} from "./test-file";
+import { getBackend, getTlapmStatuses } from "./tlapm";
 import { getMessageCodes } from "./transcript";
 
 // From the coarsest difference to the finest, so a score can say how close a host is.
@@ -50,12 +59,23 @@ const baseline: Record<string, Verdict> = existsSync(baselinePath)
   ? JSON.parse(readFileSync(baselinePath, "utf8"))
   : {};
 
-const getVerdict = (expected: Recording | undefined, actual: HostResult): Verdict => {
+// The coarse part of a transcript: TLC's message codes, tlapm's obligation statuses, or a backend's
+// verdict.
+const getMessages = (test: SuiteTest, transcript: string) => {
+  if (test.suite === "tlc") return getMessageCodes(transcript);
+  return getBackend(test.path) ? transcript.split("\n")[0] : getTlapmStatuses(transcript);
+};
+
+const getVerdict = (
+  test: SuiteTest,
+  expected: Recording | undefined,
+  actual: HostResult,
+): Verdict => {
   if (!expected) return "unrecorded";
   if (actual.exit === CRASH_EXIT) return "crash";
   if (actual.exit !== expected.exit) return "exit-mismatch";
   const expectedTranscript = expected.transcript ?? "";
-  if (getMessageCodes(actual.transcript) !== getMessageCodes(expectedTranscript))
+  if (getMessages(test, actual.transcript) !== getMessages(test, expectedTranscript))
     return "message-mismatch";
   return actual.transcript === expectedTranscript ? "pass" : "text-mismatch";
 };
@@ -73,7 +93,7 @@ await runPool(tests, WORKERS, async (test) => {
     const expected = getRecording(test, context.name);
     results.push({
       id: context.name === "model" ? test.id : `${test.id}#${context.name}`,
-      verdict: getVerdict(expected, actual),
+      verdict: getVerdict(test, expected, actual),
       expected,
       actual,
     });

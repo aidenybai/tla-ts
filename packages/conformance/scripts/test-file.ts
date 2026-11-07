@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import { dump, load } from "js-yaml";
+import { BACKEND_VERDICTS, getBackend, TLAPM_OUTCOME_EXITS } from "./tlapm";
 
 export const SUITE_DIRECTORY = join(import.meta.dirname, "../test");
 
@@ -32,6 +33,8 @@ export type Outcome = keyof typeof OUTCOME_EXITS;
 export interface TestMetadata {
   description: string;
   outcome: string;
+  // How a tlapm test runs tlapm: obligations, proof or encoding.
+  mode?: string;
   ref?: string;
   source?: string;
   features?: string[];
@@ -50,10 +53,10 @@ export interface Recording {
 
 export interface SuiteTest {
   id: string;
-  // The oracle the test was recorded from, by its first directory.
+  // The oracle the test was recorded from: tlc or tlapm.
   suite: string;
   path: string;
-  // The file a host reads.
+  // The file a host reads: the module, or a backend's input.
   fileName: string;
   moduleName: string;
   metadata: TestMetadata;
@@ -137,9 +140,20 @@ export const findTests = (filters: string[]) =>
     .filter((path) => filters.length === 0 || filters.some((filter) => path.includes(filter)))
     .flatMap((path) => parseTest(path, readFileSync(path, "utf8")) ?? []);
 
+// A backend test is the input itself, so the header and the recording are not part of it.
+export const getBackendInput = (test: SuiteTest) => test.source.replace(HEADER, "");
+
 // Whether a result is what the test declares, or undefined when the outcome is unknown.
-export const isDeclaredOutcome = (test: SuiteTest, result: Recording) =>
-  (OUTCOME_EXITS as Record<string, number[]>)[test.metadata.outcome]?.includes(result.exit);
+export const isDeclaredOutcome = (test: SuiteTest, result: Recording) => {
+  if (test.suite === "tlapm" && getBackend(test.path)) {
+    if (test.metadata.outcome === "any") return true;
+    if (!BACKEND_VERDICTS.includes(test.metadata.outcome)) return undefined;
+    return result.transcript?.split("\n")[0] === test.metadata.outcome;
+  }
+  const exits: Record<string, number[]> =
+    test.suite === "tlapm" ? TLAPM_OUTCOME_EXITS : OUTCOME_EXITS;
+  return exits[test.metadata.outcome]?.includes(result.exit);
+};
 
 export const getContexts = (test: SuiteTest): TestContext[] =>
   test.suite === "tlc" && test.metadata.flags?.includes("expression")

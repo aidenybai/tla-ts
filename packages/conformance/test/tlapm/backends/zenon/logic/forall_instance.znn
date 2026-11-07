@@ -1,0 +1,26 @@
+(*---
+description: Zenon instantiates a universal hypothesis at x.
+ref: zenon/prove.ml#newnodes_gamma
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (A. ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a)))
+(a_CONSTANTunde_Punde_a a_CONSTANTunde_xunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((\\A a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a))=>a_CONSTANTunde_Punde_a(a_CONSTANTunde_xunde_a)))" (is "~(?z_hc=>?z_hf)")
+     have z_Hc: "?z_hc" (is "\\A x : ?z_hh(x)")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hi: "(~?z_hf)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hf: "?z_hh(a_CONSTANTunde_xunde_a)"
+     by (rule zenon_all_0 [of "?z_hh" "a_CONSTANTunde_xunde_a", OF z_Hc])
+     show FALSE
+     by (rule notE [OF z_Hi z_Hf])
+    qed
+---*)

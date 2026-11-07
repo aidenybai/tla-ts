@@ -1,0 +1,12 @@
+(*---
+description: An identifier that starts with a keyword, such as nextp, is an atom.
+ref: translate/folex.mll#lexer
+outcome: sat
+---*)
+nextp & always ~p
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)
