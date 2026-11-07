@@ -21,11 +21,13 @@ import {
   parseTest,
   SUITE_DIRECTORY,
   writeRecordings,
+  type Recording,
   type TestMetadata,
 } from "./test-file";
 
 const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(2, availableParallelism()));
-const LIMIT_MILLISECONDS = 120_000;
+// An Isabelle proof can run for minutes and use gigabytes, so the importer leaves out such tests.
+const LIMITS = { milliseconds: 120_000, memoryBytes: 4 * 1024 ** 3 };
 const IMPORT_DIRECTORY = join(SUITE_DIRECTORY, "tlapm/imported");
 
 interface PendingTest {
@@ -244,69 +246,99 @@ const pendingTests: PendingTest[] = [
     .flatMap(getCorpusTests),
 ];
 
-const writePending = (pending: PendingTest) => {
-  const directory = join(IMPORT_DIRECTORY, pending.directory);
-  mkdirSync(directory, { recursive: true });
-  pending.fixtures.forEach((fixture) =>
-    writeFileSync(
-      join(directory, fixture),
-      readFileSync(join(testDirectory, pending.directory, fixture)),
-    ),
-  );
-  const metadata =
-    pending.fixtures.length > 0
-      ? { ...pending.metadata, includes: pending.fixtures }
-      : pending.metadata;
-  const path = join(directory, `${pending.moduleName}.tla`);
-  writeFileSync(path, `(*---\n${formatYaml(metadata)}\n---*)\n${pending.module}`);
-  return path;
+const getTestPath = (pending: PendingTest) =>
+  join(IMPORT_DIRECTORY, pending.directory, `${pending.moduleName}.tla`);
+
+const writePending = (pending: PendingTest, outcome: string) => {
+  const metadata = {
+    ...pending.metadata,
+    outcome,
+    ...(pending.fixtures.length > 0 ? { includes: pending.fixtures } : {}),
+  };
+  writeFileSync(getTestPath(pending), `(*---\n${formatYaml(metadata)}\n---*)\n${pending.module}`);
 };
 
+// Every file is written before any test runs, and rewritten only after all have run, because a test
+// copies its fixtures and a fixture can be a test too. A test file serves as a fixture, since tlapm
+// ignores the header and the recording outside the module.
 rmSync(IMPORT_DIRECTORY, { recursive: true, force: true });
+const testPaths = new Set(pendingTests.map(getTestPath));
+const fixturePaths = new Set(
+  pendingTests.flatMap((pending) =>
+    pending.fixtures.map((fixture) => join(IMPORT_DIRECTORY, pending.directory, fixture)),
+  ),
+);
+pendingTests.forEach((pending) => {
+  mkdirSync(join(IMPORT_DIRECTORY, pending.directory), { recursive: true });
+  pending.fixtures
+    .filter((fixture) => !testPaths.has(join(IMPORT_DIRECTORY, pending.directory, fixture)))
+    .forEach((fixture) =>
+      writeFileSync(
+        join(IMPORT_DIRECTORY, pending.directory, fixture),
+        readFileSync(join(testDirectory, pending.directory, fixture)),
+      ),
+    );
+});
+pendingTests.forEach((pending) => writePending(pending, pending.metadata.outcome));
+
 const host = getHost("tlapm");
-const kept = { count: 0 };
+const kept = new Map<PendingTest, { outcome: string; recording: Recording }>();
 
 // A test is kept only if two runs agree, since a proof near a time limit can go either way.
 await runPool(pendingTests, WORKERS, async (pending) => {
-  const path = writePending(pending);
+  const path = getTestPath(pending);
   const test = parseTest(path, readFileSync(path, "utf8"));
   if (!test) return;
   const context = { name: "model", source: test.source, config: "" };
-  const first = await runTest(host, test, context, LIMIT_MILLISECONDS);
-  const second = first.exit === -1 ? first : await runTest(host, test, context, LIMIT_MILLISECONDS);
+  const first = await runTest(host, test, context, LIMITS);
+  const second = first.exceeded ? first : await runTest(host, test, context, LIMITS);
   const observed = Object.entries(TLAPM_OUTCOME_EXITS).find(
     (entry) => entry[0] !== "any" && entry[1].includes(first.exit),
   )?.[0];
-  const reason =
-    first.exit === -1
-      ? `takes longer than ${LIMIT_MILLISECONDS} ms`
-      : first.exit !== second.exit || first.transcript !== second.transcript
-        ? "gives different results on two runs"
-        : !observed || (pending.acceptedOutcomes && !pending.acceptedOutcomes.includes(observed))
-          ? `exits ${first.exit} here, not ${(pending.acceptedOutcomes ?? ["a tlapm outcome"]).join(" or ")}`
-          : undefined;
+  const reason = first.exceeded
+    ? `exceeds the importer's ${first.exceeded} limit`
+    : first.exit !== second.exit || first.transcript !== second.transcript
+      ? "gives different results on two runs"
+      : !observed || (pending.acceptedOutcomes && !pending.acceptedOutcomes.includes(observed))
+        ? `exits ${first.exit} here, not ${(pending.acceptedOutcomes ?? ["a tlapm outcome"]).join(" or ")}`
+        : undefined;
   if (reason || !observed) {
     skipped.push(`${test.id}: ${reason}`);
-    rmSync(path, { force: true });
     return;
   }
-  const recorded =
-    observed === pending.metadata.outcome
-      ? test
-      : (parseTest(
-          writePending({ ...pending, metadata: { ...pending.metadata, outcome: observed } }),
-          readFileSync(path, "utf8"),
-        ) ?? test);
-  writeRecordings(recorded, {
-    model: {
+  kept.set(pending, {
+    outcome: observed,
+    recording: {
       exit: first.exit,
       ...(first.transcript === "" ? {} : { transcript: first.transcript }),
     },
   });
-  kept.count += 1;
 });
+
+// Only the fixtures of kept tests stay. A skipped test that a kept test includes stays as a plain
+// module.
+const keptFixturePaths = new Set(
+  [...kept.keys()].flatMap((pending) =>
+    pending.fixtures.map((fixture) => join(IMPORT_DIRECTORY, pending.directory, fixture)),
+  ),
+);
+pendingTests.forEach((pending) => {
+  const path = getTestPath(pending);
+  const result = kept.get(pending);
+  if (result) {
+    writePending(pending, result.outcome);
+    const test = parseTest(path, readFileSync(path, "utf8"));
+    if (test) writeRecordings(test, { model: result.recording });
+    return;
+  }
+  if (keptFixturePaths.has(path)) writeFileSync(path, pending.module);
+  else rmSync(path, { force: true });
+});
+[...fixturePaths]
+  .filter((path) => !testPaths.has(path) && !keptFixturePaths.has(path))
+  .forEach((path) => rmSync(path, { force: true }));
 
 skipped.sort().forEach((line) => console.log(`SKIPPED ${line}`));
 console.log(
-  `Imported ${kept.count} of ${pendingTests.length} tlapm tests, skipped ${skipped.length}`,
+  `Imported ${kept.size} of ${pendingTests.length} tlapm tests, skipped ${skipped.length}`,
 );

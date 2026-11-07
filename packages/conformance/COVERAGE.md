@@ -148,11 +148,11 @@ Some TLC messages misname their operator. The suite pins them as ordinary tests,
 
 ## tlapm coverage
 
-The tlapm half has 1,637 tests under `test/tlapm`:
+The tlapm half has 1,639 tests under `test/tlapm`:
 
 | Directory     | Tests | Contents                                                                                          |
 | ------------- | ----- | ------------------------------------------------------------------------------------------------- |
-| `imported`    | 467   | tlapm's own harness, soundness, SANY and parser corpus tests, ported by `scripts/import-tlapm.ts` |
+| `imported`    | 469   | tlapm's own harness, soundness, SANY and parser corpus tests, ported by `scripts/import-tlapm.ts` |
 | `obligations` | 372   | The obligations tlapm generates for each proof construct, and which facts PTL may box             |
 | `backends`    | 315   | Inputs fed to each backend directly: 112 for Z3, 90 for Zenon, 54 for Isabelle and 55 for LS4     |
 | `encodings`   | 235   | The input tlapm writes for Z3, Zenon, Isabelle and LS4                                            |
@@ -173,7 +173,7 @@ A tlapm test must not depend on time, so no test may pass or fail because a back
 - **Level errors**: tlapm doesn't check levels, and it leaves arity to SANY. Tests of `c'`, `ENABLED x''` and wrong arity record that tlapm accepts them.
 - **`RECURSIVE`**: TLAPS doesn't support it, so the suite pins only its rejection.
 - **The library module `BagsTheorems`**: it doesn't load, because tlapm can't find `Range`.
-- **7 of tlapm's own tests**: 4 run tlapm twice, pipe its output through a shell or name a file that doesn't exist. 3 don't reproduce here: `smt_rlimit_bad_test` exits 10, not 3, `INSTANCE_shift_due_to_omitted_modunits_test` fails an obligation, and `SnapShot_test` gives different results on two runs.
+- **8 of tlapm's own tests**: 4 run tlapm twice, pipe its output through a shell or name a file that doesn't exist. 2 don't reproduce here: `smt_rlimit_bad_test` exits 10, not 3, and `INSTANCE_shift_due_to_omitted_modunits_test` fails an obligation. `GFX_test` and `SnapShot_test` run longer than the importer's limit of 120 seconds.
 
 The runner removes what differs between machines from a transcript: the OCaml backtrace and the configuration tlapm prints when it crashes, the `PATH` it prints for a missing backend, and the command line that ran Zenon, which tlapm copies into each Isabelle theory.
 
