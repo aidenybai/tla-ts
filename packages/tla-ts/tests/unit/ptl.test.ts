@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { TlaProverError, TlaSyntaxError } from "../../src/errors";
+import { TlaProverError } from "../../src/errors";
 import { getObligations } from "../../src/obligations";
 import { decidePtl } from "../../src/prover/ptl/decide";
 import { encodeForBackend } from "../../src/prover/prove";
@@ -162,7 +162,21 @@ describe("PTL decision", () => {
     expect(decidePtl(input, { ...OPTIONS, signal: AbortSignal.abort() })).toBe("unknown");
   });
 
-  it("rejects text that is not LS4 input", () => {
-    expect(() => decidePtl("not ((always h00000) ->", OPTIONS)).toThrow(TlaSyntaxError);
+  it("reaches no verdict on text that ptl_to_trp does not parse", () => {
+    expect(decidePtl("not ((always h00000) ->", OPTIONS)).toBe("unknown");
+  });
+
+  it("reads ptl_to_trp's precedence, where | binds looser than ->", () => {
+    expect(decidePtl("a & ~c & (a | b -> c)", OPTIONS)).toBe("sat");
+    expect(decidePtl("~a & ~c & (a -> b -> c)", OPTIONS)).toBe("unsat");
+  });
+
+  it("needs the right side of until eventually, but not of unless", () => {
+    expect(decidePtl("(p until q) & always ~q", OPTIONS)).toBe("unsat");
+    expect(decidePtl("(p unless q) & always ~q", OPTIONS)).toBe("sat");
+  });
+
+  it("reads False as falsity, though ptl_to_trp prints it as an atom", () => {
+    expect(decidePtl("sometime False", OPTIONS)).toBe("unsat");
   });
 });
