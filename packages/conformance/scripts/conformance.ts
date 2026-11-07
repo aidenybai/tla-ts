@@ -1,6 +1,6 @@
 // Runs the suite against a host and compares each result with the oracle's recording.
 // Usage: pnpm conformance [--host tla-ts|tlc|tlapm|"<command>"] [--shard <i>/<n>]
-// [--update-baseline] [--verbose] [path filter]...
+// [--time-limit <seconds>] [--memory-limit <MB>] [--update-baseline] [--verbose] [path filter]...
 // The tlc and tlapm hosts are the oracles, and each runs only its own suite.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -24,6 +24,8 @@ type Verdict =
   | "text-mismatch"
   | "message-mismatch"
   | "exit-mismatch"
+  | "time-limit"
+  | "memory-limit"
   | "crash"
   | "unrecorded";
 
@@ -50,6 +52,12 @@ const hasFlag = (name: string) => {
 
 const hostName = getOption("--host") ?? "tla-ts";
 const shard = getOption("--shard");
+const timeLimit = getOption("--time-limit");
+const memoryLimit = getOption("--memory-limit");
+const limits = {
+  ...(timeLimit ? { milliseconds: Number(timeLimit) * 1000 } : {}),
+  ...(memoryLimit ? { memoryBytes: Number(memoryLimit) * 1024 * 1024 } : {}),
+};
 const isUpdatingBaseline = hasFlag("--update-baseline");
 const isVerbose = hasFlag("--verbose");
 // A host given as a command has no baseline, and its results go in one file.
@@ -72,6 +80,7 @@ const getVerdict = (
   actual: HostResult,
 ): Verdict => {
   if (!expected) return "unrecorded";
+  if (actual.exceeded) return `${actual.exceeded}-limit`;
   if (actual.exit === CRASH_EXIT) return "crash";
   if (actual.exit !== expected.exit) return "exit-mismatch";
   const expectedTranscript = expected.transcript ?? "";
@@ -89,7 +98,7 @@ const results: ResultEntry[] = [];
 
 await runPool(tests, WORKERS, async (test) => {
   for (const context of getContexts(test)) {
-    const actual = await runTest(host, test, context);
+    const actual = await runTest(host, test, context, limits);
     const expected = getRecording(test, context.name);
     results.push({
       id: context.name === "model" ? test.id : `${test.id}#${context.name}`,

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -103,6 +103,13 @@ export const getSuiteCommand = (host: Host, test: SuiteTest) =>
 export interface HostResult {
   exit: number;
   transcript: string;
+  // The limit the runner killed the host for.
+  exceeded?: "time" | "memory";
+}
+
+export interface Limits {
+  milliseconds?: number;
+  memoryBytes?: number;
 }
 
 const copyIncludes = (test: SuiteTest, directory: string) =>
@@ -115,39 +122,69 @@ const copyIncludes = (test: SuiteTest, directory: string) =>
 interface Run {
   command: string[];
   directory: string;
-  limitMilliseconds?: number;
+  limits: Limits;
 }
 
-// The process's exit status and everything it printed, stdout first.
+// kill fails when the group has already exited, which is the usual case after a run.
+const killGroup = (groupId: number) => spawnSync("kill", ["-9", `-${groupId}`]);
+
+// The resident memory of every process in a group.
+const getGroupMemoryBytes = (groupId: number) =>
+  spawnSync("ps", ["-Ao", "pgid=,rss="], { encoding: "utf8" })
+    .stdout.split("\n")
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter((fields) => fields[0] === groupId)
+    .reduce((total, fields) => total + fields[1] * 1024, 0);
+
+// The process's exit status and everything it printed, stdout first. The host runs in its own
+// process group, so a limit kills the backends it started too, such as Isabelle under tlapm.
 const spawnRun = (run: Run) =>
-  new Promise<{ exit: number; stdout: string; stderr: string }>((resolve) => {
-    const child = spawn(run.command[0], run.command.slice(1), {
-      cwd: run.directory,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const limit = run.limitMilliseconds
-      ? setTimeout(() => child.kill("SIGKILL"), run.limitMilliseconds)
-      : undefined;
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("close", (exitCode, signal) => {
-      clearTimeout(limit);
-      resolve({
-        exit: exitCode ?? (signal ? -1 : 0),
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
+  new Promise<{ exit: number; stdout: string; stderr: string; exceeded?: "time" | "memory" }>(
+    (resolve) => {
+      const child = spawn(run.command[0], run.command.slice(1), {
+        cwd: run.directory,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
       });
-    });
-  });
+      const groupId = child.pid ?? 0;
+      const state: { exceeded?: "time" | "memory" } = {};
+      const stop = (reason: "time" | "memory") => {
+        state.exceeded ??= reason;
+        killGroup(groupId);
+      };
+      const timer = run.limits.milliseconds
+        ? setTimeout(() => stop("time"), run.limits.milliseconds)
+        : undefined;
+      const memoryBytes = run.limits.memoryBytes;
+      const poll = memoryBytes
+        ? setInterval(() => {
+            if (getGroupMemoryBytes(groupId) > memoryBytes) stop("memory");
+          }, 1000)
+        : undefined;
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("exit", () => killGroup(groupId));
+      child.on("close", (exitCode, signal) => {
+        clearTimeout(timer);
+        clearInterval(poll);
+        resolve({
+          exit: exitCode ?? (signal ? -1 : 0),
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+          ...(state.exceeded ? { exceeded: state.exceeded } : {}),
+        });
+      });
+    },
+  );
 
 const runTlc = async (
   command: string[],
   test: SuiteTest,
   context: TestContext,
   directory: string,
-  limitMilliseconds?: number,
+  limits: Limits,
 ) => {
   // TLCExt!AssertError compares against the message that -tool wraps, so a test that uses it must
   // run without -tool, and only its exit status can be compared.
@@ -167,10 +204,11 @@ const runTlc = async (
       test.fileName,
     ],
     directory,
-    limitMilliseconds,
+    limits,
   });
   return {
     exit: result.exit,
+    exceeded: result.exceeded,
     transcript: isExitOnly
       ? ""
       : normalizeTranscript(result.stdout, {
@@ -181,7 +219,7 @@ const runTlc = async (
 };
 
 // tlapm writes the toolbox protocol to stderr and its log to both streams.
-const runTlapm = async (command: string[], test: SuiteTest, directory: string) => {
+const runTlapm = async (command: string[], test: SuiteTest, directory: string, limits: Limits) => {
   const cacheDirectory = join(directory, ".tlacache");
   const mode = test.metadata.mode ?? "proof";
   writeFileSync(join(directory, test.fileName), test.source);
@@ -193,6 +231,7 @@ const runTlapm = async (command: string[], test: SuiteTest, directory: string) =
       test.fileName,
     ],
     directory,
+    limits,
   });
   const transcript = normalizeTlapmTranscript(`${result.stdout}\n${result.stderr}`, directory);
   const encodings =
@@ -201,11 +240,17 @@ const runTlapm = async (command: string[], test: SuiteTest, directory: string) =
       : "";
   return {
     exit: result.exit,
+    exceeded: result.exceeded,
     transcript: encodings ? `${transcript}\n\n${encodings}` : transcript,
   };
 };
 
-const runBackend = async (command: string[], test: SuiteTest, directory: string) => {
+const runBackend = async (
+  command: string[],
+  test: SuiteTest,
+  directory: string,
+  limits: Limits,
+) => {
   const backend = getBackend(test.path);
   writeFileSync(join(directory, test.fileName), getBackendInput(test));
   const isOracle = command === HOSTS.tlapm.backend;
@@ -214,21 +259,24 @@ const runBackend = async (command: string[], test: SuiteTest, directory: string)
       ? getBackendOracleCommand(backend, join(directory, test.fileName))
       : [...command, backend, test.fileName],
     directory,
+    limits,
   });
   return {
-    exit: 0,
+    exit: result.exceeded ? -1 : 0,
+    exceeded: result.exceeded,
     transcript: isOracle
       ? getBackendVerdict(backend, `${result.stdout}${result.stderr}`, result.exit)
       : result.stdout.trimEnd(),
   };
 };
 
-// Only an importer sets a limit, to leave out models too large for the suite.
+// An importer sets limits to leave out tests too large for the suite, and a run sets them to protect
+// the machine from a host that doesn't stop.
 export const runTest = async (
   host: Host,
   test: SuiteTest,
   context: TestContext,
-  limitMilliseconds?: number,
+  limits: Limits = {},
 ): Promise<HostResult> => {
   const command = getSuiteCommand(host, test);
   if (!command) throw new Error(`The host has no command for ${test.id}`);
@@ -236,10 +284,10 @@ export const runTest = async (
   copyIncludes(test, directory);
   const result =
     test.suite === "tlc"
-      ? await runTlc(command, test, context, directory, limitMilliseconds)
+      ? await runTlc(command, test, context, directory, limits)
       : getBackend(test.path)
-        ? await runBackend(command, test, directory)
-        : await runTlapm(command, test, directory);
+        ? await runBackend(command, test, directory, limits)
+        : await runTlapm(command, test, directory, limits);
   rmSync(directory, { recursive: true, force: true });
   return result;
 };

@@ -47,6 +47,8 @@ A command host runs every test the filters select. It gets TLC's flags for a TLC
 
 For TLC, the runner adds `-tool -workers 1 -fp 0 -seed 4 -lncheck final -noGenerateSpecTE`, so a run is deterministic. For tlapm, it adds `--strict --toolbox 0 0 --threads 1` and a fresh `--cache-dir`. Set `CONFORMANCE_WORKERS` to change how many tests run at once. The default is at most 4.
 
+`--time-limit <seconds>` and `--memory-limit <MB>` stop a host that runs too long or uses too much memory. The memory is the resident memory of the host and every process it starts. The runner kills them all, and the test gets the verdict `time-limit` or `memory-limit`.
+
 ## Read a test
 
 A test is one file with metadata at the top and its oracle's recording at the end. A `.tla` test keeps both outside the module, where SANY and tlapm ignore them. The runner removes the recording before it gives the file to a host.
@@ -164,6 +166,8 @@ The runner compares a host's output with the recording after it removes what dif
 | `text-mismatch`    | The messages match, but some text differs.        |
 | `message-mismatch` | The exit status matches, but the messages differ. |
 | `exit-mismatch`    | The exit status differs.                          |
+| `time-limit`       | The host ran past `--time-limit`.                 |
+| `memory-limit`     | The host used more than `--memory-limit`.         |
 | `crash`            | A signal killed the host.                         |
 | `unrecorded`       | The test has no recording yet.                    |
 
