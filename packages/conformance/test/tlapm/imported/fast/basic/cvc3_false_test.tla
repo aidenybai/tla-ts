@@ -51,7 +51,6 @@ all:
     @type: obligationsnumber
     @count: 2
 
-    sh: line 0: type: cvc4: not found
     Executable "cvc4" not found in this PATH:
     <PATH>
     File "./cvc3_false_test.tla", line 13, characters 20-21:

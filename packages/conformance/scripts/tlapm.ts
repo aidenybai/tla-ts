@@ -137,6 +137,10 @@ const BACKTRACE_LINE =
 const ZENON_COMMAND = /(\(\* BEGIN ZENON INPUT\n);; .*\n/g;
 // A backend that isn't installed is reported with the whole PATH (src/params.ml#get_exec).
 const MISSING_EXECUTABLE = /(not found in this PATH:\n).*\n/g;
+// tlapm looks for a backend with `type <name>` in sh (src/params.ml#get_exec). bash, macOS's sh,
+// reports the failure on stderr, and dash, Ubuntu's, on stdout, which tlapm discards. The line
+// after it reports the same failure.
+const SHELL_NOT_FOUND = /^sh: .*type: \S+: not found\n/gm;
 const CONFIG_DUMP = /^version == ".*"\n((?!@!!).*\S.*\n)*/gm;
 
 interface ToolboxMessage {
@@ -173,6 +177,7 @@ export const normalizeTlapmTranscript = (output: string, directory: string) => {
     .replaceAll(directory, "")
     .replace(TEMPORARY_NAME, "tlapm_<id>")
     .replace(TIME_USED, "")
+    .replace(SHELL_NOT_FOUND, "")
     .replace(BACKTRACE_LINE, "")
     .replace(CONFIG_DUMP, "")
     .replace(MISSING_EXECUTABLE, "$1<PATH>\n");
