@@ -82,6 +82,7 @@ export interface ProofAttempt {
   reason?: string;
   proof?: string;
   note?: string;
+  errorOutput?: string;
   timeUsedMs?: number;
 }
 
@@ -473,6 +474,7 @@ const proveWithBackends = async (
               reason: isTimedOut ? "timeout" : "false",
               ...(!isTimedOut && { note: getNote(method, decision) }),
             }),
+        ...(decision.errorOutput !== undefined && { errorOutput: decision.errorOutput }),
         timeUsedMs: decision.timeUsedMs,
       });
       if (isProved) return getProvedReport(method.prover);

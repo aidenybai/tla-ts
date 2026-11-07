@@ -225,6 +225,10 @@ const proveModule = async (
         solveWith(solver, `${directory}/${file}`, text, timeLimitMs, settings.isKeepingFiles),
     }),
     onReport: (report, obligation) => {
+      report.attempts.forEach((attempt) => {
+        if (attempt.errorOutput !== undefined && !attempt.isReused)
+          process.stderr.write(attempt.errorOutput);
+      });
       if (!settings.isToolbox) return;
       if (report.obligation.status === "trivial")
         return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
