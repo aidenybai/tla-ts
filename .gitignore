@@ -4,6 +4,8 @@ node_modules
 dist
 **/*.tgz
 coverage
+# A directory of the conformance suite's tests, not a coverage report.
+!packages/conformance/test/tlc/cli/coverage/
 *.tsbuildinfo
 
 # copied into the package by prepack
