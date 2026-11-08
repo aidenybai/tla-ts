@@ -225,22 +225,41 @@ const isPlainMethod = (node: ts.Node): node is ts.MethodDeclaration =>
   !ts.isPrivateIdentifier(node.name) &&
   !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
 
+const isLiteralKey = (node: ts.Node) =>
+  ts.isStringLiteral(node) || ts.isNumericLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+
 export const isPlainAccessor = (
   node: ts.Node,
 ): node is ts.GetAccessorDeclaration | ts.SetAccessorDeclaration =>
   (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
   node.body !== undefined &&
-  (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name));
+  (ts.isIdentifier(node.name) ||
+    isLiteralKey(node.name) ||
+    (ts.isComputedPropertyName(node.name) && isLiteralKey(node.name.expression)));
+
+// The key that obj.name, obj["name"], or obj[0] reads, as a property key.
+export const getAccessKey = (node: ts.Expression) => {
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (!ts.isElementAccessExpression(node)) return undefined;
+  const key = node.argumentExpression;
+  if (ts.isNumericLiteral(key)) return String(Number(key.text));
+  return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? key.text : undefined;
+};
 
 // The accessor of a heap class, or of an object literal that a script makes once, that a property
 // access names, which the access checks the object still holds.
 const getObjectAccessor = <T extends ts.GetAccessorDeclaration | ts.SetAccessorDeclaration>(
-  node: ts.PropertyAccessExpression,
+  node: ts.Expression,
   isKind: (declaration: ts.Declaration) => declaration is T,
   context: Context,
 ) => {
-  if (context.heap === undefined) return undefined;
-  const accessor = getSymbol(node.name, context.checker)?.declarations?.find(isKind);
+  if (context.heap === undefined || getAccessKey(node) === undefined) return undefined;
+  const name = ts.isPropertyAccessExpression(node)
+    ? node.name
+    : ts.isElementAccessExpression(node)
+      ? node.argumentExpression
+      : undefined;
+  const accessor = name && getSymbol(name, context.checker)?.declarations?.find(isKind);
   const parent = accessor?.parent;
   return accessor !== undefined &&
     isPlainAccessor(accessor) &&
@@ -252,18 +271,13 @@ const getObjectAccessor = <T extends ts.GetAccessorDeclaration | ts.SetAccessorD
     : undefined;
 };
 
-export const getObjectGetter = (node: ts.PropertyAccessExpression, context: Context) =>
+export const getObjectGetter = (node: ts.Expression, context: Context) =>
   getObjectAccessor(node, ts.isGetAccessorDeclaration, context);
-
-export const getObjectSetter = (node: ts.PropertyAccessExpression, context: Context) =>
-  getObjectAccessor(node, ts.isSetAccessorDeclaration, context);
 
 // The setter that an assignment such as obj.name = value runs.
 export const getAssignedSetter = (node: ts.Node, context: Context) =>
-  ts.isBinaryExpression(node) &&
-  node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-  ts.isPropertyAccessExpression(node.left)
-    ? getObjectSetter(node.left, context)
+  ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ? getObjectAccessor(node.left, ts.isSetAccessorDeclaration, context)
     : undefined;
 
 const isStatic = (node: ts.Node) =>

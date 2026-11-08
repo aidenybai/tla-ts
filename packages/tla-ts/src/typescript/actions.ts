@@ -4,6 +4,7 @@ import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
   type Context,
   type FunctionNode,
+  getAccessKey,
   getAssignedSetter,
   getCalledMethod,
   getCallee,
@@ -674,10 +675,13 @@ const translateExpressionStatement = (
     return frame.yieldTo(path);
   }
   const setter = getAssignedSetter(expression, context);
+  const setterKey = ts.isBinaryExpression(expression) ? getAccessKey(expression.left) : undefined;
   if (
     setter !== undefined &&
+    setterKey !== undefined &&
     ts.isBinaryExpression(expression) &&
-    ts.isPropertyAccessExpression(expression.left)
+    (ts.isPropertyAccessExpression(expression.left) ||
+      ts.isElementAccessExpression(expression.left))
   ) {
     const target = expression.left;
     const object = translateObjectValue(target.expression, path.scope, context);
@@ -685,7 +689,7 @@ const translateExpressionStatement = (
       apply("=", [
         useJavaScript(
           "SetterOf",
-          [getHeap(path.scope, target, context), object, string(target.name.text)],
+          [getHeap(path.scope, target, context), object, string(setterKey)],
           context,
         ),
         getAccessorValue(setter, context),

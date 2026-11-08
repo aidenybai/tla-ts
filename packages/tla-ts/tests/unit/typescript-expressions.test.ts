@@ -469,6 +469,32 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ["['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]", "const box = {};"],
     ["[Reflect.has === Reflect.has, Reflect.has === Reflect.get]", "const box = {};"],
     [
+      "[C.prototype['0.1'], keys['16'], keys.s, first, stringSet]",
+      `let stringSet: unknown;
+      class C {
+        get .1() {
+          return "decimal";
+        }
+        set .1(param: unknown) {
+          stringSet = param;
+        }
+      }
+      var keys = {
+        get [0x10]() {
+          return "hex";
+        },
+        set [0x10](param: unknown) {
+          stringSet = param;
+        },
+        get "s"() {
+          return "string";
+        },
+      };
+      C.prototype["0.1"] = "first";
+      const first = stringSet;
+      keys["16"] = "second";`,
+    ],
+    [
       "[box.double, described.enumerable, described.configurable, typeof described.set, 'double' in box]",
       `const box = {
         count: 2,

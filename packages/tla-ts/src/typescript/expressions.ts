@@ -11,6 +11,7 @@ import {
 import type { Expression } from "../ast";
 import {
   type Context,
+  getAccessKey,
   getCalledMethod,
   getObjectGetter,
   getCallee,
@@ -755,6 +756,28 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);
 };
 
+// A read of a property that a getter of a heap class or object literal computes, which inlines
+// the getter while the object holds it.
+const translateGetterRead = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const getter = getObjectGetter(node, context);
+  const key = getAccessKey(node);
+  if (getter === undefined || key === undefined) return undefined;
+  const heap = getHeap(scope, node, context);
+  const value = translateObjectValue(node.expression, scope, context);
+  return ifExpression(
+    apply("=", [
+      useJavaScript("GetterOf", [heap, value, string(key)], context),
+      getMethodValue(getter, context),
+    ]),
+    translateGetterCall(node, { method: getter, receiver: node.expression, key }, scope, context),
+    useJavaScript("Get", [heap, value, string(key)], context),
+  );
+};
+
 const translatePropertyAccess = (
   node: ts.PropertyAccessExpression,
   scope: Scope,
@@ -769,19 +792,8 @@ const translatePropertyAccess = (
   if (intrinsic !== undefined) return intrinsic;
   const receiver = node.expression;
   const name = node.name.text;
-  const getter = getObjectGetter(node, context);
-  if (getter !== undefined) {
-    const heap = getHeap(scope, node, context);
-    const value = translateObjectValue(receiver, scope, context);
-    return ifExpression(
-      apply("=", [
-        useJavaScript("GetterOf", [heap, value, string(name)], context),
-        getMethodValue(getter, context),
-      ]),
-      translateGetterCall(node, { method: getter, receiver, key: name }, scope, context),
-      useJavaScript("Get", [heap, value, string(name)], context),
-    );
-  }
+  const getterRead = translateGetterRead(node, scope, context);
+  if (getterRead !== undefined) return getterRead;
   if (getKind(receiver, context) === "object" || isHeapBuiltIn(receiver, scope, context)) {
     return useJavaScript(
       "Get",
@@ -814,6 +826,8 @@ const translateElementAccess = (
   context: Context,
   isDefined: boolean,
 ) => {
+  const getterRead = translateGetterRead(node, scope, context);
+  if (getterRead !== undefined) return getterRead;
   const kind = getKind(node.expression, context);
   if (kind === "object" || isHeapBuiltIn(node.expression, scope, context)) {
     return useJavaScript(
