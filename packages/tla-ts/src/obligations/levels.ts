@@ -16,6 +16,7 @@ import {
   type Bound,
   type Builtin,
   type Expr,
+  type Hyp,
   type Level,
   type Scope,
 } from "./expression";
@@ -174,6 +175,14 @@ const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
   };
 };
 
+export const getContextLevel = (scope: Scope | undefined, hyps: Hyp[]) => {
+  const [inner, levels] = mapAccumulate(scope, hyps, (current, hyp) => {
+    const next = adjoin(current, hyp);
+    return [next, getHypLevel(next).level];
+  });
+  return { scope: inner, level: Math.max(0, ...levels) };
+};
+
 export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelInfo => {
   const recurse = (inner: Expr) => getLevelInfo(scope, inner);
   switch (expression.kind) {
@@ -243,11 +252,10 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
       return applyOperator(recurse(operator), expression.args.map(recurse));
     }
     case "Sequent": {
-      const [inner, levels] = mapAccumulate(scope, expression.sequent.context, (current, hyp) => {
-        const next = adjoin(current, hyp);
-        return [next, getHypLevel(next).level];
-      });
-      return getInfo(Math.max(0, ...levels, getLevelInfo(inner, expression.sequent.active).level));
+      const context = getContextLevel(scope, expression.sequent.context);
+      return getInfo(
+        Math.max(context.level, getLevelInfo(context.scope, expression.sequent.active).level),
+      );
     }
     case "With":
     case "Dot":

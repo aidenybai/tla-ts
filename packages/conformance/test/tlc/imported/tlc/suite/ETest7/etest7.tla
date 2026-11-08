@@ -42,10 +42,7 @@ Inv ==  x = 2
 all:
   exit: 151
   transcript: |-
-    2281:1 The configuration file substitutes constant C with non-constant Foo - specifically: @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
-    line 29, col 8 to line 29, col 8 of module etest7
-    2281:1 The configuration file substitutes constant C with non-constant Foo - specifically: @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
+    2281:1 The configuration file substitutes constant C with non-constant Foo - specifically:
+    2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 29, col 8 to line 29, col 8 of module etest7
 ---*)

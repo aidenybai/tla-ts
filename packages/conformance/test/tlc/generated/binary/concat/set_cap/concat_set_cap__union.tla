@@ -18,8 +18,7 @@ Test == PrintT(({1, 2} \cap {2, 3}) \o (UNION {{1}, {2}}))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    {2}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module concat_set_cap__union failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     {2}
 ---*)

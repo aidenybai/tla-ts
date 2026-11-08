@@ -18,10 +18,7 @@ Test == PrintT([[a |-> Head(Append(<<1, 2>>, {1, 2})), b |-> (LET b2673 == <<3, 
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1>>
-    , but instead it is
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01678 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1>>
     , but instead it is

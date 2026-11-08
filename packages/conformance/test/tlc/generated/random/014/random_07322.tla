@@ -18,8 +18,7 @@ Test == PrintT(Append(((-(2147483647 \div 1)) \o SortSeq(Append(<<>>, -1), LAMBD
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    -2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07322 failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     -2147483647
 ---*)

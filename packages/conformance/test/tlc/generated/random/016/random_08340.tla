@@ -22,8 +22,7 @@ all:
     line 14, col 20 to line 14, col 25 of module random_08340
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 18 to line 14, col 54 of module random_08340
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    {}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08340 failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     {}
 ---*)

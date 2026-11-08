@@ -30,10 +30,7 @@ all:
     x = 0
     2217:4 2: <Next line 18, col 9 to line 18, col 24 of module output_under_a_file>
     x = 1
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static final tlc2.value.IValue tlc2.module._TLCTrace.ioSerialize(tlc2.value.IValue,tlc2.value.impl.StringValue) throws java.io.IOException,
-    but it produced the following error:
-    output_under_a_file.tla/te.bin (Not a directory)
+    2405:1 Evaluating postcondition _TLCTraceSilent at line 28, col 5 to line 28, col 21 of module _TLCTrace failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static final tlc2.value.IValue tlc2.module._TLCTrace.ioSerialize(tlc2.value.IValue,tlc2.value.impl.StringValue) throws java.io.IOException,
     but it produced the following error:

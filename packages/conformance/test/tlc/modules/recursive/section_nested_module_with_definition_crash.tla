@@ -17,8 +17,6 @@ all:
   exit: 150
   transcript: |-
     | util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.
-    2171:1 Parsing or semantic analysis failed.@!@!@STARTMSG 2171:0 @!@!@
-    Parsing or semantic analysis failed.util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.
-    2171:1 Parsing or semantic analysis failed.@!@!@STARTMSG 2171:0 @!@!@
-    Parsing or semantic analysis failed.util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.
+    2171:1 Parsing or semantic analysis failed.
+    2171:0 Parsing or semantic analysis failed.util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.
 ---*)

@@ -437,7 +437,6 @@ export const expectBoolean = (value: Value, description: string) => {
   return value;
 };
 
-// Tool.eval names the whole expression of the boolean operators =>, ~, and <=>.
 export const expectImplication = (value: Value, expression: Expression, side: "P" | "Q") => {
   if (typeof value !== "boolean") {
     throw new TlaEvaluationError(
@@ -465,7 +464,6 @@ export const isEquivalent = (left: Value, right: Value, expression: Expression) 
   return left === right;
 };
 
-// Tool.eval names the whole quantifier or CHOOSE whose body isn't a boolean.
 export const expectBooleanBody = (value: Value, expression: Expression) => {
   if (typeof value !== "boolean") {
     throw new TlaEvaluationError(
@@ -1730,19 +1728,14 @@ const compileSetComprehension = (
       predicate: formatRange(range),
     };
     const predicateRange = describeRange(expression.predicate);
-    const createTest = (evaluator: Evaluator, context: Context) => (element: Value) => {
-      const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
-      if (typeof value !== "boolean") {
-        throw new TlaEvaluationError(
-          `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateRange}`,
-        );
-      }
-      return value;
-    };
-    // SetPredValue checks the element of a lazy filter against a tuple of names, and words the
-    // error of a predicate that isn't a boolean apart for membership and enumeration.
-    const createLazyTest =
-      (evaluator: Evaluator, context: Context) => (element: Value, isMember: boolean) => {
+    const createFiltered = (
+      base: Value,
+      context: Context,
+      evaluator: Evaluator,
+    ): RebindableFilteredSet => ({
+      kind: "FilteredSet",
+      base,
+      test: (element, isMember) => {
         if (
           pattern.kind === "Tuple" &&
           getSequenceElements(element)?.length !== pattern.names.length
@@ -1758,15 +1751,7 @@ const compileSetComprehension = (
           );
         }
         return value;
-      };
-    const createFiltered = (
-      base: Value,
-      context: Context,
-      evaluator: Evaluator,
-    ): RebindableFilteredSet => ({
-      kind: "FilteredSet",
-      base,
-      test: createLazyTest(evaluator, context),
+      },
       source,
       rebind: (tracing) =>
         createFiltered(
@@ -1779,7 +1764,17 @@ const compileSetComprehension = (
       const base = set(context);
       // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
       if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
-      return createSortedSet(toFiniteSet(base).elements.filter(createTest(predicate, context)));
+      return createSortedSet(
+        toFiniteSet(base).elements.filter((element) => {
+          const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
+          if (typeof value !== "boolean") {
+            throw new TlaEvaluationError(
+              `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateRange}`,
+            );
+          }
+          return value;
+        }),
+      );
     };
   }
   if (expression.kind === "SetMap") {

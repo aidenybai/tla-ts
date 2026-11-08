@@ -294,8 +294,7 @@ const getCodedMessagePatterns = () =>
   })));
 
 // The overflows of SetOfFcnsValue and SetOfTuplesValue, which TLC raises with a plain message that
-// reads like the coded overflow of SetOfRcdsValue and SubsetValue, and the membership of
-// SetPredValue in a set of tuples, which reads like the coded membership of a standard module.
+// reads like the coded overflow of SetOfRcdsValue and SubsetValue, and SetPredValue's tuple membership.
 const UNCODED_MESSAGE_PATTERN =
   /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+ : ))|\nis an element of a set of \d+-tuples\.$/;
 

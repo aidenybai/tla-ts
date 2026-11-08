@@ -18,6 +18,6 @@ Test == PrintT(SubSeq((SortSeq([<<3, 1, 2>> EXCEPT ![1] = 2], LAMBDA p, q : p < 
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02731 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

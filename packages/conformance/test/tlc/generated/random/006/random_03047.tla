@@ -18,8 +18,7 @@ Test == PrintT(<<(((3 % 7) - Len(2147483647)) - ((2147483647 = -1))[(-1 \div 214
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03047 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     2147483647
 ---*)

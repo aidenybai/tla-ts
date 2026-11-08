@@ -10,6 +10,7 @@ import {
   getFact,
   isBuiltinApply,
   mapAccumulate,
+  type Defn,
   type Expr,
   type Hyp,
   type Locus,
@@ -48,7 +49,7 @@ const getAssumedFacts = (offset: number, sequent: Sequent) =>
       : [],
   );
 
-const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
+export const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
   if (!step.step) throw new TlapmBugError();
   return {
     kind: "Defn",
@@ -59,6 +60,15 @@ const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
     location: step.location,
   };
 };
+
+export const getDefineHyp = (definition: Defn): Hyp => ({
+  kind: "Defn",
+  definition,
+  whereDefined: "User",
+  visibility: "Visible",
+  isLocal: true,
+  location: definition.location,
+});
 
 // The proof of an assertion leaves the always scope when the assertion assumes a fact that holds
 // only now.
@@ -112,7 +122,7 @@ const getFactTime = (context: Hyp[], fact: Expr, time: Time): Time => {
     : time;
 };
 
-const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
+export const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
   if (def.kind !== "Dx") throw new TlaProofError(`Unknown definition ${def.name}`);
   const index = context.length - def.index;
   const hyp = context[index];
@@ -127,7 +137,7 @@ const isDomainMatch = (fact: Expr, domain: Expr) =>
   fact.args[0].index === 0 &&
   isEqualExpr(domain, fact.args[1]);
 
-const setExpression = (
+export const setExpression = (
   onWarning: Warn,
   visibility: Visibility,
   fact: Expr,
@@ -165,9 +175,15 @@ export interface LineRange {
 
 const obligate = (
   sequent: Sequent,
-  from: { location?: Locus; method?: OldMethod },
+  from: { location?: Locus; method?: OldMethod; isEnabledAxiomsSound?: boolean },
   kind: ObligationKind,
-): Obligation => ({ sequent, location: from.location, kind, method: from.method });
+): Obligation => ({
+  sequent,
+  location: from.location,
+  kind,
+  method: from.method,
+  isEnabledAxiomsSound: from.isEnabledAxiomsSound,
+});
 
 interface ProofSummary {
   total: number;
@@ -305,17 +321,7 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
       case "Define":
         return [
           {
-            context: [
-              ...sequent.context,
-              ...step.definitions.map((definition): Hyp => ({
-                kind: "Defn",
-                definition,
-                whereDefined: "User",
-                visibility: "Visible",
-                isLocal: true,
-                location: definition.location,
-              })),
-            ],
+            context: [...sequent.context, ...step.definitions.map(getDefineHyp)],
             active: shiftExpr(step.definitions.length, sequent.active),
           },
           step,

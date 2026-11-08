@@ -18,8 +18,7 @@ Test == PrintT((([SortSeq([a |-> 1], LAMBDA p, q : p < q) EXCEPT ![1] = (CHOOSE 
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06470 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     [a |-> 1]
 ---*)

@@ -15,8 +15,7 @@ ASSUME A < 1
 all:
   exit: 10
   transcript: |-
-    2266:0 The first argument of < should be an integer, but instead it is:
-    m
+    2105:1 Evaluating assumption line 11, col 8 to line 11, col 12 of module less_than_is_an_error failed.
     2266:0 The first argument of < should be an integer, but instead it is:
     m
 ---*)

@@ -26,10 +26,8 @@ all:
   exit: 75
   transcript: |-
     2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
-    2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
-    line 19, col 9 to line 19, col 17 of module config_operator_temporal_in_invariant
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
     line 19, col 9 to line 19, col 17 of module config_operator_temporal_in_invariant
     2103:1 The error occurred when TLC was evaluating the nested

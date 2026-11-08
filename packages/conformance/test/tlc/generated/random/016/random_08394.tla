@@ -18,6 +18,6 @@ Test == PrintT([b12990 \in (LET b12991 == CASE TRUE -> 3 [] OTHER -> <<3, 1, 2>>
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08394 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

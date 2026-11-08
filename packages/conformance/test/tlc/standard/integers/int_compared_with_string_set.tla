@@ -16,15 +16,13 @@ Test == Int = STRING
 assume:
   exit: 10
   transcript: |-
-    2155:0 Attempted to compare Int with the value
-    STRING
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module int_compared_with_string_set failed.
     2155:0 Attempted to compare Int with the value
     STRING
 init:
   exit: 75
   transcript: |-
-    2155:0 Attempted to compare Int with the value
-    STRING
+    1000:1 
     2155:0 Attempted to compare Int with the value
     STRING
     2103:1 The error occurred when TLC was evaluating the nested
@@ -48,8 +46,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2155:0 Attempted to compare Int with the value
-    STRING
+    1000:1 
     2155:0 Attempted to compare Int with the value
     STRING
     2103:1 The error occurred when TLC was evaluating the nested
@@ -61,8 +58,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2155:0 Attempted to compare Int with the value
-    STRING
+    1000:1 
     2155:0 Attempted to compare Int with the value
     STRING
     2103:1 The error occurred when TLC was evaluating the nested

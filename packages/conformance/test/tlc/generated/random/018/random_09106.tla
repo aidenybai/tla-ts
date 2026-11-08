@@ -18,6 +18,6 @@ Test == PrintT([b14151 \in ({(2147483647 * 0) : b14152 \in {b14153 \in {x \in 1.
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09106 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

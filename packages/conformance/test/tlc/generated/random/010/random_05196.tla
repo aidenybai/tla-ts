@@ -18,10 +18,7 @@ Test == PrintT(Len(Tail(Append(SubSeq(<<1>>, -1, 3), (CHOOSE b8059 \in Nat : FAL
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1>>
-    , but instead it is
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05196 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1>>
     , but instead it is

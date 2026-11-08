@@ -18,8 +18,7 @@ Test == PrintT(Tail(SortSeq(Append(SubSeq(<<>>, [x \in Nat |-> x + 1], 214748364
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    [x \in Nat |-> <expression line 14, col 64 to line 14, col 68 of module random_00761>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00761 failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     [x \in Nat |-> <expression line 14, col 64 to line 14, col 68 of module random_00761>]
 ---*)

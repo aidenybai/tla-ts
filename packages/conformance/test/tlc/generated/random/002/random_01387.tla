@@ -18,6 +18,6 @@ Test == PrintT(([b2212 \in ((CHOOSE f \in [{} -> 2..1] : TRUE) \cup {b2213 \in {
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2147483647+1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01387 failed.
     2178:0 Overflow when computing 2147483647+1
 ---*)

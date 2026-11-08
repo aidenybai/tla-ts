@@ -27,13 +27,19 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     /\ x = 0
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2233:0 @!@!@\nThe alias C cannot be a constant.\n@!@!@ENDMSG 2233 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2233:0 \nThe alias C cannot be a constant.\n
     2217:4 2: <Next line 16, col 9 to line 16, col 18 of module error_constant>
     /\ x = 1
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2233:0 @!@!@\nThe alias C cannot be a constant.\n@!@!@ENDMSG 2233 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2233:0 \nThe alias C cannot be a constant.\n
     2217:4 3: <Next line 16, col 9 to line 16, col 18 of module error_constant>
     /\ x = 2
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2233:0 @!@!@\nThe alias C cannot be a constant.\n@!@!@ENDMSG 2233 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2233:0 \nThe alias C cannot be a constant.\n
     2199:0 3 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.
 ---*)

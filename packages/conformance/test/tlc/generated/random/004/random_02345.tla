@@ -18,8 +18,7 @@ Test == PrintT([[[a |-> Len(TRUE), b |-> (SUBSET {1} \subseteq SUBSET {1})] EXCE
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02345 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     TRUE
 ---*)

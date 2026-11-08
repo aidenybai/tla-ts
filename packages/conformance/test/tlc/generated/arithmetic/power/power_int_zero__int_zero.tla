@@ -18,6 +18,6 @@ Test == PrintT((0) ^ (0))
 all:
   exit: 10
   transcript: |-
-    2180:0 0^0 is undefined.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module power_int_zero__int_zero failed.
     2180:0 0^0 is undefined.
 ---*)

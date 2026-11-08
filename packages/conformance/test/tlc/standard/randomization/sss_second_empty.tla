@@ -18,15 +18,13 @@ Test == RandomSubsetSet(1, "", {1}) = {}
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of RandomSubsetSetProbability should be a string literal does not represent a parsable probability, but instead it is:
-    ""
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module sss_second_empty failed.
     2169:0 The second argument of RandomSubsetSetProbability should be a string literal does not represent a parsable probability, but instead it is:
     ""
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of RandomSubsetSetProbability should be a string literal does not represent a parsable probability, but instead it is:
-    ""
+    1000:1 
     2169:0 The second argument of RandomSubsetSetProbability should be a string literal does not represent a parsable probability, but instead it is:
     ""
     2103:1 The error occurred when TLC was evaluating the nested
@@ -52,8 +50,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of RandomSubsetSetProbability should be a string literal does not represent a parsable probability, but instead it is:
-    ""
+    1000:1 
     2169:0 The second argument of RandomSubsetSetProbability should be a string literal does not represent a parsable probability, but instead it is:
     ""
     2103:1 The error occurred when TLC was evaluating the nested
@@ -66,8 +63,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of RandomSubsetSetProbability should be a string literal does not represent a parsable probability, but instead it is:
-    ""
+    1000:1 
     2169:0 The second argument of RandomSubsetSetProbability should be a string literal does not represent a parsable probability, but instead it is:
     ""
     2103:1 The error occurred when TLC was evaluating the nested

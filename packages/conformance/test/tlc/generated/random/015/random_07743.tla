@@ -20,8 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 89 to line 14, col 94 of module random_07743
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    7
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07743 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     7
 ---*)

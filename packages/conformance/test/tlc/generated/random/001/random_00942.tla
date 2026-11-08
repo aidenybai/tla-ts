@@ -18,10 +18,7 @@ Test == PrintT(([UNION {{b1515 \in 1..3 : TRUE}, {b1516 \in 1..3 : FALSE}} EXCEP
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Evaluating predicate line 14, col 121 to line 14, col 126 of module random_00942 yielded non-Boolean value.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00942 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

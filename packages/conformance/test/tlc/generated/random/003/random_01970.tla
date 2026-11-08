@@ -18,10 +18,7 @@ Test == PrintT(((CHOOSE b3122 \in DOMAIN (7 :> -1) : (SubSeq(<<>>, -1, 2) = (CHO
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<>>
-    , but instead it is
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01970 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<>>
     , but instead it is

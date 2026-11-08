@@ -18,9 +18,7 @@ Test == PrintT([(SortSeq([<<3, 1, 2>> EXCEPT ![1] = 7], LAMBDA p, q : p < q) \o 
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    TRUE
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00236 failed.
     2158:0 Attempted to check if the value:
     TRUE
     is an element of Nat.

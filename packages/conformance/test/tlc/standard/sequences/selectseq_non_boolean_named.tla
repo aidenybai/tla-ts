@@ -17,15 +17,13 @@ Test == SelectSeq(<<1>>, NotBool) = <<>>
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
-    <Operator NotBool>
+    2105:1 Evaluating assumption line 14, col 8 to line 14, col 11 of module selectseq_non_boolean_named failed.
     2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
     <Operator NotBool>
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
-    <Operator NotBool>
+    1000:1 
     2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
     <Operator NotBool>
     2103:1 The error occurred when TLC was evaluating the nested
@@ -51,8 +49,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
-    <Operator NotBool>
+    1000:1 
     2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
     <Operator NotBool>
     2103:1 The error occurred when TLC was evaluating the nested
@@ -65,8 +62,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
-    <Operator NotBool>
+    1000:1 
     2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
     <Operator NotBool>
     2103:1 The error occurred when TLC was evaluating the nested

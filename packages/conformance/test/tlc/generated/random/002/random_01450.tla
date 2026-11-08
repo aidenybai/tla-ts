@@ -18,6 +18,6 @@ Test == PrintT(((((1 \div 0) .. CASE TRUE -> 3 [] OTHER -> 2147483647) \cap Sort
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01450 failed.
     2179:0 The second argument of \div is 0.
 ---*)

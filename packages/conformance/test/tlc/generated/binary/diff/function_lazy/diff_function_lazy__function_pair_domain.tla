@@ -18,12 +18,7 @@ Test == PrintT(([x \in Nat |-> x]) \ ([x \in {1}, y \in {2} |-> x + y]))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to enumerate S \ T when S:
-    [x \in Nat |-> <expression line 14, col 32 to line 14, col 32 of module diff_function_lazy__function_pair_domain>]
-    is not enumerable.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module diff_function_lazy__function_pair_domain failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

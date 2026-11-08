@@ -18,8 +18,7 @@ Test == PrintT(SelectSeq(((<<2, 7>> \o {b13722 \in 2..1 : TRUE}) \o Tail(SortSeq
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
-    {}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08857 failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
     {}
 ---*)

@@ -18,6 +18,6 @@ Test == PrintT({Len(SubSeq(Tail(<<>>), LET b5252 == -1 IN b5252, CASE TRUE -> 3 
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03303 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

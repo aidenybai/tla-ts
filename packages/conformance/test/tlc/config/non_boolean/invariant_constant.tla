@@ -19,9 +19,8 @@ I == 3
 all:
   exit: 75
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. 3
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2215:0 TLC expected a boolean value, but did not find one. 3
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

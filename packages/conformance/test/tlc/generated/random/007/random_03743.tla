@@ -18,6 +18,6 @@ Test == PrintT({IF (([a |-> 1, b |-> TRUE] = [a |-> 1]) \/ (\A b5905 \in 2..1 : 
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03743 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

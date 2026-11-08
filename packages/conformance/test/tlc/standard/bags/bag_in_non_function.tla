@@ -17,10 +17,7 @@ Test == BagIn(1, 3)
 assume:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Cannot read field "values" because "fcn" is null
+    2105:1 Evaluating assumption line 14, col 8 to line 14, col 11 of module bag_in_non_function failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
@@ -28,10 +25,7 @@ assume:
 init:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Cannot read field "values" because "fcn" is null
+    1000:1 
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
@@ -59,10 +53,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Cannot read field "values" because "fcn" is null
+    1000:1 
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
@@ -76,10 +67,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Cannot read field "values" because "fcn" is null
+    1000:1 
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

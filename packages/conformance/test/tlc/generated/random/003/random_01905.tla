@@ -18,8 +18,7 @@ Test == PrintT(((CHOOSE r \in [a : {1, 2} \cap {2}] : TRUE) = [(Append(<<3, 1, 2
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of @@ should be a function, but instead it is:
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01905 failed.
     2169:0 The first argument of @@ should be a function, but instead it is:
     Nat
 ---*)

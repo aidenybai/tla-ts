@@ -18,8 +18,7 @@ Test == PrintT([SelectSeq(SortSeq((<<>> \o <<1>>), LAMBDA p, q : p < q), LAMBDA 
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    {b6290 \in -1 : <expression line 14, col 134 to line 14, col 137 of module random_04000> }
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04000 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     {b6290 \in -1 : <expression line 14, col 134 to line 14, col 137 of module random_04000> }
 ---*)

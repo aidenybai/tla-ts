@@ -18,8 +18,7 @@ Test == PrintT(CASE SortSeq([SelectSeq(2, LAMBDA e : e > 0) EXCEPT ![1] = Head(<
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SelectSeq should be a sequence, but instead it is:
-    2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09373 failed.
     2169:0 The first argument of SelectSeq should be a sequence, but instead it is:
     2
 ---*)

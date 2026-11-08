@@ -44,15 +44,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2132:0 @!@!@
-    The first argument of Assert evaluated to FALSE; the second argument was:
-    "Test successfully completed."
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2132:0 @!@!@
-    The first argument of Assert evaluated to FALSE; the second argument was:
+    :
+    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     "Test successfully completed."
     2121:1 The behavior up to this point is:
     2217:4 1: <Init line 22, col 9 to line 23, col 64 of module etest8>

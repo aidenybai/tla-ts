@@ -18,6 +18,6 @@ Test == PrintT(((Head(SelectSeq(<<>>, LAMBDA e : e > 0))).a - (IF (2 \in 2..1) T
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08286 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

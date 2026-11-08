@@ -18,8 +18,7 @@ Test == PrintT(<<IF ({b9275 : b9275 \in {2, 1, 3}} \subseteq {2 : b9276 \in 1..3
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    [a |-> 3, b |-> FALSE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06020 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     [a |-> 3, b |-> FALSE]
 ---*)

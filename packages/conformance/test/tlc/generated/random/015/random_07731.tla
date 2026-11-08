@@ -18,8 +18,7 @@ Test == PrintT((Len(Append((CHOOSE f \in [{0} \cup {1} -> {1, 2}] : TRUE), IF TR
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    (0 :> 1 @@ 1 :> 1)
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07731 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     (0 :> 1 @@ 1 :> 1)
 ---*)

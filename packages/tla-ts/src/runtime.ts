@@ -12,12 +12,10 @@ export interface CheckerRuntime {
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
-  // TLC's Simulator answers TLCGet about the search in place of the model checker.
   getSimulationValue:
     | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
     | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
-  // TLCSet("pause", TRUE) waits for enter only in TLC's breadth-first ModelChecker.
   pause: (() => void) | undefined;
   // Prints a warning TLC raises while it evaluates, with its message code. TLC prints each
   // distinct warning once.

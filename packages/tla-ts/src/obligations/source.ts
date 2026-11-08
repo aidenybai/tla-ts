@@ -19,6 +19,7 @@ import { TlaProofError, TlaUnsupportedError } from "../errors";
 import {
   at,
   getFact,
+  mapChildren,
   type Bound,
   type Builtin,
   type Defn,
@@ -104,6 +105,7 @@ const mergeLoci = (left: Locus | undefined, right: Locus | undefined): Locus | u
 };
 
 const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
+const STEP_TUPLY_FAILURE = "use instead the class `P_visit.map_concrete`";
 
 const isDitto = (bounds: QuantifierExpression["bounds"], index: number) =>
   index > 0 && bounds[index - 1].set === bounds[index].set;
@@ -241,6 +243,13 @@ export const createSource = (
         domain: isDitto(bounds, index) ? { kind: "Ditto" } : { kind: "Domain", expression: domain },
       };
     });
+
+  // P_visit.map fails on the tuples a TAKE or PICK declares before the expression visitors do.
+  const convertStepBounds = (body: { names: string[]; bounds: QuantifierExpression["bounds"] }) => {
+    if (body.bounds.some((bound) => bound.pattern.kind === "Tuple"))
+      throw new TlaProofError("Unexpected tuple declaration", { failure: STEP_TUPLY_FAILURE });
+    return body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false);
+  };
 
   const expandTuples = (expanded: Expr, location: Locus) => {
     if (!isExpandingTuples)
@@ -602,16 +611,28 @@ export const createSource = (
           { location },
         );
       case "WeakFairness":
-      case "StrongFairness":
+      case "StrongFairness": {
+        // tlapm lexes WF_vars as WF_ and vars, both located at the whole word.
+        const isGlued = /\w/.test(lines[location.startLine - 1]?.[location.startColumn + 2] ?? "");
+        const moveGluedStart = (inner: Expr): Expr =>
+          isGlued &&
+          inner.location?.startLine === location.startLine &&
+          inner.location.startColumn === location.startColumn + 3
+            ? mapChildren(
+                { ...inner, location: { ...inner.location, startColumn: location.startColumn } },
+                moveGluedStart,
+              )
+            : inner;
         return at(
           {
             kind: "Fair",
             fairness: expression.kind === "WeakFairness" ? "Weak" : "Strong",
-            subscript: recurse(expression.subscript),
+            subscript: moveGluedStart(recurse(expression.subscript)),
             action: recurse(expression.action),
           },
           { location },
         );
+      }
       case "Label":
         return at(
           {
@@ -727,7 +748,7 @@ export const createSource = (
             { location },
           );
     const end = definition.location.range?.end;
-    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column });
+    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column }, file);
     return methods
       ? { kind: "Bpragma", name, body: operatorBody, methods, location }
       : { kind: "Operator", name, body: operatorBody, location };
@@ -924,19 +945,14 @@ export const createSource = (
           expression: convertExpression(body.expression, false),
         });
       case "Take":
-        return withStepMethod({
-          kind: "Take",
-          bounds:
-            body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false),
-        });
+        return withStepMethod({ kind: "Take", bounds: convertStepBounds(body) });
       case "Witness":
         return withStepMethod({
           kind: "Witness",
           expressions: body.expressions.map((expression) => convertExpression(expression, false)),
         });
       case "Pick": {
-        const bounds =
-          body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false);
+        const bounds = convertStepBounds(body);
         const expression = convertExpression(body.body, false);
         return withProof((proof) => ({ kind: "Pick", bounds, expression, proof }));
       }

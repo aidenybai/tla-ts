@@ -18,10 +18,7 @@ Test == PrintT(CASE (Append(SubSeq(<<3, 1, 2>>, -1, -1), Cardinality(1..3)) = (C
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<3, 1, 2>>
-    , but instead it is
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08234 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<3, 1, 2>>
     , but instead it is

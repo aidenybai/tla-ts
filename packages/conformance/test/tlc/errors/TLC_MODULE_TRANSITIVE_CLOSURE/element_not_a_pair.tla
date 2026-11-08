@@ -15,9 +15,7 @@ ASSUME Warshall({1}) = {}
 all:
   exit: 10
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    1
+    2105:1 Evaluating assumption line 11, col 8 to line 11, col 25 of module element_not_a_pair failed.
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     1

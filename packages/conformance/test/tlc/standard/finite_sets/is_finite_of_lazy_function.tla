@@ -16,12 +16,7 @@ Test == IsFiniteSet([x \in Nat |-> x])
 assume:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check if the function:
-    [x \in Nat |-> <expression line 12, col 36 to line 12, col 36 of module is_finite_of_lazy_function>]
-    is a finite set.
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module is_finite_of_lazy_function failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
     but it produced the following error:
@@ -31,12 +26,7 @@ assume:
 init:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check if the function:
-    [x \in Nat |-> <expression line 12, col 36 to line 12, col 36 of module is_finite_of_lazy_function>]
-    is a finite set.
+    1000:1 
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
     but it produced the following error:
@@ -55,19 +45,8 @@ next:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check if the function:
-    [x \in Nat |-> <expression line 12, col 36 to line 12, col 36 of module is_finite_of_lazy_function>]
-    is a finite set.
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
+    :
+    2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
     but it produced the following error:
     Attempted to check if the function:
@@ -84,14 +63,8 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check if the function:
-    [x \in Nat |-> <expression line 12, col 36 to line 12, col 36 of module is_finite_of_lazy_function>]
-    is a finite set.
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
     but it produced the following error:
@@ -107,14 +80,8 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check if the function:
-    [x \in Nat |-> <expression line 12, col 36 to line 12, col 36 of module is_finite_of_lazy_function>]
-    is a finite set.
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),
     but it produced the following error:

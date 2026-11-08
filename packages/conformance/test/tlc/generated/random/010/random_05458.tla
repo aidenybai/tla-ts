@@ -18,8 +18,7 @@ Test == PrintT(((Cardinality((<<5, 6>> @@ (1 :> 2))) .. (-(7 - 2))) \ Len(<<Len(
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    <<5, 6>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05458 failed.
     2181:0 Attempted to compute cardinality of the value
     <<5, 6>>
 ---*)

@@ -16,18 +16,14 @@ Test == SetToBag(Nat) = EmptyBag
 assume:
   exit: 10
   transcript: |-
-    2176:0 Applying BagToSet to the following value,
-    which is not a function with a finite domain:
-    Nat
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module set_to_bag_nat failed.
     2176:0 Applying BagToSet to the following value,
     which is not a function with a finite domain:
     Nat
 init:
   exit: 75
   transcript: |-
-    2176:0 Applying BagToSet to the following value,
-    which is not a function with a finite domain:
-    Nat
+    1000:1 
     2176:0 Applying BagToSet to the following value,
     which is not a function with a finite domain:
     Nat
@@ -55,9 +51,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2176:0 Applying BagToSet to the following value,
-    which is not a function with a finite domain:
-    Nat
+    1000:1 
     2176:0 Applying BagToSet to the following value,
     which is not a function with a finite domain:
     Nat
@@ -71,9 +65,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2176:0 Applying BagToSet to the following value,
-    which is not a function with a finite domain:
-    Nat
+    1000:1 
     2176:0 Applying BagToSet to the following value,
     which is not a function with a finite domain:
     Nat

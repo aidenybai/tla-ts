@@ -19,8 +19,10 @@ Next == UNCHANGED <<x, y>>
 all:
   exit: 75
   transcript: |-
-    1000:0 In evaluating TLCExt!Trace, the state is not completely specified yet (variables x, y undefined).
-    1000:0 In evaluating TLCExt!Trace, the state is not completely specified yet (variables x, y undefined).
+    1000:1 
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException,
+    but it produced the following error:
     1000:0 In evaluating TLCExt!Trace, the state is not completely specified yet (variables x, y undefined).
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

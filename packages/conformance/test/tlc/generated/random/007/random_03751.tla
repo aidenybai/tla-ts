@@ -18,6 +18,6 @@ Test == PrintT(SortSeq(SubSeq(<<(-7), (CHOOSE b5913 \in {1, 2} : [a |-> 1])>>, (
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 40 to line 14, col 74 of module random_03751
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03751 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 40 to line 14, col 74 of module random_03751
 ---*)

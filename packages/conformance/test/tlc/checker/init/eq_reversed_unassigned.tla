@@ -17,8 +17,7 @@ Init == 1 = x
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 13, col 13 to line 13, col 13 of module eq_reversed_unassigned
+    1000:1 
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 13, col 13 to line 13, col 13 of module eq_reversed_unassigned
     2103:1 The error occurred when TLC was evaluating the nested

@@ -16,15 +16,13 @@ Test == TLCGetAndSet("foo", +, 1, 0) = 0
 assume:
   exit: 10
   transcript: |-
-    2169:0 The first argument of TLCSet should be a nonnegative integer, but instead it is:
-    "foo"
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module get_and_set_unknown_key failed.
     2169:0 The first argument of TLCSet should be a nonnegative integer, but instead it is:
     "foo"
 init:
   exit: 75
   transcript: |-
-    2169:0 The first argument of TLCSet should be a nonnegative integer, but instead it is:
-    "foo"
+    1000:1 
     2169:0 The first argument of TLCSet should be a nonnegative integer, but instead it is:
     "foo"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -56,8 +54,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The first argument of TLCSet should be a nonnegative integer, but instead it is:
-    "foo"
+    1000:1 
     2169:0 The first argument of TLCSet should be a nonnegative integer, but instead it is:
     "foo"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -73,8 +70,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The first argument of TLCSet should be a nonnegative integer, but instead it is:
-    "foo"
+    1000:1 
     2169:0 The first argument of TLCSet should be a nonnegative integer, but instead it is:
     "foo"
     2103:1 The error occurred when TLC was evaluating the nested

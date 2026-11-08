@@ -18,6 +18,6 @@ Test == PrintT(LET b2669 == ((CASE TRUE -> 2 [] OTHER -> 1 - IF TRUE THEN 2 ELSE
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 185 to line 14, col 218 of module random_01674
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01674 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 185 to line 14, col 218 of module random_01674
 ---*)

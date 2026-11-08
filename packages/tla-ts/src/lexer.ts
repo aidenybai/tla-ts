@@ -451,13 +451,15 @@ export const skipWhile = (
 };
 
 // The length of a step number such as <1>a., <+>, or <2>*., which SANY reads as one token wherever
-// it appears.
-const matchStep = (source: string, index: number) => {
+// it appears. tlapm's lexer reads no name after <*> or <+>.
+const matchStep = (source: string, index: number, isTlapm: boolean) => {
   const isImplicit = source[index + 1] === "+" || source[index + 1] === "*";
   const levelEnd = isImplicit ? index + 2 : skipClass(source, index + 1, DIGIT);
   if (levelEnd === index + 1 || source[levelEnd] !== ">") return 0;
-  const nameEnd = skipClass(source, levelEnd + 1, IDENTIFIER);
-  const isDash = nameEnd === levelEnd + 1 && (source[nameEnd] === "*" || source[nameEnd] === "-");
+  const isNamed = !isImplicit || !isTlapm;
+  const nameEnd = isNamed ? skipClass(source, levelEnd + 1, IDENTIFIER) : levelEnd + 1;
+  const isDash =
+    isNamed && nameEnd === levelEnd + 1 && (source[nameEnd] === "*" || source[nameEnd] === "-");
   return (
     skipWhile(source, isDash ? nameEnd + 1 : nameEnd, (character) => character === ".") - index
   );
@@ -489,7 +491,7 @@ const matchBasedNumber = (source: string, index: number) => {
   return end === index + 2 ? 0 : end - index;
 };
 
-export const tokenize = (source: string): Token[] => {
+export const tokenize = (source: string, isTlapm = false): Token[] => {
   const headerMatch = MODULE_HEADER.exec(source);
   if (!headerMatch)
     throw new TlaSyntaxError("Expected a module header such as ---- MODULE Name ----");
@@ -663,7 +665,7 @@ export const tokenize = (source: string): Token[] => {
       continue;
     }
     if (code === CODE_LESS_THAN) {
-      const stepLength = matchStep(source, cursor.index);
+      const stepLength = matchStep(source, cursor.index, isTlapm);
       if (stepLength > 0) {
         pushToken("Step", source.slice(cursor.index, cursor.index + stepLength), stepLength);
         continue;

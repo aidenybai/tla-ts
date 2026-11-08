@@ -18,6 +18,6 @@ Test == PrintT(DOMAIN (LET b3616 == IF FALSE THEN -1 ELSE 2 IN CASE FALSE -> b36
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 107 to line 14, col 147 of module random_02291
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02291 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 107 to line 14, col 147 of module random_02291
 ---*)

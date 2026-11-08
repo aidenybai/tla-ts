@@ -18,6 +18,6 @@ Test == PrintT((-2147483647 - 1) - 1)
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing -2147483648-1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module minus_left_int_minimum failed.
     2178:0 Overflow when computing -2147483648-1
 ---*)

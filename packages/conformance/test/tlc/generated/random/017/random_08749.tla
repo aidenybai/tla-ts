@@ -18,8 +18,7 @@ Test == PrintT([[a |-> Len([a |-> 2147483647, b |-> FALSE]), b |-> ([2 EXCEPT !.
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    [a |-> 2147483647, b |-> FALSE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08749 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     [a |-> 2147483647, b |-> FALSE]
 ---*)

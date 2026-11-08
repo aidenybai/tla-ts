@@ -18,9 +18,7 @@ Test == PrintT(((-2147483647 - 1)) \in (STRING))
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    -2147483648
-    is an element of STRING.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module in_string_set__int_minimum failed.
     2158:0 Attempted to check if the value:
     -2147483648
     is an element of STRING.

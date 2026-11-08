@@ -16,15 +16,13 @@ Test == "" \o <<>> = ""
 assume:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a string:
-    <<>>
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module concat_empty_string_tuple failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a string:
     <<>>
 init:
   exit: 75
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a string:
-    <<>>
+    1000:1 
     2182:0 Evaluating an expression of the form t \o s when s is not a string:
     <<>>
     2103:1 The error occurred when TLC was evaluating the nested
@@ -50,8 +48,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a string:
-    <<>>
+    1000:1 
     2182:0 Evaluating an expression of the form t \o s when s is not a string:
     <<>>
     2103:1 The error occurred when TLC was evaluating the nested
@@ -64,8 +61,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a string:
-    <<>>
+    1000:1 
     2182:0 Evaluating an expression of the form t \o s when s is not a string:
     <<>>
     2103:1 The error occurred when TLC was evaluating the nested

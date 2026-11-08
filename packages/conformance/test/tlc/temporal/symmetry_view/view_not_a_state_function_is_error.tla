@@ -22,11 +22,9 @@ all:
   exit: 75
   transcript: |-
     2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 16, col 7 to line 16, col 7 of module view_not_a_state_function_is_error
-    | While working on the initial state:
-    | /\ h = 0
-    | /\ x = 0
+    2102:1 While working on the initial state:
+    /\ h = 0
+    /\ x = 0
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 16, col 7 to line 16, col 7 of module view_not_a_state_function_is_error
     2103:1 The error occurred when TLC was evaluating the nested

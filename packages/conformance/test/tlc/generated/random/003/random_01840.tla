@@ -18,6 +18,6 @@ Test == PrintT(DOMAIN Tail(<<(7 \div 0), LET b2911 == 2 IN 7>>))
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01840 failed.
     2179:0 The second argument of \div is 0.
 ---*)

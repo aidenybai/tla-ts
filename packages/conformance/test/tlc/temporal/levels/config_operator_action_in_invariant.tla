@@ -26,10 +26,8 @@ all:
   exit: 75
   transcript: |-
     2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 19, col 9 to line 19, col 9 of module config_operator_action_in_invariant
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 19, col 9 to line 19, col 9 of module config_operator_action_in_invariant
     2103:1 The error occurred when TLC was evaluating the nested

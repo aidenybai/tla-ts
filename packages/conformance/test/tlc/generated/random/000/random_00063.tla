@@ -18,8 +18,7 @@ Test == PrintT(([b90 \in ((2147483647 % -1) .. CASE FALSE -> 1 [] OTHER -> 7) |-
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00063 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     -1
 ---*)

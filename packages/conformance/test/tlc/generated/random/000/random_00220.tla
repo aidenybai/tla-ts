@@ -18,10 +18,7 @@ Test == PrintT(Tail((SubSeq(Append(<<>>, 2), Cardinality({1, 2}), Head(<<3, 1, 2
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<2>>
-    , but instead it is
-    2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00220 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<2>>
     , but instead it is

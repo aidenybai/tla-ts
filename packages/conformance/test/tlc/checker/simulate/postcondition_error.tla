@@ -26,7 +26,7 @@ all:
   transcript: |-
     2269:0 Computed 1 initial states...
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2179:0 The second argument of \div is 0.
+    2405:1 Evaluating postcondition Post at line 20, col 9 to line 20, col 20 of module postcondition_error failed.
     2179:0 The second argument of \div is 0.
     2209:0 Progress(1) at <date>: 6 states generated, -1 distinct states found, -1 states left on queue.
 ---*)

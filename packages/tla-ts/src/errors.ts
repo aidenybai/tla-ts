@@ -1,4 +1,5 @@
 import type { SourceRange } from "./ast";
+import type { Locus } from "./obligations/expression";
 import { EXIT_STATUS, getExitCode, setExitCode } from "./exit-codes";
 import type { PcalNode } from "./pcal/ast";
 import type { Value } from "./values";
@@ -29,6 +30,8 @@ export interface SyntaxFailure {
   line: number;
   column: number;
   isEnd: boolean;
+  // tlapm's proof parser fails over a range, up to stop, with its own exception.
+  proof?: { stop: { line: number; column: number }; exception: string };
 }
 
 // An error SANY reports at a location, such as "In module M" or a range in a module.
@@ -242,6 +245,18 @@ export class TlaProverError extends TlaError {
   }
 }
 
+// compute_meth rejects a method pragma, which tlapm reports where the pragma or the proof citing it
+// is, and then leaves the obligation unproved.
+export class TlaMethodError extends TlaProverError {
+  readonly locus: Locus | undefined;
+
+  constructor(message: string, locus: Locus | undefined) {
+    super(message);
+    this.name = "TlaMethodError";
+    this.locus = locus;
+  }
+}
+
 // Zenon gives up on a .znn file the way the OCaml Zenon raises an exception and prints no proof.
 export class TlaZenonError extends TlaError {
   constructor(message: string, cause?: unknown) {
@@ -319,13 +334,17 @@ export class PddMemoryOutError extends TlaError {
   }
 }
 
+interface SmtPosition {
+  line: number;
+  column: number;
+}
+
 // The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
-// Z3 reports it at the line and column of the token it was reading.
 export class SmtParseError extends TlaError {
   line: number;
   column: number;
 
-  constructor(message: string, position: { line: number; column: number }) {
+  constructor(message: string, position: SmtPosition) {
     super(message);
     this.name = "SmtParseError";
     this.line = position.line;

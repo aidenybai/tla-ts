@@ -19,7 +19,7 @@ Init == \E <<a, b>> \in {<<1, 2, 3>>} : x = a /\ y = b
 all:
   exit: 75
   transcript: |-
-    2170:0 Argument mismatch in operator application.%1
+    1000:1 
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

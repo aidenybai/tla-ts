@@ -21,10 +21,7 @@ all:
   exit: 75
   transcript: |-
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
-    but it produced the following error:
-    Cannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue
+    2113:1 Evaluating action property Prop failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
     but it produced the following error:

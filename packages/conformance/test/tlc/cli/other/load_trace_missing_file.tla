@@ -21,12 +21,8 @@ Next == x' = (x + 1) % 3
 all:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException,
-    but it produced the following error:
-    no_such_trace.json (No such file or directory)
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException,
     but it produced the following error:

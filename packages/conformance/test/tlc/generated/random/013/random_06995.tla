@@ -18,9 +18,7 @@ Test == PrintT(((DOMAIN [[x \in Nat |-> x + 1] EXCEPT ![{1}] = 3] \cup ({7, 7} \
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {1}
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06995 failed.
     2158:0 Attempted to check if the value:
     {1}
     is an element of Nat.

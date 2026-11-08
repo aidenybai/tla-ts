@@ -20,10 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 26 to line 14, col 55 of module random_06836
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Size of interval value exceeds the maximum representable size (32bits): -1..2147483647.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06836 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

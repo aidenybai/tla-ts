@@ -18,10 +18,7 @@ Test == PrintT([a |-> [b |-> <<1>>]] (-) SetToBag({1}))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.Bags.BagDiff(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    class tlc2.value.impl.RecordValue cannot be cast to class tlc2.value.impl.IntValue (tlc2.value.impl.RecordValue and tlc2.value.impl.IntValue are in unnamed module of loader 'app')
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module bag_minus_record_nested failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.Bags.BagDiff(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

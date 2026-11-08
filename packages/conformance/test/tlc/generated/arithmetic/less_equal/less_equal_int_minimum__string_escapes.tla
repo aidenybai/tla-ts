@@ -18,8 +18,7 @@ Test == PrintT(((-2147483647 - 1)) <= ("a\"b\\c\n"))
 all:
   exit: 10
   transcript: |-
-    2266:0 The second argument of <= should be an integer, but instead it is:
-    "a\"b\\c\n"
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module less_equal_int_minimum__string_escapes failed.
     2266:0 The second argument of <= should be an integer, but instead it is:
     "a\"b\\c\n"
 ---*)

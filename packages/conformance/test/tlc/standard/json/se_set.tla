@@ -16,15 +16,13 @@ Test == JsonSerialize("out.json", {1})
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of JsonSerialize should be a sequence or record, but instead it is:
-    {1}
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module se_set failed.
     2169:0 The second argument of JsonSerialize should be a sequence or record, but instead it is:
     {1}
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of JsonSerialize should be a sequence or record, but instead it is:
-    {1}
+    1000:1 
     2169:0 The second argument of JsonSerialize should be a sequence or record, but instead it is:
     {1}
     2103:1 The error occurred when TLC was evaluating the nested
@@ -48,8 +46,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of JsonSerialize should be a sequence or record, but instead it is:
-    {1}
+    1000:1 
     2169:0 The second argument of JsonSerialize should be a sequence or record, but instead it is:
     {1}
     2103:1 The error occurred when TLC was evaluating the nested
@@ -61,8 +58,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of JsonSerialize should be a sequence or record, but instead it is:
-    {1}
+    1000:1 
     2169:0 The second argument of JsonSerialize should be a sequence or record, but instead it is:
     {1}
     2103:1 The error occurred when TLC was evaluating the nested

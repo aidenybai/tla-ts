@@ -162,8 +162,11 @@ export const createTlcOperators = (
   runtime: CheckerRuntime,
 ): Builtin[] => [
   defineOperator("Print", 2, (args) => {
-    const texts = formatNormalizedCopies([getValue(args, 0, "Print"), getValue(args, 1, "Print")]);
-    print(texts.map(prettyPrint).join("  "));
+    print(
+      formatNormalizedCopies([getValue(args, 0, "Print"), getValue(args, 1, "Print")])
+        .map(prettyPrint)
+        .join("  "),
+    );
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
@@ -183,8 +186,7 @@ export const createTlcOperators = (
   defineOperator(":>", 2, (args) =>
     createFunction([[getValue(args, 0, ":>"), getValue(args, 1, ":>")]]),
   ),
-  // TLC's CombineFcn converts both arguments before it checks either, and keeps a key of the
-  // second function unless it equals a key of the first.
+  // CombineFcn converts both arguments before it checks either.
   defineOperator("@@", 2, (args) => {
     const leftValue = getValue(args, 0, "@@");
     const rightValue = getValue(args, 1, "@@");

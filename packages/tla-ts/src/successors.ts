@@ -1197,8 +1197,6 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
   return run.isStopped;
 };
 
-// TLC's simulator checks that each initial state is complete only after it computes them all, so
-// it takes the incomplete ones too.
 export const forEachInitialState = (
   expression: Expression,
   environment: Environment,

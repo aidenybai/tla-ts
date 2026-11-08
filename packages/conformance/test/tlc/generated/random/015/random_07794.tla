@@ -18,8 +18,7 @@ Test == PrintT((SortSeq(SortSeq(SortSeq(<<1>>, LAMBDA p, q : p < q), LAMBDA p, q
 all:
   exit: 10
   transcript: |-
-    2266:0 The first argument of > should be an integer, but instead it is:
-    {0}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07794 failed.
     2266:0 The first argument of > should be an integer, but instead it is:
     {0}
 ---*)

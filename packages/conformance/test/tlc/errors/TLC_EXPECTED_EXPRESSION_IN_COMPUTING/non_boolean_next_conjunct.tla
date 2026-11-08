@@ -21,16 +21,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2247:0 @!@!@
-    In computing next states, TLC expected a boolean expression,
-    but instead found 3.
-    3
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2247:0 @!@!@
-    In computing next states, TLC expected a boolean expression,
+    :
+    2247:0 In computing next states, TLC expected a boolean expression,
     but instead found 3.
     3
     2121:1 The behavior up to this point is:

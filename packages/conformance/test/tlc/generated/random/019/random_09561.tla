@@ -18,10 +18,7 @@ Test == PrintT({b14846 \in {b14847 \in ((FALSE + [a |-> 1]) .. IF TRUE THEN 1 EL
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.Integers.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
-    but it produced the following error:
-    Cannot cast tlc2.value.impl.RecordValue to tlc2.value.impl.IntValue
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09561 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.Integers.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
     but it produced the following error:

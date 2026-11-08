@@ -18,12 +18,7 @@ Test == PrintT({([a |-> Head(<<1, 2>>), b |-> ([a |-> 1, b |-> TRUE] = [a |-> 1]
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to enumerate S \ T when S:
-    <<1, 2>>
-    is not enumerable.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07702 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

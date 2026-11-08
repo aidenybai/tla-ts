@@ -18,9 +18,7 @@ Test == PrintT(DOMAIN [b7139 \in {Head(<<3, 1, 2>>) : b7140 \in (SUBSET {1} \cap
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {}
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04555 failed.
     2158:0 Attempted to check if the value:
     {}
     is an element of Nat.

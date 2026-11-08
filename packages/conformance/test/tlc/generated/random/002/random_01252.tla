@@ -18,10 +18,7 @@ Test == PrintT([a |-> ((Len(<<1>>) \div (2147483647 % 7)) - (([x \in 1..2 |-> x]
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.Integers.Minus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
-    but it produced the following error:
-    Cannot cast tlc2.value.impl.FcnRcdValue to tlc2.value.impl.IntValue
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01252 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.Integers.Minus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
     but it produced the following error:

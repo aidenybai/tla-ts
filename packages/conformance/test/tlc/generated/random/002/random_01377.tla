@@ -18,8 +18,7 @@ Test == PrintT(Head(Append([SubSeq(<<>>, [x \in Nat |-> x + 1], -1) EXCEPT ![1] 
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    [x \in Nat |-> <expression line 14, col 57 to line 14, col 61 of module random_01377>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01377 failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     [x \in Nat |-> <expression line 14, col 57 to line 14, col 61 of module random_01377>]
 ---*)

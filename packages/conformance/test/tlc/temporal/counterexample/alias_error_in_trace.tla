@@ -28,10 +28,14 @@ all:
     2264:1 The following behavior constitutes a counter-example:
     2217:4 1: <Initial predicate>
     /\ x = 0
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n@!@!@ENDMSG 2154 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2154:0 \nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n
     2217:4 2: <Next line 14, col 9 to line 14, col 18 of module alias_error_in_trace>
     /\ x = 1
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n@!@!@ENDMSG 2154 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2154:0 \nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n
     2122:4 1: Back to state: <Next line 14, col 9 to line 14, col 18 of module alias_error_in_trace>
     2267:0 Finished checking temporal properties in <time> at <date>
     2199:0 3 states generated, 2 distinct states found, 0 states left on queue.

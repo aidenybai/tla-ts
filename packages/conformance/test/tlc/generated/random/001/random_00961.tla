@@ -18,10 +18,7 @@ Test == PrintT((SubSeq(SelectSeq(SubSeq(<<1>>, 0, 0), LAMBDA e : e > 0), Cardina
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1>>
-    , but instead it is
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00961 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1>>
     , but instead it is

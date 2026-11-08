@@ -24,7 +24,9 @@ all:
   transcript: |-
     2269:0 Computed 1 initial states...
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2145:0 TLCGet(distinct) was undefined.
+    2154:1 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2145:0 TLCGet(distinct) was undefined.
     2121:1 The behavior up to this point is:
     2217:4 1: <Init line 17, col 9 to line 17, col 13 of module get_distinct>

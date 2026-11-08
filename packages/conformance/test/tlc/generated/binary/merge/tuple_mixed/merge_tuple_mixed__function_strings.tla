@@ -18,11 +18,7 @@ Test == PrintT((<<1, "a", {TRUE}>>) @@ ([x \in {"a", "b"} |-> x]))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check equality of string "a" with non-string:
-    1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module merge_tuple_mixed__function_strings failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

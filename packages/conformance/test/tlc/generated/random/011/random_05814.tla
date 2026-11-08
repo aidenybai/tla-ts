@@ -18,8 +18,7 @@ Test == PrintT(Append(Tail([a |-> IF FALSE THEN 7 ELSE 2147483647, b |-> (~TRUE)
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    [a |-> 2147483647, b |-> FALSE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05814 failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     [a |-> 2147483647, b |-> FALSE]
 ---*)

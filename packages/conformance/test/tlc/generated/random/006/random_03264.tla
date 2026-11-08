@@ -18,9 +18,7 @@ Test == PrintT([b5196 \in UNION {((2 .. 7) \cup (SUBSET {1} \cap Nat)), {([a |->
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {}
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03264 failed.
     2158:0 Attempted to check if the value:
     {}
     is an element of Nat.

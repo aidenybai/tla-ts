@@ -22,10 +22,7 @@ Spec == C /\ [][Next]_x
 all:
   exit: 151
   transcript: |-
-    2281:1 The configuration file substitutes constant C with non-constant Init - specifically: @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
-    line 14, col 9 to line 14, col 9 of module constant_substituted_by_init
-    2281:1 The configuration file substitutes constant C with non-constant Init - specifically: @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
+    2281:1 The configuration file substitutes constant C with non-constant Init - specifically:
+    2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 14, col 9 to line 14, col 9 of module constant_substituted_by_init
 ---*)

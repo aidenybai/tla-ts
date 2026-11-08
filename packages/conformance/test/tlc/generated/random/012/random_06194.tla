@@ -18,6 +18,6 @@ Test == PrintT([a |-> Head(SubSeq(Tail(<<>>), (<<1>> + 7), (3 \div 0))), b |-> (
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06194 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

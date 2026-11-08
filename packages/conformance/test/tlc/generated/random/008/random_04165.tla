@@ -18,8 +18,7 @@ Test == PrintT(((((3 + 1) % Cardinality(2..1)) :> LET b6554 == (2 \div 7) IN (3 
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04165 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     0
 ---*)

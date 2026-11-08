@@ -19,9 +19,8 @@ Con == x + 1
 all:
   exit: 75
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 15, col 8 to line 15, col 12 of module nonboolean_state
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2215:0 TLC expected a boolean value, but did not find one. line 15, col 8 to line 15, col 12 of module nonboolean_state
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

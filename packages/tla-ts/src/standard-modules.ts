@@ -17,10 +17,10 @@ import {
   isOutOfRange,
   overrideWithJava,
 } from "./builtins";
-import type { Builtin, BuiltinArgument } from "./evaluate";
+import type { Builtin, BuiltinArgument, Context } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import { createBagsOperators } from "./bags";
-import { createJsonOperators, type FileSystem } from "./json";
+import { createIoUtilsOperators, createJsonOperators, type FileSystem } from "./json";
 import { createRandomizationOperators, createRandomSubsetSet } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc/tlcext-operators";
 import { createTlcOperators } from "./tlc/tlc-operators";
@@ -72,7 +72,6 @@ interface StandardModule {
 const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
 
-// SpecProcessor defines BOOLEAN as a normalized set enumeration.
 const BOOLEAN_SET = createSet([false, true]);
 markNormalized(BOOLEAN_SET);
 
@@ -144,8 +143,6 @@ export const CORE_OPERATORS: Builtin[] = [
       isEnumerable(left.base);
     if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
     if (typeof left === "object" && left.kind === "Interval") {
-      // IntervalValue#isSubsetEq answers for an interval within another without enumerating it,
-      // and otherwise stops at the first element outside the right set.
       const isWithin =
         typeof right === "object" &&
         right.kind === "Interval" &&
@@ -165,8 +162,6 @@ export const CORE_OPERATORS: Builtin[] = [
     defineOperator(operator, 2, (args) => {
       const left = getValue(args, 0, operator);
       const right = getValue(args, 1, operator);
-      // A set enumeration filters itself by membership in an interval, which TLC never
-      // enumerates then.
       const isFilteredByInterval =
         operator !== "\\cup" &&
         typeof right === "object" &&
@@ -321,7 +316,7 @@ const getSequenceOrString = (args: BuiltinArgument[], index: number, message: st
   return typeof value === "string" ? value : getSequenceArgument(args, index, message);
 };
 
-const getIndexArgument = (args: BuiltinArgument[], index: number, position: string) => {
+const getSubSeqIndex = (args: BuiltinArgument[], index: number, position: string) => {
   const value = getValue(args, index, "SubSeq");
   if (typeof value !== "number") {
     throw createModuleArgumentError(position, "SubSeq", "natural number", value);
@@ -395,8 +390,8 @@ const createSequencesOperators = (version: TlcVersion) =>
     }),
     defineOperator("SubSeq", 3, (args) => {
       const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
-      const start = getIndexArgument(args, 1, "second");
-      const end = getIndexArgument(args, 2, "third");
+      const start = getSubSeqIndex(args, 1, "second");
+      const end = getSubSeqIndex(args, 2, "third");
       if (start > end) return sliceSequence(sequence, 0, 0);
       const outOfDomain =
         start < 1 || start > sequence.length
@@ -418,7 +413,6 @@ const createSequencesOperators = (version: TlcVersion) =>
           (element) => {
             const result = test.call([element]);
             if (typeof result !== "boolean") {
-              // OpLambdaValue#toString prints the operator by its name.
               throw new TlaModuleError(
                 `The second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator ${test.name}>`,
               );
@@ -456,9 +450,6 @@ const createFiniteSetsOperators = (version: TlcVersion) =>
     }),
   ]);
 
-// TLC's tlc2.module.TransitiveClosure overrides Warshall in a user's module of that name, such as the
-// one of the CommunityModules. It sizes the relation, which normalizes it, numbers each node in the
-// order it first appears, and returns the closure unnormalized.
 const TRANSITIVE_CLOSURE_OPERATORS = [
   overrideWithJava(
     defineOperator("Warshall", 1, (args) => {
@@ -468,6 +459,7 @@ const TRANSITIVE_CLOSURE_OPERATORS = [
           `Applying TransitiveClosure to the following value,\nwhich is not an enumerable set:\n${formatValue(relation)}`,
         );
       }
+      // TLC sizes the relation, which normalizes it.
       getCardinality(relation);
       const nodes: Value[] = [];
       const nodeIndices = new Map<string, number>();
@@ -513,15 +505,16 @@ const TRANSITIVE_CLOSURE_OPERATORS = [
   ),
 ];
 
-// The operators that TLC's Java class of a module overrides in a user's module of the same name.
 export const getJavaOverrides = (
   name: string,
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
   builtins: ReadonlyMap<string, Builtin>,
+  evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
+  if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
   const operators = getStandardModule(name, print, runtime, files, builtins)?.operators;
   return name === "Randomization" && operators

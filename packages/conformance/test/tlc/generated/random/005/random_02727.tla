@@ -18,13 +18,7 @@ Test == PrintT(UNION {DOMAIN [b4303 \in (SUBSET {1} \cup SUBSET {1}) |-> Head(<<
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compare record:
-    [a |-> 3, b |-> FALSE]
-    with non-record
-    {{}, {1}}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02727 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

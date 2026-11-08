@@ -18,6 +18,6 @@ Test == PrintT((CASE (IF FALSE THEN 3 ELSE 0 = CASE TRUE -> 7 [] OTHER -> 214748
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 1+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09452 failed.
     2178:0 Overflow when computing 1+2147483647
 ---*)

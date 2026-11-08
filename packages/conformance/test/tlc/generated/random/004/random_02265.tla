@@ -18,11 +18,7 @@ Test == PrintT([b3568 \in UNION {(CHOOSE r \in [a : {1, 2} \ {1}] : TRUE), DOMAI
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compare the set {0} with the value:
-    [a |-> 2]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02265 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

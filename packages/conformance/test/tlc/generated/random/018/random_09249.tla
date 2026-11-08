@@ -18,10 +18,7 @@ Test == PrintT((((~(TRUE \/ FALSE)) => (LET b14359 == -1 IN b14359 < Head(<<1, 2
 all:
   exit: 10
   transcript: |-
-    2183:0 The third argument of SubSeq must be in the domain of its first argument:
-    <<3, 1, 2>>
-    , but instead it is
-    7
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09249 failed.
     2183:0 The third argument of SubSeq must be in the domain of its first argument:
     <<3, 1, 2>>
     , but instead it is

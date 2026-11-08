@@ -18,8 +18,7 @@ Test == PrintT([a |-> LET b295 == CASE (-1 \in Nat) -> (7 * 7) [] OTHER -> Len(<
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00184 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     0
 ---*)

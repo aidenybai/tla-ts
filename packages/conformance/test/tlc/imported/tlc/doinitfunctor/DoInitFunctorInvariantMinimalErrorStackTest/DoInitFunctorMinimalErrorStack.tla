@@ -32,8 +32,7 @@ Inv == a >= 0
 all:
   exit: 75
   transcript: |-
-    2266:0 The first argument of > should be an integer, but instead it is:
-    <<1, 1>>
+    1000:1 
     2266:0 The first argument of > should be an integer, but instead it is:
     <<1, 1>>
     2103:1 The error occurred when TLC was evaluating the nested

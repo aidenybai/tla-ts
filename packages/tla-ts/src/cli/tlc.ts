@@ -6,6 +6,7 @@ import {
   readFileSync,
   readSync,
   realpathSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -96,6 +97,12 @@ const EXIT_CODES: Record<CheckStatus, number> = {
 const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
 
 // TLC names the file of a -dump by its format unless the name already ends that way.
+const checkNotDirectory = (path: string) => {
+  if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new TlaEvaluationError(`${path} (Is a directory)`);
+  }
+};
+
 const getDumpPath = (path: string, extension: string) =>
   path.endsWith(extension) ? path : `${path}${extension}`;
 
@@ -938,8 +945,12 @@ const checkSpec = async (
         const classPath = getClassPath(directory, name);
         return existsSync(classPath) ? readFileSync(classPath) : undefined;
       },
-      readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
+      readFile: (path) => {
+        checkNotDirectory(path);
+        return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+      },
       writeFile: (path, content) => {
+        checkNotDirectory(path);
         mkdirSync(dirname(resolve(path)), { recursive: true });
         writeFileSync(path, content);
       },

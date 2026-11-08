@@ -17,8 +17,7 @@ Init == x = 1 /\ Assert(FALSE, "init assert")
 all:
   exit: 75
   transcript: |-
-    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
-    "init assert"
+    1000:1 
     2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     "init assert"
     2103:1 The error occurred when TLC was evaluating the nested

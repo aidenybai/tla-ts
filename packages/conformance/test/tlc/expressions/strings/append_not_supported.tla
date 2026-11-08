@@ -13,15 +13,13 @@ Test == Append("ab", "c") = "abc"
 assume:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    "ab"
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module append_not_supported failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     "ab"
 init:
   exit: 75
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    "ab"
+    1000:1 
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     "ab"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -47,8 +45,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    "ab"
+    1000:1 
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     "ab"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -61,8 +58,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    "ab"
+    1000:1 
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     "ab"
     2103:1 The error occurred when TLC was evaluating the nested

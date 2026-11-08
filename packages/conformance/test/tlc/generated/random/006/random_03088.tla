@@ -18,6 +18,6 @@ Test == PrintT(LET b4916 == (((-1 % 7) \div (0 * 3)) % [a |-> ([a |-> 1, b |-> T
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03088 failed.
     2179:0 The second argument of \div is 0.
 ---*)

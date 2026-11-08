@@ -18,6 +18,6 @@ Test == PrintT(<<(-((-1 \div 0) + (<<5, 6>>)[2147483647])), LET b1060 == (-(-7))
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00635 failed.
     2179:0 The second argument of \div is 0.
 ---*)

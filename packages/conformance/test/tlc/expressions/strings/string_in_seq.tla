@@ -13,18 +13,14 @@ Test == "a" \in Seq(STRING)
 assume:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Seq(STRING).
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module string_in_seq failed.
     2158:0 Attempted to check if the value:
     "a"
     is an element of Seq(STRING).
 init:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Seq(STRING).
+    1000:1 
     2158:0 Attempted to check if the value:
     "a"
     is an element of Seq(STRING).
@@ -50,9 +46,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Seq(STRING).
+    1000:1 
     2158:0 Attempted to check if the value:
     "a"
     is an element of Seq(STRING).
@@ -65,9 +59,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Seq(STRING).
+    1000:1 
     2158:0 Attempted to check if the value:
     "a"
     is an element of Seq(STRING).

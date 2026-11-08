@@ -25,8 +25,7 @@ all:
   exit: 10
   transcript: |-
     2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 18, col 9 to line 18, col 9 of module config_operator_state_in_assume
+    2105:1 Evaluating assumption line 19, col 8 to line 19, col 12 of module config_operator_state_in_assume failed.
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 18, col 9 to line 18, col 9 of module config_operator_state_in_assume
 ---*)

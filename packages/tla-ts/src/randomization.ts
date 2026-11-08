@@ -74,8 +74,6 @@ const getRandomSetOfSubsets = (args: BuiltinArgument[], runtime: CheckerRuntime)
   );
 };
 
-// Double.valueOf: Java's grammar of a double, around which it trims whitespace and control
-// characters, with an optional suffix f or d.
 const JAVA_DECIMAL = /^[+-]?(?:NaN|Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fFdD]?)$/;
 const JAVA_HEXADECIMAL = /^([+-]?)0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?[pP]([+-]?\d+)[fFdD]?$/;
 
@@ -83,56 +81,53 @@ const parseJavaDouble = (text: string) => {
   const trimmed = text.replace(/^[^!-\uffff]+|[^!-\uffff]+$/g, "");
   if (JAVA_DECIMAL.test(trimmed)) return Number(trimmed.replace(/[fFdD]$/, ""));
   const hexadecimal = JAVA_HEXADECIMAL.exec(trimmed);
-  const digits = `${hexadecimal?.[2] ?? ""}${hexadecimal?.[3] ?? ""}`;
-  if (!hexadecimal || digits === "") return undefined;
+  if (!hexadecimal) return undefined;
+  const fraction = hexadecimal[3] ?? "";
+  const digits = `${hexadecimal[2]}${fraction}`;
+  if (digits === "") return undefined;
   const magnitude =
-    Number.parseInt(digits, 16) * 2 ** (Number(hexadecimal[4]) - 4 * (hexadecimal[3]?.length ?? 0));
+    Number.parseInt(digits, 16) * 2 ** (Number(hexadecimal[4]) - 4 * fraction.length);
   return hexadecimal[1] === "-" ? -magnitude : magnitude;
 };
 
-// Randomization.RandomSubsetSet, which only the Java class defines, names the operator
-// RandomSubsetSetProbability in its errors.
-const getRandomSubsetSet = (args: BuiltinArgument[], runtime: CheckerRuntime) => {
-  const name = "RandomSubsetSetProbability";
-  const picks = getCount(getValue(args, 0, name), "first", name);
-  const text = getValue(args, 1, name);
-  if (typeof text !== "string") {
-    throw createModuleArgumentError(
-      "second",
-      name,
-      "string literal representing a probability",
-      text,
-    );
-  }
-  const probability = parseJavaDouble(text);
-  if (probability === undefined || probability < 0 || probability > 1) {
-    throw createModuleArgumentError(
-      "second",
-      name,
-      "string literal does not represent a parsable probability",
-      text,
-    );
-  }
-  const set = getValue(args, 2, name);
-  if (!isSetValue(set) || isOverriddenSet(set) || !isFiniteSet(set)) {
-    throw createModuleArgumentError("third", name, "finite set", set);
-  }
-  const size = getCardinality(set);
-  if (32 - Math.clz32(picks) > size && picks > 1 << size) {
-    throw createModuleArgumentError(
-      "first",
-      name,
-      `nonnegative integer that is smaller than the subset's size of 2^${size}`,
-      picks,
-    );
-  }
-  return tossSubsets(toFiniteSet(set).elements, picks, probability, runtime.getRandom());
-};
-
-// The shipped Randomization module doesn't declare RandomSubsetSet, which TLC's Java class overrides
-// only in a user's module of that name.
+// TLC's Java class names the operator RandomSubsetSetProbability in its errors.
 export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
-  defineStateOperator("RandomSubsetSet", 3, (args) => getRandomSubsetSet(args, runtime));
+  defineStateOperator("RandomSubsetSet", 3, (args) => {
+    const name = "RandomSubsetSetProbability";
+    const picks = getCount(getValue(args, 0, name), "first", name);
+    const text = getValue(args, 1, name);
+    if (typeof text !== "string") {
+      throw createModuleArgumentError(
+        "second",
+        name,
+        "string literal representing a probability",
+        text,
+      );
+    }
+    const probability = parseJavaDouble(text);
+    if (probability === undefined || probability < 0 || probability > 1) {
+      throw createModuleArgumentError(
+        "second",
+        name,
+        "string literal does not represent a parsable probability",
+        text,
+      );
+    }
+    const set = getValue(args, 2, name);
+    if (!isSetValue(set) || isOverriddenSet(set) || !isFiniteSet(set)) {
+      throw createModuleArgumentError("third", name, "finite set", set);
+    }
+    const size = getCardinality(set);
+    if (32 - Math.clz32(picks) > size && picks > 1 << size) {
+      throw createModuleArgumentError(
+        "first",
+        name,
+        `nonnegative integer that is smaller than the subset's size of 2^${size}`,
+        picks,
+      );
+    }
+    return tossSubsets(toFiniteSet(set).elements, picks, probability, runtime.getRandom());
+  });
 
 export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[] => [
   defineStateOperator("RandomSubset", 2, (args) => {

@@ -18,8 +18,7 @@ Test == PrintT((SubSeq(<<IF TRUE THEN -1 ELSE 2147483647, Len(<<>>)>>, (Head(<<1
 all:
   exit: 10
   transcript: |-
-    2266:0 The first argument of < should be an integer, but instead it is:
-    [x \in Nat |-> <expression line 14, col 192 to line 14, col 196 of module random_03420>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03420 failed.
     2266:0 The first argument of < should be an integer, but instead it is:
     [x \in Nat |-> <expression line 14, col 192 to line 14, col 196 of module random_03420>]
 ---*)

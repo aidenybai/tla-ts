@@ -30,6 +30,7 @@ export interface Obligation {
   location: Locus | undefined;
   kind: ObligationKind;
   method?: OldMethod;
+  isEnabledAxiomsSound?: boolean;
 }
 
 // useLocation is where a USE step comes from, so find_meth can tell apart the facts of each BY.
@@ -40,6 +41,7 @@ interface ProofProps {
   method?: OldMethod;
   useLocation?: Locus;
   isSuppressed?: boolean;
+  isEnabledAxiomsSound?: boolean;
 }
 
 export type Proof = ProofCore & ProofProps;

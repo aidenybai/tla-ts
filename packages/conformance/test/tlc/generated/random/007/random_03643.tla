@@ -18,6 +18,6 @@ Test == PrintT(((CHOOSE f \in [{1, 2} -> {1}] : TRUE))[((-LET b5759 == 7 IN 2) *
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03643 failed.
     2179:0 The second argument of \div is 0.
 ---*)

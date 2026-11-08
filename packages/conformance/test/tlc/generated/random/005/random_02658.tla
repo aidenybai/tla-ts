@@ -20,8 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 30 to line 14, col 47 of module random_02658
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02658 failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     FALSE
 ---*)

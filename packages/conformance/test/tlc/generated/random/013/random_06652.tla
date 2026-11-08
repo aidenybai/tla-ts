@@ -18,10 +18,7 @@ Test == PrintT((CASE ((TRUE <=> TRUE) => (<<3, 1, 2>> = (1 :> 2))) -> IF (~FALSE
 all:
   exit: 10
   transcript: |-
-    2183:0 The third argument of SubSeq must be in the domain of its first argument:
-    <<1>>
-    , but instead it is
-    2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06652 failed.
     2183:0 The third argument of SubSeq must be in the domain of its first argument:
     <<1>>
     , but instead it is

@@ -18,8 +18,7 @@ Test == PrintT(((((-0) * (2147483647 - 2147483647)) * IF (1 < 3) THEN ([x \in Na
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    [a |-> 7, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05748 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     [a |-> 7, b |-> TRUE]
 ---*)

@@ -13,12 +13,12 @@ Test == LET k == 1 \div 0 IN [y \in Nat |-> IF y = 0 THEN 0 ELSE k][1] = 0
 assume:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module lazy_error_in_captured_value_used failed.
     2179:0 The second argument of \div is 0.
 init:
   exit: 75
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    1000:1 
     2179:0 The second argument of \div is 0.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -50,7 +50,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    1000:1 
     2179:0 The second argument of \div is 0.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -66,7 +66,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    1000:1 
     2179:0 The second argument of \div is 0.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

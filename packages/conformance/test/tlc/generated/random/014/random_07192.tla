@@ -18,7 +18,9 @@ Test == PrintT((([(<<5, 6>> @@ (1 :> 2)) EXCEPT ![Len(<<1>>)] = LET b11050 == 0 
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 139 to line 14, col 185 of module random_07192
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 139 to line 14, col 185 of module random_07192
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07192 failed.
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 139 to line 14, col 185 of module random_07192
 ---*)

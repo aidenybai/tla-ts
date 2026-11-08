@@ -18,6 +18,6 @@ Test == PrintT([((-(CHOOSE b4514 \in SUBSET {1} : <<3, 1, 2>>)) :> [b4515 \in (S
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 21 to line 14, col 61 of module random_02846
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02846 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 21 to line 14, col 61 of module random_02846
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT((Head(Tail((2 :> 2147483647))) \in DOMAIN (CHOOSE f \in [{} -> {2
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    (2 :> 2147483647)
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07359 failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     (2 :> 2147483647)
 ---*)

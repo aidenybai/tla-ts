@@ -32,10 +32,7 @@ NEXT Next
 all:
   exit: 151
   transcript: |-
-    2281:1 The configuration file substitutes constant C with non-constant C2 - specifically: @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
-    line 19, col 7 to line 19, col 7 of module Github1109a
-    2281:1 The configuration file substitutes constant C with non-constant C2 - specifically: @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
+    2281:1 The configuration file substitutes constant C with non-constant C2 - specifically:
+    2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 19, col 7 to line 19, col 7 of module Github1109a
 ---*)

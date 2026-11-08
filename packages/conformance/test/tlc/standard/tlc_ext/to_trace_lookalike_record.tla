@@ -16,15 +16,13 @@ Test == ToTrace([state |-> {}, action |-> {}]) = <<>>
 assume:
   exit: 10
   transcript: |-
-    2283:0 The argument of ToTrace should be a CounterExample, but instead it is:
-    [state |-> {}, action |-> {}]
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module to_trace_lookalike_record failed.
     2283:0 The argument of ToTrace should be a CounterExample, but instead it is:
     [state |-> {}, action |-> {}]
 init:
   exit: 75
   transcript: |-
-    2283:0 The argument of ToTrace should be a CounterExample, but instead it is:
-    [state |-> {}, action |-> {}]
+    1000:1 
     2283:0 The argument of ToTrace should be a CounterExample, but instead it is:
     [state |-> {}, action |-> {}]
     2103:1 The error occurred when TLC was evaluating the nested
@@ -50,8 +48,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2283:0 The argument of ToTrace should be a CounterExample, but instead it is:
-    [state |-> {}, action |-> {}]
+    1000:1 
     2283:0 The argument of ToTrace should be a CounterExample, but instead it is:
     [state |-> {}, action |-> {}]
     2103:1 The error occurred when TLC was evaluating the nested
@@ -64,8 +61,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2283:0 The argument of ToTrace should be a CounterExample, but instead it is:
-    [state |-> {}, action |-> {}]
+    1000:1 
     2283:0 The argument of ToTrace should be a CounterExample, but instead it is:
     [state |-> {}, action |-> {}]
     2103:1 The error occurred when TLC was evaluating the nested

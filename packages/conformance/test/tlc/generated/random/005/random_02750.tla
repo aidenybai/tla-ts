@@ -18,8 +18,7 @@ Test == PrintT(((Tail([[a |-> 1] EXCEPT !.a = @ + -1]) = ([b4341 \in 1..3 |-> {2
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    [a |-> 0]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02750 failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     [a |-> 0]
 ---*)

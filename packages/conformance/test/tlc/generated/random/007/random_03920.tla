@@ -18,8 +18,7 @@ Test == PrintT(((((7 + 1) % (2 % -1)) \div Cardinality(({x \in 1..3 : x > 1} \ca
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03920 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     -1
 ---*)

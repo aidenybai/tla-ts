@@ -16,15 +16,13 @@ Test == SubSeq(<<1>>, "a", 1) = <<>>
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    "a"
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module subseq_second_string failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     "a"
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    "a"
+    1000:1 
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     "a"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -50,8 +48,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    "a"
+    1000:1 
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     "a"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -64,8 +61,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    "a"
+    1000:1 
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     "a"
     2103:1 The error occurred when TLC was evaluating the nested

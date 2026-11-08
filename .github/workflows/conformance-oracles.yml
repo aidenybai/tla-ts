@@ -69,7 +69,19 @@ jobs:
           unzip -q z3.zip -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/z3-5.3.2-x64-glibc-2.39/bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
+      - id: tlapm-cache
+        uses: actions/cache@v4
+        with:
+          path: packages/conformance/.oracles/tlapm
+          key: tlapm-${{ hashFiles('packages/conformance/scripts/fetch-tlapm.ts') }}
+      - if: steps.tlapm-cache.outputs.cache-hit != 'true'
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5.2"
+          opam-disable-sandboxing: true
       - run: pnpm --filter @tla-ts/conformance fetch-tlapm
+        env:
+          OPAMSWITCH: ${{ github.workspace }}
       - run: pnpm --filter @tla-ts/conformance conformance --host tlapm --time-limit 300 --memory-limit 4096 --shard ${{ matrix.shard }}/2
         env:
           CONFORMANCE_WORKERS: 3

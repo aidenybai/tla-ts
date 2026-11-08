@@ -16,18 +16,14 @@ Test == BagUnion(3) = EmptyBag
 assume:
   exit: 10
   transcript: |-
-    2176:0 Applying BagUnion to the following value,
-    which is not a finite enumerable set:
-    3
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module union_int failed.
     2176:0 Applying BagUnion to the following value,
     which is not a finite enumerable set:
     3
 init:
   exit: 75
   transcript: |-
-    2176:0 Applying BagUnion to the following value,
-    which is not a finite enumerable set:
-    3
+    1000:1 
     2176:0 Applying BagUnion to the following value,
     which is not a finite enumerable set:
     3
@@ -55,9 +51,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2176:0 Applying BagUnion to the following value,
-    which is not a finite enumerable set:
-    3
+    1000:1 
     2176:0 Applying BagUnion to the following value,
     which is not a finite enumerable set:
     3
@@ -71,9 +65,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2176:0 Applying BagUnion to the following value,
-    which is not a finite enumerable set:
-    3
+    1000:1 
     2176:0 Applying BagUnion to the following value,
     which is not a finite enumerable set:
     3

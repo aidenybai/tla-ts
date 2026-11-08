@@ -18,6 +18,6 @@ Test == PrintT([[[a |-> (CHOOSE b8585 \in {1} : 2), b |-> (<<1>> = (1 :> 2))] EX
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 26 to line 14, col 49 of module random_05552
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05552 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 26 to line 14, col 49 of module random_05552
 ---*)

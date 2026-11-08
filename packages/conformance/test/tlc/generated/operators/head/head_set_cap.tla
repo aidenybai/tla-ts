@@ -18,8 +18,7 @@ Test == PrintT(Head({1, 2} \cap {2, 3}))
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    {2}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module head_set_cap failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     {2}
 ---*)

@@ -18,10 +18,7 @@ Test == PrintT(Head(SubSeq(((3 .. 1) \ {0, 2}), ((2147483647 - [a |-> 1, b |-> T
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.Integers.Minus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
-    but it produced the following error:
-    Cannot cast tlc2.value.impl.RecordValue to tlc2.value.impl.IntValue
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09868 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.Integers.Minus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
     but it produced the following error:

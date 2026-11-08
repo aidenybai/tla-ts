@@ -16,10 +16,7 @@ Test == IsABag([n \in Nat |-> 1])
 assume:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compute the number of elements in the overridden value Nat.
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module is_a_bag_infinite_function failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
     but it produced the following error:
@@ -27,10 +24,7 @@ assume:
 init:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compute the number of elements in the overridden value Nat.
+    1000:1 
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
     but it produced the following error:
@@ -47,17 +41,8 @@ next:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compute the number of elements in the overridden value Nat.
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
+    :
+    2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
     but it produced the following error:
     Attempted to compute the number of elements in the overridden value Nat.
@@ -72,12 +57,8 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compute the number of elements in the overridden value Nat.
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
     but it produced the following error:
@@ -91,12 +72,8 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compute the number of elements in the overridden value Nat.
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
     but it produced the following error:

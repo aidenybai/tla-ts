@@ -24,10 +24,8 @@ all:
   exit: 255
   transcript: |-
     2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
-    2260:0 In computing ENABLED, TLC encountered a temporal formula (SF).
-    line 18, col 9 to line 18, col 18 of module config_operator_strong_in_enabled
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2260:0 In computing ENABLED, TLC encountered a temporal formula (SF).
     line 18, col 9 to line 18, col 18 of module config_operator_strong_in_enabled
     2199:0 1 states generated, 1 distinct states found, 1 states left on queue.

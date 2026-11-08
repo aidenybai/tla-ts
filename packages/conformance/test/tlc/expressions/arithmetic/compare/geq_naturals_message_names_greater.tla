@@ -13,15 +13,13 @@ Test == "a" >= 1
 assume:
   exit: 10
   transcript: |-
-    2266:0 The first argument of > should be an integer, but instead it is:
-    "a"
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module geq_naturals_message_names_greater failed.
     2266:0 The first argument of > should be an integer, but instead it is:
     "a"
 init:
   exit: 75
   transcript: |-
-    2266:0 The first argument of > should be an integer, but instead it is:
-    "a"
+    1000:1 
     2266:0 The first argument of > should be an integer, but instead it is:
     "a"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -45,8 +43,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2266:0 The first argument of > should be an integer, but instead it is:
-    "a"
+    1000:1 
     2266:0 The first argument of > should be an integer, but instead it is:
     "a"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -58,8 +55,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2266:0 The first argument of > should be an integer, but instead it is:
-    "a"
+    1000:1 
     2266:0 The first argument of > should be an integer, but instead it is:
     "a"
     2103:1 The error occurred when TLC was evaluating the nested

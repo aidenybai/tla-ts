@@ -20,8 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 19 to line 14, col 52 of module random_08794
-    2266:0 The first argument of < should be an integer, but instead it is:
-    <<>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08794 failed.
     2266:0 The first argument of < should be an integer, but instead it is:
     <<>>
 ---*)
