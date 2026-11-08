@@ -149,6 +149,9 @@ const UNSUPPORTED = { reason: "unsupported" };
 const DEOPT = { reason: "deopt" };
 // A set of integers holds an integer a mask can't, so sets of integers must be arrays.
 const WIDE = { reason: "wide" };
+// A value's type is still unknown where it is applied, and a later disjunct may reveal it, as an
+// action that sends a message reveals its fields to an earlier action that reads them.
+const UNKNOWN = { reason: "unknown" };
 
 const createInt = (): IntType => ({ kind: "Int", target: undefined });
 const BOOL: BoolType = { kind: "Bool" };
@@ -1431,6 +1434,7 @@ const compileApplication = (
       emit: () => `H.at(${functionCode.emit()}, (${argument.emit()}) - 1)`,
     };
   }
+  if (type.kind === "Var") throw UNKNOWN;
   return unsupported();
 };
 
@@ -2258,7 +2262,26 @@ const compileStep = (
     case "And":
       return continueWith(first.scope, expression.operands);
     case "Or": {
-      const branches = expression.operands.map((operand) => continueWith(first.scope, [operand]));
+      const depth = program.inlining.length;
+      const compileBranch = (operand: Expression) => {
+        try {
+          return continueWith(first.scope, [operand]);
+        } catch (error) {
+          if (error !== UNKNOWN) throw error;
+          program.inlining.length = depth;
+          return undefined;
+        }
+      };
+      const compileBranches = (branches: ((() => string) | undefined)[]): (() => string)[] => {
+        const compiled = branches.map(
+          (branch, index) => branch ?? compileBranch(expression.operands[index]),
+        );
+        const waiting = compiled.filter((branch) => branch === undefined).length;
+        if (waiting === 0) return compiled.filter((branch) => branch !== undefined);
+        if (waiting === branches.filter((branch) => branch === undefined).length) throw UNKNOWN;
+        return compileBranches(compiled);
+      };
+      const branches = compileBranches(expression.operands.map(() => undefined));
       return () => branches.map((branch) => `{ ${branch()} }`).join(" ");
     }
     case "Exists": {
@@ -3383,6 +3406,7 @@ export const runTypedSearch = (
     // The interpreter reports these errors when it reruns the search.
     if (
       error === UNSUPPORTED ||
+      error === UNKNOWN ||
       error === DEOPT ||
       error instanceof TlaError ||
       isStackOverflow(error)

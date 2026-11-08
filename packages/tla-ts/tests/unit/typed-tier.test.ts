@@ -37,6 +37,7 @@ describe("typed tier matches TLC", () => {
     ["UnionMembership", 161],
     ["SubsetMembership", 161],
     ["InitialComparers", 4],
+    ["LateFields", 45],
     ["FilteredMembership", 280],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
