@@ -125,7 +125,7 @@ const bindIndexed = (
       const kind = getKind(parameter.name, context);
       const isUnknown =
         (context.checker.getTypeAtLocation(parameter.name).flags & ts.TypeFlags.Unknown) !== 0;
-      if (extra.owner === undefined && kind !== "sequence") {
+      if (extra.owner === undefined && kind !== "sequence" && !isUnknown) {
         throw new TlaTypeScriptError("Type a callback's array parameter as an array", parameter);
       }
       if (extra.owner !== undefined && kind !== "object" && !isUnknown) {
