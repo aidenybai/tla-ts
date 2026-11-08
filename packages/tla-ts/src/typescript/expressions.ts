@@ -20,7 +20,7 @@ import { TlaTypeScriptError } from "../errors";
 import { wrap, wrapEquated } from "./formula";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
 import type { Scope } from "./scope";
-import { getKind, isBooleanLike, isNumericKey, translateUnknown } from "./types";
+import { getKind, isBooleanLike, isNumericKey, isObject, translateUnknown } from "./types";
 
 interface Field {
   key: string;
@@ -251,6 +251,15 @@ const translateCall = (
   const method = node.expression.name.text;
   const global = ts.isIdentifier(receiver) ? receiver.text : undefined;
   if (global === "Math") return translateMath(node, method, scope, context);
+  if (global === "Object" && method === "is" && node.arguments.length === 2) {
+    if (node.arguments.some((argument) => isObject(context.checker.getTypeAtLocation(argument)))) {
+      throw new TlaTypeScriptError("TLA+ compares objects by value, not by identity", node);
+    }
+    const values = node.arguments.map((argument) =>
+      wrap(translateExpression(argument, scope, context)),
+    );
+    return `${values[0]} = ${values[1]}`;
+  }
   const constructed =
     global === "Object" && method === "fromEntries"
       ? translateFunctionConstructor(node.arguments[0], scope, context)

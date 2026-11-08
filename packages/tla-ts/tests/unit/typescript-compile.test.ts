@@ -721,6 +721,12 @@ describe("errors", () => {
     ).toThrow("spec.ts:3:3 Loops aren't supported");
   });
 
+  it("rejects Object.is on objects", () => {
+    expect(() => compile(`let isSame = Object.is([1], [1]);`)).toThrow(
+      "spec.ts:1:14 TLA+ compares objects by value, not by identity",
+    );
+  });
+
   it("rejects a class that runs code as the module loads", () => {
     expect(() =>
       compile(`let count = 0;\nclass Counter {\n  static {\n    count++;\n  }\n}`),

@@ -44,6 +44,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ["value ?? 5", "const value: number | undefined = 3 as number | undefined;"],
     ["(value ?? 2) * (value ?? 3)", "const value: number | null = null as number | null;"],
     ["value === null", "const value: number | null = null as number | null;"],
+    "[Object.is(1, 1), Object.is('a', 'b')]",
   ],
   strings: [
     '"tla" + "+"',
