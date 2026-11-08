@@ -1,13 +1,9 @@
 // Ported from Z3 (src/nlsat/levelwise.cpp, src/nlsat/nlsat_common.cpp,
-// src/util/index_sort_with_mutations.h), MIT license, see z3-license.txt. The levelwise single cell
-// construction: around the sample, for each variable below the top one, the interval of root
-// functions in which the projected polynomials keep their signs and orders.
-//
-// Deviation: Z3 breaks two ties by polynomial id: between root functions of equal value and degree,
-// and in the order of the arguments of a top-level resultant. Z3 recycles the ids of freed
-// polynomials (id_gen in polynomial.cpp), so its ids depend on its reference counting. Here ids
-// follow creation order. Either choice bounds a valid cell, but the bounding polynomial can be a
-// different one with the same root, such as x0 for -x0. Differential tests count these as ties.
+// src/util/index_sort_with_mutations.h), MIT license, see z3-license.txt.
+// Deviation: Z3 breaks ties between root functions of equal value and degree, and orders the
+// arguments of a top-level resultant, by polynomial id, which it recycles. Here ids follow
+// creation order, so the bounding polynomial can be another with the same root, such as x0 for
+// -x0, though either bounds a valid cell.
 import { NlsatUnsupportedError } from "../../../../errors";
 import { Rational } from "../rational";
 import type { AlgebraicManager, Anum } from "./algebraic";
@@ -28,7 +24,6 @@ interface CellInterval {
   upperIndex: number;
 }
 
-// lws_spt_threshold, lws_witness_subs_lc and lws_witness_subs_disc.
 interface LevelwiseParams {
   spanningTreeThreshold: number;
   isWitnessSubsLc: boolean;
@@ -75,8 +70,7 @@ const sortIndicesStably = (count: number, isLess: (first: number, second: number
   return source;
 };
 
-// todo_set with canonicalization: the distinct primitive, sign-normalized polynomials still to
-// project, in insertion order. A polynomial already in the cache goes in as it is.
+// A polynomial already in the cache goes in as it is.
 export class TodoSet {
   polynomials: Polynomial[] = [];
   private inSet = new Set<number>();
@@ -127,7 +121,6 @@ export class TodoSet {
     return result;
   }
 
-  // extract_max_polys: moves the polynomials of the maximal variable to out, after clearing it.
   extractMaxPolys(out: Polynomial[]) {
     out.length = 0;
     const variable = this.getMaxVar();
@@ -135,7 +128,6 @@ export class TodoSet {
     return variable;
   }
 
-  // extract_polys_at_level: moves the polynomials whose maximal variable is x to out.
   extractPolysAtLevel(variable: number, out: Polynomial[]) {
     const kept: Polynomial[] = [];
     for (const polynomial of this.polynomials) {
@@ -198,7 +190,6 @@ class Levelwise {
       if (!this.pm.isConst(factor)) this.todo.insert(factor);
   }
 
-  // The first element of the subresultant chain that is not zero, or null when it is constant.
   private getFirstPsc(first: Polynomial, second: Polynomial, variable: number) {
     for (const element of this.cache.pscChain(first, second, variable)) {
       if (this.pm.isZero(element)) continue;
@@ -212,8 +203,8 @@ class Levelwise {
     return this.getFirstPsc(polynomial, this.pm.derivative(polynomial, variable), variable);
   }
 
-  // handle_nullified_poly: p vanishes at the sample. Its coefficients, then its partial
-  // derivatives level by level, in non-decreasing variable order, until one does not vanish.
+  // Its coefficients, then its partial derivatives level by level, in non-decreasing variable
+  // order, until one does not vanish.
   private handleNullifiedPoly(polynomial: Polynomial) {
     const degree = this.pm.degree(polynomial, this.level);
     for (let power = 0; power <= degree; power++)
@@ -381,12 +372,10 @@ class Levelwise {
   private fillRelationSpanningTree() {
     this.buildBothSideSpanningTree();
     const isBoth = (rf: number) => this.sideMask[this.rootFunctions[rf].psIndex] === BOTH_SIDES;
-    // connect_non_tree_to_bounds
     for (let index = 0; index < this.lowerRf; index++)
       if (!isBoth(index)) this.addPair(index, this.lowerRf);
     for (let index = this.upperRf + 1; index < this.rootFunctions.length; index++)
       if (!isBoth(index)) this.addPair(this.upperRf, index);
-    // connect_tree_extremes_to_bounds
     let maxLowerBoth = UNSET;
     for (let index = 0; index < this.lowerRf; index++) if (isBoth(index)) maxLowerBoth = index;
     let minUpperBoth = UNSET;
@@ -400,8 +389,6 @@ class Levelwise {
     this.addPair(this.lowerRf, this.upperRf);
   }
 
-  // isolate_roots_around_sample: the roots of p closest to v, at or below it in lower and above
-  // it in upper, only the one at v for a section. Whether p has roots.
   private isolateRootsAroundSample(
     psIndex: number,
     value: Anum,
@@ -546,7 +533,6 @@ class Levelwise {
     }
   }
 
-  // build_interval: the root functions around the sample, sorted, and the interval they bound.
   private buildInterval() {
     this.rootFunctions = [];
     this.pairs.clear();
@@ -583,8 +569,6 @@ class Levelwise {
       );
   }
 
-  // add_adjacent_root_resultants: at the top level, the resultants of the polynomials of adjacent
-  // roots.
   private addAdjacentRootResultants() {
     const rootValues: { root: Anum; polynomial: Polynomial }[] = [];
     const values = this.getValuesWithout(this.maxVar);
@@ -666,8 +650,6 @@ class Levelwise {
     this.addRelationResultants();
   }
 
-  // collect_non_null_witnesses: a witness per polynomial, until handling the vanishing ones adds
-  // no more polynomials at this level.
   private collectNonNullWitnesses() {
     this.witnesses = [];
     for (let index = 0; index < this.levelPolys.length; index++) {
@@ -694,8 +676,8 @@ class Levelwise {
     this.processLevelWithMode(mode, hasInterval);
   }
 
-  // The top level is projected out without an interval. By projective delineability, a
-  // polynomial without roots whose leading coefficient is nonzero needs only its discriminant.
+  // By projective delineability, a polynomial without roots whose leading coefficient is nonzero
+  // needs only its discriminant.
   private processTopLevel() {
     this.collectNonNullWitnesses();
     this.addAdjacentRootResultants();
@@ -723,7 +705,6 @@ class Levelwise {
   }
 }
 
-// levelwise::single_cell: the cell intervals of the variables below maxVar around the sample.
 // isLinear forces linear bounds, for check_assignment's explanations.
 export const getSingleCell = (
   pm: PolynomialManager,

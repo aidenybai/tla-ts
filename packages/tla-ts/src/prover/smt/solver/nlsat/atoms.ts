@@ -1,6 +1,5 @@
 // Ported from Z3 (src/nlsat/nlsat_solver.cpp, src/nlsat/nlsat_scoped_literal_vector.h,
-// src/util/id_gen.h), MIT license, see z3-license.txt. The atoms of nlsat, hash-consed, with
-// reference counts. An atom whose count drops to zero is deleted and its Boolean variable reused,
+// src/util/id_gen.h), MIT license, see z3-license.txt. A deleted atom's Boolean variable is reused,
 // last freed first, so literals are numbered as in Z3. Boolean variable 0 is true and has no atom.
 import {
   NULL_VAR,
@@ -18,7 +17,6 @@ const FLIPPED_KIND: Record<IneqKind, IneqKind> = { EQ: "EQ", LT: "GT", GT: "LT" 
 
 export const flipKind = (kind: IneqKind) => FLIPPED_KIND[kind];
 
-// What the solver keeps per Boolean variable, reset when a variable is made or deleted.
 interface BoolVarHooks {
   onMk: (boolVar: number) => void;
   onDelete: (boolVar: number) => void;
@@ -43,7 +41,6 @@ export class AtomTable {
     this.mkBoolVar();
   }
 
-  // mk_bool_var_core with id_gen: the last freed variable first.
   mkBoolVar() {
     const boolVar = this.freeBoolVars.pop() ?? this.nextBoolVar++;
     this.atoms[boolVar] = null;
@@ -52,7 +49,6 @@ export class AtomTable {
     return boolVar;
   }
 
-  // degree: the degree of the atom's maximal variable.
   getDegree(atom: Atom) {
     if (!("polynomials" in atom)) return this.pm.degree(atom.polynomial, atom.maxVar);
     let max = 0;
@@ -61,8 +57,6 @@ export class AtomTable {
     return max;
   }
 
-  // reinit_cache: each polynomial back in the cache after a reset, and the maximal variables after
-  // a renaming.
   reinitCache() {
     for (const atom of this.atoms) {
       if (atom === null || atom === undefined) continue;
@@ -117,8 +111,6 @@ export class AtomTable {
     return `${atom.kind},${atom.maxVar},${atom.index},${atom.polynomial.id}`;
   }
 
-  // mk_ineq_atom: each factor sign-normalized and hash-consed, the kind flipped when an odd
-  // factor changed sign.
   mkIneqAtom(kind: IneqKind, polynomials: readonly Polynomial[], isEven: readonly boolean[]) {
     let sign = 1;
     let maxVar = NULL_VAR;
@@ -145,7 +137,6 @@ export class AtomTable {
     return atom.boolVar;
   }
 
-  // mk_ineq_literal: true or false for a product of constants.
   mkIneqLiteral(kind: IneqKind, polynomials: readonly Polynomial[], isEven: readonly boolean[]) {
     let constant = 1n;
     let isConst = true;
@@ -173,7 +164,6 @@ export class AtomTable {
     return 2 * this.mkIneqAtom(kind, polynomials, isEven);
   }
 
-  // mk_root_atom: p sign-normalized, which keeps its roots, and hash-consed.
   mkRootAtom(kind: RootKind, variable: number, index: number, polynomial: Polynomial) {
     const atom: RootAtom = {
       kind,
@@ -193,7 +183,6 @@ export class AtomTable {
   }
 }
 
-// scoped_literal_vector: literals that hold a reference to their atoms.
 export class ScopedLiterals {
   literals: number[] = [];
 
@@ -224,7 +213,6 @@ export class ScopedLiterals {
   }
 }
 
-// scoped_literal: a literal that holds a reference to its atom.
 export class ScopedLiteral {
   literal = TRUE_LITERAL;
 

@@ -57,9 +57,7 @@ export interface SymbolSpec {
   axioms: Axiom[];
 }
 
-// N_data.s: what the symbols collected so far change about the axioms of the next ones.
 export interface CollectState {
-  // The fields of each record symbol the obligation uses.
   recordFields: Map<string, string[]>;
   strings: string[];
   isFunConstr: boolean;
@@ -632,7 +630,6 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     case "TIntLteq":
       return spec(undefined, ["IntLteq"], [getTyping("IntLteq")]);
     default:
-      // The rest are numerals, which SMT-LIB has natively.
       if (name.startsWith("TIntLit_")) return spec(undefined, [], []);
       throw new TlaUnsupportedError(`the symbol ${name}`);
   }

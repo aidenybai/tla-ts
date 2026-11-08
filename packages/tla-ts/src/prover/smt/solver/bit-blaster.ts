@@ -89,7 +89,6 @@ export class BitBlaster {
     return result;
   }
 
-  // mk_ge2: at least two of the three are true.
   private mkGe2(first: number, second: number, third: number, previous: number) {
     const manager = this.manager;
     const result = manager.isFalse(first)

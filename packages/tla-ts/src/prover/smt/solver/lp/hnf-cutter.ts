@@ -1,7 +1,5 @@
 // Ported from Z3 (src/math/lp/hnf_cutter.cpp, and get_equality_and_right_side_for_term_on_current_x
-// in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt. Cuts from proofs: the integer
-// terms tight at the current solution form A x = b; with A in Hermite normal form H, a row of
-// H^-1 b that is fractional gives a cut that every integer solution meets.
+// in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import type { Dependency } from "./dependency";
 import { GeneralMatrix, getDeterminantOfRectangularMatrix, getHermiteNormalForm } from "./hnf";
@@ -15,8 +13,6 @@ interface TightTerm {
   dep: Dependency;
 }
 
-// get_equality_and_right_side_for_term_on_current_x: the non-strict bound of an integer term that
-// its current value meets, without infinitesimals.
 const getTightTerm = (lia: IntSolver, term: LarTerm): TightTerm | undefined => {
   const solver = lia.solver;
   const column = term.column;
@@ -38,7 +34,6 @@ const getTightTerm = (lia: IntSolver, term: LarTerm): TightTerm | undefined => {
   return undefined;
 };
 
-// find_cut_row_index: a fractional entry, drawn uniformly by reservoir sampling.
 const findCutRowIndex = (lia: IntSolver, values: Rational[]) => {
   let result = -1;
   let count = 0;
@@ -52,7 +47,6 @@ const findCutRowIndex = (lia: IntSolver, values: Rational[]) => {
   return result;
 };
 
-// make_hnf_cut: the cut, in the term and the explanation of the integer solver.
 export const makeHnfCut = (lia: IntSolver): LiaMove => {
   const solver = lia.solver;
   const settings = solver.settings;
@@ -105,7 +99,6 @@ export const makeHnfCut = (lia: IntSolver): LiaMove => {
   }
   const cutRow = findCutRowIndex(lia, b);
   if (cutRow === -1) return { kind: "undef" };
-  // get_ei_H_minus_1: the row cutRow of the inverse of H.
   const inverseRow = Array.from({ length: matrix.getColumnCount() }, () => Rational.zero);
   inverseRow[cutRow] = Rational.one.div(h[cutRow][cutRow]);
   for (let k = cutRow - 1; k >= 0; k--) {

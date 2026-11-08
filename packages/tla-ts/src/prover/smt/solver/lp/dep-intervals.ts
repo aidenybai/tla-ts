@@ -1,8 +1,6 @@
 // Ported from Z3 (src/math/interval/interval.h, src/math/interval/interval_def.h,
 // src/math/interval/dep_intervals.h, src/math/interval/dep_intervals.cpp), MIT license, see
-// z3-license.txt. Exact rational intervals with open, closed, or infinite bounds, where each bound
-// carries the dependency that justifies it. Only the operations nla_intervals, horner,
-// pdd_interval, and monomial_bounds call are here; mpq is exact, so there is no rounding.
+// z3-license.txt.
 import { Rational } from "../rational";
 import { type Dependency, linearize, mkJoin } from "./dependency";
 
@@ -17,7 +15,6 @@ export interface DepInterval {
   upperDep: Dependency;
 }
 
-// with_deps_t: whether an operation also computes the dependencies of the result.
 export type DepsMode = "with-deps" | "without-deps";
 
 interface ExtNumeral {
@@ -25,7 +22,6 @@ interface ExtNumeral {
   readonly value: Rational;
 }
 
-// interval_deps_combine_rule: bitmasks of the argument bounds that justify each result bound.
 interface CombineRule {
   readonly lower: number;
   readonly upper: number;
@@ -152,7 +148,6 @@ const imAdd = (first: DepInterval, second: DepInterval, result: DepInterval) =>
     first.isUpperOpen || second.isUpperOpen,
   );
 
-// div_mul with inv_k false.
 const imMulScalar = (scalar: Rational, interval: DepInterval, result: DepInterval) => {
   if (scalar.isZero()) return setBounds(result, MINUS_INF, true, PLUS_INF, true);
   const factor = mkNumeral(scalar);
@@ -451,7 +446,6 @@ const getPowerRule = (interval: DepInterval, exponent: number): CombineRule => {
   return { lower: 0, upper: DEP_IN_LOWER1 | DEP_IN_UPPER1 };
 };
 
-// im_config::mk_dependency: the joined dependencies of the bounds in the mask.
 const mkDependency = (first: DepInterval, second: DepInterval | null, mask: number) => {
   const withLower1 = mask & DEP_IN_LOWER1 ? first.lowerDep : null;
   const withLower2 =
@@ -460,7 +454,6 @@ const mkDependency = (first: DepInterval, second: DepInterval | null, mask: numb
   return second !== null && mask & DEP_IN_UPPER2 ? mkJoin(withUpper1, second.upperDep) : withUpper1;
 };
 
-// im_config::add_deps.
 const combineDeps = (
   first: DepInterval,
   second: DepInterval | null,
@@ -538,7 +531,6 @@ export const add = (
   if (mode === "with-deps") combineDeps(first, second, getAddRule(), result);
 };
 
-// add(rational, interval): shifts the finite bounds and keeps the dependencies.
 export const addScalar = (scalar: Rational, interval: DepInterval) => {
   if (!interval.isLowerInf) interval.lower = interval.lower.add(scalar);
   if (!interval.isUpperInf) interval.upper = interval.upper.add(scalar);
@@ -583,7 +575,6 @@ export const intersect = (
   }
 };
 
-// set_value and set_interval_for_scalar: the closed point interval, keeping the dependencies.
 export const setValue = (interval: DepInterval, value: Rational) =>
   setBounds(interval, mkNumeral(value), false, mkNumeral(value), false);
 
@@ -611,8 +602,6 @@ const separatedFromZeroOnUpper = (interval: DepInterval) =>
 export const separatedFromZero = (interval: DepInterval) =>
   separatedFromZeroOnUpper(interval) || separatedFromZeroOnLower(interval);
 
-// When the interval excludes zero, reports the joined dependency of dep and the separating bound,
-// lower first.
 export const checkIntervalForConflictOnZero = (
   interval: DepInterval,
   dep: Dependency,

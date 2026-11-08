@@ -1,5 +1,4 @@
 // Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
-// A hash-consed DAG of applications, de Bruijn variables and quantifiers, as in Z3's ast_manager.
 import { SmtInvariantError } from "../../../errors";
 import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
@@ -19,7 +18,6 @@ export const SORT_REAL = 2;
 export const FAMILY_BASIC = 0;
 export const FAMILY_ARITH = 1;
 export const FAMILY_USER = 2;
-// Model values: the elements that a model gives to an uninterpreted sort.
 export const FAMILY_MODEL_VALUE = 3;
 export const FAMILY_FINITE_SET = 4;
 export const FAMILY_BV = 5;
@@ -59,7 +57,6 @@ export const OP_MOD0 = 29;
 export const OP_UNINTERPRETED = 30;
 const OP_MODEL_VALUE = 31;
 
-// Z3's bv_op_kind of a bit-vector op is its op less BV_OP_BASE.
 const BV_OP_BASE = 100;
 export const OP_BV_NUM = BV_OP_BASE;
 export const OP_BNEG = BV_OP_BASE + 3;
@@ -140,7 +137,6 @@ const UNCACHED_BV_OPS: ReadonlySet<number> = new Set([
   OP_ROTATE_RIGHT,
 ]);
 
-// A Z3 symbol: a string, or a number for a numerical symbol, which Z3 prints as k!n.
 export type SmtSymbol = string | number;
 
 const getSymbolName = (symbol: SmtSymbol) => (typeof symbol === "number" ? `k!${symbol}` : symbol);
@@ -152,7 +148,6 @@ export interface FuncDecl {
   domain: number[];
   range: number;
   isSkolem: boolean;
-  // Z3's small id of the declaration, which its matcher hashes.
   smallId: number;
   parameters: number[];
 }
@@ -163,7 +158,6 @@ interface QuantifierData {
   // The names of the variables, which tell apart quantifiers that differ only in them, as in Z3.
   names: SmtSymbol[];
   body: number;
-  // Applications of the pattern declaration to the terms of each multi-pattern.
   patterns: number[];
   weight: number;
   qid: string;
@@ -286,11 +280,9 @@ const MAX_SMALL_NUM_TO_CACHE = 16;
 // The sorts that finite_set_decl_plugin::init makes.
 const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
-// symbol::hash: a numerical symbol hashes to its number.
 const getSymbolHash = (symbol: SmtSymbol) =>
   typeof symbol === "number" ? symbol : stringHash(symbol, 17);
 
-// Whether a sort is Int or Real.
 export const isArithSort = (sort: number) => sort === SORT_INT || sort === SORT_REAL;
 
 // mpz_manager::hash: the absolute value of an integer below 2^32, else the hash of its 32-bit digits,
@@ -303,7 +295,6 @@ const getIntegerHash = (value: bigint) => {
   return bytesHash(new Uint8Array(Uint32Array.from(digits).buffer), 17);
 };
 
-// decl_info::hash.
 const getInfoHash = (family: number, kind: number, parameterHashes: number[]) =>
   mkMix(family, kind, parameterHashes.length === 0 ? 0 : getCompositeHash(parameterHashes));
 
@@ -314,8 +305,6 @@ const SIGNATURE_DIV0 = 2;
 const SIGNATURE_MODEL_VALUE = 3;
 const SIGNATURE_NUMERAL = 4;
 
-// A builtin declaration that Z3 makes once per signature: its small id, and the references that
-// applications and model values hold to it.
 interface SignatureDecl {
   smallId: number;
   refCount: number;
@@ -327,7 +316,6 @@ export class AstManager {
   // replaces them, so a caller does not keep one across the creation of an expression.
   private numNodes = 0;
   kinds = new Uint8Array(1024);
-  // The declaration of an application.
   decls = new Int32Array(1024);
   // The arguments of every expression end to end: those of expr are argPool[argStarts[expr]] up to
   // argPool[argStarts[expr + 1]]. Variables and constants take an empty range and a quantifier
@@ -335,10 +323,8 @@ export class AstManager {
   private argPool = new Int32Array(1024);
   private argStarts = new Int32Array(1024);
   sorts = new Int32Array(1024);
-  // The index of a variable or model value, or of a numeral's value in numeralValues.
   values = new Int32Array(1024);
   private numeralValues: Rational[] = [];
-  // The integer numerals by value, which finds one without building its key in the table.
   private intNumerals = new Map<bigint, number>();
   // One more than the largest free de Bruijn index, so 0 means the expression is ground.
   freeVarBounds = new Int32Array(1024);
@@ -347,7 +333,6 @@ export class AstManager {
   // Z3's hash of each expression, which orders Z3's hash tables.
   hashes = new Uint32Array(1024);
   quantifiers = new Map<number, QuantifierData>();
-  // The marks that the rewriters of this manager share to flatten conjunctions and disjunctions.
   readonly flatLiterals = new FlatLiterals(this);
   funcDecls: FuncDecl[] = [];
   sortNames: string[] = ["Bool", "Int", "Real"];
@@ -361,7 +346,6 @@ export class AstManager {
     combineHash(getSymbolHash("Int"), getInfoHash(Z3_ARITH_FAMILY, 1, [])),
     combineHash(getSymbolHash("Real"), getInfoHash(Z3_ARITH_FAMILY, 0, [])),
   ];
-  // The hash of each uninterpreted declaration, and of each builtin by its Z3 declaration.
   private declHashes: number[] = [];
   // The hash of each builtin declaration other than pattern by op, argument sort, range and number
   // of arguments: open addressing with linear probing, with the four keys of slot i at 4 i in
@@ -369,7 +353,6 @@ export class AstManager {
   private builtinKeys = new Int32Array(4 * 256).fill(-1);
   private builtinHashes = new Uint32Array(256);
   private numBuiltinHashes = 0;
-  // The hash of each pattern declaration by its domain and range.
   private patternHashes = new Map<string, number>();
   private table = new Map<string, number>();
   // The hash-consing table of applications: open addressing with linear probing over the handles,
@@ -384,17 +367,11 @@ export class AstManager {
   private nextSmallId = FIRST_DECLARED_SMALL_ID;
   private freeSmallIds: number[] = [];
   private numDecls = FIRST_DECLARED_SMALL_ID;
-  // The small id and the number of live applications of each builtin declaration that Z3 makes
-  // per signature, by its signature.
   private signatureDecls = new Map<number | string, SignatureDecl>();
-  // The references to each user declaration: the script holds the declared ones, and applications
-  // and models hold the fresh ones. A deleted declaration keeps its small id here, in case an
-  // application of it is created again.
+  // A deleted declaration keeps its small id here, in case an application of it is created again.
   private declRefCounts: number[] = [];
-  // The named expressions of the recfun plugin, by declaration.
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
   private deletedDecls = new Set<number>();
-  // ast_manager::m_fresh_id, which numbers fresh declarations and variable names.
   private freshId = 0;
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
   // gives the id of a deleted expression to the next expression it creates, so its ids follow
@@ -409,15 +386,12 @@ export class AstManager {
   // no temporaries are held.
   private temporaries: number[] = [];
   private temporariesMark = -1;
-  // The arguments mkApp copies out of a caller's array that starts past index 0.
   private argBuffer: number[] = [];
-  // m_small_ints and m_small_reals: the numerals below MAX_SMALL_NUM_TO_CACHE, which are held.
   private smallInts: number[] = [];
   private smallReals: number[] = [];
   private isFiniteSetPluginInitialized = false;
   readonly trueExpr: number;
   readonly falseExpr: number;
-  // The global parameter rewriter.hi_div0, which each rewriter reads when it is made.
   isHiDiv0 = true;
 
   constructor(readonly limit: ResourceLimit) {
@@ -443,12 +417,10 @@ export class AstManager {
     return this.refCounts[expr];
   }
 
-  // get_num_asts: the live expressions, declarations and sorts, with Z3's own expressions.
   getNumAsts() {
     return this.numLive + FIRST_FREE_ID - 2 + this.numDecls;
   }
 
-  // The declaration that a held signature names.
   private getSignatureDecl(key: number | string) {
     const signatureDecl = this.signatureDecls.get(key);
     if (signatureDecl === undefined)
@@ -516,7 +488,6 @@ export class AstManager {
     return null;
   }
 
-  // The id that Z3 gives the declaration of an application.
   getDeclId(expr: number) {
     const signature = this.getSignature(expr);
     return signature === null
@@ -524,7 +495,6 @@ export class AstManager {
       : this.getSignatureDecl(signature).smallId;
   }
 
-  // An application holds its declaration, which Z3 makes with its first application.
   private holdDecl(expr: number) {
     const decl = this.decls[expr];
     if (this.funcDecls[decl].family === FAMILY_USER) {
@@ -545,8 +515,6 @@ export class AstManager {
       this.funcDecls[decl].smallId = smallId;
   }
 
-  // The small id of the declaration a deleted application releases for good, or -1 when the
-  // declaration stays.
   private releaseDecl(expr: number) {
     const decl = this.decls[expr];
     if (this.funcDecls[decl].family === FAMILY_USER) {
@@ -635,7 +603,6 @@ export class AstManager {
     shrink(temporaries, mark);
   }
 
-  // Runs body without temporaries, for code whose references are counted explicitly.
   withoutTemporaries<T>(body: () => T) {
     const outer = this.temporariesMark;
     this.temporariesMark = -1;
@@ -644,7 +611,6 @@ export class AstManager {
     return result;
   }
 
-  // Hands a reference the caller owns to the innermost withTemporaries, or releases it now.
   releaseLater(expr: number) {
     if (this.temporariesMark === -1) this.decRef(expr);
     else this.temporaries.push(expr);
@@ -716,7 +682,6 @@ export class AstManager {
     this.temporaries.push(expr);
   }
 
-  // The arguments of an application, and the body of a quantifier as its one argument.
   getNumArgs(expr: number) {
     return this.argStarts[expr + 1] - this.argStarts[expr];
   }
@@ -725,13 +690,11 @@ export class AstManager {
     return this.argPool[this.argStarts[expr] + index];
   }
 
-  // Appends the arguments to target, for a caller that needs them as an array.
   pushArgs(expr: number, target: number[]) {
     const end = this.argStarts[expr + 1];
     for (let index = this.argStarts[expr]; index < end; index++) target.push(this.argPool[index]);
   }
 
-  // A new array of the arguments.
   getArgs(expr: number) {
     const args: number[] = [];
     this.pushArgs(expr, args);
@@ -758,7 +721,6 @@ export class AstManager {
     return true;
   }
 
-  // A lookup that finds a deleted expression creates it again.
   private revive(expr: number) {
     if (this.ids[expr] === -1) this.registerNode(expr);
     return expr;
@@ -868,7 +830,6 @@ export class AstManager {
     return this.sortFamilies[sort];
   }
 
-  // The hash of a func_decl node: its name, range, info and domain.
   private getFuncDeclHash(name: SmtSymbol, domain: number[], range: number, infoHash: number) {
     return astArrayHash(
       domain,
@@ -877,7 +838,6 @@ export class AstManager {
     );
   }
 
-  // The name, Z3 decl kind and domain of the Z3 declaration of a builtin application.
   getBuiltinSignature(op: number, args: number[]) {
     const builtin = Z3_BUILTINS.get(op);
     if (builtin === undefined)
@@ -894,7 +854,6 @@ export class AstManager {
     return { name: builtin[0], kind: builtin[1], domain };
   }
 
-  // The hash of a pattern's Z3 declaration.
   private getPatternHash(args: number[], range: number) {
     const key = `${args.map((arg) => this.sorts[arg]).join(",")}:${range}`;
     const existing = this.patternHashes.get(key);
@@ -904,9 +863,7 @@ export class AstManager {
     return hash;
   }
 
-  // The slot in builtinHashes of the hash of a builtin's Z3 declaration, other than a pattern's. The
-  // domain depends only on the sort of an argument and the number of arguments, which key the cache
-  // with the op and range. It returns the slot, a small integer, because V8 boxes a hash it returns.
+  // It returns the slot, a small integer, because V8 boxes a hash it returns.
   private getBuiltinSlot(op: number, args: number[], range: number) {
     const argSort = args.length === 0 ? 0 : this.sorts[op === OP_ITE ? args[1] : args[0]];
     const count = args.length;
@@ -932,7 +889,6 @@ export class AstManager {
     return this.insertBuiltinHash(op, argSort, range, count, hash);
   }
 
-  // The slot of the builtin hash with these keys, or the free slot where it goes.
   private findBuiltinSlot(op: number, argSort: number, range: number, count: number) {
     const keys = this.builtinKeys;
     const mask = this.builtinHashes.length - 1;
@@ -977,7 +933,6 @@ export class AstManager {
     );
   }
 
-  // The hash of a user declaration, which Z3's tables of declarations hash.
   getDeclHash(decl: number) {
     return this.declHashes[decl];
   }
@@ -1003,7 +958,6 @@ export class AstManager {
     return this.funcDecls.length - 1;
   }
 
-  // mk_fresh_func_decl: without a prefix the name is the numerical symbol of the fresh id.
   mkFreshFuncDecl(prefix: SmtSymbol | null, domain: number[], range: number, isSkolem = true) {
     const name = prefix === null ? this.freshId : `${getSymbolName(prefix)}!${this.freshId}`;
     this.freshId++;
@@ -1012,7 +966,6 @@ export class AstManager {
     return decl;
   }
 
-  // mk_fresh_var_name.
   mkFreshVarName(prefix: string | null) {
     const name = `${prefix ?? "var"}!${this.freshId}`;
     this.freshId++;
@@ -1210,12 +1163,10 @@ export class AstManager {
     return numeral;
   }
 
-  // mk_numeral(value, is_int).
   mkNumeralOfSort(value: Rational, sort: number) {
     return sort === SORT_INT ? this.mkNumeral(value.num) : this.mkRealNumeral(value);
   }
 
-  // mk_model_value: the element with this index in the universe of an uninterpreted sort.
   mkModelValue(index: number, sort: number) {
     const key = `m${sort}:${index}`;
     const existing = this.table.get(key);
@@ -1283,7 +1234,6 @@ export class AstManager {
     return id;
   }
 
-  // mk_pattern: a multi-pattern of a quantifier.
   mkPattern(terms: number[]) {
     return this.mkApp(OP_PATTERN, terms, SORT_BOOL);
   }
@@ -1306,7 +1256,6 @@ export class AstManager {
     return this.freeVarBounds[expr] === 0;
   }
 
-  // Z3's is_ground: an application without variables or quantifiers.
   isGroundApp(expr: number) {
     return (
       this.kinds[expr] === KIND_APP &&
@@ -1360,24 +1309,20 @@ export class AstManager {
     return this.getOp(expr) === OP_NUM;
   }
 
-  // The value of an integer numeral.
   getNumeral(expr: number) {
     return this.isNumeral(expr) && this.sorts[expr] === SORT_INT
       ? this.getNumeralValue(expr)
       : undefined;
   }
 
-  // The value of an expression that is an integer numeral.
   getNumeralValue(expr: number) {
     return this.numeralValues[this.values[expr]].num;
   }
 
-  // The value of an expression that is a numeral of either sort.
   getRationalValue(expr: number) {
     return this.numeralValues[this.values[expr]];
   }
 
-  // Unique values are interpreted constants that are distinct from each other, as in Z3.
   isUniqueValue(expr: number) {
     const op = this.getOp(expr);
     return (
@@ -1419,7 +1364,6 @@ export class AstManager {
     return this.sortFamilies[sort] === FAMILY_USER;
   }
 
-  // An uninterpreted constant, such as a declared constant or a Skolem constant.
   isUninterpretedConst(expr: number) {
     return this.isUninterpreted(expr) && this.getNumArgs(expr) === 0;
   }
@@ -1428,7 +1372,6 @@ export class AstManager {
     return this.getFamily(expr) === FAMILY_USER;
   }
 
-  // arith_util::is_times_minus_one: the t of (* -1 t).
   getTimesMinusOneArg(expr: number) {
     if (this.getOp(expr) !== OP_MUL || this.getNumArgs(expr) !== 2) return undefined;
     const coefficient = this.getArg(expr, 0);
@@ -1438,7 +1381,6 @@ export class AstManager {
       : undefined;
   }
 
-  // occurs: decl is applied somewhere in expr.
   isOccurring(decl: number, expr: number) {
     return this.someSubterm(expr, (current) => this.decls[current] === decl);
   }
@@ -1447,8 +1389,7 @@ export class AstManager {
     return this.someSubterm(expr, (current) => this.isModelValue(current));
   }
 
-  // for_each_expr: visits the subterms with a stack of its own, so deep terms do not exhaust the call
-  // stack.
+  // Visits the subterms with a stack of its own, so deep terms do not exhaust the call stack.
   private someSubterm(expr: number, predicate: (expr: number) => boolean) {
     const visited = new Set<number>();
     const todo = [expr];

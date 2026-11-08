@@ -1,10 +1,5 @@
 // Ported from Z3 (src/math/grobner/pdd_solver.h, src/math/grobner/pdd_solver.cpp), MIT license,
-// see z3-license.txt. dd::solver, the Grobner basis completion that nla runs on polynomials as
-// pdds. Each step picks the simplest equation whose leading variable is highest, simplifies it by
-// the processed equations and them by it, and adds its S-polynomials with them to be simplified.
-// Equations move between the solved, processed and to-simplify sets, each in an array where an
-// equation knows its index. Z3's solver::simplify runs the simplifier, which here is PddSimplifier
-// in pdd-simplifier, run by its caller.
+// see z3-license.txt. Z3's solver::simplify runs the simplifier, which here its caller runs.
 import { PddMemoryOutError } from "../../../../errors";
 import { Dependency, mkJoin } from "./dependency";
 import { Pdd, PddManager } from "./pdd";
@@ -64,8 +59,7 @@ export class Equation {
   ) {}
 }
 
-// scoped_update: walks a set with i and keeps the equations that nextj moves to j. finish keeps
-// those not walked and drops the rest, as Z3's destructor does.
+// finish keeps the equations not walked and drops the rest, as Z3's destructor does.
 export class SetUpdate {
   i = 0;
   private j = 0;
@@ -144,7 +138,6 @@ export class PddSolver {
     this.updateStats(equation);
   }
 
-  // simplify: applies the substitutions to p, and returns it with its dependency.
   simplify(poly: Pdd, dep: Dependency) {
     let result = poly;
     let resultDep = dep;
@@ -265,7 +258,6 @@ export class PddSolver {
     this.add(poly, mkJoin(first.dep, second.dep));
   }
 
-  // simplify_using(eq, eqs): reduces eq by the set until no reduction applies.
   private simplifyUsingAll(equation: Equation, set: Equation[]) {
     let isSimplified = false;
     do {

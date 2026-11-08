@@ -1,6 +1,4 @@
-// Ported from Z3 (src/math/lp/lar_constraints.h), MIT license, see z3-license.txt. The bounds
-// that the theory asserts on columns, each with a leaf dependency on its own index, and the set of
-// active ones, both undone by pop.
+// Ported from Z3 (src/math/lp/lar_constraints.h), MIT license, see z3-license.txt.
 import { Dependency, mkLeaf } from "./dependency";
 import { Impq } from "./numeric-pair";
 import { shrink } from "../array";
@@ -27,7 +25,6 @@ export interface LarConstraint {
   readonly rhs: Impq;
   readonly dep: Dependency;
   isActive: boolean;
-  // Made for the atom of an nla lemma.
   readonly isAuxiliary: boolean;
 }
 
@@ -40,7 +37,6 @@ export class ConstraintSet {
   readonly constraints: LarConstraint[] = [];
   private active: number[] = [];
   private scopes: ConstraintScope[] = [];
-  // m_is_auxiliary_mode: whether new constraints are auxiliary.
   isAuxiliaryMode = false;
 
   add(column: number, kind: ConstraintKind, rhs: Impq) {

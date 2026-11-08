@@ -1,9 +1,7 @@
 // Ported from Z3 (src/math/lp/nla_basics_lemmas.h, src/math/lp/nla_basics_lemmas.cpp), MIT
-// license, see z3-license.txt. The basic lemmas of nla on monomials whose values are wrong: signs
-// (-ab = (-a)b), zeros (xy = 0 iff x = 0 or y = 0), neutral factors (|xa| = |x| and x != 0 imply
-// |a| = 1) and proportions (|xy| >= |y| when x != 0). Only the model-based lemmas are ported: with
-// derived = true, basic_lemma returns after the sign lemma, so Z3 never reaches its derived
-// zero and neutral lemmas.
+// license, see z3-license.txt. Only the model-based lemmas are ported: with derived = true,
+// basic_lemma returns after the sign lemma, so Z3 never reaches its derived zero and neutral
+// lemmas.
 import { Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
@@ -33,8 +31,6 @@ export class Basics {
       );
   }
 
-  // Signs.
-
   private basicSignLemmaOnTwoMonics(first: Monic, second: Monic) {
     const sign = signToRat(first.rsign !== second.rsign);
     if (this.core.varVal(first).equals(this.core.varVal(second).mul(sign))) return false;
@@ -61,8 +57,6 @@ export class Basics {
     for (const lpVar of fixedZeros) this.addFixedZeroLemma(monic, lpVar);
   }
 
-  // try_get_non_strict_sign_from_bounds and get_non_strict_sign: the sign times the sign of the
-  // variable, from its value or else its bounds, or 0.
   private getNonStrictSign(lpVar: number, sign: number) {
     const core = this.core;
     const value = core.val(lpVar);
@@ -135,10 +129,6 @@ export class Basics {
     lemma.explainMonic(second);
   }
 
-  // Zeros.
-
-  // find_best_zero: a variable of value 0, preferably with 0 inside its bounds, and the variables
-  // fixed to 0.
   private findBestZero(monic: Monic, fixedZeros: number[]) {
     const core = this.core;
     let zeroVar = -1;
@@ -184,8 +174,6 @@ export class Basics {
     lemma.explainExistingUpperBound(lpVar);
     lemma.addIneq(mkIneq(lpVar, KIND_LT, 0));
   }
-
-  // Model-based lemmas on the factorizations of a monic.
 
   private basicLemmaForMonModelBased(rooted: Monic) {
     const core = this.core;
@@ -335,9 +323,6 @@ export class Basics {
     else this.basicLemmaForMonNeutralFromFactorsToMonicModelBased(rooted, factorization);
   }
 
-  // can_create_lemma_for_mon_neutral_from_factors_to_monic_model_based: the one factor whose
-  // value is not +-1, or -1 when there is none, and the product of the other values, when the
-  // monic's value disagrees with them.
   private getNeutralNotOne(monic: Monic, factors: FactorValue[]) {
     let sign = Rational.one;
     let notOne = -1;

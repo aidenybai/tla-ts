@@ -1,6 +1,5 @@
 // Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see
-// z3-license.txt. The state of the SMT kernel and the translation of formulas into it: Boolean
-// variables, enodes, clauses and relevancy watches. The search lives in context.ts.
+// z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   AstManager,
@@ -59,15 +58,13 @@ import type { Theory } from "./theory";
 import { setAt, shrink } from "./array";
 import { StickyGenerations } from "./sticky-generations";
 
-// DEEP_EXPR_THRESHOLD: the depth above which internalize_deep sorts an expression's subterms.
 const DEEP_EXPR_THRESHOLD = 1024;
 const WHITE = 0;
 const GREY = 1;
 const BLACK = 2;
 
-// The kinds of undo trail entries. Z3 allocates its trail objects in a region. Here an entry is its
-// kind on trailKinds, with its operands on trailNodes and trailInts, so recording one allocates
-// nothing. pushTrail's closures are one more kind.
+// An undo entry is its kind on trailKinds, with its operands on trailNodes and trailInts, so
+// recording one allocates nothing.
 const UNDO_CLOSURE = 0;
 const UNDO_MK_BOOL_VAR = 1;
 const UNDO_MK_ENODE = 2;
@@ -98,7 +95,6 @@ interface NewEq {
   justification: EqJustification;
 }
 
-// m_conflict and m_not_l: the justification of the conflict, and the literal it falsifies, if any.
 interface Conflict {
   justification: BJustification;
   notLiteral: Literal | null;
@@ -120,23 +116,17 @@ export abstract class Internalizer {
   // first numBoolVars entries are live.
   numBoolVars = 0;
   boolVar2Expr: number[] = [];
-  // bool_var_data: two words per variable. The first holds the level of its assignment and the BV_
-  // flags, the second the level of its internalization.
   private boolVarData = new Int32Array(2048);
   private boolVarTheories: number[] = [];
   justifications: BJustification[] = [];
   activity: number[] = [];
-  // Per literal.
   protected assignment: number[] = [];
   readonly clauses = new ClauseStore();
-  // Like Z3's watch lists, a literal's lists are created when the first clause is added.
   protected watches: (Clause[] | undefined)[] = [];
   // del_clauses' uint_set of the watch lists to filter, by literal, all 0 between calls.
   private watchMarks = new Uint8Array(1024);
-  // The false literals that simplify_aux_clause_literals removes from the clause mkClause makes.
   private removedLiterals: Literal[] = [];
-  // The literal_buffer of mk_and_cnstr and mk_or_cnstr, and the array that mk_gate_clause keeps on
-  // the stack. mkClause neither keeps them nor makes a gate, so the gates reuse them.
+  // mkClause neither keeps the gate buffers nor makes a gate, so the gates reuse them.
   private gateBuffer: Literal[] = [];
   private gateLiterals: Literal[] = [];
   // The binary clauses of the binary clause optimization: the literals each literal propagates when it
@@ -146,9 +136,8 @@ export abstract class Internalizer {
   // with that literal. Clearing it would write past the end of this sparse array, which V8 then
   // turns into a dictionary.
   private binJustifications: (BinJustification | undefined)[] = [];
-  // Per expression.
-  // The Boolean variable of each expression, or -1. A typed array keeps the element loads of every
-  // context monomorphic, where the holes of a growing array give each its own elements kind.
+  // A typed array keeps the element loads of every context monomorphic, where the holes of a
+  // growing array give each its own elements kind.
   private exprToBoolVar = new Int32Array(1024).fill(-1);
   protected exprToEnode: (Enode | undefined)[] = [];
 
@@ -224,7 +213,6 @@ export abstract class Internalizer {
     this.eqPropagationQueue.push({ lhs, rhs, justification });
   }
 
-  // random_gen from Z3's util/util.h with the default seed 0.
   getRandomValue() {
     this.randomSeed = (Math.imul(this.randomSeed, 214013) + 2531011) >>> 0;
     return (this.randomSeed >>> 16) & 0x7fff;
@@ -288,8 +276,6 @@ export abstract class Internalizer {
     }
   }
 
-  // Assignment queries.
-
   getAssignment(literal: Literal) {
     return this.assignment[literal];
   }
@@ -340,7 +326,6 @@ export abstract class Internalizer {
     return this.cgTable.findFor(decl, args, decl === OP_EQ);
   }
 
-  // is_diseq_core: the roots are distinct values, or an equality between the two classes is false.
   // The congruence table is searched with m_is_diseq_tmp, an equality of the sort, which holds a
   // reference until an equality of another sort replaces it.
   isDiseq(first: Enode, second: Enode) {
@@ -400,7 +385,6 @@ export abstract class Internalizer {
     return this.relevancy.isRelevant(expr);
   }
 
-  // context::mark_as_relevant, which propagates the relevancy at once.
   markAsRelevant(expr: number) {
     this.relevancy.markAsRelevant(expr);
     this.relevancy.propagate();
@@ -414,8 +398,7 @@ export abstract class Internalizer {
     return this.conflict !== null;
   }
 
-  // get_generation: the generation of the congruence root. Equalities have generation 0, since
-  // patterns have no equalities.
+  // Equalities have generation 0, since patterns have no equalities.
   getGeneration(node: Enode) {
     return node.isEq ? 0 : this.getCgRoot(node).generation;
   }
@@ -472,8 +455,6 @@ export abstract class Internalizer {
     }
   }
 
-  // Boolean variables and enodes.
-
   // mk_bool_var: m_b_internalized_stack holds a reference to the expression until the variable is
   // deleted.
   mkBoolVar(expr: number) {
@@ -512,7 +493,6 @@ export abstract class Internalizer {
     this.manager.decRef(expr);
   }
 
-  // The level of the variable's assignment.
   getLevel(boolVar: number) {
     return this.boolVarData[2 * boolVar] & LEVEL_MASK;
   }
@@ -522,7 +502,6 @@ export abstract class Internalizer {
     this.boolVarData[index] = (this.boolVarData[index] & ~LEVEL_MASK) | level;
   }
 
-  // The scope level at which the variable was internalized.
   getInternLevel(boolVar: number) {
     return this.boolVarData[2 * boolVar + 1];
   }
@@ -636,7 +615,6 @@ export abstract class Internalizer {
     return node;
   }
 
-  // The enode of an argument of expr, which is internalized before expr.
   private getArgEnode(expr: number, index: number) {
     const node = this.exprToEnode[this.manager.getArg(expr, index)];
     if (node === undefined) throw new SmtInvariantError("an argument was not internalized");
@@ -694,16 +672,12 @@ export abstract class Internalizer {
     }
   }
 
-  // Internalization.
-
   private isGate(expr: number) {
     const op = this.manager.getOp(expr);
     if (op === OP_AND || op === OP_OR || op === OP_ITE) return true;
     return op === OP_EQ && this.manager.isBool(this.manager.getArg(expr, 0));
   }
 
-  // should_internalize_rec: a term, or a Boolean application of the basic family or an
-  // uninterpreted declaration.
   private shouldInternalizeRec(expr: number) {
     const manager = this.manager;
     if (manager.kinds[expr] !== KIND_APP || manager.sorts[expr] !== SORT_BOOL) return true;
@@ -711,8 +685,7 @@ export abstract class Internalizer {
     return family === FAMILY_BASIC || family === FAMILY_USER;
   }
 
-  // internalize_deep: internalizes the subterms of a deep expression bottom up, in the order of a
-  // topological sort, so the recursion of internalizeRec stays shallow.
+  // Internalizes bottom up in topological order, so the recursion of internalizeRec stays shallow.
   private internalizeDeep(exprs: readonly number[]) {
     const manager = this.manager;
     const isDeep = (expr: number) =>
@@ -720,8 +693,6 @@ export abstract class Internalizer {
       manager.depths[expr] > DEEP_EXPR_THRESHOLD &&
       this.shouldInternalizeRec(expr);
     if (!exprs.some(isDeep)) return;
-    // The color of each expression in a gate context and outside one: white while unvisited, grey
-    // while its children are visited, and black once it is sorted.
     const colors = new Map<number, number>();
     const getColor = (current: number, isGate: boolean) =>
       colors.get(current * 2 + (isGate ? 1 : 0)) ?? WHITE;
@@ -1004,7 +975,6 @@ export abstract class Internalizer {
     }
   }
 
-  // mk_gate_clause with two or three literals.
   private mkGateClause(first: Literal, second: Literal, third?: Literal) {
     const literals = this.gateLiterals;
     shrink(literals, 0);
@@ -1044,7 +1014,6 @@ export abstract class Internalizer {
     this.getTheory(this.manager.getSortFamily(sort))?.applySortCnstr(node, sort);
   }
 
-  // mk_eq_atom: the side with the smaller id goes first.
   mkEqAtom(lhs: number, rhs: number) {
     const ids = this.manager.ids;
     return ids[lhs] < ids[rhs] ? this.manager.mkEq(lhs, rhs) : this.manager.mkEq(rhs, lhs);
@@ -1110,8 +1079,6 @@ export abstract class Internalizer {
     this.addRelWatch(literal, handler);
     this.addRelWatch(negate(literal), handler);
   }
-
-  // Clauses.
 
   mkThAxiom(literals: Literal[]) {
     this.mkClause(literals, null, CLS_TH_AXIOM);
@@ -1332,7 +1299,7 @@ export abstract class Internalizer {
     return clause;
   }
 
-  // del_clause. A clause in the reinit stack is only marked deleted, and reinitClauses frees it.
+  // A clause in the reinit stack is only marked deleted, and reinitClauses frees it.
   protected deleteClause(clause: Clause) {
     const clauses = this.clauses;
     if (clauses.isDeleted(clause)) return;
@@ -1344,7 +1311,6 @@ export abstract class Internalizer {
     if (!clauses.isReinit(clause)) clauses.free(clause);
   }
 
-  // release_atoms: the clause no longer holds its atoms.
   protected releaseAtoms(clause: Clause) {
     for (const atom of this.clauses.getAtoms(clause)) this.manager.decRef(atom);
     this.clauses.clearAtoms(clause);

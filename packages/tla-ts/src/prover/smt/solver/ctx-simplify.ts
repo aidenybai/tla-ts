@@ -1,7 +1,5 @@
 // Ported from Z3 (src/tactic/core/ctx_simplify_tactic.cpp, src/ast/num_occurs.cpp,
-// src/tactic/goal_num_occurs.cpp), MIT license, see z3-license.txt. The ctx-simplify tactic with
-// ctx_propagate_assertions: in the context of a formula or a branch, a shared term that the context
-// asserts becomes true, false or the value it equals.
+// src/tactic/goal_num_occurs.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_OR, type AstManager } from "./ast";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";
@@ -18,22 +16,15 @@ interface CachedResult {
 }
 
 class CtxSimplifier {
-  // goal_num_occurs: how often each term with more than one reference occurs outside quantifiers.
-  // m_pinned holds the formulas it counted.
   private occs = new Map<number, number>();
   private pinned: RefVector;
-  // ctx_propagate_assertions: the value of each shared term in the current context, and the terms
-  // given one, which the trail holds.
   private assertions = new Map<number, number>();
   private trail: RefVector;
   private scopes: number[] = [];
-  // m_cache: the results of a shared term, the innermost level last, and the terms cached at each
-  // level. A cached term and its results are held.
   private cache = new Map<number, CachedResult[]>();
   private cacheUndo: number[][] = [];
   private depth = 0;
   private numSteps = 0;
-  // m_mk_app: mk_simplified_app, one reduction of the theory rewriters.
   private rewriter: Rewriter;
 
   constructor(private manager: AstManager) {
@@ -42,8 +33,6 @@ class CtxSimplifier {
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
-  // operator(): a forward pass over the formulas, then a backward pass that also counts the
-  // occurrences of the forward pass's results.
   apply(goal: Goal) {
     const manager = this.manager;
     if (goal.isInconsistent) return;
@@ -77,7 +66,6 @@ class CtxSimplifier {
     this.pinned.reset();
   }
 
-  // goal_num_occurs::operator() with ignore_ref_count1 and ignore_quantifiers.
   private countOccurrences(goal: Goal) {
     const manager = this.manager;
     const visited = new Set<number>();
@@ -104,8 +92,6 @@ class CtxSimplifier {
     return this.manager.getRefCount(expr) > 1 && (this.occs.get(expr) ?? 0) > 1;
   }
 
-  // ctx_propagate_assertions::assert_expr: a shared atom gets its truth value, and a shared term
-  // that a positive equality equates with a value gets the value.
   private assertExpr(expr: number, isNegated: boolean) {
     const manager = this.manager;
     let atom = expr;
@@ -182,7 +168,6 @@ class CtxSimplifier {
     return top !== undefined && top.level === this.scopes.length ? top.to : undefined;
   }
 
-  // m_mk_app, with a reference to the result.
   private mkApp(decl: number, args: number[], sort: number) {
     return this.manager.withTemporaries(() => this.rewriter.mkApp(decl, args, sort));
   }
@@ -194,7 +179,6 @@ class CtxSimplifier {
       manager.incRef(expr);
       return expr;
     }
-    // tactic::checkpoint.
     manager.limit.checkpoint();
     const known = this.getCached(expr) ?? this.assertions.get(expr);
     if (known !== undefined) {
@@ -214,8 +198,6 @@ class CtxSimplifier {
     return result;
   }
 
-  // simplify_or_and: each argument is simplified in the context of the others before it, then of
-  // those after it. A disjunct is asserted false and a conjunct true.
   private simplifyOrAnd(expr: number, isOr: boolean) {
     const manager = this.manager;
     const level = this.scopes.length;
@@ -269,7 +251,6 @@ class CtxSimplifier {
     return simplified;
   }
 
-  // simplify_ite: the branches are simplified in the context of the condition and its negation.
   private simplifyIte(expr: number) {
     const manager = this.manager;
     const condition = manager.getArg(expr, 0);
@@ -326,7 +307,6 @@ class CtxSimplifier {
   }
 }
 
-// The ctx-simplify tactic, which the clean tactical resets when it is done.
 export const ctxSimplify = (manager: AstManager, goal: Goal) => {
   const simplifier = new CtxSimplifier(manager);
   simplifier.apply(goal);

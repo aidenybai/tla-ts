@@ -1,6 +1,4 @@
 // Ported from Z3 (src/smt/theory_lra.cpp, src/math/lp/lp_api.h), MIT license, see z3-license.txt.
-// The atoms of theory_lra: each is a bound on a column, with axioms between the bounds of the same
-// column.
 import { OP_GE, OP_IS_INT, OP_LE } from "./ast";
 import { BoolVar, Literal, mkLiteral, negate } from "./literal";
 import { Rational } from "./rational";
@@ -68,7 +66,6 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     this.unassignedBounds[thVar] = saved + increment;
   }
 
-  // bound2constraint_kind: the kind of the bound when its atom is true or false.
   protected getBoundKind(bound: ApiBound, isTrue: boolean) {
     if (bound.isLower) return isTrue ? KIND_GE : bound.isInt ? KIND_LE : KIND_LT;
     return isTrue ? KIND_LE : bound.isInt ? KIND_GE : KIND_GT;
@@ -94,7 +91,6 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     return { boolVar, thVar, column, value, constraintTrue, constraintFalse, ...partial };
   }
 
-  // mk_bound_axioms: implications between a new bound and its closest neighbors on the variable.
   private mkBoundAxioms(bound: ApiBound) {
     if (!this.context.isSearching) {
       this.newBounds.push(bound);
@@ -146,7 +142,6 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     else mkClause([negate(l1), l2]);
   }
 
-  // flush_bound_axioms: the axioms of the bounds created before the search, per variable.
   protected flushBoundAxioms() {
     while (this.newBounds.length > 0) {
       const pending = this.newBounds.slice().sort((first, second) => first.thVar - second.thVar);

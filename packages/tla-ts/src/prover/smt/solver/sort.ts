@@ -18,8 +18,6 @@ export const sortByKey = (values: number[], getKey: (value: number) => number) =
   }
 };
 
-// std::sort of literals: sortByKey with the number as its key, which a call site of its own keeps
-// cheap.
 export const sortNumbers = (values: number[]) => {
   if (values.length > MAX_INSERTION_SORT_LENGTH) {
     values.sort((first, second) => first - second);

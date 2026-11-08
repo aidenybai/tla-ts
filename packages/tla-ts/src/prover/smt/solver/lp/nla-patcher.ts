@@ -1,12 +1,10 @@
 // Ported from Z3 (src/math/lp/nla_patcher.{h,cpp}, src/util/mpz.cpp is_perfect_square), MIT
-// license, see z3-license.txt. Moves the values of monic variables, or of one of their factors, to
-// agree with the products, without breaking monics that are already correct.
+// license, see z3-license.txt.
 import { Rational } from "../rational";
 import type { Impq } from "./numeric-pair";
 import type { NlaCore } from "./nla-core";
 import type { Monic } from "./nla-emonics";
 
-// in_power: whether the variable at an index occurs next to an equal one.
 const isInPower = (vars: number[], index: number) => {
   const lpVar = vars[index];
   return (

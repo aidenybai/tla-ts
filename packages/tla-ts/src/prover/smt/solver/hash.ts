@@ -1,6 +1,5 @@
 // Ported from Z3 (src/util/hash.h, src/util/hash.cpp), MIT license, see z3-license.txt.
-// Bob Jenkins' hash functions, on unsigned 32-bit integers. Z3 hashes every AST with them, and its
-// hash tables iterate in hash order, so matching the hashes matches Z3's iteration order.
+// Z3's hash tables iterate in hash order, so matching the hashes matches Z3's iteration order.
 const GOLDEN_RATIO = 0x9e3779b9;
 
 const mix = (state: Uint32Array) => {
@@ -30,8 +29,7 @@ const mix = (state: Uint32Array) => {
   state[2] = c;
 };
 
-// The a, b and c of Z3's mix, which wrap like its unsigned integers. No hash function calls another
-// while it uses the state, so they share one rather than allocating one per hash.
+// No hash function calls another while it uses the state, so they share one.
 const sharedState = new Uint32Array(3);
 
 const mkState = (a: number, b: number, c: number) => {
@@ -63,7 +61,6 @@ export const combineHash = (first: number, second: number) =>
 
 const encoder = new TextEncoder();
 
-// string_hash, over the bytes of a string or of a number's digits.
 export const bytesHash = (data: Uint8Array, initValue: number) => {
   const readUnsigned = (offset: number) =>
     (data[offset] |
@@ -94,7 +91,6 @@ export const bytesHash = (data: Uint8Array, initValue: number) => {
 export const stringHash = (text: string, initValue: number) =>
   bytesHash(encoder.encode(text), initValue);
 
-// get_composite_hash over child hashes, with the default kind hash of 17.
 export const getCompositeHash = (childHashes: number[], kindHash = 17) => {
   const count = childHashes.length;
   const state = mkState(GOLDEN_RATIO, GOLDEN_RATIO, 11);
@@ -137,8 +133,6 @@ export const getCompositeHash = (childHashes: number[], kindHash = 17) => {
   }
 };
 
-// ast_array_hash: the hash of an AST from the hashes of its children, each looked up in hashes like
-// Z3's get_hash.
 export const astArrayHash = (items: number[], hashes: ArrayLike<number>, initValue: number) => {
   const count = items.length;
   switch (count) {

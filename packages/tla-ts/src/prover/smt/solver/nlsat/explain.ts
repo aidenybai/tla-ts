@@ -1,9 +1,6 @@
-// Ported from Z3 (src/nlsat/nlsat_explain.cpp), MIT license, see z3-license.txt. Explains a set of
-// literals that is infeasible at the sample: the literals of a lemma that exclude a cell around
-// the sample in which the set stays infeasible. Only Z3's default nlsat parameters are ported:
-// simplify_conflicts and factor on, minimize_conflicts, add_all_coeffs and zero_disc off, and lws
-// on. So the cell always comes from the levelwise construction, and Z3's fallback projection
-// (project with cac_add_cell_lits, add_lcs and the psc_* helpers) is not ported.
+// Ported from Z3 (src/nlsat/nlsat_explain.cpp), MIT license, see z3-license.txt. Only Z3's
+// default nlsat parameters are ported, so the cell always comes from the levelwise construction,
+// and Z3's fallback projection (project, add_lcs and the psc_* helpers) is not ported.
 import type { AlgebraicManager, Anum } from "./algebraic";
 import {
   type AtomTable,
@@ -23,14 +20,11 @@ import {
 } from "./polynomial";
 import { type IneqAtom, type IneqKind, type RootKind, isIneqAtom } from "./types";
 
-// The solver state an explanation reads.
 interface ExplainContext {
   atoms: AtomTable;
-  // sample(): the solver's assignment, refined in place.
   sample: (Anum | undefined)[];
   // value(l): l_true, l_false or l_undef, as 1, -1 and 0.
   getValue: (literal: number) => number;
-  // m_var2eq: the equation of least degree assigned for each variable.
   var2eq: (IneqAtom | null)[];
 }
 
@@ -38,7 +32,6 @@ interface ExplainContext {
 // over adding all coefficients.
 class AddAllCoeffsRestart {}
 
-// eq_info: an equation used to rewrite the core, and what its leading coefficient must satisfy.
 interface EqInfo {
   eq: Polynomial;
   variable: number;
@@ -137,13 +130,11 @@ export class Explain {
     return result;
   }
 
-  // add_assumption: the negation of p kind 0, or of p != 0 when isNeg, into the lemma.
   private addAssumption(kind: IneqKind, polynomial: Polynomial, isNeg = false) {
     const boolVar = this.context.atoms.mkIneqAtom(kind, [polynomial], [false]);
     this.addLiteral(2 * boolVar + (isNeg ? 0 : 1));
   }
 
-  // find_cell_roots for one polynomial: the root equal to the sample of its maximal variable.
   private findSectionRoot(polynomial: Polynomial, variable: number) {
     const value = this.context.sample[variable]!;
     const values = this.context.sample.map((current, index) =>
@@ -158,8 +149,6 @@ export class Explain {
     return null;
   }
 
-  // add_zero_assumption: p vanishes at the sample, so the sample lies on a root of its square-free
-  // part, which becomes a section literal.
   private addZeroAssumption(polynomial: Polynomial) {
     const squareFree = this.pm.squareFree(polynomial);
     if (this.pm.isConst(squareFree)) return;
@@ -168,8 +157,6 @@ export class Explain {
     if (index !== null) this.addRootLiteral("ROOT_EQ", variable, index, squareFree);
   }
 
-  // elim_vanishing: p without its leading coefficients that vanish at the sample, each of which
-  // becomes an assumption. Zero when all do.
   private elimVanishing(polynomial: Polynomial) {
     let p = polynomial;
     let variable = this.pm.maxVar(p);
@@ -206,8 +193,7 @@ export class Explain {
       .filter((polynomial) => !this.pm.isConst(polynomial));
   }
 
-  // insert_fresh_factors_in_todo: the factors of p, without their vanishing coefficients. Returns
-  // p without its vanishing coefficients, which Z3 writes back to its argument.
+  // Returns p without its vanishing coefficients, which Z3 writes back to its argument.
   private insertFreshFactorsInTodo(polynomial: Polynomial) {
     if (this.pm.isConst(polynomial)) return polynomial;
     const p = this.elimVanishing(polynomial);
@@ -219,8 +205,6 @@ export class Explain {
     return p;
   }
 
-  // normalize: the literal without the vanishing coefficients of max and the factors of lower
-  // stages, which become assumptions. True or false when nothing is left.
   private normalizeLiteral(literal: number, max: number) {
     if (literal >> 1 === TRUE_BOOL_VAR) return literal;
     const atom = this.getAtom(literal);
@@ -272,8 +256,6 @@ export class Explain {
     core.shrink(kept);
   }
 
-  // simplify(l, info, max, new_lit): rewrites the factors of degree at least the equation's by
-  // their pseudo-remainders, recording the condition on the equation's leading coefficient.
   private simplifyLiteral(literal: number, info: EqInfo, max: number, newLiteral: ScopedLiteral) {
     const atom = this.getAtom(literal);
     if (!isIneqAtom(atom) || (atom.polynomials.length === 1 && atom.polynomials[0] === info.eq)) {
@@ -336,8 +318,8 @@ export class Explain {
     newLiteral.set(TRUE_LITERAL);
   }
 
-  // simplify(C, eq, max): the core rewritten by eq. Like Z3's scoped_literal, newLiteral keeps a
-  // reference until the next literal or the end, also when an elimination restarts.
+  // Like Z3's scoped_literal, newLiteral keeps a reference until the next literal or the end,
+  // also when an elimination restarts.
   private simplifyWithEq(core: ScopedLiterals, eq: Polynomial, max: number) {
     const variable = this.pm.maxVar(eq);
     const degree = this.pm.degree(eq, variable);
@@ -382,7 +364,6 @@ export class Explain {
     }
   }
 
-  // select_eq: the positive single-factor odd equation of least degree in max.
   private selectEq(core: ScopedLiterals, max: number) {
     let result: Polynomial | null = null;
     let minDegree = Infinity;
@@ -401,8 +382,6 @@ export class Explain {
     return result;
   }
 
-  // select_lower_stage_eq: an assigned equation of a lower variable with a constant leading
-  // coefficient that can rewrite a literal of the core.
   private selectLowerStageEq(core: ScopedLiterals, max: number) {
     for (const literal of core.literals) {
       const atom = this.getAtom(literal);
@@ -436,8 +415,6 @@ export class Explain {
     }
   }
 
-  // add_root_literal: the negation of y kind root[i](p), as an inequality when p is linear or
-  // quadratic in y, else as a root atom.
   private addRootLiteral(kind: RootKind, variable: number, index: number, polynomial: Polynomial) {
     if (this.mkLinearRoot(kind, variable, polynomial)) return;
     if (this.mkQuadraticRoot(kind, variable, index, polynomial)) return;
@@ -457,7 +434,6 @@ export class Explain {
     this.addAssumption(ineq.kind, isNegated ? this.pm.neg(polynomial) : polynomial, ineq.isNeg);
   }
 
-  // mk_plinear_root: a root of p linear in y whose coefficient keeps its sign.
   private mkPlinearRoot(kind: RootKind, variable: number, polynomial: Polynomial) {
     if (this.pm.degree(polynomial, variable) !== 1) return false;
     const coeff = this.pm.coeff(polynomial, variable, 1);
@@ -501,7 +477,6 @@ export class Explain {
     return sign;
   }
 
-  // levelwise_single_cell: the literals that bound the cell.
   private addCellLiterals(polynomials: readonly Polynomial[], maxVar: number, isLinear: boolean) {
     const cell = getSingleCell(
       this.pm,
@@ -536,7 +511,6 @@ export class Explain {
     }
   }
 
-  // project: the factors of the polynomials, then the cell around the sample.
   private project(polynomials: readonly Polynomial[], maxVar: number) {
     if (polynomials.length === 0) return;
     this.todo.reset();
@@ -551,7 +525,6 @@ export class Explain {
     this.project(this.elimVanishingAll(polynomials), maxVar);
   }
 
-  // process2: with simplify_conflicts, the core normalized and rewritten by its equations first.
   // As in Z3, a restart leaves the core holding its literals until the next attempt.
   private process(literals: readonly number[]) {
     this.lowerStagePolys = [];
@@ -565,8 +538,6 @@ export class Explain {
     core.reset();
   }
 
-  // compute_conflict_explanation: the literals, appended to result, that with the negations of
-  // literals make a valid lemma.
   computeConflictExplanation(literals: readonly number[], result: ScopedLiterals) {
     if (this.getMaxVarOfLiterals(literals) === 0 && this.context.sample[0] === undefined) {
       result.reset();
@@ -592,7 +563,6 @@ export class Explain {
     }
   }
 
-  // compute_linear_explanation: the literals of a linear cell around a sample of every variable.
   computeLinearExplanation(literals: readonly number[], result: ScopedLiterals) {
     this.result = result;
     this.lowerStagePolys = [];

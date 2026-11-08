@@ -1,7 +1,6 @@
 // Ported from Z3 (src/ast/act_cache.cpp, src/util/chashtable.h), MIT license, see z3-license.txt.
-// The rewriter's cache from an expression and a shift to its result. It holds a reference to each
-// key and value, and keeps at most maxUnused entries that were never looked up. Z3 releases the
-// entries in the order of its chained hash table, so the table is ported cell for cell.
+// Z3 releases the entries in the order of its chained hash table, so the table is ported cell for
+// cell.
 import type { AstManager } from "./ast";
 import { shrink } from "./array";
 
@@ -9,7 +8,6 @@ const INIT_SLOTS = 8;
 const INIT_CELLAR = 2;
 const MIN_MAX_UNUSED = 1024;
 const NO_CELL = -1;
-// m_next of a free cell, which Z3 tags.
 const FREE_CELL = -2;
 const MAX_SPARE_CAPACITY = 1024;
 
@@ -27,21 +25,18 @@ export class ActCache {
   private keys = new Int32Array(0);
   private offsets = new Int32Array(0);
   private values = new Int32Array(0);
-  // Whether client code looked the entry up, the tag of Z3's value pointer.
   private isUsed = new Uint8Array(0);
   private nexts = new Int32Array(0);
   private nextCell = INIT_SLOTS;
   private freeCell = NO_CELL;
   private size = 0;
-  // The entries in insertion order from qhead on, where the oldest unused entry is searched.
   private queueKeys: number[] = [];
   private queueOffsets: number[] = [];
   private qhead = 0;
   private numUnused = 0;
   private maxUnused: number;
-  // The cells of the small tables that reset and expand_table let go, by capacity. Z3 frees them and
-  // takes the next table from its small-object allocator, which is cheap, where V8 allocates each
-  // typed array slowly, so the next table of the same capacity reuses them.
+  // Z3 takes each table from its cheap small-object allocator, where V8 allocates typed arrays
+  // slowly, so a new table reuses the cells of a freed one of the same capacity.
   private spares = new Map<number, Cells>();
 
   constructor(
@@ -109,8 +104,6 @@ export class ActCache {
     this.nexts[target] = this.nexts[source];
   }
 
-  // expand_table: copy_table into twice the slots and cellar, doubling the cellar again while it is
-  // too small.
   private expandTable() {
     const old = {
       slots: this.slots,
@@ -148,7 +141,6 @@ export class ActCache {
     this.size = size;
   }
 
-  // del_unused: deletes the oldest entry that was never looked up.
   private delUnused() {
     while (this.qhead < this.queueKeys.length) {
       const key = this.queueKeys[this.qhead];
@@ -217,7 +209,6 @@ export class ActCache {
         }
         return;
       }
-      // The new entry takes the slot, and the old head moves to a free cell after it.
       const moved = this.getFreeCell();
       this.copyCell(moved, slot);
       this.nexts[slot] = moved;
@@ -244,7 +235,6 @@ export class ActCache {
     return this.values[cell];
   }
 
-  // reset: releases the entries in the table's order.
   reset() {
     for (let slot = 0; slot < this.slots && this.size > 0; slot++) {
       if (this.nexts[slot] === FREE_CELL) continue;

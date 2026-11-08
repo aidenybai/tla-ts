@@ -1,8 +1,4 @@
-// Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt. Builds a
-// model from the current assignment: every relevant equivalence class gets a value, Booleans from
-// the assignment, the terms of a theory's sorts from the theory and other sorts from fresh model
-// values, and each congruence root of an uninterpreted function becomes an entry of its
-// interpretation.
+// Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt.
 import { FAMILY_BASIC, FAMILY_USER, type FuncDecl, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
@@ -26,11 +22,9 @@ export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
   const model = new ProtoModel(manager);
   for (const theory of context.theories) theory.initModel(model);
-  // register_existing_model_values.
   for (const node of context.enodes)
     if (node.root === node && context.isRelevant(node.owner) && manager.isModelValue(node.owner))
       model.registerValue(node.owner);
-  // mk_bool_model.
   for (let boolVar = 0; boolVar < context.numBoolVars; boolVar++) {
     const expr = context.boolVar2Expr[boolVar];
     if (manager.isUninterpretedConst(expr) && context.isRelevant(expr))
@@ -69,7 +63,6 @@ export const mkModel = (context: Context): GeneratedModel => {
   for (const node of context.enodes)
     if (manager.isUninterpretedConst(node.owner) && context.isRelevant(node.owner))
       model.registerConst(manager.decls[node.owner], getValue(node));
-  // mk_func_interps.
   for (const node of context.enodes) {
     const expr = node.owner;
     if (!context.isRelevant(expr) || !isIncludedFuncInterp(context, manager.funcDecls[node.decl]))

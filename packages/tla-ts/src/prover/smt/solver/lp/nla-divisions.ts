@@ -1,7 +1,5 @@
 // Ported from Z3 (src/math/lp/nla_divisions.h, src/math/lp/nla_divisions.cpp), MIT license, see
-// z3-license.txt. The lemmas of nla on div, mod and /: monotonicity in the dividend and the
-// divisor, bounded divisions by numerals, and divisibility closures over a shared divisor. The
-// check is skipped while nla uses nlsat's model.
+// z3-license.txt.
 import { getEuclideanDiv, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { NULL_LPVAR } from "./lar-solver";
@@ -9,7 +7,6 @@ import { LarTerm } from "./lar-term";
 import { type NlaCore } from "./nla-core";
 import { LemmaBuilder, mkIneq } from "./nla-types";
 
-// A division q = x / y with r its remainder, or a divisibility fact r = mod(x, y), q = div(x, y).
 export interface Division {
   readonly quotient: number;
   readonly dividend: number;
@@ -26,7 +23,6 @@ interface DivisionValues {
   readonly quotientValue: Rational;
 }
 
-// div on integers: Euclidean division, as mpz_manager::div.
 const getIntDiv = (dividend: Rational, divisor: Rational) =>
   Rational.of(getEuclideanDiv(dividend.num, divisor.num));
 
@@ -45,7 +41,6 @@ const mkDifference = (first: number, second: number) =>
 export class Divisions {
   private idivisions: Division[] = [];
   private boundedDivisions: Division[] = [];
-  // Divisibility facts, whose quotient is div(x, y) and remainder mod(x, y).
   private divisibility: Division[] = [];
 
   constructor(private core: NlaCore) {}
@@ -159,7 +154,6 @@ export class Divisions {
     };
   }
 
-  // The monotonicity lemmas of the integer divisions whose quotients are wrong, against the others.
   // Z3's theory_lra registers no real divisions, so the rdivisions it would also check stay empty.
   private checkMonotonicity(divisions: Division[]) {
     const core = this.core;

@@ -1,7 +1,5 @@
 // Ported from Z3 (src/math/lp/nex_creator.h, src/math/lp/nex_creator.cpp), MIT license, see
-// z3-license.txt. Builds, orders, and simplifies nex expressions. The order compares variables by
-// weight, then by index, and simplification sorts products and sums by it and merges like terms.
-// Z3 keeps every expression it allocates so that it can free them; here the collector does.
+// z3-license.txt.
 import { Rational } from "../rational";
 import {
   type Nex,
@@ -17,7 +15,6 @@ import {
   isZeroScalar,
 } from "./nex";
 
-// occ: how many summands a variable divides, and its smallest power among them.
 interface Occ {
   occs: number;
   power: number;
@@ -56,7 +53,6 @@ export class NexCreator {
     return { kind: "sum", children: [...children] };
   }
 
-  // mk_mul(e, es...): a rational multiplies the coefficient, an expression is a factor.
   mkMul(...factors: (Nex | Rational)[]): NexMul {
     const children: NexPow[] = [];
     let coeff = Rational.one;
@@ -71,7 +67,6 @@ export class NexCreator {
     return { kind: "mul", coeff, children: [...children] };
   }
 
-  // mul_factory::mk_reduced.
   private mkReducedMul(coeff: Rational, children: NexPow[]) {
     if (children.length === 0) return this.mkScalar(coeff);
     if (coeff.equals(Rational.one) && children.length === 1 && children[0].power === 1)
@@ -170,8 +165,6 @@ export class NexCreator {
     return expr;
   }
 
-  // eat_scalar_pow: the coefficient times the factor raised to power when the factor is a
-  // constant, else null.
   private eatScalarPow(coeff: Rational, child: NexPow, power: number) {
     if (child.expr.kind === "mul" && child.expr.children.length === 0)
       return child.expr.coeff.equals(Rational.one)
@@ -183,8 +176,6 @@ export class NexCreator {
       : coeff.mul(child.expr.value.pow(child.power * power));
   }
 
-  // simplify_mul with simplify_children_of_mul: folds the constant factors into the coefficient,
-  // flattens the product factors, and merges equal factors into powers.
   simplifyMul(mul: NexMul): Nex {
     const children: NexPow[] = [];
     const toPromote: NexPow[] = [];
@@ -248,9 +239,7 @@ export class NexCreator {
     this.sortJoinSum(sum);
   }
 
-  // sort_join_sum: merges the summands that differ only in their coefficient, a + 3bc + 2bc into
-  // a + 5bc, sorts them by gt, and puts the sum of the scalars last. Like Z3, a merged product
-  // takes the new coefficient in place.
+  // Like Z3, a merged product takes the new coefficient in place.
   private sortJoinSum(sum: NexSum) {
     const entries: MapEntry<Rational>[] = [];
     let commonScalar = Rational.zero;
@@ -286,7 +275,6 @@ export class NexCreator {
     return this.mkSum(expr.children.map((child) => this.clone(child)));
   }
 
-  // mk_div(a, j): a, a product or the variable itself, divided by the variable once.
   mkDivByVar(expr: Nex, variable: number): Nex {
     if (expr.kind !== "mul") return this.mkScalar(Rational.one);
     const children: NexPow[] = [];
@@ -305,7 +293,6 @@ export class NexCreator {
     return this.mkReducedMul(expr.coeff, children);
   }
 
-  // mk_div_by_mul: each summand, a product or a variable, divided by the product of powers.
   mkDiv(expr: Nex, divisor: NexMul): Nex {
     if (expr.kind === "sum")
       return this.mkSum(expr.children.map((child) => this.mkDiv(child, divisor)));
@@ -327,14 +314,12 @@ export class NexCreator {
         children.push({ expr: this.mkVar(variable), power: child.power - divisorPower });
         this.powers.delete(variable);
       } else if (child.power === divisorPower) this.powers.delete(variable);
-      // The factor is eaten by the divisor, whose variable keeps the rest of its power.
       else this.powers.set(variable, divisorPower - child.power);
     }
     return this.mkReducedMul(expr.coeff.div(divisor.coeff), children);
   }
 
-  // canonize: a simplified copy with every product of a sum multiplied out. Z3's canonize_mul drops
-  // the coefficient of the product; here the summands keep it.
+  // Z3's canonize_mul drops the coefficient of the product; here the summands keep it.
   canonize(expr: Nex): Nex {
     if (isElementary(expr)) return this.clone(expr);
     const simplified = this.simplify(this.clone(expr));
@@ -363,7 +348,6 @@ export class NexCreator {
     return this.canonize(this.mkSum(summands));
   }
 
-  // equal: whether the canonical forms agree when each variable weighs its index.
   static equal(first: Nex, second: Nex) {
     const creator = new NexCreator();
     const count = Math.max(

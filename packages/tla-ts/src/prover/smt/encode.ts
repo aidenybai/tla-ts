@@ -1,6 +1,5 @@
 // Encodes a prepared proof obligation in SMT-LIB as tlapm's SMT backend does (encode/ and
-// backend/smtlib.ml): TLA+ values share one sort Idv, set membership is the predicate TLA__Mem,
-// and each symbol the obligation uses brings the symbols and axioms encode/n_data.ml lists for it.
+// backend/smtlib.ml).
 
 import {
   applyBuiltin,
@@ -26,7 +25,6 @@ const isSameFieldSet = (left: RecordExpr, right: RecordExpr) =>
   left.fields.every((field) => right.fields.some((other) => other.name === field.name)) &&
   right.fields.every((field) => left.fields.some((other) => other.name === field.name));
 
-// mk_conj: e1 /\ (e2 /\ ...).
 const conjoinRight = (items: Expr[]): Expr =>
   items.length === 1
     ? items[0]
@@ -46,8 +44,6 @@ const decompose = (left: Expr, right: Expr, from: Expr): Expr => {
   );
 };
 
-// N_rewrite.simpl_receq, before Type.Synthesize: an equality of two record constructors with the same fields is the conjunction of
-// the equalities of their fields, paired by name.
 const simplifyRecordEqualities = (expression: Expr): Expr => {
   const inner = mapChildren(expression, simplifyRecordEqualities);
   if (
@@ -62,8 +58,8 @@ const simplifyRecordEqualities = (expression: Expr): Expr => {
   return at(decompose(inner.args[0], inner.args[1], inner), inner);
 };
 
-// N_rewrite.sort_recfields: a record's or a record set's fields in order. Like tlapm, it doesn't visit the
-// field values, so a record inside a record keeps the order it's written in.
+// Like tlapm's N_rewrite.sort_recfields, it doesn't visit field values, so a nested record keeps
+// its written order.
 const sortRecordFields = (expression: Expr): Expr =>
   expression.kind === "Record" || expression.kind === "Rect"
     ? {
@@ -72,8 +68,8 @@ const sortRecordFields = (expression: Expr): Expr =>
       }
     : mapChildren(expression, sortRecordFields);
 
-// N_axiomatize.collect: each symbol the obligation uses, in the order tlapm visits them, brings
-// the symbols and axioms it depends on, smallest name first.
+// Each symbol brings its dependencies in the order tlapm's N_axiomatize.collect visits them,
+// smallest name first.
 const collectSymbols = (entries: Entry[], encoder: Encoder) => {
   const state: CollectState = {
     recordFields: encoder.recordFields,
@@ -148,7 +144,6 @@ interface EncodedContext {
   entries: Entry[];
 }
 
-// Declares each hypothesis's names and asserts its facts, in order, as Smtlib.pp_print_obligation.
 const encodeContext = (context: Hyp[], encoder: Encoder) =>
   context.reduce<EncodedContext>(
     (state, hyp) => {
@@ -165,11 +160,9 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
               : { kind: "operator", symbol, arity: hyp.shape };
           const declaration = declare(symbol, hyp.shape);
           if (!hyp.domain || hyp.domainVisibility === "Hidden") return next(binding, [declaration]);
-          // Rewrite.elim_bounds: NEW x \in S is NEW x and the fact x \in S.
           const fact = `(assert (${MEM} ${symbol} ${encoder.encodeIdv(hyp.domain, state.env, HYPOTHESIS)}))`;
           return next(binding, [declaration, ...encoder.getEntries(fact)]);
         }
-        // Rewrite.elim_flex: a variable is two constants, the second for its primed value.
         case "Flex": {
           const symbol = encoder.getUniqueName(hyp.name);
           const primed = encoder.getUniqueName(`${hyp.name}_prime`);
@@ -241,9 +234,6 @@ interface SmtHeader {
   logic: string;
 }
 
-// Smtlib.pp_print_obligation: the logic, the sort, the builtin symbols by name, their axioms,
-// then the hypotheses in order, the goal last. It throws a TlaUnsupportedError for what the
-// encoding can't express, where tlapm's encoder fails.
 export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: SmtHeader) => {
   const simplified = sortRecordFields(
     simplifyRecordEqualities({ kind: "Sequent", sequent: prepared }),

@@ -1,13 +1,11 @@
 // Ported from Z3 (src/math/lp/hnf.h, src/math/lp/general_matrix.h,
 // src/math/lp/permutation_matrix.h, and the extended gcd of src/util/mpz.cpp), MIT license, see
-// z3-license.txt. The Hermite normal form of an integer matrix, computed modulo a multiple of the
-// determinant of its rows, as the HNF cutter needs it.
+// z3-license.txt.
 import { Rational } from "../rational";
 
 // rem of mpq: the remainder of the numerators, truncated toward zero.
 const getRem = (first: Rational, second: Rational) => Rational.of(first.num % second.num);
 
-// mpz_manager::gcd(r1, r2, a, b, g): the gcd g of r1 and r2, with a * r1 + b * r2 equal to it.
 const getExtendedGcd = (first: Rational, second: Rational) => {
   let left = first.num < 0n ? -first.num : first.num;
   let right = second.num < 0n ? -second.num : second.num;
@@ -63,7 +61,6 @@ const getExtendedGcdMinimalUv = (a: Rational, b: Rational) => {
   return { d, u, v };
 };
 
-// permutation_matrix: a permutation and its inverse.
 class Permutation {
   constructor(
     readonly forward: number[],
@@ -99,7 +96,6 @@ class Permutation {
   }
 }
 
-// general_matrix: dense rows behind a row and a column permutation.
 export class GeneralMatrix {
   private rowPermutation: Permutation;
   private columnPermutation: Permutation;
@@ -149,14 +145,12 @@ export class GeneralMatrix {
     this.columnPermutation.transposeFromLeft(first, second);
   }
 
-  // shrink_to_rank: only the given data rows, leaving the permutations as they are.
   shrinkToRank(basisRows: number[]) {
     if (basisRows.length === this.getRowCount()) return;
     this.data = basisRows.map((row) => this.data[row]);
   }
 }
 
-// prepare_pivot_for_lower_triangle: moves a nonzero entry of the lower right block to (r, r).
 const preparePivot = (matrix: GeneralMatrix, r: number) => {
   for (let row = r; row < matrix.getRowCount(); row++)
     for (let column = r; column < matrix.getColumnCount(); column++) {
@@ -168,8 +162,6 @@ const preparePivot = (matrix: GeneralMatrix, r: number) => {
   return false;
 };
 
-// pivot_column_non_fractional: a fraction-free elimination step under (r, r); false when an entry
-// reaches the big number.
 const pivotColumnNonFractional = (matrix: GeneralMatrix, r: number, bigNumber: Rational) => {
   const pivot = matrix.get(r, r);
   const denominator = r > 0 ? matrix.get(r - 1, r - 1) : undefined;
@@ -185,9 +177,6 @@ const pivotColumnNonFractional = (matrix: GeneralMatrix, r: number, bigNumber: R
   return true;
 };
 
-// determinant_of_rectangular_matrix: the gcd of the last row of the triangulated matrix, a
-// multiple of the gcd of its maximal minors, and the data rows of a basis; the big number when an
-// entry grows too large.
 export const getDeterminantOfRectangularMatrix = (
   matrix: GeneralMatrix,
   basisRows: number[],
@@ -215,8 +204,6 @@ export const getDeterminantOfRectangularMatrix = (
   return gcd;
 };
 
-// hnf: W, the Hermite normal form of the rows of the matrix, computed modulo d. Undefined when
-// canceled.
 export const getHermiteNormalForm = (
   matrix: GeneralMatrix,
   d: Rational,

@@ -1,6 +1,5 @@
 // Ported from Z3 (src/smt/smt_relevancy.h, src/smt/smt_relevancy.cpp), MIT license, see
-// z3-license.txt. Relevancy level 2: only subterms that the current assignment needs are relevant,
-// and E-matching and the theories only look at relevant terms.
+// z3-license.txt.
 import { AstManager, KIND_APP, OP_AND, OP_IMPLIES, OP_ITE, OP_OR } from "./ast";
 import type { Enode } from "./enode";
 import { shrink } from "./array";
@@ -21,9 +20,7 @@ const TRAIL_HANDLER = 2;
 
 export class RelevancyPropagator {
   private qhead = 0;
-  // m_relevant_exprs: the relevant expressions in the order they were marked, which it holds.
   private relevantExprs: number[] = [];
-  // A flag per expression, which grows with the expressions marked.
   private isRelevantFlags = new Uint8Array(1024);
   // The watches and handlers of each expression, by trail kind, are lists of cons cells like Z3's
   // relevancy_ehs. A trail entry is the cell it pushed: its handler and the list it extends. heads
@@ -71,7 +68,7 @@ export class RelevancyPropagator {
     this.pushTrail(value ? TRAIL_POS_WATCH : TRAIL_NEG_WATCH, expr, handler);
   }
 
-  // push_trail: the trail holds its expressions. The cell goes in front of the expression's list.
+  // The cell goes in front of the expression's list.
   private pushTrail(kind: number, expr: number, handler: RelevancyHandler) {
     this.context.manager.incRef(expr);
     const head = 3 * expr + kind;
@@ -135,7 +132,6 @@ export class RelevancyPropagator {
     this.context.relevantEh(expr);
   }
 
-  // Marks expr and every member of its equivalence class as relevant.
   markAsRelevant(expr: number) {
     if (this.isRelevant(expr)) return;
     const node = this.context.findEnode(expr);

@@ -73,7 +73,6 @@ import {
   SORT_INT,
 } from "./ast";
 
-// The ops whose arguments and result share a sort, with their names and whether associative.
 const BINARY_OPS = new Map<number, [string, boolean]>([
   [OP_BADD, ["bvadd", true]],
   [OP_BSUB, ["bvsub", false]],

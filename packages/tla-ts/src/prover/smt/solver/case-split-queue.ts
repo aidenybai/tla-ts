@@ -1,16 +1,12 @@
 // Ported from Z3 (src/smt/smt_case_split_queue.cpp, src/util/heap.h), MIT license, see
-// z3-license.txt. Z3's default CS_ACTIVITY_DELAY_NEW queue: Boolean variables ordered by activity,
-// where variables created during the search wait in a delayed queue until the main one runs dry.
-// Without the delay, it is the CS_ACTIVITY queue of the model checker's auxiliary context.
+// z3-license.txt.
 
 import { BoolVar, toBoolVar } from "./literal";
 
-// heap<bool_var_act_lt>: a binary min-heap over activities negated, so the most active is first.
+// A binary min-heap over negated activities, so the most active is first.
 class ActivityHeap {
-  // The heap is 1-based, so the first slot is unused.
   private values: BoolVar[] = [toBoolVar(-1)];
-  // The position of each variable, or 0. A typed array keeps the loads of variables that were never
-  // inserted in bounds.
+  // A typed array keeps the loads of variables that were never inserted in bounds.
   private indices = new Int32Array(1024);
 
   constructor(private activity: number[]) {}
@@ -157,7 +153,6 @@ export class CaseSplitQueue {
     if (!this.queue.contains(boolVar)) this.queue.insert(boolVar);
   }
 
-  // Returns the next variable to split on, or undefined when every variable is assigned.
   nextCaseSplit() {
     const context = this.context;
     if (context.getRandomValue() < Math.trunc(RANDOM_VAR_FREQ * RANDOM_MAX_VALUE)) {

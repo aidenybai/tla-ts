@@ -1,9 +1,7 @@
 // Ported from Z3 (src/math/lp/nla_core.h, src/math/lp/nla_core.cpp, src/math/lp/nla_common.cpp,
 // src/math/lp/nla_explanations.cpp, src/math/lp/factorization.cpp,
 // src/math/lp/factorization_factory_imp.cpp, src/math/lp/nla_solver.cpp), MIT license, see
-// z3-license.txt. The nonlinear core over lar_solver: the monomials whose values disagree with the
-// products of their factors' values are refined by lemmas, which the passes below generate, and
-// by literals to split on, and by nlsat's search on what they leave open, see nra-solver.ts.
+// z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ResourceLimit } from "../rlimit";
 import { Rational } from "../rational";
@@ -93,7 +91,6 @@ interface NlaParams {
   crossNested: boolean;
 }
 
-// The arith.nl parameters of Z3's defaults that nla reads.
 export const NLA_PARAMS: Readonly<NlaParams> = {
   horner: true,
   hornerSubsFixed: 2,
@@ -175,7 +172,6 @@ export class NlaCore {
   readonly horner: Horner;
   readonly grobner: Grobner;
   readonly nra = new NraSolver(this);
-  // m_use_nra_model: whether the values of the last nra check stand for lar_solver's.
   isUsingNraModel = false;
   private nlsatBackoff: Backoff;
   private checkAssignmentFailCount = 0;
@@ -214,8 +210,6 @@ export class NlaCore {
   get stats() {
     return this.lra.settings.stats;
   }
-
-  // Values and bounds.
 
   val(lpVar: number) {
     return this.lra.getValue(lpVar).x;
@@ -341,8 +335,6 @@ export class NlaCore {
     return vars.some((lpVar) => this.val(lpVar).isZero());
   }
 
-  // Monomials and their canonization.
-
   isMonicVar(lpVar: number) {
     return this.emons.isMonicVar(lpVar);
   }
@@ -403,7 +395,6 @@ export class NlaCore {
     return this.mulVal(monic);
   }
 
-  // check_monic: whether the value of the monic is the product of its factors' values.
   checkMonic(monic: Monic) {
     const value = this.lra.getValue(monic.variable);
     if (this.lra.isInt(monic.variable) && !value.x.isInt()) return true;
@@ -433,7 +424,6 @@ export class NlaCore {
     return weight;
   }
 
-  // divide: the factor b with bc = b * c, up to sign.
   divide(product: Monic, divisor: Factor): Factor | undefined {
     const divisorVars = this.sortedRvars(divisor);
     const quotientVars = getVectorDiv(product.rvars, divisorVars);
@@ -502,13 +492,9 @@ export class NlaCore {
     }
   }
 
-  // Lemma helpers.
-
   negateRelation(lemma: LemmaBuilder, lpVar: number, value: Rational) {
     lemma.addIneq(mkIneq(lpVar, this.val(lpVar).compare(value) < 0 ? KIND_GE : KIND_LE, value));
   }
-
-  // Explanations of inequalities by bounds.
 
   private explainCoeffBound(
     column: number,
@@ -541,7 +527,6 @@ export class NlaCore {
     return true;
   }
 
-  // explain_ineq: whether the bounds imply the negation of term cmp rs, added to the lemma.
   explainIneq(lemma: LemmaBuilder, term: LarTerm, cmp: number, rs: Rational) {
     if (term.size === 0 && rs.isZero() && (cmp === KIND_LT || cmp === KIND_GT || cmp === KIND_NE))
       return true;
@@ -575,7 +560,6 @@ export class NlaCore {
     return true;
   }
 
-  // is_octagon_term: whether the term is +-x +-y, and whether its signs agree.
   private getOctagonTerm(term: LarTerm) {
     if (term.size !== 2) return undefined;
     let isMinusSeen = false;
@@ -600,7 +584,6 @@ export class NlaCore {
     return true;
   }
 
-  // collect_equivs: the term columns fixed to zero that equate or negate two variables.
   private collectEquivs() {
     const lra = this.lra;
     for (const term of lra.terms) {
@@ -618,8 +601,6 @@ export class NlaCore {
     this.emons.ensureCanonized();
   }
 
-  // The search.
-
   random() {
     return this.settings.getRandomNext();
   }
@@ -628,7 +609,6 @@ export class NlaCore {
     return this.settings.isCanceled();
   }
 
-  // check_bounded_divisions: the lemmas of the divisions of bounded terms by numerals.
   checkBoundedDivisions() {
     this.clear();
     this.divisions.checkBoundedDivisions();
@@ -685,7 +665,6 @@ export class NlaCore {
     return undefined;
   }
 
-  // find_bfc_to_refine: a monic to refine, with a binary factorization of it.
   findBfcToRefine() {
     const offset = this.random();
     const size = this.toRefine.size;
@@ -705,7 +684,6 @@ export class NlaCore {
     return undefined;
   }
 
-  // check_weighted: runs the checks in a random order weighted by their weights, until one yields.
   private checkWeighted(checks: WeightedCheck[]) {
     let bound = 0;
     for (const check of checks) bound += check[0];
@@ -725,7 +703,6 @@ export class NlaCore {
     }
   }
 
-  // add_bounds: a split on a free variable of a monic to refine.
   private addBounds() {
     const offset = this.random();
     const size = this.toRefine.size;
@@ -854,7 +831,6 @@ export class NlaCore {
     return result;
   }
 
-  // set_use_nra_model, undone on pop.
   setUseNraModel(isUsing: boolean) {
     if (isUsing === this.isUsingNraModel) return;
     this.emons.trail.push(() => {
@@ -862,8 +838,6 @@ export class NlaCore {
     });
     this.isUsingNraModel = isUsing;
   }
-
-  // Propagation.
 
   propagate() {
     this.clear();
@@ -943,8 +917,6 @@ export class NlaCore {
     );
   }
 
-  // Scopes.
-
   push() {
     this.emons.push();
   }
@@ -954,7 +926,6 @@ export class NlaCore {
   }
 }
 
-// vector_div: the multiset difference of sorted vectors, when the divisor is a proper factor.
 const getVectorDiv = (product: number[], divisor: number[]) => {
   if (divisor.length >= product.length) return undefined;
   const quotient: number[] = [];

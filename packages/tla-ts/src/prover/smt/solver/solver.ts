@@ -1,6 +1,5 @@
 // Ported from Z3 (src/smt/smt_solver.cpp, src/smt/smt_kernel.cpp, src/smt/smt_setup.cpp), MIT
-// license, see z3-license.txt. Decides an SMT-LIB problem the way `z3 -smt2 AUTO_CONFIG=false
-// smt.MBQI=true` does for tlapm's UFNIA obligations.
+// license, see z3-license.txt. It decides like `z3 -smt2 AUTO_CONFIG=false smt.MBQI=true`.
 import { isStackOverflow, SmtCanceledError, SmtUnsupportedError } from "../../../errors";
 import type { DecideOptions, Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
@@ -18,7 +17,6 @@ interface SmtCheck {
 
 export const solveAssertions = (manager: AstManager, assertions: number[], isMbqi = true) => {
   const goal = applyUfniaTactic(manager, assertions);
-  // and_then runs smt_tactic only on a goal that the preprocessing left undecided.
   if (goal.isInconsistent || goal.forms.size === 0) {
     manager.limit.release();
     return { result: goal.isInconsistent ? L_FALSE : L_TRUE, context: undefined };
@@ -38,7 +36,6 @@ export const solveAssertions = (manager: AstManager, assertions: number[], isMbq
 export const getVerdict = (result: number): Verdict =>
   result === L_FALSE ? "unsat" : result === L_TRUE ? "sat" : "unknown";
 
-// The verdict, and the number of quantifier instances the search made.
 export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   const manager = new AstManager(
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
@@ -63,9 +60,7 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   };
 };
 
-// Throws SmtParseError on malformed input. Input outside the subset the solver supports is unknown,
-// and so is a search that runs past the time limit, that the signal aborts, or that exhausts the
-// heap or the stack.
+// Throws SmtParseError on malformed input. Anything else it cannot decide is unknown.
 export const decideSmt = (text: string, options: DecideOptions): Verdict => {
   try {
     return checkSmt(text, options).verdict;

@@ -1,9 +1,5 @@
 // Ported from Z3 (src/math/lp/int_cube.cpp, and tighten_term_bounds_by_delta and
-// round_to_integer_solution in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt. The
-// cube test: when the bounds of every term shrunk by half the sum of its integer coefficients still
-// admit a solution, rounding that solution gives an integer one. The largest cube test maximizes
-// the edge of that cube instead, and when the edge is below 1 it rounds the center and flips
-// rounded columns to repair the bounds the rounding broke.
+// round_to_integer_solution in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { LP_FEASIBLE, LP_OPTIMAL } from "./core-solver";
@@ -14,8 +10,6 @@ import { Impq } from "./numeric-pair";
 
 const HALF = Rational.of(1n, 2n);
 
-// get_cube_delta_for_term: an infinitesimal for x - y over integers, nothing for x + y, and
-// otherwise half the sum of the integer coefficients.
 const getCubeDelta = (solver: LarSolver, term: LarTerm) => {
   const entries = [...term.coeffs];
   if (entries.length === 2) {
@@ -39,8 +33,6 @@ const getCubeDelta = (solver: LarSolver, term: LarTerm) => {
 const addVarBound = (solver: LarSolver, column: number, kind: ConstraintKind, rhs: Rational) =>
   solver.activate(solver.mkVarBound(column, kind, rhs));
 
-// tighten_term_bounds_by_delta: whether the bounds of the column stay apart when each moves inward
-// by delta.
 const tightenTermBounds = (solver: LarSolver, column: number, delta: Impq) => {
   const core = solver.core;
   const hasUpper = core.hasUpperBound(column);
@@ -64,8 +56,6 @@ const tightenTermBounds = (solver: LarSolver, column: number, delta: Impq) => {
   return true;
 };
 
-// round_to_integer_solution: integer columns without terms round to the nearest integer, and the
-// terms that use them take their new values.
 const roundToIntegerSolution = (solver: LarSolver) => {
   const x = solver.core.x;
   const rounded = new Set<number>();
@@ -82,11 +72,9 @@ const roundToIntegerSolution = (solver: LarSolver) => {
     if ([...term.coeffs].some((entry) => rounded.has(entry[0]))) x[term.column] = term.apply(x);
 };
 
-// r_basis_has_inf_int.
 const hasBasicInfInt = (solver: LarSolver) =>
   solver.core.basis.some((column) => solver.isInt(column) && !solver.getValue(column).isInt());
 
-// int_cube::operator(): whether the cube test found an integer solution.
 export const findCube = (solver: LarSolver) => {
   solver.push();
   for (const term of solver.terms) {
@@ -108,8 +96,6 @@ export const findCube = (solver: LarSolver) => {
   return true;
 };
 
-// add_edge_rows_for_term: the term column moved inward by the edge times delta stays within its
-// bounds, through a new term for each bound.
 const addEdgeRows = (solver: LarSolver, column: number, edge: number) => {
   const delta = getCubeDelta(solver, solver.getTerm(column));
   if (delta.isZero()) return true;
@@ -140,7 +126,6 @@ const addEdgeRows = (solver: LarSolver, column: number, edge: number) => {
   return true;
 };
 
-// sat_after_rounding.
 const roundCenter = (solver: LarSolver) => {
   roundToIntegerSolution(solver);
   solver.status = LP_FEASIBLE;
@@ -148,21 +133,17 @@ const roundCenter = (solver: LarSolver) => {
   return true;
 };
 
-// A rounded column, its floor, and whether it sits at its floor plus one.
 interface FlipCandidate {
   column: number;
   floor: Rational;
   isAtHigh: boolean;
 }
 
-// A term column with a bound, and its value while the repair flips columns.
 interface BoundedRow {
   column: number;
   value: Impq;
 }
 
-// repair_rounded_candidate: while the bounded terms are violated, flips the rounded column that
-// decreases the total violation most, within a budget, and keeps the values when none is left.
 const repairRoundedCandidate = (solver: LarSolver, flips: FlipCandidate[]) => {
   const core = solver.core;
   const rows: BoundedRow[] = [];
@@ -230,7 +211,6 @@ const repairRoundedCandidate = (solver: LarSolver, flips: FlipCandidate[]) => {
   return true;
 };
 
-// round_and_repair: rounds the center of the cube and repairs it, or restores the center.
 const roundAndRepair = (solver: LarSolver) => {
   const core = solver.core;
   const backup = core.x.slice();
@@ -251,8 +231,6 @@ const roundAndRepair = (solver: LarSolver) => {
   return false;
 };
 
-// find_largest_cube: whether an integer solution comes from the largest cube that fits in the
-// bounds of the terms, with its edge as a new column that the optimizing simplex maximizes.
 export const findLargestCube = (solver: LarSolver) => {
   solver.settings.stats.lcubeCalls++;
   solver.push();

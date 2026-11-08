@@ -1,6 +1,5 @@
 // Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp), MIT license, see
-// z3-license.txt. The axioms of theory_lra: those of div, mod, to_int and is_int, and the
-// arith_eq_adapter axioms that tie an equality of terms to their two inequalities.
+// z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   OP_ADD,
@@ -29,7 +28,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
   // m_restart_pairs: equalities whose axioms a backjump to the base level drops, remade on restart.
   protected restartPairs: Enode[][] = [];
 
-  // The enode of a term, internalized first if it has none.
   protected getInternalizedEnode(expr: number) {
     const context = this.context;
     if (!context.isEInternalized(expr)) context.internalize(expr, false);
@@ -134,24 +132,22 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     else if (op === OP_MOD) this.mkIdivModAxioms(manager.getArg(expr, 0), manager.getArg(expr, 1));
   }
 
-  // mk_literal.
   protected mkLiteral(atom: number) {
     const context = this.context;
     if (!context.isEInternalized(atom)) context.internalize(atom, false);
     return context.getLiteral(atom);
   }
 
-  // ensure_enode: the relevant enode of a term.
   private ensureEnode(expr: number) {
     const node = this.getInternalizedEnode(expr);
     this.context.markAsRelevant(expr);
     return node;
   }
 
-  // mk_axiom: a theory axiom whose literals are relevant. Of two literals, the second becomes
-  // relevant only once the first is false. A unit axiom is the clause of false and the literal, so
-  // mk_clause drops false and the literal is justified by unit resolution with true, which lemma
-  // minimization can see through, rather than by an axiom.
+  // Of two literals, the second becomes relevant only once the first is false. A unit axiom is
+  // the clause of false and the literal, so mk_clause drops false and the literal is justified by
+  // unit
+  // resolution with true, which lemma minimization can see through, rather than by an axiom.
   protected mkAxiom(literals: Literal[]) {
     const context = this.context;
     // mkThAxiom simplifies the literals it is given, which this reads after.
@@ -173,7 +169,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     );
   }
 
-  // mk_div_axiom: q = 0 or q * (p / q) = p.
   private mkDivAxiom(dividend: number, divisor: number) {
     const manager = this.manager;
     if (this.isZeroNumeral(divisor)) return;
@@ -186,7 +181,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     this.mkAxiom([isZero, this.mkEq(product, dividend)]);
   }
 
-  // mk_to_int_axiom: to_int (to_real x) = x, and to_real (to_int x) <= x < to_real (to_int x) + 1.
   private mkToIntAxiom(term: number) {
     const manager = this.manager;
     const arg = manager.getArg(term, 0);
@@ -211,7 +205,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     this.mkAxiom([negate(upperLiteral)]);
   }
 
-  // mk_is_int_axiom: is_int x if and only if to_real (to_int x) = x.
   protected mkIsIntAxiom(atom: number) {
     const manager = this.manager;
     const arg = manager.getArg(atom, 0);
@@ -224,7 +217,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     this.mkAxiom([isInt, negate(eq)]);
   }
 
-  // theory::mk_eq: the literal of an equality between two terms, internalized.
   protected mkEq(first: number, second: number) {
     const manager = this.manager;
     if (first === second) return TRUE_LITERAL;
@@ -234,7 +226,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     return this.context.getLiteral(atom);
   }
 
-  // mk_idiv_mod_axioms: q * (div p q) + (mod p q) = p and 0 <= (mod p q) < |q| when q is not 0.
   protected mkIdivModAxioms(dividend: number, divisor: number) {
     const manager = this.manager;
     if (manager.getNumeral(divisor) === 0n) return;

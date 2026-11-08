@@ -1,6 +1,5 @@
-// encode/n_rewrite.ml, type/t_synth.ml, and encode/n_standardize.ml: a TLA+ expression as an
-// SMT-LIB term over the sort Idv. Set extensionality is in extensionality.ts, and the axioms each
-// flattened symbol brings are in instances.ts.
+// encode/n_rewrite.ml, type/t_synth.ml and encode/n_standardize.ml: a TLA+ expression as an SMT-LIB
+// term over Idv.
 
 import { TlaUnsupportedError } from "../../errors";
 import { normalizeApply, shiftExpr } from "../../obligations/substitution";
@@ -52,13 +51,11 @@ interface Term {
   integer?: string;
 }
 
-// What tlapm keeps across the obligations of one run.
 export interface EncodingSession {
   caseErrors: number;
 }
 
 export interface Mode {
-  // Whether the text encodes a fact that tlapm leaves out, which may declare operators.
   isOmitted: boolean;
   polarity: Polarity;
   at: string | undefined;
@@ -77,8 +74,6 @@ export interface Env {
   rest: Env | undefined;
 }
 
-// A nested ASSUME's declarations and facts so far: each wraps the goal in a quantifier or an
-// implication.
 interface NestedContext {
   env: Env | undefined;
   mode: Mode;
@@ -88,12 +83,9 @@ interface NestedContext {
 export const createEncoder = (session: EncodingSession) => {
   const flattener = createFlattener();
   const flatten = flattener.flatten;
-  // The arity of each anonymous operator Coalesce introduces.
   const anonymous = new Map<string, number>();
-  // The fields of each record symbol.
   const recordFields = new Map<string, string[]>();
   const context = createContext();
-  // The salted name of each declared user symbol, for the printer's context.
   const declared = new Map<string, Identifier>();
 
   // Standardize wraps a cast term in an application, and set_extensionality_visitor visits the
@@ -119,13 +111,11 @@ export const createEncoder = (session: EncodingSession) => {
 
   const push = (env: Env | undefined, binding: Binding): Env => ({ binding, rest: env });
 
-  // The variables bound outside depth that text uses, outermost first.
   const getFree = (text: string, depth: number) =>
     [...new Set(text.match(/[^\s()]+#\d+/g))]
       .filter((variable) => getDepth(variable) < depth)
       .toSorted((left, right) => getDepth(left) - getDepth(right));
 
-  // Smtlib.adj: the Action frontend's name, salted while it's taken.
   const getUniqueName = (name: string) => {
     const identifier = context.adjoin(name);
     context.enter(identifier);
@@ -151,8 +141,8 @@ export const createEncoder = (session: EncodingSession) => {
   const encodeBool = (expression: Expr, env: Env | undefined, mode: Mode) =>
     toBool(encode(expression, env, mode));
 
-  // The domains of bounds, each in the scope outside them. A Ditto copies the last domain, and
-  // tlapm's Rewrite encodes each copy, so each one flattens again.
+  // A Ditto copies the last domain, and tlapm's Rewrite encodes each copy, so each one flattens
+  // again.
   const encodeDomains = (bounds: Bound[], env: Env | undefined, mode: Mode) =>
     bounds
       .reduce<(Expr | undefined)[]>((domains, bound) => {
@@ -274,7 +264,6 @@ export const createEncoder = (session: EncodingSession) => {
     return idv(call(symbol, [domain, ...free]));
   };
 
-  // Elab: CHOOSE x \in S : P is CHOOSE x : x \in S /\ P.
   const encodeChoose = (
     expression: Extract<Expr, { kind: "Choose" }>,
     env: Env | undefined,
@@ -350,7 +339,6 @@ export const createEncoder = (session: EncodingSession) => {
         return bool(encodeEquality(args, env, mode, true));
       case "Mem":
         return bool(call(MEM, idvs()));
-      // Rewrite.elim_notmem: a \notin S is ~(a \in S).
       case "Notmem":
         return bool(`(not ${call(MEM, idvs())})`);
       case "Subseteq":
@@ -366,7 +354,6 @@ export const createEncoder = (session: EncodingSession) => {
         const getOperands = () => (builtin === "Lt" ? idvs() : idvs().toReversed());
         return bool(`(and ${call(INT_LTEQ, getOperands())} (distinct ${getOperands().join(" ")}))`);
       }
-      // Flatten: SelectSeq(s, Test) is a fresh operator of s and the bound variables Test uses.
       case "SelectSeq": {
         const test = getSelectionTest(args[1], env, mode);
         const free = getFree(test.body, mode.depth);
@@ -411,8 +398,6 @@ export const createEncoder = (session: EncodingSession) => {
             args.map((arg) => encodeIdv(arg, env, mode)),
           ),
         );
-      // Flatten: an application of a second-order operator, which has no axioms, is a fresh
-      // operator of its first-order arguments and the bound variables its others use.
       case "secondOrder": {
         if (args.length !== binding.shapes.length)
           throw new TlaUnsupportedError("an operator applied to the wrong number of arguments");
@@ -458,8 +443,6 @@ export const createEncoder = (session: EncodingSession) => {
     }
   };
 
-  // Rewrite.elim_flex: the Action frontend's name#prime is the primed copy of the variable it
-  // names, which tlapm finds by name.
   const getPrimed = (env: Env | undefined, name: string): string => {
     if (!env) throw new TlaUnsupportedError(`a primed declaration that isn't a variable`);
     const binding = env.binding;
@@ -746,7 +729,6 @@ export const createEncoder = (session: EncodingSession) => {
     }
   };
 
-  // One fact or the goal, after the declarations of the symbols it flattens.
   const getEntries = (line: string): Entry[] => [
     ...flattener.takeIntroduced(),
     removeUnprimable(resolveTriggers(line, false)),

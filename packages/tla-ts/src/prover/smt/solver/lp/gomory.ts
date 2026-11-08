@@ -1,6 +1,4 @@
-// Ported from Z3 (src/math/lp/gomory.cpp), MIT license, see z3-license.txt. Gomory cuts: from the
-// row of a fractional basic column whose non-basic columns sit at bounds, the inequality that every
-// integer solution meets and the current solution violates.
+// Ported from Z3 (src/math/lp/gomory.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_GE, KIND_LE } from "./constraints";
 import { LP_CANCELLED } from "./core-solver";
@@ -24,7 +22,6 @@ interface Cut {
   dep: Dependency;
 }
 
-// create_cut: the cut of one row, in the term and the offset of the integer solver.
 class CutBuilder {
   polarity = POLARITY_UNDEF;
   offset = Rational.one;
@@ -62,7 +59,6 @@ class CutBuilder {
     if (Rational.of(newA.num).compare(this.bigNumber) > 0) this.isBigFound = true;
   }
 
-  // int_case_in_gomory_cut, with fj the fractional part of the negated coefficient.
   private addIntCase(column: number, fj: Rational) {
     const solver = this.lia.solver;
     const oneMinusFj = Rational.one.sub(fj);
@@ -80,7 +76,6 @@ class CutBuilder {
     this.addMonomial(newA, column);
   }
 
-  // real_case_in_gomory_cut, with a the negated coefficient.
   private addRealCase(a: Rational, column: number) {
     const solver = this.lia.solver;
     const isLower = this.lia.atLower(column);
@@ -127,15 +122,12 @@ class CutBuilder {
   }
 }
 
-// get_gomory_score: the distance of the value of the column to the nearest integer.
 const getGomoryScore = (lia: IntSolver, column: number) => {
   const value = lia.solver.getValue(column).x;
   const fraction = getFractionalPart(value);
   return fraction.compare(HALF) <= 0 ? fraction : Rational.one.sub(fraction);
 };
 
-// is_gomory_cut_target: every other column of the row is integral with an integral coefficient,
-// or sits at a bound without an infinitesimal.
 const isGomoryCutTarget = (lia: IntSolver, column: number) => {
   const solver = lia.solver;
   for (const cell of solver.getRow(solver.core.heading[column])) {
@@ -147,8 +139,6 @@ const isGomoryCutTarget = (lia: IntSolver, column: number) => {
   return true;
 };
 
-// gomory_select_int_infeasible_vars: up to the given number of target columns, drawn with a bias
-// toward the values closest to integers.
 const selectColumns = (lia: IntSolver, cutCount: number) => {
   const solver = lia.solver;
   const scores = new Map<number, Rational>();
@@ -176,8 +166,6 @@ const selectColumns = (lia: IntSolver, cutCount: number) => {
   return selected;
 };
 
-// add_deps: the bounds of the integer columns with integral coefficients, which the cut leaves
-// out of its explanation.
 const addDeps = (lia: IntSolver, dep: Dependency, row: RowCell[], basic: number) => {
   const solver = lia.solver;
   let result = dep;
@@ -193,8 +181,7 @@ const addDeps = (lia: IntSolver, dep: Dependency, row: RowCell[], basic: number)
   return result;
 };
 
-// get_gomory_cuts: cuts for the selected rows. Cuts with big coefficients stay out unless the
-// small ones alone leave the problem feasible.
+// Cuts with big coefficients stay out unless the small ones alone leave the problem feasible.
 export const getGomoryCuts = (lia: IntSolver, cutCount: number): LiaMove => {
   const solver = lia.solver;
   const bigCuts: Cut[] = [];

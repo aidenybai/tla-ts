@@ -1,10 +1,5 @@
 // Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see
-// z3-license.txt. The qe-lite tactic of Z3's ufnia strategy: each quantifier, innermost first, loses
-// the variables that its body defines by an equality, Fourier-Motzkin elimination removes integer
-// variables that only occur in bounds, and a quantifier over a small integer range becomes a finite
-// disjunction. Like Z3, the port counts references, so that expressions are created and deleted in
-// Z3's order. Arrays, bit-vectors and datatypes are not ported, as tlapm's encoding does not produce
-// them.
+// z3-license.txt.
 import {
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -33,10 +28,8 @@ import { assign, assignOwned, release } from "./expr-ref";
 import { EqDer } from "./qe-lite-der";
 import { Fm } from "./qe-lite-fm";
 
-// qe_lite's EXPAND_BOUND_LIMIT: the largest integer range that is expanded.
 const EXPAND_BOUND_LIMIT = 10000;
 
-// rewriter_tpl with elim_cfg: rewrites the quantifiers bottom-up.
 class ElimStar extends RewriterTpl {
   constructor(
     manager: AstManager,
@@ -50,7 +43,6 @@ class ElimStar extends RewriterTpl {
   }
 }
 
-// qe_lite::impl.
 class QeLite {
   private der: EqDer;
   private fm: Fm;
@@ -66,12 +58,11 @@ class QeLite {
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
-  // operator()(expr_ref&): the result comes with a reference, which the caller releases.
+  // The result comes with a reference, which the caller releases.
   apply(formula: number) {
     return this.elimStar.rewrite(formula);
   }
 
-  // ~impl.
   release() {
     this.rewriter.release();
     this.elimStar.release();
@@ -79,7 +70,7 @@ class QeLite {
     this.der.release();
   }
 
-  // bool_rewriter's mk_and and mk_or, with a reference to the result.
+  // With a reference to the result.
   private mkAnd(args: number[]) {
     return this.manager.withTemporaries(() => this.rewriter.mkAnd(args));
   }
@@ -88,7 +79,6 @@ class QeLite {
     return this.manager.withTemporaries(() => this.rewriter.mkOr(args));
   }
 
-  // elim_cfg::reduce_quantifier.
   private reduceQuantifier(expr: number, body: number, patterns: number[]) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
@@ -110,8 +100,7 @@ class QeLite {
     return result;
   }
 
-  // operator()(index_set, index_of_bound, expr_ref&): each disjunct is a conjunction to reduce. The
-  // formula comes with a reference, and so does the result.
+  // The formula comes with a reference, and so does the result.
   private reduceFormula(numVars: number, formula: number) {
     const manager = this.manager;
     const disjs = new RefVector(manager);
@@ -134,8 +123,6 @@ class QeLite {
     return result;
   }
 
-  // operator()(index_set, index_of_bound, expr_ref_vector&): a single non-ground conjunct is reduced
-  // as a disjunction, and otherwise eq_der and fm run.
   private reduceConjs(numVars: number, fmls: RefVector) {
     const manager = this.manager;
     flattenAndVector(manager, fmls);
@@ -155,8 +142,6 @@ class QeLite {
     for (let index = 0; index < fmls.size; index++) manager.limit.checkpoint();
   }
 
-  // collect_negative_equalities: whether every occurrence of the variable is in a negative equality
-  // with a term without it, or outside any equality.
   private collectNegativeEqualities(
     expr: number,
     index: number,
@@ -198,9 +183,7 @@ class QeLite {
     return !isOccurring(manager, index, expr);
   }
 
-  // eliminate_diseq_vars: an integer variable that occurs only in negative equalities can avoid
-  // every value they name, so those equalities are false. The body comes with a reference, and so
-  // does the result.
+  // The body comes with a reference, and so does the result.
   private eliminateDiseqVars(sorts: number[], body: number) {
     const manager = this.manager;
     const replace = new ExprSafeReplace(manager);
@@ -227,7 +210,6 @@ class QeLite {
     return result;
   }
 
-  // extract_var_bound: an inclusive integer bound of the variable that a conjunct states.
   private getBound(expr: number, index: number) {
     const manager = this.manager;
     const isNegated = manager.isNot(expr);
@@ -255,8 +237,7 @@ class QeLite {
     return { isLower: isVarOnLeft, value: isVarOnLeft ? value + 1n : value - 1n };
   }
 
-  // try_expand_bounded_quantifier: the disjunction of the body over every value of the integer
-  // variables when their ranges are small, with a reference, or -1.
+  // The result comes with a reference, or is -1.
   private tryExpandBoundedQuantifier(sorts: number[], body: number) {
     const manager = this.manager;
     const numDecls = sorts.length;
@@ -352,7 +333,6 @@ class QeLite {
   }
 }
 
-// qe_lite_simplifier::reduce in a dependent_expr_state_tactic, on each formula with a quantifier.
 // The tactic's m_dep holds the formula it read last, until the tactic is done.
 export const applyQeLite = (manager: AstManager, goal: Goal) => {
   const qe = new QeLite(manager);

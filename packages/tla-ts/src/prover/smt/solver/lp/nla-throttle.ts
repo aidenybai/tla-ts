@@ -1,6 +1,5 @@
 // Ported from Z3 (src/math/lp/nla_throttle.h, src/math/lp/nla_throttle.cpp), MIT license, see
-// z3-license.txt. The signatures of the lemmas nla has generated in the current scope, so that a
-// pass does not generate the same lemma twice.
+// z3-license.txt.
 import type { Rational } from "../rational";
 import type { LarSolver } from "./lar-solver";
 import type { LpStats } from "./lp-settings";
@@ -23,8 +22,6 @@ export class NlaThrottle {
     private stats: LpStats,
   ) {}
 
-  // insert_new: whether the signature, its 8 values padded with zeros, was seen, recording it when
-  // not.
   private insertNew(values: number[]) {
     const key = [...values, ...Array.from({ length: 8 - values.length }, () => 0)].join(",");
     if (this.seen.has(key)) {
@@ -72,7 +69,6 @@ export class NlaThrottle {
     return this.insertNew([kind, monicVar, xVar, yVar, isBelow ? 1 : 0, planeType]);
   }
 
-  // The simplified tangent signature, without the plane type.
   insertSimplifiedTangent(
     kind: number,
     monicVar: number,
