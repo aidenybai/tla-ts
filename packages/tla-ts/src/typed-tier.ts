@@ -121,9 +121,16 @@ type Binding = CodeBinding | OperatorBinding;
 
 type TierScope = ReadonlyMap<string, Binding>;
 
+interface TypedActionProperty {
+  action: Expression;
+  subscript: Expression;
+}
+
 export interface TypedCheck {
   invariants: Expression[];
   constraints: Expression[];
+  initialPredicates: Expression[];
+  actionProperties: TypedActionProperty[];
   init: Expression;
   next: Expression;
   isDeadlockChecked: boolean;
@@ -2882,6 +2889,8 @@ const getPermuteCode = (
 interface CompiledSpec {
   next: (state: Plain[], emit: (successor: Plain[]) => void) => void;
   invariants: ((state: Plain[]) => boolean)[];
+  initialPredicates: ((state: Plain[]) => boolean)[];
+  actionProperties: ((state: Plain[], next: Plain[]) => boolean)[];
   constraints: ((state: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
   decode: (data: Uint8Array, start: number) => Plain[];
@@ -2899,6 +2908,18 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     expectType(compileValue(program, expression, { scope: new Map(), primed: unprimed }), BOOL);
   const invariants = check.invariants.map(compilePredicate);
   const constraints = check.constraints.map(compilePredicate);
+  const initialPredicates = check.initialPredicates.map(compilePredicate);
+  const successor = program.variableTypes.map(() => getName(program, "n"));
+  // [A]_v holds when A does or v is unchanged.
+  const actionProperties = check.actionProperties.map((property) => ({
+    action: expectType(
+      compileValue(program, property.action, { scope: new Map(), primed: successor }),
+      BOOL,
+    ),
+    unchanged: getUnchangedVariables(program, property.subscript, new Map()).map(
+      (index) => `H.same(${successor[index]}, v${index})`,
+    ),
+  }));
   program.variableTypes.forEach(closeType);
   const parameters = program.variableTypes.map((_, index) => `v${index}`).join(", ");
   const unpack = `const [${parameters}] = state;`;
@@ -2934,6 +2955,10 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const nextCode = next();
   const invariantCodes = invariants.map(predicate);
   const constraintCodes = constraints.map(predicate);
+  const actionPropertyCodes = actionProperties.map(
+    (property) =>
+      `(state, next) => { ${unpack} const [${successor.join(", ")}] = next; return (${property.action.emit()}) || (${["true", ...property.unchanged].join(" && ")}); }`,
+  );
   const values = program.plains.values;
   const ranks = new Int32Array(values.length);
   values
@@ -2949,6 +2974,8 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   return {
     next: (state, emit) => { ${unpack} ${nextCode} },
     invariants: [${invariantCodes.join(", ")}],
+    initialPredicates: [${initialPredicates.map(predicate).join(", ")}],
+    actionProperties: [${actionPropertyCodes.join(", ")}],
     constraints: [${constraintCodes.join(", ")}],
     encode: (state, arena) => {
       ${unpack}
@@ -3149,6 +3176,7 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
   const cursor: Cursor = { data: initialBytes.data, position: 0 };
   for (let index = 0; index < initialStarts.size; index++) {
     const state = program.variableTypes.map((type) => readPlain(cursor, type, program.plains));
+    if (!compiled.initialPredicates.every((predicate) => predicate(state))) deopt();
     if (visit(state)) statistics.depth = 1;
   }
   initialBytes.data = new Uint8Array(0);
@@ -3156,7 +3184,11 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
   const level = { depth: 1, end: statistics.distinct };
   const expansion = { successors: 0, newStates: 0 };
+  const expanding: { state: Plain[] } = { state: [] };
   const onSuccessor = (successor: Plain[]) => {
+    for (const property of compiled.actionProperties) {
+      if (!property(expanding.state, successor)) deopt();
+    }
     expansion.successors++;
     if (visit(successor)) {
       expansion.newStates++;
@@ -3170,6 +3202,7 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     }
     const start = starts.data[index];
     const state = compiled.decode(arena.pages[start >>> PAGE_BITS], start & (PAGE_SIZE - 1));
+    expanding.state = state;
     expansion.successors = 0;
     expansion.newStates = 0;
     compiled.next(state, onSuccessor);

@@ -29,12 +29,21 @@ describe("typed tier matches TLC", () => {
     ["SymmetricProcesses", 553],
     ["SymmetricFunctions", 1361],
     ["SubsetOrder", 20],
+    ["ActionProperties", 34],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([
       generatedStates,
       generatedStates,
     ]);
+  });
+
+  it.each([
+    ["ActionFails", "Falls"],
+    ["InitialFails", "StartsLow"],
+  ])("reports the property %s violates, as TLC does", async (name, property) => {
+    const result = await checkFixture(name, true);
+    expect([result.status, result.violation?.name]).toEqual(["liveness-violation", property]);
   });
 
   it("branches on the right side of => only with warnings off, like TLC", async () => {
