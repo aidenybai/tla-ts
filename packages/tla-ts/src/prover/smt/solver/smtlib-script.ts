@@ -25,6 +25,9 @@ import {
   type SmtlibReader,
 } from "./smtlib-parser";
 import { getVerdict, solveAssertions } from "./solver";
+import type { Context } from "./context";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import { ProtoModel } from "./proto-model";
 
 const SILENT_COMMANDS = new Set([
   ...DECLARATIONS,
@@ -203,12 +206,20 @@ interface Scope {
   objectives: number;
 }
 
+interface CheckResult {
+  status: number;
+  context: Context | undefined;
+  isOptimizing: boolean;
+  model: ProtoModel | undefined;
+}
+
 interface ScriptState {
   manager: AstManager;
   reader: SmtlibReader;
   assertions: number[];
   objectives: number[];
   scopes: Scope[];
+  check: CheckResult | undefined;
 }
 
 export const runSmtlibScript = (
@@ -240,6 +251,7 @@ export const runSmtlibScript = (
       assertions: [],
       objectives: [],
       scopes: [],
+      check: undefined,
     };
   };
   const script = { state: createState() };
@@ -264,18 +276,44 @@ export const runSmtlibScript = (
     )
       throw new SmtUnsupportedError("optimization beyond linear arithmetic");
     state.manager.limit.push(settings.rlimit);
+    const isOptimizing = state.objectives.length > 0;
     try {
-      print(
-        getVerdict(
-          solveAssertions(state.manager, [...state.assertions, ...extra], settings.isMbqi).result,
-        ),
+      const solved = solveAssertions(
+        state.manager,
+        [...state.assertions, ...extra],
+        settings.isMbqi,
       );
+      state.check = {
+        status: solved.result,
+        context: solved.context,
+        isOptimizing,
+        model: undefined,
+      };
+      print(getVerdict(solved.result));
     } catch (error) {
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
+      state.check = { status: L_UNDEF, context: undefined, isOptimizing, model: undefined };
       print("unknown");
     } finally {
       state.manager.limit.pop();
     }
+  };
+  const getModel = (list: SmtList) => {
+    const check = script.state.check;
+    if (!settings.isProducingModels || check === undefined || check.status === L_FALSE)
+      throw new SmtParseError("model is not available", list.end);
+    if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
+    if (check.model !== undefined) return check.model;
+    if (check.context === undefined && check.status !== L_TRUE)
+      throw new SmtUnsupportedError("the model of a canceled search");
+    const model = check.context?.getModel() ?? new ProtoModel(script.state.manager);
+    model.incRef();
+    check.model = model;
+    return model;
+  };
+  const clearCheck = () => {
+    script.state.check?.model?.decRef();
+    script.state.check = undefined;
   };
   const parseFormulas = (items: SmtList["items"]) =>
     items.map((literal) => script.state.reader.parseFormula(literal));
@@ -288,8 +326,10 @@ export const runSmtlibScript = (
     state.objectives.push(term);
   };
   const runCommand: Record<string, (list: SmtList) => void> = {
-    assert: (list) =>
-      script.state.assertions.push(script.state.reader.parseFormula(list.items[1] ?? list.end)),
+    assert: (list) => {
+      script.state.assertions.push(script.state.reader.parseFormula(list.items[1] ?? list.end));
+      clearCheck();
+    },
     "check-sat": (list) => checkSat(parseFormulas(list.items.slice(1))),
     "check-sat-using": (list) => {
       if (!isSymbol(list.items[1], "smt") || list.items.length !== 2)
@@ -316,6 +356,7 @@ export const runSmtlibScript = (
     },
     push: (list) => {
       const state = script.state;
+      clearCheck();
       for (let index = getScopeCount(list, "push"); index > 0; index--) {
         state.scopes.push({
           assertions: state.assertions.length,
@@ -332,6 +373,7 @@ export const runSmtlibScript = (
           "invalid pop command, argument is greater than the current stack depth",
           list.end,
         );
+      clearCheck();
       for (let index = 0; index < count; index++) {
         const scope = state.scopes.pop();
         state.assertions.length = scope?.assertions ?? 0;
@@ -345,6 +387,7 @@ export const runSmtlibScript = (
     },
     "reset-assertions": () => {
       const state = script.state;
+      clearCheck();
       state.assertions = [];
       state.objectives = [];
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0 }));
@@ -379,6 +422,19 @@ export const runSmtlibScript = (
           ")",
         ].join("\n"),
       );
+    },
+    eval: (list) => {
+      const target = list.items[1];
+      const term = target === undefined ? -1 : script.state.reader.parseTerm(target);
+      if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of eval");
+      const model = getModel(list);
+      if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
+      const manager = script.state.manager;
+      manager.incRef(term);
+      const value = model.eval(term, false);
+      display(value);
+      manager.decRef(value);
+      manager.decRef(term);
     },
     display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),
     echo: (list) => {

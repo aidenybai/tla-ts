@@ -167,6 +167,19 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("evaluates a term in the model, as in z3test's idl.smt2 and t16.smt2", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (>= (- a (ite (<= a 0) (* 3 b) b)) 2))",
+        "(check-sat)",
+        "(eval (>= (- a (ite (<= a 0) (* 3 b) b)) 2))",
+        "(eval (bv2int (bvadd #x0a #xf0)))",
+      ]),
+    ).toEqual(["sat", "true", "250"]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);
