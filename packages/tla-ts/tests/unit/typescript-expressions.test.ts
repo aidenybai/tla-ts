@@ -289,6 +289,12 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const again = Object.getOwnPropertyDescriptor(box, "a");`,
     ],
     [
+      "['a' in child, Object.hasOwn(child, 'a'), Object.getPrototypeOf(child) === base, Object.getPrototypeOf(orphan) === null, Object.getPrototypeOf(base) === Object.prototype, base.isPrototypeOf(child), Object.prototype.isPrototypeOf(child), Object.prototype.isPrototypeOf(orphan), 'a' in orphan]",
+      `const base = { a: 1 };
+      const child = { __proto__: base, b: 2 };
+      const orphan = { __proto__: null };`,
+    ],
+    [
       "[copy.a, 'b' in copy, base.b]",
       `const base = { a: 1, b: 0 };
       Object.defineProperty(base, "b", { enumerable: false });

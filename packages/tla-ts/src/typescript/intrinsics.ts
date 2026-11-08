@@ -3,6 +3,7 @@ import { type Context, getSymbol } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { translateExpression } from "./expressions";
+import { getHeap } from "./heap";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { boolean, identifier, string } from "./tla";
@@ -106,7 +107,7 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (type.flags & ts.TypeFlags.BooleanLike) return "Boolean.prototype";
   if (type.flags & ts.TypeFlags.BigIntLike) return "BigInt.prototype";
   const kind = getKind(node, context);
-  if (kind === "object") return "Object.prototype";
+  if (kind === "object") return undefined;
   if (kind === "sequence") return "Array.prototype";
   if (kind === "set") return "Set.prototype";
   if (kind === "map") return "Map.prototype";
@@ -243,6 +244,42 @@ const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
 // A built-in object, or Object.getPrototypeOf or isPrototypeOf on built-in objects, or undefined
 // for any other node.
 export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: Context) => {
+  const isOfObject =
+    (isPrototypeOfCall(node) || isPrototypeCall(node, context)) &&
+    getKind(node.arguments[0], context) === "object";
+  if (isOfObject && isPrototypeOfCall(node) && ts.isPropertyAccessExpression(node.expression)) {
+    const owner = node.expression.expression;
+    const name = getName(owner, context);
+    const translatedOwner =
+      name !== undefined
+        ? translateBuiltIn(name, owner, context)
+        : getKind(owner, context) === "object"
+          ? translateExpression(owner, scope, context)
+          : undefined;
+    if (translatedOwner === undefined) return undefined;
+    return useJavaScript(
+      "IsPrototypeOf",
+      [
+        getHeap(scope, node, context),
+        translatedOwner,
+        translateExpression(node.arguments[0], scope, context),
+      ],
+      context,
+    );
+  }
+  if (isOfObject && isPrototypeCall(node, context)) {
+    if (!isCompared(node, context)) {
+      throw new TlaTypeScriptError(
+        `Compare ${node.getText()} only with === or assert.sameValue`,
+        node,
+      );
+    }
+    return useJavaScript(
+      "Prototype",
+      [getHeap(scope, node, context), translateExpression(node.arguments[0], scope, context)],
+      context,
+    );
+  }
   if (isPrototypeOfCall(node) && ts.isPropertyAccessExpression(node.expression)) {
     const owner = getName(node.expression.expression, context);
     if (owner === undefined) return undefined;

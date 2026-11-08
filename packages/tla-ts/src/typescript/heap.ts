@@ -49,6 +49,17 @@ export const translateObject = (
 ) => {
   context.prelude.add("JavaScript");
   return node.properties.reduce((object, property) => {
+    const isPrototype =
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      property.name.text === "__proto__";
+    if (isPrototype) {
+      return useJavaScript(
+        "WithPrototype",
+        [object, translateExpression(property.initializer, scope, context)],
+        context,
+      );
+    }
     if (ts.isPropertyAssignment(property)) {
       return useJavaScript(
         "Put",

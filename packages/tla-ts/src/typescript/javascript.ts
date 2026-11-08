@@ -40,6 +40,10 @@ IsRef(value) ==
   LET text == ToString(value)
   IN Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Ref :>"
 
+IsHeap(ref) == IsRef(ref) /\\ TypeOf(ref[Ref]) = "number"
+
+LOCAL ObjectPrototype == Ref :> "Object.prototype"
+
 LOCAL Inherited == {
   "constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString",
   "toString", "valueOf", "__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__",
@@ -47,12 +51,17 @@ LOCAL Inherited == {
 
 LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE]
 
-EmptyObject == [keys |-> <<>>, values |-> <<>>, attributes |-> <<>>, extensible |-> TRUE]
+EmptyObject ==
+  [keys |-> <<>>, values |-> <<>>, attributes |-> <<>>, extensible |-> TRUE,
+   prototype |-> ObjectPrototype]
+
+WithPrototype(object, value) ==
+  CASE value = Null \\/ IsRef(value) -> [object EXCEPT !.prototype = value]
+    [] TypeOf(value) \\in {"object", "function"} -> Assert(FALSE, "tla-ts can't make this a prototype")
+    [] OTHER -> object
 
 Put(object, key, value) ==
-  IF key = "__proto__"
-  THEN Assert(FALSE, "tla-ts can't set an object's prototype")
-  ELSE IF key \\in DOMAIN object.values
+  IF key \\in DOMAIN object.values
   THEN [object EXCEPT !.values = (key :> value) @@ @]
   ELSE [object EXCEPT !.keys = Append(@, key),
                       !.values = (key :> value) @@ @,
@@ -97,15 +106,6 @@ PutAll(object, values, keys) ==
 Spread(object, heap, ref) ==
   PutAll(object, Own(heap, ref), EnumerableKeys(heap[ref[Ref]]))
 
-HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
-
-Has(heap, ref, key) ==
-  IF key \\in DOMAIN Own(heap, ref) THEN TRUE
-  ELSE IF key \\in Inherited THEN Assert(FALSE, "tla-ts can't read what objects inherit")
-  ELSE FALSE
-
-Get(heap, ref, key) == IF Has(heap, ref, key) THEN Own(heap, ref)[key] ELSE Undefined
-
 Describe(heap, ref, key) ==
   LET object == heap[ref[Ref]]
       attributes == object.attributes[key]
@@ -118,9 +118,46 @@ Describe(heap, ref, key) ==
                  <<"value", "writable", "enumerable", "configurable">>)
      ELSE EmptyObject
 
-CanPut(heap, ref, key) ==
+HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
+
+Prototype(heap, ref) == heap[ref[Ref]].prototype
+
+RECURSIVE Has(_, _, _)
+Has(heap, ref, key) ==
+  LET prototype == Prototype(heap, ref)
+  IN CASE key \\in DOMAIN Own(heap, ref) -> TRUE
+       [] prototype = Null -> FALSE
+       [] IsHeap(prototype) -> Has(heap, prototype, key)
+       [] prototype = ObjectPrototype /\\ key \\notin Inherited -> FALSE
+       [] OTHER -> Assert(FALSE, "tla-ts can't read what objects inherit")
+
+RECURSIVE Get(_, _, _)
+Get(heap, ref, key) ==
+  CASE key \\in DOMAIN Own(heap, ref) -> Own(heap, ref)[key]
+    [] Has(heap, ref, key) -> Get(heap, Prototype(heap, ref), key)
+    [] OTHER -> Undefined
+
+RECURSIVE IsWritable(_, _, _)
+IsWritable(heap, ref, key) ==
   LET object == heap[ref[Ref]]
-  IN IF key \\in DOMAIN object.values THEN object.attributes[key].writable ELSE object.extensible
+  IN CASE key \\in DOMAIN object.values -> object.attributes[key].writable
+       [] object.prototype = Null -> TRUE
+       [] IsHeap(object.prototype) -> IsWritable(heap, object.prototype, key)
+       [] object.prototype = ObjectPrototype /\\ key \\notin Inherited -> TRUE
+       [] OTHER -> Assert(FALSE, "tla-ts can't write what objects inherit")
+
+CanPut(heap, ref, key) ==
+  /\\ IsWritable(heap, ref, key)
+  /\\ key \\in DOMAIN Own(heap, ref) \\/ heap[ref[Ref]].extensible
+
+RECURSIVE IsPrototypeOf(_, _, _)
+IsPrototypeOf(heap, owner, ref) ==
+  LET prototype == Prototype(heap, ref)
+  IN CASE prototype = Null -> FALSE
+       [] ToString(prototype) = ToString(owner) -> TRUE
+       [] IsHeap(prototype) -> IsPrototypeOf(heap, owner, prototype)
+       [] prototype = ObjectPrototype -> FALSE
+       [] OTHER -> Assert(FALSE, "tla-ts can't read what objects inherit")
 
 SetProperty(heap, ref, key, value) ==
   IF CanPut(heap, ref, key)
@@ -132,7 +169,7 @@ SameValue(left, right) ==
   /\\ Assert(TypeOf(left) # "object" \\/ left = Null \\/ right = Null
               \\/ IsRef(left) \\/ IsRef(right),
             "tla-ts can't compare objects by identity")
-  /\\ left = right
+  /\\ IF IsRef(left) \\/ IsRef(right) THEN ToString(left) = ToString(right) ELSE left = right
 
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
