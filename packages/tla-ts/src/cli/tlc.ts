@@ -666,8 +666,7 @@ const createFileDescriber = (
 const printWelcome = (printer: MessagePrinter) =>
   printer.print(MESSAGE_CODE.version, MESSAGE_LEVEL.none, `TLC2 Version ${version} (rev: tla-ts)`);
 
-// MonolithSpecExtractor.config: the lines after the first "---- CONFIG name ----" line, up to a
-// line that starts with "====". The lexer of the configuration needs a newline to end a comment.
+// ModelConfig needs a final newline to end a trailing \* comment.
 const getEmbeddedConfig = (contents: string, name: string) => {
   const lines = contents.split(/\r?\n/);
   const start = lines.findIndex(
