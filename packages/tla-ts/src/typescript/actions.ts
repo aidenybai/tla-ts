@@ -4,6 +4,7 @@ import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
   type Context,
   type FunctionNode,
+  getCalledMethod,
   getCallee,
   getElement,
   getFunction,
@@ -30,6 +31,7 @@ import {
   isAllocation,
   isObjectChange,
   translateAllocated,
+  translateHoldsMethod,
   translateObjectChange,
   translateObjectValue,
   translatePropertyKey,
@@ -440,7 +442,8 @@ const translateCallStatement = (
       ),
     );
   }
-  if (isMethodCall(expression)) {
+  const objectMethod = isGenerator ? undefined : getCalledMethod(expression.expression, context);
+  if (isMethodCall(expression) && objectMethod === undefined) {
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
     if (
@@ -481,7 +484,7 @@ const translateCallStatement = (
   };
   const callee = isGenerator
     ? getGenerator(expression.expression, context)
-    : getCallback(expression.expression);
+    : (objectMethod ?? getCallback(expression.expression));
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
@@ -518,7 +521,7 @@ const translateCallStatement = (
           : ts.factory.createExpressionStatement(calleeBody),
       ];
   const scope = { ...bound.scope, functions: new Map([...bound.scope.functions, ...callbacks]) };
-  return translateJoined(expression, path, context, continueWith, (next) => {
+  const call = translateJoined(expression, path, context, continueWith, (next) => {
     const afterCall = (inner: Path, value?: Expression) =>
       next({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } }, value);
     return letIn(
@@ -534,6 +537,18 @@ const translateCallStatement = (
       }),
     );
   });
+  return objectMethod === undefined || !isMethodCall(expression)
+    ? call
+    : ifThenElse(
+        translateHoldsMethod(expression.expression, objectMethod, path.scope, context),
+        call,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which method this call runs"),
+          ]),
+        ),
+      );
 };
 
 const translateExpressionStatement = (
@@ -832,7 +847,8 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     return (
       (symbol && path.scope.functions.get(symbol)) ??
       getCallee(node, context) ??
-      getGenerator(node, context)
+      getGenerator(node, context) ??
+      getCalledMethod(node, context)
     );
   };
   const visit = (node: ts.Node) => {

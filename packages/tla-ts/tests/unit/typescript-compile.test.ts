@@ -798,9 +798,9 @@ describe("errors", () => {
       "Make objects only where a statement always runs",
     ],
     [
-      "an object made in a callback",
-      "let boxes = [1].map((value) => ({ a: value }));",
-      "Make objects only where a statement always runs",
+      "a call to a method that a variable holds",
+      "const counter = { get() { return 1; } };\nconst get = counter.get;\nlet value = get();",
+      "Unsupported call: get",
     ],
   ])("rejects %s in a script", (_, source, message) => {
     expect(() => compile(source)).toThrow(message);

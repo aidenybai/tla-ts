@@ -1,6 +1,14 @@
 import ts from "@typescript/typescript6";
-import { type Context, getUndefined, isMethodCall, type MethodCall } from "./context";
+import {
+  type Context,
+  getObjectMethod,
+  getSymbol,
+  getUndefined,
+  isMethodCall,
+  type MethodCall,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getConstructor } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { isBuiltInObject, translateBuiltInObject } from "./intrinsics";
 import { useJavaScript } from "./javascript";
@@ -47,6 +55,34 @@ const translateMemberKey = (name: ts.PropertyName, scope: Scope, context: Contex
   throw new TlaTypeScriptError("Unsupported key", name);
 };
 
+// A model value that names a method of an object literal.
+export const getMethodValue = (method: ts.MethodDeclaration, context: Context) => {
+  const symbol = getSymbol(method.name, context.checker);
+  if (symbol === undefined) throw new TlaTypeScriptError("Name this method", method);
+  return getConstructor(symbol, context, `${method.name.getText()}Method`);
+};
+
+// Whether the object a call's receiver names still holds the method the call inlines, since a
+// script may replace it.
+export const translateHoldsMethod = (
+  callee: ts.PropertyAccessExpression,
+  method: ts.MethodDeclaration,
+  scope: Scope,
+  context: Context,
+) =>
+  apply("=", [
+    useJavaScript(
+      "Get",
+      [
+        getHeap(scope, callee, context),
+        translateObjectValue(callee.expression, scope, context),
+        string(callee.name.text),
+      ],
+      context,
+    ),
+    getMethodValue(method, context),
+  ]);
+
 export const translateObject = (
   node: ts.ObjectLiteralExpression,
   scope: Scope,
@@ -80,6 +116,14 @@ export const translateObject = (
       return useJavaScript(
         "Put",
         [object, string(property.name.text), translateExpression(property.name, scope, context)],
+        context,
+      );
+    }
+    const method = getObjectMethod(property);
+    if (method !== undefined) {
+      return useJavaScript(
+        "Put",
+        [object, translateMemberKey(method.name, scope, context), getMethodValue(method, context)],
         context,
       );
     }

@@ -197,6 +197,30 @@ const getMethod = (node: ts.Expression, context: Context) => {
   return getClass(owner, context) === declaration.parent ? declaration : undefined;
 };
 
+// Whether a node runs at most once, outside every function and loop.
+const isOnce = (node: ts.Node): boolean =>
+  ts.isSourceFile(node) ||
+  (!ts.isFunctionLike(node) && !ts.isIterationStatement(node, false) && isOnce(node.parent));
+
+// A plain method of an object literal that a script makes once, which a value can name, since
+// each call checks that the property still holds it.
+export const getObjectMethod = (node: ts.Node | undefined) =>
+  node !== undefined &&
+  ts.isMethodDeclaration(node) &&
+  ts.isObjectLiteralExpression(node.parent) &&
+  node.asteriskToken === undefined &&
+  node.body !== undefined &&
+  !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+  isOnce(node.parent)
+    ? node
+    : undefined;
+
+// The object method that a call's callee names, which the call checks the object still holds.
+export const getCalledMethod = (node: ts.Expression, context: Context) =>
+  context.heap !== undefined && ts.isPropertyAccessExpression(node)
+    ? getObjectMethod(getSymbol(node.name, context.checker)?.valueDeclaration)
+    : undefined;
+
 // The function that a callee or callback names: one written in place, one declared elsewhere, or
 // a method of a known class.
 const resolve = (node: ts.Expression, context: Context) =>

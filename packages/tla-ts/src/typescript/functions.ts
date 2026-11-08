@@ -192,10 +192,17 @@ export const translateHelperCall = (
   return call(definition.name, values);
 };
 
-// A call to a function declared inside another, which is inlined.
-export const translateLocalCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+// A call to a function declared inside another, or to a method a caller resolves, which is
+// inlined.
+export const translateLocalCall = (
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+  method?: FunctionNode,
+) => {
   const symbol = getSymbol(node.expression, context.checker);
-  const callee = (symbol && scope.functions.get(symbol)) ?? getCallee(node.expression, context);
+  const callee =
+    method ?? (symbol && scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   if (callee === undefined) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }

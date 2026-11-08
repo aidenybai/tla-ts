@@ -316,6 +316,21 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const steps = [first, second];`,
     ],
     [
+      "[total, count, typeof counter.add, counter.add === other.add, Object.hasOwn(counter, 'add')]",
+      `let count = 0;
+      const counter = {
+        add(step: number) {
+          count = count + step;
+        },
+        double(value: number) {
+          return value * 2;
+        },
+      };
+      const other = { add() {} };
+      counter.add(2);
+      const total = counter.double(3);`,
+    ],
+    [
       "has(point)",
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],

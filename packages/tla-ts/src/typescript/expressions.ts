@@ -11,6 +11,7 @@ import {
 import type { Expression } from "../ast";
 import {
   type Context,
+  getCalledMethod,
   getCallee,
   getElement,
   getFunction,
@@ -33,6 +34,7 @@ import {
   getHeap,
   isCreation,
   isDescription,
+  translateHoldsMethod,
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
@@ -345,7 +347,22 @@ const translateCall = (
   if (helper?.getSourceFile().isDeclarationFile) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
+  if (
+    helper !== undefined &&
+    ts.isVariableDeclaration(helper) &&
+    (helper.initializer === undefined || !ts.isFunctionLike(helper.initializer))
+  ) {
+    throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
+  }
   if (helper !== undefined) return translateHelperCall(helper, node, scope, context);
+  const objectMethod = getCalledMethod(node.expression, context);
+  if (objectMethod !== undefined && isMethodCall(node)) {
+    return ifExpression(
+      translateHoldsMethod(node.expression, objectMethod, scope, context),
+      translateLocalCall(node, scope, context, objectMethod),
+      apply("Assert", [boolean(false), string("tla-ts can't tell which method this call runs")]),
+    );
+  }
   const callee = isMethodCall(node) ? getCallee(node.expression, context) : undefined;
   if (callee !== undefined && ts.isMethodDeclaration(callee)) {
     return translateLocalCall(node, scope, context);
@@ -355,7 +372,11 @@ const translateCall = (
     if (operator === undefined || (symbol !== undefined && scope.functions.has(symbol))) {
       return translateLocalCall(node, scope, context);
     }
-    if (operator.kind !== "Identifier") {
+    const declaration = symbol?.valueDeclaration;
+    if (
+      operator.kind !== "Identifier" ||
+      (declaration !== undefined && ts.isVariableDeclaration(declaration))
+    ) {
       throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
     }
     const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
