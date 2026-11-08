@@ -1,6 +1,8 @@
 (*---
 description: A number past the int range throws NumberFormatException out of parseValue, which TLC reports as a general error.
 ref: tlc2/tool/impl/ModelConfig.java#parseValue
+features:
+  - tlc-bug
 outcome: tlc-error
 config: |
   CONSTANT N = 2147483648
