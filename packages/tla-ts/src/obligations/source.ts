@@ -19,6 +19,7 @@ import { TlaProofError, TlaUnsupportedError } from "../errors";
 import {
   at,
   getFact,
+  mapChildren,
   type Bound,
   type Builtin,
   type Defn,
@@ -602,16 +603,28 @@ export const createSource = (
           { location },
         );
       case "WeakFairness":
-      case "StrongFairness":
+      case "StrongFairness": {
+        // tlapm lexes WF_vars as WF_ and vars, both located at the whole word.
+        const isGlued = /\w/.test(lines[location.startLine - 1]?.[location.startColumn + 2] ?? "");
+        const moveGluedStart = (inner: Expr): Expr =>
+          isGlued &&
+          inner.location?.startLine === location.startLine &&
+          inner.location.startColumn === location.startColumn + 3
+            ? mapChildren(
+                { ...inner, location: { ...inner.location, startColumn: location.startColumn } },
+                moveGluedStart,
+              )
+            : inner;
         return at(
           {
             kind: "Fair",
             fairness: expression.kind === "WeakFairness" ? "Weak" : "Strong",
-            subscript: recurse(expression.subscript),
+            subscript: moveGluedStart(recurse(expression.subscript)),
             action: recurse(expression.action),
           },
           { location },
         );
+      }
       case "Label":
         return at(
           {
