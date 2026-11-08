@@ -172,6 +172,7 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   ],
   [2165, "Choose can only deal with numbers up to %1%", false],
   [2169, "The %1% argument of %2% should be a %3%, but instead it is:\n%4%", true],
+  [2170, "Argument mismatch in operator application.%1", false],
   [2176, "Applying %1% to the following value,\nwhich is not %2%:\n%3%", true],
   [
     2177,
@@ -324,7 +325,7 @@ const getCodedMessagePatterns = () =>
 // reads like the coded overflow of SetOfRcdsValue and SubsetValue, SetPredValue's tuple membership,
 // and the plain messages of Tool#enabled for ~> and -+-> that read like its coded one.
 const UNCODED_MESSAGE_PATTERN =
-  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+ : ))|\nis an element of a set of \d+-tuples\.$|^In computing ENABLED, TLC encountered a temporal formula \(a (~> b|-\+-> formula)\)\./;
+  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+: ))|\nis an element of a set of \d+-tuples\.$|^In computing ENABLED, TLC encountered a temporal formula \(a (~> b|-\+-> formula)\)\./;
 
 export const getCodedMessage = (text: string): CodedMessage | undefined =>
   UNCODED_MESSAGE_PATTERN.test(text)

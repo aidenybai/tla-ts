@@ -52,6 +52,7 @@ import {
   getWrittenElements,
   isEqualLikeTlc,
   createEnumeratedSet,
+  createNormalizedSet,
   EMPTY_SET,
   isEnumeratedSet,
   type IntervalValue,
@@ -89,6 +90,11 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
+// IntervalValue and a normalized SetEnumValue keep the intersection and difference they compute
+// normalized.
+const isNormalizedReducible = (set: ReducibleSet) =>
+  set.kind === "Interval" || (set.kind === "Set" && set.isNormalized);
+
 // TLC combines a set enumeration or an interval with another set element by element, testing each
 // element for membership in the other set.
 const combineReducible = (
@@ -99,9 +105,8 @@ const combineReducible = (
   const elements = set.kind === "Interval" ? toFiniteSet(set).elements : getWrittenElements(set);
   if (operator !== "\\cup") {
     const isKept = operator === "\\cap";
-    return createEnumeratedSet(
-      elements.filter((element) => isElementOf(element, other) === isKept),
-    );
+    const kept = elements.filter((element) => isElementOf(element, other) === isKept);
+    return isNormalizedReducible(set) ? createNormalizedSet(kept) : createEnumeratedSet(kept);
   }
   if (elements.length === 0) return other;
   if (!isReducibleSet(other)) {
@@ -184,7 +189,13 @@ export const CORE_OPERATORS: Builtin[] = [
               : getSortedDifference;
         // The merge compares the elements, which TLC tests for membership one by one instead.
         return computeLikeTlcOnFailure(
-          (finiteLeft, finiteRight) => merge(toFiniteSet(finiteLeft), toFiniteSet(finiteRight)),
+          (finiteLeft, finiteRight) => {
+            const merged = merge(toFiniteSet(finiteLeft), toFiniteSet(finiteRight));
+            if (operator !== "\\cup" && merged !== finiteLeft) {
+              merged.isNormalized = isNormalizedReducible(finiteLeft);
+            }
+            return merged;
+          },
           (reducibleLeft, reducibleRight) =>
             combineReducible(operator, reducibleLeft, reducibleRight),
           left,

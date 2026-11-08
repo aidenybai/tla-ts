@@ -37,7 +37,7 @@ import {
   createEnumeratedSet,
   createSortedFunction,
   createSortedRecord,
-  createSortedSet,
+  createNormalizedSet,
   createWrittenRecord,
   createTuple,
   formatValue,
@@ -315,9 +315,10 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
     const functionClass = getFunctionClass(value);
     if (functionClass === "tuple") throw createNonIntegerKeyError(field);
     // Only TLC's RecordValue names the field it lacks. Any other function, such as a FcnRcdValue
-    // whose keys are strings, reports an argument outside its domain.
+    // whose keys are strings, reports an argument outside its domain, and TLC enumerates a
+    // FcnLambdaValue into one first.
     return applyFunction(
-      value,
+      value.kind === "LazyFunction" ? toFiniteFunction(value) : value,
       field,
       functionClass === "record" ? describeMissing : describeNotInDomain,
     );
@@ -399,13 +400,12 @@ export const bindValue = (scope: Scope | undefined, name: string, value: Value):
   parent: scope,
 });
 
+// ContextEnumerator#nextElement, whose message TLC prints without filling in its parameter.
 export const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
-    throw new TlaEvaluationError(
-      `Cannot bind <<${pattern.names.join(", ")}>> to ${formatValue(value)}, which is not a tuple of that length`,
-    );
+    throw new TlaEvaluationError("Argument mismatch in operator application.%1");
   }
   return pattern.names.reduce<Scope | undefined>(
     (current, name, index) => bindValue(current, name, elements[index]),
@@ -734,15 +734,24 @@ const createLazyFunction = (
   domain: Value,
   compute: (argument: Value, self: LazyFunctionValue) => Value,
   source: LazyFunctionSource | undefined,
+  boundTupleLengths: (number | undefined)[] | undefined,
 ) => {
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
     domain,
     source,
+    boundTupleLengths,
     apply: (argument) => compute(argument, self),
   };
   return self;
 };
+
+const getBoundTupleLengths = (bounds: Bound[]) =>
+  bounds.length === 1
+    ? undefined
+    : bounds.map((bound) =>
+        bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
+      );
 
 // The function constructor of a definition, which SANY locates at the whole definition.
 const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
@@ -769,6 +778,7 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
       definition.bounds,
       domain,
     ),
+    getBoundTupleLengths(definition.bounds),
   );
   keepLambda({
     value: functionValue,
@@ -1628,6 +1638,7 @@ const compileFunctionConstruction = (
     return createFunction(pairs);
   };
   const template = getLazyFunctionTemplate(bounds, expression.body);
+  const boundTupleLengths = getBoundTupleLengths(bounds);
   const createLazy = (domain: Value, context: Context) => {
     const scope = context.scope;
     const functionValue = keepLambda({
@@ -1635,6 +1646,7 @@ const compileFunctionConstruction = (
         domain,
         (argument) => body(withScope(context, bindArgument(bounds, scope, argument))),
         getLazyFunctionSource(template, bounds, domain),
+        boundTupleLengths,
       ),
       bounds,
       body: expression.body,
@@ -1648,10 +1660,16 @@ const compileFunctionConstruction = (
     if (expression.isRecursive || isKeptLazy || context.isKeepLazy || !isEnumerable(domain)) {
       return createLazy(domain, context);
     }
-    // TLC builds a function over a domain other than a set enumeration or an interval lazily, so
-    // its body fails only where TLC forces it, as the replay does. Building it at once is faster
-    // otherwise.
-    if (!isReducibleSet(domain)) {
+    // TLC builds a function lazily unless the set of each bound is a set enumeration or an
+    // interval, so its body fails only where TLC forces it, as the replay does. Building it at once
+    // is faster otherwise.
+    const isReducibleDomain =
+      bounds.length === 1
+        ? isReducibleSet(domain)
+        : typeof domain === "object" &&
+          domain.kind === "ProductSet" &&
+          domain.factors.every(isReducibleSet);
+    if (!isReducibleDomain) {
       if (callStack) return createLazy(domain, context);
       try {
         return construct(domain, context);
@@ -1745,7 +1763,7 @@ const compileSetComprehension = (
       names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
       predicate: formatRange(range),
     };
-    const predicateRange = describeRange(expression.predicate);
+    const predicateNode = describeNode(expression.predicate);
     const createFiltered = (
       base: Value,
       context: Context,
@@ -1765,7 +1783,7 @@ const compileSetComprehension = (
         const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
         if (typeof value !== "boolean") {
           throw new TlaEvaluationError(
-            `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateRange} yielded non-Boolean value.`,
+            `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
           );
         }
         return value;
@@ -1782,12 +1800,12 @@ const compileSetComprehension = (
       const base = set(context);
       // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
       if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
-      return createSortedSet(
+      return createNormalizedSet(
         toFiniteSet(base).elements.filter((element) => {
           const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
           if (typeof value !== "boolean") {
             throw new TlaEvaluationError(
-              `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateRange}`,
+              `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateNode}`,
             );
           }
           return value;
@@ -1825,10 +1843,19 @@ const compileSetComprehension = (
     }
     const chosen = { value: undefined as Value | undefined };
     const elements = getNormalizedElements(base, set, context.environment.runtime.version);
+    const pattern = expression.pattern;
     someElement(elements, (element) => {
-      const scope = bindPattern(context.scope, expression.pattern, element);
+      if (
+        pattern.kind === "Tuple" &&
+        getSequenceElements(element)?.length !== pattern.names.length
+      ) {
+        throw new TlaEvaluationError(
+          `Attempted to compute the value of an expression of form\nCHOOSE <<x1, ... , xN>> \\in S: P, but S was not a set\nof N-tuples.\n${describeRange(expression)}`,
+        );
+      }
+      const scope = bindPattern(context.scope, pattern, element);
       if (!expectBooleanBody(body(withScope(context, scope)), expression)) return false;
-      chosen.value = getBoundValue(expression.pattern, scope);
+      chosen.value = getBoundValue(pattern, scope);
       return true;
     });
     if (chosen.value === undefined) {
