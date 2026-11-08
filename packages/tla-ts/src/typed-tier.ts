@@ -1679,6 +1679,18 @@ const compileBuiltin = (
       unify(operand.type, { kind: "Seq", element: sequence });
       return { type: operand.type, emit: () => `H.tail(${operand.emit()})` };
     }
+    if (operator === "UNION") {
+      const set = getSetElement(operand);
+      const element: Type = createVar();
+      unify(set, { kind: "Set", element });
+      return {
+        type: set,
+        emit: () =>
+          isMask(set, program.plains)
+            ? `(${operand.emit()}).reduce((union, mask) => union | mask, 0)`
+            : `H.normalize(${getComparerCode(program, element)}, (${operand.emit()}).flat())`,
+      };
+    }
     if (operator === "Cardinality") {
       getSetElement(operand);
       return {
