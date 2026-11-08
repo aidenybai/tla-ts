@@ -154,7 +154,8 @@ const isDescriptor = (type: ts.Type | undefined) =>
 
 // Types for the objects that test262 builds up and describes, which TypeScript can't infer:
 // a descriptor that is possibly undefined, an object given properties after it's made, a
-// descriptor whose attributes aren't booleans, and an object that Object.create makes. Each only adds types, so Node runs the same program.
+// descriptor whose attributes aren't booleans, an object that Object.create makes, and a parameter
+// or variable with no type to infer. Each only adds types, so Node runs the same program.
 const loosen = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(PROGRAM_PATH);
@@ -193,6 +194,25 @@ const loosen = () => {
       ) {
         edits.set(declaration.name.getEnd(), ": { [key: string]: unknown }");
       }
+    }
+    // A parameter or variable whose type inferFromUsage can't infer may hold any value.
+    const declared =
+      (diagnostic.code === 7006 && ts.isParameter(parent)) ||
+      ((diagnostic.code === 7005 || diagnostic.code === 7034) && ts.isVariableDeclaration(parent))
+        ? parent
+        : undefined;
+    if (
+      declared !== undefined &&
+      declared.type === undefined &&
+      ts.isIdentifier(declared.name) &&
+      declared.name === node
+    ) {
+      const isRest = ts.isParameter(declared) && declared.dotDotDotToken !== undefined;
+      const end =
+        ts.isParameter(declared) && declared.questionToken !== undefined
+          ? declared.questionToken.getEnd()
+          : declared.name.getEnd();
+      edits.set(end, isRest ? ": unknown[]" : ": unknown");
     }
     const literal = ts.findAncestor(node, ts.isObjectLiteralExpression);
     if (diagnostic.code === 2322 && literal && isDescriptor(checker.getContextualType(literal))) {
