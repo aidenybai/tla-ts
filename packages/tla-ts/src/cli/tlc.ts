@@ -632,9 +632,10 @@ const printWelcome = (printer: MessagePrinter) =>
 // MonolithSpecExtractor.config: the lines after the first "---- CONFIG name ----" line, up to a
 // line that starts with "====". The lexer of the configuration needs a newline to end a comment.
 const getEmbeddedConfig = (contents: string, name: string) => {
-  const marker = new RegExp(`^-----*\\s*CONFIG\\s+${RegExp.escape(name)}\\s*-----*$`);
   const lines = contents.split(/\r?\n/);
-  const start = lines.findIndex((line) => marker.test(line));
+  const start = lines.findIndex(
+    (line) => line.match(/^-----*\s*CONFIG\s+(\S+?)\s*-----*$/)?.[1] === name,
+  );
   if (start === -1) return "\n";
   const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
   return `${lines
