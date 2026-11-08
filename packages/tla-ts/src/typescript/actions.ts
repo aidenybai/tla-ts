@@ -3,6 +3,7 @@ import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
   type Context,
+  getElement,
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
@@ -19,7 +20,14 @@ import {
 } from "./expressions";
 import { and, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
-import { bindPattern, bindValues, createStateScope, type Scope } from "./scope";
+import {
+  bindPattern,
+  bindValues,
+  createStateScope,
+  getDefaulted,
+  getOptionalField,
+  type Scope,
+} from "./scope";
 import {
   apply,
   boolean,
@@ -167,6 +175,11 @@ const assign = (
 
 // Assigns a value to a target, or to each target in a destructuring pattern. Every value is read
 // before any target changes, so [a, b] = [b, a] swaps.
+const getDefaultedTarget = (node: ts.Expression) =>
+  ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ? { target: node.left, initializer: node.right }
+    : { target: node, initializer: undefined };
+
 const assignPattern = (
   target: ts.Expression,
   source: ts.Expression | undefined,
@@ -180,42 +193,54 @@ const assignPattern = (
       if (ts.isSpreadElement(element)) {
         throw new TlaTypeScriptError("Rest elements can't be assigned", element);
       }
+      const defaulted = getDefaultedTarget(element);
       const sourceElement =
         source !== undefined && ts.isArrayLiteralExpression(source)
           ? source.elements[position]
           : undefined;
-      return sourceElement !== undefined && !ts.isSpreadElement(sourceElement)
-        ? assignPattern(
-            element,
-            sourceElement,
-            translateExpression(sourceElement, path.scope, context),
-            current,
-            context,
-          )
-        : assignPattern(element, undefined, index(value, [number(position + 1)]), current, context);
+      const isFromSource = sourceElement !== undefined && !ts.isSpreadElement(sourceElement);
+      return assignPattern(
+        defaulted.target,
+        isFromSource ? sourceElement : undefined,
+        getDefaulted(
+          isFromSource
+            ? translateExpression(sourceElement, path.scope, context)
+            : getElement(value, number(position + 1), context),
+          defaulted.initializer,
+          current.scope,
+          context,
+        ),
+        current,
+        context,
+      );
     }, path);
   }
   if (ts.isObjectLiteralExpression(target)) {
     return target.properties.reduce((current, property) => {
-      if (ts.isShorthandPropertyAssignment(property)) {
-        return assignPattern(
-          property.name,
-          undefined,
-          getField(value, property.name.text),
-          current,
-          context,
-        );
+      if (
+        !(ts.isShorthandPropertyAssignment(property) || ts.isPropertyAssignment(property)) ||
+        !ts.isIdentifier(property.name)
+      ) {
+        throw new TlaTypeScriptError(`Can't assign to ${property.getText()}`, property);
       }
-      if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
-        return assignPattern(
-          property.initializer,
-          undefined,
-          getField(value, property.name.text),
-          current,
-          context,
-        );
-      }
-      throw new TlaTypeScriptError(`Can't assign to ${property.getText()}`, property);
+      const defaulted = ts.isShorthandPropertyAssignment(property)
+        ? { target: property.name, initializer: property.objectAssignmentInitializer }
+        : getDefaultedTarget(property.initializer);
+      const key = property.name.text;
+      return assignPattern(
+        defaulted.target,
+        undefined,
+        defaulted.initializer === undefined
+          ? getField(value, key)
+          : getDefaulted(
+              getOptionalField(value, key, context),
+              defaulted.initializer,
+              current.scope,
+              context,
+            ),
+        current,
+        context,
+      );
     }, path);
   }
   return assign(target, path, context, () => value);

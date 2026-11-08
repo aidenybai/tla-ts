@@ -69,6 +69,34 @@ export const declareParameters = (
   context: Context,
 ) => parameters.map((parameter) => declareParameter(parameter, context));
 
+export const getDefaulted = (
+  part: Expression,
+  initializer: ts.Expression | undefined,
+  scope: Scope,
+  context: Context,
+) =>
+  initializer === undefined
+    ? part
+    : share(part, "element", context, (shared) =>
+        ifExpression(
+          apply("=", [shared, getUndefined(context)]),
+          translateExpression(initializer, scope, context),
+          shared,
+        ),
+      );
+
+export const getOptionalField = (value: Expression, key: string, context: Context) => {
+  const step = getPathStep(key);
+  return ifExpression(
+    apply("\\in", [
+      step.kind === "Field" ? string(step.name) : step.args[0],
+      apply("DOMAIN", [value]),
+    ]),
+    getField(value, key),
+    getUndefined(context),
+  );
+};
+
 // Binds the names in a destructuring pattern to parts of a value, without LET definitions.
 export const bindPatternInline = (
   pattern: ts.BindingName,
@@ -82,16 +110,7 @@ export const bindPatternInline = (
   return pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
     const initializer = element.initializer;
-    const withDefault = (part: Expression) =>
-      initializer === undefined
-        ? part
-        : share(part, "element", context, (shared) =>
-            ifExpression(
-              apply("=", [shared, getUndefined(context)]),
-              translateExpression(initializer, current, context),
-              shared,
-            ),
-          );
+    const withDefault = (part: Expression) => getDefaulted(part, initializer, current, context);
     if (ts.isArrayBindingPattern(pattern)) {
       if (element.dotDotDotToken === undefined) {
         return bindPatternInline(
@@ -133,18 +152,8 @@ export const bindPatternInline = (
         context,
       );
     }
-    const step = getPathStep(key);
     const part =
-      initializer === undefined
-        ? getField(value, key)
-        : ifExpression(
-            apply("\\in", [
-              step.kind === "Field" ? string(step.name) : step.args[0],
-              apply("DOMAIN", [value]),
-            ]),
-            getField(value, key),
-            getUndefined(context),
-          );
+      initializer === undefined ? getField(value, key) : getOptionalField(value, key, context);
     return bindPatternInline(element.name, withDefault(part), current, context);
   }, scope);
 };

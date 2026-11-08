@@ -34,6 +34,15 @@ const CASES: Record<string, Case[]> = {
       variables: "first = 0, second = 0",
       statements: "({ first, second } = { first: 7, second: 8 });",
     },
+    {
+      variables: "first = 0, second = 0",
+      statements:
+        "const pairs: { first?: number; second?: number }[] = [{ second: 3 }]; ({ first = 5, second = 6 } = pairs[0]);",
+    },
+    {
+      variables: "first = 0, second = 0",
+      statements: "const values: number[] = [1]; [first = 5, second = first] = values;",
+    },
   ],
   "fields and indexes": [
     { variables: "point = { x: 1, y: 2 }", statements: "point.x = 5; point.y += point.x;" },
@@ -76,6 +85,10 @@ const CASES: Record<string, Case[]> = {
       statements: "for (const [first, second] of [[1, 2], [3, 4]]) values.push(first * second);",
     },
     {
+      variables: "count = 0, last = 0",
+      statements: "for (last of [4, 5, 6]) count += last;",
+    },
+    {
       variables: "count = 0",
       statements: "let index = 0; while (true) { index++; if (index > 3) break; count += index; }",
     },
@@ -87,10 +100,6 @@ const CASES: Record<string, Case[]> = {
     {
       variables: "queue = [1, 2, 3], head = 0",
       statements: "const first = queue.shift()!; head = first;",
-    },
-    {
-      variables: "count = 0, last = 0",
-      statements: "for (last of [4, 5, 6]) count += last;",
     },
     {
       variables: "queue = [1, 2, 3], tail = 0",
