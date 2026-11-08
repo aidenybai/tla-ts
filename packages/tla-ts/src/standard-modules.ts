@@ -253,15 +253,22 @@ export const CORE_OPERATORS: Builtin[] = [
     }
     // TLC adds each set's elements in written order, and only those not yet in the union.
     const added = sets.flatMap(getWrittenElements);
-    if (isMixedSet(outer) || sets.some(isMixedSet)) {
+    const getUnionLikeTlc = () => {
       const union: MixedSetValue = { kind: "MixedSet", elements: [] };
       added.forEach((member) => {
         if (!isElementOf(member, union)) addBoundedElement(union.elements, member);
       });
       return createEnumeratedSet(union.elements);
-    }
+    };
+    if (isMixedSet(outer) || sets.some(isMixedSet)) return getUnionLikeTlc();
     if (sets.length === 0) return EMPTY_SET;
-    return createUnsortedCopy(getBalancedUnion(sets.map(toFiniteSet), 0, sets.length), added);
+    return computeLikeTlcOnFailure(
+      (finiteSets: SetValue[]) =>
+        createUnsortedCopy(getBalancedUnion(finiteSets, 0, finiteSets.length), added),
+      getUnionLikeTlc,
+      sets.map(toFiniteSet),
+      undefined,
+    );
   }),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");
