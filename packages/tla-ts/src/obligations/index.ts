@@ -158,7 +158,7 @@ const loadMule = (
             endLine: failure.line,
             endColumn: failure.column + 1,
           },
-          failure.reason,
+          `${failure.reason}\n`,
         ),
       );
     });
