@@ -139,8 +139,8 @@ const isDescriptor = (type: ts.Type | undefined) =>
   );
 
 // Types for the objects that test262 builds up and describes, which TypeScript can't infer:
-// a descriptor that is possibly undefined, an object given properties after it's made, and a
-// descriptor whose attributes aren't booleans. Each only adds types, so Node runs the same program.
+// a descriptor that is possibly undefined, an object given properties after it's made, a
+// descriptor whose attributes aren't booleans, and an object that Object.create makes. Each only adds types, so Node runs the same program.
 const loosen = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(PROGRAM_PATH);
@@ -185,6 +185,20 @@ const loosen = () => {
       edits.set(literal.getEnd(), " as unknown as PropertyDescriptor");
     }
   });
+  const visit = (node: ts.Node) => {
+    const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.type === undefined &&
+      initializer !== undefined &&
+      ts.isCallExpression(initializer) &&
+      initializer.expression.getText() === "Object.create"
+    ) {
+      edits.set(node.name.getEnd(), ": { [key: string]: unknown }");
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
   if (edits.size > 0) applyEdits(edits);
 };
 
