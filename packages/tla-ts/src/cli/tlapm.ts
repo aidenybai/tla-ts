@@ -122,18 +122,19 @@ const generateObligations = (
   } catch (error) {
     if (!(error instanceof TlaProofError)) throw error;
     console.error(` tlapm ending abnormally with ${error.exception}\n`);
-    if (!isToolbox) return undefined;
-    if (errorSetting.message === "")
-      printToolboxMessage([
-        "type:error",
-        "url:http://tla.msr-inria.inria.fr/bugs",
-        `msg:Oops, this seems to be a bug in TLAPM.\nPlease give feedback to developers.\n\n\n ${error.exception}\n`,
-      ]);
-    else
-      printToolboxMessage([
-        "type:warning",
-        `msg:${errorSetting.location === undefined ? "" : `${errorSetting.location}\n\n`}${errorSetting.message}`,
-      ]);
+    if (isToolbox)
+      printToolboxMessage(
+        errorSetting.message === ""
+          ? [
+              "type:error",
+              "url:http://tla.msr-inria.inria.fr/bugs",
+              `msg:Oops, this seems to be a bug in TLAPM.\nPlease give feedback to developers.\n\n\n ${error.exception}\n`,
+            ]
+          : [
+              "type:warning",
+              `msg:${errorSetting.location === undefined ? "" : `${errorSetting.location}\n\n`}${errorSetting.message}`,
+            ],
+      );
     return undefined;
   }
 };
