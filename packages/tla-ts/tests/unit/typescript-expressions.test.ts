@@ -265,6 +265,14 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[box.a, other.b, box === copy, box === box]",
+      `const flag = 1 > 2;
+      const box = flag ? { a: 1 } : { a: 2 };
+      const maybe: { b: number } | undefined = flag ? { b: 3 } : undefined;
+      const other = maybe ?? { b: 4 };
+      const copy = flag ? box : { a: 2 };`,
+    ],
+    [
       "has(point)",
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],

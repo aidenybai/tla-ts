@@ -184,31 +184,47 @@ export const isCreation = (node: ts.Node, context: Context) => {
 export const isAllocation = (node: ts.Node, context: Context): node is ts.CallExpression =>
   ts.isCallExpression(node) && (isDescription(node, context) || isCreation(node, context));
 
-// The object literals, descriptions, and creations that evaluating a node always makes, innermost
-// first.
-// Functions and operands that only sometimes run make none.
-export const getAllocated = (node: ts.Node, context: Context): ts.Expression[] => {
+// The object literals, descriptions, and creations that evaluating a node makes, innermost first.
+// Functions make none. An operand that only sometimes runs makes its object literals anyway, as
+// making an object that nothing reads can't be seen, but not its descriptions and creations,
+// which may stop the run.
+export const getAllocated = (
+  node: ts.Node,
+  context: Context,
+  isSometimes = false,
+): ts.Expression[] => {
   if (context.heap === undefined || ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
   if (ts.isOptionalChain(node)) return [];
-  if (ts.isConditionalExpression(node)) return getAllocated(node.condition, context);
+  if (ts.isConditionalExpression(node)) {
+    return [
+      ...getAllocated(node.condition, context, isSometimes),
+      ...getAllocated(node.whenTrue, context, true),
+      ...getAllocated(node.whenFalse, context, true),
+    ];
+  }
   if (ts.isBinaryExpression(node)) {
     const kind = node.operatorToken.kind;
-    if (SHORT_CIRCUITS.has(kind)) return getAllocated(node.left, context);
+    if (SHORT_CIRCUITS.has(kind)) {
+      return [
+        ...getAllocated(node.left, context, isSometimes),
+        ...getAllocated(node.right, context, true),
+      ];
+    }
     const isPattern =
       kind === ts.SyntaxKind.EqualsToken &&
       (ts.isObjectLiteralExpression(node.left) || ts.isArrayLiteralExpression(node.left));
     return [
-      ...(isPattern ? [] : getAllocated(node.left, context)),
-      ...getAllocated(node.right, context),
+      ...(isPattern ? [] : getAllocated(node.left, context, isSometimes)),
+      ...getAllocated(node.right, context, isSometimes),
     ];
   }
   const nested: ts.Expression[] = [];
   ts.forEachChild(node, (child) => {
-    nested.push(...getAllocated(child, context));
+    nested.push(...getAllocated(child, context, isSometimes));
   });
   const isAllocated =
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
-    isAllocation(node, context);
+    (!isSometimes && isAllocation(node, context));
   return isAllocated ? [...nested, node] : nested;
 };
 

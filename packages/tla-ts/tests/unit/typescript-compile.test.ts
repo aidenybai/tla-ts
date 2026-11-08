@@ -797,8 +797,8 @@ describe("errors", () => {
       "Make objects only where a statement always runs",
     ],
     [
-      "an object made in only one branch",
-      "let flag = true;\nlet box = flag ? { a: 1 } : undefined;",
+      "an object made in a callback",
+      "let boxes = [1].map((value) => ({ a: value }));",
       "Make objects only where a statement always runs",
     ],
   ])("rejects %s in a script", (_, source, message) => {
