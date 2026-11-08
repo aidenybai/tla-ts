@@ -21,10 +21,8 @@ all:
   exit: 151
   transcript: |-
     2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 16, col 20 to line 16, col 20 of module enabled_primed_read_before_bound
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 16, col 20 to line 16, col 20 of module enabled_primed_read_before_bound
     2199:0 1 states generated, 1 distinct states found, 1 states left on queue.

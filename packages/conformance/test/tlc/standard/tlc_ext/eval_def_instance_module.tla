@@ -23,10 +23,10 @@ Next == UNCHANGED x
 all:
   exit: 75
   transcript: |-
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Inner"
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Inner"
+    1000:1 
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefByName(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
     "Inner"
     2103:1 The error occurred when TLC was evaluating the nested

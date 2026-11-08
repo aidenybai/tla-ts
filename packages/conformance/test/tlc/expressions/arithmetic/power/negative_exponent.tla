@@ -13,15 +13,13 @@ Test == 2 ^ (-1) = 0
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of ^ should be a natural number, but instead it is:
-    -1
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module negative_exponent failed.
     2169:0 The second argument of ^ should be a natural number, but instead it is:
     -1
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of ^ should be a natural number, but instead it is:
-    -1
+    1000:1 
     2169:0 The second argument of ^ should be a natural number, but instead it is:
     -1
     2103:1 The error occurred when TLC was evaluating the nested
@@ -47,8 +45,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of ^ should be a natural number, but instead it is:
-    -1
+    1000:1 
     2169:0 The second argument of ^ should be a natural number, but instead it is:
     -1
     2103:1 The error occurred when TLC was evaluating the nested
@@ -61,8 +58,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of ^ should be a natural number, but instead it is:
-    -1
+    1000:1 
     2169:0 The second argument of ^ should be a natural number, but instead it is:
     -1
     2103:1 The error occurred when TLC was evaluating the nested

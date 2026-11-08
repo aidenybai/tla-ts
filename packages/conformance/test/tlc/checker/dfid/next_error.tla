@@ -26,14 +26,8 @@ all:
     This was probably caused by an error in the spec or model.
     The error occurred when TLC was computing the set of next states.
     The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2179:0 @!@!@
-    The second argument of \div is 0.
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    The error occurred when TLC was computing the set of next states.
-    The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2179:0 @!@!@
-    The second argument of \div is 0.
+    :
+    2179:0 The second argument of \div is 0.
     2121:1 The behavior up to this point is:
     2216:4 1:
     x = 0

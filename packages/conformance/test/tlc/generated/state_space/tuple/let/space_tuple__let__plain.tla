@@ -23,8 +23,7 @@ Next == LET k == x IN x' = k /\ y' = y
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 17, col 11 to line 17, col 11 of module space_tuple__let__plain
+    1000:1 
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 17, col 11 to line 17, col 11 of module space_tuple__let__plain
     2103:1 The error occurred when TLC was evaluating the nested

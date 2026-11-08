@@ -17,8 +17,10 @@ Next == x' = x
 all:
   exit: 75
   transcript: |-
-    2145:0 TLCGet(1) was undefined.
-    2145:0 TLCGet(1) was undefined.
+    1000:1 
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2145:0 TLCGet(1) was undefined.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

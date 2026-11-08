@@ -21,15 +21,13 @@ Test == Assert(FALSE, {2, 1})
 assume:
   exit: 10
   transcript: |-
-    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
-    {1, 2}
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module assert_false_set failed.
     2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     {1, 2}
 init:
   exit: 75
   transcript: |-
-    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
-    {1, 2}
+    1000:1 
     2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     {1, 2}
     2103:1 The error occurred when TLC was evaluating the nested
@@ -40,8 +38,7 @@ init:
 invariant:
   exit: 75
   transcript: |-
-    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
-    {1, 2}
+    1000:1 
     2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     {1, 2}
     2103:1 The error occurred when TLC was evaluating the nested
@@ -53,8 +50,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
-    {1, 2}
+    1000:1 
     2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     {1, 2}
     2103:1 The error occurred when TLC was evaluating the nested

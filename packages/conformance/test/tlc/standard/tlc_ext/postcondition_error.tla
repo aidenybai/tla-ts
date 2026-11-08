@@ -22,7 +22,7 @@ all:
   exit: 10
   transcript: |-
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2179:0 The second argument of \div is 0.
+    2405:1 Evaluating postcondition Post at line 17, col 9 to line 17, col 20 of module postcondition_error failed.
     2179:0 The second argument of \div is 0.
     2199:0 4 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.

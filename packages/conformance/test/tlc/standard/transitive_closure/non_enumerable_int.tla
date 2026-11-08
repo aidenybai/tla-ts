@@ -18,18 +18,14 @@ Test == Warshall(3) = {}
 assume:
   exit: 10
   transcript: |-
-    2176:0 Applying TransitiveClosure to the following value,
-    which is not an enumerable set:
-    3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module non_enumerable_int failed.
     2176:0 Applying TransitiveClosure to the following value,
     which is not an enumerable set:
     3
 init:
   exit: 75
   transcript: |-
-    2176:0 Applying TransitiveClosure to the following value,
-    which is not an enumerable set:
-    3
+    1000:1 
     2176:0 Applying TransitiveClosure to the following value,
     which is not an enumerable set:
     3
@@ -57,9 +53,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2176:0 Applying TransitiveClosure to the following value,
-    which is not an enumerable set:
-    3
+    1000:1 
     2176:0 Applying TransitiveClosure to the following value,
     which is not an enumerable set:
     3
@@ -73,9 +67,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2176:0 Applying TransitiveClosure to the following value,
-    which is not an enumerable set:
-    3
+    1000:1 
     2176:0 Applying TransitiveClosure to the following value,
     which is not an enumerable set:
     3

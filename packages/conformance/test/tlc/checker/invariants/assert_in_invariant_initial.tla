@@ -19,8 +19,7 @@ Inv == Assert(x > 0, "bad")
 all:
   exit: 75
   transcript: |-
-    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
-    "bad"
+    1000:1 
     2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     "bad"
     2103:1 The error occurred when TLC was evaluating the nested

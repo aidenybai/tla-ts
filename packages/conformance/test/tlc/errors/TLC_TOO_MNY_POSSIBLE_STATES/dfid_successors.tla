@@ -28,14 +28,8 @@ all:
     This was probably caused by an error in the spec or model.
     The error occurred when TLC was computing the set of next states.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2172:0 @!@!@
-    Too many possible next states for the last state in the trace.
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    The error occurred when TLC was computing the set of next states.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2172:0 @!@!@
-    Too many possible next states for the last state in the trace.
+    :
+    2172:0 Too many possible next states for the last state in the trace.
     2121:1 The behavior up to this point is:
     2216:4 1:
     x = 0

@@ -24,8 +24,7 @@ Next == (x' = x /\ y' = y) \/ (UNCHANGED vars)
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 18, col 11 to line 18, col 11 of module space_tuple__two_actions__no_deadlock_check
+    1000:1 
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 18, col 11 to line 18, col 11 of module space_tuple__two_actions__no_deadlock_check
     2103:1 The error occurred when TLC was evaluating the nested

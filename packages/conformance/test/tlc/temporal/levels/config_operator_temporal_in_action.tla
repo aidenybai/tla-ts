@@ -24,8 +24,7 @@ all:
   exit: 75
   transcript: |-
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
-    line 18, col 9 to line 18, col 17 of module config_operator_temporal_in_action
+    2113:1 Evaluating action property Prop failed.
     2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
     line 18, col 9 to line 18, col 17 of module config_operator_temporal_in_action
     2121:1 The behavior up to this point is:

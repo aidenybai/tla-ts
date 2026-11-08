@@ -16,18 +16,14 @@ Test == BagUnion({1, 2}) = EmptyBag
 assume:
   exit: 10
   transcript: |-
-    2177:0 Attempted to apply BagUnion to the following set, whose
-    element is not a bag:
-    {1, 2}
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module union_elements_not_bags failed.
     2177:0 Attempted to apply BagUnion to the following set, whose
     element is not a bag:
     {1, 2}
 init:
   exit: 75
   transcript: |-
-    2177:0 Attempted to apply BagUnion to the following set, whose
-    element is not a bag:
-    {1, 2}
+    1000:1 
     2177:0 Attempted to apply BagUnion to the following set, whose
     element is not a bag:
     {1, 2}
@@ -55,9 +51,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2177:0 Attempted to apply BagUnion to the following set, whose
-    element is not a bag:
-    {1, 2}
+    1000:1 
     2177:0 Attempted to apply BagUnion to the following set, whose
     element is not a bag:
     {1, 2}
@@ -71,9 +65,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2177:0 Attempted to apply BagUnion to the following set, whose
-    element is not a bag:
-    {1, 2}
+    1000:1 
     2177:0 Attempted to apply BagUnion to the following set, whose
     element is not a bag:
     {1, 2}

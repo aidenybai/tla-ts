@@ -18,7 +18,7 @@ all:
   exit: 75
   transcript: |-
     | "before"
-    2179:0 The second argument of \div is 0.
+    1000:1 
     2179:0 The second argument of \div is 0.
     | "before"
     2103:1 The error occurred when TLC was evaluating the nested

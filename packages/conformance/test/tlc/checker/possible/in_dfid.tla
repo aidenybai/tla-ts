@@ -23,12 +23,8 @@ Pred == x = 9
 all:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcGetOrDefault(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Cannot invoke "tlc2.util.IdThread.getNamedRegister(util.UniqueString)" because "this.workers[i]" is null
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcGetOrDefault(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

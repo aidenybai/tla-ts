@@ -20,8 +20,7 @@ all:
   exit: 76
   transcript: |-
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
-    "bad"
+    2111:1 Evaluating invariant Inv failed.
     2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     "bad"
     2121:1 The behavior up to this point is:

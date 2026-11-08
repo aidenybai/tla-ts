@@ -20,7 +20,7 @@ all:
   exit: 76
   transcript: |-
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2215:0 TLC expected a boolean value, but did not find one. line 15, col 8 to line 15, col 32 of module non_boolean_on_successor
+    2111:1 Evaluating invariant Inv failed.
     2215:0 TLC expected a boolean value, but did not find one. line 15, col 8 to line 15, col 32 of module non_boolean_on_successor
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>

@@ -16,10 +16,7 @@ Test == SubSeq(<<>>, 1, 1) = <<>>
 assume:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<>>
-    , but instead it is
-    1
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module subseq_empty_nonempty_range failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<>>
     , but instead it is
@@ -27,10 +24,7 @@ assume:
 init:
   exit: 75
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<>>
-    , but instead it is
-    1
+    1000:1 
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<>>
     , but instead it is
@@ -60,10 +54,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<>>
-    , but instead it is
-    1
+    1000:1 
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<>>
     , but instead it is
@@ -78,10 +69,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<>>
-    , but instead it is
-    1
+    1000:1 
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<>>
     , but instead it is

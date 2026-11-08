@@ -19,8 +19,7 @@ I == x = 0 /\ [](x = 0)
 all:
   exit: 75
   transcript: |-
-    2261:0 TLC encountered a temporal formula ([]A) when evaluating a predicate or action.
-    line 15, col 15 to line 15, col 23 of module tlc_init_box_via_config
+    1000:1 
     2261:0 TLC encountered a temporal formula ([]A) when evaluating a predicate or action.
     line 15, col 15 to line 15, col 23 of module tlc_init_box_via_config
     2103:1 The error occurred when TLC was evaluating the nested

@@ -18,10 +18,14 @@ all:
   exit: 75
   transcript: |-
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2283:0 The argument of TLCGet should be a nonnegative integer, but instead it is:
-    -1
-    2283:0 The argument of TLCGet should be a nonnegative integer, but instead it is:
-    -1
+    1000:1 TLC threw an unexpected exception.
+    This was probably caused by an error in the spec or model.
+    See the User Output or TLC Console for clues to what happened.
+    The exception was a java.lang.RuntimeException
+    :
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2283:0 The argument of TLCGet should be a nonnegative integer, but instead it is:
     -1
     2121:1 The behavior up to this point is:

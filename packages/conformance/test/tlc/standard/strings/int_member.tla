@@ -16,18 +16,14 @@ Test == 1 \in STRING
 assume:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    1
-    is an element of STRING.
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module int_member failed.
     2158:0 Attempted to check if the value:
     1
     is an element of STRING.
 init:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    1
-    is an element of STRING.
+    1000:1 
     2158:0 Attempted to check if the value:
     1
     is an element of STRING.
@@ -53,9 +49,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    1
-    is an element of STRING.
+    1000:1 
     2158:0 Attempted to check if the value:
     1
     is an element of STRING.
@@ -68,9 +62,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    1
-    is an element of STRING.
+    1000:1 
     2158:0 Attempted to check if the value:
     1
     is an element of STRING.

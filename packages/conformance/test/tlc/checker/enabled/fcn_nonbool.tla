@@ -20,11 +20,8 @@ Inv == PrintT(ENABLED F[1])
 all:
   exit: 75
   transcript: |-
-    2248:0 In computing ENABLED, TLC expected a boolean expression,
-    but didn't find one.
-    line 16, col 23 to line 16, col 26 of module fcn_nonbool
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2248:0 In computing ENABLED, TLC expected a boolean expression,
     but didn't find one.
     line 16, col 23 to line 16, col 26 of module fcn_nonbool

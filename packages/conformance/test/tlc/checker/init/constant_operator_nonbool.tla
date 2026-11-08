@@ -18,9 +18,7 @@ Init == x = 1 /\ C /\ y = 1
 all:
   exit: 75
   transcript: |-
-    2247:0 In computing initial states, TLC expected a boolean expression,
-    but instead found 1.
-    line 14, col 18 to line 14, col 18 of module constant_operator_nonbool
+    1000:1 
     2247:0 In computing initial states, TLC expected a boolean expression,
     but instead found 1.
     line 14, col 18 to line 14, col 18 of module constant_operator_nonbool

@@ -13,12 +13,12 @@ Test == \A <<a, b>> \in {<<1, 2>>, <<1, 2, 3>>} : a = 1
 assume:
   exit: 10
   transcript: |-
-    2170:0 Argument mismatch in operator application.%1
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module tuple_binder_mismatch_after_true_witness_order failed.
     2170:0 Argument mismatch in operator application.%1
 init:
   exit: 75
   transcript: |-
-    2170:0 Argument mismatch in operator application.%1
+    1000:1 
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -32,14 +32,8 @@ next:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2170:0 @!@!@
-    Argument mismatch in operator application.%1
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2170:0 @!@!@
-    Argument mismatch in operator application.%1
+    :
+    2170:0 Argument mismatch in operator application.%1
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     conformance_state = TRUE
@@ -51,9 +45,8 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2170:0 Argument mismatch in operator application.%1
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -64,9 +57,8 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2170:0 Argument mismatch in operator application.%1
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

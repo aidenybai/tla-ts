@@ -23,15 +23,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
-    line 14, col 22 to line 14, col 22 of module nonarity_op_with_args_unassigned
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
+    :
+    2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 14, col 22 to line 14, col 22 of module nonarity_op_with_args_unassigned
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>

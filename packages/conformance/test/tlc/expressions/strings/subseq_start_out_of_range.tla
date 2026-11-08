@@ -13,10 +13,7 @@ Test == SubSeq("abc", 0, 1) = ""
 assume:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    "abc"
-    , but instead it is
-    0
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module subseq_start_out_of_range failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     "abc"
     , but instead it is
@@ -24,10 +21,7 @@ assume:
 init:
   exit: 75
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    "abc"
-    , but instead it is
-    0
+    1000:1 
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     "abc"
     , but instead it is
@@ -57,10 +51,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    "abc"
-    , but instead it is
-    0
+    1000:1 
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     "abc"
     , but instead it is
@@ -75,10 +66,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    "abc"
-    , but instead it is
-    0
+    1000:1 
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     "abc"
     , but instead it is

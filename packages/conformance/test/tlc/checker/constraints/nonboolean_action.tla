@@ -24,14 +24,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2215:0 @!@!@
-    TLC expected a boolean value, but did not find one. line 15, col 8 to line 15, col 13 of module nonboolean_action
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2215:0 @!@!@
-    TLC expected a boolean value, but did not find one. line 15, col 8 to line 15, col 13 of module nonboolean_action
+    :
+    2215:0 TLC expected a boolean value, but did not find one. line 15, col 8 to line 15, col 13 of module nonboolean_action
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0

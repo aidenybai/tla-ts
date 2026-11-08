@@ -25,9 +25,8 @@ all:
   exit: 255
   transcript: |-
     2269:0 Computed 1 initial states...
-    2179:0 The second argument of \div is 0.
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2179:0 The second argument of \div is 0.
     2209:0 Progress(0) at <date>: 1 states generated, -1 distinct states found, -1 states left on queue.
     2210:0 The number of states generated: 1

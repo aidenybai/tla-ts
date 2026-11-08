@@ -26,15 +26,8 @@ all:
     This was probably caused by an error in the spec or model.
     The error occurred when TLC was computing the set of next states.
     The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2132:0 @!@!@
-    The first argument of Assert evaluated to FALSE; the second argument was:
-    "bad"
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    The error occurred when TLC was computing the set of next states.
-    The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2132:0 @!@!@
-    The first argument of Assert evaluated to FALSE; the second argument was:
+    :
+    2132:0 The first argument of Assert evaluated to FALSE; the second argument was:
     "bad"
     2121:1 The behavior up to this point is:
     2216:4 1:

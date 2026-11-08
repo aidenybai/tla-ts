@@ -13,12 +13,12 @@ Test == {x + 2147483647 : x \in 0..1} # {}
 assume:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 1+2147483647
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module overflow_inside_set_map failed.
     2178:0 Overflow when computing 1+2147483647
 init:
   exit: 75
   transcript: |-
-    2178:0 Overflow when computing 1+2147483647
+    1000:1 
     2178:0 Overflow when computing 1+2147483647
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -44,7 +44,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2178:0 Overflow when computing 1+2147483647
+    1000:1 
     2178:0 Overflow when computing 1+2147483647
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -57,7 +57,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2178:0 Overflow when computing 1+2147483647
+    1000:1 
     2178:0 Overflow when computing 1+2147483647
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

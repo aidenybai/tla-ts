@@ -18,8 +18,7 @@ Next == x' = x
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 12, col 6 to line 12, col 6 of module non_boolean_operator_with_state_level
+    1000:1 
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 12, col 6 to line 12, col 6 of module non_boolean_operator_with_state_level
     2103:1 The error occurred when TLC was evaluating the nested

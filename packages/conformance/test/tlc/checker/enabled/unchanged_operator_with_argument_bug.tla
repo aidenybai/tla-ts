@@ -22,9 +22,8 @@ Inv == PrintT(ENABLED (UNCHANGED Id(x)))
 all:
   exit: 75
   transcript: |-
-    2148:0 The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable x occurring in the state formula v.
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2148:0 The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable x occurring in the state formula v.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

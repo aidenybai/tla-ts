@@ -16,15 +16,13 @@ Test == RandomSetOfSubsets(1, "b", 3) = {}
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
-    "b"
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module sos_check_order_second failed.
     2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
     "b"
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
-    "b"
+    1000:1 
     2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
     "b"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -50,8 +48,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
-    "b"
+    1000:1 
     2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
     "b"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -64,8 +61,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
-    "b"
+    1000:1 
     2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
     "b"
     2103:1 The error occurred when TLC was evaluating the nested
