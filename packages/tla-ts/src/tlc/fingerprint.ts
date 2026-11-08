@@ -30,8 +30,7 @@ const BYTE_MOD_HIGH = Int32Array.from(BYTE_MOD_TABLE, (entry) =>
 );
 const BYTE_MOD_LOW = Int32Array.from(BYTE_MOD_TABLE, (entry) => Number(BigInt.asIntN(32, entry)));
 
-// The fingerprint being extended, as its high and low 32 bits, which avoids a BigInt operation
-// for every byte.
+// As its high and low 32 bits, which avoids a BigInt operation for every byte.
 const INITIAL_HIGH = Number(BigInt.asIntN(32, IRREDUCIBLE_POLYNOMIAL >> 32n));
 const INITIAL_LOW = Number(BigInt.asIntN(32, IRREDUCIBLE_POLYNOMIAL));
 let high = INITIAL_HIGH;
@@ -76,7 +75,6 @@ const SLICE_LOW_1 = SLICES.lows[1];
 const SLICE_LOW_2 = SLICES.lows[2];
 const SLICE_LOW_3 = SLICES.lows[3];
 
-// Extends the fingerprint by the four bytes of a word, lowest first.
 const extendInt = (word: number) => {
   const mixed = low ^ word;
   const first = mixed & 0xff;
@@ -94,9 +92,8 @@ const SET_ENUM_VALUE = 5;
 const FCN_RCD_VALUE = 9;
 const MODEL_VALUE = 21;
 
-// Value#fingerPrint for TLC's booleans, integers, strings, and model values, which returns how
-// many bytes it extends the fingerprint by. A model value extends the fingerprint with its
-// UniqueString token, and TLC numbers tokens from 1 in intern order.
+// Returns how many bytes it extends the fingerprint by. A model value extends it with its
+// UniqueString token, which TLC numbers from 1 in intern order.
 const extendScalar = (value: boolean | number | string | ModelValue) => {
   if (typeof value === "boolean") {
     extendByte(BOOL_VALUE);
@@ -128,7 +125,6 @@ const extendScalar = (value: boolean | number | string | ModelValue) => {
   return 5;
 };
 
-// Value#fingerPrint for each of TLC's value classes.
 const extendValue = (value: Value) => {
   if (typeof value !== "object" || isModelValue(value)) {
     extendScalar(value);
@@ -148,8 +144,7 @@ const extendValue = (value: Value) => {
   }
 };
 
-// TLCStateMut#fingerPrint of variable values in TLC's variable order. Evaluating a lazy value can
-// fingerprint another, so this restores the fingerprint it interrupts.
+// Evaluating a lazy value can fingerprint another, so this restores the fingerprint it interrupts.
 export const getTlcFingerprint = (state: Value[]) => {
   const outer = { high, low };
   high = INITIAL_HIGH;
@@ -161,8 +156,6 @@ export const getTlcFingerprint = (state: Value[]) => {
   return fingerprint;
 };
 
-// TLCStateMut#fingerPrint of each state's variables in TLC's variable order, as the fingerprint
-// store reads them.
 export const getTlcFingerprints = (states: Value[][], order: number[]) => {
   const fingerprints = new BigInt64Array(states.length);
   // Each fingerprint's low and high words, as a BigInt64Array is little-endian.

@@ -30,9 +30,8 @@ const listLs4Files = (directory: string): string[] =>
 const isVerbose = process.argv.includes("--verbose");
 const filter = getOption("--filter");
 
-// The abstraction: the LS4 inputs tla-ts prints for each module's LS4 obligations are the ones
-// tlapm sent. Where .proofs holds the inputs they must match byte for byte, and elsewhere as a
-// multiset of digests, which rename atoms.
+// Where .proofs holds the LS4 inputs they must match byte for byte, and elsewhere as a multiset
+// of digests, which rename atoms.
 const abstraction = { match: 0, mismatch: 0, unsupported: 0, reused: 0, error: 0 };
 readProofRecords()
   .filter((record) => record.ls4.length > 0)
@@ -116,7 +115,6 @@ readProofRecords()
     matching.unprinted.forEach((key) => console.log(`  tlapm:\n${key}`));
   });
 
-// The decision: tla-ts answers each recorded LS4 input as LS4 did.
 const decision = { agree: 0, disagree: 0, unknown: 0, timeout: 0, worstMs: 0, worst: "" };
 [
   ...listLs4Files(PROOF_INPUTS_DIRECTORY).filter(

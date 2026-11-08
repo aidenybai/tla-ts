@@ -1,5 +1,3 @@
-// Records what Java's TLC and SANY print for each call of pstack's statechart skill in
-// tests/fixtures/statechart, and the state graph -dump writes.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

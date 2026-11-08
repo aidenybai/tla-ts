@@ -76,7 +76,6 @@ const getDigestDifference = (expected: SanyResult, actual: ParseOutcome) =>
     "module",
   );
 
-// tla-ts checks a module the way SANY does when it builds the environment, before it needs a model.
 const analyze = (path: string): ParseOutcome => {
   const source = readFileSync(path, "utf8");
   try {

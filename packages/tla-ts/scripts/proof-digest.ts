@@ -9,8 +9,7 @@ import type {
 } from "../src/ast";
 import { getChild, getChildren, type XmlElement } from "./xml";
 
-// A proof tree reduced to what both SANY and tla-ts can report: each node's kind, name, and
-// location, with facts by their location and definitions by their names.
+// Only what both SANY and tla-ts can report.
 type ProofDigest =
   | { kind: "omitted" | "obvious"; range: string | undefined }
   | { kind: "by"; range: string | undefined; only: boolean; facts: string[]; defs: string[] }
@@ -254,7 +253,6 @@ const digestParsedTheorem = (theorem: Theorem): TheoremDigest => ({
   proof: digestParsedProof(theorem.proof),
 });
 
-// The same digest of a module that tla-ts parsed.
 export const digestParsed = (module: Module): ModuleDigest => ({
   name: module.name,
   units: [

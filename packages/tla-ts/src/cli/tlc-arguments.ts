@@ -24,9 +24,8 @@ export interface TlcArguments {
   isUsage: boolean;
 }
 
-// TLC rejects its command line with a message, which it prints as -tool asks if -tool came first.
-// An argument TLC reads past the end of the command line, or can't parse without catching the
-// exception, ends TLC with that exception.
+// TLC prints a command line error as -tool asks only if -tool came first. An argument TLC reads
+// past the end, or can't parse without catching the exception, ends TLC with that exception.
 export interface TlcArgumentsError {
   error: string;
   isTool: boolean;

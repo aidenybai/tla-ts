@@ -38,15 +38,12 @@ const analyze = (path: string): Outcome => {
   }
 };
 
-// Whether tla-ts prints the recorded obligation at its location, up to whitespace.
 const isSameText = (expected: TlapmObligation | undefined, actual: PrintedObligation | undefined) =>
   expected !== undefined &&
   actual !== undefined &&
   expected.loc === actual.location &&
   expected.text === getDigest(collapseWhitespace(actual.text));
 
-// The first obligation whose location or text differs, with both texts when the full recording is
-// available.
 const findDifference = (expected: TlapmDigest, actual: Outcome, texts: TlapmResult | undefined) => {
   const expectedObligations = expected.obligations ?? [];
   const count = Math.max(expectedObligations.length, actual.obligations.length);

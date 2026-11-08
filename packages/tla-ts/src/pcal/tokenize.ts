@@ -1,9 +1,8 @@
 import { PcalError, PcalBugError } from "../errors";
 import { createNormalizedPcalExpr, createPcalToken, PCAL_TOKEN, type PcalToken } from "./ast";
 
-// PcalCharReader: reads the algorithm's characters from a start position to the end of the lines,
-// returning "\n" at the end of each line and "\t" at the end of the input. Columns count code
-// points. The lines come without tabs, as trans.removeTabs replaced them.
+// Returns "\n" at the end of each line and "\t" at the end of the input. Columns count code
+// points, and the lines come without tabs, as trans.removeTabs replaced them.
 export interface PcalCharReader {
   lines: string[];
   currentLine: string[] | undefined;
@@ -55,8 +54,6 @@ const backspacePcalReader = (reader: PcalCharReader) => {
   reader.vcolumn = reader.column;
 };
 
-// PcalCharReader.peek: the rest of the line from the next character that is not white space, with
-// its "\n", or "\t" at the end of the input.
 export const peekPcalReader = (reader: PcalCharReader) => {
   for (;;) {
     const next = getNextPcalChar(reader);
@@ -67,11 +64,9 @@ export const peekPcalReader = (reader: PcalCharReader) => {
   return `${(reader.currentLine ?? []).slice(reader.column).join("")}\n`;
 };
 
-// Symbol.LEFT_PAREN and RIGHT_PAREN of PcalBuiltInSymbols' table.
 const LEFT_PARENS = new Set(["(", "[", "{", "<<", "⟨"]);
 const RIGHT_PARENS = new Set([">>_", "⟩_", "]_", ")", "}", "]", ">>", "⟩"]);
 
-// PcalBuiltInSymbols.buildHashTable.
 const BUILT_IN_SYMBOLS = new Set([
   ...LEFT_PARENS,
   ...RIGHT_PARENS,
@@ -100,30 +95,25 @@ const isLetter = (char: string) => /^[A-Za-z_]$/.test(char);
 const isDigit = (char: string) => /^[0-9]$/.test(char);
 const isSpace = (char: string) => char === " " || char === "\f" || char === "\r";
 
-// PcalBuiltInSymbols.buildPrefixHashTable: the prefixes of the symbols that are not words.
 const BUILT_IN_PREFIXES = new Set(
   [...BUILT_IN_SYMBOLS]
     .filter((symbol) => !isLetter(symbol[0]) && !(symbol[0] === "\\" && isLetter(symbol[1] ?? "")))
     .flatMap((symbol) => Array.from(symbol, (_, index) => symbol.slice(0, symbol.length - index))),
 );
 
-// PcalBuiltInSymbols.buildStringCharTable.
 const STRING_CHARS = new Set(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ~!@#$%^&*()_-+={}[]|:;<,>.?/`'0123456789",
 );
 
-// Tokenize.IsDelimiter: the words and symbols that end an expression of the algorithm.
 const DELIMITERS = new Set(
   "; do then := ≔ begin variable variables || ‖ end else elsif if either or while with call return goto print assert skip procedure define process fair".split(
     " ",
   ),
 );
 
-// tla2tex.Token's types, of which an expression allows the ones TLAToken shares.
 const TOKEN_TYPE = { ...PCAL_TOKEN, dashes: 6, endModule: 7 };
 
-// Tokenize's static Delimiter fields, the delimiter its last call ended at, and its comment depth,
-// which an error in a comment leaves set for the next call.
+// An error in a comment leaves the comment depth set for the next call.
 export interface PcalTokenizerState {
   delimiter: string;
   delimiterLine: number;
@@ -152,9 +142,7 @@ interface PcalScan {
   previousToken: string;
 }
 
-// Tokenize.InnerTokenize in TLA mode: reads an expression up to the delimiter that ends it when
-// isExpr, and otherwise a single token of the algorithm, which becomes state.delimiter. A define
-// block's commas at the top level don't end it.
+// A define block's commas at the top level don't end its expression.
 const tokenize = (
   state: PcalTokenizerState,
   reader: PcalCharReader,
@@ -202,7 +190,6 @@ const tokenize = (
     state.delimiterCol = scan.column;
     state.delimiterLine = reader.line - (scan.nextChar === "\n" ? 1 : 0);
   };
-  // Tokenize.TokenOut.
   const tokenOut = (type: number) => {
     if (!isExpr) {
       endExpression();
@@ -259,7 +246,6 @@ const tokenize = (
     skipNextChar();
     scan.state = nextState;
   };
-  // One transition of the state machine on the next character.
   const step = (next: string) => {
     switch (scan.state) {
       case "start":
@@ -473,14 +459,12 @@ const tokenize = (
   return createNormalizedPcalExpr(scan.lines);
 };
 
-// Tokenize.TokenizeExpr and TokenizeDefineBlock.
 export const tokenizePcalExpr = (
   state: PcalTokenizerState,
   reader: PcalCharReader,
   isInDefineBlock: boolean,
 ) => tokenize(state, reader, true, isInDefineBlock);
 
-// Tokenize.GetAlgorithmToken.
 export const getPcalAlgorithmToken = (state: PcalTokenizerState, reader: PcalCharReader) => {
   tokenize(state, reader, false, false);
   return state.delimiter;

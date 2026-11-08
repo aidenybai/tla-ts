@@ -35,8 +35,6 @@ interface InfixOperator extends Precedence {
   isAssociative: boolean;
 }
 
-// TLAplusParser.lastOp, the operator parsed last, and the operator an operand being parsed follows
-// in its expression.
 interface OperatorContext {
   last?: Precedence;
   preceding?: Precedence;
@@ -158,7 +156,6 @@ const DEFINABLE_POSTFIX_OPERATORS = new Set([...POSTFIX_OPERATORS, "'"]);
 
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
-// The prefix operators SANY reads in a definition's left-hand side, built-in ones included.
 const DEFINABLE_PREFIX_OPERATORS = new Set([
   "-.",
   "~",
@@ -271,8 +268,8 @@ interface Span {
   stop: Point;
 }
 
-// What tlapm's proof parser reads a proof as before nesting it: leaf proofs, and steps without
-// their proofs. first is the index of the first token, before any PROOF, and end of the last.
+// tlapm reads a proof as leaf proofs and steps without their proofs, then nests them. first is the
+// index of the first token, before any PROOF.
 type Preproof =
   | { kind: "Leaf"; proof: Proof; span: Span; first: number; end: number }
   | {
@@ -322,7 +319,6 @@ const getSpan = (range: SourceRange): Span => ({
   stop: { line: range.end.line, column: range.end.column + 1 },
 });
 
-// P_parser fails with these where it can't nest a proof's steps.
 const createProofError = (message: string, span: Span, exception = "Proof.Parser") =>
   new TlaSyntaxError(message, undefined, {
     reason: message,
@@ -370,7 +366,6 @@ const BUILTIN_CONSTANTS = new Set(["TRUE", "FALSE", "BOOLEAN", "STRING"]);
 
 const NO_OFFSIDE = -1;
 
-// A SANY InfixExpr or PostfixExpr.
 const isOperatorExpression = (expression: Expression) =>
   expression.kind === "Prime" ||
   expression.kind === "Product" ||
@@ -422,9 +417,8 @@ export const extractModule = (source: string, name: string) => {
   return `${lines.slice(start, end === -1 ? undefined : end + 1).join("\n")}\n`;
 };
 
-// The tlapm mode parses as tlapm does for proof obligations, which accepts and rejects some modules
-// that SANY does not. The sany mode leaves the checks that SANY makes after parsing to the SANY
-// generator.
+// The tlapm mode parses as tlapm does for proof obligations, which accepts and rejects some
+// modules that SANY does not. The sany mode leaves SANY's post-parse checks to the SANY generator.
 type ParseMode = "tlc" | "tlapm" | "sany";
 
 const parse = (
@@ -436,7 +430,6 @@ const parse = (
   const tokens = isTlapm ? sourceTokens : sourceTokens.map(readAtAsIdentifier);
   const cursor = { index: 0, offsideColumns: [] as number[] };
   const operators: OperatorContext = {};
-  // A RECURSIVE declaration covers the definitions of its own LET or module.
   const recursiveScopes: Set<string>[] = [];
   const factNames = new Set<string>();
   // The NEW, TAKE, and PICK names in scope, which a DEF clause cannot cite.
@@ -613,7 +606,6 @@ const parse = (
     ranges: names.map((item) => item.range),
   });
 
-  // TLAplusParser.Substitution: an identifier, or a prefix, infix or postfix operator.
   const expectSubstitutionTarget = () => {
     const token = peek();
     const isOperator =
@@ -1112,7 +1104,6 @@ const parse = (
         expect("::");
         const head = getRange(start);
         const body = parseExpression();
-        // TLAplusParser.labelDoesNotChangeParse.
         if (
           !isTlapm &&
           preceding !== undefined &&
@@ -1753,7 +1744,6 @@ const parse = (
         module.variables.some((variable) => variable.name === name),
     );
 
-  // tlapm's definable: names and operators joined by !.
   const parseDefinable = (): Fact => {
     const start = cursor.index;
     const token = peek();
@@ -2058,8 +2048,7 @@ const parse = (
     };
   };
 
-  // P_parser.to_proof: the proof that starts at index, where a backtrack leaves the proof
-  // implicitly omitted.
+  // A backtrack leaves the proof implicitly omitted.
   const nestProof = (
     items: Preproof[],
     index: number,
@@ -2084,7 +2073,6 @@ const parse = (
     };
   };
 
-  // P_parser.to_steps: the steps at one level through its QED step, or undefined to backtrack.
   const nestSteps = (
     items: Preproof[],
     index: number,
@@ -2153,8 +2141,8 @@ const parse = (
     );
   };
 
-  // P_parser.proof and toplevel: tlapm reads every step and leaf proof that follows, then nests
-  // them by level, where the first step counts as having PROOF.
+  // tlapm reads every step and leaf proof that follows, then nests them by level, where the first
+  // step counts as having PROOF.
   const parseTlapmProof = () => {
     if (!isPreproofStart()) return undefined;
     const items: Preproof[] = [];
@@ -2400,7 +2388,6 @@ const parse = (
 
 export const parseModule = (source: string) => parse(source, "tlc");
 
-// Parses a module the caller has tokenized already.
 export const parseModuleTokens = (source: string, tokens: Token[]) => parse(source, "tlc", tokens);
 
 export const parseTlapmModule = (source: string) => parse(source, "tlapm");

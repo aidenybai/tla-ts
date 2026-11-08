@@ -41,8 +41,6 @@ interface Selection {
   location: SourceLocation;
 }
 
-// A name that selects a subexpression, with the range of each part and of the arguments of each
-// part, where SANY reports an error in selecting that part.
 interface SelectingName {
   location: SourceLocation;
   selectorRanges?: SourceRange[];
@@ -316,7 +314,6 @@ const selectSubexpression = (
   return createApplication(selection, state.current);
 };
 
-// A name such as Op(1)!lab(2) whose first parts name a definition selects part of it.
 const getQualifiedSelectors = (
   name: string,
   args: Expression[],

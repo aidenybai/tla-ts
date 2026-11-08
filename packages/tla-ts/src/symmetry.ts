@@ -20,7 +20,6 @@ import {
   type Value,
 } from "./values";
 
-// The image of each model value a permutation moves, by name.
 type Images = Map<string, ModelValue>;
 
 const getPermutationKey = (permutation: Images) =>
@@ -242,9 +241,8 @@ const permuteValue = (value: Value, images: Images): Value => {
   return elements ? createSet(elements) : set;
 };
 
-// TLCStateMut#fingerPrint: the smallest image of the state under the group in TLC's variable
-// order. TLC permutes the state under each permutation, variable by variable, and moves on to the
-// next permutation as soon as a variable's image is larger than the smallest state's.
+// TLC permutes the state under each permutation, variable by variable, and moves on to the next
+// permutation as soon as a variable's image is larger than the smallest state's.
 export const getRepresentative = (
   state: Value[],
   permutations: Images[],

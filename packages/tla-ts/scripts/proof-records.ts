@@ -6,14 +6,12 @@ import { collapseWhitespace, getDigest } from "./tlapm-digest";
 
 export type BackendVerdict = "unsat" | "sat" | "unknown";
 
-// One backend run: a digest of the input tlapm sent and what the backend answered. tlapm frames an
-// obligation as unsat when the backend proves it. Zenon and Isabelle only ever find a proof or give up.
+// tlapm frames an obligation as unsat when the backend proves it.
 interface BackendRecord<Verdict extends BackendVerdict = BackendVerdict> {
   input: string;
   verdict: Verdict;
 }
 
-// tlapm proves a trivial obligation itself, without a backend.
 interface TrivialObligationRecord {
   id: number;
   loc: string;
@@ -42,7 +40,6 @@ interface FailedObligationRecord extends DecidedObligationRecord {
   reason?: string;
 }
 
-// tlapm stopped before a backend answered.
 interface UnfinishedObligationRecord {
   id: number;
   loc: string;
@@ -77,17 +74,14 @@ const removeComments = (text: string) =>
     .filter((line) => !line.startsWith(";"))
     .join("\n");
 
-// Digests an SMT-LIB or Zenon input.
 export const getInputDigest = (text: string) => getDigest(collapseWhitespace(removeComments(text)));
 
-// An Isabelle theory with its comments removed and its theory name, which tlapm takes from a
-// temporary file, made the same.
+// tlapm takes the theory name from a temporary file, so it is made the same.
 export const normalizeTheory = (text: string) =>
   collapseWhitespace(
     text.replace(/\(\*[\s\S]*?\*\)/g, "").replace(/\btlapm_[0-9a-f]+\b/g, "tlapm"),
   );
 
-// Isabelle theories carry the module's path in comments and a hashed theory name.
 export const getIsabelleDigest = (text: string) => getDigest(normalizeTheory(text));
 
 // tlapm names each atom of a PTL formula with a hash, so atoms are renumbered by first appearance.
@@ -119,8 +113,6 @@ export const getLs4Verdict = (output: string): BackendVerdict => {
   return answer === undefined ? "unknown" : answer.startsWith("UNSAT") ? "unsat" : "sat";
 };
 
-// The records of the modules whose ids contain the --filter argument, or of every module, less
-// those whose ids contain the --skip argument.
 export const readProofRecords = (): ModuleProofRecord[] => {
   if (!existsSync(PROOFS_PATH)) {
     console.error("Run conformance:record-proofs first");
@@ -138,8 +130,7 @@ export const readProofRecords = (): ModuleProofRecord[] => {
 
 const libraryModules = getLibraryModules();
 
-// Reads a module the corpus module at path uses, where tlapm finds it: in the module's directory,
-// then the -I library, then tlapm's own standard library.
+// Where tlapm finds it: in the module's directory, then the -I library, then its standard library.
 const readModule = (path: string, name: string) => {
   const file = [
     join(dirname(path), `${name}.tla`),
@@ -151,15 +142,12 @@ const readModule = (path: string, name: string) => {
 
 export const getModuleLoader = (path: string) => (name: string) => readModule(path, name)?.source;
 
-// The obligations of a corpus module. A submodule reports its own obligations, before the module
-// that contains it.
+// A submodule reports its own obligations, before the module that contains it.
 export const getModuleObligations = (path: string) =>
   getObligations([{ file: path, source: readFileSync(path, "utf8") }], (name) =>
     readModule(path, name),
   ).flatMap((result) => result.obligations);
 
-// Prints how many results have each verdict, then the ones worth a look, all of them with
-// --verbose and otherwise the first 20.
 export const printResults = <Result extends { verdict: string }>(
   results: Result[],
   verdicts: readonly Result["verdict"][],

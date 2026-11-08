@@ -1,6 +1,3 @@
-// Compares tla-ts's Isabelle theory for each obligation with the theory tlapm wrote, as
-// conformance:record-proofs recorded it, up to comments and the theory's name.
-
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TlaProverError, TlaUnsupportedError } from "../src/errors";
@@ -19,7 +16,6 @@ type Verdict = "match" | "mismatch" | "unsupported" | "failed";
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".isabelle-encode-results.json");
 
-// How much of each theory to show around the first difference.
 const CONTEXT_LENGTH = 150;
 
 interface Result {
@@ -31,7 +27,6 @@ interface Result {
   actual?: string;
 }
 
-// The theory, or why tla-ts can't encode the obligation or tlapm wouldn't.
 const getEncoding = (encode: () => string) => {
   try {
     return { kind: "theory", text: encode() } as const;
@@ -43,7 +38,6 @@ const getEncoding = (encode: () => string) => {
   }
 };
 
-// The two normalized theories from just before the first character where they differ.
 const findDifference = (expected: string, actual: string) => {
   const left = normalizeTheory(expected);
   const right = normalizeTheory(actual);

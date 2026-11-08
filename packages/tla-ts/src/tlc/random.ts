@@ -23,7 +23,6 @@ const MULTIPLIER = 0x5deece66dn;
 const SEED_MASK = (1n << 48n) - 1n;
 const MAXIMUM_INT = 2147483647;
 
-// java.util.Random, which TLC's RandomEnumerableValues extends.
 export const createJavaRandom = (seed: bigint): JavaRandom => {
   const state = { value: (BigInt.asUintN(64, seed) ^ MULTIPLIER) & SEED_MASK };
   const next = (bits: number) => {
@@ -103,8 +102,6 @@ const getModulusAndMultiplier = (size: number) => {
   }
 };
 
-// EnumerableValue.SubsetEnumerator: count indices below size from a full-period linear
-// congruential generator that starts at random.nextInt(size).
 const getSubsetIndicesMaster = (count: number, size: number, random: JavaRandom) => {
   if (size <= 0) return [];
   const generator = getModulusAndMultiplier(size);
@@ -132,8 +129,7 @@ const getSubsetIndices174 = (count: number, size: number, random: JavaRandom) =>
 
 const LARGE_STRIDE = (1n << 63n) - 1n - 24n;
 
-// SetOfFcnsOrRcdsValue.BigIntegerSubsetEnumerator, for products with more than 2^31 - 1
-// elements.
+// For products with more than 2^31 - 1 elements.
 const getLargeSubsetIndices = (count: number, size: bigint, random: JavaRandom) => {
   const signed = random.nextLong();
   const offset = BigInt.asIntN(64, signed < 0n ? -signed : signed);
@@ -189,7 +185,6 @@ export const getEnumeratedFactors = (set: Value, version: TlcVersion) =>
     ? set.factors
     : undefined;
 
-// Enumerable#getRandomSubset, which Randomization's RandomSubset calls.
 export const getRandomSubset = (
   count: number,
   set: Value,

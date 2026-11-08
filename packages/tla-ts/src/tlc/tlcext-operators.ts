@@ -48,7 +48,6 @@ import {
   type Value,
 } from "../values";
 
-// TLC's record for an action it doesn't store, such as every action in breadth-first search.
 export const createActionRecord = (action: string | undefined) =>
   createRecord([
     ["name", action ?? "UnnamedAction"],
@@ -64,9 +63,6 @@ export const createActionRecord = (action: string | undefined) =>
     ],
   ]);
 
-// TLC's CounterExample is a graph of the violating behavior: the states numbered from 1, an edge
-// for each step, and for a lasso an edge from the last state back to where the loop starts. Each
-// edge holds the record of the action TLC found for the step.
 export const createCounterExample = (
   stateRecords: Record<string, Value>[],
   actions: Value[],
@@ -95,7 +91,6 @@ const getRegister = (runtime: CheckerRuntime, key: Value) => {
   return undefined;
 };
 
-// TLC's TLCSet. TLCExt's TLCGetAndSet is a TLA+ definition that calls it.
 export const setTlcValue = (
   runtime: CheckerRuntime,
   print: (text: string) => void,

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 const STEP_INTERVAL_MS = 600;
 
-// Steps through a trace one state at a time. Mount it once per trace, so a new trace starts over.
+// Mount it once per trace, so a new trace starts over.
 export const usePlayback = (stepCount: number) => {
   const lastIndex = stepCount - 1;
   const [stepIndex, setStepIndex] = useState(0);

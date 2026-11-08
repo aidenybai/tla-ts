@@ -13,7 +13,6 @@ fun esc s =
       else if c = "\n" then "\\n" else c;
   in "\"" ^ String.concat (map e (Symbol.explode s)) ^ "\"" end;
 
-(* types, interned *)
 val type_tab : (typ * int) list Unsynchronized.ref = Unsynchronized.ref [];
 val type_out : string list Unsynchronized.ref = Unsynchronized.ref [];
 fun sort_json S = "[" ^ commas (map esc S) ^ "]";
@@ -39,7 +38,7 @@ fun term_json (Const (a, T)) = "[\"C\"," ^ esc a ^ "," ^ jint (typ_id T) ^ "]"
       "[\"A\"," ^ esc a ^ "," ^ jint (typ_id T) ^ "," ^ term_json t ^ "]"
   | term_json (t $ u) = "[\"$\"," ^ term_json t ^ "," ^ term_json u ^ "]";
 
-(* theorems, interned by full proposition (with names) *)
+(* interned by full proposition, with names *)
 val thm_tab : (term * int) list Unsynchronized.ref = Unsynchronized.ref [];
 val thm_out : string list Unsynchronized.ref = Unsynchronized.ref [];
 fun thm_id th =
@@ -68,24 +67,20 @@ fun key_json ks = esc (space_implode " " ks);
 
 fun name_json (a, i) = "[" ^ esc a ^ "," ^ jint i ^ "]";
 
-(* constants *)
 val {constants, ...} = Consts.dest (Sign.consts_of thy);
 val consts_json = "[" ^ commas (map (fn (c, (T, rhs)) =>
   "[" ^ esc c ^ "," ^ jint (typ_id T) ^
   (case rhs of NONE => "" | SOME t => "," ^ term_json t) ^ "]") constants) ^ "]";
 
-(* the constant each base name resolves to *)
 val names_json = "[" ^ commas (map (fn base => "[" ^ esc base ^ "," ^ esc (Sign.intern_const thy base) ^ "]")
   (distinct (op =) (map (Long_Name.base_name o #1) constants))) ^ "]";
 
-(* facts *)
 val facts = Facts.dest_static true [] (Global_Theory.facts_of thy);
 val fact_names_json = "[" ^ commas (map (fn base => "[" ^ esc base ^ "," ^ esc (Global_Theory.intern_fact thy base) ^ "]")
   (distinct (op =) (map (Long_Name.base_name o #1) facts))) ^ "]";
 val facts_json = "[" ^ commas (map (fn (a, ths) =>
   "[" ^ esc a ^ ",[" ^ commas (map (jint o thm_id) ths) ^ "]]") facts) ^ "]";
 
-(* simpset *)
 val ss = simpset_of ctxt;
 val {simps, simprocs, congs, weak_congs, loopers, unsafe_solvers, safe_solvers, ...} =
   Raw_Simplifier.dest_ss ss;
@@ -102,7 +97,6 @@ val simprocs_json = "[" ^ commas (map (fn (a, lhss) =>
   "[" ^ esc a ^ ",[" ^ commas (map term_json lhss) ^ "]]") simprocs) ^ "]";
 fun strings_json xs = "[" ^ commas (map esc xs) ^ "]";
 
-(* claset *)
 val cs = Classical.rep_cs (Classical.claset_of ctxt);
 fun brl_key (eres, th) =
   if eres then my_keys (Thm.major_prem_of th) else my_keys (Thm.concl_of th);

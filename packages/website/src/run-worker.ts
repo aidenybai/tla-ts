@@ -13,19 +13,15 @@ export interface TraceStepSummary {
 export interface RunResult {
   isPassed: boolean;
   title: string;
-  // The invariant or property that failed, shown next to the title.
   name: string | undefined;
   summary: string;
-  // A check's counterexample, which the drawer steps through.
   trace: TraceStepSummary[];
   loopStart: number | undefined;
-  // A proof's obligations, or why the run failed.
   rows: RunRow[];
 }
 
 export interface RunRow {
   title: string;
-  // Shown while the row is the active step, such as the goal an obligation proves.
   detail: string;
   isFailed: boolean;
 }

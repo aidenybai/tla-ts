@@ -164,7 +164,6 @@ const containsAction = (expression: LiveExpression): boolean => {
 const termKeys = new WeakMap<LiveExpression, string>();
 const atoms = { count: 0 };
 
-// A term's structure as a string in which each atom stands for itself, so equal terms share a key.
 export const getTermKey = (expression: LiveExpression): string => {
   const cached = termKeys.get(expression);
   if (cached !== undefined) return cached;

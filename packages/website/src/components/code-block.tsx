@@ -11,7 +11,6 @@ const PURPLE = "text-[color(display-p3_0.391345_0.215644_0.853560)]";
 const GREEN = "text-[color(display-p3_0.259723_0.647032_0.276349)]";
 const GRAY = "text-gray-1000";
 
-// Comments are gray, strings green, and every other match, a keyword or a command, purple.
 const PATTERNS = {
   shell: /^\S+/g,
   typescript: /(?<comment>\/\/.*)|(?<string>"[^"]*")|\b(?:import|from|const|await)\b/g,
@@ -53,7 +52,6 @@ const getTokens = (code: string, language: Language) => {
 interface CodeBlockProps {
   code: string;
   language: Language;
-  // What the run button runs.
   run?: RunRequest;
 }
 

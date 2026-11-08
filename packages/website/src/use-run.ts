@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { RunRequest, RunResult } from "./run-worker";
 
-// Runs tla-ts in a worker, so a long check or proof never blocks the page.
 export const useRun = () => {
   const [result, setResult] = useState<RunResult | undefined>(undefined);
   const [isRunning, setIsRunning] = useState(false);

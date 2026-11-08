@@ -2,7 +2,6 @@
 // holds every count from 31 up.
 export const OUT_DEGREE_BUCKETS = 32;
 
-// TLC's optimistic estimate of a fingerprint collision, from AbstractChecker.
 export const getOptimisticProbability = (distinctStates: number, generatedStates: number) =>
   distinctStates * ((generatedStates - distinctStates) / 2 ** 64);
 
@@ -56,7 +55,6 @@ export const formatProbability = (value: number) => {
   return text;
 };
 
-// Adds one to the last digit and carries it over nines and the decimal point.
 const roundUp = (digits: string): string => {
   const position = digits.length - 1;
   if (position < 0) return "1";
@@ -87,8 +85,8 @@ export const getFingerprintDistance = (
   const probability = getOptimisticProbability(distinctStates, generatedStates);
   if (probability < ACTUAL_PROBABILITY_THRESHOLD) return undefined;
   const fingerprints = getFingerprints().sort();
-  // The low and high words of each fingerprint. A gap whose high words differ by at most 2^20 is
-  // below 2^53, so a number holds it exactly and only wider gaps need a BigInt.
+  // A gap whose high words differ by at most 2^20 is below 2^53, so a number holds it exactly and
+  // only wider gaps need a BigInt.
   const words = new Int32Array(fingerprints.buffer);
   const nearest = { narrow: Number.POSITIVE_INFINITY, wide: 0x7fff_ffff_ffff_ffffn };
   for (let index = 1; index < fingerprints.length; index++) {

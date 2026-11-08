@@ -13,7 +13,6 @@ export interface StateDump {
 export interface GraphState {
   fingerprint: bigint;
   level: number;
-  // The state as TLC prints it after evaluating the alias, and as it prints it without the alias.
   getLabel: () => string;
   getText: () => string;
 }
@@ -31,7 +30,6 @@ export interface StateWriter {
     isSeen: boolean,
     action: GraphAction | undefined,
   ) => void;
-  // The stuttering step of a state that TLC 1.7.4 adds to the behavior graph.
   writeStuttering: (state: GraphState) => void;
   close: () => void;
 }

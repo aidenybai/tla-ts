@@ -33,7 +33,6 @@ const getCount = (value: Value, position: string, name: string) => {
   return value;
 };
 
-// SubsetValue.CoinTossingSubsetEnumerator: each pick keeps each element with the probability.
 const tossSubsets = (elements: Value[], picks: number, probability: number, random: JavaRandom) =>
   createSet(
     Array.from({ length: picks }, () =>
