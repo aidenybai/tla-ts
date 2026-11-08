@@ -1444,6 +1444,22 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  // EnumerableValue#elements(NORMALIZED) sorts the elements a union lists outside the union's
+  // methods, so the failure to compare them isn't one to fingerprint the union.
+  it.each(["\\E t \\in U : x' = t", "x' = CHOOSE t \\in U : TRUE"])(
+    "reports a union of tuples and strings that %s fails to sort like TLC",
+    async (next) => {
+      const result = await check({
+        source: `---- MODULE M ----\nVARIABLE x\nU == ({"t0"} \\X {0}) \\cup {"null"}\nInit == x = "none"\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toContain(
+        'Attempted to compare the function <<"t0", 0>> with the value:\n"null"',
+      );
+      expect(result.failure?.fingerprint).toBeUndefined();
+    },
+  );
+
   // A tuple, record or set with a source raises a FingerprintException when the replay fails to
   // apply it, but TLC fails before it applies a value that isn't a function.
   it.each([

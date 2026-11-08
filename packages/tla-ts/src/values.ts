@@ -1578,8 +1578,17 @@ const enumerateSet = (
           `Attempted to enumerate S \\ T when S:\n${formatValue(value.left)}\nis not enumerable.`,
         );
       }
-      if (value.operator === "\\cup")
-        return getSortedUnion(toFiniteSet(value.left), toFiniteSet(value.right)).elements;
+      // SetCupValue#toSetEnum lists the elements of S and then those of T, which TLC sorts as it
+      // normalizes the set.
+      if (value.operator === "\\cup") {
+        return computeLikeTlcOnFailure(
+          (left, right) => getSortedUnion(toFiniteSet(left), toFiniteSet(right)).elements,
+          (left, right) =>
+            sortLikeTlc([...toFiniteSet(left).elements, ...toFiniteSet(right).elements]),
+          value.left,
+          value.right,
+        );
+      }
       const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
       const other = isLeftEnumerated ? value.right : value.left;
@@ -1621,6 +1630,27 @@ export const toFiniteSet = (value: Value): SetValue => {
   if (lazy) lazy.enumerated = set;
   return set;
 };
+
+// EnumerableValue#elements(NORMALIZED) sorts the elements SetCupValue#toSetEnum lists outside the
+// methods of the union, so a failure to compare two of them isn't one in fingerprinting the union.
+export const getNormalizedSetElements = (value: Value) =>
+  typeof value === "object" && value.kind === "SetOperation" && value.operator === "\\cup"
+    ? computeLikeTlcOnFailure(
+        (union: SetOperationValue) => toFiniteSet(union).elements,
+        (union: SetOperationValue) => {
+          const sets = setTrace.sets;
+          sets?.push(union);
+          const listed = [
+            ...toFiniteSet(union.left).elements,
+            ...toFiniteSet(union.right).elements,
+          ];
+          sets?.pop();
+          return sortLikeTlc(listed);
+        },
+        value,
+        value,
+      )
+    : toFiniteSet(value).elements;
 
 // TLC's Enumerator for a lazy set streams the sets it combines until the set caches its elements,
 // so an element that two of them share comes up once for each.
