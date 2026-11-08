@@ -5,6 +5,7 @@ import {
   AstManager,
   FAMILY_ARITH,
   FAMILY_BASIC,
+  FAMILY_DATATYPE,
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_ABS,
@@ -15,6 +16,7 @@ import {
   OP_CONST_ARRAY,
   OP_DISTINCT,
   OP_DIV,
+  OP_DT_ACCESSOR,
   OP_EQ,
   OP_GE,
   OP_GT,
@@ -45,6 +47,23 @@ import {
 } from "./ast";
 import { getArraySignature, getMapSignature } from "./array-decl-plugin";
 import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
+import {
+  type ConstructorDef,
+  type DatatypeDef,
+  getConstructorAccessors,
+  getConstructorIs,
+  getConstructorRecognizer,
+  getDatatypeConstructors,
+  getDatatypeDef,
+  instantiateAccessor,
+  instantiateConstructor,
+  mkDatatypeDef,
+  mkDatatypeSort,
+  mkDatatypes,
+  mkUpdateField,
+  removeDatatype,
+  substituteSort,
+} from "./datatype-decl-plugin";
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
 
@@ -92,6 +111,40 @@ interface Macro {
   range: number;
   body: number;
 }
+
+interface ConstantSortDecl {
+  kind: "sort";
+  sort: number;
+}
+
+interface UserSortDecl {
+  kind: "user";
+  name: string;
+  arity: number;
+}
+
+interface DatatypeSortDecl {
+  kind: "datatype";
+  name: string;
+  arity: number;
+  siblings: string[];
+  instances: Map<string, number>;
+}
+
+interface DefinedSortDecl {
+  kind: "definition";
+  parameters: string[];
+  body: SExpr;
+}
+
+// Z3's List datatype, which exists when no logic is set, declared here at its first use.
+interface ListSortDecl {
+  kind: "list";
+}
+
+type SortDecl = ConstantSortDecl | UserSortDecl | DatatypeSortDecl | DefinedSortDecl | ListSortDecl;
+
+const NO_BINDINGS: ReadonlyMap<string, number> = new Map();
 
 interface SmtProblem {
   assertions: number[];
@@ -568,32 +621,156 @@ export const createSmtlibReader = (
   logic?: string,
   options: ParserOptions = DEFAULT_PARSER_OPTIONS,
 ) => {
-  const sorts = new Map<string, number>([
-    ["Bool", SORT_BOOL],
-    ["Int", SORT_INT],
-    ["Real", SORT_REAL],
+  const sortDecls = new Map<string, SortDecl>([
+    ["Bool", { kind: "sort", sort: SORT_BOOL }],
+    ["Int", { kind: "sort", sort: SORT_INT }],
+    ["Real", { kind: "sort", sort: SORT_REAL }],
+    ...(logic === undefined ? [["List", { kind: "list" }] as const] : []),
   ]);
-  const funcs = new Map<string, number>();
+  const funcs = new Map<string, readonly number[]>();
   const macros = new Map<string, Macro>();
-  const undo: { names: Map<string, unknown>; name: string; previous: unknown }[] = [];
+  const notifiedSorts = new Set<number>();
+  const undo: (() => void)[] = [];
   const scopeStarts: number[] = [];
   const scopes: Map<string, Binding>[] = [];
   const binders = { depth: 0 };
 
   const declare = <Value>(names: Map<string, Value>, name: string, value: Value) => {
-    undo.push({ names, name, previous: names.get(name) });
+    const previous = names.get(name);
+    undo.push(() => {
+      if (previous === undefined) names.delete(name);
+      else names.set(name, previous);
+    });
     names.set(name, value);
   };
 
   const hasArrays = isArrayLogic(logic);
   const hasArrayExtensions = logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic);
 
-  const parseParametricSort = (sexpr: SmtList, context: string): number => {
+  const getFirstFunc = (name: string) => funcs.get(name)?.[0];
+
+  const insertFunc = (decl: number, at: SExpr) => {
+    const funcDecl = manager.funcDecls[decl];
+    const name = String(funcDecl.name);
+    if (macros.has(name))
+      throw new SmtParseError(
+        `invalid declaration, named expression already defined with this name ${name}`,
+        at,
+      );
+    const existing = funcs.get(name) ?? [];
+    if (existing.includes(decl))
+      throw new SmtParseError(
+        `invalid declaration, ${funcDecl.domain.length === 0 ? "constant" : "function"} '${name}' (with the given signature) already declared`,
+        at,
+      );
+    declare(funcs, name, [...existing, decl]);
+  };
+
+  const insertDatatypeDecls = (sort: number, at: SExpr) => {
+    for (const constructor of getDatatypeConstructors(manager, sort)) {
+      insertFunc(constructor, at);
+      insertFunc(getConstructorRecognizer(manager, constructor), at);
+      for (const accessor of getConstructorAccessors(manager, constructor))
+        insertFunc(accessor, at);
+    }
+  };
+
+  const notifyDatatype = (sort: number, at: SExpr) => {
+    const parameters = manager.getSortParameters(sort);
+    if (parameters.length === 0 || notifiedSorts.has(sort)) return;
+    if (getDatatypeDef(manager, sort) === undefined) return;
+    if (parameters.every((parameter) => manager.getTypeParameterIndex(parameter) === -1))
+      insertDatatypeDecls(sort, at);
+    notifiedSorts.add(sort);
+    undo.push(() => notifiedSorts.delete(sort));
+  };
+
+  const getDatatypeInstance = (decl: DatatypeSortDecl, parameters: number[], at: SExpr) => {
+    const key = parameters.join(",");
+    const sort = decl.instances.get(key) ?? mkDatatypeSort(manager, decl.name, parameters);
+    decl.instances.set(key, sort);
+    notifyDatatype(sort, at);
+    return sort;
+  };
+
+  const instantiateDatatype = (decl: DatatypeSortDecl, parameters: number[], at: SExpr) => {
+    const sort = getDatatypeInstance(decl, parameters, at);
+    const def = getDatatypeDef(manager, sort);
+    if (def === undefined || parameters.length === 0 || decl.siblings.length === 0) return sort;
+    const marked = new Set([sort]);
+    for (const constructor of def.constructors)
+      for (const accessor of constructor.accessors) {
+        const range = accessor.range;
+        if (!manager.isDatatypeSort(range) || marked.has(range)) continue;
+        marked.add(range);
+        const sibling = sortDecls.get(manager.sortNames[range]);
+        if (sibling?.kind !== "datatype" || !decl.siblings.includes(sibling.name)) continue;
+        const instance = substituteSort(manager, range, def.parameters, parameters);
+        getDatatypeInstance(sibling, [...manager.getSortParameters(instance)], at);
+      }
+    return sort;
+  };
+
+  const getSortDeclArity = (decl: SortDecl) =>
+    decl.kind === "sort"
+      ? 0
+      : decl.kind === "list"
+        ? 1
+        : decl.kind === "definition"
+          ? decl.parameters.length
+          : decl.arity;
+
+  const instantiateSort = (decl: SortDecl, parameters: number[], at: SExpr): number => {
+    if (decl.kind === "sort") return decl.sort;
+    if (decl.kind === "list") {
+      const element = manager.mkTypeParameter(0);
+      mkDatatypes(manager, [
+        mkDatatypeDef(
+          manager,
+          "List",
+          [element],
+          [
+            { name: "nil", recognizer: "is-nil", accessors: [] },
+            {
+              name: "insert",
+              recognizer: "is-insert",
+              accessors: [
+                { name: "head", range: element },
+                { name: "tail", range: -1 },
+              ],
+            },
+          ],
+        ),
+      ]);
+      const list: DatatypeSortDecl = {
+        kind: "datatype",
+        name: "List",
+        arity: 1,
+        siblings: [],
+        instances: new Map(),
+      };
+      sortDecls.set("List", list);
+      return instantiateSort(list, parameters, at);
+    }
+    if (decl.kind === "user") return manager.mkUninterpretedSort(decl.name, parameters);
+    if (decl.kind === "datatype") return instantiateDatatype(decl, parameters, at);
+    return parseSort(
+      decl.body,
+      "",
+      new Map(decl.parameters.map((name, index) => [name, parameters[index]])),
+    );
+  };
+
+  const parseParametricSort = (
+    sexpr: SmtList,
+    context: string,
+    bindings: ReadonlyMap<string, number>,
+  ): number => {
     const head = sexpr.items[0];
-    if (!isSymbol(head)) throw new SmtUnsupportedError("parametric sorts");
+    if (!isSymbol(head)) throw new SmtParseError("invalid sort, symbol or '_' expected", head);
     const isArray = ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && hasArrayExtensions);
     if (isArray && hasArrays) {
-      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context));
+      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
       if (head.text === "Set" ? parameters.length !== 1 : parameters.length < 2)
         throw new SmtParseError(
           "invalid array sort definition, invalid number of parameters",
@@ -601,15 +778,25 @@ export const createSmtlibReader = (
         );
       return manager.mkArraySort(head.text === "Set" ? [parameters[0], SORT_BOOL] : parameters);
     }
-    if (THEORY_SORTS.has(head.text) && !isArray)
-      throw new SmtUnsupportedError(`the sort ${head.text}`);
-    if (!sorts.has(head.text)) throw new SmtParseError(`unknown sort '${head.text}'`, head);
-    throw new SmtUnsupportedError("parametric sorts");
+    const decl = sortDecls.get(head.text);
+    if (decl === undefined) {
+      if (THEORY_SORTS.has(head.text) && !isArray)
+        throw new SmtUnsupportedError(`the sort ${head.text}`);
+      throw new SmtParseError(`unknown sort '${head.text}'`, head);
+    }
+    const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
+    if (parameters.length !== getSortDeclArity(decl))
+      throw new SmtParseError("invalid number of parameters to sort constructor", sexpr.end);
+    return instantiateSort(decl, parameters, sexpr);
   };
 
-  const parseSort = (sexpr: SExpr, context: string): number => {
+  const parseSort = (
+    sexpr: SExpr,
+    context: string,
+    bindings: ReadonlyMap<string, number> = NO_BINDINGS,
+  ): number => {
     if (sexpr.kind === "list") {
-      if (!isSymbol(sexpr.items[0], "_")) return parseParametricSort(sexpr, context);
+      if (!isSymbol(sexpr.items[0], "_")) return parseParametricSort(sexpr, context, bindings);
       const width = sexpr.items[2];
       if (
         !isSymbol(sexpr.items[1], "BitVec") ||
@@ -621,15 +808,19 @@ export const createSmtlibReader = (
         throw new SmtParseError("bit-vector size must be greater than zero", sexpr.end);
       return manager.mkBvSort(Number(width.text));
     }
-    const sort = sorts.get(sexpr.text);
-    if (sort === undefined) {
-      if (THEORY_SORTS.has(sexpr.text)) throw new SmtUnsupportedError(`the sort ${sexpr.text}`);
-      throw new SmtParseError(
-        `${context === "" ? "" : `${context}: `}unknown sort '${sexpr.text}'`,
-        sexpr,
-      );
+    const decl = sortDecls.get(sexpr.text);
+    if (decl !== undefined) {
+      if (getSortDeclArity(decl) !== 0)
+        throw new SmtParseError("sort constructor expects parameters", sexpr);
+      return instantiateSort(decl, [], sexpr);
     }
-    return sort;
+    const bound = bindings.get(sexpr.text);
+    if (bound !== undefined) return bound;
+    if (THEORY_SORTS.has(sexpr.text)) throw new SmtUnsupportedError(`the sort ${sexpr.text}`);
+    throw new SmtParseError(
+      `${context === "" ? "" : `${context}: `}unknown sort '${sexpr.text}'`,
+      sexpr,
+    );
   };
 
   const lookup = (name: string) => {
@@ -667,7 +858,8 @@ export const createSmtlibReader = (
   const mkApp = (decl: number, inputArgs: number[], at: SExpr, domainSort?: number) => {
     const op = manager.funcDecls[decl].op;
     const name = manager.funcDecls[decl].name;
-    const isUninterpreted = op === OP_UNINTERPRETED;
+    const isUninterpreted =
+      op === OP_UNINTERPRETED || manager.funcDecls[decl].family === FAMILY_DATATYPE;
     const domain = manager.funcDecls[decl].domain;
     const builtinSort = isUninterpreted ? -1 : (domainSort ?? getDomainSort(op, inputArgs));
     const getExpected = (index: number) =>
@@ -710,7 +902,7 @@ export const createSmtlibReader = (
     if (sexpr.items.length === 0) return rejectPattern("invalid empty pattern", at);
     const head = sexpr.items[0];
     if (head.kind === "list") return manager.mkPattern(sexpr.items.map(parseTerm));
-    const decl = head.text === "true" || head.text === "false" ? -1 : funcs.get(head.text);
+    const decl = head.text === "true" || head.text === "false" ? -1 : getFirstFunc(head.text);
     if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0))
       return rejectPattern("invalid constant pattern", head);
     return manager.mkPattern([parseTerm(sexpr)]);
@@ -912,9 +1104,141 @@ export const createSmtlibReader = (
     return manager.mkApp(decl, args, signature.range);
   };
 
+  const findFuncDecl = (sexpr: SmtToken) => {
+    const decls = funcs.get(sexpr.text);
+    if (decls !== undefined && decls.length > 1)
+      throw new SmtParseError(
+        `ambiguous function declaration reference, provide full signature to disambiguate (<symbol> (<sort>*) <sort>) ${sexpr.text}`,
+        sexpr,
+      );
+    return decls?.[0];
+  };
+
+  const throwAmbiguousConstant = (name: string, at: SExpr) => {
+    throw new SmtParseError(
+      `ambiguous constant reference, more than one constant with the same sort, use a qualified expression (as <symbol> <sort>) to disambiguate ${name}`,
+      at,
+    );
+  };
+
+  // An exact signature wins, else the last one that matches once Int and Real coerce.
+  const mkDeclaredApp = (
+    name: string,
+    decls: readonly number[],
+    args: number[],
+    range: number | undefined,
+    at: SExpr,
+  ) => {
+    if (args.length === 0 && range === undefined) {
+      if (decls.length > 1) throwAmbiguousConstant(name, at);
+      return mkApp(decls[0], args, at);
+    }
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    const candidates = decls.filter(
+      (decl) =>
+        (range === undefined || manager.funcDecls[decl].range === range) &&
+        manager.funcDecls[decl].domain.length === args.length &&
+        manager.funcDecls[decl].domain.every(
+          (sort, index) =>
+            sort === argSorts[index] || (isArithSort(sort) && isArithSort(argSorts[index])),
+        ),
+    );
+    const found =
+      candidates.find((decl) =>
+        manager.funcDecls[decl].domain.every((sort, index) => sort === argSorts[index]),
+      ) ?? candidates.at(-1);
+    if (found !== undefined) return mkApp(found, args, at);
+    if (args.length === 0 || range !== undefined) return undefined;
+    if (decls.length > 1) throwAmbiguousConstant(name, at);
+    const array = manager.funcDecls[decls[0]];
+    if (array.domain.length > 0 || !manager.isArraySort(array.range)) return undefined;
+    const parameters = manager.getSortParameters(array.range);
+    if (
+      parameters.length !== args.length + 1 ||
+      argSorts.some((sort, index) => sort !== parameters[index])
+    )
+      return undefined;
+    return mkArrayTerm(OP_SELECT, [mkApp(decls[0], [], at), ...args], [], at);
+  };
+
+  const mkDatatypeInstanceApp = (name: string, args: number[], at: SExpr) => {
+    const argSorts = args.map((arg) => manager.sorts[arg]);
+    for (const def of manager.datatypeDefs.values())
+      for (const [index, constructor] of def.constructors.entries()) {
+        if (constructor.name !== name || constructor.accessors.length !== args.length) continue;
+        const binding: number[] = [];
+        const isMatch = constructor.accessors.every((accessor, position) => {
+          if (accessor.range === argSorts[position]) return true;
+          const parameter = manager.getTypeParameterIndex(accessor.range);
+          if (parameter === -1) return false;
+          if (binding[parameter] !== undefined && binding[parameter] !== argSorts[position])
+            return false;
+          binding[parameter] = argSorts[position];
+          return true;
+        });
+        if (
+          !isMatch ||
+          binding.length !== def.parameters.length ||
+          !def.parameters.every((_parameter, parameter) => binding[parameter] !== undefined)
+        )
+          continue;
+        return mkApp(instantiateConstructor(manager, def, index, binding), args, at);
+      }
+    if (args.length !== 1 || !manager.isDatatypeSort(argSorts[0])) return undefined;
+    for (const def of manager.datatypeDefs.values())
+      for (const [index, constructor] of def.constructors.entries()) {
+        const position = constructor.accessors.findIndex((accessor) => accessor.name === name);
+        if (position === -1) continue;
+        const sort = mkDatatypeSort(manager, def.name, [...manager.getSortParameters(argSorts[0])]);
+        return mkApp(instantiateAccessor(manager, sort, index, position), args, at);
+      }
+    return undefined;
+  };
+
+  const mkIsApp = (constructorName: SmtToken, args: number[], at: SExpr) => {
+    const declared = findFuncDecl(constructorName);
+    if (declared !== undefined) return mkApp(getConstructorIs(manager, declared), args, at);
+    const argSort = args.length === 1 ? manager.sorts[args[0]] : -1;
+    if (argSort === -1 || !manager.isDatatypeSort(argSort))
+      throw new SmtUnsupportedError("the operator is");
+    const constructor = getDatatypeConstructors(manager, argSort).find(
+      (decl) => manager.funcDecls[decl].name === constructorName.text,
+    );
+    if (constructor === undefined)
+      throw new SmtParseError(
+        `invalid datatype recognizer, unknown constructor ${constructorName.text}`,
+        at,
+      );
+    return mkApp(getConstructorIs(manager, constructor), args, at);
+  };
+
+  const mkUpdateFieldApp = (accessorName: SmtToken, args: number[], at: SExpr) => {
+    const accessor = findFuncDecl(accessorName);
+    if (accessor === undefined)
+      throw new SmtParseError(
+        `invalid function declaration reference, unknown function ${accessorName.text}`,
+        accessorName,
+      );
+    if (manager.funcDecls[accessor].op !== OP_DT_ACCESSOR)
+      throw new SmtUnsupportedError("the operator update-field");
+    return mkApp(mkUpdateField(manager, accessor), args, at);
+  };
+
+  const getUnknownConstantMessage = (name: string, args: number[], range: number | undefined) => {
+    const argSorts =
+      args.length === 0
+        ? ""
+        : ` (${args.map((arg) => manager.getSortName(manager.sorts[arg])).join(" ")}) `;
+    const declared = (funcs.get(name) ?? []).map((decl) => {
+      const domain = manager.funcDecls[decl].domain.map((sort) => manager.getSortName(sort));
+      return `\ndeclared: (declare-fun ${name} (${domain.join(" ")}) ${manager.getSortName(manager.funcDecls[decl].range)}) `;
+    });
+    return `unknown constant ${name}${argSorts}${range === undefined ? "" : `${manager.getSortName(range)} `}${declared.join("")}`;
+  };
+
   const parseFuncDeclRef = (sexpr: SExpr): MappedDecl => {
     if (sexpr.kind === "symbol") {
-      const decl = funcs.get(sexpr.text);
+      const decl = findFuncDecl(sexpr);
       if (decl !== undefined) return { decl, ...manager.funcDecls[decl] };
       const unary = UNARY_BOOL_REFS.get(sexpr.text);
       if (unary !== undefined) return { decl: unary, domain: [SORT_BOOL], range: SORT_BOOL };
@@ -930,7 +1254,14 @@ export const createSmtlibReader = (
       throw new SmtUnsupportedError("the declaration reference");
     const domain = domainList.items.map((item) => parseSort(item, "Invalid function name"));
     const range = parseSort(rangeSort, "Invalid function name");
-    const declared = funcs.get(name.text);
+    const declared = funcs
+      .get(name.text)
+      ?.find(
+        (decl) =>
+          manager.funcDecls[decl].range === range &&
+          manager.funcDecls[decl].domain.length === domain.length &&
+          manager.funcDecls[decl].domain.every((sort, index) => sort === domain[index]),
+      );
     if (declared !== undefined) return { decl: declared, domain, range };
     const builtin = CHAINABLE_OPS.get(name.text) ?? BUILTIN_OPS.get(name.text);
     if (builtin === undefined)
@@ -960,7 +1291,13 @@ export const createSmtlibReader = (
       ? (ARRAY_OPS.get(name) ?? (hasArrayExtensions ? ARRAY_EXTENSION_OPS.get(name) : undefined))
       : undefined;
 
-  const parseApp = (head: SmtToken, args: number[], at: SExpr, indices: number[] = []) => {
+  const parseApp = (
+    head: SmtToken,
+    args: number[],
+    at: SExpr,
+    indices: number[] = [],
+    range?: number,
+  ) => {
     const name = head.text;
     if (indices.length > 0) return mkBvApp(name, args, indices, at);
     const macro = macros.get(name);
@@ -973,8 +1310,11 @@ export const createSmtlibReader = (
         throw new SmtParseError(`ill-sorted application of ${name}`, at);
       return expandMacro(macro, coerced);
     }
-    const decl = funcs.get(name);
-    if (decl !== undefined) return mkApp(decl, args, at);
+    const decls = funcs.get(name);
+    const declared = decls === undefined ? undefined : mkDeclaredApp(name, decls, args, range, at);
+    if (declared !== undefined) return declared;
+    if (range !== undefined)
+      throw new SmtParseError(getUnknownConstantMessage(name, args, range), at);
     if (isBvOpName(name)) return mkBvApp(name, args, indices, at);
     const arrayOp = getArrayOp(name);
     if (arrayOp !== undefined) return mkArrayTerm(arrayOp, args, [], at);
@@ -989,9 +1329,12 @@ export const createSmtlibReader = (
     if (op === undefined) {
       if (THEORY_OPERATOR.test(name) || THEORY_OPERATORS.has(name))
         throw new SmtUnsupportedError(`the operator ${name}`);
-      if (args.length === 0) throw new SmtParseError(`unknown constant ${name}`, head);
-      const argSorts = args.map((arg) => manager.getSortName(manager.sorts[arg])).join(" ");
-      throw new SmtParseError(`unknown constant ${name} (${argSorts}) `, at);
+      const instance = mkDatatypeInstanceApp(name, args, at);
+      if (instance !== undefined) return instance;
+      throw new SmtParseError(
+        getUnknownConstantMessage(name, args, undefined),
+        args.length === 0 ? head : at,
+      );
     }
     // xor is associative, so ast_manager::mk_app takes fewer than two arguments, which
     // bool_rewriter reduces to false or the argument.
@@ -1117,6 +1460,38 @@ export const createSmtlibReader = (
           });
           return;
         }
+        const indexed = head.items[2];
+        if (
+          isSymbol(head.items[0], "_") &&
+          (isSymbol(name, "is") || isSymbol(name, "update-field")) &&
+          isSymbol(indexed) &&
+          head.items.length === 3
+        ) {
+          frames.push({
+            head: name,
+            indices: [],
+            build: (args) =>
+              name.text === "is"
+                ? mkIsApp(indexed, args, current.end)
+                : mkUpdateFieldApp(indexed, args, current.end),
+            list: current,
+            start: results.length,
+            next: 1,
+          });
+          return;
+        }
+        if (isSymbol(head.items[0], "as") && isSymbol(name) && head.items.length === 3) {
+          const range = parseSort(head.items[2], "Invalid qualified identifier");
+          frames.push({
+            head: name,
+            indices: [],
+            build: (args) => parseApp(name, args, current.end, [], range),
+            list: current,
+            start: results.length,
+            next: 1,
+          });
+          return;
+        }
         if (
           !isSymbol(head.items[0], "_") ||
           !isSymbol(name) ||
@@ -1137,6 +1512,19 @@ export const createSmtlibReader = (
         throw new SmtParseError("invalid function application, symbol expected", head);
       if (head.text === "_") {
         results.push(parseBvNumeral(current));
+        return;
+      }
+      const qualified = current.items[1];
+      if (head.text === "as" && isSymbol(qualified) && current.items.length === 3) {
+        results.push(
+          parseApp(
+            qualified,
+            [],
+            qualified,
+            [],
+            parseSort(current.items[2], "Invalid qualified identifier"),
+          ),
+        );
         return;
       }
       if (
@@ -1172,20 +1560,325 @@ export const createSmtlibReader = (
     return expectList(sexpr, context, at).items.map((item) => parseSort(item, context));
   };
 
+  const parseSortParameters = (sexpr: SExpr | undefined, message: string, at: SExpr) =>
+    expectList(sexpr, "invalid sort declaration, parameters missing", at).items.map(
+      (item) => expectSymbol(item, message, item).text,
+    );
+
+  const bindTypeParameters = (names: string[]) =>
+    new Map(names.map((name, index) => [name, manager.mkTypeParameter(index)]));
+
+  const parseAccessorSort = (
+    sexpr: SExpr,
+    bindings: ReadonlyMap<string, number>,
+    datatypeIndexes: ReadonlyMap<string, number>,
+    missing: string[],
+  ) => {
+    if (sexpr.kind === "list") return parseSort(sexpr, "", bindings);
+    if (sexpr.kind !== "symbol")
+      throw new SmtParseError("invalid sort, symbol, '_' or '(' expected", sexpr);
+    if (sortDecls.has(sexpr.text) || bindings.has(sexpr.text))
+      return parseSort(sexpr, "", bindings);
+    const index = datatypeIndexes.get(sexpr.text);
+    if (index !== undefined) return -1 - index;
+    missing.push(sexpr.text);
+    return SORT_BOOL;
+  };
+
+  const parseConstructors = (
+    items: SExpr[],
+    bindings: ReadonlyMap<string, number>,
+    datatypeIndexes: ReadonlyMap<string, number>,
+    missing: string[],
+    at: SExpr,
+  ): ConstructorDef[] => {
+    if (items.length === 0)
+      throw new SmtParseError(
+        "invalid datatype declaration, datatype does not have any constructors",
+        at,
+      );
+    return items.map((item) => {
+      if (isSymbol(item)) return { name: item.text, recognizer: `is-${item.text}`, accessors: [] };
+      const constructor = expectList(
+        item,
+        "invalid datatype declaration, '(' or ')' expected",
+        item,
+      );
+      const name = expectSymbol(
+        constructor.items[0],
+        "invalid constructor declaration, symbol (constructor name) expected",
+        constructor,
+      ).text;
+      const accessors = constructor.items.slice(1).map((accessorItem) => {
+        const accessor = expectList(
+          accessorItem,
+          "invalid datatype declaration, '(' or ')' expected",
+          accessorItem,
+        );
+        const accessorName = expectSymbol(
+          accessor.items[0],
+          "invalid accessor declaration, symbol (accessor name) expected",
+          accessor,
+        ).text;
+        const range = parseAccessorSort(
+          accessor.items[1] ?? accessor.end,
+          bindings,
+          datatypeIndexes,
+          missing,
+        );
+        if (accessor.items.length > 2)
+          throw new SmtParseError("invalid accessor declaration, ')' expected", accessor.items[2]);
+        return { name: accessorName, range };
+      });
+      return { name, recognizer: `is-${name}`, accessors };
+    });
+  };
+
+  const parseDatatypeBody = (
+    sexpr: SExpr | undefined,
+    datatypeIndexes: ReadonlyMap<string, number>,
+    missing: string[],
+    at: SExpr,
+  ) => {
+    const body = expectList(sexpr, "invalid datatype declaration, '(' expected", at);
+    if (!isSymbol(body.items[0], "par"))
+      return {
+        parameters: [],
+        constructors: parseConstructors(body.items, NO_BINDINGS, datatypeIndexes, missing, body),
+      };
+    const parameters = parseSortParameters(
+      body.items[1],
+      "invalid sort parameter, symbol or ')' expected",
+      body,
+    );
+    const constructors = expectList(
+      body.items[2],
+      "invalid constructor declaration after par, '(' expected",
+      body,
+    );
+    return {
+      parameters: parameters.map((_name, index) => manager.mkTypeParameter(index)),
+      constructors: parseConstructors(
+        constructors.items,
+        bindTypeParameters(parameters),
+        datatypeIndexes,
+        missing,
+        constructors,
+      ),
+    };
+  };
+
+  const commitDatatypes = (defs: DatatypeDef[], missing: string[], at: SExpr, end: SExpr) => {
+    if (missing.length > 0)
+      throw new SmtParseError(`invalid datatype declaration, unknown sort '${missing[0]}'`, at);
+    const sorts = mkDatatypes(manager, defs);
+    if (typeof sorts === "string") throw new SmtParseError(sorts, end);
+    for (const def of defs) undo.push(() => removeDatatype(manager, def.name));
+    defs.forEach((def, index) => {
+      if (def.parameters.length === 0) insertDatatypeDecls(sorts[index], end);
+    });
+    for (const def of defs) {
+      const names = def.constructors.flatMap((constructor) =>
+        constructor.accessors.map((accessor) => accessor.name),
+      );
+      const duplicated = names.find((name, index) => names.indexOf(name) !== index);
+      if (duplicated !== undefined)
+        throw new SmtParseError(
+          `invalid datatype declaration, repeated accessor identifier '${duplicated}'`,
+          at,
+        );
+    }
+  };
+
+  const declareSortDecl = (name: string, decl: SortDecl, at: SExpr) => {
+    if (sortDecls.has(name)) throw new SmtParseError(`sort already defined ${name}`, at);
+    declare(sortDecls, name, decl);
+  };
+
+  const declareDatatypes = (list: SmtList) => {
+    const declaration = expectList(
+      list.items[1],
+      "invalid sort declaration, parameters missing",
+      list,
+    );
+    const isSmt26 = declaration.items[0]?.kind === "list";
+    const datatypeIndexes = new Map<string, number>();
+    const names: string[] = [];
+    const arities: number[] = [];
+    const parameterNames: string[] = [];
+    declaration.items.forEach((item, index) => {
+      if (!isSmt26) {
+        parameterNames.push(
+          expectSymbol(item, "invalid sort parameter, symbol or ')' expected", item).text,
+        );
+        return;
+      }
+      const sortDeclaration = expectList(item, "invalid sort declaration, '(' expected", item);
+      const name = expectSymbol(
+        sortDeclaration.items[0],
+        "invalid sort name, identified expected",
+        sortDeclaration,
+      ).text;
+      const arity = sortDeclaration.items[1];
+      if (arity?.kind !== "numeral")
+        throw new SmtParseError(
+          "invalid sort declaration, arity expected",
+          arity ?? sortDeclaration.end,
+        );
+      if (sortDeclaration.items.length > 2)
+        throw new SmtParseError("invalid sort declaration, ')' expected", sortDeclaration.items[2]);
+      datatypeIndexes.set(name, index);
+      names.push(name);
+      arities.push(Number(arity.text));
+      declareSortDecl(
+        name,
+        { kind: "datatype", name, arity: Number(arity.text), siblings: [], instances: new Map() },
+        sortDeclaration,
+      );
+    });
+    const bodies = expectList(list.items[2], "invalid datatype declaration, '(' expected", list);
+    // A datatype of the older syntax may refer to any datatype of its declaration.
+    if (!isSmt26)
+      bodies.items.forEach((item, index) => {
+        const datatype = expectList(
+          item,
+          "invalid datatype declaration, '(' or ')' expected",
+          item,
+        );
+        const name = expectSymbol(
+          datatype.items[0],
+          "invalid datatype declaration, symbol (datatype name) expected",
+          datatype,
+        ).text;
+        datatypeIndexes.set(name, index);
+        names.push(name);
+      });
+    const missing: string[] = [];
+    const typeParameters = parameterNames.map((_name, index) => manager.mkTypeParameter(index));
+    const bindings = bindTypeParameters(parameterNames);
+    const defs = bodies.items.map((item, index) => {
+      if (isSmt26) {
+        if (index >= names.length)
+          throw new SmtParseError(
+            "invalid datatype declaration, too many data-type bodies defined",
+            item,
+          );
+        return mkDatatypeDef(
+          manager,
+          names[index],
+          Array.from({ length: arities[index] }, (_unused, parameter) =>
+            manager.mkTypeParameter(parameter),
+          ),
+          parseDatatypeBody(item, datatypeIndexes, missing, list).constructors,
+        );
+      }
+      const datatype = expectList(item, "invalid datatype declaration, '(' or ')' expected", item);
+      return mkDatatypeDef(
+        manager,
+        names[index],
+        typeParameters,
+        parseConstructors(datatype.items.slice(1), bindings, datatypeIndexes, missing, datatype),
+      );
+    });
+    if (defs.length < arities.length)
+      throw new SmtParseError(
+        "invalid datatype declaration, too few datatype definitions compared to declared sorts",
+        bodies.end,
+      );
+    if (list.items.length > 3)
+      throw new SmtParseError("invalid datatype declaration", list.items[3]);
+    if (defs.length === 0) return;
+    commitDatatypes(defs, missing, declaration, list.end);
+    if (isSmt26) return;
+    for (const def of defs)
+      declareSortDecl(
+        def.name,
+        {
+          kind: "datatype",
+          name: def.name,
+          arity: def.parameters.length,
+          siblings: defs.length > 1 ? names : [],
+          instances: new Map(),
+        },
+        list.end,
+      );
+  };
+
+  const declareDatatype = (list: SmtList) => {
+    const name = expectSymbol(list.items[1], "unexpected token used as datatype name", list);
+    const missing: string[] = [];
+    const bodyList = list.items[2];
+    const arity =
+      bodyList?.kind === "list" &&
+      isSymbol(bodyList.items[0], "par") &&
+      bodyList.items[1]?.kind === "list"
+        ? bodyList.items[1].items.length
+        : 0;
+    declareSortDecl(
+      name.text,
+      { kind: "datatype", name: name.text, arity, siblings: [], instances: new Map() },
+      name,
+    );
+    const body = parseDatatypeBody(bodyList, new Map([[name.text, 0]]), missing, list);
+    if (list.items.length > 3)
+      throw new SmtParseError("invalid end of datatype declaration, ')' expected", list.items[3]);
+    commitDatatypes(
+      [mkDatatypeDef(manager, name.text, body.parameters, body.constructors)],
+      missing,
+      name,
+      list.end,
+    );
+  };
+
   const declareCommand = (list: SmtList) => {
     const name = list.items[0].kind === "list" ? "" : list.items[0].text;
+    if (name === "declare-datatypes") {
+      declareDatatypes(list);
+      return;
+    }
+    if (name === "declare-datatype") {
+      declareDatatype(list);
+      return;
+    }
     const symbol = expectSymbol(list.items[1], "invalid declaration, symbol expected", list);
     if (name === "declare-sort") {
+      if (sortDecls.has(symbol.text))
+        throw new SmtParseError("invalid sort declaration, sort already declared/defined", symbol);
       const arity = list.items[2];
-      if (arity !== undefined && (arity.kind === "list" || arity.text !== "0"))
-        throw new SmtUnsupportedError("parametric sorts are not supported");
-      declare(sorts, symbol.text, manager.mkSort(symbol.text));
+      if (arity !== undefined && arity.kind !== "numeral")
+        throw new SmtParseError(
+          "invalid sort declaration, arity (<numeral>) or ')' expected",
+          arity,
+        );
+      if (list.items.length > 3)
+        throw new SmtParseError("invalid sort declaration, ')' expected", list.items[3]);
+      declare(
+        sortDecls,
+        symbol.text,
+        arity === undefined || arity.text === "0"
+          ? { kind: "sort", sort: manager.mkSort(symbol.text) }
+          : { kind: "user", name: symbol.text, arity: Number(arity.text) },
+      );
       return;
     }
     if (name === "define-sort") {
-      if (expectList(list.items[2], "invalid sort definition, '(' expected", list).items.length > 0)
-        throw new SmtUnsupportedError("parametric sorts are not supported");
-      declare(sorts, symbol.text, parseSort(list.items[3] ?? list.end, "invalid sort definition"));
+      if (sortDecls.has(symbol.text))
+        throw new SmtParseError("invalid sort definition, sort already declared/defined", symbol);
+      const parameters = parseSortParameters(
+        list.items[2],
+        "invalid sort parameter, symbol or ')' expected",
+        list,
+      );
+      const body = list.items[3] ?? list.end;
+      if (parameters.length === 0) {
+        declare(sortDecls, symbol.text, {
+          kind: "sort",
+          sort: parseSort(body, "invalid sort definition"),
+        });
+        return;
+      }
+      parseSort(body, "", bindTypeParameters(parameters));
+      declare(sortDecls, symbol.text, { kind: "definition", parameters, body });
       return;
     }
     if (name === "define-fun" || name === "define-const") {
@@ -1219,24 +1912,22 @@ export const createSmtlibReader = (
       for (const domainVar of vars) manager.incRef(domainVar);
       for (const domainVar of vars) manager.decRef(domainVar);
     }
-    const existing = funcs.get(symbol.text);
-    if (macros.has(symbol.text) || existing !== undefined) {
-      const previous = existing === undefined ? undefined : manager.funcDecls[existing];
-      // func_decls::insert: one name can declare functions of different signatures, which this
-      // port does not keep apart.
-      if (
-        previous === undefined ||
-        previous.range !== range ||
-        previous.domain.length !== domain.length ||
-        previous.domain.some((sort, index) => sort !== domain[index])
+    if (macros.has(symbol.text))
+      throw new SmtUnsupportedError(`the overloaded symbol ${symbol.text}`);
+    const existing = funcs.get(symbol.text) ?? [];
+    if (
+      existing.some(
+        (decl) =>
+          manager.funcDecls[decl].range === range &&
+          manager.funcDecls[decl].domain.length === domain.length &&
+          manager.funcDecls[decl].domain.every((sort, index) => sort === domain[index]),
       )
-        throw new SmtUnsupportedError(`the overloaded symbol ${symbol.text}`);
+    )
       throw new SmtParseError(
         `invalid declaration, ${domain.length === 0 ? "constant" : "function"} '${symbol.text}' (with the given signature) already declared`,
         list.end,
       );
-    }
-    declare(funcs, symbol.text, manager.mkFuncDecl(symbol.text, domain, range));
+    declare(funcs, symbol.text, [...existing, manager.mkFuncDecl(symbol.text, domain, range)]);
   };
 
   const parseFormula = (sexpr: SExpr) => {
@@ -1251,10 +1942,7 @@ export const createSmtlibReader = (
 
   const pop = () => {
     const start = scopeStarts.pop() ?? 0;
-    for (const entry of undo.splice(start).reverse()) {
-      if (entry.previous === undefined) entry.names.delete(entry.name);
-      else entry.names.set(entry.name, entry.previous);
-    }
+    for (const restore of undo.splice(start).reverse()) restore();
   };
 
   const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
@@ -1266,6 +1954,8 @@ export type SmtlibReader = ReturnType<typeof createSmtlibReader>;
 
 export const DECLARATIONS = new Set([
   "declare-sort",
+  "declare-datatypes",
+  "declare-datatype",
   "declare-fun",
   "declare-const",
   "define-fun",
