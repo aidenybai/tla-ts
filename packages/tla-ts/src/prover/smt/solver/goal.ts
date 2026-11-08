@@ -11,6 +11,7 @@ interface Polarized {
 export class Goal {
   readonly forms: RefVector;
   isInconsistent = false;
+  depth = 0;
 
   constructor(private manager: AstManager) {
     this.forms = new RefVector(manager);

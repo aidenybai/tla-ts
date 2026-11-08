@@ -96,6 +96,56 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "unsat"]);
   });
 
+  it("prints the simplified term, as in z3test's t27.smt2 and abs.smt2", () => {
+    expect(
+      run([
+        "(simplify (distinct 0 1 2 3 4 5 6))",
+        "(declare-fun a () Int)",
+        "(simplify (distinct 0 1 2 3 a 4 5 6))",
+        "(simplify (abs a))",
+      ]),
+    ).toEqual(["true", "(distinct 0 1 2 3 a 4 5 6)", "(ite (>= a 0) a (* (- 1) a))"]);
+  });
+
+  it("names a deep subterm with let, as Z3's printer does", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(simplify (forall ((x Int) (y Int)) (=> (> x y) (> (+ x a) (+ y a b b b b b b b b b)))))",
+      ]),
+    ).toEqual([
+      [
+        "(forall ((x Int) (y Int))",
+        "  (let ((a!1 (not (<= x (+ y (* 9 b))))))",
+        "    (or (<= x y) a!1)))",
+      ].join("\n"),
+    ]);
+  });
+
+  it("prints the goal that apply's tactic leaves, as in z3test's t64.smt2", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (>= x 0))",
+        "(assert (and (>= x 1) (not (or (not (and (>= x 2) (>= x 5))) (>= x 3)))))",
+        "(apply simplify)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (>= x 0)",
+        "  (>= x 1)",
+        "  (>= x 2)",
+        "  (>= x 5)",
+        "  (not (>= x 3))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);

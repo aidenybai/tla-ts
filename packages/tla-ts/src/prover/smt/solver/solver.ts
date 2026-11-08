@@ -16,8 +16,6 @@ interface SmtCheck {
   numInstances: number;
 }
 
-// What the ufnia tactic and the SMT kernel make of the assertions: the lbool of the search, the
-// context that searched, or none when the preprocessing decided the goal.
 export const solveAssertions = (manager: AstManager, assertions: number[], isMbqi = true) => {
   const goal = applyUfniaTactic(manager, assertions);
   // and_then runs smt_tactic only on a goal that the preprocessing left undecided.

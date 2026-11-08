@@ -331,4 +331,5 @@ export const ctxSimplify = (manager: AstManager, goal: Goal) => {
   const simplifier = new CtxSimplifier(manager);
   simplifier.apply(goal);
   simplifier.release();
+  goal.depth++;
 };

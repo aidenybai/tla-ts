@@ -1,6 +1,5 @@
 // Ported from Z3 (src/parsers/smt2/smt2scanner.cpp, src/parsers/smt2/smt2parser.cpp,
-// src/cmd_context/cmd_context.cpp), MIT license, see z3-license.txt. Reads SMT-LIB commands and
-// parses the Int, Real and uninterpreted part of SMT-LIB into Z3-style expressions.
+// src/cmd_context/cmd_context.cpp), MIT license, see z3-license.txt.
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
@@ -42,8 +41,13 @@ import {
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
 
-// A token of smt2scanner, at the line and column Z3 reports it. Z3 counts the columns of the first
-// line from 1 and of the others from 0.
+export interface ParserOptions {
+  isIgnoringBadPatterns: boolean;
+}
+
+const DEFAULT_PARSER_OPTIONS: ParserOptions = { isIgnoringBadPatterns: true };
+
+// Z3 counts the columns of the first line from 1 and of the others from 0.
 export interface SmtToken {
   kind: "(" | ")" | "symbol" | "keyword" | "string" | "numeral" | "decimal" | "bitvector";
   text: string;
@@ -56,20 +60,26 @@ export interface SmtList {
   items: SExpr[];
   line: number;
   column: number;
-  // The closing parenthesis, where Z3 reports an error in making an application.
+  // Z3 reports an error in making an application at its closing parenthesis.
   end: SmtToken;
 }
 
 export type SExpr = SmtToken | SmtList;
 
-// A name in scope: a variable bound by a quantifier, or a let binding's term. depth is the number of
-// binders above it.
-type Binding =
-  | { kind: "var"; depth: number; sort: number }
-  | { kind: "let"; depth: number; expr: number };
+interface VarBinding {
+  kind: "var";
+  depth: number;
+  sort: number;
+}
 
-// A function that define-fun declares, which cmd_context expands where it is applied: its body
-// over the variables of its parameters.
+interface LetBinding {
+  kind: "let";
+  depth: number;
+  expr: number;
+}
+
+type Binding = VarBinding | LetBinding;
+
 interface Macro {
   domain: number[];
   range: number;
@@ -78,12 +88,9 @@ interface Macro {
 
 interface SmtProblem {
   assertions: number[];
-  // Z3 prints no answer for a script without check-sat.
   hasCheckSat: boolean;
 }
 
-// An application that parseTerm is parsing: its head, its list, where its arguments start on the
-// result stack, and its next argument.
 interface ApplicationFrame {
   head: SmtToken;
   list: SmtList;
@@ -123,8 +130,7 @@ const LOGIC_FREE_ALIASES = new Map([
   ["equiv", "="],
 ]);
 
-// arith_decl_plugin's operators beyond linear and polynomial arithmetic, which Z3 knows only when the
-// script sets no logic.
+// Z3 knows these only when the script sets no logic.
 const TRANSCENDENTALS = new Set([
   "^",
   "^0",
@@ -155,9 +161,6 @@ const TRANSCENDENTALS = new Set([
   "complex.imag",
 ]);
 
-// The sorts and operators of the theories that cmd_context loads and the port does not implement:
-// bit-vectors, arrays and sets, datatypes, sequences and strings, characters, floating point,
-// pseudo-Booleans, special relations, finite sets and finite fields.
 const THEORY_SORTS = new Set([
   "BitVec",
   "Array",
@@ -252,8 +255,43 @@ const THEORY_OPERATORS = new Set([
 // left.
 const NESTED_OPS = new Set([OP_XOR, OP_IMPLIES, OP_SUB, OP_DIV, OP_IDIV]);
 
-// arith_decl_plugin's use_coercion: the operators that are Real when any argument is Real.
 const COERCING_OPS = new Set([OP_ADD, OP_SUB, OP_UMINUS, OP_MUL, OP_LE, OP_GE, OP_LT, OP_GT]);
+
+const ARITIES = new Map<number, [number, number]>([
+  [OP_AND, [0, Infinity]],
+  [OP_OR, [0, Infinity]],
+  [OP_ITE, [3, 3]],
+  [OP_EQ, [2, Infinity]],
+  [OP_DISTINCT, [2, Infinity]],
+  ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT].map(
+    (op): [number, [number, number]] => [op, [1, 1]],
+  ),
+  ...[OP_IMPLIES, OP_XOR, OP_IDIV, OP_MOD, OP_DIV, OP_LE, OP_GE, OP_LT, OP_GT].map(
+    (op): [number, [number, number]] => [op, [2, 2]],
+  ),
+]);
+
+const RANGES = new Map<number, number>([
+  [OP_TO_REAL, SORT_REAL],
+  [OP_DIV, SORT_REAL],
+  [OP_TO_INT, SORT_INT],
+  [OP_IDIV, SORT_INT],
+  [OP_MOD, SORT_INT],
+  ...[
+    OP_EQ,
+    OP_DISTINCT,
+    OP_AND,
+    OP_OR,
+    OP_XOR,
+    OP_NOT,
+    OP_IMPLIES,
+    OP_LE,
+    OP_GE,
+    OP_LT,
+    OP_GT,
+  ].map((op): [number, number] => [op, SORT_BOOL]),
+  [OP_IS_INT, SORT_BOOL],
+]);
 
 const CHAINABLE_OPS = new Map<string, number>([
   ["=", OP_EQ],
@@ -263,11 +301,19 @@ const CHAINABLE_OPS = new Map<string, number>([
   [">", OP_GT],
 ]);
 
-// smt2scanner's m_normalized: the characters of a symbol, past its first.
+const BUILTIN_NAMES = new Set([
+  "true",
+  "false",
+  "~",
+  ...CHAINABLE_OPS.keys(),
+  ...BUILTIN_OPS.keys(),
+  ...LOGIC_FREE_ALIASES.keys(),
+  ...TRANSCENDENTALS,
+  ...THEORY_OPERATORS,
+]);
+
 const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 
-// smt2scanner: reads the tokens of text one at a time, and throws SmtParseError on a character
-// that starts no token.
 const createScanner = (text: string) => {
   const state = { index: 0, line: 1, lineStart: -1 };
   const getColumn = () => state.index - state.lineStart - (state.line === 1 ? 0 : 1);
@@ -348,12 +394,8 @@ const createScanner = (text: string) => {
   return { next, getPosition: () => ({ line: state.line, column: getColumn() }) };
 };
 
-// Reads the commands of a script one at a time, as parse_cmd consumes them. A command that fails to
-// read is reported, and the reader skips past it as sync_after_error does, to the next opening
-// parenthesis at the top level.
 export const createCommandReader = (text: string) => {
   const scanner = createScanner(text);
-  // depth: the parentheses of the command being read that are still open.
   const state: { lookahead: SmtToken | undefined; depth: number } = {
     lookahead: undefined,
     depth: 0,
@@ -401,7 +443,6 @@ export const createCommandReader = (text: string) => {
       current = parent;
     }
   };
-  // The next command, undefined at the end of the script.
   const read = (): SmtList | undefined => {
     const token = take();
     if (token === undefined) return undefined;
@@ -409,8 +450,6 @@ export const createCommandReader = (text: string) => {
     state.depth = 1;
     return readList(token);
   };
-  // sync_after_error: skips the rest of the command, and what follows up to the next one. It reports
-  // the scanner's errors on the way.
   const skip = (report: (error: SmtParseError) => void) => {
     for (;;) {
       try {
@@ -444,9 +483,11 @@ const expectSymbol = (sexpr: SExpr | undefined, message: string, at: SExpr): Smt
   return sexpr;
 };
 
-// The declarations of a script and the parser of its terms, with push and pop for the scopes
-// cmd_context keeps. Expressions are created in the order of Z3's parser, and live as long as there.
-export const createSmtlibReader = (manager: AstManager, logic?: string) => {
+export const createSmtlibReader = (
+  manager: AstManager,
+  logic?: string,
+  options: ParserOptions = DEFAULT_PARSER_OPTIONS,
+) => {
   const sorts = new Map<string, number>([
     ["Bool", SORT_BOOL],
     ["Int", SORT_INT],
@@ -454,18 +495,16 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
   ]);
   const funcs = new Map<string, number>();
   const macros = new Map<string, Macro>();
-  // What each declaration replaced, so that pop can restore it, and where each scope starts.
   const undo: { names: Map<string, unknown>; name: string; previous: unknown }[] = [];
   const scopeStarts: number[] = [];
   const scopes: Map<string, Binding>[] = [];
-  let depth = 0;
+  const binders = { depth: 0 };
 
   const declare = <Value>(names: Map<string, Value>, name: string, value: Value) => {
     undo.push({ names, name, previous: names.get(name) });
     names.set(name, value);
   };
 
-  // parse_sort: context prefixes the message of an unknown sort.
   const parseSort = (sexpr: SExpr, context: string) => {
     if (sexpr.kind === "list") {
       if (isSymbol(sexpr.items[0], "_")) throw new SmtUnsupportedError("indexed sorts");
@@ -490,14 +529,12 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     return undefined;
   };
 
-  // basic_decl_plugin::join: Int and Real join to Real. Other sorts join only with themselves.
   const getJoin = (args: number[]) => {
     const argSorts = args.map((arg) => manager.sorts[arg]);
     if (!argSorts.every(isArithSort)) return argSorts[0];
     return argSorts.includes(SORT_REAL) ? SORT_REAL : SORT_INT;
   };
 
-  // The sort of the arguments of a builtin, as Z3's decl plugins pick its declaration.
   const getDomainSort = (op: number, args: number[]) => {
     if (op === OP_ITE) return getJoin(args.slice(1));
     if (op === OP_EQ || op === OP_DISTINCT) return getJoin(args);
@@ -508,22 +545,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     return SORT_BOOL;
   };
 
-  const getRange = (op: number, domainSort: number) =>
-    op === OP_TO_REAL || op === OP_DIV
-      ? SORT_REAL
-      : op === OP_TO_INT || op === OP_IDIV || op === OP_MOD
-        ? SORT_INT
-        : op === OP_ITE ||
-            op === OP_ABS ||
-            op === OP_ADD ||
-            op === OP_SUB ||
-            op === OP_UMINUS ||
-            op === OP_MUL
-          ? domainSort
-          : SORT_BOOL;
-
-  // ast_manager::coerce_to: an Int argument of a Real position becomes to_real, and a Real argument
-  // of an Int position to_int.
   const coerce = (arg: number, sort: number) => {
     const argSort = manager.sorts[arg];
     if (argSort === sort || !isArithSort(argSort) || !isArithSort(sort)) return arg;
@@ -532,9 +553,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
       : manager.mkApp(OP_TO_INT, [arg], SORT_INT);
   };
 
-  // Coerces the arguments of an application to the sorts of its declaration, as Z3 does with its
-  // default int_real_coercions, then checks their sorts and number, so the solver only sees
-  // well-sorted terms, and that quantifiers occur only under Boolean connectives.
   const mkApp = (decl: number, inputArgs: number[], at: SExpr, domainSort?: number) => {
     const op = manager.funcDecls[decl].op;
     const name = manager.funcDecls[decl].name;
@@ -546,33 +564,10 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     const args = inputArgs.map((arg, index) =>
       getExpected(index) === undefined ? arg : coerce(arg, getExpected(index)),
     );
-    const isArity = (min: number, max: number) => args.length >= min && args.length <= max;
+    const arity = ARITIES.get(op) ?? [1, Infinity];
     const isArityOk = isUninterpreted
       ? args.length === domain.length
-      : op === OP_AND || op === OP_OR
-        ? true
-        : op === OP_ITE
-          ? isArity(3, 3)
-          : op === OP_EQ || op === OP_DISTINCT
-            ? isArity(2, Infinity)
-            : op === OP_NOT ||
-                op === OP_UMINUS ||
-                op === OP_ABS ||
-                op === OP_TO_REAL ||
-                op === OP_TO_INT ||
-                op === OP_IS_INT
-              ? isArity(1, 1)
-              : op === OP_IMPLIES ||
-                  op === OP_XOR ||
-                  op === OP_IDIV ||
-                  op === OP_MOD ||
-                  op === OP_DIV ||
-                  op === OP_LE ||
-                  op === OP_GE ||
-                  op === OP_LT ||
-                  op === OP_GT
-                ? isArity(2, 2)
-                : isArity(1, Infinity);
+      : args.length >= arity[0] && args.length <= arity[1];
     const isBuiltinArith = manager.funcDecls[decl].family === FAMILY_ARITH;
     const isWellSorted =
       isArityOk &&
@@ -582,7 +577,7 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     return manager.mkApp(
       decl,
       args,
-      isUninterpreted ? manager.funcDecls[decl].range : getRange(op, builtinSort),
+      isUninterpreted ? manager.funcDecls[decl].range : (RANGES.get(op) ?? builtinSort),
     );
   };
 
@@ -594,25 +589,22 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs, at);
   };
 
-  const expectBool = (expr: number, at: SExpr) => {
-    if (manager.sorts[expr] !== SORT_BOOL) throw new SmtParseError("expected a formula", at);
-    return expr;
+  const rejectPattern = (message: string, at: SExpr) => {
+    if (!options.isIgnoringBadPatterns) throw new SmtParseError(message, at);
+    return undefined;
   };
 
-  // push_pattern_frame with ignore_bad_patterns: (t1 ... tn) is a multi-pattern, (f a ...) a pattern
-  // of one term, and a pattern that starts with a constant is dropped unparsed.
-  const parsePattern = (sexpr: SExpr | undefined) => {
-    if (sexpr?.kind !== "list" || sexpr.items.length === 0) return undefined;
+  const parsePattern = (sexpr: SExpr, at: SExpr) => {
+    if (sexpr.kind !== "list") return rejectPattern("invalid pattern, '(' expected", sexpr);
+    if (sexpr.items.length === 0) return rejectPattern("invalid empty pattern", at);
     const head = sexpr.items[0];
     if (head.kind === "list") return manager.mkPattern(sexpr.items.map(parseTerm));
     const decl = head.text === "true" || head.text === "false" ? -1 : funcs.get(head.text);
     if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0))
-      return undefined;
+      return rejectPattern("invalid constant pattern", head);
     return manager.mkPattern([parseTerm(sexpr)]);
   };
 
-  // pattern_validator: a pattern has no Boolean operator other than equality, no quantifier, and
-  // every variable of its quantifier.
   const isValidPattern = (pattern: number, numDecls: number) => {
     const found = new Set<number>();
     const isValid = (expr: number): boolean => {
@@ -635,7 +627,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     return manager.everyArg(pattern, isValid) && found.size === numDecls;
   };
 
-  // parse_sorted_vars: the names and sorts of ((x1 s1) ... (xn sn)), bound in a new scope.
   const bindSortedVars = (sexpr: SExpr | undefined, at: SExpr) => {
     const message = "invalid sorted variables, syntax error: ((<symbol> <sort>)*) expected";
     const declarations = expectList(sexpr, message, at).items.map((declaration) =>
@@ -648,17 +639,17 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     const varSorts = declarations.map((declaration, index) => {
       if (declaration.items.length !== 2) throw new SmtParseError(message, declaration.end);
       const sort = parseSort(declaration.items[1], "invalid sorted variables");
-      scope.set(names[index], { kind: "var", depth: depth + index, sort });
+      scope.set(names[index], { kind: "var", depth: binders.depth + index, sort });
       return sort;
     });
     scopes.push(scope);
-    depth += varSorts.length;
+    binders.depth += varSorts.length;
     return { names, varSorts };
   };
 
   const unbindSortedVars = (count: number) => {
     scopes.pop();
-    depth -= count;
+    binders.depth -= count;
   };
 
   const parseQuantifier = (list: SmtList, isForall: boolean) => {
@@ -678,30 +669,45 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     const bodySExpr = list.items[2];
     const isAnnotated = bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!");
     const annotations = bodySExpr.kind === "list" && isAnnotated ? bodySExpr.items : [];
-    const body = expectBool(parseTerm(isAnnotated ? annotations[1] : bodySExpr), bodySExpr);
+    const body = parseTerm(isAnnotated ? annotations[1] : bodySExpr);
+    if (manager.sorts[body] !== SORT_BOOL) throw new SmtParseError("expected a formula", bodySExpr);
+    const attributes = Array.from(
+      { length: Math.ceil((annotations.length - 2) / 2) },
+      (_unused, index) => ({
+        keyword: annotations[2 + 2 * index],
+        value: annotations[3 + 2 * index],
+      }),
+    );
     const patterns: number[] = [];
-    let weight = 1;
-    let qid = "";
-    for (let index = 2; index < annotations.length; index += 2) {
-      const keyword = annotations[index];
-      const value = annotations[index + 1];
-      if (keyword.kind === "keyword" && keyword.text === ":pattern") {
-        const pattern = parsePattern(value);
-        if (pattern !== undefined) {
-          manager.incRef(pattern);
-          patterns.push(pattern);
-        }
-      } else if (keyword.kind === "keyword" && keyword.text === ":weight" && value.kind !== "list")
-        weight = Number(value.text);
-      else if (keyword.kind === "keyword" && keyword.text === ":qid" && value.kind !== "list")
-        qid = value.text;
+    for (const attribute of attributes) {
+      if (attribute.keyword.kind !== "keyword" || attribute.keyword.text !== ":pattern") continue;
+      const pattern = parsePattern(attribute.value ?? list.end, list.end);
+      if (pattern === undefined) continue;
+      manager.incRef(pattern);
+      patterns.push(pattern);
     }
+    const getAttribute = (name: string) => {
+      const value = attributes
+        .filter(
+          (attribute) =>
+            attribute.keyword.kind === "keyword" &&
+            attribute.keyword.text === name &&
+            attribute.value?.kind !== "list",
+        )
+        .at(-1)?.value;
+      return value?.kind === "list" ? undefined : value?.text;
+    };
+    const weight = Number(getAttribute(":weight") ?? 1);
+    const qid = getAttribute(":qid") ?? "";
     unbindSortedVars(varSorts.length);
     // pop_quant_frame: the invalid patterns leave the parser's stack before the quantifier is made,
     // and the valid ones after.
     let numKept = 0;
     for (const pattern of patterns) {
-      if (!isValidPattern(pattern, varSorts.length)) continue;
+      if (!isValidPattern(pattern, varSorts.length)) {
+        rejectPattern("invalid pattern", list.end);
+        continue;
+      }
       manager.incRef(pattern);
       manager.decRef(patterns[numKept]);
       patterns[numKept] = pattern;
@@ -729,7 +735,7 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
       const pair = expectList(binding, message, binding);
       const name = expectSymbol(pair.items[0], message, pair);
       const expr = parseTerm(pair.items[1] ?? pair.end);
-      scope.set(name.text, { kind: "let", depth, expr });
+      scope.set(name.text, { kind: "let", depth: binders.depth, expr });
     }
     scopes.push(scope);
     const body = parseTerm(list.items[2] ?? list.end);
@@ -737,8 +743,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     return body;
   };
 
-  // var_subst: the macro's body with its parameters replaced by the arguments. A replaced argument
-  // under a binder of the body moves its free variables up by the binders above it.
   const expandMacro = (macro: Macro, args: number[]) =>
     replaceFreeVars(manager, macro.body, (_variable, index, shift) => {
       const arg = args[args.length - 1 - index];
@@ -749,7 +753,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
           );
     });
 
-  // cmd_context::mk_app: a macro, then a declared function, then a builtin.
   const parseApp = (head: SmtToken, args: number[], at: SExpr) => {
     const name = head.text;
     const macro = macros.get(name);
@@ -786,8 +789,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
         throw new SmtParseError(`ill-sorted application of ${name}`, at);
       return args[0] ?? manager.falseExpr;
     }
-    // ast_manager::mk_app: more arguments of an operator that is not flat nest to the left or
-    // the right, with the declaration picked for all of them.
     if (args.length <= 2 || !NESTED_OPS.has(op)) return mkApp(op, args, at);
     const domainSort = getDomainSort(op, args);
     return op === OP_XOR || op === OP_IMPLIES
@@ -802,34 +803,30 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
 
   const getSortName = (sort: number) => manager.sortNames[sort];
 
-  const parseNumeral = (token: SmtToken) => {
-    if (token.kind === "numeral") return manager.mkNumeral(BigInt(token.text));
-    const parts = token.text.split(".");
-    const fraction = parts[1] ?? "";
-    return manager.mkRealNumeral(
-      Rational.of(BigInt(parts[0] + fraction), 10n ** BigInt(fraction.length)),
-    );
-  };
-
-  // A term without nested applications to parse first: a symbol, a quantifier, a let or an
-  // annotation.
   const parseLeaf = (sexpr: SExpr): number => {
-    if (sexpr.kind === "numeral" || sexpr.kind === "decimal") return parseNumeral(sexpr);
+    if (sexpr.kind === "numeral") return manager.mkNumeral(BigInt(sexpr.text));
+    if (sexpr.kind === "decimal") {
+      const parts = sexpr.text.split(".");
+      return manager.mkRealNumeral(
+        Rational.of(BigInt(parts[0] + parts[1]), 10n ** BigInt(parts[1].length)),
+      );
+    }
     if (sexpr.kind === "bitvector") throw new SmtUnsupportedError("bit-vector literals");
     if (sexpr.kind === "string") throw new SmtUnsupportedError("string literals");
     if (sexpr.kind === "symbol") {
       if (sexpr.text === "true") return manager.trueExpr;
       if (sexpr.text === "false") return manager.falseExpr;
       const binding = lookup(sexpr.text);
-      if (binding?.kind === "var") return manager.mkVar(depth - 1 - binding.depth, binding.sort);
+      if (binding?.kind === "var")
+        return manager.mkVar(binders.depth - 1 - binding.depth, binding.sort);
       // Z3's var_shifter moves the free variables of a let binding up by the binders since. Its cache
       // holds the terms it makes, but this parser holds no references, so it rebuilds the binding
       // with replaceFreeVars.
       if (binding !== undefined)
-        return depth === binding.depth
+        return binders.depth === binding.depth
           ? binding.expr
           : replaceFreeVars(manager, binding.expr, (variable, index, shift) =>
-              manager.mkVar(index + shift + depth - binding.depth, manager.sorts[variable]),
+              manager.mkVar(index + shift + binders.depth - binding.depth, manager.sorts[variable]),
             );
       return parseApp(sexpr, [], sexpr);
     }
@@ -839,7 +836,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
       return parseQuantifier(sexpr, head.text === "forall");
     if (isSymbol(head, "let")) return parseLet(sexpr);
     const named = parseTerm(sexpr.items[1] ?? sexpr.end);
-    // name_expr: cmd_context keeps a named expression as a macro.
     const nameIndex = sexpr.items.findIndex(
       (item) => item.kind === "keyword" && item.text === ":named",
     );
@@ -856,8 +852,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     return named;
   };
 
-  // Applications keep their own stack, like Z3's parser, so deeply nested terms do not exhaust the
-  // call stack.
   const parseTerm = (sexpr: SExpr): number => {
     const frames: ApplicationFrame[] = [];
     const results: number[] = [];
@@ -898,13 +892,11 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     return results[0];
   };
 
-  // The sorts of a declaration's domain: (s1 ... sn).
   const parseDomain = (sexpr: SExpr | undefined, at: SExpr) => {
     const context = "Parsing function declaration. Expecting sort list '('";
     return expectList(sexpr, context, at).items.map((item) => parseSort(item, context));
   };
 
-  // declare-fun, declare-const, declare-sort, define-fun, define-const and define-sort.
   const declareCommand = (list: SmtList) => {
     const name = list.items[0].kind === "list" ? "" : list.items[0].text;
     const symbol = expectSymbol(list.items[1], "invalid declaration, symbol expected", list);
@@ -972,7 +964,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     declare(funcs, symbol.text, manager.mkFuncDecl(symbol.text, domain, range));
   };
 
-  // An assertion, which cmd_context::assert_expr keeps.
   const parseFormula = (sexpr: SExpr) => {
     const assertion = parseTerm(sexpr);
     if (manager.sorts[assertion] !== SORT_BOOL)
@@ -983,7 +974,6 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
 
   const push = () => scopeStarts.push(undo.length);
 
-  // pop: the declarations of the scope go, and those they replaced come back.
   const pop = () => {
     const start = scopeStarts.pop() ?? 0;
     for (const entry of undo.splice(start).reverse()) {
@@ -992,7 +982,9 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     }
   };
 
-  return { declareCommand, parseTerm, parseFormula, push, pop };
+  const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
+
+  return { declareCommand, parseTerm, parseFormula, push, pop, isUsed };
 };
 
 export type SmtlibReader = ReturnType<typeof createSmtlibReader>;
@@ -1006,8 +998,6 @@ export const DECLARATIONS = new Set([
   "define-sort",
 ]);
 
-// Parses tlapm's problem up to its first check-sat, and hands each assertion to assertExpr as Z3's
-// cmd_context does, before it parses the next command.
 export const parseSmtlib = (
   text: string,
   manager: AstManager,

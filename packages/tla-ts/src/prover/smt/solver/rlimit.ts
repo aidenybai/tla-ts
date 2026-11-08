@@ -33,7 +33,6 @@ export class ResourceLimit {
     return !this.isCanceled;
   }
 
-  // Starts the work over with a new deadline, as a script does for each check-sat.
   restart(deadline: number) {
     this.deadline = deadline;
     this.isCanceled = false;
