@@ -588,10 +588,15 @@ const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) =>
   if (operation === undefined || node.arguments[0] === undefined) {
     throw new TlaTypeScriptError(`Unsupported Set method: ${method}`, node);
   }
-  return operation(
-    translateExpression(node.expression.expression, scope, context),
-    translateExpression(node.arguments[0], scope, context),
-  );
+  const argument = node.arguments[0];
+  const kind = getKind(argument, context);
+  if (method !== "has" && kind !== "set" && kind !== "map") {
+    throw new TlaTypeScriptError(`Pass a Set or a Map to ${method}()`, argument);
+  }
+  const values = translateExpression(node.expression.expression, scope, context);
+  const other = translateExpression(argument, scope, context);
+  // A Map is like a set of its keys.
+  return operation(values, method !== "has" && kind === "map" ? getDomain(other) : other);
 };
 
 const translateMapMethod = (

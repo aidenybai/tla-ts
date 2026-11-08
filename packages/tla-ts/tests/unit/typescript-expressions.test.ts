@@ -117,6 +117,8 @@ const CASES: Record<string, (string | [string, string])[]> = {
     "new Set([1, 2]).isSupersetOf(new Set([1]))",
     "new Set([1]).isDisjointFrom(new Set([2]))",
     "new Set([1, 2]).isDisjointFrom(new Set([2]))",
+    "new Set([2]).isSubsetOf(new Map([[2, 'two']]))",
+    "new Set([1]).isDisjointFrom(new Map([[2, 'two']]))",
     "[...new Set([1, 2, 3])].filter((value) => value > 1).length",
     "new Set([...new Set([1, 2, 3])].map((value) => value % 2))",
     "new Set([1, 2, 3].map((value) => value % 2))",
