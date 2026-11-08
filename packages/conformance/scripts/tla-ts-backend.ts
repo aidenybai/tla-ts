@@ -1,6 +1,5 @@
 // tla-ts's host for backend tests: runs its port of a tlapm backend on one input and prints the
-// verdict the way getBackendVerdict reduces the real backend's output. An SMT-LIB script runs whole,
-// and prints all that Z3 prints.
+// verdict the way getBackendVerdict reduces the real backend's output.
 // Usage: node .scripts/tla-ts-backend.js <z3|zenon|isabelle|ls4> <file>
 
 import { readFileSync } from "node:fs";
