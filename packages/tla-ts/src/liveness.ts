@@ -211,7 +211,11 @@ export const expandTemporal = (
   if (expression.kind === "Identifier") {
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk") {
-      return expand(binding.expression, binding.scope);
+      return expand(
+        binding.expression,
+        binding.scope,
+        definitionThunks.has(binding) ? expression.name : name,
+      );
     }
     const definition = environment.constants.has(expression.name)
       ? undefined

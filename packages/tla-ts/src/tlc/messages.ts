@@ -240,6 +240,21 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   ],
   [2265, "TLC can't handle a number this big.\n%1%", false],
   [2266, "The %1% argument of %2% should be an %3%, but instead it is:\n%4%", true],
+  [
+    2272,
+    "The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action %1% holds in *every* step of the behavior, define a temporal property: Let A be the formula at %2%; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).",
+    false,
+  ],
+  [
+    2273,
+    'The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action %1% holds in *every* step of the behavior, define a temporal property by applying the "always" temporal operator ([]) to the formula at %2% (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).',
+    false,
+  ],
+  [
+    2274,
+    'The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that infinitely many %1% steps occur, define a temporal property by applying the "always eventually" temporal operator combination ([]<>) to the formula at %2% (compare page 91 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).',
+    false,
+  ],
   [2280, "In evaluation, the identifier %1% is either undefined or not an operator.\n%2%", false],
   [2281, "The configuration file substitutes constant %1% with non-constant %2%%3%", false],
   [2283, "The argument of %1% should be a %2%, but instead it is:\n%3%", true],
