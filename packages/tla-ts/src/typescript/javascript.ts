@@ -36,6 +36,19 @@ SequenceWith(sequence, index, value) ==
      THEN [sequence EXCEPT ![relative + 1] = value]
      ELSE Assert(FALSE, "tla-ts can't throw the RangeError of with()")
 
+RECURSIVE ReduceAt(_, _, _)
+ReduceAt(Op(_, _), accumulator, positions) ==
+  IF positions = <<>>
+  THEN accumulator
+  ELSE ReduceAt(Op, Op(accumulator, Head(positions)), Tail(positions))
+
+Reduce(sequence, Op(_, _), isRight, hasInitial, initial) ==
+  LET length == Len(sequence)
+      order == [position \\in 1..length |-> IF isRight THEN length - position + 1 ELSE position]
+  IN CASE hasInitial -> ReduceAt(Op, initial, order)
+       [] length = 0 -> Assert(FALSE, "tla-ts can't throw the TypeError of reducing an empty array")
+       [] OTHER -> ReduceAt(Op, sequence[order[1]], Tail(order))
+
 IsRef(value) ==
   LET text == ToString(value)
   IN Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Ref :>"

@@ -17,6 +17,7 @@ import { isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Scope } from "./scope";
 import {
   apply,
+  boolean,
   bound,
   choose,
   filter,
@@ -33,7 +34,7 @@ import {
   set,
   tuple,
 } from "./tla";
-import { getKind, isBooleanType, type Kind, translateUnknown } from "./types";
+import { getKind, isBooleanType, isNumberLike, type Kind, translateUnknown } from "./types";
 
 interface Unordered {
   set: Expression;
@@ -100,16 +101,18 @@ const bindElement = (callback: ts.Expression, scope: Scope, context: Context): E
 };
 
 // Binds a callback's (element, index, array) parameters for the TLA+ index of a sequence, which
-// counts from 1 where JavaScript counts from 0.
+// counts from 1 where JavaScript counts from 0. A reducer takes an accumulator before them.
 const bindIndexed = (
   callback: ts.Expression,
   sequence: Expression | undefined,
   position: Expression,
   scope: Scope,
   context: Context,
+  accumulator?: Expression,
 ) => {
   const parameters = getCallback(callback, context).parameters;
   const bindings = [
+    ...(accumulator === undefined ? [] : [accumulator]),
     sequence === undefined ? undefined : index(sequence, [position]),
     apply("-", [position, number(1)]),
     sequence,
@@ -117,7 +120,7 @@ const bindIndexed = (
   return parameters.reduce((current, parameter, position) => {
     const value = bindings[position];
     if (
-      position === 2 &&
+      position === bindings.length - 1 &&
       ts.isIdentifier(parameter.name) &&
       getKind(parameter.name, context) !== "sequence"
     ) {
@@ -344,13 +347,21 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
   );
 };
 
-// The first index in a sequence whose element passes a test, or undefined if none does.
-const getEarlier = (earlier: string, position: string) =>
-  bound(earlier, apply("..", [number(1), apply("-", [identifier(position), number(1)])]));
+// The positions a search passes before it reaches a position, from the end when it searches back.
+const getPassed = (passed: string, position: string, sequence: Expression, isLast: boolean) =>
+  bound(
+    passed,
+    isLast
+      ? apply("..", [apply("+", [identifier(position), number(1)]), apply("Len", [sequence])])
+      : apply("..", [number(1), apply("-", [identifier(position), number(1)])]),
+  );
 
-const translateFirstIndex = (
+// The first index in a sequence whose element passes a test, or the last when isLast, and whether
+// any does.
+const translateFoundIndex = (
   sequence: Expression,
   callback: ts.Expression,
+  isLast: boolean,
   scope: Scope,
   context: Context,
 ) => {
@@ -361,15 +372,15 @@ const translateFirstIndex = (
       context,
     );
   const position = context.names.getFresh("index");
-  const earlier = context.names.getFresh("earlier");
+  const passed = context.names.getFresh("passed");
   return {
     exists: quantify("Exists", [bound(position, getDomain(sequence))], getTest(position)),
-    first: choose(
+    found: choose(
       position,
       getDomain(sequence),
       junction("And", [
         getTest(position),
-        quantify("Forall", [getEarlier(earlier, position)], not(getTest(earlier))),
+        quantify("Forall", [getPassed(passed, position, sequence, isLast)], not(getTest(passed))),
       ]),
     ),
   };
@@ -408,7 +419,10 @@ const translateSequenceOperation = (
         translateElement(argument, inner, context),
       );
     };
-  const withSearch = (use: (isFound: (position: Expression) => Expression) => Expression) =>
+  const withSearch = (
+    isLast: boolean,
+    use: (isFound: (position: Expression) => Expression) => Expression,
+  ) =>
     share(translate(argument), "value", context, (value) => {
       const checker = context.checker;
       const elementType = checker.getIndexTypeOfType(
@@ -423,25 +437,95 @@ const translateSequenceOperation = (
           ? apply("=", [index(sequence, [position]), value])
           : useJavaScript("SameValue", [index(sequence, [position]), value], context);
       const from = node.arguments[1];
-      if (
-        from === undefined ||
-        context.checker.getTypeAtLocation(from).flags & ts.TypeFlags.Undefined
-      ) {
-        return use(getEqual);
+      // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.
+      const isUndefined =
+        from !== undefined &&
+        (context.checker.getTypeAtLocation(from).flags & ts.TypeFlags.Undefined) !== 0;
+      if (from === undefined || (isUndefined && !isLast)) return use(getEqual);
+      if (!isUndefined && !isNumberLike(from, context)) {
+        throw new TlaTypeScriptError("Pass a number as the index to search from", from);
       }
-      const start = ts.isNumericLiteral(from)
-        ? translate(from)
-        : share(translate(from), "from", context, (shared) =>
-            ifExpression(
-              apply("<", [shared, number(0)]),
-              apply("+", [getLength(), shared]),
-              shared,
-            ),
-          );
+      const start = isUndefined
+        ? number(0)
+        : ts.isNumericLiteral(from)
+          ? translate(from)
+          : share(translate(from), "from", context, (shared) =>
+              ifExpression(
+                apply("<", [shared, number(0)]),
+                apply("+", [getLength(), shared]),
+                shared,
+              ),
+            );
+      // A search back from index start reaches position start + 1, as positions count from 1.
       return share(start, "start", context, (shared) =>
-        use((position) => junction("And", [apply(">", [position, shared]), getEqual(position)])),
+        use((position) =>
+          junction("And", [
+            isLast
+              ? apply("<=", [position, apply("+", [shared, number(1)])])
+              : apply(">", [position, shared]),
+            getEqual(position),
+          ]),
+        ),
       );
     });
+  const getSearchIndex = (isLast: boolean) => () =>
+    withSearch(isLast, (isFound) => {
+      const position = context.names.getFresh("index");
+      const passed = context.names.getFresh("passed");
+      return ifExpression(
+        quantify("Exists", [bound(position, getDomain(sequence))], isFound(identifier(position))),
+        apply("-", [
+          choose(
+            position,
+            getDomain(sequence),
+            junction("And", [
+              isFound(identifier(position)),
+              quantify(
+                "Forall",
+                [getPassed(passed, position, sequence, isLast)],
+                not(isFound(identifier(passed))),
+              ),
+            ]),
+          ),
+          number(1),
+        ]),
+        number(-1),
+      );
+    });
+  // The callback takes (accumulator, element, index, array), and Reduce gives it the accumulator
+  // and the position of the element.
+  const getReduced = (isRight: boolean) => () => {
+    const accumulator = context.names.getFresh("accumulator");
+    const position = context.names.getFresh("index");
+    const inner = bindIndexed(
+      argument,
+      sequence,
+      identifier(position),
+      scope,
+      context,
+      identifier(accumulator),
+    );
+    const initial = node.arguments[1];
+    return useJavaScript(
+      "Reduce",
+      [
+        sequence,
+        lambda([accumulator, position], translateCallback(argument, inner, context)),
+        boolean(isRight),
+        boolean(initial !== undefined),
+        initial === undefined ? getUndefined(context) : translate(initial),
+      ],
+      context,
+    );
+  };
+  const getFound = (isLast: boolean) => () => {
+    const result = translateFoundIndex(sequence, argument, isLast, scope, context);
+    return orUndefined(result.exists, index(sequence, [result.found]));
+  };
+  const getFoundIndex = (isLast: boolean) => () => {
+    const result = translateFoundIndex(sequence, argument, isLast, scope, context);
+    return ifExpression(result.exists, apply("-", [result.found, number(1)]), number(-1));
+  };
   const operations = new Map<string, () => Expression>([
     [
       "at",
@@ -456,7 +540,7 @@ const translateSequenceOperation = (
     [
       "includes",
       () =>
-        withSearch((isFound) => {
+        withSearch(false, (isFound) => {
           const position = context.names.getFresh("index");
           return quantify(
             "Exists",
@@ -465,37 +549,8 @@ const translateSequenceOperation = (
           );
         }),
     ],
-    [
-      "indexOf",
-      () =>
-        withSearch((isFound) => {
-          const position = context.names.getFresh("index");
-          const earlier = context.names.getFresh("earlier");
-          return ifExpression(
-            quantify(
-              "Exists",
-              [bound(position, getDomain(sequence))],
-              isFound(identifier(position)),
-            ),
-            apply("-", [
-              choose(
-                position,
-                getDomain(sequence),
-                junction("And", [
-                  isFound(identifier(position)),
-                  quantify(
-                    "Forall",
-                    [getEarlier(earlier, position)],
-                    not(isFound(identifier(earlier))),
-                  ),
-                ]),
-              ),
-              number(1),
-            ]),
-            number(-1),
-          );
-        }),
-    ],
+    ["indexOf", getSearchIndex(false)],
+    ["lastIndexOf", getSearchIndex(true)],
     [
       "slice",
       () => {
@@ -576,20 +631,12 @@ const translateSequenceOperation = (
         });
       },
     ],
-    [
-      "find",
-      () => {
-        const result = translateFirstIndex(sequence, argument, scope, context);
-        return orUndefined(result.exists, index(sequence, [result.first]));
-      },
-    ],
-    [
-      "findIndex",
-      () => {
-        const result = translateFirstIndex(sequence, argument, scope, context);
-        return ifExpression(result.exists, apply("-", [result.first, number(1)]), number(-1));
-      },
-    ],
+    ["reduce", getReduced(false)],
+    ["reduceRight", getReduced(true)],
+    ["find", getFound(false)],
+    ["findLast", getFound(true)],
+    ["findIndex", getFoundIndex(false)],
+    ["findLastIndex", getFoundIndex(true)],
   ]);
   const operation = operations.get(method);
   if (operation === undefined)
