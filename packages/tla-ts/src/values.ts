@@ -1,5 +1,6 @@
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { prettyPrint } from "./pretty-print";
+import { isEvalException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
 
 export interface ModelValue {
@@ -99,7 +100,7 @@ interface FilteredSetSource {
 export interface FilteredSetValue extends LazySet {
   kind: "FilteredSet";
   base: Value;
-  test: (element: Value) => boolean;
+  test: (element: Value, isMember: boolean) => boolean;
   source?: FilteredSetSource;
 }
 
@@ -1548,7 +1549,7 @@ const enumerateSet = (
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${formatValue(value.base)}\nis not enumerable`,
         );
       }
-      return toFiniteSet(value.base).elements.filter(value.test);
+      return toFiniteSet(value.base).elements.filter((element) => value.test(element, false));
     case "Union": {
       const elements = getUnionSets(value).flatMap(
         (set, index) => toFiniteSet(getUnionSet(set, index, value)).elements,
@@ -1697,7 +1698,7 @@ const streamElements = (value: ObjectValue): Value[] => {
     );
   }
   if (value.kind === "FilteredSet" && !isOverriddenSet(value.base)) {
-    return getStreamedElements(value.base).filter(value.test);
+    return getStreamedElements(value.base).filter((element) => value.test(element, false));
   }
   const components = getCombinedSets(value);
   if (components?.some(isStreamedApart)) return enumerateSet(value, getStreamedElements);
@@ -2079,7 +2080,16 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       );
     }
     case "FilteredSet":
-      return isElementOf(element, set.base) && set.test(element);
+      // SetPredValue#member reports any EvalException of the membership or the predicate as one
+      // it can't decide.
+      try {
+        return isElementOf(element, set.base) && set.test(element, true);
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError) || !isEvalException(error)) throw error;
+        throw new TlaEvaluationError(
+          `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`,
+        );
+      }
     case "Union":
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(

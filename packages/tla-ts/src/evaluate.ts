@@ -1729,11 +1729,36 @@ const compileSetComprehension = (
       names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
       predicate: formatRange(range),
     };
-    const createTest = (evaluator: Evaluator, context: Context) => (element: Value) =>
-      expectBoolean(
-        evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
-        "a set filter predicate",
-      );
+    const predicateRange = describeRange(expression.predicate);
+    const createTest = (evaluator: Evaluator, context: Context) => (element: Value) => {
+      const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
+      if (typeof value !== "boolean") {
+        throw new TlaEvaluationError(
+          `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateRange}`,
+        );
+      }
+      return value;
+    };
+    // SetPredValue checks the element of a lazy filter against a tuple of names, and words the
+    // error of a predicate that isn't a boolean apart for membership and enumeration.
+    const createLazyTest =
+      (evaluator: Evaluator, context: Context) => (element: Value, isMember: boolean) => {
+        if (
+          pattern.kind === "Tuple" &&
+          getSequenceElements(element)?.length !== pattern.names.length
+        ) {
+          throw new TlaEvaluationError(
+            `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
+          );
+        }
+        const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
+        if (typeof value !== "boolean") {
+          throw new TlaEvaluationError(
+            `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateRange} yielded non-Boolean value.`,
+          );
+        }
+        return value;
+      };
     const createFiltered = (
       base: Value,
       context: Context,
@@ -1741,7 +1766,7 @@ const compileSetComprehension = (
     ): RebindableFilteredSet => ({
       kind: "FilteredSet",
       base,
-      test: createTest(evaluator, context),
+      test: createLazyTest(evaluator, context),
       source,
       rebind: (tracing) =>
         createFiltered(
