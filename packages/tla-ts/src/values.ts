@@ -1439,7 +1439,7 @@ const getCartesianProduct = (lists: Value[][]) => {
   return combinations;
 };
 
-export const advanceCombination = (indices: number[], length: number) => {
+const advanceCombination = (indices: number[], length: number) => {
   for (let position = indices.length - 1; position >= 0; position--) {
     if (indices[position] < length - indices.length + position) {
       indices[position]++;
