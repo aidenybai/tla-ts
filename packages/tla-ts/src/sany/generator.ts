@@ -1902,7 +1902,7 @@ export const generateSanySpecification = (
       const context = createContext();
       const nameIndex = definition.isLocal ? span.start + 1 : span.start;
       const bounds = withContext(context, () => generateBounds(definition.bounds, nameIndex + 1));
-      const existing = resolveSymbol(symbolTable, definition.name);
+      const existing = withContext(context, () => resolveSymbol(symbolTable, definition.name));
       const recursionParam = withContext(context, () =>
         createFormalParam(definition.name, 0, location, existing === undefined),
       );
