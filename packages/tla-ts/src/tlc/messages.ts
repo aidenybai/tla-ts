@@ -297,7 +297,7 @@ const getCodedMessagePatterns = () =>
 // The overflows of SetOfFcnsValue and SetOfTuplesValue, which TLC raises with a plain message that
 // reads like the coded overflow of SetOfRcdsValue and SubsetValue, and SetPredValue's tuple membership.
 const UNCODED_MESSAGE_PATTERN =
-  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+ : ))|\nis an element of a set of \d+-tuples\.$/;
+  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+: ))|\nis an element of a set of \d+-tuples\.$/;
 
 export const getCodedMessage = (text: string): CodedMessage | undefined =>
   UNCODED_MESSAGE_PATTERN.test(text)
