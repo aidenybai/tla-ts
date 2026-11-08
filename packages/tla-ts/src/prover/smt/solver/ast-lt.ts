@@ -1,6 +1,4 @@
-// Ported from Z3 (src/ast/ast_lt.cpp, src/util/symbol.cpp), MIT license, see z3-license.txt. A
-// total order on expressions that does not depend on their ids. The rewriter sorts a disjunction
-// only when its arguments are out of this order.
+// Ported from Z3 (src/ast/ast_lt.cpp, src/util/symbol.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_BV,
   FAMILY_MODEL_VALUE,
@@ -18,7 +16,6 @@ import {
 } from "./ast";
 import { Rational } from "./rational";
 
-// The parts of a func_decl that lt compares: its name, parameters, domain and range.
 interface DeclKey {
   name: SmtSymbol;
   parameters: (number | Rational)[];
@@ -182,6 +179,5 @@ const compareAsts = (manager: AstManager, first: number, second: number): number
   return 0;
 };
 
-// lt: whether the first expression comes before the second.
 export const isAstLess = (manager: AstManager, first: number, second: number) =>
   compareAsts(manager, first, second) < 0;

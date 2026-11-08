@@ -1,8 +1,4 @@
-// Ported from Z3 (src/math/lp/cross_nested.h), MIT license, see z3-license.txt. Enumerates the
-// cross-nested forms of a sum, such as x*(y + z) + w for x*y + x*z + w, and calls back on each
-// until the callback returns true or 100 forms are reported. A form is built by rewriting the
-// expression in place: the front holds the slots of the subsums still to split.
-//
+// Ported from Z3 (src/math/lp/cross_nested.h), MIT license, see z3-license.txt.
 // The occurrence map is a Map in insertion order, where Z3 has an unordered_map. So when several
 // variables divide every summand, the extracted common factor may list them in another order.
 import { Rational } from "../rational";
@@ -17,7 +13,6 @@ import {
 } from "./nex";
 import type { NexCreator } from "./nex-creator";
 
-// A place that holds an expression, where Z3 has a nex**.
 interface NexSlot {
   get(): Nex;
   set(value: Nex): void;
@@ -45,8 +40,7 @@ const isDivisibleByVar = (expr: Nex, variable: number) =>
   (expr.kind === "mul" && containsVar(expr, variable)) ||
   (expr.kind === "var" && expr.variable === variable);
 
-// has_common_factor: whether a variable of the first summand divides the rest. A sum that
-// simplified to one term counts as a sum of that term.
+// A sum that simplified to one term counts as a sum of that term.
 const hasCommonFactor = (expr: Nex) => {
   const children = expr.kind === "sum" ? expr.children : [expr];
   for (const variable of getVarsOfExpr(children[0]))
@@ -199,8 +193,7 @@ export class CrossNested {
     this.exploreExprOnFrontElem(next, front);
   }
 
-  // split_with_var: e = j*a + b, where a sums the summands divisible by j, divided by it, and b
-  // sums the rest. It is enough to split on the variables where a has no common factor.
+  // It is enough to split on the variables where a has no common factor.
   private splitWithVar(slot: NexSlot, variable: number, front: NexSlot[]) {
     const expr = slot.get();
     if (expr.kind !== "sum") return false;

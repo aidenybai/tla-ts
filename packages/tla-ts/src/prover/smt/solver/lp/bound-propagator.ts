@@ -1,7 +1,6 @@
 // Ported from Z3 (src/math/lp/bound_analyzer_on_row.h, src/math/lp/lp_bound_propagator.h,
 // src/math/lp/implied_bound.h, and propagate_bounds_for_touched_rows in src/math/lp/lar_solver.h),
-// MIT license, see z3-license.txt. Bounds that a row implies on its columns from the bounds of the
-// others, and equalities between columns that rows with fixed columns imply.
+// MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
@@ -10,7 +9,6 @@ import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
 import type { RowCell } from "./static-matrix";
 
-// The theory side of lp_bound_propagator.
 interface BoundPropagatorHost {
   columnIsInteresting(column: number): boolean;
   boundIsInteresting(column: number, kind: ConstraintKind, value: Rational): boolean;
@@ -18,7 +16,6 @@ interface BoundPropagatorHost {
   addEq(first: number, second: number, explanation: Explanation, isFixed: boolean): boolean;
 }
 
-// implied_bound: the explanation is a weighted list of the witnesses of the other columns.
 const getBoundKind = (isLower: boolean, isStrict: boolean) => {
   if (isLower) return isStrict ? KIND_GT : KIND_GE;
   return isStrict ? KIND_LT : KIND_LE;
@@ -32,7 +29,6 @@ export interface ImpliedBound {
   explain: () => [Rational, Dependency][];
 }
 
-// bound_kind: the kind of a lower or upper bound, strict or not.
 export const getImpliedKind = (bound: ImpliedBound) => getBoundKind(bound.isLower, bound.isStrict);
 
 export class BoundPropagator {
@@ -55,7 +51,6 @@ export class BoundPropagator {
     this.ibounds = [];
   }
 
-  // propagate_bounds_for_touched_rows.
   propagateBoundsForTouchedRows() {
     const solver = this.solver;
     const settings = solver.settings;
@@ -79,8 +74,6 @@ export class BoundPropagator {
     }
     solver.touchedRows.clear();
   }
-
-  // Bound analysis of a row whose sum is zero.
 
   private analyzeRow(row: RowCell[]) {
     const core = this.solver.core;
@@ -123,7 +116,6 @@ export class BoundPropagator {
     } else if (columnOfL === -1 && isSomeInteresting()) this.limitAllMonoids(row, false);
   }
 
-  // The bound of a monoid a * x at its maximum, or its minimum, and whether it is strict.
   private getMonoidBound(coeff: Rational, column: number, isMax: boolean) {
     const solver = this.solver;
     const isUpper = coeff.isPositive() === isMax;
@@ -131,7 +123,6 @@ export class BoundPropagator {
     return { value: bound.x, isStrict: !bound.y.isZero() };
   }
 
-  // limit_all_monoids_from_below (isFromBelow) and limit_all_monoids_from_above.
   private limitAllMonoids(row: RowCell[], isFromBelow: boolean) {
     let numStrict = 0;
     let total = Rational.zero;
@@ -150,7 +141,6 @@ export class BoundPropagator {
     }
   }
 
-  // limit_monoid_u_from_below (isFromBelow) and limit_monoid_l_from_above.
   private limitMonoidFromOne(row: RowCell[], target: number, isFromBelow: boolean) {
     let bound = Rational.zero;
     let targetCoeff = Rational.zero;
@@ -221,9 +211,6 @@ export class BoundPropagator {
     }
   }
 
-  // Equalities from rows.
-
-  // column_is_fixed: fixed, without an infinitesimal.
   private isFixed(column: number) {
     const solver = this.solver;
     return (
@@ -322,8 +309,6 @@ export class BoundPropagator {
     this.addEqOnColumns(explanation, other, column, true);
   }
 
-  // extract_non_fixed: the basic column, the other non-fixed column and the sign of its unit
-  // coefficient, when the row has at most two non-fixed columns.
   private extractNonFixed(rowIndex: number) {
     const solver = this.solver;
     const x = solver.core.basis[rowIndex];

@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt. The model of
-// theory_lra: the values of its variables, and the equalities between shared terms with equal
-// values that it assumes.
+// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { type FuncDecl, OP_DIV, OP_DIV0, OP_IDIV, OP_IDIV0, OP_MOD, OP_MOD0 } from "./ast";
 import { SmtUnsupportedError } from "../../../errors";
 import { Enode } from "./enode";
@@ -31,7 +29,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return this.context.isRelevant(node.owner) && this.context.isShared(node);
   }
 
-  // random_update: moves the values of shared variables that collide with others.
   private randomUpdate() {
     if (this.nla?.hasRelevantMonomial()) return;
     const solver = this.solver;
@@ -60,7 +57,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     if (columns.length > 0) randomUpdate(solver, columns);
   }
 
-  // assume_eqs: model-based theory combination.
   protected assumeEqs() {
     if (this.delayedAssumeEqs()) return true;
     this.randomUpdate();
@@ -134,7 +130,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     }
   }
 
-  // mk_value: the value of the class of a root, rounded down for an integer.
   mkValue(node: Enode) {
     const thVar = this.getThVar(node);
     if (thVar < 0) return undefined;
@@ -153,7 +148,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return this.manager.mkRealNumeral(value);
   }
 
-  // is_eq: whether two variables have the same value, in nlsat's model when nla uses it.
   private isEq(first: number, second: number) {
     const nla = this.nla;
     if (nla !== undefined && nla.isUsingNraModel)
@@ -164,7 +158,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       .equals(solver.getValue(this.registerVar(second)));
   }
 
-  // nl_value: the value of a variable in nlsat's model, a term's the sum over its columns.
   private getNlValue(nla: NlaCore, thVar: number) {
     const solver = this.solver;
     const am = nla.nra.am;
@@ -195,7 +188,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       : this.manager.mkRealNumeral(value);
   }
 
-  // theory_lra::is_shared: whether the class is an argument of a division by a term or by zero.
   override isShared(thVar: number) {
     const manager = this.manager;
     const count = this.underspecifiedTerms.length;
@@ -212,7 +204,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return decl.op === OP_DIV0 || decl.op === OP_IDIV0 || decl.op === OP_MOD0;
   }
 
-  // arith_util::is_underspecified.
   private isUnderspecified(expr: number) {
     const op = this.manager.getOp(expr);
     return (

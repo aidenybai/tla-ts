@@ -4,8 +4,6 @@
 import { declare, formatName, getClosing } from "./format";
 import type { Axiom } from "./table";
 
-// A symbol that Flatten introduces, with the text tlapm's collect pass visits for its
-// higher-order arguments.
 export interface Flattened {
   symbol: string;
   kind: string;
@@ -20,13 +18,12 @@ interface OmittedFact {
 
 export type Entry = string | Flattened | OmittedFact;
 
-// A bound variable's placeholder: its name and its depth, which the printer names in scope.
 export const getVariable = (name: string, depth: number) => `${name}#${depth}`;
 
 export const getDepth = (variable: string) => Number(variable.slice(variable.lastIndexOf("#") + 1));
 
-// The head that marks the Unprimable WITNESS wraps around its witness, which Prep never removes:
-// (?unprimable term). Flatten.compare_expr tells it apart, and the printed text drops it.
+// Marks the Unprimable WITNESS, which Prep never removes; Flatten.compare_expr tells it apart and
+// printing drops it.
 export const UNPRIMABLE = "?unprimable";
 
 export const removeUnprimable = (text: string): string => {
@@ -40,9 +37,8 @@ export const removeUnprimable = (text: string): string => {
   );
 };
 
-// Flatten.compare_expr: an application matches an earlier one with the same higher-order
-// arguments, whatever the variables bound outside them. It can't compare quantifiers or
-// conditionals, so an argument with one matches nothing.
+// Flatten.compare_expr ignores outer bound variables and can't compare quantifiers or conditionals,
+// so those match nothing.
 const getFlatKey = (text: string, depth: number) =>
   /\((forall|exists|ite) /.test(text)
     ? undefined
@@ -50,20 +46,15 @@ const getFlatKey = (text: string, depth: number) =>
         Number(found) < depth ? "#" : `#${Number(found) - depth}`,
       );
 
-// Where an application occurs: its depth of bound variables, and whether it's in a fact that
-// Smtlib leaves out, which Flatten doesn't enter.
 interface Site {
   depth: number;
   isOmitted: boolean;
 }
 
-// The state of Flatten.main over one obligation: its blueprint count, which init_bp_count resets
-// for each obligation, and the symbols it introduced.
 export const createFlattener = () => {
   const flattened = new Map<string, Flattened>();
   const flatKeys = new Map<string, Flattened>();
   const counter = { blueprints: 0 };
-  // The symbols that the fact being encoded introduces, declared before it.
   const introduced: Flattened[] = [];
 
   const flatten = (

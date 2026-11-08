@@ -1,12 +1,8 @@
 // Ported from Z3 (src/math/dd/dd_pdd.h, src/math/dd/dd_pdd.cpp, src/math/dd/pdd_eval.h), MIT
-// license, see z3-license.txt. Polynomial decision diagrams over the rationals, which nla's Grobner
-// solver works on: a node is x*hi + lo for the variable x at its level, lo has no x, and the leaves
-// are values. Only the free semantics is ported, the one nla and dd::solver use: not mod2, mod2N or
-// zero_one_vars, nor what only those or polysat use (the boolean operations, substitution of
-// values, resolve, quot_rem, and division without the inverse). Nodes are never freed, so there is
-// no garbage collection: node indices match Z3's until its first collection, and the node limit
-// counts every node made. The op cache keys on both operands, where Z3's eq_entry compares the
-// first operand of one entry with the second of the other.
+// license, see z3-license.txt. Nodes are never freed, so node indices match Z3's until its first
+// garbage collection, and the node limit counts every node made. The op cache keys on both
+// operands, where Z3's eq_entry compares the first operand of one entry with the second of the
+// other.
 import { PddMemoryOutError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { shrink } from "../array";
@@ -352,7 +348,6 @@ export class PddManager {
     return current;
   }
 
-  // lm_occurs: whether the leading monomial of p divides a monomial of q.
   private lmOccurs(first: number, second: number): boolean {
     let divisor = this.firstLeading(first);
     let target = second;
@@ -454,7 +449,6 @@ export class PddManager {
     }
   }
 
-  // lm_lt: compares the leading monomials, then the monomials in degree-lex order.
   lmLt(first: Pdd, second: Pdd) {
     let firstNode = this.firstLeading(first.root);
     let secondNode = this.firstLeading(second.root);
@@ -497,8 +491,6 @@ export class PddManager {
     }
   }
 
-  // first_leading: the first node with a term of the leading monomial, the monomial of highest
-  // degree and then highest variables.
   private firstLeading(node: number) {
     let current = node;
     while (
@@ -577,8 +569,8 @@ export class PddManager {
     );
   }
 
-  // get_powers: the variables with a power above 1. The var of a value node is the lowest
-  // variable, so Z3 counts a value under that variable as one more power of it.
+  // The var of a value node is the lowest variable, so Z3 counts a value under that variable as
+  // one more power of it.
   getPowers(poly: Pdd) {
     const powers: PddPower[] = [];
     const marked = new Set<number>();
@@ -600,7 +592,6 @@ export class PddManager {
     return powers;
   }
 
-  // var_is_leaf: whether every node of v has values as children.
   varIsLeaf(poly: Pdd, variable: number) {
     const marked = new Set<number>();
     const todo = [poly.root];
@@ -727,12 +718,10 @@ export class Pdd {
     return !this.isVal() && this.lo().isZero() && this.hi().isOne();
   }
 
-  // a*x for a value a.
   isUnary() {
     return !this.isVal() && this.lo().isZero() && this.hi().isVal();
   }
 
-  // x + b for a value b.
   isOffset() {
     return !this.isVal() && this.lo().isVal() && this.hi().isOne();
   }
@@ -806,7 +795,6 @@ export class Pdd {
     return this.manager.getPowers(this);
   }
 
-  // var_factors: the variables that divide every monomial, with their product divided out.
   varFactors(): PddVarFactors {
     if (this.isVal()) return { vars: [], poly: this };
     const manager = this.manager;
@@ -821,7 +809,6 @@ export class Pdd {
     const loVars = loFactors.vars;
     if (loVars.length === 0) return { vars: [], poly: this };
     const loAndHi: number[] = [];
-    // Moves the variables in both lists to loAndHi and keeps the rest in place, by level.
     const merge = (hiVars: number[]) => {
       let loKept = 0;
       let hiKept = 0;
@@ -868,7 +855,6 @@ export class Pdd {
     };
   }
 
-  // subst_pdd: replaces the variable by the polynomial, without the op cache.
   substPdd(variable: number, replacement: Pdd): Pdd {
     const manager = this.manager;
     if (this.isVal() || manager.var2level[this.var()] < manager.var2level[variable]) return this;
@@ -962,7 +948,6 @@ export class Pdd {
   }
 }
 
-// pdd_eval: the value of the polynomial under the values of its variables.
 export const evaluatePdd = (poly: Pdd, getValue: (variable: number) => Rational): Rational =>
   poly.isVal()
     ? poly.val()

@@ -1,10 +1,6 @@
-// Ported from Z3 (src/ast/normal_forms/nnf.cpp, name_exprs.cpp, defined_names.cpp), MIT license, see
-// z3-license.txt. Negation normal form in Z3's default NNF_SKOLEM mode: only subformulas that
-// contain quantifiers are normalized, and existential quantifiers in positive positions become
-// Skolem functions of the enclosing universal variables. A quantifier inside an atom gets a name, a
-// fresh predicate over its free variables, with a definition that is normalized too. Like Z3, the
-// frames, the result stack and the caches hold their expressions, so that expressions are created
-// and deleted in Z3's order.
+// Ported from Z3 (src/ast/normal_forms/nnf.cpp, name_exprs.cpp, defined_names.cpp), MIT license,
+// see z3-license.txt. Like Z3, the frames, the result stack and the caches hold their expressions,
+// so that expressions are created and deleted in Z3's order.
 import { ActCache } from "./act-cache";
 import {
   AstManager,
@@ -25,7 +21,6 @@ import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
 
-// defined_names: the name of each named expression. It holds the expressions and their names.
 export class DefinedNames {
   private names = new Map<number, number>();
   private exprs: RefVector;
@@ -41,7 +36,6 @@ export class DefinedNames {
     this.lims.push(this.exprs.size);
   }
 
-  // pop_scope: forgets the names since the matching push, the last first.
   pop() {
     const size = this.lims[this.lims.length - 1];
     this.lims.pop();
@@ -52,9 +46,7 @@ export class DefinedNames {
     }
   }
 
-  // mk_name: (n x1 ... xk) for the free variables x1 ... xk of the quantifier, with n => q and q => n
-  // as the definition, under a universal quantifier whose pattern is the name. The definition comes
-  // with a reference, and is -1 when the quantifier already has a name.
+  // The definition comes with a reference, and is -1 when the quantifier already has a name.
   mkName(quantifier: number) {
     const manager = this.manager;
     const existing = this.names.get(quantifier);
@@ -97,8 +89,6 @@ export class DefinedNames {
   }
 }
 
-// name_quantifier_labels: a rewriter that replaces each quantifier by its name, and collects the
-// definitions of the new names.
 class QuantifierNamer extends RewriterTpl {
   private definitions: RefVector | null = null;
 
@@ -126,8 +116,7 @@ class QuantifierNamer extends RewriterTpl {
   }
 }
 
-// skolemizer: the Skolem functions take the free variables of the quantifier. The function of the
-// last variable comes first, and takes the variable's name.
+// The function of the last variable comes first, and takes the variable's name.
 class Skolemizer {
   private cache: ActCache;
   private subst: VarSubst;
@@ -184,8 +173,6 @@ class Skolemizer {
   }
 }
 
-// A normalization still to finish: its expression, the next child, its polarity, whether it is
-// nested in a quantifier, whether to cache its result, and where its children's results start.
 interface Frame {
   curr: number;
   index: number;
@@ -195,8 +182,6 @@ interface Frame {
   spos: number;
 }
 
-// nnf: one object normalizes the formulas of a reduction, and keeps its caches until it is
-// released.
 export class Nnf {
   private frames: Frame[] = [];
   private results: RefVector;
@@ -281,7 +266,6 @@ export class Nnf {
     this.results.push(isPositive ? expr : mkNot(this.manager, expr));
   }
 
-  // visit: whether the result of expr is on the result stack. Otherwise it pushes a frame for expr.
   private visit(expr: number, isPositive: boolean, isInQuantifier: boolean) {
     const manager = this.manager;
     if (!manager.hasQuantifierFlags[expr]) {
@@ -305,7 +289,6 @@ export class Nnf {
     return false;
   }
 
-  // process: the normal form of expr, with a reference.
   private process(expr: number) {
     const manager = this.manager;
     if (!this.visit(expr, true, false))
@@ -339,7 +322,6 @@ export class Nnf {
     return result;
   }
 
-  // Visits the children from frame.index on, each with its polarity, and whether all are done.
   private visitChildren(frame: Frame, children: [number, boolean][]) {
     while (frame.index < children.length) {
       const child = children[frame.index++];
@@ -348,7 +330,6 @@ export class Nnf {
     return true;
   }
 
-  // Replaces the results from spos on with result.
   private setResult(spos: number, result: number) {
     this.manager.incRef(result);
     this.results.shrink(spos);
@@ -433,7 +414,6 @@ export class Nnf {
         return true;
       }
       default: {
-        // process_default: the quantifiers of an atom get names.
         const named = this.namer.name(expr, this.todoDefs);
         if (isPositive) this.results.pushOwned(named);
         else {

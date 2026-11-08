@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt. The interpreter of Z3's
-// matching abstract machine: it runs a code tree against a term, backtracking through the choices
-// of BIND, CONTINUE and CHOOSE, and reports each match.
+// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import {
@@ -30,8 +28,6 @@ import { shrink } from "./array";
 
 export type OnMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) => void;
 
-// backtrack_point: the instruction to resume, the generation to restore, the term a BIND is at,
-// and the terms a CONTINUE goes through.
 interface BacktrackPoint {
   instr: Instruction;
   oldMaxGeneration: number;
@@ -46,11 +42,9 @@ const MAX_FILTERED_GET_CGR_ARGS = 6;
 
 export class Interpreter {
   private registers: (Enode | null)[] = [];
-  // m_bindings: the terms a YIELD reports, which the match callback does not keep.
   private bindings: Enode[] = [];
   private backtrackStack: BacktrackPoint[] = [];
   private top = 0;
-  // m_max_generation: the largest generation of a term the match went through.
   private maxGeneration = 0;
 
   constructor(
@@ -74,7 +68,6 @@ export class Interpreter {
     return point;
   }
 
-  // get_first_f_app and get_next_f_app: the next congruence root with the label in the class.
   private getNextFApp(label: number, numArgs: number, first: Enode, start: Enode | null) {
     let curr = start === null ? first : start.next;
     if (start !== null && curr === first) return null;
@@ -88,7 +81,6 @@ export class Interpreter {
     return null;
   }
 
-  // exec_is_cgr: whether the class has a term with the label and the arguments of the registers.
   private isCgr(instr: Instruction) {
     const registers = this.registers;
     const args: Enode[] = [];
@@ -124,7 +116,6 @@ export class Interpreter {
     );
   }
 
-  // mk_depth1_vector: the relevant decl-parents of the class of node where it is argument argIndex.
   // init_continue drops a vector of limit terms or more, so this stops at limit and returns null.
   private getDepth1Vector(node: Enode, decl: number, argIndex: number, limit: number) {
     const root = node.root;
@@ -137,7 +128,6 @@ export class Interpreter {
     return result;
   }
 
-  // mk_depth2_vector, which stops at limit like getDepth1Vector.
   private getDepth2Vector(joint: Joint, decl: number, argIndex: number, limit: number) {
     const node = this.registers[joint.reg];
     if (node === null || node === undefined) return null;
@@ -156,7 +146,6 @@ export class Interpreter {
     return result;
   }
 
-  // SET_VAR's filter: whether the class of each input register has a parent with the label.
   private hasParentLabels(instr: Instruction) {
     for (const reg of instr.regs) {
       const root = (this.registers[reg] as Enode).root;
@@ -171,7 +160,6 @@ export class Interpreter {
     return null;
   }
 
-  // init_continue: the smallest candidate vector among the joints, or all terms with the label.
   private initContinue(instr: Instruction) {
     const context = this.context;
     const label = instr.label;
@@ -224,8 +212,6 @@ export class Interpreter {
     for (let index = 0; index < numArgs; index++) this.registers[oreg + index] = node.getArg(index);
   }
 
-  // The backtracking step of execute_core: the instruction to resume at, or null when the top choice
-  // is exhausted and was popped.
   private resume(point: BacktrackPoint): Instruction | null {
     const instr = point.instr;
     if (instr.op === OP_CHOOSE) {
@@ -260,8 +246,7 @@ export class Interpreter {
     return null;
   }
 
-  // execute_core: runs the tree against a term, one instruction at a time, and backtracks when an
-  // instruction fails. It returns false when the search is canceled.
+  // It returns false when the search is canceled.
   executeCore(tree: CodeTree, node: Enode) {
     const context = this.context;
     const registers = this.registers;
@@ -385,8 +370,7 @@ export class Interpreter {
     }
   }
 
-  // execute: runs the tree against its candidates. A tree that filters its candidates runs each
-  // term once.
+  // A tree that filters its candidates runs each term once.
   execute(tree: CodeTree) {
     const context = this.context;
     const seen = tree.isFilteringCandidates ? new Set<Enode>() : null;

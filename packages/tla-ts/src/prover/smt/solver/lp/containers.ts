@@ -1,5 +1,5 @@
 // Ported from Z3 (src/util/uint_set.h, src/util/heap.h, src/math/lp/stacked_vector.h), MIT
-// license, see z3-license.txt. The containers whose iteration order the lp solver depends on.
+// license, see z3-license.txt. The lp solver depends on the iteration order of these containers.
 import { shrink } from "../array";
 
 // indexed_uint_set: insertion order, and a removal moves the last element into the gap.
@@ -39,7 +39,6 @@ export class IndexedUintSet {
   }
 }
 
-// heap<lpvar_lt>: the infeasible columns, smallest first.
 export class VarHeap {
   private values: number[] = [];
   private positions: number[] = [];
@@ -127,7 +126,6 @@ interface StackedScope {
   logSize: number;
 }
 
-// stacked_vector: a vector whose size and values a pop restores to the matching push.
 export class StackedVector<T> {
   values: T[] = [];
   private log: StackedLogEntry<T>[] = [];
@@ -214,7 +212,6 @@ export class UnorderedUintMap<V> {
     for (let node = this.anchor.next; node !== null; node = node.next) yield [node.key, node.value];
   }
 
-  // __emplace_unique_key_args: the key is new.
   insert(key: number, value: V) {
     const node: HashNode<V> = { key, value, next: null };
     const count = this.buckets.length;
@@ -234,7 +231,6 @@ export class UnorderedUintMap<V> {
     if (node.next !== null) this.buckets[getBucket(node.next.key, this.buckets.length)] = node;
   }
 
-  // remove: unlinks the node and repairs the buckets of it and of its successor.
   delete(key: number) {
     const node = this.nodes.get(key);
     if (node === undefined) return;

@@ -1,10 +1,5 @@
 // Ported from Z3 (src/math/lp/dioph_eq.cpp, src/math/lp/var_register.h), MIT license, see
-// z3-license.txt. The Diophantine solver of Griggio's "A Practical Approach to Satisfiability
-// Modulo Linear Integer Arithmetic": every integer term t with column j gives the equation
-// t - j = 0 over the columns that are not fixed. The equations are normalized by the gcd of their
-// coefficients, which finds a conflict when the gcd does not divide the constant, and solved for a
-// column with a unit coefficient, or rewritten with a fresh column until one appears. The bounds of
-// the term columns are then tightened modulo the gcd of their terms after the substitutions.
+// z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, getLcm, Rational } from "../rational";
 import { IndexedUintSet, UnorderedUintMap } from "./containers";
@@ -35,7 +30,6 @@ const NO_VAR = -1;
 // m_tighten_size_max: a longer term likely has gcd one.
 const TIGHTEN_SIZE_MAX = 10;
 
-// join of lia_move, for the moves the Diophantine solver makes.
 const joinMoves = (first: DioMove, second: DioMove): DioMove => {
   if (first === second || second === "undef") return first;
   if (first === "undef") return second;
@@ -45,7 +39,6 @@ const joinMoves = (first: DioMove, second: DioMove): DioMove => {
 const getTermMonomials = (term: LarTerm): Monomial[] =>
   [...term.coeffs].map((entry) => ({ coeff: entry[1], column: entry[0] }));
 
-// ext_coeffs: the monomials of the term and then the term column with coefficient -1.
 const getExtendedMonomials = (term: LarTerm) => [
   ...getTermMonomials(term),
   { coeff: Rational.minusOne, column: term.column },
@@ -58,7 +51,6 @@ const getRemainder = (left: Rational, right: Rational) => Rational.of(left.num %
 
 const getTruncatedQuotient = (left: Rational, right: Rational) => Rational.of(left.num / right.num);
 
-// bitsize of an mpq: the bits of the numerator, and of the denominator when it is not one.
 const getBitsize = (value: Rational) => {
   const getIntBitsize = (part: bigint) =>
     part === 0n ? 1 : (part < 0n ? -part : part).toString(2).length;
@@ -67,7 +59,6 @@ const getBitsize = (value: Rational) => {
     : getIntBitsize(value.num) + getIntBitsize(value.den);
 };
 
-// gcd_of_coeffs: one as soon as a unit coefficient shows up when asked to look for one.
 const getGcdOfCoeffs = (monomials: Iterable<{ coeff: Rational }>, isCheckingForOne: boolean) => {
   if (isCheckingForOne)
     for (const monomial of monomials) if (isUnit(monomial.coeff)) return Rational.one;
@@ -79,8 +70,6 @@ const getGcdOfCoeffs = (monomials: Iterable<{ coeff: Rational }>, isCheckingForO
   return gcd;
 };
 
-// term_with_index: the monomials in a vector with the position of every column, and a removal
-// that moves the last monomial into the gap.
 class TermWithIndex {
   readonly data: Monomial[] = [];
   private positions: number[] = [];
@@ -127,7 +116,6 @@ class TermWithIndex {
   }
 }
 
-// protected_queue: a queue of distinct columns that can also lose a column in the middle.
 class ProtectedQueue {
   readonly items: number[] = [];
   private members = new Set<number>();
@@ -159,8 +147,6 @@ class ProtectedQueue {
   }
 }
 
-// var_register: the local columns of the equations, and the lar_solver column of each, or none
-// for a fresh column.
 class VarRegister {
   private localToExternal: number[] = [];
   private externalToLocal = new Map<number, number>();
@@ -182,7 +168,6 @@ class VarRegister {
     return this.externalToLocal.has(external);
   }
 
-  // external_to_local, which Z3 asserts finds the column.
   getLocal(external: number) {
     const local = this.externalToLocal.get(external);
     if (local === undefined)
@@ -202,8 +187,7 @@ class VarRegister {
   }
 }
 
-// m_fresh_k2xt_terms: the definition of a substituted column k by a fresh column xt, reachable
-// from both. The map from k to xt is an unordered_map whose order Z3 iterates.
+// The map from k to xt is an unordered_map whose order Z3 iterates.
 class FreshDefinitions {
   readonly keyToFresh = new UnorderedUintMap<number>();
   private freshToKey = new Map<number, number>();
@@ -248,22 +232,16 @@ class FreshDefinitions {
 }
 
 export class DiophantineSolver {
-  // m_some_terms_are_ignored: a term was not integral or had a big number, so the GCD test and
-  // Gomory cuts run.
   hasIgnoredTerms = false;
   private readonly solver: LarSolver;
   private sumOfFixed: Rational[] = [];
   private varRegister = new VarRegister();
-  // m_e_matrix: the equations over local columns. m_l_matrix: each as a combination of the term
-  // definitions, which explains it.
   private eMatrix = new StaticMatrix();
   private lMatrix = new StaticMatrix();
   private infeasExplanation = new Explanation();
-  // m_c, the constant of m_espace.
   private constant = Rational.zero;
   private lspace = new TermWithIndex();
   private espace = new TermWithIndex();
-  // m_k2s: the column each equation of S is solved for, and back.
   private keyToRow = new Map<number, number>();
   private rowToKey = new Map<number, number>();
   private freshDefinitions = new FreshDefinitions();
@@ -310,8 +288,6 @@ export class DiophantineSolver {
     );
     explanation.pushDependency(dep);
   }
-
-  // Callbacks of lar_solver.
 
   private addTermCallback(term: LarTerm) {
     if (!this.solver.isInt(term.column)) {
@@ -361,8 +337,6 @@ export class DiophantineSolver {
     }
   }
 
-  // elimination_work_estimate: the words that eliminating the column of the retired term from
-  // m_l_matrix touches.
   private getEliminationWorkEstimate() {
     const lMatrix = this.lMatrix;
     if (lMatrix.getColumnCount() === 0 || lMatrix.getRowCount() === 0) return 0;
@@ -374,8 +348,6 @@ export class DiophantineSolver {
     return (columnSize - 1) * words;
   }
 
-  // reset_state: drops what was derived, and puts the active terms back to be added again in the
-  // order of their columns.
   private resetState() {
     for (const term of this.activeTerms) {
       this.deregisterColumnsOfTerm(term);
@@ -404,7 +376,6 @@ export class DiophantineSolver {
     this.solver.settings.stats.dioStateResets++;
   }
 
-  // shrink_matrices: removes the equation of the retired term, the last one.
   private shrinkMatrices() {
     const lastRow = this.lMatrix.getRowCount() - 1;
     this.eliminateLastTermColumn();
@@ -422,8 +393,6 @@ export class DiophantineSolver {
     this.sumOfFixed.pop();
   }
 
-  // eliminate_last_term_column: pivots the last column of m_l_matrix into its last row, and marks
-  // the rows that change, whose equations are recalculated later.
   private eliminateLastTermColumn() {
     const lMatrix = this.lMatrix;
     const termColumn = lMatrix.getColumnCount() - 1;
@@ -442,8 +411,6 @@ export class DiophantineSolver {
       lMatrix.pivotRowToRowGivenCell(lastRowIndex, cell, termColumn);
     }
   }
-
-  // Filling the equations.
 
   private init(fVector: number[]) {
     this.infeasExplanation.clear();
@@ -468,7 +435,6 @@ export class DiophantineSolver {
     }
   }
 
-  // fill_entry: the equation t - j = 0 with the fixed columns in the constant, explained by j.
   private fillEntry(term: LarTerm) {
     const solver = this.solver;
     const row = this.eMatrix.getRowCount();
@@ -490,7 +456,6 @@ export class DiophantineSolver {
     this.subsEntry(row);
   }
 
-  // subs_entry: substitutes the solved and the freshly defined columns in the equation.
   private subsEntry(row: number) {
     if (row >= this.eMatrix.getRowCount()) return;
     const queue = this.queue;
@@ -515,14 +480,12 @@ export class DiophantineSolver {
     }
   }
 
-  // add_two_entries: adds an equation times coeff to another.
   private addTwoEntries(coeff: Rational, from: number, to: number) {
     this.eMatrix.addRows(coeff, from, to);
     this.lMatrix.addRows(coeff, from, to);
     this.sumOfFixed[to] = this.sumOfFixed[to].add(coeff.mul(this.sumOfFixed[from]));
   }
 
-  // recalculate_entry: the equation again from its explanation, scaled to integers.
   private recalculateEntry(row: number) {
     let fixedSum = this.openLTermToEspace(row);
     const eRow = this.eMatrix.rows[row];
@@ -544,8 +507,6 @@ export class DiophantineSolver {
     if (this.rowToKey.has(row)) this.removeFromS(row);
   }
 
-  // open_l_term_to_espace: the combination of term definitions of the row, over lar_solver
-  // columns, with the fixed ones in the returned constant.
   private openLTermToEspace(row: number) {
     const solver = this.solver;
     this.espace.clear();
@@ -560,8 +521,6 @@ export class DiophantineSolver {
     return constant;
   }
 
-  // process_m_changed_f_columns: recalculates the equations that the columns that became fixed or
-  // stopped being fixed, and the changed terms, touch.
   private processChangedFixedColumns(fVector: number[]) {
     for (const column of this.changedFixedColumns.elems.slice()) {
       const terms = this.columnsToTerms.get(column);
@@ -610,7 +569,6 @@ export class DiophantineSolver {
     this.changedTerms.clear();
   }
 
-  // is_big_term_or_no_term: also marks the terms ignored for their big numbers.
   private isBigTermOrNoTerm(column: number) {
     const solver = this.solver;
     if (column >= solver.getColumnCount() || !solver.hasTerm(column)) return true;
@@ -624,9 +582,6 @@ export class DiophantineSolver {
     return false;
   }
 
-  // Fresh definitions.
-
-  // collect_dependent_fresh_vars: the fresh columns whose definitions use a removed one.
   private collectDependentFreshVars(removed: number, toRemove: number[]) {
     const newlyFound: number[] = [];
     for (const entry of this.freshDefinitions.keyToFresh) {
@@ -640,8 +595,6 @@ export class DiophantineSolver {
     for (const fresh of newlyFound) this.collectDependentFreshVars(fresh, toRemove);
   }
 
-  // deep_remove_fresh_var: removes the fresh column and those that depend on it, and marks the
-  // rows that use them.
   private deepRemoveFreshVar(removed: number) {
     if (!this.freshDefinitions.hasFresh(removed)) return;
     const toRemove = [removed];
@@ -680,8 +633,6 @@ export class DiophantineSolver {
     for (const row of rows) this.removeIrrelevantFreshDefsForRow(row);
   }
 
-  // fresh_var_step: step 7 of the paper. With the smallest coefficient a of k in row h, the fresh
-  // column xt = k + sum (a_i div a) x_i replaces k in the equations of F.
   private freshVarStep(row: number, key: number, ahk: Rational) {
     const fresh = this.varRegister.addVar(NO_VAR);
     while (fresh >= this.eMatrix.getColumnCount()) this.eMatrix.addColumn();
@@ -708,8 +659,6 @@ export class DiophantineSolver {
     }
   }
 
-  // Solving F.
-
   private processFAndTightenTerms(fVector: number[]): DioMove {
     const move = this.processF(fVector);
     if (move !== "undef") return move;
@@ -735,8 +684,6 @@ export class DiophantineSolver {
     this.solver.settings.stats.dioRewriteConflicts++;
   }
 
-  // rewrite_eqs: steps 6 and 7 of the paper on the equation of F with the smallest coefficient,
-  // and of those the one whose substitution fills the fewest cells.
   private rewriteEqs(fVector: number[]): DioMove {
     if (fVector.length === 0) return "undef";
     let chosenRow = NO_VAR;
@@ -792,8 +739,6 @@ export class DiophantineSolver {
     return "continue";
   }
 
-  // find_minimal_abs_coeff: the first column with the smallest coefficient, its sign, and the
-  // Markowitz number of the pivot.
   private findMinimalAbsCoeff(row: number) {
     let ahk = Rational.zero;
     let column = NO_VAR;
@@ -811,8 +756,6 @@ export class DiophantineSolver {
     return { ahk, column, sign, markovich };
   }
 
-  // normalize_e_by_gcd: the gcd of the coefficients after dividing the equation by it, or
-  // undefined on the conflict of a gcd that does not divide the constant.
   private normalizeEByGcd(row: number) {
     const gcd = getGcdOfCoeffs(this.eMatrix.rows[row], true);
     if (gcd.isZero() || gcd.equals(Rational.one)) return gcd;
@@ -827,7 +770,6 @@ export class DiophantineSolver {
     return gcd;
   }
 
-  // eliminate_var_in_f: substitutes the column solved by the row in the other equations of F.
   private eliminateVarInF(row: number, key: number, sign: number) {
     const constant = this.sumOfFixed[row];
     const column = this.eMatrix.columns[key];
@@ -872,9 +814,6 @@ export class DiophantineSolver {
     return matrix.rows[row].map((cell) => ({ coeff: cell.coeff, column: cell.column }));
   }
 
-  // Tightening the bounds of term columns.
-
-  // tighten_terms_with_S: the terms whose bounds changed, the most shared first.
   private tightenTermsWithS(): DioMove {
     const solver = this.solver;
     const sortedTerms: number[] = [];
@@ -925,8 +864,6 @@ export class DiophantineSolver {
     return this.tightenOnEspace(column);
   }
 
-  // init_substitutions: m_espace is the term over local columns with its fixed part in m_c, and
-  // m_lspace explains it. False on a big number.
   private initSubstitutions(term: LarTerm, queue: ProtectedQueue) {
     const solver = this.solver;
     const isIgnoringBigNums = solver.settings.isDioIgnoringBigNums;
@@ -970,8 +907,6 @@ export class DiophantineSolver {
     return joinMoves(move, tightened);
   }
 
-  // find_var_to_substitute_on_espace: the queued column whose substitution adds the fewest new
-  // columns, drawn at random among ties, and the queued columns no longer in m_espace dropped.
   private findVarToSubstituteOnEspace(queue: ProtectedQueue) {
     const espace = this.espace;
     let best = NO_VAR;
@@ -1006,7 +941,6 @@ export class DiophantineSolver {
     return best;
   }
 
-  // subs_qfront_by_fresh: replaces k by its fresh definition, which leaves m_lspace as it is.
   private subsByFresh(key: number, queue: ProtectedQueue, column: number) {
     const term = this.freshDefinitions.getByKey(key).term;
     const coeff = this.espace.get(key).neg();
@@ -1019,8 +953,6 @@ export class DiophantineSolver {
     return this.tightenOnEspace(column);
   }
 
-  // subs_qfront_by_S: replaces k by the equation solved for it, and adds that equation's
-  // explanation to m_lspace.
   private subsByS(key: number, queue: ProtectedQueue, column: number) {
     const row = this.keyToRow.get(key) ?? NO_VAR;
     const constant = this.sumOfFixed[row];
@@ -1054,8 +986,6 @@ export class DiophantineSolver {
     }
   }
 
-  // tighten_on_espace: with g the gcd of m_espace, the bounds of the term column move to the
-  // nearest values congruent to m_c modulo g, and a constant m_espace is checked against them.
   private tightenOnEspace(column: number): DioMove {
     const gcd = getGcdOfCoeffs(this.espace.data, true);
     if (gcd.equals(Rational.one)) return "undef";
@@ -1091,7 +1021,6 @@ export class DiophantineSolver {
     this.infeasExplanation.pushDependency(dep);
   }
 
-  // tighten_bounds_for_non_trivial_gcd: whether tightening the bound found a conflict.
   private tightenBoundsForNonTrivialGcd(gcd: Rational, column: number, isUpper: boolean) {
     const bound = this.solver.getBound(column, isUpper);
     if (bound === undefined) return false;
@@ -1102,8 +1031,7 @@ export class DiophantineSolver {
     );
   }
 
-  // tighten_bound_kind: t = g*t' + m_c <= rs gives t <= rs - (rs - m_c) mod g, and a lower bound
-  // likewise. The fixed columns whose coefficients g divides do not explain the new bound.
+  // The fixed columns whose coefficients g divides do not explain the new bound.
   private tightenBoundKind(
     gcd: Rational,
     column: number,
@@ -1128,7 +1056,6 @@ export class DiophantineSolver {
     return true;
   }
 
-  // open_fixed_from_ml: the fixed columns of a combination of term definitions.
   private openFixedFromMl(monomials: Iterable<Monomial>) {
     const solver = this.solver;
     const result = new TermWithIndex();
@@ -1143,8 +1070,6 @@ export class DiophantineSolver {
     return this.explainFixed(this.openFixedFromMl(monomials).data, gcd);
   }
 
-  // explain_fixed: the bounds of the fixed columns, but those whose coefficients a nonzero gcd
-  // divides.
   private explainFixed(monomials: Iterable<Monomial>, gcd: Rational) {
     let dep: Dependency = null;
     for (const monomial of monomials) {

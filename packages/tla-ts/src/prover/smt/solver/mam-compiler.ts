@@ -1,7 +1,4 @@
-// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt. The code trees of Z3's matching
-// abstract machine and the compiler that builds them: each pattern becomes a sequence of
-// instructions, and the patterns that start with the same label share the instructions they have
-// in common, so a term is matched against all of them at once and the matches come in Z3's order.
+// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
 import { KIND_VAR, type AstManager } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
@@ -64,17 +61,12 @@ export interface CodeTree {
   numChoices: number;
   root: Instruction;
   candidates: Enode[];
-  // code_tree::m_candidate_gc_threshold: the number of candidates at which duplicates are dropped.
   candidateGcThreshold: number;
 }
 
-// What the compiler needs from the matching abstract machine.
 export interface LabelHasher {
-  // label_hasher.
   getLabelHash(decl: number): number;
-  // mk_enode: the enode of a ground term, internalized at the quantifier's generation if needed.
   getGroundEnode(expr: number, quantifier: number): Enode | null;
-  // The label hash of a ground term's enode, which set_lbl_hash gives it if it has none.
   getLblHash(node: Enode): number;
 }
 
@@ -82,7 +74,6 @@ const NOT_CHECKED = 0;
 const CHECK_SET = 1;
 const CHECK_SINGLETON = 2;
 
-// FIND_BEST_CHILD_THRESHOLD and SIMPLE_SEQ_THRESHOLD.
 const FIND_BEST_CHILD_THRESHOLD = 64;
 const SIMPLE_SEQ_THRESHOLD = 4;
 
@@ -103,7 +94,6 @@ const mkInstruction = (op: number): Instruction => ({
   joints: [],
 });
 
-// approx_set over 64 bits, in two words.
 export const hasHash = (low: number, high: number, hash: number) =>
   ((hash < 32 ? low : high) & (1 << hash)) !== 0;
 
@@ -158,14 +148,10 @@ const mkInit = (numArgs: number) => {
   return instr;
 };
 
-// The patterns are the terms of a multi-pattern, and firstIndex picks the one the tree starts with.
 export class Compiler {
-  // The pattern each register holds, -1 for none.
   private registers: number[] = [];
-  // m_todo: the registers whose patterns are still to be processed.
   private todo: number[] = [];
   private aux: number[] = [];
-  // The register of each variable by de Bruijn index, -1 while it is unbound.
   private vars: number[] = [];
   private quantifier = -1;
   private patterns: number[] = [];
@@ -229,7 +215,6 @@ export class Compiler {
     this.vars.fill(-1, 0, numDecls);
   }
 
-  // all_args_are_bound_vars.
   private isAllArgsBoundVars(expr: number) {
     const manager = this.manager;
     return manager.everyArg(
@@ -238,7 +223,6 @@ export class Compiler {
     );
   }
 
-  // get_stats: the size of a pattern and its number of unbound variables.
   private getStats(expr: number) {
     const manager = this.manager;
     let size = 0;
@@ -258,8 +242,6 @@ export class Compiler {
     return { size, numUnboundVars };
   }
 
-  // linearise_core: the registers in m_todo that do not need a BIND are processed first, then a
-  // single BIND or IS_CGR is produced, and the registers left and the new ones become m_todo.
   private lineariseCore() {
     const manager = this.manager;
     const hasher = this.hasher;
@@ -348,7 +330,6 @@ export class Compiler {
     this.aux = todo;
   }
 
-  // get_num_bound_vars: the number of bound variables in a pattern, and whether it has unbound ones.
   private getNumBoundVars(expr: number) {
     const manager = this.manager;
     let count = 0;
@@ -366,8 +347,6 @@ export class Compiler {
     return { count, hasUnboundVars };
   }
 
-  // gen_mp_filter: compiles a pattern whose variables are all bound, and returns the register that
-  // gets the enode congruent to it.
   private genMpFilter(expr: number): number {
     const manager = this.manager;
     if (manager.isGround(expr)) {
@@ -394,8 +373,6 @@ export class Compiler {
     return oreg;
   }
 
-  // linearise_multi_pattern: the other patterns of a multi-pattern, the one with the most bound
-  // variables first.
   private lineariseMultiPattern() {
     const manager = this.manager;
     const patterns = this.patterns;
@@ -488,7 +465,6 @@ export class Compiler {
     }
   }
 
-  // linearise: the instructions for the registers in m_todo, appended after head.
   private linearise(head: Instruction, firstIndex: number) {
     this.seq = [];
     this.matchedExprs.clear();
@@ -562,7 +538,6 @@ export class Compiler {
     return instr.enode !== null && node !== null && instr.enode.root === node.root;
   }
 
-  // get_pat_lbl_hash: a ground pattern is a constant, hashed by its enode.
   private getPatLblHash(reg: number) {
     const expr = this.registers[reg];
     if (this.manager.isGround(expr)) {
@@ -609,8 +584,6 @@ export class Compiler {
     );
   }
 
-  // get_compatibility_measure: how many instructions of the branch at child are compatible with the
-  // patterns in the registers, and whether the branch is too simple to look at.
   private getCompatibilityMeasure(child: Instruction) {
     const manager = this.manager;
     this.toReset.length = 0;
@@ -660,8 +633,6 @@ export class Compiler {
     if (index !== -1) this.todo.splice(index, 1);
   }
 
-  // compiler::insert: follows the instructions compatible with the new pattern, then branches off
-  // with a CHOOSE where they stop.
   private insertAt(start: Instruction, firstIndex: number) {
     const manager = this.manager;
     let head = start;
@@ -729,7 +700,6 @@ export class Compiler {
               const hash = this.getPatLblHash(curr.reg);
               this.setMark(curr.reg, CHECK_SET);
               if (countBits(curr.lblLow) + countBits(curr.lblHigh) > 1) {
-                // insert_new_lbl_hash.
                 const filter = curr;
                 const low = filter.lblLow;
                 const high = filter.lblHigh;
@@ -791,7 +761,6 @@ export class Compiler {
     }
   }
 
-  // mk_tree: a new code tree for a quantifier, which starts with the pattern at firstIndex.
   mkTree(
     quantifier: number,
     patterns: number[],
@@ -816,7 +785,7 @@ export class Compiler {
     return tree;
   }
 
-  // insert: adds a pattern to a code tree. A temporary tree records no trail.
+  // A temporary tree records no trail.
   insert(
     tree: CodeTree,
     quantifier: number,

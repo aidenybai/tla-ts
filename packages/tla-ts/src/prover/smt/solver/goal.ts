@@ -1,5 +1,4 @@
-// Ported from Z3 (src/tactic/goal.cpp), MIT license, see z3-license.txt. The formulas that a tactic
-// transforms, kept split into conjuncts. Like Z3's goal, it holds a reference to each formula.
+// Ported from Z3 (src/tactic/goal.cpp), MIT license, see z3-license.txt.
 import { OP_AND, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import { RefVector } from "./ref-vector";
 
@@ -17,7 +16,6 @@ export class Goal {
     this.forms = new RefVector(manager);
   }
 
-  // push_back: a false formula replaces the whole goal.
   private pushBack(form: number) {
     const manager = this.manager;
     if (manager.isTrue(form)) return;
@@ -28,9 +26,8 @@ export class Goal {
     this.forms.push(form);
   }
 
-  // quick_process: splits conjunctions and negated disjunctions in order. With isSavingFirst, the
-  // first conjunct is returned instead of added. The formula comes with a reference, and so does
-  // the result. The negations it creates are held until it returns.
+  // The formula comes with a reference, and so does the result. The negations it creates are held
+  // until it returns.
   private quickProcess(form: number, isSavingFirst: boolean) {
     const manager = this.manager;
     const op = manager.getOp(form);
@@ -67,7 +64,6 @@ export class Goal {
     return first;
   }
 
-  // assert_expr.
   assert(form: number) {
     const manager = this.manager;
     manager.incRef(form);
@@ -98,7 +94,6 @@ export class Goal {
     while (this.forms.size > size) this.forms.pop();
   }
 
-  // elim_true.
   elimTrue() {
     const manager = this.manager;
     let kept = 0;
@@ -110,8 +105,7 @@ export class Goal {
     this.shrink(kept);
   }
 
-  // elim_redundancies: drops true and repeated literals, and finds a complementary pair. The marks
-  // hold the literals until it returns.
+  // The marks hold the literals until it returns.
   elimRedundancies() {
     const manager = this.manager;
     if (this.isInconsistent) return;

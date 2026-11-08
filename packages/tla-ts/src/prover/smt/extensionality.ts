@@ -22,8 +22,8 @@ const UNRESOLVED_TRIGGER = "?trigger";
 
 const SET_HEADS = new Set([UNION, SUBSET, CUP, CAP, SET_MINUS, INT_RANGE, FUN_SET, SEQ]);
 
-// Standardize.is_set: the applications of constructors whose values are sets. Standardize leaves
-// BOOLEAN, STRING, Int, and Nat as bare symbols, which is_set doesn't match.
+// Standardize leaves BOOLEAN, STRING, Int, and Nat as bare symbols, which Standardize.is_set
+// doesn't match.
 const isSetTerm = (text: string) => {
   const head = /^\(?([^\s()]+)/.exec(text)?.[1] ?? "";
   return (
@@ -34,7 +34,6 @@ const isSetTerm = (text: string) => {
   );
 };
 
-// Picks the triggered or the kept form of each unresolved set equality in text.
 export const resolveTriggers = (text: string, isTriggered: boolean): string => {
   const start = text.indexOf(`(${UNRESOLVED_TRIGGER} `);
   if (start === -1) return text;
@@ -47,7 +46,6 @@ export const resolveTriggers = (text: string, isTriggered: boolean): string => {
   return text.slice(0, start) + chosen + resolveTriggers(text.slice(keptEnd + 1), isTriggered);
 };
 
-// The equality, or disequality, of two Idv terms at a polarity.
 export const getEquality = (
   left: string,
   right: string,

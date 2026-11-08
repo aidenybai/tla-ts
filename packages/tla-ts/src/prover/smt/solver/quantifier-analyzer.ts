@@ -1,6 +1,5 @@
 // Ported from Z3 (src/smt/smt_model_finder.cpp, src/ast/macros/quantifier_macro_info.cpp), MIT
-// license, see z3-license.txt. The quantifier analyzer of the model finder, which collects how the
-// variables of each quantifier occur, and the quantifier info where it records what it learns.
+// license, see z3-license.txt.
 import {
   KIND_APP,
   KIND_VAR,
@@ -25,11 +24,8 @@ import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { AufSolver, type Evaluate, InstantiationSet, Node } from "./auf-solver";
 
-// smt_params' mbqi_force_template: macros of quantifiers with at least this weight are used even
-// in the AUF fragment.
 export const MBQI_FORCE_TEMPLATE = 10;
 
-// qinfo: a bit of information about how a variable occurs in a quantifier.
 type QInfo =
   | { kind: "f_var"; decl: number; argIndex: number; varIndex: number }
   | { kind: "f_var_plus_offset"; decl: number; argIndex: number; varIndex: number; offset: number }
@@ -42,7 +38,6 @@ const isSameQInfo = (first: QInfo, second: QInfo) =>
 const mkVarPair = (kind: "x_eq_y" | "x_neq_y" | "x_leq_y", first: number, second: number): QInfo =>
   first > second ? { kind, first: second, second: first } : { kind, first, second };
 
-// quantifier_info: what the analyzer learned about one quantifier.
 export class QuantifierInfo {
   readonly flatQ: number;
   qinfos: QInfo[] = [];
@@ -59,7 +54,6 @@ export class QuantifierInfo {
     readonly quantifier: number,
     macroRewriter: Rewriter,
   ) {
-    // m_flat_q, which holds a reference.
     const isNested = manager.hasQuantifierFlags[manager.getQuantifier(quantifier).body];
     this.flatQ = isNested ? pullQuant(manager, quantifier) : quantifier;
     if (!isNested) manager.incRef(quantifier);
@@ -197,7 +191,6 @@ export class QuantifierInfo {
       );
   }
 
-  // populate_macro_based_inst_sets: the sets of a quantifier that a macro satisfies.
   getMacroBasedInstSet(varIndex: number, evaluate: Evaluate) {
     const theOne = this.theOne;
     if (theOne === null) return null;
@@ -227,8 +220,6 @@ export class QuantifierInfo {
 
 type Polarity = "pos" | "neg";
 
-// quantifier_analyzer.
-// One analyzer runs per quantifier and records what it learns in the quantifier's info.
 export class QuantifierAnalyzer {
   private posCache = new Set<number>();
   private negCache = new Set<number>();
@@ -249,7 +240,6 @@ export class QuantifierAnalyzer {
     return this.manager.kinds[expr] === KIND_VAR;
   }
 
-  // poly_rewriter::is_var_plus_ground.
   private isVarPlusGround(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_ADD || this.isGround(expr)) return undefined;
@@ -532,7 +522,6 @@ export class QuantifierAnalyzer {
     }
   }
 
-  // is_clause: a disjunction of literals.
   private isLiteral(expr: number) {
     const manager = this.manager;
     const atom = manager.isNot(expr) ? manager.getArg(expr, 0) : expr;

@@ -1,6 +1,5 @@
 // Ported from Z3 (src/ast/rewriter/bv_rewriter.cpp, mk_extract_proc.cpp), MIT license, see
-// z3-license.txt. It has elim_sign_ext, bit2bool, bv_sort_ac and bv_le2extract on and
-// blast_eq_value, bv_extract_prop, bv_not_simpl, bv_ite2id and bv_le_extra off.
+// z3-license.txt.
 import { isAstLess } from "./ast-lt";
 import {
   type AstManager,

@@ -1,13 +1,10 @@
-// Ported from Z3 (src/nlsat/nlsat_evaluator.cpp), MIT license, see z3-license.txt. Evaluates atoms
-// at the assignment, and computes the intervals of the maximal variable of an atom that falsify a
-// literal at the values of the variables below it. The assignment is the solver's, shared and
-// refined in place.
+// Ported from Z3 (src/nlsat/nlsat_evaluator.cpp), MIT license, see z3-license.txt.
+// The assignment is the solver's, shared and refined in place.
 import type { Anum, AlgebraicManager } from "./algebraic";
 import { type IntervalSet, IntervalSetManager } from "./interval-set";
 import type { Polynomial, PolynomialManager } from "./polynomial";
 import { type Atom, type Clause, type IneqAtom, type RootAtom, isIneqAtom } from "./types";
 
-// Z3's LINEAR_SEARCH_THRESHOLD.
 const LINEAR_SEARCH_THRESHOLD = 8;
 
 interface Section {
@@ -114,7 +111,6 @@ class SignTable {
     return this.polynomialSigns[info.firstSign + index];
   }
 
-  // sign_at: the sign of the infoId-th polynomial in the cell.
   signAt(infoId: number, cell: number) {
     const info = this.infos[infoId];
     const rootCount = info.rootCount;
@@ -215,7 +211,6 @@ export class Evaluator {
     table.add(signed.roots, signed.signs);
   }
 
-  // The maximal runs of cells where the literal is false, as a union of intervals.
   private getIneqInfeasibleIntervals(atom: IneqAtom, isNeg: boolean, clause: Clause | null) {
     const table = new SignTable(this.am);
     for (const polynomial of atom.polynomials) this.addToTable(polynomial, atom.maxVar, table);

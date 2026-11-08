@@ -1,9 +1,6 @@
 // Ported from Z3 (src/math/grobner/pdd_simplifier.h, src/math/grobner/pdd_simplifier.cpp), MIT
-// license, see z3-license.txt. The passes that dd::solver::simplify runs before saturation: solve
-// linear equations for their top variable, retire equations whose top variable occurs nowhere
-// else, subtract equations that share a lo part, and eliminate variables that occur as leaves.
-// The extended linear pass works only modulo 2 and the dual elimination is disabled in Z3, so
-// neither is ported. No pass makes a value outside an operation, so none can run out of nodes.
+// license, see z3-license.txt. The extended linear pass works only modulo 2 and the dual
+// elimination is disabled in Z3, so neither is ported.
 import { mkJoin } from "./dependency";
 import { Equation, PddSolver, SetUpdate, SOLVED, TO_SIMPLIFY } from "./pdd-solver";
 import { shrink } from "../array";
@@ -30,8 +27,6 @@ export class PddSimplifier {
     return this.simplifyLinear(linear);
   }
 
-  // simplify_linear_step: solves each linear equation for its top variable, which it eliminates
-  // from the others, and moves it to the solved equations.
   private simplifyLinear(linear: Equation[]) {
     const solver = this.solver;
     const useList = this.getUseList();
@@ -80,7 +75,6 @@ export class PddSimplifier {
     return kept > 0 || hasConflict;
   }
 
-  // simplify_cc_step: replaces p*x + q and r*y + q by p*x + q and p*x - r*y, when p or r is a value.
   private simplifyCcStep() {
     const solver = this.solver;
     const los = new Map<number, Equation>();
@@ -107,7 +101,6 @@ export class PddSimplifier {
     return isReduced;
   }
 
-  // simplify_leaf_step: removes a*x + b from the equations where x occurs as a leaf, for a value a.
   private simplifyLeafStep() {
     const solver = this.solver;
     const useList = this.getUseList();
@@ -137,8 +130,6 @@ export class PddSimplifier {
     return false;
   }
 
-  // simplify_elim_pure_step: an equation linear in its top variable, which occurs nowhere else, is
-  // solved.
   private simplifyElimPureStep() {
     const solver = this.solver;
     const useList = this.getUseList();

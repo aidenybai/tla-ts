@@ -1,7 +1,5 @@
 // Ported from Z3 (src/smt/qi_queue.cpp, src/smt/smt_checker.cpp), MIT license, see
-// z3-license.txt. Instances found by E-matching wait here. Z3's default cost is
-// (+ weight generation): cheap instances are created at once, expensive ones only in the final
-// check, and the checker skips instances that the current assignment already satisfies.
+// z3-license.txt.
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
@@ -20,14 +18,12 @@ interface Entry {
   isInstantiated: boolean;
 }
 
-// A copy of the array with room for the index, at least twice as long.
 const grow = (array: Int32Array, index: number) => {
   const grown = new Int32Array(Math.max(2 * array.length, index + 1));
   grown.set(array);
   return grown;
 };
 
-// smt::checker: evaluates a quantifier body under bindings with the E-graph and the assignment.
 class Checker {
   private bindings: Enode[] = [];
   // The caches of a run, by expression, which hold an entry for the run whose stamp it has. So a run
@@ -37,7 +33,6 @@ class Checker {
   private checkResults = new Int32Array(1024);
   private enodeStamps = new Int32Array(1024);
   private enodeResults: (Enode | null | undefined)[] = [];
-  // The ptr_buffer of each level of get_enode_eq_to_core, which Z3 keeps on the stack.
   private argBuffers: Enode[][] = [];
   private argDepth = 0;
 
@@ -161,7 +156,6 @@ class Checker {
     return this.isAssigned(node.owner, isTrue);
   }
 
-  // get_enode_eq_to: the relevant term of the E-graph that the expression equals by congruence.
   private getEnodeEqTo(expr: number): Enode | null {
     const context = this.context;
     const manager = context.manager;
@@ -215,7 +209,6 @@ export class QiQueue {
   private instanceStarts: number[] = [];
   private instanceNext: number[] = [];
   private bindingOwners: number[] = [];
-  // m_instances: the lemmas, which the queue holds until their scope is popped.
   private lemmas: RefVector;
   numInstances = 0;
 

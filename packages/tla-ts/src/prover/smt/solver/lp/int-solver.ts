@@ -1,8 +1,5 @@
 // Ported from Z3 (src/math/lp/int_solver.cpp, src/math/lp/int_gcd_test.cpp,
-// src/math/lp/int_branch.cpp), MIT license, see z3-license.txt. The integer check of the final
-// check: the GCD test on rows, patching fractional basic columns through integer non-basic ones,
-// the cube and largest cube tests, HNF cuts, the Diophantine solver, Gomory cuts, and a branch on a
-// fractional basic column.
+// src/math/lp/int_branch.cpp), MIT license, see z3-license.txt.
 import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { DiophantineSolver } from "./dioph-eq";
@@ -25,7 +22,6 @@ export type LiaMove =
 
 const getFractionalPart = (value: Rational) => value.sub(value.floor());
 
-// gcd(a, b, u, v): the gcd of a and b, with a * u + b * v equal to it.
 const getExtendedGcd = (first: bigint, second: bigint) => {
   let previous = [first, 1n, 0n];
   let current = [second, 0n, 1n];
@@ -42,7 +38,6 @@ const getExtendedGcd = (first: bigint, second: bigint) => {
   return previous[0] < 0n ? previous.map((value) => -value) : previous;
 };
 
-// get_patching_deltas: the moves of a column with coefficient alpha that make x integral.
 const getPatchingDeltas = (x: Rational, alpha: Rational) => {
   if (alpha.den % x.den !== 0n) return undefined;
   const scale = alpha.den / x.den;
@@ -61,17 +56,15 @@ interface Parity {
 
 export class IntSolver {
   private numberOfCalls = 0;
-  // m_parities and m_inserted_vars of the GCD test, for one test.
   private parities = new Map<number, Parity[]>();
   private parityColumns: number[] = [];
   private lcubePeriod: number;
   readonly explanation = new Explanation();
-  // m_t: the term of a branch or a cut, kept across calls as Z3 keeps its table.
+  // Kept across calls, as Z3 keeps its table.
   readonly term = new LarTerm();
 
   private dio: DiophantineSolver;
   private initialDioCallsPeriod: number;
-  // m_dio_undef_in_a_row: the Diophantine solver's calls in a row that found nothing.
   private dioUndefInARow = 0;
 
   constructor(readonly solver: LarSolver) {
@@ -159,8 +152,6 @@ export class IntSolver {
     return this.branch();
   }
 
-  // find_lcube: the period doubles while the largest cube finds nothing, and resets when it finds a
-  // solution.
   private findLcube() {
     const isSat = findLargestCube(this.solver);
     if (isSat) this.lcubePeriod = this.solver.settings.intFindCubePeriod;
@@ -168,8 +159,6 @@ export class IntSolver {
     return isSat;
   }
 
-  // should_solve_dioph_eq: a draw with the current period, which relaxes toward the initial one
-  // when it misses.
   private shouldSolveDiophantineEquations() {
     const settings = this.solver.settings;
     const isHit = this.hitPeriod(settings.dioCallsPeriod);
@@ -183,9 +172,7 @@ export class IntSolver {
     return isHit;
   }
 
-  // solve_dioph_eq: a conflict resets the period and stops Gomory cuts, and nothing found doubles
-  // the period and starts Gomory cuts after enough failures in a row. Z3 also sets the GCD test's
-  // flag, which it does not read while the Diophantine solver is on.
+  // Z3 also sets the GCD test's flag, which it does not read while the Diophantine solver is on.
   private solveDiophantineEquations(): LiaMove {
     const settings = this.solver.settings;
     if (this.dio.check() === "conflict") {
@@ -202,8 +189,6 @@ export class IntSolver {
     return { kind: "undef" };
   }
 
-  // GCD test.
-
   private gcdTest(): LiaMove {
     const solver = this.solver;
     solver.settings.stats.gcdCalls++;
@@ -212,8 +197,6 @@ export class IntSolver {
     return { kind: "conflict" };
   }
 
-  // gcd_test: the rows of fractional basic columns, then the other rows of the columns whose
-  // parity a row fixed.
   private isGcdTestFeasible() {
     const solver = this.solver;
     this.parities.clear();
@@ -294,8 +277,6 @@ export class IntSolver {
     return this.accumulateParity(row, leastCoeffColumn, lcm, consts, leastCoeff);
   }
 
-  // accumulate_parity: the row fixes the residue of its unique least column modulo the gcd of the
-  // others, and two rows that fix different residues for the same modulus conflict.
   private accumulateParity(
     row: RowCell[],
     leastColumn: number,
@@ -379,8 +360,6 @@ export class IntSolver {
       if (this.solver.isFixed(cell.column)) this.addBoundWitnesses(cell.column);
   }
 
-  // Patching.
-
   private patchBasicColumns() {
     const solver = this.solver;
     solver.settings.stats.patches++;
@@ -432,8 +411,6 @@ export class IntSolver {
     solver.setValueForNbasicColumn(column, value);
     return true;
   }
-
-  // Branching.
 
   private branch(): LiaMove {
     const solver = this.solver;

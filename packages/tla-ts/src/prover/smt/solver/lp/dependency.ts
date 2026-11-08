@@ -1,6 +1,4 @@
-// Ported from Z3 (src/util/dependency.h), MIT license, see z3-license.txt. The witnesses of bounds:
-// a DAG whose leaves are constraint indices. Without proofs, lar_solver's evidence_manager is the
-// plain u_dependency_manager.
+// Ported from Z3 (src/util/dependency.h), MIT license, see z3-license.txt.
 
 export interface DependencyLeaf {
   readonly isLeaf: true;

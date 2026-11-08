@@ -2,7 +2,6 @@
 
 import { formatName } from "./format";
 
-// A quantifier's variables, in scope until the quantifier's closing parenthesis.
 interface QuantifierScope {
   depth: number;
   exits: (() => void)[];
@@ -30,7 +29,6 @@ export const createContext = () => {
       ) ?? start;
     return { base, salt, name: getSaltedName(base, salt) };
   };
-  // Brings an identifier into scope and returns how to take it out again.
   const enter = (identifier: Identifier) => {
     const previous = salts.get(identifier.base);
     salts.set(identifier.base, identifier.salt);
@@ -44,8 +42,6 @@ export const createContext = () => {
   return { names, adjoin, enter };
 };
 
-// Smtlib.pp_print_obligation names each declaration for the rest of the obligation, and each
-// quantifier's variables within it, so a variable's name depends on the names in scope.
 export const createPrinter = (declared: Map<string, Identifier>) => {
   const context = createContext();
   const resolve = (line: string) => {

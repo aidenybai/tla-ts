@@ -1,6 +1,5 @@
-// Flatten.instantiate: the axioms of encode/n_axioms.ml for a second-order construct, instantiated
-// for one flattened symbol. Each takes the symbol's name, the bound variables its argument uses,
-// which become its last arguments, and the argument's text with the variable it binds.
+// Flatten.instantiate: encode/n_axioms.ml's second-order axioms, instantiated for one flattened
+// symbol.
 
 import {
   APPEND,
@@ -24,7 +23,6 @@ import {
 } from "./format";
 import { axiom, getAxiomKey } from "./table";
 
-// SetStDef for { x \in a : body }.
 export const getSetStAxioms = (name: string, free: string[], body: string, variable: string) => {
   const set = call(name, ["a", ...free]);
   return [
@@ -40,7 +38,6 @@ export const getSetStAxioms = (name: string, free: string[], body: string, varia
   ];
 };
 
-// SetOfIntro, SetOfElim, and AssertIsSetOf for { element : y1 \in a1, ..., yn \in an }.
 export const getSetOfAxioms = (name: string, free: string[], element: string, bound: string[]) => {
   const count = bound.length;
   const sets = getNames("a", count);
@@ -80,8 +77,6 @@ export const getSetOfAxioms = (name: string, free: string[], element: string, bo
   ];
 };
 
-// FunConstrIsafcn, FunDomDef, FunAppDef, and FunTyping when collect brought it, for
-// [x \in a |-> body].
 export const getFunctionAxioms = (
   name: string,
   free: string[],
@@ -119,7 +114,6 @@ export const getFunctionAxioms = (
   ];
 };
 
-// ChooseDef for CHOOSE x : body.
 export const getChooseAxioms = (name: string, free: string[], body: string, variable: string) => [
   axiom(
     "ChooseDef",
@@ -131,7 +125,6 @@ export const getChooseAxioms = (name: string, free: string[], body: string, vari
   ),
 ];
 
-// The SeqSelectseq axioms for SelectSeq(s, LAMBDA x : body).
 export const getSelectSeqAxioms = (
   name: string,
   free: string[],

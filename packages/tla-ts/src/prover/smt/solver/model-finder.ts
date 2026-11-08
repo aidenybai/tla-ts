@@ -1,8 +1,4 @@
-// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt. Completes the
-// model of the ground formulas so that it may satisfy the universal quantifiers, following
-// "Complete instantiation for quantified SMT formulas": the quantifier analyzer collects how the
-// variables occur, and the AUF solver gives each group of argument positions and variables a
-// projection function onto its instantiation set.
+// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt.
 import { OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import type { Context } from "./context";
 import { L_TRUE } from "./lbool";
@@ -19,8 +15,7 @@ export class ModelFinder {
   private quantifiers: number[] = [];
   private scopes: number[] = [];
   private rewriter: Rewriter;
-  // m_mutil of quantifier_analyzer: macro_util's rewriting, kept apart from the rewriter above so that
-  // its last result is never released early.
+  // Kept apart from the rewriter above, so that its last result is never released early.
   private macroRewriter: Rewriter;
   readonly aufSolver: AufSolver;
   private newConstraints: number[] = [];
@@ -60,8 +55,6 @@ export class ModelFinder {
     shrink(this.scopes, this.scopes.length - numScopes);
   }
 
-  // fix_model: tries to satisfy the relevant quantifiers by changing the model while keeping the
-  // ground formulas satisfied.
   fixModel(model: ProtoModel) {
     const context = this.context;
     if (this.quantifiers.length === 0) return;
@@ -92,7 +85,6 @@ export class ModelFinder {
     return this.getQuantifierInfo(quantifier).flatQ;
   }
 
-  // get_uvar_inst_set: the set of variable index of the quantifier before flattening.
   getUvarInstSet(quantifier: number, index: number) {
     const manager = this.manager;
     const flatQ = this.getFlatQuantifier(quantifier);
@@ -105,7 +97,6 @@ export class ModelFinder {
     );
   }
 
-  // get_inv: a term of the instantiation set whose value is value.
   getInv(quantifier: number, index: number, value: number, model: ProtoModel) {
     const set = this.getUvarInstSet(quantifier, index);
     if (set === null) return null;
@@ -115,7 +106,6 @@ export class ModelFinder {
     return term === undefined ? null : { term, generation: set.getGeneration(term) };
   }
 
-  // restrict_sks_to_inst_set: each Skolem constant must take the value of a term in its set.
   restrictSksToInstSet(quantifier: number, sks: number[], assert: (expr: number) => void) {
     const manager = this.manager;
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
@@ -141,7 +131,6 @@ export class ModelFinder {
     return isAsserted;
   }
 
-  // restart_eh: the constraints of the last model become axioms.
   restartEh() {
     const context = this.context;
     for (const constraint of this.newConstraints) {

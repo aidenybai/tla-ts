@@ -1,7 +1,4 @@
-// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt. Matching of quantifier
-// patterns against the E-graph with Z3's matching abstract machine: the patterns are compiled into
-// code trees, new relevant terms become candidates of the tree for their label, and the inverted
-// path index with approximate label sets finds the candidates that a merge creates.
+// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
 import { AstManager, KIND_VAR } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
@@ -10,8 +7,6 @@ import { type CodeTree, Compiler, hasHash, type LabelHasher } from "./mam-compil
 import { Interpreter, type OnMatch } from "./mam-interpreter";
 import { setAt, shrink } from "./array";
 
-// A step from a term to its parent: the parent's label, the position of the term in it, and an
-// optional ground argument the parent must also have.
 interface Path {
   label: number;
   argIndex: number;
@@ -33,7 +28,6 @@ interface PathTree {
   code: CodeTree | null;
   firstChild: PathTree | null;
   sibling: PathTree | null;
-  // The roots that collect_parents visits at this node, while it walks the tree.
   todo: Enode[] | null;
 }
 
@@ -54,7 +48,6 @@ const isEqualPath = (first: Path, second: Path): boolean => {
   }
 };
 
-// A multi-pattern of a quantifier: the terms of one of its patterns.
 interface MultiPattern {
   quantifier: number;
   patterns: number[];
@@ -62,7 +55,6 @@ interface MultiPattern {
 
 export class Mam implements LabelHasher {
   private trees = new Map<number, CodeTree>();
-  // m_shared_enodes: the ground terms of the patterns.
   private sharedEnodes = new Set<Enode>();
   private toMatch: CodeTree[] = [];
   private newPatterns: MultiPattern[] = [];
@@ -72,7 +64,6 @@ export class Mam implements LabelHasher {
   private clbls = new Set<number>();
   private r1: Enode | null = null;
   private r2: Enode | null = null;
-  // The nodes that collect_parents marks, to unmark at the end of each level.
   private visitedParents: Enode[] = [];
   private queuedRoots: Enode[] = [];
   private labelHashes: (number | undefined)[] = [];
@@ -95,7 +86,6 @@ export class Mam implements LabelHasher {
     return this.context.manager;
   }
 
-  // label_hasher: Bob Jenkins' mix of the small id of a declaration, in [0, 64).
   getLabelHash(decl: number) {
     const cached = this.labelHashes[decl];
     if (cached !== undefined) return cached;
@@ -104,9 +94,8 @@ export class Mam implements LabelHasher {
     return hash;
   }
 
-  // enode::set_lbl_hash: a ground term of a pattern hashes its id, and its root's labels take it.
-  // The context's trail undoes both. Z3 pops it after the matcher's trail, so the labels of a root
-  // can keep a hash that a merge undone by the matcher's trail added.
+  // The context's trail undoes set_lbl_hash. Z3 pops it after the matcher's trail, so the labels
+  // of a root can keep a hash that a merge undone by the matcher's trail added.
   private setLblHash(node: Enode) {
     const hash = hashU(this.manager.ids[node.owner]) & 63;
     node.lblHash = hash;
@@ -184,12 +173,10 @@ export class Mam implements LabelHasher {
       if (this.context.isRelevant(node.owner)) this.updateLbls(node, hash);
   }
 
-  // mk_code: the code tree of a path, which runs each candidate once.
   private mkCode(mp: MultiPattern, patternIndex: number) {
     return this.compiler.mkTree(mp.quantifier, mp.patterns, patternIndex, true);
   }
 
-  // mk_path_tree: a chain of path tree nodes whose last one has a code for the path's pattern.
   private mkPathTree(path: Path, mp: MultiPattern): PathTree {
     const tree: PathTree = {
       label: path.label,
@@ -211,7 +198,6 @@ export class Mam implements LabelHasher {
     return tree;
   }
 
-  // compiler::insert for path trees.
   private insertPath(head: PathTree, path: Path, mp: MultiPattern) {
     let isLabelFound = false;
     let last = head;
@@ -388,7 +374,6 @@ export class Mam implements LabelHasher {
     patterns.forEach((pattern, index) => this.updateFilters(pattern, null, index, varPaths, mp));
     this.collectGroundExprs(quantifier, patterns);
     this.newPatterns.push(mp);
-    // code_tree_map::add_pattern for each pattern as the first one.
     patterns.forEach((pattern, firstIndex) => {
       if (manager.isGround(pattern)) return;
       const label = manager.decls[pattern];
@@ -403,8 +388,6 @@ export class Mam implements LabelHasher {
     });
   }
 
-  // collect_ground_exprs: the ground patterns become relevant enodes, and the ground subterms of the
-  // other patterns become enodes that theory combination treats as shared.
   private collectGroundExprs(quantifier: number, patterns: number[]) {
     const manager = this.manager;
     const todo: number[] = [];
@@ -470,9 +453,8 @@ export class Mam implements LabelHasher {
     );
   }
 
-  // collect_parents: walks the path tree level by level from the merged class, visiting each parent
-  // once per level, and hands the terms where a path ends to that path's code. The mark of a parent
-  // says it was visited at this level, and the second mark of a root says it is queued for the next.
+  // The mark of a parent says it was visited at this level, and the second mark of a root says
+  // it is queued for the next.
   private collectParents(start: Enode, head: PathTree | null | undefined) {
     if (head === null || head === undefined) return;
     const context = this.context;

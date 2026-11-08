@@ -1,7 +1,4 @@
 // Ported from Z3 (src/ast/pattern/pattern_inference.cpp), MIT license, see z3-license.txt.
-// Infers E-matching patterns for quantifiers that have none, with Z3's default parameters:
-// pi.max_multi_patterns=0, pi.block_loop_patterns=true, pi.decompose_patterns=true,
-// pi.arith=1 (conservative), pi.avoid_skolems=true.
 import {
   AstManager,
   FAMILY_ARITH,
@@ -40,8 +37,7 @@ const isSameSet = (left: Set<number>, right: Set<number>) =>
 const isSubset = (left: Set<number>, right: Set<number>) =>
   [...left].every((element) => right.has(element));
 
-// pattern_inference_cfg, which asserted_formulas keeps as long as it lives. m_candidates holds its
-// candidates until the end of mk_patterns.
+// m_candidates holds its candidates until the end of mk_patterns.
 export class PatternInference {
   private candidates: RefVector;
   private candidateInfos = new Map<number, CandidateInfo>();
@@ -282,7 +278,6 @@ export class PatternInference {
       const looseCandidates = this.filterLoopingPatterns().filter(
         (candidate) => !this.containsSubpattern(candidate),
       );
-      // m_tmp1: the candidates that do not cover every variable, which may form a multi-pattern.
       const partialCandidates: number[] = [];
       for (const candidate of looseCandidates) {
         const info = this.candidateInfos.get(candidate);
@@ -314,8 +309,8 @@ export class PatternInference {
     return result;
   }
 
-  // reduce_quantifier for a quantifier without patterns: arithmetic, then looping and non-nested
-  // arithmetic patterns, are allowed when no pattern is found without them.
+  // Arithmetic, then looping and non-nested arithmetic patterns, are allowed when no pattern is
+  // found without them.
   infer(numBindings: number, body: number, weight: number): InferredPatterns {
     this.isArithForbidden = true;
     this.isNestedArithOnly = true;

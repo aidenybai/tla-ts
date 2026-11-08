@@ -1,8 +1,6 @@
 // Ported from Z3 (src/math/polynomial/upolynomial.{h,cpp}, src/util/mpzzp.h,
-// src/math/polynomial/polynomial_primes.h), MIT license, see z3-license.txt. Univariate
-// polynomials with integer coefficients, as coefficient arrays from the constant term up with no
-// leading zeros, over Z or over Z_p. Root isolation by Descartes' rule of signs, Sturm sequences
-// and refinement of isolating intervals with binary rational endpoints.
+// src/math/polynomial/polynomial_primes.h), MIT license, see z3-license.txt. Polynomials are
+// coefficient arrays from the constant term up, with no leading zeros.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { getLog2, Mpbq, refineLower, refineUpper } from "./mpbq";
@@ -38,7 +36,6 @@ const floorDiv = (dividend: bigint, divisor: bigint) => {
   return dividend % divisor !== 0n && dividend < 0n !== divisor < 0n ? quotient - 1n : quotient;
 };
 
-// mpz gcd(a, b, x, y, g): a*x + b*y = g.
 const getExtendedGcd = (first: bigint, second: bigint) => {
   let [oldR, r] = [first, second];
   let [oldS, s] = [1n, 0n];
@@ -65,7 +62,6 @@ interface IsolatedRoots {
   uppers: Mpbq[];
 }
 
-// An interval (a, b) refined around the root of a square-free polynomial, or the root itself.
 interface Refinement {
   isInterval: boolean;
   lower: Mpbq;
@@ -90,25 +86,22 @@ export class UpolynomialManager {
     return this.modulus;
   }
 
-  // field: Z_p for a prime p. Over a prime power, division falls back to pseudo-division.
+  // Over a prime power, division falls back to pseudo-division.
   private get isField() {
     return this.modulus !== null && this.isPrimeModulus;
   }
 
-  // set_zp
   setZp(prime: bigint) {
     this.modulus = prime;
     this.isPrimeModulus = true;
   }
 
-  // set_p_sq: from Z_m to Z_(m^2).
   squareModulus() {
     if (this.modulus === null) throw new SmtInvariantError("squaring the modulus of Z");
     this.modulus *= this.modulus;
     this.isPrimeModulus = false;
   }
 
-  // scoped_set_zp
   withZp<T>(prime: bigint, body: () => T) {
     const savedModulus = this.modulus;
     const savedIsPrime = this.isPrimeModulus;
@@ -119,9 +112,6 @@ export class UpolynomialManager {
     return result;
   }
 
-  // Numerals.
-
-  // p_normalize
   normalizeNumeral(value: bigint) {
     const modulus = this.modulus;
     if (modulus === null) return value;
@@ -149,12 +139,9 @@ export class UpolynomialManager {
     return divisor === 0n ? dividend === 0n : dividend % divisor === 0n;
   }
 
-  // set: the coefficients reduced to the current ring.
   set(coeffs: Upolynomial) {
     return trim(coeffs.map((coeff) => this.normalizeNumeral(coeff)));
   }
-
-  // Core operations.
 
   getContent(coeffs: Upolynomial) {
     let content = 0n;
@@ -221,7 +208,6 @@ export class UpolynomialManager {
     );
   }
 
-  // normalize: the coefficients divided by their gcd, or the sign of a constant.
   normalize(coeffs: Upolynomial) {
     if (coeffs.length === 0) return [];
     if (coeffs.length === 1) return [coeffs[0] > 0n ? 1n : this.normalizeNumeral(-1n)];
@@ -234,7 +220,6 @@ export class UpolynomialManager {
     return coeffs.length > 0 && coeffs[coeffs.length - 1] < 0n ? this.neg(coeffs) : [...coeffs];
   }
 
-  // mk_monic: the polynomial divided by its leading coefficient, over Z_p.
   mkMonic(coeffs: Upolynomial) {
     if (coeffs.length === 0 || coeffs[coeffs.length - 1] === 1n) return [...coeffs];
     const inverse = this.inv(coeffs[coeffs.length - 1]);
@@ -290,7 +275,6 @@ export class UpolynomialManager {
     return this.divRem(dividend, divisor).quotient;
   }
 
-  // rem: the pseudo-remainder, with the number of pseudo-division steps.
   remWithPower(dividend: Upolynomial, divisor: Upolynomial) {
     if (divisor.length === 1) return { remainder: [] as bigint[], power: 0 };
     const remainder = this.set(dividend);
@@ -356,7 +340,6 @@ export class UpolynomialManager {
     return true;
   }
 
-  // exact_div: dividend / divisor when the division is exact, else null.
   exactDiv(dividend: Upolynomial, divisor: Upolynomial): bigint[] | null {
     if (divisor.length === 0) return null;
     if (dividend.length === 0) return [];
@@ -383,8 +366,6 @@ export class UpolynomialManager {
     return trim(result);
   }
 
-  // GCD.
-
   private euclidGcd(first: Upolynomial, second: Upolynomial) {
     if (first.length === 0) return this.flipSignIfLmNeg(this.set(second));
     if (second.length === 0) return this.flipSignIfLmNeg(this.set(first));
@@ -399,7 +380,6 @@ export class UpolynomialManager {
     return this.isField ? this.mkMonic(normalized) : this.flipSignIfLmNeg(normalized);
   }
 
-  // CRA_combine_images: the image modulo bound * prime, in the symmetric range.
   private combineImages(image: Upolynomial, prime: bigint, combined: Upolynomial, bound: bigint) {
     const inverses = getExtendedGcd(prime, bound);
     const mod = (value: bigint, modulus: bigint) => ((value % modulus) + modulus) % modulus;
@@ -421,7 +401,6 @@ export class UpolynomialManager {
     return { coeffs: result, bound: newBound };
   }
 
-  // mod_gcd: the gcd over Z from images modulo big primes, combined by the Chinese remainder theorem.
   private modGcd(first: Upolynomial, second: Upolynomial) {
     const contentU = this.getContent(first);
     const contentV = this.getContent(second);
@@ -469,7 +448,6 @@ export class UpolynomialManager {
     return this.modulus === null ? this.modGcd(first, second) : this.euclidGcd(first, second);
   }
 
-  // square_free: p divided by gcd(p, p'), normalized.
   squareFree(coeffs: Upolynomial) {
     if (coeffs.length <= 1) return this.set(coeffs);
     const common = this.gcd(coeffs, this.derivative(coeffs));
@@ -487,7 +465,6 @@ export class UpolynomialManager {
     return result;
   }
 
-  // ext_gcd over Z_p: u, v and the monic d with a*u + b*v = d.
   extGcd(first: Upolynomial, second: Upolynomial) {
     let u: bigint[] = [1n];
     let d = this.mkMonic(this.set(first));
@@ -510,8 +487,6 @@ export class UpolynomialManager {
       d: this.mkMonic(d),
     };
   }
-
-  // Transformations.
 
   hasZeroRoots(coeffs: Upolynomial) {
     return coeffs.length > 0 && coeffs[0] === 0n;
@@ -577,28 +552,23 @@ export class UpolynomialManager {
     return result;
   }
 
-  // compose_2n_p_x_div_2: 2^n * p(x/2).
   private compose2nPxDiv2(coeffs: Upolynomial) {
     const degree = coeffs.length - 1;
     return coeffs.map((coeff, index) => coeff << BigInt(degree - index));
   }
 
-  // p_minus_x: p(-x).
   pMinusX(coeffs: Upolynomial) {
     return coeffs.map((coeff, index) => (index % 2 === 1 && coeff !== 0n ? -coeff : coeff));
   }
 
-  // p_1_div_x: x^n * p(1/x).
   p1DivX(coeffs: Upolynomial) {
     return [...coeffs].reverse();
   }
 
-  // compose_p_2k_x: p(2^k * x).
   private composeP2kX(coeffs: Upolynomial, k: number) {
     return coeffs.map((coeff, index) => coeff << BigInt(k * index));
   }
 
-  // compose_an_p_x_div_a: a^n * p(x/a).
   private composeAnPxDivA(coeffs: Upolynomial, factor: bigint) {
     const degree = coeffs.length - 1;
     return coeffs.map((coeff, index) =>
@@ -685,8 +655,6 @@ export class UpolynomialManager {
     return this.countSignVariations(sequence.map((coeffs) => this.evalSignAtBq(coeffs, value)));
   }
 
-  // Root bounds.
-
   // knuth_positive_root_upper_bound: k with every positive root below 2^k.
   knuthPositiveRootUpperBound(coeffs: Upolynomial) {
     if (coeffs.length === 0) return 0;
@@ -718,8 +686,6 @@ export class UpolynomialManager {
       this.knuthNegativeRootUpperBound(reversed),
     );
   }
-
-  // Root isolation by Descartes' rule of signs.
 
   // push_child_frames: the halves (0, 1/2) and (1/2, 1), as 2^n p(x/2) and its translation.
   private pushChildFrames(coeffs: Upolynomial, frames: DrsFrame[]) {
@@ -823,8 +789,6 @@ export class UpolynomialManager {
     return result;
   }
 
-  // Sturm sequences.
-
   private sturmSeqCore(sequence: bigint[][]) {
     while (true) {
       const remainder = this.srem(sequence[sequence.length - 2], sequence[sequence.length - 1]);
@@ -841,10 +805,6 @@ export class UpolynomialManager {
     return this.sturmSeqCore([[...first], this.mul(this.derivative(first), second)]);
   }
 
-  // Refinement.
-
-  // isolating2refinable: an isolating interval of a square-free polynomial turned into one whose
-  // endpoint signs differ, or the root it contains.
   isolating2refinable(coeffs: Upolynomial, lower: Mpbq, upper: Mpbq): Refinement {
     const signLower = this.evalSignAtBq(coeffs, lower);
     const signUpper = this.evalSignAtBq(coeffs, upper);
@@ -897,7 +857,6 @@ export class UpolynomialManager {
     }
   }
 
-  // refine_core: one bisection of a refinable interval, or the root at its midpoint.
   refineCore(coeffs: Upolynomial, signLower: number, lower: Mpbq, upper: Mpbq): Refinement {
     const middle = lower.add(upper).div2();
     const signMiddle = this.evalSignAtBq(coeffs, middle);
@@ -911,7 +870,6 @@ export class UpolynomialManager {
     return this.refineCore(coeffs, this.evalSignAtBq(coeffs, lower), lower, upper);
   }
 
-  // refine_core with a precision: bisects until the interval is narrower than 1/2^k.
   refineToPrecision(coeffs: Upolynomial, lower: Mpbq, upper: Mpbq, precision: number): Refinement {
     const signLower = this.evalSignAtBq(coeffs, lower);
     let current: Refinement = { isInterval: true, lower, upper };
@@ -922,8 +880,6 @@ export class UpolynomialManager {
     }
   }
 
-  // convert_q2bq_interval: a rational isolating interval (a, b) as a binary rational one (c, d), or
-  // the root itself in c.
   convertQ2bqInterval(coeffs: Upolynomial, a: Rational, b: Rational): Refinement {
     const signA = this.evalSignAtQ(coeffs, a);
     const signB = this.evalSignAtQ(coeffs, b);
@@ -978,8 +934,7 @@ export class UpolynomialManager {
     }
   }
 
-  // normalize_interval_core: a refinable interval around zero shrunk to the side of zero holding
-  // the root, given the sign at its lower end. Null when zero is the root.
+  // Null when zero is the root.
   normalizeInterval(coeffs: Upolynomial, lower: Mpbq, upper: Mpbq, signLower: number) {
     if (!(lower.isNeg && upper.isPos)) return { lower, upper };
     if (this.hasZeroRoots(coeffs)) return null;
@@ -988,7 +943,6 @@ export class UpolynomialManager {
       : { lower, upper: Mpbq.zero };
   }
 
-  // get_root_id: the number of roots up to l.
   getRootId(coeffs: Upolynomial, lower: Mpbq) {
     const sequence = this.sturmSeq(coeffs);
     return this.signVariationsAtMinusInf(sequence) - this.signVariationsAt(sequence, lower);

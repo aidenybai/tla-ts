@@ -1,6 +1,5 @@
 // Ported from Z3 (src/smt/theory_bv.h, src/smt/theory_bv.cpp, src/util/union_find.h), MIT license,
-// see z3-license.txt. It has setup_unknown's parameters: bv_reflect on, no congruence closure on
-// its terms, le atoms' definitions asserted eagerly, no watched disequalities, no size bound.
+// see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   FAMILY_BV,
@@ -85,7 +84,6 @@ interface BitAtom {
   occs: VarPosOcc | null;
 }
 
-// le_atom, which the overflow predicates also use.
 interface LeAtom {
   readonly isBit: false;
   readonly literal: Literal;

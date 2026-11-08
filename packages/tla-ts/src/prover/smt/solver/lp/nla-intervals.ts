@@ -1,7 +1,5 @@
 // Ported from Z3 (src/math/lp/nla_intervals.h, src/math/lp/nla_intervals.cpp), MIT license, see
-// z3-license.txt. Evaluates a nex expression over the bounds of its variables. When the interval
-// excludes zero, the expression cannot vanish, so the bounds behind the interval and the
-// dependencies of the row conflict with the row's equation, and the conflict becomes a lemma.
+// z3-license.txt.
 import { Rational } from "../rational";
 import {
   type DepInterval,
@@ -38,7 +36,6 @@ const mkExplanation = (constraints: number[]) => {
 export class Intervals {
   constructor(private readonly core: NlaCore) {}
 
-  // check_nex: whether the expression's interval excludes zero, in which case a lemma explains it.
   checkNex(expr: Nex, initialDeps: Dependency) {
     const report: ReportConflict = (explanation) =>
       new LemmaBuilder(this.core).addExplanation(explanation);
@@ -74,8 +71,6 @@ export class Intervals {
     return hasInf;
   }
 
-  // expression_to_normalized_term: the sum a*t + b, where t is the linear part divided by the
-  // coefficient of its smallest variable, which is a.
   private expressionToNormalizedTerm(sum: NexSum) {
     const pairs: [Rational, number][] = [];
     let constant = Rational.zero;
@@ -134,8 +129,6 @@ export class Intervals {
     if (mode === "with-deps") interval.upperDep = upperDep;
   }
 
-  // interval_from_term: the interval of a linear sum from the bounds of the term column that
-  // equals it, or from an equivalence that fixes it.
   private intervalFromTerm(sum: NexSum, interval: DepInterval, mode: DepsMode) {
     const normalized = this.expressionToNormalizedTerm(sum);
     const explanation = new Explanation();
@@ -176,8 +169,7 @@ export class Intervals {
     return true;
   }
 
-  // conflict_u_l: whether first's upper bound is below second's lower bound. Like Z3, equal
-  // bounds conflict when either upper bound is open.
+  // Like Z3, equal bounds conflict when either upper bound is open.
   private conflictUpperLower(first: DepInterval, second: DepInterval) {
     if (first.isUpperInf || second.isLowerInf) return false;
     const comparison = first.upper.compare(second.lower);
@@ -242,7 +234,7 @@ export class Intervals {
     set(interval, result, mode);
   }
 
-  // interval_of_expr: false when a sum met a conflict, which report received.
+  // False when a sum met a conflict, which report received.
   private intervalOfExpr(
     expr: Nex,
     exponent: number,

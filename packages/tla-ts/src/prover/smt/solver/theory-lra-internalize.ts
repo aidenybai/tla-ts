@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt. How theory_lra
-// internalizes terms: a term becomes a column of the lp solver, a linear sum becomes a term column,
-// nonlinear products and divisions go to nla, and numerals are fixed columns.
+// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_ARITH,
   OP_ADD,
@@ -28,7 +26,6 @@ import { NlaCore } from "./lp/nla-core";
 import type { Division } from "./lp/nla-divisions";
 import { TheoryLraAxioms } from "./theory-lra-axioms";
 
-// api_bound: an atom v <= value or v >= value, with its constraints when true and when false.
 export interface ApiBound {
   readonly boolVar: BoolVar;
   readonly thVar: number;
@@ -47,7 +44,6 @@ interface Scope {
   numVars: number;
 }
 
-// The theory variables of a linear sum and their coefficients.
 interface LinearizedSum {
   vars: number[];
   coeffs: Rational[];
@@ -61,15 +57,13 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   protected realOneVar = NULL_LPVAR;
   protected realZeroVar = NULL_LPVAR;
 
-  // The literal of each inequality constraint, and null for a definition.
   protected constraintSources: (Literal | null)[] = [];
 
   protected bounds: ApiBound[][] = [];
   protected unassignedBounds: number[] = [];
   protected isNewDef = false;
 
-  // m_internalize_states: the terms of each nesting depth of internalize_def and mk_var_bound, which
-  // hold references until the next one at that depth resets them.
+  // The terms of each depth hold references until the next one at that depth resets them.
   private internalizeStates: RefVector[] = [];
 
   protected internalizeHead = 0;
@@ -83,8 +77,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   protected underspecifiedTerms: number[] = [];
   protected nla: NlaCore | undefined;
 
-  // init: the constants 1 and 0, integer and then real, each in a scope of its own. The context
-  // runs it once, when it registers the theory.
+  // The constants 1 and 0, integer and then real, each in a scope of its own.
   init() {
     const manager = this.manager;
     this.oneVar = this.addConst(manager.mkNumeral(1n));
@@ -121,7 +114,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return column !== NULL_LPVAR ? column : this.solver.addVar(thVar, this.isIntVar(thVar));
   }
 
-  // mk_enode: the arguments, which become relevant, then the term.
+  // The arguments, which become relevant, then the term.
   protected mkEnode(expr: number) {
     const context = this.context;
     for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
@@ -144,7 +137,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     }
   }
 
-  // found_unsupported: the list of unsupported terms is on the trail.
   protected foundUnsupported(expr: number) {
     this.unsupportedTerms.push(expr);
     this.context.pushTrail(() => this.unsupportedTerms.pop());
@@ -192,7 +184,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return thVar;
   }
 
-  // internalize_mul: a product of terms is a variable whose arguments have variables.
   private internalizeMul(expr: number) {
     this.internalizeArgs(expr);
     const hasVar = this.context.isEInternalized(expr) && this.isAttachedExpr(expr);
@@ -209,7 +200,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return thVar;
   }
 
-  // ensure_nla: the nonlinear solver, made on the first nonlinear term, in the current scopes.
   private ensureNla() {
     if (this.nla !== undefined) return this.nla;
     const nla = new NlaCore(this.solver, this.manager.limit);
@@ -239,7 +229,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return this.manager.isNumeral(expr) && !this.manager.getRationalValue(expr).isZero();
   }
 
-  // arith_util::is_bounded: a numeral, a mod by a numeral, or a div by a numeral of a bounded term.
   private isBounded(expr: number): boolean {
     const manager = this.manager;
     const op = manager.getOp(expr);
@@ -253,7 +242,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return node !== undefined && this.isAttachedToVar(node);
   }
 
-  // scoped_internalize_state: the terms of the next depth, reset. The caller decrements the head.
+  // The caller decrements the head.
   protected pushInternalizeState() {
     const terms = (this.internalizeStates[this.internalizeHead] ??= new RefVector(this.manager));
     this.internalizeHead++;
@@ -261,7 +250,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return terms;
   }
 
-  // linearize: the theory variables of a weighted sum of terms, with their coefficients.
   private linearize(terms: RefVector, coeffs: Rational[]) {
     const manager = this.manager;
     const context = this.context;
@@ -406,7 +394,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return { vars, coeffs: coeffs.slice(0, vars.length) };
   }
 
-  // init_left_side: the coefficients of the variables summed, in the order of the variables.
   private initLeftSide(vars: number[], coeffs: Rational[]) {
     const sums = new Map<number, Rational>();
     vars.forEach((thVar, index) =>
@@ -422,7 +409,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return leftSide;
   }
 
-  // internalize_def: the variable of a term, with a column for its linear combination.
   protected internalizeDef(expr: number) {
     const terms = this.pushInternalizeState();
     terms.push(expr);
@@ -431,7 +417,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return thVar;
   }
 
-  // internalize_linearized_def: term - v = 0, unless the term is its own variable.
   private internalizeLinearizedDef(expr: number, linearized: LinearizedSum) {
     const thVar = this.mkVar(expr);
     if (

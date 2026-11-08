@@ -1,6 +1,5 @@
 // Ported from Z3 (src/util/hashtable.h, src/util/obj_hashtable.h), MIT license, see
-// z3-license.txt. Z3's open-addressing table with linear probing. Its iteration order is the slot
-// order, which the model finder depends on, so the AST maps that Z3 iterates use this table.
+// z3-license.txt. The model finder depends on the slot order, so the AST maps Z3 iterates use this.
 import { SmtInvariantError } from "../../../errors";
 
 const INITIAL_CAPACITY = 8;
@@ -9,7 +8,6 @@ const FREE = 0;
 const DELETED = 1;
 const USED = 2;
 
-// u_hash: an unsigned key is its own hash.
 export const getIdentityHash = (key: number) => key;
 
 export class ObjMap<V> {
@@ -33,7 +31,6 @@ export class ObjMap<V> {
     return -1;
   }
 
-  // move_table: reinserts the used slots, in slot order, into a table of the new capacity.
   private moveTable(capacity: number) {
     const states = this.states;
     const keys = this.slotKeys;
@@ -63,7 +60,7 @@ export class ObjMap<V> {
     return slot === -1 ? undefined : this.values[slot];
   }
 
-  // find_core and an assignment to the entry: unlike insert, never grows the table.
+  // Unlike insert, never grows the table.
   replace(key: number, value: V) {
     const slot = this.findSlot(key);
     if (slot !== -1) this.values[slot] = value;
@@ -136,7 +133,6 @@ export class ObjMap<V> {
   }
 }
 
-// obj_hashtable: a set of ASTs in Z3's slot order.
 export class ObjHashtable {
   private map: ObjMap<true>;
 

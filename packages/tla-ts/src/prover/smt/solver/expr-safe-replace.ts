@@ -1,6 +1,5 @@
 // Ported from Z3 (src/ast/rewriter/expr_safe_replace.cpp), MIT license, see z3-license.txt.
-// Replaces subterms by terms, under quantifiers too, without rewriting. Like Z3, it visits the
-// arguments of an application from the last one, and holds the expressions it creates.
+// Like Z3, it visits the arguments of an application from the last one.
 import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, KIND_VAR, type AstManager } from "./ast";
 import { RefVector } from "./ref-vector";
@@ -25,7 +24,6 @@ export class ExprSafeReplace {
     this.cache.clear();
   }
 
-  // operator(): the result comes with a reference, which the caller releases.
   apply(expr: number) {
     const manager = this.manager;
     if (this.sources.size === 0) {
@@ -79,7 +77,6 @@ export class ExprSafeReplace {
     return result;
   }
 
-  // Replaces the quantifier, or pushes the children it still needs.
   private applyQuantifier(quantifier: number, todo: number[]) {
     const manager = this.manager;
     const data = manager.getQuantifier(quantifier);
@@ -162,7 +159,6 @@ export class ExprSafeReplace {
     manager.decRef(body);
   }
 
-  // ~expr_safe_replace.
   release() {
     this.cache.clear();
     this.refs.reset();

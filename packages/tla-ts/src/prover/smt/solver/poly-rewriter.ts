@@ -1,6 +1,5 @@
 // Ported from Z3 (src/ast/rewriter/poly_rewriter.h, poly_rewriter_def.h), MIT license, see
-// z3-license.txt. The rewrites of sums and products of monomials, which arith_rewriter and
-// bv_rewriter extend. Powers are not ported, as neither rewriter uses them here.
+// z3-license.txt.
 import {
   AstManager,
   KIND_APP,
@@ -27,13 +26,9 @@ import { Rational } from "./rational";
 import type { Rewrite } from "./rewriter-tpl";
 
 export interface ArithRewriterOptions {
-  // poly_rewriter's som: distributes products over sums.
   readonly isSom: boolean;
-  // arith_rewriter's sort_sums: orders the monomials of a sum.
   readonly isSortSums: boolean;
-  // arith_rewriter's arith_ineq_lhs: moves the monomials of an inequality to the left-hand side.
   readonly isArithIneqLhs: boolean;
-  // arith_rewriter's gcd_rounding: divides integer atoms by the gcd of their coefficients.
   readonly isGcdRounding: boolean;
 }
 
@@ -57,10 +52,7 @@ const ARITH_OPS: ReadonlySet<number> = new Set([
 ]);
 
 export class PolyRewriter {
-  // m_curr_sort: the sort of the numerals and terms that the current rewrite makes.
   protected currSort = SORT_INT;
-  // The expr_fast_mark1 and expr_fast_mark2 of mk_nflat_add_core: Z3 marks the power products in
-  // their nodes, and a stamp per expression marks them here for one call.
   private visitedStamps = new Int32Array(0);
   private multipleStamps = new Int32Array(0);
   private stamp = 0;
@@ -82,7 +74,6 @@ export class PolyRewriter {
     return this.isNumeral(expr) && this.getValue(expr).isZero();
   }
 
-  // The value of a numeral of either sort.
   protected getValue(expr: number) {
     return this.manager.getRationalValue(expr);
   }
@@ -103,7 +94,6 @@ export class PolyRewriter {
     return this.manager.getOp(expr) === OP_MUL;
   }
 
-  // An application of the rewriter's family, which is_essentially_var tells from a variable.
   protected isArithTerm(expr: number) {
     return this.manager.kinds[expr] === KIND_APP && ARITH_OPS.has(this.manager.getOp(expr));
   }
@@ -116,7 +106,6 @@ export class PolyRewriter {
     return this.manager.mkApp(OP_MUL, args, this.currSort);
   }
 
-  // get_monomials: the summands of a sum, and otherwise the term itself.
   protected getNumMonomials(expr: number) {
     return this.isAdd(expr) ? this.manager.getNumArgs(expr) : 1;
   }
@@ -125,7 +114,6 @@ export class PolyRewriter {
     return this.isAdd(expr) ? this.manager.getArg(expr, index) : expr;
   }
 
-  // get_power_product: the monomial without its coefficient.
   protected getPowerProduct(expr: number) {
     return this.isMul(expr) &&
       this.manager.getNumArgs(expr) === 2 &&
@@ -142,7 +130,6 @@ export class PolyRewriter {
       : Rational.one;
   }
 
-  // mon_lt::ordinal, without powers.
   protected getOrdinal(expr: number) {
     const manager = this.manager;
     if (!this.isArithTerm(expr)) return manager.ids[expr];
@@ -158,8 +145,8 @@ export class PolyRewriter {
       : isAstLess(this.manager, first, second);
   }
 
-  // std::sort with mon_lt, of the monomials from start, in place. Insertion sort is stable, as
-  // Array.prototype.sort is, and allocates nothing for the short sums that are the common case.
+  // Insertion sort is stable, as Array.prototype.sort is, and allocates nothing for the short
+  // sums that are the common case.
   protected sortMonomials(monomials: number[], start: number) {
     for (let index = start + 1; index < monomials.length; index++) {
       const monomial = monomials[index];
@@ -238,7 +225,6 @@ export class PolyRewriter {
           coeffs.set(product, (coeffs.get(product) ?? Rational.zero).add(this.getCoefficient(arg)));
       }
       const newArgs: number[] = constant.isZero() ? [] : [this.mkNumeral(constant)];
-      // visited.reset(): a new stamp marks the power products already copied.
       const copiedStamp = ++this.stamp;
       for (const arg of args) {
         if (this.isNumeral(arg)) continue;
@@ -399,7 +385,7 @@ export class PolyRewriter {
     return this.reduce(this.mkMulAppWith(Rational.minusOne, arg), 1);
   }
 
-  // poly_rewriter::cancel_monomials. The stamps stand for its visited, multiple and copied marks.
+  // The stamps stand for cancel_monomials' visited, multiple and copied marks.
   protected cancelMonomials(lhs: number, rhs: number, isMoving: boolean) {
     const manager = this.manager;
     this.currSort = manager.sorts[lhs];
