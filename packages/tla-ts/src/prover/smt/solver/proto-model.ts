@@ -602,7 +602,7 @@ export class ProtoModel {
   }
 
   // The last constant takes the place of a removed one.
-  private unregisterDecl(decl: number) {
+  unregisterDecl(decl: number) {
     const value = this.constInterps.get(decl);
     if (value !== undefined) {
       const index = this.constDecls.indexOf(decl);

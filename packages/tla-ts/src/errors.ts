@@ -298,6 +298,15 @@ export class SmtCanceledError extends TlaError {
   }
 }
 
+// A tactic failed. or-else tries the next tactic, and apply prints the message. index.ts doesn't
+// export it.
+export class SmtTacticError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SmtTacticError";
+  }
+}
+
 // A bug in the port rather than in the input. It keeps its name, and index.ts doesn't export it.
 export class SmtInvariantError extends TlaError {
   constructor(message: string) {

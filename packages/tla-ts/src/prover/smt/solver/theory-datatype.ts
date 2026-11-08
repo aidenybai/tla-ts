@@ -31,6 +31,7 @@ import { type DependentValue, FC_CONTINUE, FC_DONE, Theory } from "./theory";
 const NULL_THEORY = -1;
 
 export class TheoryDatatype extends Theory {
+  readonly name = "datatype";
   private finds: number[] = [];
   private sizes: number[] = [];
   private constructors: (Enode | null)[] = [];

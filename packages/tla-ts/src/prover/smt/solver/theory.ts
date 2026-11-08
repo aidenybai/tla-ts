@@ -21,6 +21,7 @@ export interface DependentValue {
 }
 
 export abstract class Theory {
+  abstract readonly name: string;
   protected varEnodes: Enode[] = [];
   private varEnodeLimits: number[] = [];
 

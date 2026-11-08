@@ -4,6 +4,7 @@ import {
   isStackOverflow,
   SmtCanceledError,
   SmtParseError,
+  SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
 import type { DecideOptions } from "../../verdict";
@@ -19,11 +20,8 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { ctxSimplify } from "./ctx-simplify";
-import { Goal } from "./goal";
-import { propagateValues } from "./propagate-values";
-import { simplifyGoal } from "./quant-tactics";
-import { Rewriter, type RewriterOptions } from "./rewriter";
+import { Goal, PRECISION_NAMES } from "./goal";
+import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
 import { DEFAULT_PRINT_OPTIONS, type PrintOptions, printExpr } from "./smt2-printer";
 import {
@@ -40,6 +38,13 @@ import type { Context } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { printModel } from "./model-printer";
 import { FuncInterp, ProtoModel } from "./proto-model";
+import {
+  applyTactic,
+  checkSatUsing,
+  compileTactic,
+  getRewriterOptions,
+  type TacticParam,
+} from "./tactic";
 
 const SILENT_COMMANDS = new Set([
   ...DECLARATIONS,
@@ -80,16 +85,16 @@ const BOOLEAN_PRINT_OPTIONS = new Map<string, PrintOptionOf<boolean>>([
 ]);
 
 const SIMPLIFY_PARAMETERS = new Set([
-  ":elim_and",
-  ":pull_cheap_ite",
-  ":blast_distinct",
-  ":som",
-  ":sort_sums",
-  ":arith_lhs",
-  ":gcd_rounding",
-  ":hi_div0",
-  ":mul2concat",
-  ":split_concat_eq",
+  "elim_and",
+  "pull_cheap_ite",
+  "blast_distinct",
+  "som",
+  "sort_sums",
+  "arith_lhs",
+  "gcd_rounding",
+  "hi_div0",
+  "mul2concat",
+  "split_concat_eq",
 ]);
 
 const PARAMETER_DEFAULTS = new Map([
@@ -125,62 +130,61 @@ const BUILTIN_OPTIONS = new Set([
 
 const getParameterName = (keyword: string) => keyword.slice(1).toLowerCase().replaceAll("-", "_");
 
-const getRewriterOptions = (manager: AstManager, items: SExpr[]): RewriterOptions => {
-  const parameters = new Map<string, boolean>();
+const getSimplifyParams = (items: SExpr[]) => {
+  const params = new Map<string, TacticParam>();
   for (let index = 0; index < items.length; index += 2) {
     const keyword = items[index];
-    const name = keyword.kind === "keyword" ? keyword.text.toLowerCase().replaceAll("-", "_") : "";
+    const name = keyword.kind === "keyword" ? getParameterName(keyword.text) : "";
     if (!SIMPLIFY_PARAMETERS.has(name) || !isSymbol(items[index + 1]))
-      throw new SmtUnsupportedError(`the parameter ${name} of the simplifier`);
-    parameters.set(name, isSymbol(items[index + 1], "true"));
+      throw new SmtUnsupportedError(`the parameter :${name} of the simplifier`);
+    params.set(name, isSymbol(items[index + 1], "true"));
   }
-  const getParameter = (name: string) => parameters.get(name) ?? false;
-  return {
-    isEliminatingAnd: getParameter(":elim_and"),
-    isRewritingPatterns: false,
-    isPullingCheapIte: getParameter(":pull_cheap_ite"),
-    isKeepingDistinct: !getParameter(":blast_distinct"),
-    arith: {
-      isSom: getParameter(":som"),
-      isSortSums: getParameter(":sort_sums"),
-      isArithIneqLhs: getParameter(":arith_lhs"),
-      isGcdRounding: getParameter(":gcd_rounding"),
-    },
-    bv: {
-      isHiDiv0: parameters.get(":hi_div0") ?? manager.isHiDiv0,
-      isMul2concat: getParameter(":mul2concat"),
-      isSplitConcatEq: getParameter(":split_concat_eq"),
-    },
-  };
+  return params;
 };
 
-const NAMED_TACTICS = new Map<string, (manager: AstManager, goal: Goal) => void>([
-  ["simplify", (manager, goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, []))],
-  ["propagate-values", propagateValues],
-  ["ctx-simplify", ctxSimplify],
-  ["skip", () => {}],
+const APPLY_PARAMETERS = new Map([
+  ["print", true],
+  ["print_model_converter", true],
+  ["print_benchmark", true],
+  ["print_dependencies", true],
+  ["timeout", false],
+  ["max_memory", false],
+  ["print_statistics", true],
 ]);
 
-const runTactic = (manager: AstManager, tactic: SExpr, goal: Goal): void => {
-  if (isSymbol(tactic)) {
-    const named = NAMED_TACTICS.get(tactic.text);
-    if (named === undefined) throw new SmtUnsupportedError(`the tactic ${tactic.text}`);
-    named(manager, goal);
-    return;
-  }
-  const head = tactic.kind === "list" ? tactic.items[0] : undefined;
-  if (tactic.kind === "list" && (isSymbol(head, "then") || isSymbol(head, "and-then"))) {
-    for (const inner of tactic.items.slice(1)) {
-      if (goal.isInconsistent || goal.forms.size === 0) return;
-      runTactic(manager, inner, goal);
+const CHECK_SAT_USING_PARAMETERS = new Map([
+  ["timeout", false],
+  ["max_memory", false],
+  ["print_statistics", true],
+  ["print_unsat_core", true],
+  ["print_proof", true],
+  ["print_model", true],
+]);
+
+const getCommandParams = (items: SExpr[], isBooleans: ReadonlyMap<string, boolean>) => {
+  const params = new Map<string, TacticParam>();
+  for (let index = 2; index < items.length; index += 2) {
+    const keyword = items[index];
+    if (keyword.kind !== "keyword")
+      throw new SmtParseError("invalid command argument, keyword expected", keyword);
+    const name = getParameterName(keyword.text);
+    const isBoolean = isBooleans.get(name);
+    if (isBoolean === undefined) throw new SmtParseError("invalid keyword argument", keyword);
+    const value = items[index + 1];
+    if (isBoolean) {
+      if (!isSymbol(value, "true") && !isSymbol(value, "false"))
+        throw new SmtParseError("invalid command argument, true/false expected", value ?? keyword);
+      params.set(name, isSymbol(value, "true"));
+    } else {
+      if (value?.kind !== "numeral")
+        throw new SmtParseError(
+          "invalid command argument, unsigned integer expected",
+          value ?? keyword,
+        );
+      params.set(name, Number(value.text));
     }
-    return;
   }
-  if (tactic.kind === "list" && isSymbol(head, "!") && isSymbol(tactic.items[1], "simplify")) {
-    simplifyGoal(manager, goal, getRewriterOptions(manager, tactic.items.slice(2)));
-    return;
-  }
-  throw new SmtUnsupportedError("the tactic expression");
+  return params;
 };
 
 const getScopeCount = (list: SmtList, command: string) => {
@@ -278,7 +282,7 @@ export const runSmtlibScript = (
   const display = (expr: number) => print(format(expr));
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
-  const checkSat = (extra: number[], isTactic = false) => {
+  const checkSat = (extra: number[]) => {
     const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
@@ -293,7 +297,7 @@ export const runSmtlibScript = (
     try {
       const manager = state.manager;
       const names = state.names.filter((name) => name !== -1);
-      const isNamed = names.length > 0 && !isTactic;
+      const isNamed = names.length > 0;
       const solved =
         isNamed || extra.length > 0
           ? solveAssuming(
@@ -312,7 +316,7 @@ export const runSmtlibScript = (
         context: solved.context,
         isOptimizing,
         model: undefined,
-        core: names.length > 0 && isTactic ? undefined : (solved.context?.unsatCore ?? []),
+        core: solved.context?.unsatCore ?? [],
       };
       print(getVerdict(solved.result));
     } catch (error) {
@@ -346,6 +350,13 @@ export const runSmtlibScript = (
     script.state.check?.model?.decRef();
     script.state.check = undefined;
   };
+  const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
+    compileTactic({ manager: script.state.manager, isMbqi: settings.isMbqi }, sexpr, end);
+  const getGoal = () => {
+    const goal = new Goal(script.state.manager);
+    for (const assertion of script.state.assertions) goal.assert(assertion);
+    return goal;
+  };
   const parseFormulas = (items: SmtList["items"]) =>
     items.map((literal) => script.state.reader.parseFormula(literal));
   const addObjective = (list: SmtList) => {
@@ -376,9 +387,28 @@ export const runSmtlibScript = (
     },
     "check-sat": (list) => checkSat(parseFormulas(list.items.slice(1))),
     "check-sat-using": (list) => {
-      if (!isSymbol(list.items[1], "smt") || list.items.length !== 2)
-        throw new SmtUnsupportedError("the command check-sat-using");
-      checkSat([], true);
+      const state = script.state;
+      const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
+      if (list.items[1] === undefined)
+        throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
+      const tactic = getTactic(list.items[1], list.end).build(params);
+      clearCheck();
+      state.manager.limit.restart(Date.now() + options.timeLimitMs);
+      state.manager.limit.push(settings.rlimit);
+      try {
+        const checked = checkSatUsing(tactic, getGoal());
+        checked.model?.incRef();
+        state.check = {
+          status: checked.status,
+          context: undefined,
+          isOptimizing: false,
+          model: checked.model,
+          core: state.names.some((name) => name !== -1) ? undefined : [],
+        };
+        print(getVerdict(checked.status));
+      } finally {
+        state.manager.limit.pop();
+      }
     },
     "check-sat-assuming": (list) => {
       const literals = list.items[1];
@@ -444,7 +474,10 @@ export const runSmtlibScript = (
         throw new SmtParseError("invalid simplify command, argument expected", list.end);
       const term = script.state.reader.parseTerm(list.items[1]);
       manager.incRef(term);
-      const rewriter = new Rewriter(manager, getRewriterOptions(manager, list.items.slice(2)));
+      const rewriter = new Rewriter(
+        manager,
+        getRewriterOptions(manager, getSimplifyParams(list.items.slice(2))),
+      );
       const simplified = rewriter.rewrite(term);
       rewriter.cleanup();
       display(simplified);
@@ -454,17 +487,36 @@ export const runSmtlibScript = (
     },
     apply: (list) => {
       const state = script.state;
-      if (list.items.length !== 2) throw new SmtUnsupportedError("the parameters of apply");
-      const goal = new Goal(state.manager);
-      for (const assertion of state.assertions) goal.assert(assertion);
-      runTactic(state.manager, list.items[1], goal);
+      const params = getCommandParams(list.items, APPLY_PARAMETERS);
+      if (list.items[1] === undefined)
+        throw new SmtParseError("apply needs a tactic argument", list.end);
+      const tactic = getTactic(list.items[1], list.end).build(params);
+      for (const name of ["print_model_converter", "print_benchmark", "print_dependencies"])
+        if (params.get(name) === true) throw new SmtUnsupportedError(`the parameter :${name}`);
+      state.manager.limit.restart(Date.now() + options.timeLimitMs);
+      const goals = (() => {
+        try {
+          return applyTactic(tactic, getGoal());
+        } catch (error) {
+          if (!(error instanceof SmtTacticError)) throw error;
+          print(`(error "tactic failed: ${error.message}")`);
+          return undefined;
+        }
+      })();
+      if (goals === undefined || params.get("print") === false) return;
       const environment = getPrintEnvironment();
       print(
         [
           "(goals",
-          "(goal",
-          ...goal.forms.items.map((form) => `  ${printExpr(state.manager, environment, form, 2)}`),
-          `  :precision precise :depth ${goal.depth})`,
+          ...goals.map((goal) =>
+            [
+              "(goal",
+              ...goal.forms.items.map(
+                (form) => `  ${printExpr(state.manager, environment, form, 2)}`,
+              ),
+              `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
+            ].join("\n"),
+          ),
           ")",
         ].join("\n"),
       );

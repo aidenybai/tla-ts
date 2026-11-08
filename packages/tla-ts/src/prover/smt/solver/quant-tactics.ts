@@ -98,7 +98,7 @@ export const applyUfniaTactic = (manager: AstManager, assertions: number[]) => {
   // has formulas left.
   const steps = [
     () => propagateValues(manager, goal),
-    () => ctxSimplify(manager, goal),
+    () => ctxSimplify(manager, goal, 30, 5000000),
     () => simplifyGoal(manager, goal, { ...TACTIC_REWRITER_OPTIONS, isPullingCheapIte: true }),
     () => elimUncnstr(manager, goal),
     () => simplifyGoal(manager, goal, TACTIC_REWRITER_OPTIONS),

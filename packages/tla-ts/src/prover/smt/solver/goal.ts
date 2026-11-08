@@ -1,5 +1,6 @@
 // Ported from Z3 (src/tactic/goal.cpp), MIT license, see z3-license.txt.
 import { OP_AND, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
+import type { ProtoModel } from "./proto-model";
 import { RefVector } from "./ref-vector";
 
 interface Polarized {
@@ -7,13 +8,80 @@ interface Polarized {
   isPositive: boolean;
 }
 
+export const PRECISE = 0;
+export const UNDER = 1;
+export const OVER = 2;
+const UNDER_OVER = 3;
+
+export const PRECISION_NAMES = ["precise", "under", "over", "under-over"];
+
+const getPrecisionUnion = (first: number, second: number) =>
+  first === PRECISE ? second : second === PRECISE || first === second ? first : UNDER_OVER;
+
+export interface ConverterEntry {
+  decl: number;
+  def: number;
+}
+
 export class Goal {
   readonly forms: RefVector;
   isInconsistent = false;
   depth = 0;
+  precision = PRECISE;
+  converters: ConverterEntry[] = [];
+  model: ProtoModel | undefined;
 
-  constructor(private manager: AstManager) {
+  constructor(readonly manager: AstManager) {
     this.forms = new RefVector(manager);
+  }
+
+  copy() {
+    const copied = new Goal(this.manager);
+    copied.copyFrom(this);
+    return copied;
+  }
+
+  copyFrom(source: Goal) {
+    if (source === this) return;
+    this.forms.reset();
+    for (const form of source.forms.items) this.forms.push(form);
+    this.depth = Math.max(this.depth, source.depth);
+    this.isInconsistent = source.isInconsistent;
+    this.precision = getPrecisionUnion(source.precision, this.precision);
+    this.converters = source.converters;
+  }
+
+  reset() {
+    this.forms.reset();
+    this.isInconsistent = false;
+  }
+
+  resetAll() {
+    this.reset();
+    this.depth = 0;
+    this.precision = PRECISE;
+  }
+
+  updatePrecision(precision: number) {
+    this.precision = getPrecisionUnion(this.precision, precision);
+  }
+
+  // The goal holds the definition.
+  addConverter(decl: number, def = -1) {
+    if (def !== -1) this.manager.incRef(def);
+    this.converters = [...this.converters, { decl, def }];
+  }
+
+  isDecidedSat() {
+    return this.forms.size === 0 && (this.precision === PRECISE || this.precision === UNDER);
+  }
+
+  isDecidedUnsat() {
+    return this.isInconsistent && (this.precision === PRECISE || this.precision === OVER);
+  }
+
+  isDecided() {
+    return this.isDecidedSat() || this.isDecidedUnsat();
   }
 
   private pushBack(form: number) {

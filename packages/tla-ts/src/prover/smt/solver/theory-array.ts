@@ -43,6 +43,7 @@ interface Reach {
 }
 
 export class TheoryArray extends Theory {
+  readonly name = "array";
   private finds: number[] = [];
   private sizes: number[] = [];
   private nexts: number[] = [];

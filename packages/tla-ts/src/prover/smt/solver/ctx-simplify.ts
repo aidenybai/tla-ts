@@ -6,10 +6,6 @@ import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { shrink } from "./array";
 
-// The max_depth and max_steps that mk_quant_preprocessor gives ctx-simplify.
-const MAX_DEPTH = 30;
-const MAX_STEPS = 5000000;
-
 interface CachedResult {
   to: number;
   level: number;
@@ -27,7 +23,11 @@ class CtxSimplifier {
   private numSteps = 0;
   private rewriter: Rewriter;
 
-  constructor(private manager: AstManager) {
+  constructor(
+    private manager: AstManager,
+    private maxDepth: number,
+    private maxSteps: number,
+  ) {
     this.pinned = new RefVector(manager);
     this.trail = new RefVector(manager);
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
@@ -175,7 +175,11 @@ class CtxSimplifier {
   // The result comes with a reference, which the caller releases.
   private simplify(expr: number): number {
     const manager = this.manager;
-    if (this.depth >= MAX_DEPTH || this.numSteps >= MAX_STEPS || manager.kinds[expr] !== KIND_APP) {
+    if (
+      this.depth >= this.maxDepth ||
+      this.numSteps >= this.maxSteps ||
+      manager.kinds[expr] !== KIND_APP
+    ) {
       manager.incRef(expr);
       return expr;
     }
@@ -307,8 +311,13 @@ class CtxSimplifier {
   }
 }
 
-export const ctxSimplify = (manager: AstManager, goal: Goal) => {
-  const simplifier = new CtxSimplifier(manager);
+export const ctxSimplify = (
+  manager: AstManager,
+  goal: Goal,
+  maxDepth: number,
+  maxSteps: number,
+) => {
+  const simplifier = new CtxSimplifier(manager, maxDepth, maxSteps);
   simplifier.apply(goal);
   simplifier.release();
   goal.depth++;

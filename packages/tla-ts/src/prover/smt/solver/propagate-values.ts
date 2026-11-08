@@ -4,8 +4,6 @@ import { KIND_APP, KIND_QUANTIFIER, OP_EQ, type AstManager } from "./ast";
 import type { Goal } from "./goal";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
-const MAX_ROUNDS = 4;
-
 // Quantifier bodies are included and patterns excluded.
 const getSharedOccs = (manager: AstManager, forms: number[]) => {
   const visited = new Set<number>();
@@ -23,7 +21,7 @@ const getSharedOccs = (manager: AstManager, forms: number[]) => {
   return shared;
 };
 
-export const propagateValues = (manager: AstManager, goal: Goal) => {
+export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) => {
   goal.depth++;
   if (goal.isInconsistent) return;
   const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
@@ -55,7 +53,7 @@ export const propagateValues = (manager: AstManager, goal: Goal) => {
   };
   // Each pass is a round: a forward pass, which stops when it found nothing, then a backward pass,
   // which stops when it changed nothing.
-  for (let round = 0; round < MAX_ROUNDS; round += 2) {
+  for (let round = 0; round < maxRounds; round += 2) {
     const size = goal.forms.size;
     for (let index = 0; index < size; index++) {
       process(index);

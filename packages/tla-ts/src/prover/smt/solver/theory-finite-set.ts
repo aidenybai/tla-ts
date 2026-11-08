@@ -5,6 +5,7 @@ import type { Context } from "./context";
 import { FC_DONE, Theory } from "./theory";
 
 export class TheoryFiniteSet extends Theory {
+  readonly name = "finite_set";
   constructor(context: Context) {
     super(context, FAMILY_FINITE_SET);
   }

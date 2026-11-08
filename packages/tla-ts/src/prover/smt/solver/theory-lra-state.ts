@@ -7,6 +7,7 @@ import { LarSolver } from "./lp/lar-solver";
 import { Theory } from "./theory";
 
 export abstract class TheoryLraState extends Theory {
+  readonly name = "arithmetic";
   protected solver: LarSolver;
 
   constructor(context: Context) {

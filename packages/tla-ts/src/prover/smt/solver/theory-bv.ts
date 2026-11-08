@@ -218,6 +218,7 @@ class FixedEqJustification extends Justification {
 }
 
 export class TheoryBv extends Theory {
+  readonly name = "bit-vector";
   private blaster: BitBlaster;
   private trail: (() => void)[] = [];
   private trailLimits: number[] = [];

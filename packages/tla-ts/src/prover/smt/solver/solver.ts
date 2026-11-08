@@ -15,22 +15,26 @@ interface SmtCheck {
   numInstances: number;
 }
 
+// The context makes its asserted formulas first, and asserts the formulas. It makes the theories
+// next, before the formulas are reduced.
+export const solveGoal = (manager: AstManager, forms: number[], isMbqi: boolean) => {
+  const asserted = new AssertedFormulas(manager);
+  const context = new Context(manager, { isMbqi, relevancyLevel: 2 });
+  for (const form of forms) asserted.assertExpr(form);
+  context.setupContext();
+  context.internalizeAssertions(asserted);
+  const result = context.search();
+  manager.limit.release();
+  return { result, context };
+};
+
 export const solveAssertions = (manager: AstManager, assertions: number[], isMbqi = true) => {
   const goal = applyUfniaTactic(manager, assertions);
   if (goal.isInconsistent || goal.forms.size === 0) {
     manager.limit.release();
     return { result: goal.isInconsistent ? L_FALSE : L_TRUE, context: undefined };
   }
-  // smt_tactic makes the context, which makes its asserted formulas first, and asserts the goal.
-  // setup_context then makes the theories, before the formulas are reduced.
-  const asserted = new AssertedFormulas(manager);
-  const context = new Context(manager, { isMbqi, relevancyLevel: 2 });
-  for (const assertion of goal.forms.items) asserted.assertExpr(assertion);
-  context.setupContext();
-  context.internalizeAssertions(asserted);
-  const result = context.search();
-  manager.limit.release();
-  return { result, context };
+  return solveGoal(manager, goal.forms.items, isMbqi);
 };
 
 // combined_solver searches with its incremental smt kernel, without the tactic, once the check has

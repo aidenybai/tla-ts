@@ -131,6 +131,7 @@ export class Context extends Internalizer {
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
+  private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
 
   constructor(manager: AstManager, params: SmtParams) {
@@ -1084,6 +1085,7 @@ export class Context extends Internalizer {
     let failure: SearchFailure = FAILURE_OK;
     let level = 1;
     let maxLevel = 1;
+    this.incompleteTheories = [];
     for (;;) {
       const theory = this.theories[this.finalCheckIndex];
       const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
@@ -1091,7 +1093,10 @@ export class Context extends Internalizer {
       // Z3 reads the cancel flag after each theory's final check, and a canceled check gives up.
       const isCanceled = theory === this.arith && this.checkCanceled();
       if (isCanceled) failure = FAILURE_CANCELED;
-      else if (theory !== undefined && check === FC_GIVEUP) failure = FAILURE_THEORY;
+      else if (theory !== undefined && check === FC_GIVEUP) {
+        failure = FAILURE_THEORY;
+        if (!this.incompleteTheories.includes(theory)) this.incompleteTheories.push(theory);
+      }
       this.finalCheckIndex = (this.finalCheckIndex + 1) % (this.theories.length + 1);
       if (check === FC_CONTINUE) return FC_CONTINUE;
       if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
@@ -1101,6 +1106,7 @@ export class Context extends Internalizer {
       level++;
       result = FC_DONE;
       failure = FAILURE_OK;
+      this.incompleteTheories = [];
     }
     if (this.canPropagate()) return FC_CONTINUE;
     if (result === FC_GIVEUP && failure !== FAILURE_OK) this.lastSearchFailure = failure;
@@ -1165,6 +1171,14 @@ export class Context extends Internalizer {
   }
 
   // add_rec_funs gives each named expression without an interpretation its expression.
+  getLastFailureMessage() {
+    if (this.lastSearchFailure === FAILURE_CANCELED) return "canceled";
+    if (this.lastSearchFailure === FAILURE_QUANTIFIERS) return "(incomplete quantifiers)";
+    if (this.lastSearchFailure === FAILURE_THEORY)
+      return `(incomplete (theory${this.incompleteTheories.map((theory) => ` ${theory.name}`).join("")}))`;
+    return "unknown";
+  }
+
   getModel() {
     if (this.modelState.kind === "final") return this.modelState.model;
     const generated =
@@ -1380,6 +1394,7 @@ export class Context extends Internalizer {
     for (const theory of this.theories) theory.initSearchEh();
     this.qmanager.initSearchEh();
     this.dynAck.initSearchEh();
+    this.incompleteTheories = [];
     this.numConflicts = 0;
     this.numConflictsSinceRestart = 0;
     this.numConflictsSinceLemmaGc = 0;
