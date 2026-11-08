@@ -328,9 +328,9 @@ export abstract class Internalizer {
 
   // The congruence table is searched with m_is_diseq_tmp, an equality of the sort, which holds a
   // reference until an equality of another sort replaces it.
-  isDiseq(first: Enode, second: Enode) {
+  isDiseq(first: Enode, second: Enode, isCheckingValues = true) {
     const manager = this.manager;
-    if (manager.areDistinct(first.root.owner, second.root.owner)) return true;
+    if (isCheckingValues && manager.areDistinct(first.root.owner, second.root.owner)) return true;
     const tmp = this.isDiseqTmp;
     if (tmp === -1 || manager.sorts[manager.getArg(tmp, 0)] !== manager.sorts[first.owner]) {
       if (tmp !== -1) manager.decRef(tmp);

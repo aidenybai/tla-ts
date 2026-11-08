@@ -5,6 +5,7 @@ import { getCongruenceJustification, isCongruent } from "./cg-table";
 import { BJustification, type Clause, CLS_LEARNED, CLS_TH_LEMMA, HEADER_SIZE } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
 import { DynAckManager } from "./dyn-ack";
+import { FingerprintSet } from "./fingerprints";
 import {
   Enode,
   EqConflictJustification,
@@ -32,6 +33,7 @@ import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP, Theory } from "./theory";
+import { TheoryArray } from "./theory-array";
 import { TheoryBv } from "./theory-bv";
 import { TheoryFiniteSet } from "./theory-finite-set";
 import { TheoryLra } from "./theory-lra";
@@ -84,6 +86,7 @@ export class Context extends Internalizer {
   readonly theories: Theory[] = [];
   private theoryByFamily: (Theory | undefined)[] = [];
   readonly qmanager: DefaultQuantifierManager;
+  readonly fingerprints = new FingerprintSet(this.manager);
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
   private readonly dynAck = new DynAckManager(this);
   private qhead = 0;
@@ -117,6 +120,7 @@ export class Context extends Internalizer {
   setupContext() {
     this.arith = new TheoryLra(this);
     this.registerPlugin(this.arith);
+    this.registerPlugin(new TheoryArray(this));
     this.registerPlugin(new TheoryBv(this));
     this.registerPlugin(new TheoryFiniteSet(this));
   }
@@ -793,6 +797,7 @@ export class Context extends Internalizer {
     this.scopeTrailLimits.push(this.trailKinds.length);
     this.relevancy.push();
     this.qmanager.push();
+    this.fingerprints.push();
     for (const theory of this.theories) theory.pushScopeEh();
   }
 
@@ -851,6 +856,7 @@ export class Context extends Internalizer {
     const newLevel = this.scopeLevel - numScopes;
     this.cacheGeneration(newLevel, visited);
     this.qmanager.pop(numScopes);
+    this.fingerprints.pop(numScopes);
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
       shrink(this.baseScopeLemmaLimits, newLevel);
