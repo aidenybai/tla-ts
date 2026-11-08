@@ -696,6 +696,16 @@ const translateLoopCall = (
   }
   const isReversed = method === "reduceRight" || method.startsWith("findLast");
   const isReduce = method.startsWith("reduce");
+  // The array parameter holds a sequence, which only a parameter typed as an array can read.
+  const arrayName = callback.parameters.at(isReduce ? 3 : 2)?.name;
+  if (
+    arrayName !== undefined &&
+    ts.isIdentifier(arrayName) &&
+    getKind(arrayName, context) !== "sequence" &&
+    (context.checker.getTypeAtLocation(arrayName).flags & ts.TypeFlags.Unknown) === 0
+  ) {
+    throw new TlaTypeScriptError("Type a callback's array parameter as an array", arrayName);
+  }
   const initial = isReduce ? expression.arguments.at(1) : undefined;
   const name = context.names.getFresh("Loop");
   const sequenceName = context.names.getFresh("sequence");

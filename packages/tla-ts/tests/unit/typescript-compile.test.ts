@@ -898,6 +898,11 @@ describe("errors", () => {
       "would share an object that changes in place",
     ],
     [
+      "a callback that changes state and types its array as an object",
+      "let calls = 0;\nconst list = [1, 2];\nconst isTwo = (value: number, index: number, array: { length: number }) => {\n  calls++;\n  return array.length === 2;\n};\nlet isAll = list.every(isTwo);",
+      "Type a callback's array parameter as an array",
+    ],
+    [
       "an object made in a callback inside an expression",
       "let size = [1].map((value) => ({ value })).length;",
       "Make objects only where a statement always runs",
