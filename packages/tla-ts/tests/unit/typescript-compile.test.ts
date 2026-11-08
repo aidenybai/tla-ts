@@ -323,6 +323,18 @@ describe("top-level statements", () => {
     });
   });
 
+  it("run array-like callbacks that change state as loops", async () => {
+    const result = await checkModel(`
+      let calls = 0;
+      const object = { 0: 11, 1: 12, length: 2 };
+      let isAll = Array.prototype.every.call(object, (value: unknown) => {
+        calls++;
+        return value === 11;
+      });
+    `);
+    expect(getTrace(result)?.[0]).toMatchObject({ calls: "2", isAll: "FALSE" });
+  });
+
   it("make the objects of a parameter's default", async () => {
     const result = await checkModel(`
       let total = 0;

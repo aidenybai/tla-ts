@@ -17,7 +17,6 @@ import {
   getUndefined,
   isHeapClass,
   isMethodCall,
-  type MethodCall,
   isStatementNew,
   share,
   isInlined,
@@ -423,9 +422,9 @@ const translateCallStatement = (
   continueWith: (path: Path, value?: Expression) => Formula,
   isGenerator = false,
 ): Formula => {
-  const loopCallback = getLoopCallback(expression, path, context);
-  if (loopCallback !== undefined && isMethodCall(expression)) {
-    return translateLoopCall(expression, loopCallback, path, context, frame, continueWith);
+  const loop = getLoopCall(expression, path, context);
+  if (loop !== undefined) {
+    return translateLoopCall(expression, loop, path, context, frame, continueWith);
   }
   const first = expression.arguments.at(0);
   if (
@@ -657,33 +656,63 @@ const LOOP_METHODS = new Set([
 
 // The callback of an array method that changes what a statement can see, such as a count of its
 // calls, which the method runs as a loop of statements.
-const getLoopCallback = (node: ts.Expression, path: Path, context: Context) => {
-  if (!isMethodCall(node) || !LOOP_METHODS.has(node.expression.name.text)) return undefined;
-  if (getKind(node.expression.expression, context) !== "sequence") return undefined;
-  const argument = node.arguments.at(0);
+interface LoopCall {
+  method: string;
+  // The array, or the array-like object that Array.prototype's method calls back for.
+  receiver: ts.Expression;
+  callback: FunctionNode;
+  initial: ts.Expression | undefined;
+  isArrayLike: boolean;
+}
+
+const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCall | undefined => {
+  if (!isMethodCall(node)) return undefined;
+  const target = node.expression.expression;
+  const isArrayLike =
+    node.expression.name.text === "call" &&
+    ts.isPropertyAccessExpression(target) &&
+    target.expression.getText() === "Array.prototype" &&
+    node.arguments.length > 0 &&
+    getKind(node.arguments[0], context) === "object";
+  const method =
+    isArrayLike && ts.isPropertyAccessExpression(target)
+      ? target.name.text
+      : node.expression.name.text;
+  const receiver = isArrayLike ? node.arguments[0] : target;
+  const callbackArguments = isArrayLike ? node.arguments.slice(1) : node.arguments;
+  if (!LOOP_METHODS.has(method) || (!isArrayLike && getKind(receiver, context) !== "sequence")) {
+    return undefined;
+  }
+  const argument = callbackArguments.at(0);
   const callback = argument && getCallback(argument, path, context);
   return callback?.body !== undefined &&
     (ts.isArrowFunction(callback) ||
       ts.isFunctionExpression(callback) ||
       ts.isFunctionDeclaration(callback)) &&
     getChanged(callback, path, context).length > 0
-    ? callback
+    ? { method, receiver, callback, initial: callbackArguments.at(1), isArrayLike }
     : undefined;
 };
 
 // Runs an array method's callback on each element in turn, as statements. An array is a value
 // that the callback can't change, so the method visits each of the elements it had.
 const translateLoopCall = (
-  expression: MethodCall,
-  callback: FunctionNode,
+  expression: ts.CallExpression,
+  loop: LoopCall,
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
-  const receiver = expression.expression.expression;
-  const method = expression.expression.name.text;
+  const receiver = loop.receiver;
+  const method = loop.method;
+  const callback = loop.callback;
   const changed = getChanged(callback, path, context);
+  // An array-like object's method reads its elements as it visits them, which a callback that
+  // changes objects could change.
+  if (loop.isArrayLike && changed.some((symbol) => symbol === context.heap)) {
+    throw new TlaTypeScriptError("Don't change objects in this callback", callback);
+  }
   const isReceiverChanged = (node: ts.Node): boolean =>
     (ts.isIdentifier(node) &&
       changed.some((symbol) => symbol === getSymbol(node, context.checker))) ||
@@ -701,13 +730,15 @@ const translateLoopCall = (
   if (
     arrayName !== undefined &&
     ts.isIdentifier(arrayName) &&
-    getKind(arrayName, context) !== "sequence" &&
+    getKind(arrayName, context) !== (loop.isArrayLike ? "object" : "sequence") &&
     (context.checker.getTypeAtLocation(arrayName).flags & ts.TypeFlags.Unknown) === 0
   ) {
     throw new TlaTypeScriptError("Type a callback's array parameter as an array", arrayName);
   }
-  const initial = isReduce ? expression.arguments.at(1) : undefined;
+  const initial = isReduce ? loop.initial : undefined;
   const name = context.names.getFresh("Loop");
+  const ownerName = context.names.getFresh("owner");
+  const owner = identifier(ownerName);
   const sequenceName = context.names.getFresh("sequence");
   const sequence = identifier(sequenceName);
   const position = context.names.getFresh("position");
@@ -778,7 +809,12 @@ const translateLoopCall = (
   };
   const bound = bindValues(
     callback.parameters,
-    [...(isReduce ? [kept] : []), element, apply("-", [identifier(position), number(1)]), sequence],
+    [
+      ...(isReduce ? [kept] : []),
+      element,
+      apply("-", [identifier(position), number(1)]),
+      loop.isArrayLike ? owner : sequence,
+    ],
     inner.scope,
     context,
   );
@@ -875,7 +911,16 @@ const translateLoopCall = (
           ),
         );
   return letIn(
-    [define(sequenceName, [], translateExpression(receiver, path.scope, context))],
+    [
+      define(ownerName, [], translateExpression(receiver, path.scope, context)),
+      define(
+        sequenceName,
+        [],
+        loop.isArrayLike
+          ? useJavaScript("ArrayLike", [getHeap(path.scope, receiver, context), owner], context)
+          : owner,
+      ),
+    ],
     seeded,
   );
 };
@@ -1162,7 +1207,7 @@ const isHeapCall = (
 
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
-  isHeapCall(node, path, context) || getLoopCallback(node, path, context) !== undefined;
+  isHeapCall(node, path, context) || getLoopCall(node, path, context) !== undefined;
 
 // The expression that parentheses and casts wrap.
 const getCast = (node: ts.Expression): ts.Expression =>
@@ -1179,7 +1224,7 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
     (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   return (
     isHeapCall(node, path, context) ||
-    getLoopCallback(node, path, context) !== undefined ||
+    getLoopCall(node, path, context) !== undefined ||
     (callee?.body !== undefined && ts.forEachChild(callee.body, hasTry) === true)
   );
 };
