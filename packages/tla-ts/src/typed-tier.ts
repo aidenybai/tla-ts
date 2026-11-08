@@ -3087,7 +3087,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       images: for (let G = 0; G < A.length; G++) {
         const P = A[G];
         n = W.start + m;
-        if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; }
+        if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }
         let c = 0;
         ${imageWriters.join(" ")}
         if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; }
