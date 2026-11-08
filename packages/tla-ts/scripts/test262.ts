@@ -117,11 +117,82 @@ const service = ts.createLanguageService({
   readFile: (path) => (path === PROGRAM_PATH ? file.text : ts.sys.readFile(path)),
 });
 
-// test262 is JavaScript, so its functions and variables have no types. This annotates them as
-// TypeScript's "Infer type from usage" fix does, with unknown where it infers any.
-const annotate = (text: string) => {
+const setText = (text: string) => {
   file.text = text;
   file.version += 1;
+};
+
+const applyEdits = (edits: Map<number, string>) =>
+  setText(
+    [...edits]
+      .toSorted((left, right) => right[0] - left[0])
+      .reduce(
+        (current, [position, text]) => current.slice(0, position) + text + current.slice(position),
+        file.text,
+      ),
+  );
+
+const isDescriptor = (type: ts.Type | undefined) =>
+  type !== undefined &&
+  (type.isIntersection() ? type.types : [type]).some(
+    (member) => member.getSymbol()?.name === "PropertyDescriptor",
+  );
+
+// Types for the objects that test262 builds up and describes, which TypeScript can't infer:
+// a descriptor that is possibly undefined, an object given properties after it's made, and a
+// descriptor whose attributes aren't booleans. Each only adds types, so Node runs the same program.
+const loosen = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const getNode = (position: number) => {
+    const visit = (node: ts.Node): ts.Node =>
+      ts.forEachChild(node, (child) =>
+        child.getStart() <= position && position < child.getEnd() ? visit(child) : undefined,
+      ) ?? node;
+    return visit(sourceFile);
+  };
+  const edits = new Map<number, string>();
+  service.getSemanticDiagnostics(PROGRAM_PATH).forEach((diagnostic) => {
+    const node = getNode(diagnostic.start ?? 0);
+    const parent = node.parent;
+    if (
+      diagnostic.code === 18048 &&
+      ts.isIdentifier(node) &&
+      isDescriptor(checker.getNonNullableType(checker.getTypeAtLocation(node)))
+    ) {
+      edits.set(node.getEnd(), "!");
+    }
+    if (
+      diagnostic.code === 2339 &&
+      ts.isPropertyAccessExpression(parent) &&
+      ts.isIdentifier(parent.expression)
+    ) {
+      const declaration = checker.getSymbolAtLocation(parent.expression)?.valueDeclaration;
+      if (
+        declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        declaration.type === undefined &&
+        declaration.initializer !== undefined &&
+        ts.isObjectLiteralExpression(declaration.initializer)
+      ) {
+        edits.set(declaration.name.getEnd(), ": { [key: string]: unknown }");
+      }
+    }
+    const literal = ts.findAncestor(node, ts.isObjectLiteralExpression);
+    if (diagnostic.code === 2322 && literal && isDescriptor(checker.getContextualType(literal))) {
+      edits.set(literal.getEnd(), " as unknown as PropertyDescriptor");
+    }
+  });
+  if (edits.size > 0) applyEdits(edits);
+};
+
+// test262 is JavaScript, so its functions and variables have no types. This annotates them as
+// TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
+// the types of the objects it describes.
+const annotate = (text: string) => {
+  setText(text);
   for (;;) {
     const fix = service
       .getSemanticDiagnostics(PROGRAM_PATH)
@@ -133,21 +204,24 @@ const annotate = (text: string) => {
         return service.getCodeFixesAtPosition(PROGRAM_PATH, start, end, [diagnostic.code], {}, {});
       })
       .find((candidate) => candidate.fixName === "inferFromUsage");
-    if (fix === undefined) return file.text;
-    const annotated = fix.changes
-      .flatMap((change) => change.textChanges)
-      .toSorted((left, right) => right.span.start - left.span.start)
-      .reduce(
-        (current, change) =>
-          current.slice(0, change.span.start) +
-          change.newText.replaceAll(/\bany\b/g, "unknown") +
-          current.slice(change.span.start + change.span.length),
-        file.text,
-      );
-    if (annotated === file.text) return file.text;
-    file.text = annotated;
-    file.version += 1;
+    const annotated =
+      fix === undefined
+        ? file.text
+        : fix.changes
+            .flatMap((change) => change.textChanges)
+            .toSorted((left, right) => right.span.start - left.span.start)
+            .reduce(
+              (current, change) =>
+                current.slice(0, change.span.start) +
+                change.newText.replaceAll(/\bany\b/g, "unknown") +
+                current.slice(change.span.start + change.span.length),
+              file.text,
+            );
+    if (annotated === file.text) break;
+    setText(annotated);
   }
+  loosen();
+  return file.text;
 };
 
 // TLC stops when a value has no TLA+ form, which only a run finds, rather than giving a different
