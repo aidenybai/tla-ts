@@ -10,7 +10,7 @@ import {
   SmtUnsupportedError,
 } from "../../../errors";
 import type { DecideOptions } from "../../verdict";
-import { AstManager } from "./ast";
+import { AstManager, OP_DIV, OP_IDIV, OP_MOD, OP_MUL, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
 import { ResourceLimit } from "./rlimit";
 import {
   createCommandReader,
@@ -33,6 +33,9 @@ const SILENT_COMMANDS = new Set([
   "set-logic",
   "set-option",
   "set-info",
+  "minimize",
+  "maximize",
+  "assert-soft",
 ]);
 
 // smt2parser's parse_opt_unsigned: the number of scopes of push and pop, 1 when left out.
@@ -46,12 +49,39 @@ const getScopeCount = (list: SmtList, command: string) => {
   return Number(argument.text);
 };
 
+// Whether opt::context's search is out of the port's reach for the formulas: a quantifier, which
+// opt::context warns it does not support, or nonlinear arithmetic, where optsmt need not find a
+// bound.
+const isBeyondOptimization = (manager: AstManager, formulas: number[]) => {
+  const seen = new Set<number>();
+  const stack = [...formulas];
+  for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
+    if (seen.has(expr)) continue;
+    seen.add(expr);
+    if (manager.hasQuantifierFlags[expr]) return true;
+    const args = manager.getArgs(expr);
+    const op = manager.getOp(expr);
+    const variables = args.filter((arg) => !manager.isNumeral(arg)).length;
+    if (op === OP_MUL && variables > 1) return true;
+    if ((op === OP_DIV || op === OP_IDIV || op === OP_MOD) && !manager.isNumeral(args[1]))
+      return true;
+    stack.push(...args);
+  }
+  return false;
+};
+
+interface Scope {
+  assertions: number;
+  objectives: number;
+}
+
 interface ScriptState {
   manager: AstManager;
   reader: SmtlibReader;
   assertions: number[];
-  // The number of assertions when each scope began.
-  scopes: number[];
+  // The terms of minimize and maximize and the formulas of assert-soft, which opt::context keeps.
+  objectives: number[];
+  scopes: Scope[];
 }
 
 export const runSmtlibScript = (
@@ -64,7 +94,13 @@ export const runSmtlibScript = (
     const manager = new AstManager(
       new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
     );
-    return { manager, reader: createSmtlibReader(manager), assertions: [], scopes: [] };
+    return {
+      manager,
+      reader: createSmtlibReader(manager),
+      assertions: [],
+      objectives: [],
+      scopes: [],
+    };
   };
   let state = createState();
   const settings = { isPrintingSuccess: false, isMbqi: true };
@@ -72,6 +108,13 @@ export const runSmtlibScript = (
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
   const checkSat = (extra: number[]) => {
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
+    // opt::context::optimize answers as the search of the hard constraints does: once they are
+    // satisfiable, optsmt and maxsmt only improve the model.
+    if (
+      state.objectives.length > 0 &&
+      isBeyondOptimization(state.manager, [...state.assertions, ...state.objectives])
+    )
+      throw new SmtUnsupportedError("optimization beyond linear arithmetic");
     const solved = (() => {
       try {
         return solveAssertions(state.manager, [...state.assertions, ...extra], settings.isMbqi)
@@ -109,10 +152,24 @@ export const runSmtlibScript = (
           literals ?? list.end,
         );
       checkSat(literals.items.map((literal) => state.reader.parseFormula(literal)));
+    } else if (name === "minimize" || name === "maximize") {
+      const term = state.reader.parseTerm(list.items[1] ?? list.end);
+      const sort = state.manager.sorts[term];
+      if (sort !== SORT_INT && sort !== SORT_REAL)
+        throw new SmtParseError("Objective must be bit-vector, integer or real", list.end);
+      state.objectives.push(term);
+    } else if (name === "assert-soft") {
+      const formula = state.reader.parseTerm(list.items[1] ?? list.end);
+      if (state.manager.sorts[formula] !== SORT_BOOL)
+        throw new SmtParseError("Invalid type for expression. Expected Boolean type.", list.end);
+      state.objectives.push(formula);
     } else if (name === "push") {
       const count = getScopeCount(list, name);
       for (let index = 0; index < count; index++) {
-        state.scopes.push(state.assertions.length);
+        state.scopes.push({
+          assertions: state.assertions.length,
+          objectives: state.objectives.length,
+        });
         state.reader.push();
       }
     } else if (name === "pop") {
@@ -123,15 +180,19 @@ export const runSmtlibScript = (
           list.end,
         );
       for (let index = 0; index < count; index++) {
-        state.assertions.length = state.scopes.pop() ?? 0;
+        const scope = state.scopes.pop();
+        state.assertions.length = scope?.assertions ?? 0;
+        state.objectives.length = scope?.objectives ?? 0;
         state.reader.pop();
       }
     } else if (name === "reset") {
       state = createState();
       settings.isPrintingSuccess = false;
     } else if (name === "reset-assertions") {
+      // cmd_context::reset_assertions drops the optimization context too.
       state.assertions = [];
-      state.scopes = state.scopes.map(() => 0);
+      state.objectives = [];
+      state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0 }));
     } else if (name === "echo") {
       const message = list.items[1];
       if (message?.kind !== "string")

@@ -69,10 +69,36 @@ describe("runSmtlibScript prints what Z3 prints", () => {
       run([
         "(declare-const a Bool)",
         "(assert (xor a a a))",
+        "(assert (not (xor false)))",
         "(assert (= (- 10 3 2) 5))",
         "(check-sat)",
       ]),
     ).toEqual(["sat"]);
+  });
+
+  it("reports a declaration of the same signature twice", () => {
+    expect(run(["(declare-fun a () Bool)", "(declare-fun a () Bool)"])).toEqual([
+      "(error \"line 2 column 22: invalid declaration, constant 'a' (with the given signature) already declared\")",
+    ]);
+  });
+
+  it("answers an optimization by its hard constraints", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 3))",
+        "(minimize x)",
+        "(assert-soft (< x 0))",
+        "(check-sat)",
+        "(assert (< x 2))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat", "unsat"]);
+  });
+
+  it("throws at a theory it does not implement", () => {
+    expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
+    expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);
   });
 
   it("throws at a command it does not implement", () => {
