@@ -400,12 +400,12 @@ export const bindValue = (scope: Scope | undefined, name: string, value: Value):
   parent: scope,
 });
 
-// ContextEnumerator#nextElement, whose message TLC prints without filling in its parameter.
+// TLC's template for this message ends in a stray %1, which tla-ts leaves out.
 export const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
-    throw new TlaEvaluationError("Argument mismatch in operator application.%1");
+    throw new TlaEvaluationError("Argument mismatch in operator application.");
   }
   return pattern.names.reduce<Scope | undefined>(
     (current, name, index) => bindValue(current, name, elements[index]),
