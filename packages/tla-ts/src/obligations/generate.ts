@@ -392,10 +392,11 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
         item.steps.forEach(visitStep);
         return;
       }
-      if (item.obligations) obligations.push(...item.obligations);
+      if (item.obligations && !item.isSuppressed) obligations.push(...item.obligations);
     };
     const visitStep = (step: Step) => {
-      if (step.kind === "Use" && step.obligations) obligations.push(...step.obligations);
+      if (step.kind === "Use" && step.obligations && !step.isSuppressed)
+        obligations.push(...step.obligations);
       if ("proof" in step) visitProof(step.proof);
     };
     visitProof(proof);
