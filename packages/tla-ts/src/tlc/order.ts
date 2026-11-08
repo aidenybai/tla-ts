@@ -1,5 +1,4 @@
-// TLC orders strings and model values by when it first interned their text, and compares a
-// state's variables in the order of SANY's symbol table. This reproduces both orders.
+// Reproduces TLC's string order, by first interning, and its variable order, from SANY's context.
 import type { Module, SourceLocation } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
@@ -65,9 +64,8 @@ const getJavaHash = (text: string) => {
   return hash;
 };
 
-// java.util.Hashtable as SANY's Context uses it: default capacity 11, load factor 0.75, new
-// entries at the head of their bucket, and enumeration from the last bucket to the first. Each
-// bucket lists its entries from tail to head, so a new entry goes at the end.
+// java.util.Hashtable as SANY's Context uses it: capacity 11, load factor 0.75, new entries at
+// the head of their bucket, and enumeration from the last bucket, each from tail to head.
 const createSymbolTable = (): SymbolTable => {
   let buckets: SymbolEntry[][] = Array.from({ length: 11 }, () => []);
   let threshold = 8;
@@ -155,8 +153,7 @@ type ModuleSearch = (
   visited: Set<string>,
 ) => [ModuleReferences, string] | undefined;
 
-// The modules a module extends and instantiates, with its inner modules, as SANY's SpecObj
-// walks them to decide which module to parse next.
+// In the order SANY's SpecObj walks them to decide which module to parse next.
 const getModuleReferences = (
   tokens: Token[],
   unit: string | undefined,
@@ -211,9 +208,8 @@ const STRING_ESCAPES: Record<string, string> = {
   "\f": "\\f",
 };
 
-// The texts SANY interns while parsing, in order. SANY reads a proof step label such as <1>2 and
-// a module header such as ---- MODULE as one token. It interns a string literal as written, quotes
-// included, and interns the literal's contents only during semantic analysis.
+// SANY reads <1>2 and ---- MODULE as one token each, and interns a string literal with its
+// quotes, its contents only during semantic analysis.
 const getParsedTexts = (tokens: Token[]) => {
   const texts: string[] = [];
   for (let index = 0; index < tokens.length; index++) {
@@ -267,8 +263,7 @@ interface ModuleText {
   getModule: () => Module;
 }
 
-// A module's source is read into tokens once, and parsed from them once, for every order and for
-// the environment that evaluates it.
+// Read and parsed once, for every order and for the environment that evaluates it.
 const readModuleText = (text: string | undefined): ModuleText => {
   const tokens = text === undefined ? [] : tokenize(text);
   const parsed = { module: undefined as Module | undefined };
@@ -280,13 +275,10 @@ const readModuleText = (text: string | undefined): ModuleText => {
   };
 };
 
-// The modules TLC reads for a spec: the root module, the files the loader returns, TLC's standard
-// modules, the modules that follow the root module, and the modules nested in any of these. A
-// module without a source has no tokens.
+// A module without a source has no tokens.
 const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   const files = new Map<string, ParsedModule>();
   const nestedModules = new Map<string, ParsedModule>();
-  // The read of each module text, so that the environment parses a text the order read only once.
   const texts = new Map<string, ModuleText>();
   const readText = (text: string | undefined) => {
     const known = text === undefined ? undefined : texts.get(text);
@@ -324,7 +316,7 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   };
 };
 
-// SANY's Context of each module, which the root module has under undefined.
+// The root module's context is under undefined.
 type ModuleSet = ReturnType<typeof createModuleSet>["getParsed"];
 
 const createContexts = (getParsed: ModuleSet) => {
@@ -466,9 +458,8 @@ const createContexts = (getParsed: ModuleSet) => {
   };
 };
 
-// Every string TLC interns before model checking starts, in order: values in the config, TLC's
-// startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, string
-// literals in semantic analysis order, and the names TLC interns for TLCGet.
+// In order: config values, TLC's startup strings, each module's tokens as SpecObj.loadSpec
+// parses them, string literals in semantic analysis order, and TLCGet's names.
 const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => {
   const order = new Set<string>();
   const intern = (text: string) => {
@@ -572,23 +563,16 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
 };
 
 export interface TlcOrder {
-  // Every string TLC interns before model checking starts.
   getStringOrder: (config: ModelConfig) => string[];
-  // The variables or constants of the root module in the reverse of its context enumeration, as
-  // ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
-  // order, and checks that the configuration assigns each constant in it.
+  // The reverse of the root module's context enumeration, in which TLC compares variables and
+  // checks that the configuration assigns each constant.
   getDeclarationOrder: (kind: "variable" | "constant") => string[];
-  // The names of the definitions each module adds to its context, in the order of
-  // ModuleNode.getOpDefs, in which TLC computes the constant definitions as it starts. An INSTANCE
-  // adds the definitions of the module it instantiates in the order that module's Hashtable
-  // enumerates them.
+  // In the order TLC computes constant definitions at startup. An INSTANCE adds those of the
+  // module it instantiates in the order that module's Hashtable enumerates them.
   createDefinitionOrder: () => (name: string | undefined) => string[];
-  // Parses a module's source, once for the order and the environment.
   parseModule: (source: string) => Module;
 }
 
-// One check reads the spec's modules once, and every order shares their tokens, parses and
-// contexts.
 export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrder => {
   const modules = createModuleSet(source, loadModule);
   const getParsed = modules.getParsed;
@@ -606,8 +590,7 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
     parseModule: modules.parseText,
     createDefinitionOrder: () => {
       const { getContext, getOwnEntries } = getContexts();
-      // The root module's context reads every file of the spec, and so finds the modules nested
-      // in the files it extends or instantiates.
+      // The root module's context finds the modules nested in the files it extends or instantiates.
       getContext(undefined);
       return (name) =>
         getOwnEntries(name)

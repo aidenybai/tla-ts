@@ -23,11 +23,8 @@ import {
 } from "../evaluate";
 import { getStreamedElements, isTlcEnumerable, setTrace, valuesEqual, type Value } from "../values";
 
-// When TLC fails to compute the initial states or the successors of a state, it computes them
-// again with its CallStackTool, which records each node it visits, and prints where the failure
-// occurred. The replay below walks the predicates as TLC's Tool.getInitStates and
-// Tool.getNextStates do, in their order and with their nesting, so that it records the nodes TLC
-// records. It evaluates the other expressions with an environment that records the nodes too.
+// Replays a failed computation as TLC's CallStackTool does, walking the predicates in the order
+// and nesting of Tool.getInitStates and getNextStates, so it records the nodes TLC records.
 
 interface ReplayAction {
   expression: Expression;
@@ -46,9 +43,7 @@ interface Replay {
   environment: Environment;
   callStack: CallStack;
   isInit: boolean;
-  // Whether the replay computes ENABLED rather than the successors of the state.
   isEnabled: boolean;
-  // The state whose successors the replay computes.
   current: Value[] | undefined;
   onState: (state: Value[]) => void;
 }
@@ -88,8 +83,7 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-// SANY parses an infix chain such as A /\ B /\ C as (A /\ B) /\ C, where tla-ts keeps one
-// junction, so the replay recreates the node of each prefix.
+// SANY parses A /\ B /\ C as (A /\ B) /\ C, so the replay recreates the node of each prefix.
 const getPrefix = (expression: Expression & { kind: "And" | "Or" }, count: number): Expression => {
   const first = expression.operands[0].location;
   const range = expression.location.range;
@@ -102,8 +96,6 @@ const getPrefix = (expression: Expression & { kind: "And" | "Or" }, count: numbe
 const getIdentifierName = (expression: Expression) =>
   expression.kind === "Identifier" ? expression.name : undefined;
 
-// The state variable an expression names, as TLC's getVar finds it through definitions and
-// operator arguments.
 const getVariable = (
   replay: Replay,
   expression: Expression,
@@ -123,7 +115,6 @@ const getVariable = (
     : undefined;
 };
 
-// The variable a primed expression such as x' assigns, as TLC's getPrimedVar finds it.
 const getPrimedVariable = (
   replay: Replay,
   expression: Expression,
@@ -150,14 +141,11 @@ const isTrue = (value: Value) => {
   return value;
 };
 
-// Once every variable has a value, TLC's getInitStates and getNextStatesAllAssigned evaluate the
-// conjuncts left instead of walking them, so a disjunction among them takes one step. Its enabled
-// doesn't, and Tool#getNextStates0 takes this shortcut only with warnings on.
+// Once every variable has a value, TLC evaluates the conjuncts left instead of walking them,
+// though not under ENABLED, and the next states take this shortcut only with warnings on.
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
   !replay.isEnabled && (replay.isInit || replay.environment.runtime.isWarningEnabled);
 
-// TLC's getInitStates(ActionItemList) and getNextStates(ActionItemList): processes the conjuncts
-// left once a conjunct holds.
 const proceed = (replay: Replay, items: ActionItem | undefined, partial: State): void => {
   if (items === undefined) {
     if (isComplete(partial)) replay.onState(partial);
@@ -380,8 +368,7 @@ const ENABLED_TEMPORAL_FORMS: Partial<Record<Expression["kind"], string>> = {
   StrongFairness: "SF",
 };
 
-// Tool#enabled rejects a temporal formula, and a quantifier or CHOOSE without a bound, with
-// messages of its own.
+// TLC rejects a temporal formula, and a quantifier or CHOOSE without a bound, under ENABLED.
 export const getEnabledFailure = (expression: Expression) => {
   const form =
     expression.kind === "Apply" && (expression.operator === "~>" || expression.operator === "-+->")
@@ -552,7 +539,6 @@ const visitApplication = (
   visitValue(replay, evaluate(expression, context), items, partial);
 };
 
-// TLC's processUnchanged.
 const visitUnchanged = (
   replay: Replay,
   expression: Expression,
@@ -619,8 +605,6 @@ const createReplay = (
 
 const ENABLED_FOUND = new Error("The replay found a successor");
 
-// TLC's Tool#enabled, which walks the action as getNextStates does and stops at the first
-// successor.
 export const replayEnabled = (
   expression: Expression,
   scope: Scope | undefined,
@@ -638,8 +622,7 @@ export const replayEnabled = (
   );
   const depth = replay.callStack.expressions.length;
   try {
-    // The ENABLED of a fairness condition WF_v(A) passes A to TLC's enabled with v to change, where
-    // liveness.ts builds <<A>>_v at the location of A.
+    // liveness.ts builds the <<A>>_v of WF_v(A) at the location of A.
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
       const changed = createItem("Changed", expression.subscript, scope, undefined);
       visit(replay, expression.action, changed, scope, getEmptyState(environment));
@@ -656,7 +639,6 @@ export const replayEnabled = (
   }
 };
 
-// TLC's getInitStates, which conjoins the initial predicates of the specification.
 export const replayInitialStates = (
   inits: ReplayAction[],
   environment: Environment,
@@ -672,16 +654,14 @@ export const replayInitialStates = (
   visit(replay, first.expression, rest, first.scope, getEmptyState(environment));
 };
 
-// TLC's getNextStates for each action TLC splits the next-state relation into. TLC checks the
-// successors of an action once it has computed them all.
+// TLC checks the successors of an action once it has computed them all.
 export const replaySuccessors = <Action extends ReplayAction>(
   actions: Action[],
   state: Value[],
   environment: Environment,
   onState: (state: Value[], action: Action) => void,
 ) => {
-  // TLC fails to split a next-state relation that is not an operator application before it checks
-  // the spec, so it replays nothing.
+  // TLC fails to split a next-state relation that isn't an operator application, so replays none.
   if (actions.some((action) => LITERAL_KINDS.has(action.expression.kind))) return;
   actions.forEach((action) => {
     const successors: Value[][] = [];

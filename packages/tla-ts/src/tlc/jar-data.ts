@@ -921,8 +921,7 @@ _PrintCounts == PrintT(_Counts)
   ],
 ]);
 
-// The Java methods that override standard module operators, as java.lang.reflect.Method prints
-// them in TLC's errors.
+// As java.lang.reflect.Method prints them in TLC's errors.
 export const TLC_JAVA_METHODS = new Map([
   [
     "Bags",
