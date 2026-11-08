@@ -50,7 +50,7 @@ interface LineBreakFormat {
   kind: "line-break";
 }
 
-type Format = TextFormat | IndentFormat | ComposeFormat | ChoiceFormat | LineBreakFormat;
+export type Format = TextFormat | IndentFormat | ComposeFormat | ChoiceFormat | LineBreakFormat;
 
 export interface PrintOptions {
   maxIndent: number;
@@ -87,20 +87,22 @@ export const DEFAULT_PRINT_OPTIONS: PrintOptions = {
 export interface PrintEnvironment {
   options: PrintOptions;
   isUsed: (name: string) => boolean;
+  // Another declaration of the same name takes the same arguments, so the name needs its sort.
+  isClashing: (decl: number) => boolean;
 }
 
-const LINE_BREAK: LineBreakFormat = { kind: "line-break" };
+export const LINE_BREAK: LineBreakFormat = { kind: "line-break" };
 const SMALL_INDENT = 2;
 const MAX_INDENT = 16;
 const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL]);
 
-const mkText = (text: string): TextFormat => ({ kind: "text", text });
-const mkIndent = (amount: number, child: Format): IndentFormat => ({
+export const mkText = (text: string): TextFormat => ({ kind: "text", text });
+export const mkIndent = (amount: number, child: Format): IndentFormat => ({
   kind: "indent",
   amount,
   child,
 });
-const mkCompose = (...children: Format[]): ComposeFormat => ({ kind: "compose", children });
+export const mkCompose = (...children: Format[]): ComposeFormat => ({ kind: "compose", children });
 
 const getFlat = (format: Format): Format => {
   if (format.kind === "line-break") return mkText(" ");
@@ -110,7 +112,7 @@ const getFlat = (format: Format): Format => {
   return format;
 };
 
-const mkGroup = (format: Format): ChoiceFormat => ({
+export const mkGroup = (format: Format): ChoiceFormat => ({
   kind: "choice",
   flat: getFlat(format),
   broken: format,
@@ -119,7 +121,7 @@ const mkGroup = (format: Format): ChoiceFormat => ({
 const mkSeq = (elements: Format[]) =>
   mkCompose(...elements.flatMap((element) => [LINE_BREAK, element]));
 
-const mkSeq1 = (elements: Format[], header: string, open = "(", close = ")") => {
+export const mkSeq1 = (elements: Format[], header: string, open = "(", close = ")") => {
   if (elements.length === 0) return mkCompose(mkText(open), mkText(header), mkText(close));
   return mkGroup(
     mkCompose(
@@ -152,7 +154,7 @@ const mkSeq3 = (elements: Format[], header: string, inline: number) => {
   );
 };
 
-const mkSeq5 = (elements: Format[]) => {
+export const mkSeq5 = (elements: Format[]) => {
   if (elements.length === 0) return mkCompose(mkText("("), mkText(")"));
   return mkGroup(
     mkCompose(
@@ -176,7 +178,7 @@ const getSpaceUptoLineBreak = (format: Format): { space: number; isBroken: boole
   return total;
 };
 
-const renderFormat = (root: Format, options: PrintOptions) => {
+export const renderFormat = (root: Format, options: PrintOptions) => {
   const output: string[] = [];
   const state = { position: 0, line: 0 };
   const todo: { format: Format; indent: number }[] = [{ format: root, indent: 0 }];
@@ -223,14 +225,14 @@ const isQuotedSymbol = (name: string) => {
   return !SIMPLE_SYMBOL.test(name);
 };
 
-const getQuotedName = (symbol: SmtSymbol) =>
+export const getQuotedName = (symbol: SmtSymbol) =>
   typeof symbol === "number"
     ? `k!${symbol}`
     : isQuotedSymbol(symbol)
       ? `|${symbol.replace(/[|\\]/g, "\\$&")}|`
       : symbol;
 
-const formatSort = (manager: AstManager, sort: number): Format =>
+export const formatSort = (manager: AstManager, sort: number): Format =>
   manager.isBvSort(sort)
     ? mkSeq1([mkText(String(manager.getBvSize(sort)))], "_ BitVec")
     : manager.getSortParameters(sort).length > 0
@@ -362,12 +364,20 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
     }
   };
 
+  const formatDeclName = (decl: number) =>
+    environment.isClashing(decl)
+      ? mkSeq1(
+          [mkText(getDeclName(manager, decl)), formatSort(manager, manager.funcDecls[decl].range)],
+          "as",
+        )
+      : mkText(getDeclName(manager, decl));
+
   const formatConst = (expr: number) =>
     manager.getOp(expr) === OP_NUM
       ? formatNumeral(manager, options, expr)
       : manager.isBvNumeral(expr)
         ? formatBvNumeral(manager, options, expr)
-        : mkText(getDeclName(manager, manager.decls[expr]));
+        : formatDeclName(manager.decls[expr]);
 
   const formatExpr = (root: number) => {
     const shared = getSharedTerms(manager, root);
@@ -494,8 +504,11 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
         return;
       }
       const args = formats.slice(frame.start);
-      const name = mkText(getDeclName(manager, manager.decls[frame.expr]));
-      const nameLength = name.text.startsWith("(") ? Infinity : name.text.length;
+      const decl = manager.decls[frame.expr];
+      const name = formatDeclName(decl);
+      const declName = getDeclName(manager, decl);
+      const nameLength =
+        !environment.isClashing(decl) && declName.startsWith("(") ? Infinity : declName.length;
       const format =
         manager.getOp(frame.expr) === OP_PATTERN
           ? mkSeq5(args)
@@ -607,12 +620,37 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
     return formatLet(formats[formats.length - 1]).format;
   };
 
-  return formatExpr;
+  // The free variables are named prefix!0, prefix!1 and so on, the first for the variable 0.
+  return (root: number, numVars = 0, prefix = "x") => {
+    const counter = { index: 0 };
+    const names = Array.from({ length: numVars }, () => {
+      const name = getQuotedName(getNextName(prefix, counter));
+      varNameSet.add(name);
+      return name;
+    });
+    varNames.push(...names.toReversed());
+    const format = formatExpr(root);
+    varNames.length = 0;
+    varNameSet.clear();
+    return { format, names };
+  };
 };
+
+export const formatExpr = (
+  manager: AstManager,
+  environment: PrintEnvironment,
+  expr: number,
+  numVars?: number,
+  prefix?: string,
+) => createPrinter(manager, environment)(expr, numVars, prefix);
 
 export const printExpr = (
   manager: AstManager,
   environment: PrintEnvironment,
   expr: number,
   indent = 0,
-) => renderFormat(mkIndent(indent, createPrinter(manager, environment)(expr)), environment.options);
+) =>
+  renderFormat(
+    mkIndent(indent, formatExpr(manager, environment, expr).format),
+    environment.options,
+  );

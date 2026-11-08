@@ -8,6 +8,7 @@ import {
   KIND_VAR,
   OP_AND,
   OP_EQ,
+  OP_CONST_ARRAY,
   OP_ITE,
   SORT_BOOL,
   isArithSort,
@@ -17,12 +18,34 @@ import {
   getNonRecConstructor,
   isRecursiveDatatype,
 } from "./datatype-decl-plugin";
+import { mkArrayApp } from "./array-decl-plugin";
 import { RandomGen } from "./random-gen";
 import { Rational } from "./rational";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { ModelEvaluator } from "./model-evaluator";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
+
+// ast_manager::get_some_value, with the value each plugin gives.
+const getManagerSomeValue = (manager: AstManager, sort: number): number => {
+  if (sort === SORT_BOOL) return manager.falseExpr;
+  if (isArithSort(sort)) return manager.mkNumeralOfSort(Rational.zero, sort);
+  if (manager.isBvSort(sort)) return manager.mkBvNumeral(0n, manager.getBvSize(sort));
+  if (manager.isArraySort(sort))
+    return mkArrayApp(
+      manager,
+      OP_CONST_ARRAY,
+      [getManagerSomeValue(manager, manager.getArrayRange(sort))],
+      [sort],
+    );
+  if (!manager.isDatatypeSort(sort)) return manager.mkModelValue(0, sort);
+  const constructor = getNonRecConstructor(manager, sort);
+  return manager.mkApp(
+    constructor,
+    manager.funcDecls[constructor].domain.map((argSort) => getManagerSomeValue(manager, argSort)),
+    sort,
+  );
+};
 
 interface FuncEntry {
   args: number[];
@@ -238,6 +261,8 @@ export class ProtoModel {
   private rewriter: Rewriter;
   // The holders of a proto_model and a model are counted, and the last one releases it.
   private refCount = 0;
+  // A model, rather than the proto_model it was made from, takes its values from the manager.
+  private isFinal = false;
 
   constructor(readonly manager: AstManager) {
     this.boolRandom = new RandomGen(manager.getNumAsts());
@@ -340,6 +365,12 @@ export class ProtoModel {
 
   getSomeValue(sort: number): number {
     const manager = this.manager;
+    if (this.isFinal) {
+      const first = manager.isUninterpretedSort(sort)
+        ? this.values.get(sort)?.[Symbol.iterator]().next().value
+        : undefined;
+      return first ?? getManagerSomeValue(manager, sort);
+    }
     if (sort === SORT_BOOL)
       return this.boolRandom.next() % 2 === 0 ? manager.falseExpr : manager.trueExpr;
     const set = this.values.get(sort);
@@ -463,6 +494,18 @@ export class ProtoModel {
 
   isFinite(sort: number) {
     return this.manager.isUninterpretedSort(sort) && this.finiteSorts.has(sort);
+  }
+
+  getConstDecls(): readonly number[] {
+    return this.constDecls;
+  }
+
+  getFuncDecls(): readonly number[] {
+    return this.funcDecls;
+  }
+
+  getUninterpretedSorts() {
+    return [...this.values.keys()].filter((sort) => this.manager.isUninterpretedSort(sort));
   }
 
   getKnownUniverse(sort: number): number[] {
@@ -611,6 +654,7 @@ export class ProtoModel {
 
   mkModel() {
     const model = new ProtoModel(this.manager);
+    model.isFinal = true;
     for (const entry of this.constInterps) model.registerConst(entry[0], entry[1]);
     for (const entry of this.funcInterps) {
       model.registerFunc(entry[0], entry[1]);

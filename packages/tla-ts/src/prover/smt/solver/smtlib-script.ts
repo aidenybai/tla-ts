@@ -7,7 +7,17 @@ import {
   SmtUnsupportedError,
 } from "../../../errors";
 import type { DecideOptions } from "../../verdict";
-import { AstManager, OP_DIV, OP_IDIV, OP_MOD, OP_MUL, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
+import {
+  AstManager,
+  FAMILY_USER,
+  OP_DIV,
+  OP_IDIV,
+  OP_MOD,
+  OP_MUL,
+  SORT_BOOL,
+  SORT_INT,
+  SORT_REAL,
+} from "./ast";
 import { ctxSimplify } from "./ctx-simplify";
 import { Goal } from "./goal";
 import { propagateValues } from "./propagate-values";
@@ -27,7 +37,8 @@ import {
 import { getVerdict, solveAssertions } from "./solver";
 import type { Context } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import { ProtoModel } from "./proto-model";
+import { printModel } from "./model-printer";
+import { FuncInterp, ProtoModel } from "./proto-model";
 
 const SILENT_COMMANDS = new Set([
   ...DECLARATIONS,
@@ -255,12 +266,12 @@ export const runSmtlibScript = (
     };
   };
   const script = { state: createState() };
-  const format = (expr: number) =>
-    printExpr(
-      script.state.manager,
-      { options: settings.printOptions, isUsed: script.state.reader.isUsed },
-      expr,
-    );
+  const getPrintEnvironment = () => ({
+    options: settings.printOptions,
+    isUsed: script.state.reader.isUsed,
+    isClashing: script.state.reader.isClashing,
+  });
+  const format = (expr: number) => printExpr(script.state.manager, getPrintEnvironment(), expr);
   const display = (expr: number) => print(format(expr));
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
@@ -411,7 +422,7 @@ export const runSmtlibScript = (
       const goal = new Goal(state.manager);
       for (const assertion of state.assertions) goal.assert(assertion);
       runTactic(state.manager, list.items[1], goal);
-      const environment = { options: settings.printOptions, isUsed: state.reader.isUsed };
+      const environment = getPrintEnvironment();
       print(
         [
           "(goals",
@@ -460,6 +471,31 @@ export const runSmtlibScript = (
         return line;
       });
       print(`(${lines.join("\n ")})`);
+    },
+    "get-model": (list) => {
+      if (list.items.length > 1) throw new SmtUnsupportedError("the index of get-model");
+      const manager = script.state.manager;
+      const model = getModel(list);
+      model.compress();
+      // add_declared_functions: each declared function the model leaves out gets some value.
+      for (const decl of script.state.reader.getDeclaredFuncs()) {
+        const funcDecl = manager.funcDecls[decl];
+        if (
+          funcDecl.family !== FAMILY_USER ||
+          model.constInterps.has(decl) ||
+          model.funcInterps.has(decl)
+        )
+          continue;
+        const value = model.getSomeValue(funcDecl.range);
+        if (funcDecl.domain.length === 0) {
+          model.registerConst(decl, value);
+          continue;
+        }
+        const interp = new FuncInterp(manager, funcDecl.domain.length);
+        interp.setElse(value);
+        model.registerFunc(decl, interp);
+      }
+      print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
     },
     display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),
     echo: (list) => {

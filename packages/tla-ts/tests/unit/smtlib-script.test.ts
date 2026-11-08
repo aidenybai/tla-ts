@@ -192,12 +192,36 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "((x 3)\n (( + x 1 ) 4)\n (y 0))"]);
   });
 
+  it("prints the model with the declared constants it leaves out, as in z3test's model_compact_bug.smt2", () => {
+    expect(
+      run([
+        "(declare-fun p (Int) Bool)",
+        "(declare-const z Int)",
+        "(assert (p 1))",
+        "(assert (p 2))",
+        "(assert (p 3))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun z () Int",
+        "    0)",
+        "  (define-fun p ((x!0 Int)) Bool",
+        "    true)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);
   });
 
   it("throws at a command it does not implement", () => {
-    expect(() => run(["(check-sat)", "(get-model)"])).toThrow(SmtUnsupportedError);
+    expect(() => run(["(check-sat)", "(get-proof)"])).toThrow(SmtUnsupportedError);
   });
 });

@@ -304,7 +304,7 @@ const MAX_SMALL_NUM_TO_CACHE = 16;
 // The sorts that finite_set_decl_plugin::init makes.
 const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
-const getSymbolHash = (symbol: SmtSymbol) =>
+export const getSymbolHash = (symbol: SmtSymbol) =>
   typeof symbol === "number" ? symbol : stringHash(symbol, 17);
 
 export const isArithSort = (sort: number) => sort === SORT_INT || sort === SORT_REAL;

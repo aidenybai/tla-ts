@@ -3,6 +3,7 @@
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
+  getSymbolHash,
   FAMILY_ARITH,
   FAMILY_BASIC,
   FAMILY_DATATYPE,
@@ -64,6 +65,7 @@ import {
   removeDatatype,
   substituteSort,
 } from "./datatype-decl-plugin";
+import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
 
@@ -1977,7 +1979,37 @@ export const createSmtlibReader = (
 
   const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
 
-  return { declareCommand, parseTerm, parseFormula, push, pop, isUsed };
+  const isClashing = (decl: number) => {
+    const domain = manager.funcDecls[decl].domain;
+    const decls = funcs.get(String(manager.funcDecls[decl].name)) ?? [];
+    return (
+      decls.includes(decl) &&
+      decls.some(
+        (other) =>
+          other !== decl &&
+          manager.funcDecls[other].domain.length === domain.length &&
+          manager.funcDecls[other].domain.every((sort, index) => sort === domain[index]),
+      )
+    );
+  };
+
+  // The first declaration of each name, in the slot order of cmd_context's dictionary.
+  const getDeclaredFuncs = () => {
+    const table = new ObjMap<true>((decl) => getSymbolHash(manager.funcDecls[decl].name));
+    for (const decls of funcs.values()) table.set(decls[0], true);
+    return [...table.keys()];
+  };
+
+  return {
+    declareCommand,
+    parseTerm,
+    parseFormula,
+    push,
+    pop,
+    isUsed,
+    isClashing,
+    getDeclaredFuncs,
+  };
 };
 
 export type SmtlibReader = ReturnType<typeof createSmtlibReader>;
