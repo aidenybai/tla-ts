@@ -111,23 +111,14 @@ const parseLs4 = (text: string): PtlFormula => {
     if (name.length > MAX_LS4_IDENTIFIER) reject(`the identifier ${name} is too long`);
     return { kind: "Atom", name };
   };
-  const parseBinary = (level: number): PtlFormula => {
-    if (level === BINARY_LEVELS.length) return parsePrefix();
-    const operands = [parseBinary(level + 1)];
-    const kinds: BinaryKind[] = [];
-    for (
-      let kind = BINARY_LEVELS[level].get(peek());
-      kind;
-      kind = BINARY_LEVELS[level].get(peek())
-    ) {
-      take();
-      kinds.push(kind);
-      operands.push(parseBinary(level + 1));
-    }
-    return operands
-      .slice(1)
-      .reduce((left, right, index) => ({ kind: kinds[index], left, right }), operands[0]);
+  const parseOperators = (level: number, left: PtlFormula): PtlFormula => {
+    const kind = BINARY_LEVELS[level].get(peek());
+    if (kind === undefined) return left;
+    take();
+    return parseOperators(level, { kind, left, right: parseBinary(level + 1) });
   };
+  const parseBinary = (level: number): PtlFormula =>
+    level === BINARY_LEVELS.length ? parsePrefix() : parseOperators(level, parseBinary(level + 1));
   const formula = parseBinary(0);
   if (state.position < tokens.length) reject(`expected the end, found ${peek()}`);
   return formula;
