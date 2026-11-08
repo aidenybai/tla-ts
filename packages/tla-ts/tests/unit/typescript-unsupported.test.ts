@@ -18,6 +18,10 @@ const CASES: [string, string][] = [
   ["object rest elements", "const { a, ...others } = record; count = a ?? 0;"],
   ["calling a generator", "const make = function* () { count++; }; make();"],
   ["calling an async function", "const run = async () => { count++; }; run();"],
+  [
+    "instanceof on a value that isn't caught or an error",
+    "const value: unknown = count; if (value instanceof Error) count = 1;",
+  ],
   ["rest parameters", "const add = (...more: number[]) => more.length; count = add(1, 2);"],
   ["string methods as values", "count = label.includes.length;"],
   ["properties of functions", "count = step.length;"],
@@ -27,7 +31,6 @@ const CASES: [string, string][] = [
   ["bitwise xor", "count = count ^ 1;"],
   ["shifts", "count = count << 1;"],
   ["bitwise not", "count = ~count;"],
-  ["typeof", "label = typeof count;"],
   ["delete", "delete record.a;"],
   ["optional chaining", "count = record?.a ?? 0;"],
   ["try", "try { count++; } catch { count--; }"],

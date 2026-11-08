@@ -771,7 +771,8 @@ const checkSpec = async (
   if (args.has("-deadlock")) config.checkDeadlock = false;
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
-  const loadModule = createModuleLoader(directories);
+  const loadFile = createModuleLoader(directories);
+  const loadModule = (name: string) => compiled?.loadModule(name) ?? loadFile(name);
   const isRecorded = isTraceRecorded(args, version);
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");

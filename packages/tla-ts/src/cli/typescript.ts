@@ -9,6 +9,7 @@ export interface CompiledInput {
   specPath: string;
   source: Module;
   config: string;
+  loadModule: (name: string) => string | undefined;
 }
 
 export const compileTypeScriptFile = async (path: string): Promise<CompiledInput> => {
@@ -22,5 +23,6 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
     specPath: join(dirname(path), `${compiled.name}.tla`),
     source: compiled.source,
     config: compiled.config,
+    loadModule: compiled.loadModule,
   };
 };

@@ -200,6 +200,20 @@ const CASES: Record<string, Case[]> = {
       statements: "result = count > 3 ? count - 3 : count + 3;",
     },
   ],
+  errors: [
+    {
+      variables: "log: string[] = []",
+      statements:
+        "const error = new TypeError(); const named = new MyError('m'); log.push(error.message); log.push(error.name); log.push(named.name); log.push(named.message);",
+      setup: "class MyError extends Error {}",
+    },
+    {
+      variables: "log: string[] = []",
+      statements:
+        "const error: Error = new MyError('m'); if (error instanceof MyError) log.push('mine'); if (error instanceof TypeError) log.push('type'); if (error instanceof Error) log.push('error');",
+      setup: "class MyError extends Error {}",
+    },
+  ],
   helpers: [
     {
       variables: "count = 0",

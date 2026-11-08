@@ -25,6 +25,7 @@ import {
   temporal,
   tuple,
 } from "./tla";
+import { JAVASCRIPT_MODULE } from "./javascript";
 
 // The parts of a spec and its config, in the order that the model declares them.
 export interface Sections {
@@ -47,6 +48,7 @@ export interface CompiledSpec {
   name: string;
   source: Module;
   config: string;
+  loadModule: (name: string) => string | undefined;
 }
 
 const getMagnitude = (value: Expression) =>
@@ -139,11 +141,14 @@ export const emit = (
     return { name: definition.name, arity: definition.parameters.length, location };
   });
   const prelude = context.prelude;
+  const isJavaScript = prelude.has("JavaScript");
   const constants = [
-    ...(prelude.has("Null") ? ["Null"] : []),
-    ...(prelude.has("Undefined") ? ["Undefined"] : []),
+    ...(prelude.has("Null") && !isJavaScript ? ["Null"] : []),
+    ...(prelude.has("Undefined") && !isJavaScript ? ["Undefined"] : []),
     ...context.modelValues.values(),
+    ...context.constructors.values(),
   ];
+  const modelValues = [...(isJavaScript ? ["Undefined", "Null"] : []), ...constants];
   const variables = model.variables.map((variable) => variable.name);
   const symmetrySets = model.symmetrySets;
   const defineHere = (name: string, body: Expression) => ({
@@ -226,7 +231,13 @@ export const emit = (
   const source: Module = {
     name: moduleName,
     modules: [],
-    extends: ["Integers", "Sequences", "FiniteSets", "TLC"],
+    extends: [
+      "Integers",
+      "Sequences",
+      "FiniteSets",
+      "TLC",
+      ...(isJavaScript ? ["JavaScript"] : []),
+    ],
     extendsRanges: [],
     constants: getDeclarations("Constants"),
     variables: getDeclarations("Variables"),
@@ -240,8 +251,8 @@ export const emit = (
   };
   const config = [
     "SPECIFICATION Spec",
-    ...(constants.length > 0
-      ? ["CONSTANTS", ...constants.map((constant) => `  ${constant} = ${constant}`)]
+    ...(modelValues.length > 0
+      ? ["CONSTANTS", ...modelValues.map((constant) => `  ${constant} = ${constant}`)]
       : []),
     ...formatConfigSection("INVARIANTS", sections.invariants),
     ...formatConfigSection("PROPERTIES", sections.properties),
@@ -252,5 +263,10 @@ export const emit = (
     ...(symmetrySets.length > 0 ? ["SYMMETRY Perms"] : []),
     ...(model.isDeadlockChecked ? [] : ["CHECK_DEADLOCK FALSE"]),
   ].join("\n");
-  return { name: moduleName, source, config };
+  return {
+    name: moduleName,
+    source,
+    config,
+    loadModule: (name) => (isJavaScript && name === "JavaScript" ? JAVASCRIPT_MODULE : undefined),
+  };
 };

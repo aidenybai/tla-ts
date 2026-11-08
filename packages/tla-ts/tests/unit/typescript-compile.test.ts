@@ -724,6 +724,14 @@ describe("errors", () => {
     ).toThrow("spec.ts:3:3 for-in isn't supported");
   });
 
+  it("rejects typeof on an unknown value beside @symmetric values", () => {
+    expect(() =>
+      compile(
+        `/** @symmetric */\ntype Name = "a" | "b";\nconst getType = (value: unknown) => typeof value;\nlet kind = getType(1);`,
+      ),
+    ).toThrow("spec.ts:3:37 typeof can't tell a @symmetric value from a function");
+  });
+
   it("rejects Object.is on objects", () => {
     expect(() => compile(`let isSame = Object.is([1], [1]);`)).toThrow(
       "spec.ts:1:14 TLA+ compares objects by value, not by identity",

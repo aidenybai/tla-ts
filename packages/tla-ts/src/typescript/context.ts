@@ -21,8 +21,9 @@ export interface Context {
   output: OperatorDefinition[];
   // String literals of @symmetric types, which become model values.
   modelValues: Map<string, string>;
+  constructors: Map<ts.Symbol, string>;
   // Model values and helper operators that the spec uses.
-  prelude: Set<"Null" | "Undefined" | "Rem" | "Quot">;
+  prelude: Set<"Null" | "Undefined" | "Rem" | "Quot" | "JavaScript">;
   // The calls that the exported function being compiled makes and tla-ts can't compile.
   unknowns: Unknowns | undefined;
 }
@@ -55,6 +56,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   recursive: new Set(),
   output: [],
   modelValues: new Map(),
+  constructors: new Map(),
   prelude: new Set(),
   unknowns: undefined,
 });

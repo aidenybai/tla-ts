@@ -167,6 +167,18 @@ const CASES: Record<string, (string | [string, string])[]> = {
     "{ IF: 1, 'b-c': 2, bre\\u0061k: 3 }",
     "{ IF: 1, 'b-c': 2 }['b-c'] + { IF: 1 }.IF",
   ],
+  types: [
+    "[typeof 1, typeof 'a', typeof true, typeof undefined, typeof null, typeof { a: 1 }, typeof [1]]",
+    "[typeof TypeError, typeof (() => 1)]",
+    [
+      "[getType(1), getType('a'), getType('TRUE'), getType(false), getType(undefined), getType(null), getType([1]), getType(new Set([1])), getType(TypeError), getType(new TypeError('t'))]",
+      "const getType = (value: unknown) => typeof value;",
+    ],
+    [
+      "[isSame(1, '1'), isSame(1, 1), isSame(undefined, null), isSame(null, null), isSame(TypeError, TypeError), isSame(TypeError, RangeError), Object.is(text, 1)]",
+      "const isSame = (left: unknown, right: unknown) => left === right;\nconst text: string | number = 'a' as string | number;",
+    ],
+  ],
   helpers: [
     ["double(4)", "const double = (value: number) => value * 2;"],
     [

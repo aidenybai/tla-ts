@@ -20,7 +20,14 @@ import {
   translateString,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import {
+  getConstructor,
+  getErrorClass,
+  translateInstanceOf,
+  translateNewError,
+} from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
+import { isComparable, translateTypeOf, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import {
   apply,
@@ -319,10 +326,10 @@ const translateCall = (
     if (node.arguments.some((argument) => isObject(context.checker.getTypeAtLocation(argument)))) {
       throw new TlaTypeScriptError("TLA+ compares objects by value, not by identity", node);
     }
-    return apply(
-      "=",
-      node.arguments.map((argument) => translateExpression(argument, scope, context)),
-    );
+    const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
+    return isComparable(node.arguments[0], node.arguments[1], context)
+      ? apply("=", values)
+      : useJavaScript("SameValue", values, context);
   }
   const constructed =
     global === "Object" && method === "fromEntries"
@@ -400,6 +407,19 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       ),
     );
   }
+  if (kind === ts.SyntaxKind.InstanceOfKeyword) return translateInstanceOf(node, scope, context);
+  if (
+    (kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+      kind === ts.SyntaxKind.ExclamationEqualsEqualsToken) &&
+    !isComparable(node.left, node.right, context)
+  ) {
+    const isSame = useJavaScript(
+      "SameValue",
+      [translate(node.left), translate(node.right)],
+      context,
+    );
+    return kind === ts.SyntaxKind.EqualsEqualsEqualsToken ? isSame : not(isSame);
+  }
   if (kind === ts.SyntaxKind.InKeyword) {
     return apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
   }
@@ -473,6 +493,9 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (declared !== undefined) return declared;
   if (symbol !== undefined && context.variables.has(symbol)) {
     throw new TlaTypeScriptError(`${node.text} can't be read here`, node);
+  }
+  if (symbol !== undefined && getErrorClass(symbol, context.checker) !== undefined) {
+    return getConstructor(symbol, context);
   }
   throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);
 };
@@ -634,6 +657,12 @@ const translateNode = (
     return translateElementAccess(node, scope, context, isDefined);
   }
   if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
-  if (ts.isNewExpression(node)) return translateNew(node, scope, context);
+  if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
+  if (ts.isNewExpression(node)) {
+    const classes = getErrorClass(getSymbol(node.expression, context.checker), context.checker);
+    return classes === undefined
+      ? translateNew(node, scope, context)
+      : translateNewError(node, classes, scope, context);
+  }
   throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
 };
