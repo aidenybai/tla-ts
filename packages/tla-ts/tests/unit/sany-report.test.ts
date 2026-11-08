@@ -370,6 +370,18 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  // Linter.lintRecords: a field of any record with the same fields, in any order, that a
+  // declaration builds keeps the record from warning.
+  it("warns about a field only when no record with the same domain uses a declaration", () => {
+    const report = getReport({
+      Fields:
+        "---- MODULE Fields ----\nCONSTANT k\nfoo == 1\nr == [foo |-> 2, bar |-> 3]\ns == [bar |-> k, foo |-> 4]\nt == [foo |-> 5]\n====\n",
+    });
+    expect(
+      report.text.match(/line \d+, col \d+ to line \d+, col \d+ of module Fields\n\nThe field/g),
+    ).toEqual(["line 6, col 7 to line 6, col 9 of module Fields\n\nThe field"]);
+  });
+
   it("reports a circular dependency as a fatal error", () => {
     const report = getReport({
       Cycle: "---- MODULE Cycle ----\nEXTENDS Other\n====\n",

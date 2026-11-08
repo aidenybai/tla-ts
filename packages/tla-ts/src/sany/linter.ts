@@ -74,13 +74,15 @@ const getFieldName = (pair: OpApplNode) => {
   return name?.kind === "String" ? name : undefined;
 };
 
-// Records.sameDomain.
-const isSameDomain = (record: OpApplNode, other: OpApplNode) => {
-  if (record === other) return true;
-  if (record.operands.length !== other.operands.length) return false;
-  const names = new Set(getFieldPairs(other).map((pair) => getFieldName(pair)?.value));
-  return getFieldPairs(record).every((pair) => names.has(getFieldName(pair)?.value));
-};
+// The domain of a record, which Records.sameDomain compares. A module SANY accepts gives no record
+// two fields of the same name.
+const getDomain = (record: OpApplNode) =>
+  JSON.stringify([
+    record.operands.length,
+    ...getFieldPairs(record)
+      .map((pair) => getFieldName(pair)?.value)
+      .sort(),
+  ]);
 
 // ModuleNode.getExtendedModuleSet(true).
 const getExtendedModules = (module: ModuleNode, found = new Set<ModuleNode>()) => {
@@ -92,21 +94,23 @@ const getExtendedModules = (module: ModuleNode, found = new Set<ModuleNode>()) =
   return found;
 };
 
-// Linter.lintRecords: the warnings for the records of a module.
+// Linter.lintRecords: the warnings for the records of a module. Linter checks each field named like
+// a symbol, unless the value of a field of a record with the same domain, the record itself among
+// them, is built from declarations.
 export const lintSanyModule = (module: ModuleNode): SanyMessage[] => {
-  const allRecords = [
+  const domains = new Map<string, OpApplNode[]>();
+  [
     ...[...getExtendedModules(module)].flatMap((extended) => extended.records),
     ...module.records,
-  ];
-  return module.records.flatMap((record) => {
-    // Linter checks the field's value, the record's fields and the fields of every record with the
-    // same domain, which includes the record itself.
-    const isExempt = allRecords
-      .filter((other) => isSameDomain(other, record))
-      .flatMap(getFieldPairs)
-      .some(isBuiltFromDeclarations);
-    if (isExempt) return [];
-    return getFieldPairs(record).flatMap((pair) => {
+  ].forEach((record) => {
+    const domain = getDomain(record);
+    const records = domains.get(domain);
+    if (records) records.push(record);
+    else domains.set(domain, [record]);
+  });
+  const linted = module.records.map((record) => ({
+    domain: getDomain(record),
+    warnings: getFieldPairs(record).flatMap((pair): SanyMessage[] => {
       const name = getFieldName(pair);
       const symbol = name && getContextSymbol(module.context, name.value);
       if (name === undefined || symbol === undefined) return [];
@@ -117,6 +121,14 @@ export const lintSanyModule = (module: ModuleNode): SanyMessage[] => {
           isWarning: true,
         },
       ];
-    });
-  });
+    }),
+  }));
+  const exempt = new Set(
+    [
+      ...new Set(linted.filter((item) => item.warnings.length > 0).map((item) => item.domain)),
+    ].filter((domain) =>
+      (domains.get(domain) ?? []).flatMap(getFieldPairs).some(isBuiltFromDeclarations),
+    ),
+  );
+  return linted.flatMap((item) => (exempt.has(item.domain) ? [] : item.warnings));
 };
