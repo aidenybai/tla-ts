@@ -263,6 +263,7 @@ export const runSmtlibScript = (
     isProducingModels: true,
     isProducingUnsatCores: false,
     isExitingOnError: false,
+    isDiagnosticOnStdout: false,
     parameters: new Map<string, string>(),
     isMbqi: true,
     isHiDiv0: true,
@@ -363,8 +364,16 @@ export const runSmtlibScript = (
     script.state.check?.model?.decRef();
     script.state.check = undefined;
   };
+  // The text after the last newline waits for the rest of its line.
+  let pendingText = "";
+  const write = (text: string, isDiagnostic: boolean) => {
+    if (isDiagnostic && !settings.isDiagnosticOnStdout) return;
+    const lines = (pendingText + text).split("\n");
+    pendingText = lines.pop() ?? "";
+    for (const line of lines) print(line);
+  };
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
-    compileTactic({ manager: script.state.manager, isMbqi: settings.isMbqi }, sexpr, end);
+    compileTactic({ manager: script.state.manager, isMbqi: settings.isMbqi, write }, sexpr, end);
   const getGoal = () => {
     const goal = new Goal(script.state.manager);
     for (const assertion of script.state.assertions) goal.assert(assertion);
@@ -675,6 +684,8 @@ export const runSmtlibScript = (
       const isTrue = isSymbol(value, "true");
       if (keyword === ":produce-models") settings.isProducingModels = isTrue;
       if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
+      if (keyword === ":diagnostic-output-channel")
+        settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
       if (keyword === ":int-real-coercions" && !isTrue)
         throw new SmtUnsupportedError("the option :int-real-coercions false");
       if (keyword === ":error-behavior") {
