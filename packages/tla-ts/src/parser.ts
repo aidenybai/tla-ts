@@ -783,6 +783,9 @@ const parse = (
           peek(1).line === token.line &&
           peek(1).column === token.endColumn + 1));
     if (isTlapmIncomplete && isStandalone(token)) throw createError("incomplete expression", token);
+    if (isOperatorAlone && !isTlapm && token.text === "\\X" && token.spelling !== "×") {
+      throw createError("\\X may not be used as an infix operator", token);
+    }
     if (isOperatorAlone) {
       cursor.index++;
       return withRange(
