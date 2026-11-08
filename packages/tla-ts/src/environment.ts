@@ -21,6 +21,7 @@ import {
   TlaEvaluationError,
   TlaModuleError,
   TlaSyntaxError,
+  UNEXPECTED_EXCEPTION,
   type SanyError,
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -82,9 +83,9 @@ import { createTlcOrder, type TlcOrder } from "./tlc/order";
 import {
   isTlcInteger,
   createModelValue,
-  createSet,
   formatValue,
   valuesEqual,
+  toFiniteSet,
   type Value,
   markNormalized,
 } from "./values";
@@ -145,7 +146,21 @@ const toValue = (value: ConfigValue): Value => {
     case "ModelValue":
       return createModelValue(value.name);
     case "Set":
-      return createSet(value.elements.map(toValue));
+      return toFiniteSet({ kind: "MixedSet", elements: value.elements.map(toValue) });
+  }
+};
+
+// IValue.initialize sorts a set of the config as TLC starts, and fails with a RuntimeException that
+// TLC reports as one it didn't expect.
+const toConstantValue = (value: ConfigValue) => {
+  try {
+    return toValue(value);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError) || error instanceof TlaModuleError) throw error;
+    throw setExitCode(
+      new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
+      EXIT_STATUS.error,
+    );
   }
 };
 
@@ -1139,7 +1154,7 @@ export const createEnvironment = (
   config.constants
     .filter((assignment) => assignment.args === undefined)
     .forEach((assignment) => {
-      const value = toValue(assignment.value);
+      const value = toConstantValue(assignment.value);
       markNormalized(value);
       getScopedKeys(assignment).forEach((key) => {
         const arity = getKeyArity(key);
