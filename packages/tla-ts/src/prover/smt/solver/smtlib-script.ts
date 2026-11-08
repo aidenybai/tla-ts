@@ -241,7 +241,7 @@ export const runSmtlibScript = (
     const state = script.state;
     const term = state.reader.parseTerm(list.items[1] ?? list.end);
     const sort = state.manager.sorts[term];
-    if (sort !== SORT_INT && sort !== SORT_REAL)
+    if (sort !== SORT_INT && sort !== SORT_REAL && !state.manager.isBvSort(sort))
       throw new SmtParseError("Objective must be bit-vector, integer or real", list.end);
     state.objectives.push(term);
   };
