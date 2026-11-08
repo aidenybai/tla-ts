@@ -81,7 +81,8 @@ const PROOF_STEP_OPERATORS = new Map([
 ]);
 
 // The parts of a name like I!Op or Op!lab, except for an operator such as !! that contains a "!".
-const getNameParts = (name: string) => {
+const getNameParts = (name: string): string[] => {
+  if (name.length > 3 && name.endsWith("!!!")) return [...getNameParts(name.slice(0, -3)), "!!"];
   const parts = name.split("!");
   return parts.some((part) => part.length === 0) ? [name] : parts;
 };

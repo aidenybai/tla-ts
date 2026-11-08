@@ -1009,9 +1009,9 @@ const parse = (
         next.kind === "Number" ||
         SELECTOR_SYMBOLS.has(next.text) ||
         (next.kind === "Operator" &&
-          (INFIX_OPERATORS.has(next.text) ||
-            POSTFIX_OPERATORS.has(next.text) ||
-            PREFIX_OPERATOR_REFERENCES.has(next.text))))
+          (INFIX_OPERATORS.has(next.text) || DEFINABLE_POSTFIX_OPERATORS.has(next.text))) ||
+        ((next.kind === "Operator" || next.kind === "Keyword") &&
+          DEFINABLE_PREFIX_OPERATORS.has(next.text)))
     );
   };
 
