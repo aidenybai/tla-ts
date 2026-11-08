@@ -2960,7 +2960,7 @@ describe("rejecting literals matches TLC", () => {
   ])("rejects %s before checking", async (_, source) => {
     const run = checkSource(source);
     await expect(run).rejects.toThrow(TlaEvaluationError);
-    await expect(run).rejects.toThrow(/^TLC can't handle real numbers: 1\.5/);
+    await expect(run).rejects.toThrow("TLC can't handle real numbers.\n1.5");
   });
 
   it("accepts decimals in proofs and ASSUME PROVE theorems", async () => {
@@ -2981,12 +2981,12 @@ describe("rejecting literals matches TLC", () => {
   ])("rejects an integer literal too big for TLC in %s", async (_, source) => {
     const run = checkSource(source);
     await expect(run).rejects.toThrow(TlaEvaluationError);
-    await expect(run).rejects.toThrow(/^TLC can't handle a number this big: 2147483648/);
+    await expect(run).rejects.toThrow("TLC can't handle a number this big.\n2147483648");
   });
 
   it.each(["\\hFFFFFFFFF", "99999999999999999999"])("quotes %s as typed", async (literal) => {
     await expect(checkSource(`VARIABLE x\nBig == ${literal}\nInit == x = 0`)).rejects.toThrow(
-      `TLC can't handle a number this big: ${literal} at line 3, column 8`,
+      `TLC can't handle a number this big.\n${literal}`,
     );
   });
 

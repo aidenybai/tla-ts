@@ -341,16 +341,14 @@ export const getSubsetOperator =
 // TLC rejects a decimal, or an integer literal too big for it, while it processes the spec.
 export const createRealNumberError = (expression: DecimalExpression) =>
   setExitCode(
-    new TlaEvaluationError(
-      `TLC can't handle real numbers: ${expression.text} at ${describeLocation(expression)}`,
-    ),
+    new TlaEvaluationError(`TLC can't handle real numbers.\n${expression.text}`),
     EXIT_STATUS.configParseError,
   );
 
 export const createBigNumberError = (expression: NumberExpression) =>
   setExitCode(
     new TlaEvaluationError(
-      `TLC can't handle a number this big: ${expression.text ?? expression.value} at ${describeLocation(expression)}`,
+      `TLC can't handle a number this big.\n${expression.text ?? expression.value}`,
     ),
     EXIT_STATUS.error,
   );
