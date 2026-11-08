@@ -1,7 +1,7 @@
 // Ported from Z3 (src/ast/rewriter/maximize_ac_sharing.cpp), MIT license, see z3-license.txt.
 // maximize_bv_sharing_rw: an associative application of more than two arguments becomes a tree of
 // binary applications that reuses the pairs it made before.
-import { OP_ADD, OP_OR, type AstManager } from "./ast";
+import { OP_ADD, OP_BADD, OP_BAND, OP_BMUL, OP_BOR, OP_OR, type AstManager } from "./ast";
 import { RewriterTpl } from "./rewriter-tpl";
 import { shrink } from "./array";
 
@@ -14,9 +14,12 @@ interface SharingEntry {
 // MAX_NUM_ARGS_FOR_OPT: pairs are reused only for fewer arguments.
 const MAX_NUM_ARGS_FOR_OPT = 128;
 
+// Z3 registers the kinds of bvadd, bvmul, bvor and bvand, and compares the kind without the family.
+// bvmul has the kind of or and of +, so the associative ones of those are shared too.
+const SHARED_OPS = new Set([OP_BADD, OP_BMUL, OP_BOR, OP_BAND, OP_OR, OP_ADD]);
+
 export class MaxBvSharing extends RewriterTpl {
-  // Z3 registers the kinds of bvadd, bvmul, bvor and bvand when the first scope is pushed, and
-  // compares the kind without the family. bvmul has the kind of or and of +, so those are shared.
+  // Z3 registers the kinds when the first scope is pushed.
   private isInit = false;
   // m_entries and m_cache: the pairs made, which hold their arguments. The cache maps a declaration
   // and the lower of two arguments to the higher ones, so a pair matches in either order.
@@ -31,9 +34,11 @@ export class MaxBvSharing extends RewriterTpl {
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
-    if (!this.isInit || (op !== OP_OR && op !== OP_ADD) || args.length <= 2) return -1;
+    if (!this.isInit || !SHARED_OPS.has(op) || args.length <= 2) return -1;
     return manager.withTemporaries(() => {
-      const pending = [...args];
+      // A bit-vector numeral first stays out of the tree, and applies to it.
+      const numeral = manager.isBvNumeral(args[0]) ? args[0] : -1;
+      const pending = numeral === -1 ? [...args] : args.slice(1);
       // Reuses the pairs made before, the first pair found first. Z3 scans every pair again after
       // each reuse, but no pair is made meanwhile, so before the reused pair only the pairs with
       // the argument it became can match.
@@ -68,7 +73,7 @@ export class MaxBvSharing extends RewriterTpl {
         }
         pending.splice(0, pending.length, ...next);
       }
-      return pending[0];
+      return numeral === -1 ? pending[0] : manager.mkApp(decl, [numeral, pending[0]], sort);
     });
   }
 
