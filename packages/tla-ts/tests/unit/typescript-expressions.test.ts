@@ -323,6 +323,15 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const missing = Object.getOwnPropertyDescriptor(Math, "missing");
       const source = Object.getOwnPropertyDescriptor(RegExp.prototype, "source")!;`,
     ],
+    [
+      "objects.map((object) => Array.prototype.filter.call(object, () => true).length)",
+      `const base = { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1 };
+      const objects = [{ ...base, length: undefined }, { ...base, length: null }, { ...base, length: true }, { ...base, length: false }, { ...base, length: 0 }, { ...base, length: -3 }, { ...base, length: 2 }, { ...base, length: "" }, { ...base, length: "2" }, { ...base, length: "0002.0" }, { ...base, length: "2E0" }, { ...base, length: "2.3E-1" }, { ...base, length: "1e1" }, { ...base, length: "-4294967294" }, { ...base, length: "0x2" }, { ...base, length: "0X1" }, { ...base, length: "0o2" }, { ...base, length: "0b10" }, { ...base, length: "-0x2" }, { ...base, length: "one" }, { ...base, length: "1e" }, { ...base, length: "." }, { ...base, length: ".5" }, { ...base, length: "-Infinity" }];`,
+    ],
+    [
+      "[Array.prototype.every.call(digits, (value: number) => value > 0), Array.prototype.some.call(digits, (value: number, index: unknown, array: unknown) => array === digits && index === 1 && value === 2), Array.prototype.filter.call(digits, (value: number) => value !== 2), Array.prototype.map.call(digits, (value: number) => value * 2), Array.prototype.lastIndexOf.call(digits, 1), Array.prototype.includes.call(digits, 3), Array.prototype.find.call(digits, (value: number) => value > 1), Array.prototype.reduce.call(digits, (sum, value: number) => (typeof sum === 'number' ? sum + value : 0), 0)]",
+      "const digits = { 0: 1, 1: 2, 2: 1, length: 3 };",
+    ],
     "[Date.prototype.hasOwnProperty('constructor'), Math.hasOwnProperty('missing'), Object.prototype.hasOwnProperty.call(Array.prototype, 'map'), Object.hasOwn(Function, 'length')]",
   ],
   helpers: [

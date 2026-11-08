@@ -175,6 +175,109 @@ Get(heap, ref, key) ==
        [] object.prototype = Null -> Undefined
        [] OTHER -> Get(heap, object.prototype, key)
 
+LOCAL IsDigitText(text) ==
+  \\A position \\in 1..Len(text) : SubSeq(text, position, position) \\in Digits \\ {"-"}
+
+LOCAL Alphanumerics == "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+LOCAL CharactersOf(text) == {SubSeq(text, position, position) : position \\in 1..Len(text)}
+
+\\* The digits of a radix, where a digit past 9 is a letter of either case.
+LOCAL DigitsOf(radix) ==
+  {SubSeq(Alphanumerics, value + 1, value + 1) : value \\in 0..(radix - 1)}
+    \\cup {SubSeq(Alphanumerics, value + 27, value + 27) : value \\in 10..(radix - 1)}
+
+LOCAL DigitValue(character) ==
+  CHOOSE value \\in 0..35 :
+    \\/ SubSeq(Alphanumerics, value + 1, value + 1) = character
+    \\/ value >= 10 /\\ SubSeq(Alphanumerics, value + 27, value + 27) = character
+
+RECURSIVE StripZeros(_)
+StripZeros(text) ==
+  IF Len(text) > 1 /\\ SubSeq(text, 1, 1) = "0" THEN StripZeros(Tail(text)) ELSE text
+
+\\* The digits of a radix that a TLC integer always holds.
+LOCAL MaxDigits(radix) == CASE radix = 2 -> 30 [] radix = 8 -> 10 [] radix = 10 -> 9 [] OTHER -> 7
+
+RECURSIVE ParseDigits(_, _)
+ParseDigits(text, radix) ==
+  IF text = ""
+  THEN 0
+  ELSE radix * ParseDigits(SubSeq(text, 1, Len(text) - 1), radix)
+         + DigitValue(SubSeq(text, Len(text), Len(text)))
+
+LOCAL ParseFitting(text, radix) ==
+  LET stripped == StripZeros(text)
+  IN IF Len(stripped) <= MaxDigits(radix)
+     THEN ParseDigits(stripped, radix)
+     ELSE Assert(FALSE, "tla-ts can't represent the number " \\o text)
+
+LOCAL Prefix(text, length) == IF Len(text) < length THEN text ELSE SubSeq(text, 1, length)
+
+\\* ToLength of a string: ToNumber's grammar, without whitespace, truncated and clamped at 0.
+LOCAL ToLengthOfText(text) ==
+  LET prefix == Prefix(text, 2)
+      body == SubSeq(text, 3, Len(text))
+      radix == CASE prefix \\in {"0x", "0X"} -> 16
+                 [] prefix \\in {"0o", "0O"} -> 8
+                 [] prefix \\in {"0b", "0B"} -> 2
+                 [] OTHER -> 10
+      isNegative == Prefix(text, 1) = "-"
+      unsigned == IF Prefix(text, 1) \\in {"+", "-"} THEN Tail(text) ELSE text
+      exponents == {position \\in 1..Len(unsigned) : SubSeq(unsigned, position, position) \\in {"e", "E"}}
+      exponent == IF exponents = {} THEN Len(unsigned) + 1 ELSE CHOOSE position \\in exponents : TRUE
+      mantissa == SubSeq(unsigned, 1, exponent - 1)
+      exponentText == SubSeq(unsigned, exponent + 1, Len(unsigned))
+      exponentDigits ==
+        IF Prefix(exponentText, 1) \\in {"+", "-"} THEN Tail(exponentText) ELSE exponentText
+      points == {position \\in 1..Len(mantissa) : SubSeq(mantissa, position, position) = "."}
+      point == IF points = {} THEN Len(mantissa) + 1 ELSE CHOOSE position \\in points : TRUE
+      whole == SubSeq(mantissa, 1, point - 1)
+      fraction == SubSeq(mantissa, point + 1, Len(mantissa))
+      isDecimal ==
+        /\\ \\A left, right \\in exponents : left = right
+        /\\ \\A left, right \\in points : left = right
+        /\\ exponents = {} \\/ exponentDigits # ""
+        /\\ Len(whole) + Len(fraction) > 0
+        /\\ IsDigitText(whole) /\\ IsDigitText(fraction) /\\ IsDigitText(exponentDigits)
+      significand == StripZeros(whole \\o fraction)
+      shift ==
+        (IF Prefix(exponentText, 1) = "-" THEN -1 ELSE 1) * ParseFitting(exponentDigits, 10)
+          - Len(fraction)
+  IN CASE text = "" -> 0
+       [] radix # 10 /\\ body # "" /\\ CharactersOf(body) \\subseteq DigitsOf(radix) ->
+            ParseFitting(body, radix)
+       [] isDecimal /\\ (isNegative \\/ significand = "0") -> 0
+       [] isDecimal /\\ shift >= 0 -> ParseFitting(significand, 10) * 10 ^ shift
+       [] isDecimal /\\ -shift >= Len(significand) -> 0
+       [] isDecimal -> ParseFitting(SubSeq(significand, 1, Len(significand) + shift), 10)
+       [] text = "-Infinity" -> 0
+       [] /\\ text \\notin {"Infinity", "+Infinity"}
+          /\\ CharactersOf(text) \\subseteq CharactersOf(Alphanumerics) \\cup {"+", "-", ".", "_", "!"} ->
+            0
+       [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(text) \\o " to a length")
+
+\\* ToLength of a length property.
+LOCAL ToLength(value) ==
+  CASE value \\in {Undefined, Null} -> 0
+    [] TypeOf(value) = "boolean" -> IF value THEN 1 ELSE 0
+    [] TypeOf(value) = "number" -> IF value < 0 THEN 0 ELSE value
+    [] TypeOf(value) = "string" -> ToLengthOfText(value)
+    [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(value) \\o " to a length")
+
+RECURSIVE KeyCount(_, _)
+KeyCount(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN Len(object.keys) + IF object.prototype = Null THEN 0 ELSE KeyCount(heap, object.prototype)
+
+\\* The elements of an array-like object, which has an element at each index below its length.
+ArrayLike(heap, ref) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+  IN IF \\/ length > KeyCount(heap, ref)
+        \\/ \\E position \\in 0..(length - 1) : ~Has(heap, ref, ToString(position))
+     THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
+     ELSE [position \\in 1..length |-> Get(heap, ref, ToString(position - 1))]
+
 RECURSIVE IsWritable(_, _, _)
 IsWritable(heap, ref, key) ==
   LET object == Lookup(heap, ref)

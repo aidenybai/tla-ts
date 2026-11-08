@@ -101,30 +101,35 @@ const bindElement = (callback: ts.Expression, scope: Scope, context: Context): E
 };
 
 // Binds a callback's (element, index, array) parameters for the TLA+ index of a sequence, which
-// counts from 1 where JavaScript counts from 0. A reducer takes an accumulator before them.
+// counts from 1 where JavaScript counts from 0. A reducer takes an accumulator before them, and an
+// array-like object's callbacks take the object as their array.
 const bindIndexed = (
   callback: ts.Expression,
   sequence: Expression | undefined,
   position: Expression,
   scope: Scope,
   context: Context,
-  accumulator?: Expression,
+  extra: { accumulator?: Expression; owner?: Expression } = {},
 ) => {
   const parameters = getCallback(callback, context).parameters;
   const bindings = [
-    ...(accumulator === undefined ? [] : [accumulator]),
+    ...(extra.accumulator === undefined ? [] : [extra.accumulator]),
     sequence === undefined ? undefined : index(sequence, [position]),
     apply("-", [position, number(1)]),
-    sequence,
+    extra.owner ?? sequence,
   ];
   return parameters.reduce((current, parameter, position) => {
     const value = bindings[position];
-    if (
-      position === bindings.length - 1 &&
-      ts.isIdentifier(parameter.name) &&
-      getKind(parameter.name, context) !== "sequence"
-    ) {
-      throw new TlaTypeScriptError("Type a callback's array parameter as an array", parameter);
+    if (position === bindings.length - 1 && ts.isIdentifier(parameter.name)) {
+      const kind = getKind(parameter.name, context);
+      const isUnknown =
+        (context.checker.getTypeAtLocation(parameter.name).flags & ts.TypeFlags.Unknown) !== 0;
+      if (extra.owner === undefined && kind !== "sequence") {
+        throw new TlaTypeScriptError("Type a callback's array parameter as an array", parameter);
+      }
+      if (extra.owner !== undefined && kind !== "object" && !isUnknown) {
+        throw new TlaTypeScriptError("Type a callback's array parameter as an object", parameter);
+      }
     }
     return value === undefined
       ? current
@@ -362,13 +367,14 @@ const translateFoundIndex = (
   sequence: Expression,
   callback: ts.Expression,
   isLast: boolean,
+  owner: Expression | undefined,
   scope: Scope,
   context: Context,
 ) => {
   const getTest = (position: string) =>
     translateTest(
       callback,
-      bindIndexed(callback, sequence, identifier(position), scope, context),
+      bindIndexed(callback, sequence, identifier(position), scope, context, { owner }),
       context,
     );
   const position = context.names.getFresh("index");
@@ -386,16 +392,27 @@ const translateFoundIndex = (
   };
 };
 
+// A call of an array method, on an array or, through Array.prototype, on an array-like object that
+// its callbacks take as their array.
+interface ArrayCall {
+  node: ts.CallExpression;
+  method: string;
+  arguments: readonly ts.Expression[];
+  elementType: ts.Type | undefined;
+  owner: Expression | undefined;
+}
+
 const translateSequenceOperation = (
-  node: MethodCall,
+  call: ArrayCall,
   sequence: Expression,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ) => {
-  const method = node.expression.name.text;
+  const node = call.node;
+  const method = call.method;
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
-  const argument = node.arguments[0];
+  const argument = call.arguments[0];
   const getLength = () => apply("Len", [sequence]);
   // An index that counts back from the end when it's negative, as at() and slice() take it.
   const getRelative = (inner: ts.Expression, operator: "RelativeIndex" | "ClampedIndex") =>
@@ -413,7 +430,9 @@ const translateSequenceOperation = (
     ) =>
     () => {
       const position = context.names.getFresh("index");
-      const inner = bindIndexed(argument, sequence, identifier(position), scope, context);
+      const inner = bindIndexed(argument, sequence, identifier(position), scope, context, {
+        owner: call.owner,
+      });
       return format(
         [bound(position, getDomain(sequence))],
         translateElement(argument, inner, context),
@@ -425,10 +444,7 @@ const translateSequenceOperation = (
   ) =>
     share(translate(argument), "value", context, (value) => {
       const checker = context.checker;
-      const elementType = checker.getIndexTypeOfType(
-        checker.getTypeAtLocation(node.expression.expression),
-        ts.IndexKind.Number,
-      );
+      const elementType = call.elementType;
       const isComparableElement =
         elementType !== undefined &&
         isComparableType(elementType, checker.getTypeAtLocation(argument), checker);
@@ -436,7 +452,7 @@ const translateSequenceOperation = (
         isComparableElement
           ? apply("=", [index(sequence, [position]), value])
           : useJavaScript("SameValue", [index(sequence, [position]), value], context);
-      const from = node.arguments[1];
+      const from = call.arguments[1];
       // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.
       const isUndefined =
         from !== undefined &&
@@ -497,15 +513,11 @@ const translateSequenceOperation = (
   const getReduced = (isRight: boolean) => () => {
     const accumulator = context.names.getFresh("accumulator");
     const position = context.names.getFresh("index");
-    const inner = bindIndexed(
-      argument,
-      sequence,
-      identifier(position),
-      scope,
-      context,
-      identifier(accumulator),
-    );
-    const initial = node.arguments[1];
+    const inner = bindIndexed(argument, sequence, identifier(position), scope, context, {
+      accumulator: identifier(accumulator),
+      owner: call.owner,
+    });
+    const initial = call.arguments[1];
     return useJavaScript(
       "Reduce",
       [
@@ -519,11 +531,11 @@ const translateSequenceOperation = (
     );
   };
   const getFound = (isLast: boolean) => () => {
-    const result = translateFoundIndex(sequence, argument, isLast, scope, context);
+    const result = translateFoundIndex(sequence, argument, isLast, call.owner, scope, context);
     return orUndefined(result.exists, index(sequence, [result.found]));
   };
   const getFoundIndex = (isLast: boolean) => () => {
-    const result = translateFoundIndex(sequence, argument, isLast, scope, context);
+    const result = translateFoundIndex(sequence, argument, isLast, call.owner, scope, context);
     return ifExpression(result.exists, apply("-", [result.found, number(1)]), number(-1));
   };
   const operations = new Map<string, () => Expression>([
@@ -555,7 +567,7 @@ const translateSequenceOperation = (
       "slice",
       () => {
         const start = argument === undefined ? number(0) : getRelative(argument, "ClampedIndex");
-        const end = node.arguments[1];
+        const end = call.arguments[1];
         const last =
           end === undefined
             ? getLength()
@@ -570,7 +582,7 @@ const translateSequenceOperation = (
       () =>
         [
           sequence,
-          ...node.arguments.map((inner) =>
+          ...call.arguments.map((inner) =>
             getKind(inner, context) === "sequence" ? translate(inner) : tuple([translate(inner)]),
           ),
         ].reduce((left, right) => apply("\\o", [left, right])),
@@ -580,7 +592,7 @@ const translateSequenceOperation = (
       () =>
         useJavaScript(
           "SequenceWith",
-          [sequence, translate(argument), translate(node.arguments[1])],
+          [sequence, translate(argument), translate(call.arguments[1])],
           context,
         ),
     ],
@@ -617,7 +629,9 @@ const translateSequenceOperation = (
             [position],
             translateTest(
               argument,
-              bindIndexed(argument, sequence, identifier(position), scope, context),
+              bindIndexed(argument, sequence, identifier(position), scope, context, {
+                owner: call.owner,
+              }),
               context,
             ),
           ),
@@ -813,8 +827,18 @@ export const translateMethod = (
   if (kind === "sequence") {
     const method = node.expression.name.text;
     const sequence = translateExpression(receiver, scope, context);
+    const call = {
+      node,
+      method,
+      arguments: node.arguments,
+      elementType: context.checker.getIndexTypeOfType(
+        context.checker.getTypeAtLocation(receiver),
+        ts.IndexKind.Number,
+      ),
+      owner: undefined,
+    };
     const translateWith = (shared: Expression) =>
-      translateSequenceOperation(node, shared, scope, context, isDefined);
+      translateSequenceOperation(call, shared, scope, context, isDefined);
     return SINGLE_USE_METHODS.has(method)
       ? translateWith(sequence)
       : share(sequence, "sequence", context, translateWith);
@@ -822,6 +846,63 @@ export const translateMethod = (
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
   return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
+};
+
+const ARRAY_LIKE_METHODS = new Set([
+  "every",
+  "some",
+  "filter",
+  "map",
+  "indexOf",
+  "lastIndexOf",
+  "includes",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "reduce",
+  "reduceRight",
+]);
+
+// Array.prototype.method.call(object, ...arguments) on an array-like object, which runs on the
+// object's elements, or undefined for any other call.
+export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const callee = node.expression;
+  const target = ts.isPropertyAccessExpression(callee) ? callee.expression : undefined;
+  const object = node.arguments[0];
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    callee.name.text !== "call" ||
+    target === undefined ||
+    !ts.isPropertyAccessExpression(target) ||
+    target.expression.getText() !== "Array.prototype" ||
+    !ARRAY_LIKE_METHODS.has(target.name.text) ||
+    object === undefined ||
+    getKind(object, context) !== "object"
+  ) {
+    return undefined;
+  }
+  return share(translateExpression(object, scope, context), "object", context, (owner) =>
+    share(
+      useJavaScript("ArrayLike", [getHeap(scope, node, context), owner], context),
+      "sequence",
+      context,
+      (sequence) =>
+        translateSequenceOperation(
+          {
+            node,
+            method: target.name.text,
+            arguments: node.arguments.slice(1),
+            elementType: undefined,
+            owner,
+          },
+          sequence,
+          scope,
+          context,
+          false,
+        ),
+    ),
+  );
 };
 
 export const translateNew = (node: ts.NewExpression, scope: Scope, context: Context) => {

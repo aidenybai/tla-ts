@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import {
   translateArrayConstructor,
+  translateArrayLikeCall,
   translateFunctionConstructor,
   translateMethod,
   translateNew,
@@ -435,6 +436,8 @@ const translateCall = (
       getUndefined(context),
     );
   }
+  const arrayLike = translateArrayLikeCall(node, scope, context);
+  if (arrayLike !== undefined) return arrayLike;
   const isPrototypeHasOwn =
     method === "call" &&
     ts.isPropertyAccessExpression(receiver) &&
