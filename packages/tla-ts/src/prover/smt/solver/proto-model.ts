@@ -26,7 +26,6 @@ import { ModelEvaluator } from "./model-evaluator";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
-// ast_manager::get_some_value, with the value each plugin gives.
 const getManagerSomeValue = (manager: AstManager, sort: number): number => {
   if (sort === SORT_BOOL) return manager.falseExpr;
   if (isArithSort(sort)) return manager.mkNumeralOfSort(Rational.zero, sort);

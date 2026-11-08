@@ -48,7 +48,6 @@ const isConsideredUninterpreted = (manager: AstManager, decl: number) => {
   );
 };
 
-// collect_func_decls: the uninterpreted functions applied to arguments in the expression.
 const collectFuncDecls = (manager: AstManager, expr: number) => {
   const decls = new ObjHashtable((decl) => manager.getDeclHash(decl));
   const visited = new Set<number>();
@@ -68,7 +67,6 @@ const collectFuncDecls = (manager: AstManager, expr: number) => {
   return decls;
 };
 
-// sort_fun_decls: a function comes after the functions its else expression applies.
 const sortFuncDecls = (manager: AstManager, model: ProtoModel) => {
   const visited = new Set<number>();
   const result: number[] = [];

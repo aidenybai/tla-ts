@@ -92,7 +92,6 @@ const SIMPLIFY_PARAMETERS = new Set([
   ":split_concat_eq",
 ]);
 
-// The defaults of the parameters that get-option reads and that the port follows.
 const PARAMETER_DEFAULTS = new Map([
   ["auto_config", "true"],
   ["smt.relevancy", "2"],
@@ -230,7 +229,6 @@ interface ScriptState {
   manager: AstManager;
   reader: SmtlibReader;
   assertions: number[];
-  // The answer literal of each assertion, or -1 for an assertion without a name.
   names: number[];
   objectives: number[];
   scopes: Scope[];
@@ -527,7 +525,6 @@ export const runSmtlibScript = (
       const manager = script.state.manager;
       const model = getModel(list);
       model.compress();
-      // add_declared_functions: each declared function the model leaves out gets some value.
       for (const decl of script.state.reader.getDeclaredFuncs()) {
         const funcDecl = manager.funcDecls[decl];
         if (

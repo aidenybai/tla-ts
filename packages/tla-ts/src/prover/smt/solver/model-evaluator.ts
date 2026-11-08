@@ -164,7 +164,6 @@ export class ModelEvaluator extends RewriterTpl {
     return { expr: this.substitute(interp.getInterp() as number, args), depth: Infinity };
   }
 
-  // func_interp::get_array_interp: the stores of the entries over the constant array of the else.
   private getArrayInterp(decl: number) {
     const manager = this.manager;
     const interp = this.model.funcInterps.get(decl);
@@ -187,7 +186,6 @@ export class ModelEvaluator extends RewriterTpl {
     );
   }
 
-  // extract_array_func_interp: the stores, from the outermost, each its indices then its value.
   // Like Z3, only the indices of the stores of a store chain decide whether they are unique.
   private extractArrayFuncInterp(inputArray: number) {
     const manager = this.manager;

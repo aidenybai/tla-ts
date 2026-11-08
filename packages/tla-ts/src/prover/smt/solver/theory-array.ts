@@ -71,7 +71,6 @@ export class TheoryArray extends Theory {
   private model: ProtoModel | undefined;
   private isUnspecifiedDefault = false;
   private defaults: (Enode | null)[] = [];
-  // The else value of each class of arrays without a default: a value, or a fresh one to make.
   private elseValues: (number | ExtraFreshValue | undefined)[] = [];
   private mgParents: number[] = [];
   private selectSets = new Map<Enode, Map<string, Enode>>();

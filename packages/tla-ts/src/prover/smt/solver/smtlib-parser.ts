@@ -81,7 +81,6 @@ export interface SmtToken {
   text: string;
   line: number;
   column: number;
-  // The indexes in the script of the token and just past it.
   offset: number;
   endOffset: number;
 }
