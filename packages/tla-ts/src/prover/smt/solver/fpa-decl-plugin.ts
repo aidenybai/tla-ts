@@ -71,8 +71,10 @@ import {
   MPF_ROUND_TOWARD_POSITIVE,
   MPF_ROUND_TOWARD_ZERO,
   mkInf,
+  mkMpf,
   mkNan,
   mkZero,
+  unbiasExp,
 } from "./mpf";
 
 export const BV_RM_TIES_TO_EVEN = 0;
@@ -516,6 +518,21 @@ export const mkFpaAppOf = (manager: AstManager, signature: FpaSignature, args: n
 
 export const mkFpNumeral = (manager: AstManager, value: Mpf) =>
   mkFpaAppOf(manager, getNumeralSignature(manager, value), []);
+
+export const mkFpNumeralOfBits = (manager: AstManager, sort: number, bits: bigint) => {
+  const ebits = manager.getEbits(sort);
+  const sbits = manager.getSbits(sort);
+  return mkFpNumeral(
+    manager,
+    mkMpf(
+      ebits,
+      sbits,
+      bits >> BigInt(ebits + sbits - 1) === 1n,
+      unbiasExp(ebits, Number((bits >> BigInt(sbits - 1)) % (1n << BigInt(ebits)))),
+      bits % (1n << BigInt(sbits - 1)),
+    ),
+  );
+};
 
 export const mkRmNumeral = (manager: AstManager, rm: number) => mkFpaApp(manager, RM_OPS[rm], []);
 

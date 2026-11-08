@@ -1,10 +1,9 @@
 // Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see
 // z3-license.txt.
-import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
+import { SmtInvariantError } from "../../../errors";
 import {
   AstManager,
   FAMILY_BASIC,
-  FAMILY_FPA,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -1012,11 +1011,7 @@ export abstract class Internalizer {
 
   private applySortCnstr(expr: number, node: Enode) {
     const sort = this.manager.sorts[expr];
-    const family = this.manager.getSortFamily(sort);
-    const theory = this.getTheory(family);
-    if (theory === undefined && family === FAMILY_FPA)
-      throw new SmtUnsupportedError("floating-point terms");
-    theory?.applySortCnstr(node, sort);
+    this.getTheory(this.manager.getSortFamily(sort))?.applySortCnstr(node, sort);
   }
 
   mkEqAtom(lhs: number, rhs: number) {

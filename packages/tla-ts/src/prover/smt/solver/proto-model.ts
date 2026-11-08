@@ -19,6 +19,8 @@ import {
   isRecursiveDatatype,
 } from "./datatype-decl-plugin";
 import { mkArrayApp } from "./array-decl-plugin";
+import { mkFpNumeral, mkRmNumeral } from "./fpa-decl-plugin";
+import { MPF_ROUND_TOWARD_ZERO, mkZero } from "./mpf";
 import { RandomGen } from "./random-gen";
 import { Rational } from "./rational";
 import { ObjHashtable, ObjMap } from "./hashtable";
@@ -28,6 +30,9 @@ import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 const getManagerSomeValue = (manager: AstManager, sort: number): number => {
   if (sort === SORT_BOOL) return manager.falseExpr;
+  if (manager.isRmSort(sort)) return mkRmNumeral(manager, MPF_ROUND_TOWARD_ZERO);
+  if (manager.isFpSort(sort))
+    return mkFpNumeral(manager, mkZero(manager.getEbits(sort), manager.getSbits(sort), false));
   if (isArithSort(sort)) return manager.mkNumeralOfSort(Rational.zero, sort);
   if (manager.isBvSort(sort)) return manager.mkBvNumeral(0n, manager.getBvSize(sort));
   if (manager.isArraySort(sort))
@@ -364,6 +369,7 @@ export class ProtoModel {
 
   getSomeValue(sort: number): number {
     const manager = this.manager;
+    if (manager.isFpSort(sort) || manager.isRmSort(sort)) return getManagerSomeValue(manager, sort);
     if (this.isFinal) {
       const first = manager.isUninterpretedSort(sort)
         ? this.values.get(sort)?.[Symbol.iterator]().next().value
@@ -466,6 +472,8 @@ export class ProtoModel {
 
   getFreshValue(sort: number): number | null {
     if (sort === SORT_BOOL || this.finiteSorts.has(sort)) return null;
+    if (this.manager.isFpSort(sort) || this.manager.isRmSort(sort))
+      return getManagerSomeValue(this.manager, sort);
     if (this.manager.isDatatypeSort(sort)) return this.getFreshDatatypeValue(sort);
     const set = this.getValueSet(sort);
     const start = this.nextValue.get(sort) ?? 0;
