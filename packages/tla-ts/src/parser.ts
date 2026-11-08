@@ -154,6 +154,8 @@ const NEGATION_PRECEDENCE = 12;
 
 const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
+const DEFINABLE_POSTFIX_OPERATORS = new Set([...POSTFIX_OPERATORS, "'"]);
+
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
 // The prefix operators SANY reads in a definition's left-hand side, built-in ones included.
@@ -193,8 +195,7 @@ const OPERATOR_ARGUMENTS = new Set([
   "UNCHANGED",
   "[]",
   "<>",
-  "'",
-  ...POSTFIX_OPERATORS,
+  ...DEFINABLE_POSTFIX_OPERATORS,
 ]);
 
 const SELECTOR_SYMBOLS = new Set(["<<", ">>", ":", "@", "("]);
@@ -612,8 +613,7 @@ const parse = (
       token.kind !== "String" &&
       (DEFINABLE_PREFIX_OPERATORS.has(token.text) ||
         INFIX_OPERATORS.has(token.text) ||
-        POSTFIX_OPERATORS.has(token.text) ||
-        token.text === "'");
+        DEFINABLE_POSTFIX_OPERATORS.has(token.text));
     if (!isOperator) return expectIdentifier();
     cursor.index++;
     return token.text;
@@ -717,7 +717,8 @@ const parse = (
       token.kind === "Identifier" &&
       (next.text === "(" ||
         next.text === "[" ||
-        (next.kind === "Operator" && isAt("==", POSTFIX_OPERATORS.has(next.text) ? 3 : 4)))
+        (next.kind === "Operator" &&
+          isAt("==", DEFINABLE_POSTFIX_OPERATORS.has(next.text) ? 3 : 4)))
     );
   };
 
@@ -1222,10 +1223,9 @@ const parse = (
     operators.last = operators.preceding = { low, high };
     const operand = parseExpression(high + 1);
     const next = peek();
-    const nextHigh =
-      next.text === "'" || POSTFIX_OPERATORS.has(next.text)
-        ? POSTFIX_PRECEDENCE.high
-        : INFIX_OPERATORS.get(next.text)?.high;
+    const nextHigh = DEFINABLE_POSTFIX_OPERATORS.has(next.text)
+      ? POSTFIX_PRECEDENCE.high
+      : INFIX_OPERATORS.get(next.text)?.high;
     if (!isTlapm && next.kind === "Operator" && nextHigh !== undefined && nextHigh >= low) {
       throw createError(`Precedence conflict between ${operator.text} and ${next.text}`, next);
     }
@@ -1445,7 +1445,7 @@ const parse = (
     const isPrefixDefinition =
       token.kind !== "String" && DEFINABLE_PREFIX_OPERATORS.has(token.text);
     const isPostfixDefinition =
-      token.kind === "Identifier" && POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
+      token.kind === "Identifier" && DEFINABLE_POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
     if (isPrefixDefinition || isPostfixDefinition) {
       const operator = isPrefixDefinition ? token.text : peek(1).text;
       if (isPrefixDefinition) advance();
@@ -1568,7 +1568,8 @@ const parse = (
       );
     }
     if (isAt("(", 1) || isAt("[", 1)) return isAt("==", getClosingOffset(1));
-    if (next.kind === "Operator" && POSTFIX_OPERATORS.has(next.text)) return isAt("==", 2);
+    if (next.kind === "Operator" && DEFINABLE_POSTFIX_OPERATORS.has(next.text))
+      return isAt("==", 2);
     if (next.kind === "Operator" && INFIX_OPERATORS.has(next.text)) {
       return peek(2).kind === "Identifier" && isAt("==", 3);
     }
