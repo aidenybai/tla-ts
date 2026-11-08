@@ -108,7 +108,7 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
       : [
           locate(
             render(translateScript(model.script, model.exported.length === 0, context)),
-            getLocation(model.script[0]),
+            getLocation(model.script[0] ?? sourceFile),
           ),
         ]),
   );

@@ -245,6 +245,15 @@ describe("top-level statements", () => {
     expect(getTrace(result)).toEqual([{ count: "2" }]);
   });
 
+  it("may be none in a script that declares functions that read objects", async () => {
+    const result = await checkModel(`
+      function isSame(left: unknown, right: unknown) {
+        return Object.is(left, right);
+      }
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
   it("treat a var as a let, even when declared again", async () => {
     const result = await checkModel(`
       var count = 1;
