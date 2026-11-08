@@ -248,6 +248,9 @@ const proveModule = async (
         if (attempt.errorOutput !== undefined) process.stdout.write(attempt.errorOutput);
         if (attempt.warning !== undefined) process.stderr.write(`${attempt.warning}\n`);
       });
+      if (report.error !== undefined && settings.isToolbox)
+        printToolboxMessage(["type:warning", `msg:${report.error}`]);
+      if (report.error !== undefined && !settings.isToolbox) console.error(report.error);
       if (!settings.isToolbox) return;
       if (report.obligation.status === "trivial")
         return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);

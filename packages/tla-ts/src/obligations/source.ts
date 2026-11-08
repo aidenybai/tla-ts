@@ -740,7 +740,7 @@ export const createSource = (
             { location },
           );
     const end = definition.location.range?.end;
-    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column });
+    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column }, file);
     return methods
       ? { kind: "Bpragma", name, body: operatorBody, methods, location }
       : { kind: "Operator", name, body: operatorBody, location };

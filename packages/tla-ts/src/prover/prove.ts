@@ -1,9 +1,10 @@
 // Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
 
-import { TlaProverError, TlaUnsupportedError } from "../errors";
+import { TlaMethodError, TlaProverError, TlaUnsupportedError } from "../errors";
 import {
   getChildren,
   getLocusPosition,
+  getLocusPrefix,
   mapHyp,
   type Expr,
   type Hyp,
@@ -90,6 +91,7 @@ export interface ProofAttempt {
 interface ProofReport {
   obligation: ProofObligation;
   attempts: ProofAttempt[];
+  error?: string;
 }
 
 // Why a method left an obligation unproved: a prover decided so, or tla-ts couldn't try it.
@@ -502,6 +504,11 @@ const proveWithBackends = async (
 // An error that escapes proveWithBackends: what tla-ts can't handle is unsupported, and what tlapm
 // refuses, as a frontend's soundness check, fails.
 const getErrorReport = (obligation: PrintedObligation, error: unknown) => {
+  if (error instanceof TlaMethodError)
+    return {
+      ...getUnprovedReport(obligation, "failed", error.message),
+      error: `${getLocusPrefix(error.locus)}${error.message}`,
+    };
   if (error instanceof TlaUnsupportedError)
     return getUnprovedReport(obligation, "unsupported", error.message);
   if (error instanceof TlaProverError)

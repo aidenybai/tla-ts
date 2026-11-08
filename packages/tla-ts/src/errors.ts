@@ -1,4 +1,5 @@
 import type { SourceRange } from "./ast";
+import type { Locus } from "./obligations/expression";
 import { EXIT_STATUS, getExitCode, setExitCode } from "./exit-codes";
 import type { PcalNode } from "./pcal/ast";
 import type { Value } from "./values";
@@ -239,6 +240,18 @@ export class TlaProverError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
     this.name = "TlaProverError";
+  }
+}
+
+// compute_meth rejects a method pragma, which tlapm reports where the pragma or the proof citing it
+// is, and then leaves the obligation unproved.
+export class TlaMethodError extends TlaProverError {
+  readonly locus: Locus | undefined;
+
+  constructor(message: string, locus: Locus | undefined) {
+    super(message);
+    this.name = "TlaMethodError";
+    this.locus = locus;
   }
 }
 
