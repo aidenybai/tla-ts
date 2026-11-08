@@ -1254,6 +1254,25 @@ const compileMembership = (
         },
       };
     }
+    // TLC tests membership in SUBSET S as membership in S of each element.
+    if (isBuiltin && operator === "SUBSET" && isStructural(program, setExpression.args[0], frame)) {
+      const inner: Type = createVar();
+      unify(element.type, { kind: "Set", element: inner });
+      const name = getName(program, "e");
+      const test = compileMembership(
+        program,
+        { type: inner, emit: () => name },
+        setExpression.args[0],
+        frame,
+      );
+      return {
+        type: BOOL,
+        emit: () =>
+          isMask(element.type, program.plains)
+            ? unsupported()
+            : `${element.emit()}.every((${name}) => ${test.emit()})`,
+      };
+    }
     if (isBuiltin && operator === "SUBSET") {
       const base = compileValue(program, setExpression.args[0], frame);
       getSetElement(base);
