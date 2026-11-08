@@ -35,6 +35,7 @@ import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP, Theory } from "./theory";
+import { TheoryBv } from "./theory-bv";
 import { TheoryFiniteSet } from "./theory-finite-set";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
@@ -132,6 +133,7 @@ export class Context extends Internalizer {
   setupContext() {
     this.arith = new TheoryLra(this);
     this.registerPlugin(this.arith);
+    this.registerPlugin(new TheoryBv(this));
     this.registerPlugin(new TheoryFiniteSet(this));
   }
 

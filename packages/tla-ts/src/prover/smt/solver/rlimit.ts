@@ -8,6 +8,8 @@ import { SmtCanceledError } from "../../../errors";
 export class ResourceLimit {
   // m_count: the steps taken, which MBQI also uses as a random seed.
   count = 0;
+  // m_suspend: while set, the work goes on even once it is canceled.
+  isSuspended = false;
   private isCanceled = false;
   // Watches for a full collection while the used size is past the threshold.
   private profiler: GCProfiler | null = null;
@@ -30,7 +32,7 @@ export class ResourceLimit {
       this.isCanceled = true;
       this.release();
     }
-    return !this.isCanceled;
+    return this.isSuspended || !this.isCanceled;
   }
 
   restart(deadline: number) {

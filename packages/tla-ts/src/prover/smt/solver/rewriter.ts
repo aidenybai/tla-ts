@@ -60,6 +60,8 @@ export interface RewriterOptions {
   readonly isPullingCheapIte?: boolean;
   readonly isKeepingDistinct?: boolean;
   readonly bv?: BvRewriterOptions;
+  // flat_and_or, on by default: a conjunction or disjunction takes in the arguments of nested ones.
+  readonly isFlatAndOr?: boolean;
 }
 
 // The parameters that asserted_formulas gives the kernel's rewriters.
@@ -493,11 +495,13 @@ export class Rewriter extends RewriterTpl {
   }
 
   // bool_rewriter::mk_flat_or_core and mk_nflat_or_core: lifts the disjuncts of nested disjunctions
-  // one level, drops false and duplicates, and detects true or a complementary pair. With
-  // sort_disjunctions, a disjunction that changed or is out of ast_lt's order is stably sorted by id.
+  // one level with flat_and_or, drops false and duplicates, and detects true or a complementary
+  // pair. With sort_disjunctions, a disjunction that changed or is out of ast_lt's order is stably
+  // sorted by id.
   mkOr(args: number[]): number {
     const manager = this.manager;
-    const isNested = args.some((arg) => manager.getOp(arg) === OP_OR);
+    const isNested =
+      this.options.isFlatAndOr !== false && args.some((arg) => manager.getOp(arg) === OP_OR);
     const flatArgs = isNested ? this.flattenArgs(args, OP_OR) : args;
     const literals = manager.flatLiterals;
     literals.clear();
@@ -521,7 +525,8 @@ export class Rewriter extends RewriterTpl {
   private mkAndCore(args: number[]): number | Rewrite {
     const manager = this.manager;
     if (this.options.isEliminatingAnd) return this.mkAndAsOr(args);
-    if (!args.some((arg) => manager.getOp(arg) === OP_AND)) return this.mkNflatAnd(args);
+    if (this.options.isFlatAndOr === false || !args.some((arg) => manager.getOp(arg) === OP_AND))
+      return this.mkNflatAnd(args);
     return { expr: this.mkNflatAnd(this.flattenArgs(args, OP_AND)), depth: 1 };
   }
 
@@ -782,7 +787,7 @@ export class Rewriter extends RewriterTpl {
   // bool_rewriter::mk_ite_core with elim_ite and ite_extra_rules. It applies the rules that change
   // only the condition or a branch in sequence, and a result that it builds from new terms comes as a
   // Rewrite for the main loop.
-  private mkIte(inputCondition: number, inputThen: number, inputElse: number): number | Rewrite {
+  mkIte(inputCondition: number, inputThen: number, inputElse: number): number | Rewrite {
     const manager = this.manager;
     const isNegated = manager.isNot(inputCondition);
     const condition = isNegated ? manager.getArg(inputCondition, 0) : inputCondition;

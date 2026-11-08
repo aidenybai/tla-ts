@@ -2,7 +2,7 @@
 // MIT license, see z3-license.txt. E-graph nodes and the justifications for their equalities.
 import type { Literal } from "./literal";
 
-interface Antecedents {
+export interface Antecedents {
   markLiteral(literal: Literal): void;
   markEq(first: Enode, second: Enode): void;
   markJustification(justification: Justification): void;

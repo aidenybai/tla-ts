@@ -232,6 +232,7 @@ export class ProtoModel {
   private values = new Map<number, ObjHashtable>();
   private userSortValues: RefVector;
   private arithValues: RefVector;
+  private bvValues: RefVector;
   private nextValue = new Map<number, number>();
   private finiteSorts = new Set<number>();
   private boolRandom: RandomGen;
@@ -247,6 +248,7 @@ export class ProtoModel {
     this.funcInterps = new ObjMap((decl) => manager.getDeclHash(decl));
     this.userSortValues = new RefVector(manager);
     this.arithValues = new RefVector(manager);
+    this.bvValues = new RefVector(manager);
     this.auxDecls = new ObjHashtable((decl) => manager.getDeclHash(decl));
     this.evaluator = new ModelEvaluator(manager, this);
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
@@ -306,11 +308,14 @@ export class ProtoModel {
     return created;
   }
 
-  // arith_factory's values are the integers, of either sort.
+  // arith_factory's values are the integers, of either sort, and bv_factory's the numerals.
   private mkIndexedValue(index: number, sort: number) {
+    const manager = this.manager;
     return isArithSort(sort)
-      ? this.manager.mkNumeralOfSort(Rational.of(BigInt(index)), sort)
-      : this.manager.mkModelValue(index, sort);
+      ? manager.mkNumeralOfSort(Rational.of(BigInt(index)), sort)
+      : manager.isBvSort(sort)
+        ? manager.mkBvNumeral(BigInt(index), manager.getBvSize(sort))
+        : manager.mkModelValue(index, sort);
   }
 
   // mk_value and register_value: a value is inserted only when it is new, since inserting grows the
@@ -318,7 +323,12 @@ export class ProtoModel {
   private addValue(sort: number, value: number) {
     const set = this.getValueSet(sort);
     if (set.has(value)) return;
-    (isArithSort(sort) ? this.arithValues : this.userSortValues).push(value);
+    (isArithSort(sort)
+      ? this.arithValues
+      : this.manager.isBvSort(sort)
+        ? this.bvValues
+        : this.userSortValues
+    ).push(value);
     set.add(value);
   }
 
@@ -356,15 +366,20 @@ export class ProtoModel {
   getFreshValue(sort: number): number | null {
     if (sort === SORT_BOOL || this.finiteSorts.has(sort)) return null;
     const set = this.getValueSet(sort);
-    let next = this.nextValue.get(sort) ?? 0;
+    const start = this.nextValue.get(sort) ?? 0;
+    // A bit-vector sort of fewer than 32 bits has a size, past which no value is fresh.
+    const manager = this.manager;
+    const maxSize =
+      manager.isBvSort(sort) && manager.getBvSize(sort) < 32 ? 2 ** manager.getBvSize(sort) : -1;
+    let next = start;
     for (;;) {
       const value = this.mkIndexedValue(next, sort);
+      const isNew = !set.has(value);
+      if (isNew) this.addValue(sort, value);
       next++;
-      if (!set.has(value)) {
-        this.addValue(sort, value);
-        this.nextValue.set(sort, next);
-        return value;
-      }
+      this.nextValue.set(sort, next);
+      if (maxSize !== -1 && next > maxSize + start) return null;
+      if (isNew) return value;
     }
   }
 
@@ -513,6 +528,7 @@ export class ProtoModel {
     this.evaluator.release();
     this.userSortValues.reset();
     this.arithValues.reset();
+    this.bvValues.reset();
     for (const entry of this.constInterps) {
       this.manager.decDeclRef(entry[0]);
       this.manager.decRef(entry[1]);

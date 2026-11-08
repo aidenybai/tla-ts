@@ -562,8 +562,9 @@ export abstract class Internalizer {
     return this.hasBoolVarFlag(boolVar, BV_EQ | BV_ENODE | BV_THEORY | BV_QUANTIFIER);
   }
 
+  // get_var_theory: the theory of the atom, or -1.
   getBoolVarTheory(boolVar: BoolVar) {
-    return this.boolVarTheories[boolVar];
+    return this.hasBoolVarFlag(boolVar, BV_THEORY) ? this.boolVarTheories[boolVar] : -1;
   }
 
   setVarTheory(boolVar: BoolVar, thId: number) {
@@ -714,20 +715,21 @@ export abstract class Internalizer {
 
   // internalize_deep: internalizes the subterms of a deep expression bottom up, in the order of a
   // topological sort, so the recursion of internalizeRec stays shallow.
-  private internalizeDeep(expr: number) {
-    if (
-      this.isEInternalized(expr) ||
-      this.manager.depths[expr] <= DEEP_EXPR_THRESHOLD ||
-      !this.shouldInternalizeRec(expr)
-    )
-      return;
+  private internalizeDeep(exprs: readonly number[]) {
     const manager = this.manager;
+    const isDeep = (expr: number) =>
+      !this.isEInternalized(expr) &&
+      manager.depths[expr] > DEEP_EXPR_THRESHOLD &&
+      this.shouldInternalizeRec(expr);
+    if (!exprs.some(isDeep)) return;
     // The color of each expression in a gate context and outside one: white while unvisited, grey
     // while its children are visited, and black once it is sorted.
     const colors = new Map<number, number>();
     const getColor = (current: number, isGate: boolean) =>
       colors.get(current * 2 + (isGate ? 1 : 0)) ?? WHITE;
-    const todo: [number, boolean][] = [[expr, true]];
+    const todo: [number, boolean][] = exprs
+      .filter(isDeep)
+      .map((innerExpr): [number, boolean] => [innerExpr, true]);
     const sorted: [number, boolean][] = [];
     const visitChild = (child: number, isGate: boolean) => {
       if (getColor(child, isGate) === WHITE) todo.push([child, isGate]);
@@ -759,7 +761,7 @@ export abstract class Internalizer {
         visitChildren(top[0]);
       } else {
         colors.set(top[0] * 2 + (top[1] ? 1 : 0), BLACK);
-        if (top[0] !== expr && !manager.isNot(top[0]) && this.shouldInternalizeRec(top[0]))
+        if (!exprs.includes(top[0]) && !manager.isNot(top[0]) && this.shouldInternalizeRec(top[0]))
           sorted.push(top);
       }
     }
@@ -769,7 +771,7 @@ export abstract class Internalizer {
   internalizeAssertion(expr: number, generation: number) {
     const savedGeneration = this.generation;
     this.generation = generation;
-    this.internalizeDeep(expr);
+    this.internalizeDeep([expr]);
     const manager = this.manager;
     if (this.isGate(expr)) {
       switch (manager.getOp(expr)) {
@@ -833,9 +835,14 @@ export abstract class Internalizer {
   internalize(expr: number, isGateContext: boolean, generation = this.generation) {
     const savedGeneration = this.generation;
     this.generation = generation;
-    this.internalizeDeep(expr);
+    this.internalizeDeep([expr]);
     this.internalizeRec(expr, isGateContext);
     this.generation = savedGeneration;
+  }
+
+  internalizeAll(exprs: readonly number[], isGateContext: boolean) {
+    this.internalizeDeep(exprs);
+    for (const expr of exprs) this.internalizeRec(expr, isGateContext);
   }
 
   private internalizeRec(expr: number, isGateContext: boolean) {

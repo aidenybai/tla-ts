@@ -76,6 +76,11 @@ export abstract class Theory {
     this.varEnodeLimits.push(this.varEnodes.length);
   }
 
+  // get_old_num_vars: the number of variables before the last numScopes scopes.
+  protected getOldNumVars(numScopes: number) {
+    return this.varEnodeLimits[this.varEnodeLimits.length - numScopes];
+  }
+
   popScopeEh(numScopes: number) {
     const newLevel = this.varEnodeLimits.length - numScopes;
     shrink(this.varEnodes, this.varEnodeLimits[newLevel]);
