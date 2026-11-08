@@ -17,8 +17,6 @@ const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 
 export const TLC_JAR = join(PACKAGE_DIRECTORY, ".oracles/tla2tools.jar");
 
-// The fixed fingerprint polynomial, seed and liveness schedule make a run with one worker
-// deterministic.
 const DETERMINISTIC_ARGUMENTS = [
   "-workers",
   "1",
@@ -38,7 +36,6 @@ const TLA_TS = [
   join(PACKAGE_DIRECTORY, "../tla-ts/dist/cli.js"),
 ];
 
-// The command a host runs for each suite.
 export interface Host {
   tlc?: string[];
 }
@@ -49,12 +46,9 @@ export const HOSTS: Record<string, Host> = {
       "java",
       "-XX:+UseSerialGC",
       "-XX:TieredStopAtLevel=1",
-      // Each JVM otherwise keeps a file under /tmp/hsperfdata_<user>, and warns in the output when
-      // another JVM holds it.
       "-XX:-UsePerfData",
       "-Xmx1g",
-      // How deep TLC can recurse depends on the thread stack, which the JVM sizes per platform: 2 MB
-      // on macOS arm64, where the recordings come from, and 1 MB on Linux x64.
+      // The recordings come from macOS arm64, whose default thread stack is 2 MB.
       "-Xss2m",
       "-cp",
       TLC_JAR,
@@ -64,7 +58,6 @@ export const HOSTS: Record<string, Host> = {
   "tla-ts": { tlc: TLA_TS },
 };
 
-// A host given as a command runs every suite the filters select.
 export const getHost = (name: string): Host => {
   const host = HOSTS[name];
   if (!host) return { tlc: name.split(" ") };
@@ -81,7 +74,6 @@ export const getSuiteCommand = (host: Host, test: SuiteTest) =>
 export interface HostResult {
   exit: number;
   transcript: string;
-  // The limit the runner killed the host for.
   exceeded?: "time" | "memory";
 }
 
@@ -103,9 +95,8 @@ interface Run {
   limits: Limits;
 }
 
-// The signal goes through Node, not the kill command: procps's kill reads `kill -9 -12345` as
-// `kill -9 -1`, which kills every process the user owns. The group has usually exited by the end of
-// a run, which Linux reports as ESRCH and macOS as EPERM. A child that failed to spawn has no group.
+// Not the kill command: procps reads `kill -9 -<group>` as `kill -9 -1`, which kills every process
+// the user owns.
 const killGroup = (groupId: number | undefined) => {
   if (groupId === undefined) return;
   try {
@@ -116,7 +107,6 @@ const killGroup = (groupId: number | undefined) => {
   }
 };
 
-// The resident memory of every process in a group.
 const getGroupMemoryBytes = (groupId: number) =>
   spawnSync("ps", ["-Ao", "pgid=,rss="], { encoding: "utf8" })
     .stdout.split("\n")
@@ -124,8 +114,6 @@ const getGroupMemoryBytes = (groupId: number) =>
     .filter((fields) => fields[0] === groupId)
     .reduce((total, fields) => total + fields[1] * 1024, 0);
 
-// The process's exit status and everything it printed, stdout first. The host runs in its own
-// process group, so a limit kills the backends it started too,.
 const spawnRun = (run: Run) =>
   new Promise<{ exit: number; stdout: string; stderr: string; exceeded?: "time" | "memory" }>(
     (resolve) => {
@@ -174,8 +162,6 @@ const runTlc = async (
   directory: string,
   limits: Limits,
 ) => {
-  // TLCExt!AssertError compares against the message that -tool wraps, so a test that uses it must
-  // run without -tool, and only its exit status can be compared.
   const isExitOnly = test.metadata.flags?.includes("exit-only") ?? false;
   const configFile = `${test.moduleName}.cfg`;
   writeFileSync(join(directory, test.fileName), context.source);
@@ -206,8 +192,6 @@ const runTlc = async (
   };
 };
 
-// An importer sets limits to leave out tests too large for the suite, and a run sets them to protect
-// the machine from a host that doesn't stop.
 export const runTest = async (
   host: Host,
   test: SuiteTest,

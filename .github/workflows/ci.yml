@@ -62,7 +62,6 @@ jobs:
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      # Four tests run at once, so the memory limit keeps them within the runner's 16 GB.
       - run: pnpm --filter @tla-ts/conformance conformance --time-limit 300 --memory-limit 3072 --shard ${{ matrix.shard }}/8
       - if: always()
         uses: actions/upload-artifact@v4

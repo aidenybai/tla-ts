@@ -1,8 +1,3 @@
-// Records what the pinned oracle of each test's suite does, after checking that it does what the test
-// declares.
-// Usage: pnpm record [--missing] [--shard <i>/<n>] [path filter]...
-// --missing skips tests that already have a recording.
-
 import { availableParallelism } from "node:os";
 import { getHost, runPool, runTest } from "./hosts";
 import {

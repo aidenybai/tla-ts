@@ -1,7 +1,3 @@
-// Writes the procedurally generated tests under test/generated, as test262 does from src/. Each test
-// exercises one cell of a matrix and declares outcome `any`: the recording decides what is right.
-// Usage: bun scripts/generate.ts
-
 import { removeStaleTests, SET_VALUES, VALUES, writeTest, writeValueTest } from "./generate-common";
 import { generateCheckerMatrix } from "./generate-checker";
 import { generateConfigMatrix } from "./generate-config";
@@ -11,7 +7,6 @@ import { generateBinaryMatrix } from "./generate-values";
 
 interface Template {
   name: string;
-  // The Java or TLA+ definition that the operator's behavior comes from.
   ref: string;
   render: (value: string) => string;
 }
@@ -389,8 +384,6 @@ const generateMembershipMatrix = () =>
     ),
   );
 
-// Each set of precedences from tla2sany/parser/Operators.java, with one operator a test can define.
-// The operator renders its own grouping, so a test pins the parse, not just its acceptance.
 const INFIX_OPERATORS = [
   { name: "implies_like", symbol: "-+->", isDefinable: true },
   { name: "cdot", symbol: "\\cdot", isDefinable: true },

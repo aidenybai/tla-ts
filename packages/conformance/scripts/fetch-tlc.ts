@@ -4,9 +4,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { TLC_JAR } from "./hosts";
 
-// The suite's oracle: every recording in test/ comes from TLC at this revision. tlaplus publishes
-// TLC only as the rolling v1.8.0 release, whose jar changes with each build, so the script builds
-// the revision from source as tlaplus's DEVELOPING.md does. It needs git, a JDK and Ant.
 const REVISION = "309e489a512e8017f1cdc8388fa6a5e8a01cf597";
 
 const getJarRevision = () =>
@@ -35,7 +32,6 @@ runStep(
   checkout,
 );
 runStep("git", ["checkout", "--quiet", "FETCH_HEAD"], checkout);
-// dist stamps the jar's manifest with these, which the build's git-revision task would set.
 runStep(
   "ant",
   [

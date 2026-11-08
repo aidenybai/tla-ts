@@ -1,7 +1,3 @@
-// Runs the suite against a host and compares each result with the oracle's recording.
-// Usage: pnpm conformance [--host tla-ts|tlc|"<command>"] [--shard <i>/<n>]
-// [--time-limit <seconds>] [--memory-limit <MB>] [--update-baseline] [--verbose] [path filter]...
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,7 +5,6 @@ import { getHost, getSuiteCommand, HOSTS, runPool, runTest, type HostResult } fr
 import { findTests, getContexts, getRecording, getShard, type Recording } from "./test-file";
 import { getMessageCodes } from "./transcript";
 
-// From the coarsest difference to the finest, so a score can say how close a host is.
 type Verdict =
   | "pass"
   | "text-mismatch"
@@ -51,7 +46,6 @@ const limits = {
 };
 const isUpdatingBaseline = hasFlag("--update-baseline");
 const isVerbose = hasFlag("--verbose");
-// A host given as a command has no baseline, and its results go in one file.
 const hostLabel = hostName in HOSTS ? hostName : "custom";
 const baselinePath = join(import.meta.dirname, "../baselines", `${hostLabel}.json`);
 const baseline: Record<string, Verdict> = existsSync(baselinePath)

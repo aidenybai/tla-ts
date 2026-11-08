@@ -1,6 +1,3 @@
-// Reports which of TLC's message codes and command line flags no recording or test exercises.
-// Usage: bun scripts/coverage.ts <checkout of tlaplus/tlaplus at the pinned tag>
-
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { findTests } from "./test-file";
@@ -22,7 +19,6 @@ const allSource = listJavaFiles(SOURCE_DIRECTORY)
   .map((path) => readFileSync(path, "utf8"))
   .join("\n");
 
-// A code that only EC.java mentions can't appear in any output.
 const codes = [...codeSource.matchAll(/public static final int (\w+)\s*=\s*(\d+);/g)]
   .map((match) => ({ name: match[1], value: match[2] }))
   .filter((code) => allSource.includes(`EC.${code.name}`));

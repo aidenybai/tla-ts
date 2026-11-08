@@ -95,8 +95,6 @@ const FORMULAS = [
 
 const CHECK_REF = "tlc2/tool/liveness/LiveCheck.java; tlc2/tool/liveness/Liveness.java";
 
-// The full cross repeats the same few behaviors, so each formula meets every machine under two
-// fairness conditions, and each fairness condition meets every machine under the formulas below.
 const PAIRED_FAIRNESS = ["unfair", "weak"];
 const PAIRED_FORMULAS = [
   "eventually",
