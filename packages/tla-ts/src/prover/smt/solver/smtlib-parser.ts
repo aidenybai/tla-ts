@@ -295,6 +295,17 @@ const CHAINABLE_OPS = new Map<string, number>([
   [">", OP_GT],
 ]);
 
+const BUILTIN_NAMES = new Set([
+  "true",
+  "false",
+  "~",
+  ...CHAINABLE_OPS.keys(),
+  ...BUILTIN_OPS.keys(),
+  ...LOGIC_FREE_ALIASES.keys(),
+  ...TRANSCENDENTALS,
+  ...THEORY_OPERATORS,
+]);
+
 const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 
 const createScanner = (text: string) => {
@@ -954,7 +965,9 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     }
   };
 
-  return { declareCommand, parseTerm, parseFormula, push, pop };
+  const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
+
+  return { declareCommand, parseTerm, parseFormula, push, pop, isUsed };
 };
 
 export type SmtlibReader = ReturnType<typeof createSmtlibReader>;

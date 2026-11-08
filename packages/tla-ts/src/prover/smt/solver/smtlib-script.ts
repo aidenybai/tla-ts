@@ -8,7 +8,9 @@ import {
 } from "../../../errors";
 import type { DecideOptions } from "../../verdict";
 import { AstManager, OP_DIV, OP_IDIV, OP_MOD, OP_MUL, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
+import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
+import { DEFAULT_PRINT_OPTIONS, type PrintOptions, printExpr } from "./smt2-printer";
 import {
   createCommandReader,
   createSmtlibReader,
@@ -32,6 +34,37 @@ const SILENT_COMMANDS = new Set([
   "minimize",
   "maximize",
   "assert-soft",
+]);
+
+type PrintOptionOf<Value> = {
+  [Key in keyof PrintOptions]: PrintOptions[Key] extends Value ? Key : never;
+}[keyof PrintOptions];
+
+const NUMERIC_PRINT_OPTIONS = new Map<string, PrintOptionOf<number>>([
+  [":pp.max_indent", "maxIndent"],
+  [":pp.max_num_lines", "maxNumLines"],
+  [":pp.max_width", "maxWidth"],
+  [":pp.max_ribbon", "maxRibbon"],
+  [":pp.max_depth", "maxDepth"],
+  [":pp.min_alias_size", "minAliasSize"],
+  [":pp.decimal_precision", "decimalPrecision"],
+]);
+
+const BOOLEAN_PRINT_OPTIONS = new Map<string, PrintOptionOf<boolean>>([
+  [":pp.flat_assoc", "isFlatAssoc"],
+  [":pp.single_line", "isSingleLine"],
+  [":pp.bounded", "isBounded"],
+  [":pp.decimal", "isDecimal"],
+]);
+
+const SIMPLIFY_PARAMETERS = new Set([
+  ":elim_and",
+  ":pull_cheap_ite",
+  ":blast_distinct",
+  ":som",
+  ":sort_sums",
+  ":arith_lhs",
+  ":gcd_rounding",
 ]);
 
 const getScopeCount = (list: SmtList, command: string) => {
@@ -95,7 +128,19 @@ export const runSmtlibScript = (
     };
   };
   const script = { state: createState() };
-  const settings = { isPrintingSuccess: false, isMbqi: true };
+  const settings = {
+    isPrintingSuccess: false,
+    isMbqi: true,
+    printOptions: { ...DEFAULT_PRINT_OPTIONS },
+  };
+  const display = (expr: number) =>
+    print(
+      printExpr(
+        script.state.manager,
+        { options: settings.printOptions, isUsed: script.state.reader.isUsed },
+        expr,
+      ),
+    );
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
   const checkSat = (extra: number[]) => {
@@ -191,6 +236,41 @@ export const runSmtlibScript = (
       state.objectives = [];
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0 }));
     },
+    simplify: (list) => {
+      const manager = script.state.manager;
+      if (list.items.length < 2)
+        throw new SmtParseError("invalid simplify command, argument expected", list.end);
+      const term = script.state.reader.parseTerm(list.items[1]);
+      const parameters = new Map<string, boolean>();
+      for (let index = 2; index < list.items.length; index += 2) {
+        const keyword = list.items[index];
+        const name =
+          keyword.kind === "keyword" ? keyword.text.toLowerCase().replaceAll("-", "_") : "";
+        if (!SIMPLIFY_PARAMETERS.has(name) || !isSymbol(list.items[index + 1]))
+          throw new SmtUnsupportedError(`the parameter ${name} of simplify`);
+        parameters.set(name, isSymbol(list.items[index + 1], "true"));
+      }
+      const getParameter = (name: string) => parameters.get(name) ?? false;
+      manager.incRef(term);
+      const rewriter = new Rewriter(manager, {
+        isEliminatingAnd: getParameter(":elim_and"),
+        isRewritingPatterns: false,
+        isPullingCheapIte: getParameter(":pull_cheap_ite"),
+        isKeepingDistinct: !getParameter(":blast_distinct"),
+        arith: {
+          isSom: getParameter(":som"),
+          isSortSums: getParameter(":sort_sums"),
+          isArithIneqLhs: getParameter(":arith_lhs"),
+          isGcdRounding: getParameter(":gcd_rounding"),
+        },
+      });
+      const simplified = rewriter.rewrite(term);
+      rewriter.cleanup();
+      display(simplified);
+      rewriter.release();
+      manager.decRef(simplified);
+      manager.decRef(term);
+    },
     echo: (list) => {
       const message = list.items[1];
       if (message?.kind !== "string")
@@ -201,9 +281,21 @@ export const runSmtlibScript = (
       const option = list.items[1];
       const optionName =
         option?.kind === "keyword" ? option.text.toLowerCase().replaceAll("-", "_") : "";
-      const isTrue = isSymbol(list.items[2], "true");
+      const value = list.items[2];
+      const isTrue = isSymbol(value, "true");
       if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
+      const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);
+      if (numericOption !== undefined && value?.kind === "numeral")
+        settings.printOptions[numericOption] = Number(value.text);
+      const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
+      if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
+      if (
+        optionName.startsWith(":pp.") &&
+        numericOption === undefined &&
+        booleanOption === undefined
+      )
+        throw new SmtUnsupportedError(`the option ${optionName}`);
     },
     "set-logic": (list) => {
       const logic = list.items[1];

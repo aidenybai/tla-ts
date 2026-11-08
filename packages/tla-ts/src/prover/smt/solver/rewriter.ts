@@ -42,7 +42,7 @@ import { getRewriteDepth, type Rewrite, RewriterTpl } from "./rewriter-tpl";
 import { sortByKey } from "./sort";
 import { UnusedVarsEliminator } from "./var-subst";
 
-interface RewriterOptions {
+export interface RewriterOptions {
   // Replaces (and a b) with (not (or (not a) (not b))), as Z3's asserted_formulas does after NNF.
   readonly isEliminatingAnd: boolean;
   readonly arith: ArithRewriterOptions;
@@ -51,6 +51,7 @@ interface RewriterOptions {
   readonly isRewritingPatterns: boolean;
   // pull_cheap_ite: a binary predicate or a function of an ite with values distributes over the ite.
   readonly isPullingCheapIte?: boolean;
+  readonly isKeepingDistinct?: boolean;
 }
 
 // The parameters that asserted_formulas gives the kernel's rewriters.
@@ -694,16 +695,28 @@ export class Rewriter extends RewriterTpl {
     return undefined;
   }
 
-  // bool_rewriter::mk_distinct_core: two arguments become a disequality, which the main loop rewrites
-  // again, since mk_eq may dispatch to other rewriters. Z3 keeps a longer distinct, which tlapm does
-  // not send, and this port expands it into disequalities.
+  // bool_rewriter::mk_distinct_core. The port's kernel cannot internalize a distinct of more than two
+  // arguments, so the solver's rewriters blast every one.
   private mkDistinct(args: number[]): number | Rewrite {
+    const manager = this.manager;
+    if (args.length <= 1) return manager.trueExpr;
     if (args.length === 2) return { expr: this.mkNot(this.mkEq(args[0], args[1])), depth: 2 };
+    if (new Set(args).size < args.length) return manager.falseExpr;
+    const firstNonValue = args.findIndex((arg) => !manager.isUniqueValue(arg));
+    const isAllDifferent = args.every(
+      (arg, index) =>
+        firstNonValue === -1 ||
+        index < firstNonValue ||
+        args.slice(0, index).every((previous) => manager.areDistinct(arg, previous)),
+    );
+    if (isAllDifferent) return manager.trueExpr;
+    if (manager.sorts[args[0]] === SORT_BOOL) return manager.falseExpr;
+    if (this.options.isKeepingDistinct === true) return -1;
     const pairs: number[] = [];
     for (let left = 0; left < args.length; left++)
       for (let right = left + 1; right < args.length; right++)
-        pairs.push(this.mkNot(this.mkEq(args[left], args[right])));
-    return this.mkAnd(pairs);
+        pairs.push(manager.mkNot(manager.mkEq(args[left], args[right])));
+    return { expr: manager.mkAnd(pairs), depth: 3 };
   }
 
   // bool_rewriter::mk_ite_core with elim_ite and ite_extra_rules. It applies the rules that change
