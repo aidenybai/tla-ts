@@ -2,7 +2,7 @@
 // expands definitions, runs Expr.Elab.normalize and the frontend methods the obligation cites, then
 // trivial and flatten.
 
-import { TlapmBugError, TlaProofError } from "../../errors";
+import { TlapmBugError, TlaProofError, TlaProverError } from "../../errors";
 import { expandActionOperators, lambdify } from "../../obligations/action";
 import { createAnonymizer } from "../../obligations/anonymize";
 import { isEqualExpr } from "../../obligations/equality";
@@ -201,6 +201,7 @@ export const normalizeSequent = (sequent: Sequent): Sequent => {
 const expandEnabledCdot = (
   sequent: Sequent,
   locus: Locus | undefined,
+  isEnabledAxiomsSound: boolean | undefined,
   frontends: Set<string>,
   onWarning: Warn,
 ): Sequent => {
@@ -211,7 +212,10 @@ const expandEnabledCdot = (
   if (!isEnabled && !isCdot && !isLambdify) {
     if (frontends.has("levelcomparison")) return checkLevelChange(sequent);
     if (!frontends.has("enabledaxioms")) return sequent;
-    onWarning({ text: "expr has ENABLEDaxioms property ===", channel: "stdout" });
+    if (isEnabledAxiomsSound !== undefined)
+      onWarning({ text: "expr has ENABLEDaxioms property ===", channel: "stdout" });
+    if (isEnabledAxiomsSound === false)
+      throw new TlaProverError("ENABLEDaxioms depends on assumptions of level > 1 \n\n");
     return implicationToEnabled(sequent, locus, onWarning);
   }
   // Expr.Anon's anon, which only meets the names that lambdification binds.
@@ -241,13 +245,19 @@ const expandEnabledCdot = (
 
 // normalize_expand: expand_defs, Elab.normalize, then the frontends the obligation cites.
 export const normalizeExpand = (
-  obligation: { sequent: Sequent; method?: OldMethod; locus?: Locus },
+  obligation: {
+    sequent: Sequent;
+    method?: OldMethod;
+    locus?: Locus;
+    isEnabledAxiomsSound?: boolean;
+  },
   methods = findMethods(obligation),
   onWarning: Warn = () => {},
 ) =>
   expandEnabledCdot(
     normalizeSequent(expandDefs(obligation.sequent)),
     obligation.locus,
+    obligation.isEnabledAxiomsSound,
     methods.frontends,
     onWarning,
   );

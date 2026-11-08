@@ -42,6 +42,7 @@ export interface PrintedObligation {
   kind: ObligationKind;
   sequent: Sequent;
   method?: OldMethod;
+  isEnabledAxiomsSound?: boolean;
 }
 
 export interface ModuleObligations {
@@ -347,6 +348,7 @@ export const getObligations = (
           kind: obligation.kind,
           sequent: obligation.sequent,
           method: obligation.method,
+          isEnabledAxiomsSound: obligation.isEnabledAxiomsSound,
         },
       ];
     });

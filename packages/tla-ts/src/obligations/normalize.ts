@@ -4,6 +4,7 @@
 import { TlaProofError, TlapmBugError } from "../errors";
 import { lambdify } from "./action";
 import type { Anonymizer } from "./anonymize";
+import { checkEnabledAxioms } from "./enabled-axioms";
 import { isEqualHyp } from "./equality";
 import {
   adjoinAll,
@@ -531,12 +532,17 @@ export const normalize = (
           binding.sequent.context,
         );
         const anonymized = pipeline.anonymizer.proof(proofScope, proof);
+        const proofContext = getScopeHyps(proofScope);
         const simplified = module.isImportant
-          ? pipeline.simplify(
-              getScopeHyps(proofScope),
-              binding.sequent.active,
-              anonymized,
-              getScopeTime(binding.sequent.context, "Always"),
+          ? checkEnabledAxioms(
+              proofContext,
+              pipeline.simplify(
+                proofContext,
+                binding.sequent.active,
+                anonymized,
+                getScopeTime(binding.sequent.context, "Always"),
+              ),
+              pipeline.onWarning,
             )
           : anonymized;
         emit({ ...unit, name, sequent, proof: simplified });
