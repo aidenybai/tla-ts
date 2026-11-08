@@ -93,11 +93,9 @@ export const isZero = (value: Mpf) => hasBotExp(value) && value.significand === 
 
 export const isPinf = (value: Mpf) => !value.sign && isInf(value);
 
-export const isNinf = (value: Mpf) => value.sign && isInf(value);
+const isNinf = (value: Mpf) => value.sign && isInf(value);
 
 export const isPzero = (value: Mpf) => !value.sign && isZero(value);
-
-export const isNzero = (value: Mpf) => value.sign && isZero(value);
 
 export const isNeg = (value: Mpf) => value.sign && !isNan(value);
 
@@ -106,23 +104,6 @@ export const isPos = (value: Mpf) => !value.sign && !isNan(value);
 export const isDenormal = (value: Mpf) => !isZero(value) && hasBotExp(value);
 
 export const isNormal = (value: Mpf) => !(hasTopExp(value) || isDenormal(value) || isZero(value));
-
-export const isRegular = (value: Mpf) => value.sbits === 0 || isNormal(value) || isDenormal(value);
-
-export const isMpfInt = (value: Mpf) => {
-  if (!isNormal(value)) return false;
-  if (value.exponent >= value.sbits - 1) return true;
-  if (value.exponent < 0) return false;
-  const shift = value.sbits - value.exponent - 1;
-  return value.significand % getPower(shift) === 0n;
-};
-
-export const isSameMpf = (first: Mpf, second: Mpf) =>
-  first.ebits === second.ebits &&
-  first.sbits === second.sbits &&
-  first.sign === second.sign &&
-  first.significand === second.significand &&
-  first.exponent === second.exponent;
 
 export const mpfEq = (first: Mpf, second: Mpf) => {
   if (isNan(first) || isNan(second)) return false;
@@ -149,18 +130,14 @@ export const mpfLt = (first: Mpf, second: Mpf) => {
 
 export const mpfLe = (first: Mpf, second: Mpf) => mpfLt(first, second) || mpfEq(first, second);
 
-export const mpfGt = (first: Mpf, second: Mpf) => {
+const mpfGt = (first: Mpf, second: Mpf) => {
   if (isNan(first) || isNan(second)) return false;
   if (isZero(first) && isZero(second)) return false;
   return !mpfLe(first, second);
 };
 
-export const mpfGe = (first: Mpf, second: Mpf) => mpfGt(first, second) || mpfEq(first, second);
-
 export const mpfNeg = (value: Mpf) =>
   isNan(value) ? copy(value) : { ...value, sign: !value.sign };
-
-export const mpfAbs = (value: Mpf) => ({ ...value, sign: false });
 
 const unpack = (value: Mpf, isNormalizing: boolean) => {
   if (isZero(value)) return;
@@ -352,8 +329,6 @@ const mpfAddSub = (rm: number, first: Mpf, second: Mpf, isSub: boolean): Mpf => 
 };
 
 export const mpfAdd = (rm: number, first: Mpf, second: Mpf) => mpfAddSub(rm, first, second, false);
-
-export const mpfSub = (rm: number, first: Mpf, second: Mpf) => mpfAddSub(rm, first, second, true);
 
 export const mpfMul = (rm: number, first: Mpf, second: Mpf): Mpf => {
   const ebits = first.ebits;
@@ -734,36 +709,4 @@ export const mpfToIeeeBv = (value: Mpf) => {
       BigInt(value.sbits - 1)) +
     value.significand
   );
-};
-
-const getDecimal = (value: Rational, precision: number) => {
-  const magnitude = value.abs();
-  const sign = value.isNegative() ? "-" : "";
-  const integer = magnitude.num / magnitude.den;
-  let remainder = magnitude.num % magnitude.den;
-  if (remainder === 0n) return `${sign}${integer}`;
-  const digits: string[] = [];
-  for (let index = 0; index < precision && remainder !== 0n; index++) {
-    remainder *= 10n;
-    digits.push(String(remainder / magnitude.den));
-    remainder %= magnitude.den;
-  }
-  return `${sign}${integer}.${digits.join("")}${remainder === 0n ? "" : "?"}`;
-};
-
-export const mpfToString = (value: Mpf) => {
-  if (isNan(value)) return "NaN";
-  if (isInf(value)) return value.sign ? "-oo" : "+oo";
-  if (isZero(value)) return value.sign ? "-zero" : "+zero";
-  const isSubnormal = isDenormal(value);
-  const numerator = (isSubnormal ? 0n : getPower(value.sbits - 1)) + value.significand;
-  const ratio = Rational.of(numerator, getPower(value.sbits - 1));
-  const exponent = isSubnormal ? mkMinExp(value.ebits) : value.exponent;
-  return `${value.sign ? "-" : ""}${getDecimal(ratio, value.sbits)}${ratio.isInt() ? ".0" : ""} ${exponent}`;
-};
-
-export const mpfPrevPowerOfTwo = (value: Mpf) => {
-  if (!isPos(value)) return 0;
-  if (value.exponent <= -value.sbits) return 0;
-  return value.sbits + value.exponent - 1;
 };

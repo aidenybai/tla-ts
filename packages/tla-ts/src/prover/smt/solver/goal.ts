@@ -23,7 +23,7 @@ export interface ConverterEntry {
   def: number;
 }
 
-export interface ModelConversion {
+interface ModelConversion {
   convert: (model: ProtoModel) => ProtoModel;
 }
 

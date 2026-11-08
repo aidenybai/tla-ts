@@ -57,7 +57,7 @@ const getBigLog2 = (value: bigint) => (value > 0n ? value.toString(2).length - 1
 
 const getPowerOfTwoMinusOne = (exponent: number) => (1n << BigInt(exponent)) - 1n;
 
-export interface Unpacked {
+interface Unpacked {
   sgn: number;
   sig: number;
   exp: number;

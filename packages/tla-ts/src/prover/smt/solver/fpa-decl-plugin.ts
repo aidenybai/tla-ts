@@ -205,7 +205,7 @@ const TO_FP_COMBINATIONS =
   "(RoundingMode (_ BitVec (eb+sb))), (RoundingMode (_ FloatingPoint eb' sb')), " +
   "(RoundingMode Int Real), (RoundingMode Real Int), (RoundingMode Int), and (RoundingMode Real).";
 
-export interface FpaSignature {
+interface FpaSignature {
   op: number;
   name: string;
   parameters: number[];
