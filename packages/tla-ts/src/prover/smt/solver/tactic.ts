@@ -6,7 +6,9 @@ import {
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import type { AstManager } from "./ast";
+import { type AstManager, SORT_BOOL } from "./ast";
+import { AssertedFormulas } from "./asserted-formulas";
+import { Context } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import type { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -174,6 +176,31 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   return [goal];
 };
 
+// Each clause gets a fresh context, where Z3 pushes a scope on one context.
+const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
+  const manager = environment.manager;
+  const clauses = goal.forms.items.map(() => manager.mkFreshConst("#clause", SORT_BOOL));
+  const definitions = goal.forms.items.map((form, index) => manager.mkEq(clauses[index], form));
+  for (const expr of [...clauses, ...definitions]) manager.incRef(expr);
+  const deleted: number[] = [];
+  for (const [index, clause] of clauses.entries()) {
+    const asserted = new AssertedFormulas(manager);
+    const context = new Context(manager, { isMbqi: environment.isMbqi, relevancyLevel: 2 });
+    for (const definition of definitions) asserted.assertExpr(definition);
+    for (const [other, otherClause] of clauses.entries())
+      if (other === index) asserted.assertExpr(manager.mkNot(clause));
+      else if (!deleted.includes(other)) asserted.assertExpr(otherClause);
+    context.setupContext();
+    context.internalizeAssertions(asserted);
+    if (!context.isInconsistent()) context.propagate();
+    if (context.isInconsistent()) deleted.push(index);
+  }
+  for (const index of deleted) goal.update(index, manager.trueExpr);
+  goal.elimTrue();
+  for (const expr of [...clauses, ...definitions]) manager.decRef(expr);
+  return [goal];
+};
+
 const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
   run(goal);
   return [goal];
@@ -307,6 +334,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
+  ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
   [
@@ -358,7 +386,7 @@ const UNPORTED_TACTICS = new Set(
     "qfnia qfnra qfnra-nlsat qfuf qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args " +
     "reduce-args2 reduce-bv-size sat sat-preprocess sls-smt smtfd solve-eqs " +
     "solver-subsumption special-relations split-clause subpaving symmetry-reduce tseitin-cnf " +
-    "tseitin-cnf-core ufbv ufbv-rewriter uflra ufnia unit-subsume-simplify"
+    "tseitin-cnf-core ufbv ufbv-rewriter uflra ufnia"
   ).split(" "),
 );
 
