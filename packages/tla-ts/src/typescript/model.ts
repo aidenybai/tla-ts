@@ -29,6 +29,7 @@ export interface Exported {
 interface Declared {
   name: string;
   declaration: HelperDeclaration;
+  identifier: ts.Identifier;
 }
 
 export interface Model {
@@ -76,7 +77,8 @@ const isExported = (node: HelperDeclaration) =>
 
 const isLet = (declared: Declared) =>
   ts.isVariableDeclaration(declared.declaration) &&
-  (declared.declaration.parent.flags & ts.NodeFlags.Const) === 0 &&
+  ((declared.declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+    !ts.isIdentifier(declared.declaration.name)) &&
   getFunction(declared.declaration) === undefined;
 
 // The string literals of a @symmetric type become model values, which TLC can permute.
@@ -134,16 +136,24 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
   }
   if (ts.isFunctionDeclaration(statement) && statement.body !== undefined) {
     if (statement.name === undefined) throw new TlaTypeScriptError("Name this function", statement);
-    return [{ name: statement.name.text, declaration: statement }];
+    return [{ name: statement.name.text, declaration: statement, identifier: statement.name }];
   }
   if (!ts.isVariableStatement(statement)) return [];
-  return statement.declarationList.declarations.map((declaration) => {
-    if (!ts.isIdentifier(declaration.name)) {
-      throw new TlaTypeScriptError("Declare one name at a time", declaration);
-    }
-    return { name: declaration.name.text, declaration };
-  });
+  return statement.declarationList.declarations.flatMap((declaration) =>
+    getBoundNames(declaration.name).map((identifier) => ({
+      name: identifier.text,
+      declaration,
+      identifier,
+    })),
+  );
 };
+
+const getBoundNames = (name: ts.BindingName): ts.Identifier[] =>
+  ts.isIdentifier(name)
+    ? [name]
+    : name.elements.flatMap((element) =>
+        ts.isOmittedExpression(element) ? [] : getBoundNames(element.name),
+      );
 
 // Reads a model's state variables, exported functions, and tags, and names them in TLA+.
 export const readModel = (sourceFile: ts.SourceFile, context: Context): Model => {
@@ -159,13 +169,13 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
   const variables = declarations.flatMap((declared) => {
     const declaration = declared.declaration;
     if (!isLet(declared) || !ts.isVariableDeclaration(declaration)) return [];
-    const symbol = getSymbol(declaration.name, context.checker);
+    const symbol = getSymbol(declared.identifier, context.checker);
     if (isExported(declaration) || symbol === undefined) {
       throw new TlaTypeScriptError("State variables can't be exported", declaration);
     }
     if (context.variables.has(symbol)) return [];
     const name = context.names.getFresh(declared.name);
-    context.variables.set(symbol, identifier(name, getLocation(declaration.name)));
+    context.variables.set(symbol, identifier(name, getLocation(declared.identifier)));
     return [{ name, symbol, declaration }];
   });
   const helpers = declarations.filter((declared) => !isLet(declared));

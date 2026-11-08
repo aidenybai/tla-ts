@@ -63,7 +63,13 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const model = readModel(program.sourceFile, context);
   const sections = createSections();
   sections.init.push(
-    ...(model.script.every(ts.isVariableStatement)
+    ...(model.script.every(
+      (statement) =>
+        ts.isVariableStatement(statement) &&
+        statement.declarationList.declarations.every((declaration) =>
+          ts.isIdentifier(declaration.name),
+        ),
+    )
       ? model.variables.map((variable) => translateInitial(variable, context))
       : [locate(render(translateScript(model.script, context)), getLocation(model.script[0]))]),
   );

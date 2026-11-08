@@ -44,6 +44,18 @@ const CASES: Record<string, Case[]> = {
       statements: "const values: number[] = [1]; [first = 5, second = first] = values;",
     },
   ],
+  "top-level patterns": [
+    {
+      variables: "copy = 0",
+      statements: "copy = first * 100 + second * 10 + rest.length;",
+      setup: "let [first, second, ...rest] = [1, 2, 3, 4];",
+    },
+    {
+      variables: "copy = 0",
+      statements: "copy = x * 10 + y;",
+      setup: "const { x, y = 5 }: { x: number; y?: number } = { x: 1 };",
+    },
+  ],
   "fields and indexes": [
     { variables: "point = { x: 1, y: 2 }", statements: "point.x = 5; point.y += point.x;" },
     { variables: "point = { x: 1, y: 2 }", statements: "point = { ...point, y: 9 };" },
