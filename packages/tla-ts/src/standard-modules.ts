@@ -418,7 +418,10 @@ const createSequencesOperators = (version: TlcVersion) =>
           (element) => {
             const result = test.call([element]);
             if (typeof result !== "boolean") {
-              throw createModuleArgumentError("second", "SelectSeq", "operator", result);
+              // OpLambdaValue#toString prints the operator by its name.
+              throw new TlaModuleError(
+                `The second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator ${test.name}>`,
+              );
             }
             return result;
           },
