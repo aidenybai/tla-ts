@@ -390,52 +390,74 @@ ToBoolean(value) ==
     [] TypeOf(value) = "string" -> value # ""
     [] OTHER -> TRUE
 
-LOCAL Fields == {"value", "writable", "enumerable", "configurable"}
+LOCAL Fields == {"value", "writable", "get", "set", "enumerable", "configurable"}
 
+\\* A descriptor is valid if its get and set are functions or undefined, and it doesn't mix them
+\\* with value or writable. Otherwise ToPropertyDescriptor throws a TypeError.
 LOCAL ToDescriptor(heap, ref) ==
-  IF Has(heap, ref, "get") \\/ Has(heap, ref, "set")
-  THEN Assert(FALSE, "tla-ts can't define accessors")
-  ELSE [fields |-> {field \\in Fields : Has(heap, ref, field)},
-        value |-> Get(heap, ref, "value"),
-        writable |-> ToBoolean(Get(heap, ref, "writable")),
-        enumerable |-> ToBoolean(Get(heap, ref, "enumerable")),
-        configurable |-> ToBoolean(Get(heap, ref, "configurable"))]
+  LET fields == {field \\in Fields : Has(heap, ref, field)}
+      isCallable(field) ==
+        LET value == Get(heap, ref, field) IN value = Undefined \\/ TypeOfIn(heap, value) = "function"
+      isAccessor == fields \\cap {"get", "set"} # {}
+      isData == fields \\cap {"value", "writable"} # {}
+  IN [fields |-> fields,
+      isAccessor |-> isAccessor,
+      isData |-> isData,
+      isValid |-> /\\ \\A field \\in fields \\cap {"get", "set"} : isCallable(field)
+                  /\\ ~(isAccessor /\\ isData),
+      value |-> Get(heap, ref, "value"),
+      get |-> Get(heap, ref, "get"),
+      set |-> Get(heap, ref, "set"),
+      writable |-> ToBoolean(Get(heap, ref, "writable")),
+      enumerable |-> ToBoolean(Get(heap, ref, "enumerable")),
+      configurable |-> ToBoolean(Get(heap, ref, "configurable"))]
 
 \\* No value a script makes is the same as a value TLA+ can't represent.
 LOCAL CanApply(object, key, descriptor) ==
   LET has(field) == field \\in descriptor.fields
       current == object.attributes[key]
-      isSame == current.kind = "data" /\\ SameValue(descriptor.value, object.values[key])
+      isSame(field) == SameValue(descriptor[field], object.values[key][field])
   IN CASE key \\notin DOMAIN object.values -> object.extensible
-       [] current.kind = "accessor" -> Assert(FALSE, "tla-ts can't redefine accessors")
+       [] current.configurable -> TRUE
+       [] has("configurable") /\\ descriptor.configurable -> FALSE
+       [] has("enumerable") /\\ descriptor.enumerable # current.enumerable -> FALSE
+       [] (descriptor.isAccessor \\/ descriptor.isData)
+            /\\ descriptor.isAccessor # (current.kind = "accessor") -> FALSE
+       [] current.kind = "accessor" ->
+            \\A field \\in {"get", "set"} : has(field) => isSame(field)
+       [] current.writable -> TRUE
        [] OTHER ->
-          \\/ current.configurable
-          \\/ /\\ ~(has("configurable") /\\ descriptor.configurable)
-             /\\ ~(has("enumerable") /\\ descriptor.enumerable # current.enumerable)
-             /\\ \\/ current.writable
-                \\/ /\\ ~(has("writable") /\\ descriptor.writable)
-                   /\\ ~(has("value") /\\ ~isSame)
+            /\\ ~(has("writable") /\\ descriptor.writable)
+            /\\ has("value") => current.kind = "data" /\\ SameValue(descriptor.value, object.values[key])
 
+\\* A descriptor that changes a property between data and accessor keeps only its enumerable and
+\\* configurable.
 LOCAL Apply(object, key, descriptor) ==
   LET has(field) == field \\in descriptor.fields
       isNew == key \\notin DOMAIN object.values
-      pick(field) ==
-        IF has(field) THEN descriptor[field]
-        ELSE IF isNew THEN FALSE
-        ELSE object.attributes[key][field]
+      wasAccessor == ~isNew /\\ object.attributes[key].kind = "accessor"
+      isKept ==
+        ~isNew /\\ ~(descriptor.isAccessor /\\ ~wasAccessor) /\\ ~(descriptor.isData /\\ wasAccessor)
+      isNowAccessor == IF isKept THEN wasAccessor ELSE descriptor.isAccessor
+      current == IF isKept THEN object.values[key] ELSE [get |-> Undefined, set |-> Undefined]
+      pick(field, kept) == IF has(field) THEN descriptor[field] ELSE kept
+      flag(field) ==
+        IF has(field) THEN descriptor[field] ELSE ~isNew /\\ object.attributes[key][field]
       value ==
-        IF has("value") THEN descriptor.value
-        ELSE IF isNew THEN Undefined
-        ELSE object.values[key]
+        IF isNowAccessor
+        THEN [get |-> pick("get", current.get), set |-> pick("set", current.set)]
+        ELSE pick("value", IF isKept THEN object.values[key] ELSE Undefined)
   IN [object EXCEPT
         !.keys = IF isNew THEN Append(@, key) ELSE @,
         !.values = (key :> value) @@ @,
-        !.attributes = (key :> [writable |-> pick("writable"),
-                                enumerable |-> pick("enumerable"),
-                                configurable |-> pick("configurable"),
-                                kind |-> IF has("value") \\/ isNew
-                                         THEN "data"
-                                         ELSE object.attributes[key].kind]) @@ @]
+        !.attributes = (key :> [writable |-> ~isNowAccessor /\\ IF has("writable")
+                                                               THEN descriptor.writable
+                                                               ELSE isKept /\\ object.attributes[key].writable,
+                                enumerable |-> flag("enumerable"),
+                                configurable |-> flag("configurable"),
+                                kind |-> CASE isNowAccessor -> "accessor"
+                                           [] isKept /\\ ~has("value") -> object.attributes[key].kind
+                                           [] OTHER -> "data"]) @@ @]
 
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==
@@ -453,11 +475,19 @@ LOCAL IsObjectArgument(value) ==
          Assert(FALSE, "tla-ts can't use " \\o ToString(value) \\o " as an object here")
     [] OTHER -> FALSE
 
+\\* Arrays and the other values that tla-ts keeps outside the heap never read a built-in's accessors.
+LOCAL CanDefineOn(ref, descriptor) ==
+  Assert(IsHeap(ref) \\/ ~descriptor.isAccessor, "tla-ts can't define accessors on built-in objects")
+
 DefineProperty(heap, ref, key, descriptor) ==
-  IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
-  THEN LET applied == ApplyAll(Lookup(heap, ref), <<key>>, <<ToDescriptor(heap, descriptor)>>)
-       IN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
-  ELSE [heap |-> heap, isDone |-> FALSE]
+  LET converted == ToDescriptor(heap, descriptor)
+      applied == ApplyAll(Lookup(heap, ref), <<key>>, <<converted>>)
+  IN IF /\\ IsObjectArgument(ref)
+        /\\ IsObjectArgument(descriptor)
+        /\\ converted.isValid
+        /\\ CanDefineOn(ref, converted)
+     THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
+     ELSE [heap |-> heap, isDone |-> FALSE]
 
 DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
@@ -469,7 +499,10 @@ DefineProperties(heap, ref, properties) ==
      THEN [heap |-> heap, isDone |-> FALSE]
      ELSE LET descriptors == [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])]
               applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
-          IN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
+          IN IF \\A position \\in DOMAIN keys :
+                  descriptors[position].isValid /\\ CanDefineOn(ref, descriptors[position])
+             THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
+             ELSE [heap |-> heap, isDone |-> FALSE]
 
 Create(heap, prototype, properties) ==
   LET created == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype])

@@ -396,6 +396,27 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[getter!.get === read, getter!.set, setter!.set === write, Object.hasOwn(getter!, 'writable'), box.propertyIsEnumerable('b'), box.b, changed, caught]",
+      `const box: { a?: number; b?: number } = {};
+      const read = function () {
+        return 1;
+      };
+      const write = function (value: number) {};
+      Object.defineProperty(box, "a", { get: read, configurable: true });
+      Object.defineProperty(box, "b", { set: write, enumerable: true });
+      const getter = Object.getOwnPropertyDescriptor(box, "a");
+      const setter = Object.getOwnPropertyDescriptor(box, "b");
+      Object.defineProperty(box, "a", { value: 2, writable: true });
+      const changed = Object.getOwnPropertyDescriptor(box, "a")!.value;
+      Object.defineProperty(box, "a", { get: read });
+      let caught = "none";
+      try {
+        Object.defineProperty(box, "b", { set: read });
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }`,
+    ],
+    [
       "[caught, 'a' in box, box.b]",
       `const box: { b?: number } = {};
       Object.defineProperty(box, "b", { value: 1 });
