@@ -2016,9 +2016,7 @@ export const generateSanySpecification = (
       // nullOpArg it substitutes after an error.
       const checkArity = (target: OpDeclNode, substitute: ExprOrOpArgNode) => {
         const arity = substitute.kind === "OpArg" ? getSymbolArity(substitute.op) : 0;
-        const isNullOpArg =
-          target.arity > 0 && substitute.kind === "OpAppl" && substitute.isNull === true;
-        if (arity !== target.arity && !isNullOpArg) {
+        if (arity !== target.arity) {
           addError(
             substitute.location,
             `An operator must be substituted for symbol '${target.name}', and it must have arity ${target.arity}.`,
