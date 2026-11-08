@@ -1,8 +1,10 @@
 import { getChildren, isLocallyResolved, type Expression } from "./ast";
 import {
   bindValue,
-  expectBoolean,
   expectBooleanBody,
+  expectImplication,
+  isEquivalent,
+  negate,
   findGlobalName,
   createConditionError,
   createJunctionError,
@@ -68,7 +70,9 @@ const GENERATED_KINDS = new Set([
 ]);
 
 const createGeneratedHelpers = () => ({
-  bool: expectBoolean,
+  implication: expectImplication,
+  negate,
+  equivalent: isEquivalent,
   body: expectBooleanBody,
   condition: (value: Value, expression: Expression) => {
     if (typeof value !== "boolean") throw createConditionError(expression, value);
@@ -204,7 +208,14 @@ const generateApply = (
   if (expression.operator === "=>") {
     const left = generateExpression(generator, args[0], frame);
     const right = generateExpression(generator, args[1], frame);
-    return `(bool(${left}, "the left side of =>") ? bool(${right}, "the right side of =>") : true)`;
+    const reference = addReference(generator, expression);
+    return `(implication(${left}, ${reference}, "P") ? implication(${right}, ${reference}, "Q") : true)`;
+  }
+  if (expression.operator === "~" && args.length === 1) {
+    return `negate(${generateExpression(generator, args[0], frame)}, ${addReference(generator, expression)})`;
+  }
+  if (expression.operator === "<=>") {
+    return `equivalent(${generateExpression(generator, args[0], frame)}, ${generateExpression(generator, args[1], frame)}, ${addReference(generator, expression)})`;
   }
   if (isLocallyResolved(expression)) return generateDelegate(generator, expression, frame);
   const builtin = resolveGlobalOperator(expression.operator, generator.environment);

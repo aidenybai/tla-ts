@@ -437,6 +437,34 @@ export const expectBoolean = (value: Value, description: string) => {
   return value;
 };
 
+// Tool.eval names the whole expression of the boolean operators =>, ~, and <=>.
+export const expectImplication = (value: Value, expression: Expression, side: "P" | "Q") => {
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(
+      `Attempted to evaluate an expression of form P => Q when ${side} was\n${getKindString(value)}.\n${describeRange(expression)}`,
+    );
+  }
+  return value;
+};
+
+export const negate = (value: Value, expression: Expression) => {
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(
+      `Attempted to apply the operator ~ to a non-boolean\n(${getKindString(value)})\n${describeRange(expression)}`,
+    );
+  }
+  return !value;
+};
+
+export const isEquivalent = (left: Value, right: Value, expression: Expression) => {
+  if (typeof left !== "boolean" || typeof right !== "boolean") {
+    throw new TlaEvaluationError(
+      `Attempted to evaluate an expression of form P <=> Q when P or Q was not a boolean.\n${describeRange(expression)}`,
+    );
+  }
+  return left === right;
+};
+
 // Tool.eval names the whole quantifier or CHOOSE whose body isn't a boolean.
 export const expectBooleanBody = (value: Value, expression: Expression) => {
   if (typeof value !== "boolean") {
@@ -1404,8 +1432,17 @@ const compileApply = (
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
     return (context) =>
-      !expectBoolean(left(context), "the left side of =>") ||
-      expectBoolean(right(context), "the right side of =>");
+      !expectImplication(left(context), expression, "P") ||
+      expectImplication(right(context), expression, "Q");
+  }
+  if (expression.operator === "~" && args.length === 1) {
+    const operand = getEvaluator(args[0], environment);
+    return (context) => negate(operand(context), expression);
+  }
+  if (expression.operator === "<=>") {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    return (context) => isEquivalent(left(context), right(context), expression);
   }
   if (expression.operator === "~>") {
     return () => {

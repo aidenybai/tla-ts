@@ -19,7 +19,6 @@ import {
   bindValue,
   compileArgumentScope,
   evaluate,
-  expectBoolean,
   forEachBinding,
   getLazyFunction,
   toKeepLazyContext,
@@ -1038,11 +1037,19 @@ const compileAction = (
         const right = getChildRunner(args[1]);
         return (run, scope, partial, action, isFixed, onComplete) => {
           const condition = evaluate(args[0], getContext(run, scope, partial));
-          const isTrue =
-            typeof condition === "boolean"
-              ? condition
-              : expectBoolean(condition, `the left side of => at ${describeLocation(args[0])}`);
-          if (!isTrue) {
+          if (typeof condition !== "boolean") {
+            const kind = getKindString(condition);
+            const range = describeRange(expression);
+            throw createRunError(
+              run,
+              run.isInit
+                ? `In computing initial states of a predicate of form P => Q, P was ${kind}\n.${range}`
+                : run.isEnabled
+                  ? `While computing ENABLED of an expression of the form P => Q, P was ${kind}.\n${range}`
+                  : `In computing next states of a predicate of the form P => Q, P was\n${kind}.\n${range}`,
+            );
+          }
+          if (!condition) {
             onComplete(partial, action);
             return;
           }
