@@ -2578,6 +2578,13 @@ const HELPERS = {
       return subset;
     }),
   bits: getBits,
+  compareSignatures: (sums: Int32Array, left: Int32Array, right: Int32Array) => {
+    for (let index = 0; index < left.length; index++) {
+      const difference = sums[left[index]] - sums[right[index]];
+      if (difference !== 0) return difference;
+    }
+    return 0;
+  },
   compareBytes: (data: Uint8Array, start: number, end: number, other: Uint8Array, from: number) => {
     for (let index = start; index < end; index++) {
       const difference = data[index] - other[from + index - start];
@@ -2973,6 +2980,95 @@ const getPermuteCode = (
   }
 };
 
+// Adds to Z, for each atom in a value, a weight for where the atom is, scaled by a hash of the
+// values around it that no image moves. An image moves an atom's sum to its image, so every key
+// position an image can move shares one weight.
+const getSignatureCode = (
+  program: Program,
+  sites: { count: number },
+  type: Type,
+  code: string,
+  scale = "1",
+): string | undefined => {
+  const resolved = resolveType(type);
+  const getWeight = () => Math.imul(++sites.count, 0x9e3779b1);
+  const getLoop = (element: Type, elements: string) => {
+    const name = getName(program, "e");
+    const inner = getSignatureCode(program, sites, element, name, scale);
+    return inner && `for (const ${name} of ${elements}) { ${inner} }`;
+  };
+  // No image moves an integer, a boolean or a set of integers, which is a mask.
+  const getScalarCode = (scalar: Type, scalarCode: string) => {
+    const resolvedScalar = resolveType(scalar);
+    if (resolvedScalar.kind === "Bool") return `(${scalarCode} ? 2 : 1)`;
+    return resolvedScalar.kind === "Int" ||
+      (resolvedScalar.kind === "Set" && isMask(resolvedScalar, program.plains))
+      ? `(${scalarCode} + 1)`
+      : undefined;
+  };
+  switch (resolved.kind) {
+    case "Str":
+      return `Z[${code}] += Math.imul(${getWeight()}, ${scale});`;
+    case "Mix":
+      return `if (${code} >= ${ATOM_BASE}) Z[${code} - ${ATOM_BASE}] += Math.imul(${getWeight()}, ${scale});`;
+    case "Seq":
+      return getLoop(resolved.element, code);
+    case "Set":
+      return isMask(resolved, program.plains) ? undefined : getLoop(resolved.element, code);
+    case "Rec": {
+      const record = getName(program, "r");
+      const hash = getName(program, "h");
+      const offset = resolved.shapes.length === 1 ? 0 : 1;
+      const shapes = resolved.shapes.map((shape) => {
+        const fields = shape.map((field, index) => ({
+          type: getFieldType(resolved, field),
+          code: `${record}[${index + offset}]`,
+        }));
+        const scalars = fields.flatMap((field) => getScalarCode(field.type, field.code) ?? []);
+        const signatures = fields.flatMap(
+          (field) =>
+            getSignatureCode(
+              program,
+              sites,
+              field.type,
+              field.code,
+              scalars.length === 0 ? scale : hash,
+            ) ?? [],
+        );
+        if (signatures.length === 0) return "";
+        const hashing = scalars.reduce(
+          (previous, scalar) => `Math.imul(${previous} ^ ${scalar}, 16777619)`,
+          scale,
+        );
+        return `${scalars.length === 0 ? "" : `const ${hash} = ${hashing};`} ${signatures.join(" ")}`;
+      });
+      if (shapes.every((shape) => shape === "")) return undefined;
+      if (offset === 0) return `{ const ${record} = ${code}; ${shapes[0]} }`;
+      const cases = shapes.map((shape, tag) => `case ${tag}: { ${shape} } break;`);
+      return `{ const ${record} = ${code}; switch (${record}[0]) { ${cases.join(" ")} } }`;
+    }
+    case "Fn": {
+      const fn = getName(program, "f");
+      const weight = getWeight();
+      const keys = resolved.domain.flatMap((key, position) => {
+        const id =
+          typeof key === "object" && key.kind === "ModelValue"
+            ? program.plains.ids.get(key)
+            : undefined;
+        const value = getScalarCode(resolved.range, `${fn}[${position}]`);
+        return id === undefined || value === undefined
+          ? []
+          : [`Z[${id}] += Math.imul(Math.imul(${weight}, ${scale}), ${value});`];
+      });
+      const values = getLoop(resolved.range, fn);
+      if (keys.length === 0 && values === undefined) return undefined;
+      return `{ const ${fn} = ${code}; ${keys.join(" ")} ${values ?? ""} }`;
+    }
+    default:
+      return undefined;
+  }
+};
+
 interface CompiledSpec {
   next: (state: Plain[], emit: (successor: Plain[]) => void) => void;
   invariants: ((state: Plain[]) => boolean)[];
@@ -2981,7 +3077,7 @@ interface CompiledSpec {
   constraints: ((state: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
   decode: (data: Uint8Array, start: number) => Plain[];
-  writeKey: (state: Plain[], arena: Arena, atoms: Int32Array[]) => void;
+  writeKey: (state: Plain[], arena: Arena) => void;
 }
 
 const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
@@ -3035,6 +3131,10 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     .map((_, index) => index)
     .sort((left, right) => getKeyCost(left) - getKeyCost(right));
   const keyWriters = keyOrder.map((index) => writers[index]);
+  const sites = { count: 0 };
+  const signatures = program.variableTypes.map((type, index) =>
+    getSignatureCode(program, sites, type, `v${index}`),
+  );
   const imageWriters = keyOrder.map((index) => {
     const writer = imageWrites[index] ?? writers[index];
     return `{ const b = n - W.start - m; ${writer} if (c === 0) { c = H.compareBytes(d, W.start + m + b, n, d, W.start + b); if (c > 0) continue images; } }`;
@@ -3075,33 +3175,56 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       arena.size = n;
     },
     decode: (data, start) => { d = data; i = start; return [${readers.join(", ")}]; },
-    writeKey: (state, arena, A) => {
+    writeKey: (state, arena) => {
       ${unpack}
       W = arena;
       arena.start = arena.size;
       if (arena.size + ${RESERVED_BYTES} > arena.data.length) H.addPage(arena);
       d = arena.data;
       n = arena.size;
-      ${keyWriters.join(" ")}
+      Z.fill(0);
+      ${signatures.join(" ")}
+      let F = 0;
+      for (let G = 1; G < Q.length; G++) if (H.compareSignatures(Z, Q[G], Q[F]) < 0) F = G;
+      if (F === 0) { ${keyWriters.join(" ")} }
       let m = n - W.start;
       images: for (let G = 0; G < A.length; G++) {
+        if (H.compareSignatures(Z, Q[G + 1], Q[F]) !== 0) continue;
         const P = A[G];
+        let c = m === 0 && F > 0 ? -1 : 0;
         n = W.start + m;
         if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }
-        let c = 0;
         ${imageWriters.join(" ")}
         if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; }
       }
       arena.size = W.start + m;
     },
   };`;
-  return new Function("K", "S", "B", "R", "D", "L", "H", source)(
+  const atoms = images.map((table) =>
+    Int32Array.from(program.plains.values, (value, id) => {
+      const image = typeof value === "object" ? table[value.rank] : undefined;
+      return image === undefined ? id : (program.plains.ids.get(image) ?? unsupported());
+    }),
+  );
+  // A key is the smallest image among those whose sums of moved atoms, in a fixed order of the
+  // atoms, are smallest. Which images those are depends only on the state, so its orbit shares it.
+  const moved = Int32Array.from(
+    program.plains.values.flatMap((_, id) => (atoms.some((table) => table[id] !== id) ? [id] : [])),
+  );
+  const preimages = [
+    moved,
+    ...atoms.map((table) => moved.map((atom) => table.findIndex((image) => image === atom))),
+  ];
+  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "H", source)(
     program.constants,
     program.constantSets,
     program.bitmaps,
     ranks,
     program.indexes,
     program.lookups,
+    atoms,
+    preimages,
+    new Int32Array(program.plains.values.length),
     HELPERS,
   );
 };
@@ -3175,19 +3298,13 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
   const images = check.symmetry ?? [];
   images.forEach((table) => table.forEach((image) => image && getAtom(program.plains, image)));
   const compiled = compileSpec(program, check);
-  const atoms = images.map((table) =>
-    Int32Array.from(program.plains.values, (value, id) => {
-      const image = typeof value === "object" ? table[value.rank] : undefined;
-      return image === undefined ? id : (program.plains.ids.get(image) ?? unsupported());
-    }),
-  );
   const arena = createArena();
   const starts = { data: new Int32Array(1 << 16), size: 0 };
   // Under symmetry the table holds the key of each state apart from the state TLC explores.
   const keys = images.length === 0 ? arena : createArena();
   const keyStarts = images.length === 0 ? starts : { data: new Int32Array(1 << 16), size: 0 };
   const encodeKey = (state: Plain[]) =>
-    images.length === 0 ? compiled.encode(state, keys) : compiled.writeKey(state, keys, atoms);
+    images.length === 0 ? compiled.encode(state, keys) : compiled.writeKey(state, keys);
   const table: StateTable = { slots: new Int32Array(1 << 18), mask: (1 << 17) - 1 };
   const statistics = { generated: 0, distinct: 0, depth: 0 };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
