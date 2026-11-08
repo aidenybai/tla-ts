@@ -41,6 +41,7 @@ import {
   getFingerprintError,
   getSequenceElements,
   getValueKey,
+  isEqualLikeTlc,
   isFunctionValue,
   toFiniteSet,
   valuesEqual,
@@ -180,7 +181,7 @@ export const createTlcExtOperators = (
     defineOperator("AssertEq", 2, (args) => {
       const left = getValue(args, 0, "AssertEq");
       const right = getValue(args, 1, "AssertEq");
-      const isEqual = valuesEqual(left, right);
+      const isEqual = isEqualLikeTlc(left, right);
       if (!isEqual) {
         print(formatValue("Assertion failed", true));
         print(formatValue(left, true));
