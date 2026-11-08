@@ -162,7 +162,7 @@ const printAttempt = (
     ...(attempt.isProved
       ? []
       : [
-          `obl:${attempt.isReused ? "" : `\n${attempt.note ?? ""}`}${formatNormalized(obligation, attempt.isReused, { ...printing, isTemporal: attempt.method.prover === "ls4" })}`,
+          `obl:${attempt.isReused ? "" : `\n${attempt.note ?? ""}`}${attempt.shipped ?? formatNormalized(obligation, attempt.isReused, { ...printing, isTemporal: attempt.method.prover === "ls4" })}`,
         ]),
   ]);
 };
@@ -254,8 +254,9 @@ const proveModule = async (
     }),
     onReport: (report, obligation) => {
       report.attempts.forEach((attempt) => {
-        if (attempt.errorOutput !== undefined && !attempt.isReused)
-          process.stdout.write(attempt.errorOutput);
+        if (attempt.isReused) return;
+        if (attempt.errorOutput !== undefined) process.stdout.write(attempt.errorOutput);
+        if (attempt.warning !== undefined) process.stderr.write(`${attempt.warning}\n`);
       });
       if (!settings.isToolbox) return;
       if (report.obligation.status === "trivial")

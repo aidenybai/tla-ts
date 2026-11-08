@@ -75,6 +75,8 @@ export interface ProveOptions {
 
 // What one method concluded about an obligation, as tlapm's toolbox messages report it: the proof
 // it writes in the module's theory, or the note it prepends to the obligation.
+// warning is what Errors.warn prints, and shipped the obligation as a method that prints its own
+// shipped form gives it.
 export interface ProofAttempt {
   method: Method;
   isProved: boolean;
@@ -83,6 +85,8 @@ export interface ProofAttempt {
   proof?: string;
   note?: string;
   errorOutput?: string;
+  warning?: string;
+  shipped?: string;
   timeUsedMs?: number;
 }
 
@@ -413,6 +417,20 @@ const proveWithBackends = async (
     if (method.prover === "trivial") return getProvedReport(method.prover);
     if (method.prover === "fail") {
       failures.push({ reason: "the fail method", isDecided: true });
+      continue;
+    }
+    // tlapm no longer has Cooper's method, and prints the obligation it would have shipped.
+    if (method.prover === "cooper") {
+      const warning = "Cooper's method is not available any more.\n";
+      record({
+        method,
+        isProved: false,
+        isReused: false,
+        warning,
+        note: `\\* ${warning}\n`,
+        shipped: `${formatObligation(shipFirstOrder(sequent, run.settings.isFlattened))}\n`,
+      });
+      failures.push({ reason: warning.trim(), isDecided: true });
       continue;
     }
     const encode = ENCODERS[method.prover];

@@ -24,10 +24,12 @@ const MAGIC_NUMBER = 20210223;
 
 const RECORD_SIZE = 23;
 
-// Each prover's field in V13.str and constructor in V13.meth.
+// Each prover's field in V13.str and constructor in V13.meth. Cooper's constructor is a constant one,
+// so its tag is the value itself.
 const PROVERS: Record<string, { field: number; tag: number }> = {
   zenon: { field: 1, tag: 1 },
   isabelle: { field: 2, tag: 0 },
+  cooper: { field: 4, tag: 3 },
   smt: { field: 10, tag: 8 },
   z3: { field: 11, tag: 9 },
   ls4: { field: 17, tag: 16 },
@@ -148,7 +150,9 @@ const encodeResult = (attempt: ProofAttempt) => {
       block(
         0,
         attempt.isProved ? 0 : block(0, reason),
-        block(PROVERS[method.prover].tag, argument),
+        method.prover === "cooper"
+          ? PROVERS.cooper.tag
+          : block(PROVERS[method.prover].tag, argument),
       ),
       block(
         0,
