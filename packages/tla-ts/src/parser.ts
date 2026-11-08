@@ -689,21 +689,44 @@ const parse = (
       return patterns.map((pattern) => ({ pattern, set }));
     }).flat();
 
-  const parseSubscript = (): Expression => {
+  // TLAplusParser.NoOpExtension, which leaves the arguments of the subscript's last name for a
+  // fairness expression to take as its action.
+  const parseSubscript = (): { subscript: Expression; lastArgs: Expression[] } => {
     const token = peek();
     if (token.kind === "Identifier") {
       const start = cursor.index;
-      const names = [advance().text];
+      const names: string[] = [];
+      const selectorRanges: SourceRange[] = [];
+      const parseElement = () => {
+        selectorRanges.push(getRange(cursor.index, cursor.index));
+        names.push(expectIdentifier());
+        return isAt("(") ? parseArguments() : [];
+      };
+      const elementArgs = [parseElement()];
       while (isAt("!") && peek(1).kind === "Identifier") {
         advance();
-        names.push(expectIdentifier());
+        elementArgs.push(parseElement());
       }
-      return withRange(
-        { kind: "Identifier", name: names.join("!"), location: getLocation(token) },
-        start,
-      );
+      const prefixArgs = elementArgs.slice(0, -1);
+      const location = getLocation(token);
+      location.range = { ...getRange(start), end: selectorRanges[selectorRanges.length - 1].end };
+      const name = names.join("!");
+      const subscript: Expression = prefixArgs.every((args) => args.length === 0)
+        ? { kind: "Identifier", name, location }
+        : {
+            kind: "Apply",
+            operator: name,
+            args: prefixArgs.flat(),
+            argumentCounts: [...prefixArgs.map((args) => args.length), 0],
+            argumentsRange: location.range,
+            selectorRanges,
+            location,
+          };
+      return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
     }
-    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[")) return parsePrimary();
+    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[")) {
+      return { subscript: parsePrimary(), lastArgs: [] };
+    }
     throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
   };
 
@@ -908,7 +931,12 @@ const parse = (
         return { kind: "Bracket", args, location };
       }
       expect("]_");
-      return { kind: "BoxAction", action: expression, subscript: parseSubscript(), location };
+      return {
+        kind: "BoxAction",
+        action: expression,
+        subscript: parseSubscript().subscript,
+        location,
+      };
     });
 
   // SANY reads the set after the \in of {x \in S} as a whole expression, whatever operators it has.
@@ -959,7 +987,12 @@ const parse = (
     if (accept(">>_")) {
       if (elements.length !== 1)
         throw createError("Expected a single action inside <<A>>_v", start);
-      return { kind: "AngleAction", action: elements[0], subscript: parseSubscript(), location };
+      return {
+        kind: "AngleAction",
+        action: elements[0],
+        subscript: parseSubscript().subscript,
+        location,
+      };
     }
     expect(">>");
     return { kind: "Tuple", elements, location };
@@ -1200,15 +1233,18 @@ const parse = (
       case "WF_":
       case "SF_": {
         const subscript = parseSubscript();
-        const action = withBracketLayout(() => {
-          expect("(");
-          const expression = parseExpression();
-          expect(")");
-          return expression;
-        });
+        const action =
+          !isAt("(") && subscript.lastArgs.length === 1
+            ? subscript.lastArgs[0]
+            : withBracketLayout(() => {
+                expect("(");
+                const expression = parseExpression();
+                expect(")");
+                return expression;
+              });
         return {
           kind: token.text === "WF_" ? "WeakFairness" : "StrongFairness",
-          subscript,
+          subscript: subscript.subscript,
           action,
           location,
         };
