@@ -755,7 +755,7 @@ export const findAssumptionViolation = (
   return undefined;
 };
 
-export const prepareSearch = (options: CheckOptions, print: (text: string) => void) => {
+export const prepareSearch = (options: CheckOptions) => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -768,7 +768,7 @@ export const prepareSearch = (options: CheckOptions, print: (text: string) => vo
     loadModule: options.loadModule,
     order,
     loadClass: options.loadClass,
-    print,
+    print: options.onPrint ?? console.log,
     files: { readFile: options.readFile, writeFile: options.writeFile },
     seed: options.seed,
     isTool: options.isTool,

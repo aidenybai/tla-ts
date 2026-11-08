@@ -104,7 +104,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const output = options.onOutput;
   const isTool = options.isTool ?? false;
   const isContinued = options.isContinued ?? false;
-  const prepared = prepareSearch(options, options.onPrint ?? console.log);
+  const prepared = prepareSearch(options);
   const config = prepared.config;
   const environment = prepared.environment;
   const runtime = environment.runtime;
