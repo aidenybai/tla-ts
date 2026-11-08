@@ -10,11 +10,13 @@ import type { AstManager } from "./ast";
 import { ctxSimplify } from "./ctx-simplify";
 import type { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import { Der } from "./der";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { propagateValues } from "./propagate-values";
 import { ProtoModel } from "./proto-model";
 import { simplifyGoal } from "./quant-tactics";
 import { RefVector } from "./ref-vector";
+import { RewriterTpl } from "./rewriter-tpl";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { isSymbol, type SExpr, type SmtList, type SmtToken } from "./smtlib-parser";
 import { solveGoal } from "./solver";
@@ -177,6 +179,38 @@ const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
   return [goal];
 };
 
+class DerRewriter extends RewriterTpl {
+  readonly der: Der;
+
+  constructor(manager: AstManager) {
+    super(manager);
+    this.der = new Der(manager);
+  }
+
+  reduceQuantifier(expr: number, body: number, patterns: number[]) {
+    const manager = this.manager;
+    return manager.withTemporaries(() =>
+      this.der.apply(manager.mkQuantifier({ ...manager.getQuantifier(expr), body, patterns })),
+    );
+  }
+}
+
+const runDer = (manager: AstManager) => (goal: Goal) => {
+  const rewriter = new DerRewriter(manager);
+  const size = goal.forms.size;
+  for (let index = 0; !goal.isInconsistent && index < size; index++) {
+    const result = rewriter.rewrite(goal.forms.items[index]);
+    goal.update(index, result);
+    manager.decRef(result);
+  }
+  goal.elimTrue();
+  goal.elimRedundancies();
+  goal.depth++;
+  rewriter.der.release();
+  rewriter.release();
+  return [goal];
+};
+
 const NNF_MODES = new Map([
   ["skolem", NNF_SKOLEM],
   ["quantifiers", NNF_QUANT],
@@ -273,6 +307,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
+  ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
   [
     "snf",
@@ -312,7 +347,7 @@ const UNPORTED_TACTICS = new Set(
   (
     "ackermannize_bv add-bounds aig auflia auflira aufnira bit-blast blast-term-ite bv " +
     "bv_bound_chk bv-divrem-bounds bv-slice bv1-blast bvarray2uf card2bv cofactor-term-ite " +
-    "collect-statistics ctx-solver-simplify default degree-shift demodulator der diff-neq " +
+    "collect-statistics ctx-solver-simplify default degree-shift demodulator diff-neq " +
     "distribute-forall dom-simplify dt2bv elim-predicates elim-small-bv elim-term-ite " +
     "elim-uncnstr elim-uncnstr2 eq2bv euf-completion factor ff-sat ff-simplify ff-solve " +
     "ff-unique ff2bv fix-dl-var fm fold-unfold fpa2bv horn horn-simplify injectivity lia " +
