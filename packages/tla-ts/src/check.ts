@@ -244,6 +244,7 @@ export interface EvaluationFailure {
 interface ReplayFailure {
   callStack: Expression[];
   fingerprint: FingerprintFailure | undefined;
+  replayError?: TlaEvaluationError;
 }
 
 export interface InitialStates {
@@ -289,6 +290,7 @@ interface FailureOptions {
   outDegrees?: number[];
   callStack?: Expression[];
   fingerprint?: FingerprintFailure;
+  replayError?: TlaEvaluationError;
   isNextState?: boolean;
   isCallStackFirst?: boolean;
   traceFailure?: FailureMessage;
@@ -531,7 +533,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       // A replay that overflows the stack again has an empty call stack.
       if (isStackOverflow(error)) return { callStack: [], fingerprint: undefined };
       if (!(error instanceof TlaEvaluationError) || !callStack) return undefined;
-      return { callStack: callStack.expressions, fingerprint: callStack.fingerprint };
+      return {
+        callStack: callStack.expressions,
+        fingerprint: callStack.fingerprint,
+        replayError: error,
+      };
     }
   };
   // Outermost first: each value fails as it fingerprints a value it holds.
@@ -879,7 +885,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     // TLC exits with the code of a failed initial replay whatever the error, as for a fingerprint.
     return failureOptions.isInitial || failureOptions.fingerprint
       ? EXIT_STATUS.specEvaluationFailure
-      : getReplayExitCode(error);
+      : getReplayExitCode(failureOptions.replayError ?? error);
   };
   const createFailureResult = (
     failed: unknown,

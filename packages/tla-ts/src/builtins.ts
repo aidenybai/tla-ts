@@ -3,6 +3,7 @@ import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluat
 import {
   formatValue,
   getFunctionClass,
+  isFingerprintedSince,
   isOverriddenSet,
   isSetValue,
   MAXIMUM_INTEGER,
@@ -244,12 +245,13 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
       try {
         return compute(...args);
       } catch (error) {
-        const isWrapped =
-          error instanceof TlaEvaluationError &&
-          (builtin.isLazy === true || !(error instanceof TlaModuleError));
-        if (!isWrapped) throw error;
-        // The wrapping error replaces a FingerprintException that a set with a source raised.
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        const isFingerprinted = isFingerprintedSince(depth);
+        // The wrapping error replaces the FingerprintException.
         if (setTrace.sets) setTrace.sets.length = depth;
+        const isWrapped =
+          builtin.isLazy === true || !(error instanceof TlaModuleError) || isFingerprinted;
+        if (!isWrapped) throw error;
         if (builtin.isLazy !== true && error instanceof TlaNullPointerError) {
           throw new TlaModuleError(getJavaOverrideMessage(signature, error.message));
         }
