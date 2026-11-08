@@ -354,7 +354,7 @@ const translateCall = (
   if (global === "Array" && method === "isArray" && node.arguments.length === 1) {
     const argument = node.arguments[0];
     translateExpression(argument, scope, context);
-    const names = getTypeNames(context.checker.getTypeAtLocation(argument));
+    const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
     if (getKind(argument, context) === "sequence" && names?.every((name) => name === "object")) {
       return boolean(true);
     }

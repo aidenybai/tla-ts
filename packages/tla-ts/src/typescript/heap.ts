@@ -96,6 +96,7 @@ const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
     isBuiltInArgument ||
     contextual === undefined ||
     (contextual.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0 ||
+    checker.isTypeAssignableTo(checker.getNumberType(), contextual) ||
     isHeapType(checker.getNonNullableType(contextual), node, context)
   );
 };

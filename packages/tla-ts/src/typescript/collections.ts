@@ -13,7 +13,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { translateBody } from "./functions";
 import { getHeap } from "./heap";
-import { useJavaScript } from "./javascript";
+import { isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Scope } from "./scope";
 import {
   apply,
@@ -410,7 +410,18 @@ const translateSequenceOperation = (
     };
   const withSearch = (use: (isFound: (position: Expression) => Expression) => Expression) =>
     share(translate(argument), "value", context, (value) => {
-      const getEqual = (position: Expression) => apply("=", [index(sequence, [position]), value]);
+      const checker = context.checker;
+      const elementType = checker.getIndexTypeOfType(
+        checker.getTypeAtLocation(node.expression.expression),
+        ts.IndexKind.Number,
+      );
+      const isComparableElement =
+        elementType !== undefined &&
+        isComparableType(elementType, checker.getTypeAtLocation(argument), checker);
+      const getEqual = (position: Expression) =>
+        isComparableElement
+          ? apply("=", [index(sequence, [position]), value])
+          : useJavaScript("SameValue", [index(sequence, [position]), value], context);
       const from = node.arguments[1];
       if (
         from === undefined ||

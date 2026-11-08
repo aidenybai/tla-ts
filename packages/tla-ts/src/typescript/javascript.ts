@@ -85,9 +85,9 @@ export const useJavaScript = (operator: string, args: Expression[], context: Con
   return apply(operator, args);
 };
 
-export const getTypeNames = (type: ts.Type): string[] | undefined => {
+export const getTypeNames = (type: ts.Type, checker: ts.TypeChecker): string[] | undefined => {
   if (type.isUnion()) {
-    const names = type.types.map(getTypeNames);
+    const names = type.types.map((member) => getTypeNames(member, checker));
     return names.every((name) => name !== undefined) ? [...new Set(names.flat())] : undefined;
   }
   const flags = type.flags;
@@ -98,6 +98,13 @@ export const getTypeNames = (type: ts.Type): string[] | undefined => {
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return ["undefined"];
   if (flags & ts.TypeFlags.Null) return ["null"];
   if (!(flags & ts.TypeFlags.Object)) return undefined;
+  // A structural type such as {} or { length: number } also holds the primitives that fit it.
+  const isPrimitive = [
+    checker.getStringType(),
+    checker.getNumberType(),
+    checker.getBooleanType(),
+  ].some((primitive) => checker.isTypeAssignableTo(primitive, type));
+  if (isPrimitive) return undefined;
   const isFunction =
     type.getCallSignatures().length > 0 ||
     type.getConstructSignatures().length > 0 ||
@@ -106,7 +113,7 @@ export const getTypeNames = (type: ts.Type): string[] | undefined => {
 };
 
 export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context: Context) => {
-  const names = getTypeNames(context.checker.getTypeAtLocation(node.expression));
+  const names = getTypeNames(context.checker.getTypeAtLocation(node.expression), context.checker);
   const known = names && [...new Set(names.map((name) => (name === "null" ? "object" : name)))];
   if (known?.length === 1) return string(known[0]);
   if (context.modelValues.size > 0) {
@@ -115,14 +122,21 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
   return useJavaScript("TypeOf", [translateExpression(node.expression, scope, context)], context);
 };
 
-export const isComparable = (left: ts.Expression, right: ts.Expression, context: Context) => {
-  const names = [left, right].map((node) => getTypeNames(context.checker.getTypeAtLocation(node)));
+export const isComparableType = (left: ts.Type, right: ts.Type, checker: ts.TypeChecker) => {
+  const names = [left, right].map((type) => getTypeNames(type, checker));
   if (names.some((name) => name === undefined)) return false;
   const kinds = new Set(
     names.flatMap((name) => name ?? []).filter((name) => name !== "null" && name !== "undefined"),
   );
   return kinds.size <= 1;
 };
+
+export const isComparable = (left: ts.Expression, right: ts.Expression, context: Context) =>
+  isComparableType(
+    context.checker.getTypeAtLocation(left),
+    context.checker.getTypeAtLocation(right),
+    context.checker,
+  );
 
 const CONVERSIONS = new Set(["Boolean", "String", "Number", "parseInt", "parseFloat"]);
 
@@ -146,7 +160,7 @@ export const translateToNumber = (
   context: Context,
 ) => {
   if (ts.isStringLiteral(argument)) return getInteger(Number(argument.text), node);
-  const names = getTypeNames(context.checker.getTypeAtLocation(argument));
+  const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
   const kind = names?.length === 1 ? names[0] : undefined;
   if (kind === "null") return number(0);
   const value = translateExpression(argument, scope, context);
@@ -182,7 +196,7 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
   if (parse !== undefined && ts.isStringLiteral(argument)) {
     return getInteger(parse(argument.text), node);
   }
-  const names = getTypeNames(context.checker.getTypeAtLocation(argument));
+  const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
   const kind = names?.length === 1 ? names[0] : undefined;
   const value = translateExpression(argument, scope, context);
   const isEmpty = kind === "undefined" || kind === "null";

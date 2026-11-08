@@ -74,7 +74,9 @@ export const translateNewError = (
   const value =
     message === undefined
       ? string("")
-      : getTypeNames(context.checker.getTypeAtLocation(message))?.includes("undefined") !== false
+      : getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.includes(
+            "undefined",
+          ) !== false
         ? share(translateExpression(message, scope, context), "message", context, (shared) =>
             ifExpression(apply("=", [shared, getUndefined(context)]), string(""), shared),
           )
@@ -136,7 +138,7 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
 
 export const translateThrown = (node: ts.Expression, scope: Scope, context: Context) => {
   const type = context.checker.getTypeAtLocation(node);
-  const names = getTypeNames(type);
+  const names = getTypeNames(type, context.checker);
   const isPrimitive = names?.every((name) => name !== "object" && name !== "function") === true;
   if (
     !isPrimitive &&

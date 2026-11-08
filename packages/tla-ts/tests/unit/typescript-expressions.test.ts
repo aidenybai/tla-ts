@@ -231,6 +231,11 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ],
     ["new Set(Object.keys(point))", "const point = { a: 1, 2: 'b' };"],
     [
+      "[[0, box, 2].indexOf(box, 2), [0, 1, box].indexOf(box, 2), [2, box].includes(box)]",
+      "const box = {};",
+    ],
+    ["[box === 1, 1 === box]", "const box: {} = {};"],
+    [
       "[point.x, point === other]",
       "const make = () => ({ x: 4 });\nconst point = make();\nconst other = make();",
     ],
