@@ -495,6 +495,11 @@ const translateDeclarations = (
 
 const getChanged = (loop: ts.Node, path: Path, context: Context) => {
   const changed = new Set<ts.Symbol>();
+  const visited = new Set<ts.Node>();
+  const getFunctionNode = (node: ts.Expression) => {
+    const symbol = getSymbol(node, context.checker);
+    return (symbol && path.scope.functions.get(symbol)) ?? getCallee(node, context);
+  };
   const visit = (node: ts.Node) => {
     const written =
       ts.isForOfStatement(node) && !ts.isVariableDeclarationList(node.initializer)
@@ -503,8 +508,14 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     if (written !== undefined) {
       getWrittenSymbols(written, context).forEach((symbol) => changed.add(symbol));
     }
-    if (ts.isCallExpression(node) && writesState(node, context)) {
-      context.variables.forEach((_, symbol) => changed.add(symbol));
+    if (ts.isCallExpression(node)) {
+      [node.expression, ...node.arguments].forEach((callee) => {
+        const called = getFunctionNode(callee);
+        if (called !== undefined && !visited.has(called)) {
+          visited.add(called);
+          visit(called);
+        }
+      });
     }
     ts.forEachChild(node, visit);
   };

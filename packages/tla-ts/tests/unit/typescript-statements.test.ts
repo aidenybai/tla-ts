@@ -258,6 +258,13 @@ const CASES: Record<string, Case[]> = {
   helpers: [
     {
       variables: "count = 0",
+      statements:
+        "twice(add); let n = 0; const inc = () => { n += 1; }; for (const item of [1, 2]) inc(); count += n;",
+      setup:
+        "const add = () => { count += 10; };\nconst twice = (run: () => void) => { for (const item of [1, 2]) run(); };",
+    },
+    {
+      variables: "count = 0",
       statements: "twice(() => { count += 1; }); twice(add);",
       setup:
         "const add = () => { count += 10; };\nconst twice = (run: () => void) => { run(); run(); };",
