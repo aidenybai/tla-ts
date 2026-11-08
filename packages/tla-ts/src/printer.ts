@@ -225,9 +225,18 @@ const print = (expression: Expression): string[] => {
         throw new TlaUnsupportedError("tla-ts can't print a LET that instantiates a module");
       }
       return [
-        ...expression.definitions.flatMap((definition, index) =>
-          concat(index === 0 ? "LET " : "    ", printDefinition(definition)),
-        ),
+        ...expression.definitions
+          .flatMap((definition) =>
+            definition.kind === "Operator" && definition.isRecursive
+              ? [
+                  [
+                    `RECURSIVE ${formatParameter({ name: definition.name, arity: definition.params.length })}`,
+                  ],
+                  printDefinition(definition),
+                ]
+              : [printDefinition(definition)],
+          )
+          .flatMap((lines, index) => concat(index === 0 ? "LET " : "    ", lines)),
         ...concat("IN  ", print(expression.body)),
       ];
     case "Forall":
