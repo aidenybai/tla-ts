@@ -1299,6 +1299,12 @@ export const createSmtlibReader = (
     range?: number,
   ) => {
     const name = head.text;
+    // A bound variable applied to arguments selects from the array it stands for, one at a time.
+    if (args.length > 0 && lookup(name) !== undefined)
+      return args.reduce(
+        (array, arg) => mkArrayTerm(OP_SELECT, [array, arg], [], at),
+        parseLeaf(head),
+      );
     if (indices.length > 0) return mkBvApp(name, args, indices, at);
     const macro = macros.get(name);
     if (macro !== undefined) {
