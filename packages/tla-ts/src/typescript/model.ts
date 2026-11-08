@@ -92,7 +92,18 @@ const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context
   return `{${names.join(", ")}}`;
 };
 
+const isInertClass = (statement: ts.Statement) =>
+  ts.isClassDeclaration(statement) &&
+  !statement.members.some(
+    (member) =>
+      ts.isClassStaticBlockDeclaration(member) ||
+      (ts.isPropertyDeclaration(member) &&
+        member.initializer !== undefined &&
+        (ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Static) !== 0),
+  );
+
 const isDeclaration = (statement: ts.Statement) =>
+  isInertClass(statement) ||
   ts.isModuleDeclaration(statement) ||
   ts.isImportDeclaration(statement) ||
   ts.isTypeAliasDeclaration(statement) ||

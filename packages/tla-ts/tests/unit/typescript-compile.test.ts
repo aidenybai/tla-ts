@@ -548,6 +548,15 @@ describe("definitions", () => {
     expect(result.failure?.message).toContain("not positive");
   });
 
+  it("throws a class without compiling it", async () => {
+    const result = await checkModel(`
+      class CountError extends Error {}
+      let count = 1;
+      if (count === 1) throw new CountError("count is one");
+    `);
+    expect(result.failure?.message).toContain("count is one");
+  });
+
   it("compiles constants and functions imported from other files", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/counter.ts");
     const result = await check(compile(readFileSync(path, "utf8"), path));
@@ -710,6 +719,12 @@ describe("errors", () => {
         `let count = 0;\nexport const step = () => {\n  for (const index of [1, 2]) count += index;\n};`,
       ),
     ).toThrow("spec.ts:3:3 Loops aren't supported");
+  });
+
+  it("rejects a class that runs code as the module loads", () => {
+    expect(() =>
+      compile(`let count = 0;\nclass Counter {\n  static {\n    count++;\n  }\n}`),
+    ).toThrow("spec.ts:2:1 Unsupported statement");
   });
 
   it("rejects unknown tags", () => {
