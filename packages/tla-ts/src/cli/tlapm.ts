@@ -39,8 +39,8 @@ import { getInputPaths } from "./shared";
 
 const TLAPM_INTEGER_OPTIONS = new Set(["--toolbox", "--line", "--threads", "--nofpl"]);
 
-// tlapm searches the current directory, then its standard library at lib/tlapm/stdlib beside
-// bin/tlapm, then each -I directory, the last given first.
+// tlapm searches the current directory, then lib/tlapm/stdlib beside bin/tlapm, then each -I
+// directory, the last given first.
 const getLibraryDirectories = (parsed: ParsedArgs) => [
   ".",
   ...getTlapmPaths()
@@ -50,7 +50,6 @@ const getLibraryDirectories = (parsed: ParsedArgs) => [
   ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
 ];
 
-// A message of tlapm's toolbox protocol, which it writes to stderr.
 const printToolboxMessage = (fields: string[]) =>
   console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
 
@@ -138,7 +137,6 @@ const generateObligations = (
   }
 };
 
-// Toolbox.print_res_aux.
 const printAttempt = (
   obligation: PrintedObligation,
   attempt: ProofAttempt,
@@ -175,7 +173,6 @@ const printWarning = (warning: ObligationWarning, isToolbox: boolean) => {
   if (warning.channel !== "toolboxOnly") console.error(warning.text);
 };
 
-// Method.Fail, for an error obligation or one no method was tried on.
 const printFailedObligation = (obligation: PrintedObligation, reason: string) =>
   printObligationMessage(obligation, "failed", [
     "prover:fail",
@@ -228,7 +225,6 @@ const solveWith = (
   };
 };
 
-// Tlapm_lib.process_obs. Returns whether some obligation failed.
 const proveModule = async (
   module: ModuleObligations,
   directory: string,
@@ -431,7 +427,6 @@ export const runTlapm = async (args: string[]) => {
   };
   const statuses: number[] = [];
   for (const [index, module] of modules.entries()) {
-    // Tlapm_lib.mkdir_tlaps.
     const directory = `${cacheDirectory}/${module.name}.tlaps`;
     const fingerprintsPath = `${directory}/fingerprints`;
     const loadedPath = parsed.get("--usefp")?.[0] ?? fingerprintsPath;
@@ -464,7 +459,6 @@ export const runTlapm = async (args: string[]) => {
         ...checkStrictly(module, lines.start > 0 || lines.end < Infinity, parsed.has("--summary")),
       );
     if (!isProcessing) continue;
-    // tlapm's history holds the source of each module read so far.
     saveHistory(
       fingerprintsPath,
       [...moduleNames, ...modules.slice(0, index + 1).map((innerModule) => innerModule.name)].map(

@@ -1,7 +1,6 @@
 interface OptionSpec {
   flag: string;
   isRepeatable?: boolean;
-  // How many of the arguments after the flag the option takes, when that depends on them.
   getArity?: (rest: string[]) => number;
 }
 
