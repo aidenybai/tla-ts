@@ -65,7 +65,6 @@ const getPrimes = () => {
   return PRIMES;
 };
 
-// RandomGenerator.nextPrime.
 export const nextPrime = (random: JavaRandom) => {
   const primes = getPrimes();
   const choice = { index: primes.length };
@@ -218,8 +217,7 @@ export const getRandomSubset = (
 };
 
 // TLC!RandomElement chooses each component of a set of functions, records, or tuples
-// separately, and otherwise indexes the enumerated set with nextDouble, which fails on an empty
-// set as Java's array access does.
+// separately, and otherwise indexes the enumerated set with nextDouble.
 export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "FunctionSet") {
     // TLC builds the chosen function without the interval its domain came from.
