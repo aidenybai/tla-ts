@@ -779,6 +779,13 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
       const argSorts = args.map((arg) => getSortName(manager.sorts[arg])).join(" ");
       throw new SmtParseError(`unknown constant ${name} (${argSorts}) `, at);
     }
+    // xor is associative, so ast_manager::mk_app takes fewer than two arguments, which
+    // bool_rewriter reduces to false or the argument.
+    if (op === OP_XOR && args.length < 2) {
+      if (args.some((arg) => manager.sorts[arg] !== SORT_BOOL))
+        throw new SmtParseError(`ill-sorted application of ${name}`, at);
+      return args[0] ?? manager.falseExpr;
+    }
     // ast_manager::mk_app: more arguments of an operator that is not flat nest to the left or
     // the right, with the declaration picked for all of them.
     if (args.length <= 2 || !NESTED_OPS.has(op)) return mkApp(op, args, at);
@@ -985,7 +992,7 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     }
   };
 
-  return { declareCommand, parseFormula, push, pop };
+  return { declareCommand, parseTerm, parseFormula, push, pop };
 };
 
 export type SmtlibReader = ReturnType<typeof createSmtlibReader>;
