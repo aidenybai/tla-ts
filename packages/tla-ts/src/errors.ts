@@ -312,7 +312,6 @@ export class PddMemoryOutError extends TlaError {
   }
 }
 
-// Z3 reports a parse error at the line and column of the token it was reading.
 interface SmtPosition {
   line: number;
   column: number;

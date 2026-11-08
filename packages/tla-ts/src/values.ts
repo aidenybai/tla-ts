@@ -20,11 +20,10 @@ interface LazySet {
   isFingerprinted?: boolean;
 }
 
-// TLC keeps the elements of a set enumeration in the order it computed them, duplicates and all,
-// until it normalizes the set. writtenElements holds that order when it isn't sorted.
 export interface SetValue {
   kind: "Set";
   elements: Value[];
+  // A set enumeration's unsorted elements, duplicates included, until TLC normalizes it.
   writtenElements: Value[] | undefined;
   hash: number;
   fingerprint: number;
@@ -1060,8 +1059,6 @@ const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
 // compareTo instead of element by element.
 const normalizedSets = new WeakSet<SetValue>();
 
-// SetEnumValue#member and the set operations of Reducible go through the elements of a set that
-// TLC hasn't normalized in the order TLC computed them.
 export const getWrittenElements = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet" || normalizedSets.has(set)
     ? set.elements
@@ -1927,8 +1924,6 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
-  // FcnLambdaValue#toTuple enumerates the domain through toSetEnum, which is null for a set that a
-  // module overrides, such as Nat.
   if (value.kind === "LazyFunction" && isOverriddenSet(value.domain)) {
     throw new TlaEvaluationError(
       "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
@@ -2100,8 +2095,6 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       );
     }
     case "FilteredSet":
-      // SetPredValue#member reports any EvalException of the membership or the predicate as one
-      // it can't decide.
       try {
         return isElementOf(element, set.base) && set.test(element, true);
       } catch (error) {
@@ -2610,9 +2603,7 @@ const expandLazySet = (value: LazySetValue) => {
   if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
     return toFiniteSet(value);
   }
-  // Each toString enumerates a small set through toSetEnum, which first asks whether the set is
-  // empty. SetOfFcnsValue#toString asks whether the domain is empty before it sizes the domain and
-  // then the range.
+  // TLC asks whether the domain is empty before it sizes it.
   if (value.kind === "FunctionSet") {
     const domainSize = isEmptySet(value.domain) ? 0 : getCardinality(value.domain);
     const size = domainSize === 0 ? 1 : getCardinality(value.range) ** domainSize;
@@ -2676,8 +2667,7 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
   }
 };
 
-// Print and PrintT print deep copies of their values that IValue#deepNormalize normalized, so the
-// sets they normalize stay as they were outside the print.
+// TLC prints normalized copies, so the printed values themselves stay unnormalized.
 export const formatNormalizedCopies = (values: Value[]) => {
   const markedSets: SetValue[] = [];
   const normalize = (value: Value): void => {
@@ -2778,7 +2768,6 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       // TLC normalizes a lambda's domain to print it, but evaluates its body afterward.
       const formatRange = (inner: Value) =>
         formatValue(inner, isStrict, isNormalized && getFunctionClass(value) !== "lambda");
-      // TLC's Java code builds records without fields, such as TLCGet("stats").actions.
       if (functionValue.domain.length === 0 && getFunctionClass(value) === "record") return "[]";
       if (functionValue.domain.every((key, index) => key === index + 1)) {
         return `<<${functionValue.range.map(formatRange).join(", ")}>>`;

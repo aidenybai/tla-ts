@@ -74,8 +74,6 @@ const getRandomSetOfSubsets = (args: BuiltinArgument[], runtime: CheckerRuntime)
   );
 };
 
-// Double.valueOf: Java's grammar of a double, around which it trims whitespace and control
-// characters, with an optional suffix f or d.
 const JAVA_DECIMAL = /^[+-]?(?:NaN|Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fFdD]?)$/;
 const JAVA_HEXADECIMAL = /^([+-]?)0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?[pP]([+-]?\d+)[fFdD]?$/;
 
@@ -92,8 +90,7 @@ const parseJavaDouble = (text: string) => {
   return hexadecimal[1] === "-" ? -magnitude : magnitude;
 };
 
-// The shipped Randomization module doesn't declare RandomSubsetSet, which TLC's Java class overrides
-// only in a user's module of that name. The class names it RandomSubsetSetProbability in its errors.
+// TLC's Java class names the operator RandomSubsetSetProbability in its errors.
 export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
   defineStateOperator("RandomSubsetSet", 3, (args) => {
     const name = "RandomSubsetSetProbability";

@@ -437,7 +437,6 @@ export const expectBoolean = (value: Value, description: string) => {
   return value;
 };
 
-// Tool.eval names the whole expression of the boolean operators =>, ~, and <=>.
 export const expectImplication = (value: Value, expression: Expression, side: "P" | "Q") => {
   if (typeof value !== "boolean") {
     throw new TlaEvaluationError(
@@ -465,7 +464,6 @@ export const isEquivalent = (left: Value, right: Value, expression: Expression) 
   return left === right;
 };
 
-// Tool.eval names the whole quantifier or CHOOSE whose body isn't a boolean.
 export const expectBooleanBody = (value: Value, expression: Expression) => {
   if (typeof value !== "boolean") {
     throw new TlaEvaluationError(
@@ -1737,8 +1735,6 @@ const compileSetComprehension = (
     ): RebindableFilteredSet => ({
       kind: "FilteredSet",
       base,
-      // SetPredValue checks the element against a tuple of names, and words a predicate that isn't
-      // a boolean apart for membership and enumeration.
       test: (element, isMember) => {
         if (
           pattern.kind === "Tuple" &&

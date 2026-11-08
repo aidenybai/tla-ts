@@ -57,8 +57,6 @@ export const createModuleArgumentError = (
     `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${formatValue(value)}`,
   );
 
-// TLC's toSetEnum, which is null for a value other than a set, or for a set that a module
-// overrides, such as Nat.
 export const toEnumeratedSet = (value: Value, name: string, reported = value) => {
   if (!isSetValue(value) || isOverriddenSet(value)) {
     throw new TlaModuleError(

@@ -186,8 +186,7 @@ export const createTlcOperators = (
   defineOperator(":>", 2, (args) =>
     createFunction([[getValue(args, 0, ":>"), getValue(args, 1, ":>")]]),
   ),
-  // TLC's CombineFcn converts both arguments before it checks either, and keeps a key of the
-  // second function unless it equals a key of the first.
+  // CombineFcn converts both arguments before it checks either.
   defineOperator("@@", 2, (args) => {
     const leftValue = getValue(args, 0, "@@");
     const rightValue = getValue(args, 1, "@@");
