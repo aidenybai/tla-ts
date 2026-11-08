@@ -450,14 +450,8 @@ const CASES: Record<string, (string | [string, string])[]> = {
         caught = error instanceof TypeError ? "TypeError" : "other";
       }`,
     ],
-    [
-      "['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]",
-      "const box = {};",
-    ],
-    [
-      "[read({}), read({ x: 2 })]",
-      "var read = ({ x = 1 }) => x;",
-    ],
+    ["['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]", "const box = {};"],
+    ["[read({}), read({ x: 2 })]", "var read = ({ x = 1 }) => x;"],
     [
       "[thrown.constructor === TypeError, thrown.constructor === Error, thrown.name, thrown.toString === Error.prototype.toString]",
       `const box = {};
