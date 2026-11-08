@@ -351,9 +351,13 @@ const instantiate = (
   for (const name of [...parameters].sort(compareNames)) {
     if (substitutes.has(name)) continue;
     if (!findNamed(instanceScope, name)) {
-      throw new TlaProofError(
-        `Required parameter ${name} for module ${instance.module} could not be inferred.`,
-      );
+      const message = `Required parameter ${name} for module ${instance.module} could not be inferred.`;
+      // Errors.err, which the toolbox reports as a warning before tlapm ends abnormally.
+      pipeline.onWarning({
+        text: `${getLocusPrefix(instance.location)}${message}\n`,
+        channel: "toolbox",
+      });
+      throw new TlaProofError(message, { failure: "Module.Elab.complete_with_statement_params" });
     }
     substitutes.set(name, at({ kind: "Opaque", name }, { location }));
   }
