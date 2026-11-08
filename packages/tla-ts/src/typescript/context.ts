@@ -232,23 +232,39 @@ export const isPlainAccessor = (
   node.body !== undefined &&
   (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name));
 
-// The getter of a heap class, or of an object literal that a script makes once, that a property
-// read names, which the read checks the object still holds.
-export const getObjectGetter = (node: ts.PropertyAccessExpression, context: Context) => {
+// The accessor of a heap class, or of an object literal that a script makes once, that a property
+// access names, which the access checks the object still holds.
+const getObjectAccessor = <T extends ts.GetAccessorDeclaration | ts.SetAccessorDeclaration>(
+  node: ts.PropertyAccessExpression,
+  isKind: (declaration: ts.Declaration) => declaration is T,
+  context: Context,
+) => {
   if (context.heap === undefined) return undefined;
-  const getter = getSymbol(node.name, context.checker)?.declarations?.find(
-    ts.isGetAccessorDeclaration,
-  );
-  const parent = getter?.parent;
-  return getter !== undefined &&
-    isPlainAccessor(getter) &&
+  const accessor = getSymbol(node.name, context.checker)?.declarations?.find(isKind);
+  const parent = accessor?.parent;
+  return accessor !== undefined &&
+    isPlainAccessor(accessor) &&
     parent !== undefined &&
     (ts.isObjectLiteralExpression(parent)
       ? isOnce(parent)
       : ts.isClassLike(parent) && isHeapClass(parent, context))
-    ? getter
+    ? accessor
     : undefined;
 };
+
+export const getObjectGetter = (node: ts.PropertyAccessExpression, context: Context) =>
+  getObjectAccessor(node, ts.isGetAccessorDeclaration, context);
+
+export const getObjectSetter = (node: ts.PropertyAccessExpression, context: Context) =>
+  getObjectAccessor(node, ts.isSetAccessorDeclaration, context);
+
+// The setter that an assignment such as obj.name = value runs.
+export const getAssignedSetter = (node: ts.Node, context: Context) =>
+  ts.isBinaryExpression(node) &&
+  node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+  ts.isPropertyAccessExpression(node.left)
+    ? getObjectSetter(node.left, context)
+    : undefined;
 
 const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&

@@ -4,6 +4,7 @@ import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
   type Context,
   type FunctionNode,
+  getAssignedSetter,
   getCalledMethod,
   getCallee,
   getElement,
@@ -30,6 +31,7 @@ import {
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import { getErrorClass, translateEngineError, translateThrown } from "./exceptions";
 import {
+  getAccessorValue,
   getAllocated,
   getHeap,
   isAllocation,
@@ -545,7 +547,7 @@ const getCallback = (node: ts.Expression, path: Path, context: Context) => {
 
 // Runs a function's body as statements, for a call or a new that a statement makes.
 const inlineBody = (
-  node: ts.CallExpression | ts.NewExpression,
+  node: ts.Expression,
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
   receiver: Receiver | undefined,
@@ -670,6 +672,42 @@ const translateExpressionStatement = (
       throw new TlaTypeScriptError("Unsupported yield", expression);
     }
     return frame.yieldTo(path);
+  }
+  const setter = getAssignedSetter(expression, context);
+  if (
+    setter !== undefined &&
+    ts.isBinaryExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.left)
+  ) {
+    const target = expression.left;
+    const object = translateObjectValue(target.expression, path.scope, context);
+    return ifThenElse(
+      apply("=", [
+        useJavaScript(
+          "SetterOf",
+          [getHeap(path.scope, target, context), object, string(target.name.text)],
+          context,
+        ),
+        getAccessorValue(setter, context),
+      ]),
+      inlineBody(
+        expression,
+        setter,
+        [expression.right],
+        { value: object, method: setter },
+        path,
+        context,
+        frame,
+        (after) => continueWith(after),
+        false,
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which setter this assignment runs"),
+        ]),
+      ),
+    );
   }
   const newAssigned =
     ts.isBinaryExpression(expression) &&
@@ -1082,6 +1120,11 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
           visit(called);
         }
       });
+    }
+    const setter = getAssignedSetter(node, context);
+    if (setter !== undefined && !visited.has(setter)) {
+      visited.add(setter);
+      visit(setter);
     }
     ts.forEachChild(node, visit);
   };

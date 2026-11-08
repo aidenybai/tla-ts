@@ -360,13 +360,19 @@ AccessorOf(heap, ref, key) ==
        [] object.prototype = Null -> Undefined
        [] OTHER -> AccessorOf(heap, object.prototype, key)
 
-RECURSIVE GetterOf(_, _, _)
-GetterOf(heap, ref, key) ==
+RECURSIVE AccessorFieldOf(_, _, _, _)
+AccessorFieldOf(heap, ref, key, field) ==
   LET object == Lookup(heap, ref)
   IN CASE key \\in DOMAIN object.values ->
-            IF object.attributes[key].kind = "accessor" THEN object.values[key].get ELSE Undefined
+            IF object.attributes[key].kind = "accessor"
+            THEN object.values[key][field]
+            ELSE Undefined
        [] object.prototype = Null -> Undefined
-       [] OTHER -> GetterOf(heap, object.prototype, key)
+       [] OTHER -> AccessorFieldOf(heap, object.prototype, key, field)
+
+GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
+
+SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
 RECURSIVE IsWritable(_, _, _)
 IsWritable(heap, ref, key) ==

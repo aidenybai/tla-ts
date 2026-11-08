@@ -285,6 +285,21 @@ describe("top-level statements", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("run setters as statements", async () => {
+    const result = await checkModel(`
+      let total = 0;
+      const counter = {
+        set add(value: number) {
+          total += value;
+        },
+      };
+      for (let i = 0; i < 3; i++) {
+        counter.add = i;
+      }
+    `);
+    expect(getTrace(result)?.[0]?.total).toBe("3");
+  });
+
   it("treat a var as a let, even when declared again", async () => {
     const result = await checkModel(`
       var count = 1;
