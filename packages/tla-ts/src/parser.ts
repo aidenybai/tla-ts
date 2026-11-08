@@ -512,6 +512,7 @@ const parse = (
     if (TLAPM_PUNCTUATION.has(token.text) || token.kind === "Number" || token.kind === "Decimal")
       return token.text;
     if (token.kind === "String") return JSON.stringify(token.text);
+    if (token.kind === "Step") return token.text;
     if (isTlapmKeyword(token)) return `keyword ${token.text}`;
     return token.kind === "Identifier" ? `identifier ${token.text}` : `operator ${token.text}`;
   };
@@ -1732,10 +1733,12 @@ const parse = (
     return defs;
   };
 
-  const parseFacts = () => ({
-    facts: isFactAhead() ? parseSeparated(parseFact) : [],
-    defs: accept("DEF") || accept("DEFS") ? parseDefs() : [],
-  });
+  const parseFacts = () => {
+    const facts = isFactAhead() ? parseSeparated(parseFact) : [];
+    const isDef = accept("DEF") || accept("DEFS");
+    if (isTlapm && facts.length === 0 && !isDef) throw createUnexpected("Expected a fact");
+    return { facts, defs: isDef ? parseDefs() : [] };
+  };
 
   const parseUseOrHide = (): UseOrHide => {
     const start = cursor.index;
