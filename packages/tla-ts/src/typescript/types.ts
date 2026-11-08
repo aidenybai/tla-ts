@@ -49,7 +49,7 @@ const isSetType = (type: ts.Type) => ["Set", "ReadonlySet"].includes(getTypeName
 const isMapType = (type: ts.Type) => ["Map", "ReadonlyMap"].includes(getTypeName(type));
 
 // Arrays, tuples, and unions of them, such as [] | [number] | [number, number].
-const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean =>
+export const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean =>
   type.isUnion()
     ? type.types.every((member) => isSequenceType(member, checker))
     : checker.isArrayType(type) || checker.isTupleType(type);

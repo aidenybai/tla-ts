@@ -3,8 +3,8 @@ import { type Context, getElement, getSymbol, getUndefined, share } from "./cont
 import { TlaTypeScriptError } from "../errors";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
-import { apply, define, identifier, ifExpression, number } from "./tla";
-import { getField, getPropertyKey } from "./types";
+import { apply, define, identifier, ifExpression, number, string } from "./tla";
+import { getField, getPathStep, getPropertyKey, isSequenceType } from "./types";
 
 export interface Scope {
   // The TLA+ expression for each variable, parameter, and local in scope.
@@ -81,16 +81,38 @@ export const bindPatternInline = (
   }
   return pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
-    if (element.dotDotDotToken !== undefined || element.initializer !== undefined) {
-      throw new TlaTypeScriptError("Rest elements and default values aren't supported", element);
-    }
+    const initializer = element.initializer;
+    const withDefault = (part: Expression) =>
+      initializer === undefined
+        ? part
+        : share(part, "element", context, (shared) =>
+            ifExpression(
+              apply("=", [shared, getUndefined(context)]),
+              translateExpression(initializer, current, context),
+              shared,
+            ),
+          );
     if (ts.isArrayBindingPattern(pattern)) {
+      if (element.dotDotDotToken === undefined) {
+        return bindPatternInline(
+          element.name,
+          withDefault(getElement(value, number(position + 1), context)),
+          current,
+          context,
+        );
+      }
+      if (context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike) {
+        throw new TlaTypeScriptError("Spread a string with split('') instead", element);
+      }
       return bindPatternInline(
         element.name,
-        getElement(value, number(position + 1), context),
+        apply("SubSeq", [value, number(position + 1), apply("Len", [value])]),
         current,
         context,
       );
+    }
+    if (element.dotDotDotToken !== undefined) {
+      throw new TlaTypeScriptError("Object rest elements aren't supported", element);
     }
     const name = element.propertyName ?? element.name;
     const key =
@@ -98,7 +120,32 @@ export const bindPatternInline = (
         ? undefined
         : getPropertyKey(name);
     if (key === undefined) throw new TlaTypeScriptError("Unsupported key", element);
-    return bindPatternInline(element.name, getField(value, key), current, context);
+    if (isSequenceType(context.checker.getTypeAtLocation(pattern), context.checker)) {
+      if (key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key)) {
+        throw new TlaTypeScriptError(`Unsupported array property: ${key}`, element);
+      }
+      return bindPatternInline(
+        element.name,
+        key === "length"
+          ? apply("Len", [value])
+          : withDefault(getElement(value, number(Number(key) + 1), context)),
+        current,
+        context,
+      );
+    }
+    const step = getPathStep(key);
+    const part =
+      initializer === undefined
+        ? getField(value, key)
+        : ifExpression(
+            apply("\\in", [
+              step.kind === "Field" ? string(step.name) : step.args[0],
+              apply("DOMAIN", [value]),
+            ]),
+            getField(value, key),
+            getUndefined(context),
+          );
+    return bindPatternInline(element.name, withDefault(part), current, context);
   }, scope);
 };
 

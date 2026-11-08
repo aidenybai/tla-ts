@@ -219,6 +219,18 @@ const CASES: Record<string, (string | [string, string])[]> = {
       "run()",
       "const run = () => { const values: number[] = [1]; const [first, second] = values; return [first, second]; };",
     ],
+    [
+      "run()",
+      "const run = () => { const values: (number | undefined)[] = [undefined, 2, 3]; const [first = 5, ...rest] = values; const [, , , fourth = 9] = values; return [first, rest, fourth]; };",
+    ],
+    [
+      "run()",
+      "const run = () => { const point: { x?: number; y: number } = { y: 2 }; const { x = 7, y = 8 } = point; return [x, y]; };",
+    ],
+    [
+      "run()",
+      "const run = () => { const [first, ...{ length, 0: second, 5: sixth = 4 }] = [1, 2, 3]; return [first, length, second, sixth]; };",
+    ],
     ["call()", "let call = () => 4;"],
     [
       "count(new Set([1, 2, 3]))",
