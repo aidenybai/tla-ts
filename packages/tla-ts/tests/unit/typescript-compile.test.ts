@@ -703,6 +703,13 @@ describe("errors", () => {
     ).toThrow("spec.ts:2:21 () => number isn't finite");
   });
 
+  it("fails the check where an action writes past the end of an array", async () => {
+    const result = await check(
+      compile(`let values = [1];\nexport const step = () => { values[2] = 3; };`),
+    );
+    expect(result.failure?.message).toContain("TLA+ sequences can't have holes");
+  });
+
   it("rejects division without rounding", () => {
     expect(() =>
       compile(`let count = 8;\nexport const halve = () => { count = count / 2; };`),

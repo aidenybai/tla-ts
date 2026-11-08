@@ -6,14 +6,28 @@ import {
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
+  getUndefined,
   isMethodCall,
+  share,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateKey } from "./expressions";
 import { and, DISABLED, type Formula, letIn, leaf } from "./formula";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import { bindPattern, bindValues, createStateScope, type Scope } from "./scope";
-import { apply, except, exceptAt, index, number, prime, string, tuple, unchanged } from "./tla";
+import {
+  apply,
+  boolean,
+  except,
+  exceptAt,
+  ifExpression,
+  index,
+  number,
+  prime,
+  string,
+  tuple,
+  unchanged,
+} from "./tla";
 import { getField, getKind, getPathStep } from "./types";
 
 interface Path {
@@ -26,8 +40,8 @@ interface Path {
 interface Target {
   symbol: ts.Symbol;
   current: Expression;
-  // The path to the changed part, as in the EXCEPT selector .field[2].
-  selector: ExceptPathStep[];
+  // The new value of the symbol, given the new value of the target from its current value.
+  update: (getValue: (current: Expression) => Expression) => Expression;
 }
 
 interface Removed {
@@ -56,6 +70,12 @@ const INCREMENT_OPERATORS = new Map<ts.SyntaxKind, string>([
   [ts.SyntaxKind.MinusMinusToken, "-"],
 ]);
 
+const getPart = (target: Target, step: ExceptPathStep): Target => ({
+  ...target,
+  update: (getValue) =>
+    target.update((value) => except(value, [{ path: [step], value: getValue(exceptAt()) }])),
+});
+
 // The current value of an assignment target, and how to replace it.
 const getTarget = (node: ts.Expression, path: Path, context: Context): Target => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
@@ -70,19 +90,43 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         node,
       );
     }
-    return { symbol, current, selector: [] };
+    return { symbol, current, update: (getValue) => getValue(current) };
   }
   if (ts.isPropertyAccessExpression(node)) {
     if (getKind(node.expression, context) !== "other") {
       throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
     }
-    const target = getTarget(node.expression, path, context);
-    return { ...target, selector: [...target.selector, getPathStep(node.name.text)] };
+    return getPart(getTarget(node.expression, path, context), getPathStep(node.name.text));
   }
   if (ts.isElementAccessExpression(node)) {
     const target = getTarget(node.expression, path, context);
     const key = translateKey(node, path.scope, context);
-    return { ...target, selector: [...target.selector, { kind: "Index", args: [key] }] };
+    if (getKind(node.expression, context) !== "sequence") {
+      return getPart(target, { kind: "Index", args: [key] });
+    }
+    // An array grows by one when the index is its length, and JavaScript leaves a hole past that.
+    return {
+      ...target,
+      update: (getValue) =>
+        target.update((sequence) =>
+          share(key, "position", context, (position) =>
+            ifExpression(
+              apply("\\in", [position, apply("DOMAIN", [sequence])]),
+              except(sequence, [
+                { path: [{ kind: "Index", args: [position] }], value: getValue(exceptAt()) },
+              ]),
+              ifExpression(
+                apply("=", [position, apply("+", [apply("Len", [sequence]), number(1)])]),
+                apply("Append", [sequence, getValue(getUndefined(context))]),
+                apply("Assert", [
+                  boolean(false),
+                  string("TLA+ sequences can't have holes, so write at most one past the end"),
+                ]),
+              ),
+            ),
+          ),
+        ),
+    };
   }
   if (
     isMethodCall(node) &&
@@ -90,9 +134,11 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     node.arguments.length === 1 &&
     getKind(node.expression.expression, context) === "map"
   ) {
-    const target = getTarget(node.expression.expression, path, context);
     const key = translateExpression(node.arguments[0], path.scope, context);
-    return { ...target, selector: [...target.selector, { kind: "Index", args: [key] }] };
+    return getPart(getTarget(node.expression.expression, path, context), {
+      kind: "Index",
+      args: [key],
+    });
   }
   throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
 };
@@ -104,10 +150,7 @@ const assign = (
   getValue: (current: Expression) => Expression,
 ): Path => {
   const target = getTarget(node, path, context);
-  const value =
-    target.selector.length === 0
-      ? getValue(target.current)
-      : except(target.current, [{ path: target.selector, value: getValue(exceptAt()) }]);
+  const value = target.update(getValue);
   return {
     scope: { ...path.scope, bindings: new Map([...path.scope.bindings, [target.symbol, value]]) },
     mutable: path.mutable,

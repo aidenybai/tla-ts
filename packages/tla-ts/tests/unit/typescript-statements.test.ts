@@ -53,6 +53,7 @@ const CASES: Record<string, Case[]> = {
       variables: "flags: Record<1 | 2, boolean> = { 1: false, 2: false }",
       statements: "flags[2] = true;",
     },
+    { variables: "values: number[] = [1]", statements: "values[1] = 2; values[2] = values[0];" },
   ],
   arrays: [
     { variables: "queue: number[] = [1]", statements: "queue.push(2); queue.push(3, 4);" },
