@@ -111,6 +111,11 @@ const CASES: [string, string][] = [
   ],
   ["a callback parameter with a default", "count = [undefined].map((value = 1) => value)[0];"],
   ["a callback rest parameter", "count = [1].map((...values) => values.length)[0];"],
+  ["indexing an array with a string", 'count = values["0"] ?? 0;'],
+  [
+    "a callback array parameter typed as an object",
+    "count = [1].filter((_, __, array: { length: number }) => array.length === 1).length;",
+  ],
   ["a conversion whose type is unknown", "const value: unknown = count; label = String(value);"],
   ["an unknown call in a callback", "values = values.map(() => Math.random());"],
   ["a test that doesn't return a boolean", "values = values.filter((value) => value);"],

@@ -117,6 +117,9 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
   const key = node.argumentExpression;
   const kind = getKind(node.expression, context);
   if (kind !== "sequence" && kind !== "string") return translateExpression(key, scope, context);
+  if (!isNumberLike(key, context)) {
+    throw new TlaTypeScriptError("Index arrays and strings with numbers", key);
+  }
   const position = translateExpression(key, scope, context);
   return position.kind === "Number"
     ? number(position.value + 1)

@@ -115,6 +115,13 @@ const bindIndexed = (
   ];
   return parameters.reduce((current, parameter, position) => {
     const value = bindings[position];
+    if (
+      position === 2 &&
+      ts.isIdentifier(parameter.name) &&
+      getKind(parameter.name, context) !== "sequence"
+    ) {
+      throw new TlaTypeScriptError("Type a callback's array parameter as an array", parameter);
+    }
     return value === undefined
       ? current
       : bindPatternInline(parameter.name, value, current, context);
