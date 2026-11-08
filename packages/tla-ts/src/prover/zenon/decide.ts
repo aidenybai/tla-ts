@@ -111,6 +111,6 @@ const FAILURE_ERRORS: Partial<Record<SearchFailure | "zenon error", string>> = {
 export const decideZenon = (text: string, options: DecideOptions): ZenonDecision => {
   const run = runZenon(text, options);
   if (run.isar !== undefined) return { verdict: "unsat", proof: run.isar };
-  const error = run.failure === undefined ? undefined : FAILURE_ERRORS[run.failure];
+  const error = run.failure && FAILURE_ERRORS[run.failure];
   return { verdict: "unknown", ...(error !== undefined && { error }) };
 };
