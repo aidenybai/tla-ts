@@ -25,7 +25,7 @@ export const getHeap = (scope: Scope, node: ts.Node, context: Context) => {
 
 // An object, which may be a built-in one such as Math or Array.prototype.
 export const translateObjectValue = (node: ts.Expression, scope: Scope, context: Context) =>
-  translateBuiltInObject(node, context) ?? translateExpression(node, scope, context);
+  translateBuiltInObject(node, scope, context) ?? translateExpression(node, scope, context);
 
 const getNumericKey = (node: ts.NumericLiteral) => string(String(Number(node.text)));
 
@@ -102,7 +102,7 @@ export const translateObject = (
 export const translateAllocated = (node: ts.Expression, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
   if (ts.isObjectLiteralExpression(node)) {
-    return apply("Append", [heap, translateObject(node, scope, context)]);
+    return useJavaScript("Allocate", [heap, translateObject(node, scope, context)], context);
   }
   if (ts.isCallExpression(node) && isDescription(node, context)) {
     const described = useJavaScript(
@@ -114,7 +114,7 @@ export const translateAllocated = (node: ts.Expression, scope: Scope, context: C
       ],
       context,
     );
-    return apply("Append", [heap, described]);
+    return useJavaScript("Allocate", [heap, described], context);
   }
   if (!ts.isCallExpression(node) || !isCreation(node, context)) {
     throw new TlaTypeScriptError("Unsupported object", node);
@@ -237,7 +237,11 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
   const change = OBJECT_CHANGES.get(method);
   const isObject = (position: number) => {
     const argument = node.arguments.at(position);
-    return argument !== undefined && getKind(argument, context) === "object";
+    return (
+      argument !== undefined &&
+      (getKind(argument, context) === "object" ||
+        (position === 0 && isBuiltInObject(argument, context)))
+    );
   };
   if (change === undefined || !change.objects.every(isObject)) {
     throw new TlaTypeScriptError(`Unsupported statement: ${node.getText()}`, node);
@@ -247,7 +251,7 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
     .map((argument, position) =>
       method === "defineProperty" && position === 1
         ? translatePropertyKey(argument, scope, context)
-        : translateExpression(argument, scope, context),
+        : translateObjectValue(argument, scope, context),
     );
   return {
     change: useJavaScript(change.operator, [getHeap(scope, node, context), ...values], context),

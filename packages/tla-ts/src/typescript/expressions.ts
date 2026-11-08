@@ -383,14 +383,21 @@ const translateCall = (
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
   }
   const test = OBJECT_TESTS.get(method);
-  // Only freeze, seal, and preventExtensions on a script's objects make an object inextensible.
+  // Only freeze, seal, and preventExtensions on a script's objects, or on the built-in objects a
+  // script's heap holds, make an object inextensible.
   if (global === "Object" && test !== undefined && node.arguments.length > 0) {
     const argument = node.arguments[0];
     const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
     const isFunction = ts.isIdentifier(argument) && names?.every((name) => name === "function");
-    if (isBuiltInObject(argument, context) || isFunction) {
-      return boolean(method === "isExtensible");
+    const isBuiltIn = isBuiltInObject(argument, context);
+    if (isBuiltIn && context.heap !== undefined) {
+      return useJavaScript(
+        test,
+        [getHeap(scope, node, context), translateObjectValue(argument, scope, context)],
+        context,
+      );
     }
+    if (isBuiltIn || isFunction) return boolean(method === "isExtensible");
     const value = translateExpression(argument, scope, context);
     const kind = getKind(argument, context);
     if (kind === "object") {

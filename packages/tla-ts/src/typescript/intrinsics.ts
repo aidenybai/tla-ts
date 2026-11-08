@@ -127,9 +127,9 @@ export const isBuiltInObject = (node: ts.Expression, context: Context) =>
   getName(node, context) !== undefined;
 
 // A built-in object that a built-in function takes, such as the prototype Object.create takes.
-export const translateBuiltInObject = (node: ts.Expression, context: Context) => {
+export const translateBuiltInObject = (node: ts.Expression, scope: Scope, context: Context) => {
   const name = getName(node, context);
-  return name === undefined ? undefined : translateBuiltIn(name, node, context);
+  return name === undefined ? undefined : translateBuiltIn(name, node, scope, context);
 };
 
 const isPrototypeCall = (node: ts.Node, context: Context): node is ts.CallExpression =>
@@ -226,13 +226,41 @@ const getBuiltInValue = (name: string, node: ts.Node, context: Context) => {
   return useJavaScript(":>", [identifier("Ref"), string(name)], context);
 };
 
-const translateBuiltIn = (name: string, node: ts.Node, context: Context) => {
+// A built-in object. A script may change a property that a path to one reads, so a script reads
+// the path from its heap, unless the property can't change.
+const translateBuiltIn = (
+  name: string,
+  node: ts.Expression,
+  scope: Scope,
+  context: Context,
+): Expression => {
   if (name === "null") {
     context.prelude.add("Null");
     return identifier("Null");
   }
-  if (context.heap !== undefined) context.builtIns.add(name);
-  return getBuiltInValue(name, node, context);
+  if (context.heap === undefined) return getBuiltInValue(name, node, context);
+  context.builtIns.add(name);
+  const path = ts.isParenthesizedExpression(node) ? node.expression : node;
+  if (!ts.isPropertyAccessExpression(path) || !scope.bindings.has(context.heap)) {
+    return getBuiltInValue(name, node, context);
+  }
+  const owner = getName(path.expression, context);
+  const flags =
+    owner === undefined
+      ? undefined
+      : BUILT_INS[owner][3].find((property) => property[0] === path.name.text)?.[1];
+  if (owner === undefined || flags === undefined || !/[wc]/.test(flags)) {
+    return getBuiltInValue(name, node, context);
+  }
+  return useJavaScript(
+    "Get",
+    [
+      getHeap(scope, node, context),
+      translateBuiltIn(owner, path.expression, scope, context),
+      string(path.name.text),
+    ],
+    context,
+  );
 };
 
 const MAX_INTEGER = 2 ** 31 - 1;
@@ -375,15 +403,19 @@ const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
 // A built-in object, or Object.getPrototypeOf or isPrototypeOf on built-in objects, or undefined
 // for any other node.
 export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: Context) => {
+  // A script's heap holds the built-in objects it names, which its statements may change.
   const isOfObject =
     (isPrototypeOfCall(node) || isPrototypeCall(node, context)) &&
-    getKind(node.arguments[0], context) === "object";
+    (getKind(node.arguments[0], context) === "object" ||
+      (context.heap !== undefined &&
+        scope.bindings.has(context.heap) &&
+        isBuiltInObject(node.arguments[0], context)));
   if (isOfObject && isPrototypeOfCall(node) && ts.isPropertyAccessExpression(node.expression)) {
     const owner = node.expression.expression;
     const name = getName(owner, context);
     const translatedOwner =
       name !== undefined
-        ? translateBuiltIn(name, owner, context)
+        ? translateBuiltIn(name, owner, scope, context)
         : getKind(owner, context) === "object"
           ? translateExpression(owner, scope, context)
           : undefined;
@@ -393,7 +425,8 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
       [
         getHeap(scope, node, context),
         translatedOwner,
-        translateExpression(node.arguments[0], scope, context),
+        translateBuiltInObject(node.arguments[0], scope, context) ??
+          translateExpression(node.arguments[0], scope, context),
       ],
       context,
     );
@@ -407,7 +440,11 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     }
     return useJavaScript(
       "Prototype",
-      [getHeap(scope, node, context), translateExpression(node.arguments[0], scope, context)],
+      [
+        getHeap(scope, node, context),
+        translateBuiltInObject(node.arguments[0], scope, context) ??
+          translateExpression(node.arguments[0], scope, context),
+      ],
       context,
     );
   }
@@ -442,6 +479,6 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
   }
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
   return symbol === undefined
-    ? translateBuiltIn(name, node, context)
+    ? translateBuiltIn(name, node, scope, context)
     : getConstructor(symbol, context);
 };

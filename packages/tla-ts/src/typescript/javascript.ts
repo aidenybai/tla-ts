@@ -55,6 +55,8 @@ IsRef(value) ==
 
 IsHeap(ref) == IsRef(ref) /\\ TypeOf(ref[Ref]) = "number"
 
+LOCAL IsObject(value) == IsRef(value) \\/ TypeOf(value) = "function"
+
 LOCAL ObjectPrototype == Ref :> "Object.prototype"
 
 LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE, kind |-> "data"]
@@ -63,24 +65,35 @@ EmptyObject ==
   [keys |-> <<>>, values |-> <<>>, attributes |-> <<>>, extensible |-> TRUE,
    prototype |-> ObjectPrototype, isCallable |-> FALSE, isOpaque |-> FALSE]
 
+\\* A heap holds the objects a script makes, and the built-in objects it has changed, by key.
+EmptyHeap == [objects |-> <<>>, changed |-> <<>>]
+
+Allocate(heap, object) == [heap EXCEPT !.objects = Append(@, object)]
+
+Allocated(heap) == Ref :> Len(heap.objects)
+
+LOCAL BuiltInKey(ref) == IF IsRef(ref) THEN ref[Ref] ELSE ref
+
+LOCAL IsBuiltIn(ref) ==
+  /\\ IsObject(ref)
+  /\\ BuiltInKey(ref) \\in DOMAIN BuiltIns
+  /\\ ~BuiltIns[BuiltInKey(ref)].isOpaque
+
 Lookup(heap, ref) ==
   CASE ref \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of " \\o ToString(ref))
-    [] IsHeap(ref) -> heap[ref[Ref]]
-    [] OTHER ->
-         LET key == IF IsRef(ref) THEN ref[Ref] ELSE ref
-         IN IF (IsRef(ref) \\/ TypeOf(ref) = "function") /\\ key \\in DOMAIN BuiltIns
-               /\\ ~BuiltIns[key].isOpaque
-            THEN BuiltIns[key]
-            ELSE Assert(FALSE, "tla-ts can't read the properties of " \\o ToString(ref))
+    [] IsHeap(ref) -> heap.objects[ref[Ref]]
+    [] IsBuiltIn(ref) /\\ BuiltInKey(ref) \\in DOMAIN heap.changed -> heap.changed[BuiltInKey(ref)]
+    [] IsBuiltIn(ref) -> BuiltIns[BuiltInKey(ref)]
+    [] OTHER -> Assert(FALSE, "tla-ts can't read the properties of " \\o ToString(ref))
 
 Update(heap, ref, object) ==
   IF IsHeap(ref)
-  THEN [heap EXCEPT ![ref[Ref]] = object]
-  ELSE Assert(FALSE, "tla-ts can't change built-in objects")
+  THEN [heap EXCEPT !.objects[ref[Ref]] = object]
+  ELSE [heap EXCEPT !.changed = (BuiltInKey(ref) :> object) @@ @]
 
 TypeOfIn(heap, value) ==
-  CASE IsHeap(value) -> IF heap[value[Ref]].isCallable THEN "function" ELSE "object"
+  CASE IsHeap(value) -> IF heap.objects[value[Ref]].isCallable THEN "function" ELSE "object"
     [] IsRef(value) /\\ value[Ref] \\in DOMAIN BuiltIns ->
          IF BuiltIns[value[Ref]].isCallable THEN "function" ELSE "object"
     [] IsRef(value) -> Assert(FALSE, "tla-ts can't tell the type of " \\o ToString(value))
@@ -91,9 +104,10 @@ WithPrototype(object, value) ==
     [] TypeOf(value) \\in {"object", "function"} -> Assert(FALSE, "tla-ts can't make this a prototype")
     [] OTHER -> object
 
+\\* A write to a property whose value TLA+ can't represent gives it one.
 Put(object, key, value) ==
   IF key \\in DOMAIN object.values
-  THEN [object EXCEPT !.values = (key :> value) @@ @]
+  THEN [object EXCEPT !.values = (key :> value) @@ @, !.attributes[key].kind = "data"]
   ELSE [object EXCEPT !.keys = Append(@, key),
                       !.values = (key :> value) @@ @,
                       !.attributes = (key :> Writable) @@ @]
@@ -149,15 +163,18 @@ Describe(heap, ref, key) ==
       fields ==
         IF isAccessor
         THEN [get |-> object.values[key].get, set |-> object.values[key].set]
-        ELSE [value |-> Value(object, key), writable |-> attributes.writable]
-  IN IF key \\in DOMAIN object.values
-     THEN PutAll(EmptyObject,
-                 fields @@ [enumerable |-> attributes.enumerable,
-                            configurable |-> attributes.configurable],
-                 IF isAccessor
-                 THEN <<"get", "set", "enumerable", "configurable">>
-                 ELSE <<"value", "writable", "enumerable", "configurable">>)
-     ELSE EmptyObject
+        ELSE [value |-> object.values[key], writable |-> attributes.writable]
+      described ==
+        PutAll(EmptyObject,
+               fields @@ [enumerable |-> attributes.enumerable,
+                          configurable |-> attributes.configurable],
+               IF isAccessor
+               THEN <<"get", "set", "enumerable", "configurable">>
+               ELSE <<"value", "writable", "enumerable", "configurable">>)
+  \\* A description's value is one TLA+ can't represent where the property's is.
+  IN CASE key \\notin DOMAIN object.values -> EmptyObject
+       [] isAccessor -> described
+       [] OTHER -> [described EXCEPT !.attributes["value"].kind = attributes.kind]
 
 HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
 
@@ -327,18 +344,20 @@ LOCAL ToDescriptor(heap, ref) ==
         enumerable |-> ToBoolean(Get(heap, ref, "enumerable")),
         configurable |-> ToBoolean(Get(heap, ref, "configurable"))]
 
+\\* No value a script makes is the same as a value TLA+ can't represent.
 LOCAL CanApply(object, key, descriptor) ==
   LET has(field) == field \\in descriptor.fields
       current == object.attributes[key]
+      isSame == current.kind = "data" /\\ SameValue(descriptor.value, object.values[key])
   IN CASE key \\notin DOMAIN object.values -> object.extensible
-       [] current.kind # "data" -> Assert(FALSE, "tla-ts can't redefine accessors")
+       [] current.kind = "accessor" -> Assert(FALSE, "tla-ts can't redefine accessors")
        [] OTHER ->
           \\/ current.configurable
           \\/ /\\ ~(has("configurable") /\\ descriptor.configurable)
              /\\ ~(has("enumerable") /\\ descriptor.enumerable # current.enumerable)
              /\\ \\/ current.writable
                 \\/ /\\ ~(has("writable") /\\ descriptor.writable)
-                   /\\ ~(has("value") /\\ ~SameValue(descriptor.value, object.values[key]))
+                   /\\ ~(has("value") /\\ ~isSame)
 
 LOCAL Apply(object, key, descriptor) ==
   LET has(field) == field \\in descriptor.fields
@@ -357,7 +376,9 @@ LOCAL Apply(object, key, descriptor) ==
         !.attributes = (key :> [writable |-> pick("writable"),
                                 enumerable |-> pick("enumerable"),
                                 configurable |-> pick("configurable"),
-                                kind |-> "data"]) @@ @]
+                                kind |-> IF has("value") \\/ isNew
+                                         THEN "data"
+                                         ELSE object.attributes[key].kind]) @@ @]
 
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==
@@ -368,7 +389,7 @@ ApplyAll(object, keys, descriptors) ==
   ELSE [object |-> object, isDone |-> FALSE]
 
 DefineProperty(heap, ref, key, descriptor) ==
-  IF IsRef(ref) /\\ IsRef(descriptor)
+  IF IsObject(ref) /\\ IsRef(descriptor)
   THEN LET applied == ApplyAll(Lookup(heap, ref), <<key>>, <<ToDescriptor(heap, descriptor)>>)
        IN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
   ELSE [heap |-> heap, isDone |-> FALSE]
@@ -377,15 +398,15 @@ DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
       keys == EnumerableKeys(source)
       values == [position \\in DOMAIN keys |-> Value(source, keys[position])]
-  IN IF ~IsRef(ref) \\/ ~IsRef(properties) \\/ \\E position \\in DOMAIN keys : ~IsRef(values[position])
+  IN IF ~IsObject(ref) \\/ ~IsRef(properties) \\/ \\E position \\in DOMAIN keys : ~IsRef(values[position])
      THEN [heap |-> heap, isDone |-> FALSE]
      ELSE LET descriptors == [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])]
               applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
           IN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
 
 Create(heap, prototype, properties) ==
-  LET created == Append(heap, [EmptyObject EXCEPT !.prototype = prototype])
-      change == DefineProperties(created, Ref :> Len(created), properties)
+  LET created == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype])
+      change == DefineProperties(created, Allocated(created), properties)
   IN CASE ~(prototype = Null \\/ IsRef(prototype)) ->
             Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
        [] properties = Undefined -> created

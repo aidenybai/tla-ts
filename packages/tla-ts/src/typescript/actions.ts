@@ -30,8 +30,10 @@ import {
   isObjectChange,
   translateAllocated,
   translateObjectChange,
+  translateObjectValue,
   translatePropertyKey,
 } from "./heap";
+import { isBuiltInObject } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import {
@@ -121,25 +123,31 @@ const getPart = (target: Target, step: ExceptPathStep): Target => ({
     target.update((value) => except(value, [{ path: [step], value: getValue(exceptAt()) }])),
 });
 
-const getHeapTarget = (
-  node: ts.Expression,
-  receiver: ts.Expression,
-  key: Expression,
-  path: Path,
-  context: Context,
-): Target => {
+// A property of an object in the heap, or of a built-in object, that an assignment writes.
+interface HeapWrite {
+  symbol: ts.Symbol;
+  heap: Expression;
+  ref: Expression;
+  key: Expression;
+}
+
+const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWrite | undefined => {
+  if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+  const receiver = node.expression;
+  const isBuiltIn = context.heap !== undefined && isBuiltInObject(receiver, context);
+  if (!isBuiltIn && getKind(receiver, context) !== "object") return undefined;
   const symbol = context.heap;
   const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
   if (symbol === undefined || heap === undefined || !path.mutable.has(symbol)) {
     throw new TlaTypeScriptError("Change objects only in statements", node);
   }
-  const ref = translateExpression(receiver, path.scope, context);
-  const current = useJavaScript("Get", [heap, ref, key], context);
   return {
     symbol,
-    current,
-    update: (getValue) =>
-      useJavaScript("SetProperty", [heap, ref, key, getValue(current)], context),
+    heap,
+    ref: translateObjectValue(receiver, path.scope, context),
+    key: ts.isPropertyAccessExpression(node)
+      ? string(node.name.text)
+      : translatePropertyKey(node.argumentExpression, path.scope, context),
   };
 };
 
@@ -160,20 +168,27 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     }
     return { symbol, current, update: (getValue) => getValue(current) };
   }
+  const write = getHeapWrite(node, path, context);
+  if (write !== undefined) {
+    const current = useJavaScript("Get", [write.heap, write.ref, write.key], context);
+    return {
+      symbol: write.symbol,
+      current,
+      update: (getValue) =>
+        useJavaScript(
+          "SetProperty",
+          [write.heap, write.ref, write.key, getValue(current)],
+          context,
+        ),
+    };
+  }
   if (ts.isPropertyAccessExpression(node)) {
-    if (getKind(node.expression, context) === "object") {
-      return getHeapTarget(node, node.expression, string(node.name.text), path, context);
-    }
     if (getKind(node.expression, context) !== "other") {
       throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
     }
     return getPart(getTarget(node.expression, path, context), getPathStep(node.name.text));
   }
   if (ts.isElementAccessExpression(node)) {
-    if (getKind(node.expression, context) === "object") {
-      const key = translatePropertyKey(node.argumentExpression, path.scope, context);
-      return getHeapTarget(node, node.expression, key, path, context);
-    }
     const target = getTarget(node.expression, path, context);
     const key = translateKey(node, path.scope, context);
     if (getKind(node.expression, context) !== "sequence") {
@@ -409,26 +424,18 @@ const translateCallStatement = (
         bindings: new Map([...path.scope.bindings, [heapSymbol, heap]]),
       },
     });
-    const definitions = [define(name, [], translated.change)];
     if (!translated.isFallible) {
-      return letIn(
-        definitions,
-        forceHeap(identifier(name), continueWith(withHeap(identifier(name)))),
-      );
+      return bindOnce(path, name, translated.change, continueWith(withHeap(identifier(name))));
     }
     const after = withHeap(field(identifier(name), "heap"));
-    const uncaught = apply("Assert", [boolean(false), string("TypeError")]);
-    return letIn(
-      definitions,
+    return bindOnce(
+      path,
+      name,
+      translated.change,
       ifThenElse(
         field(identifier(name), "isDone"),
         continueWith(after),
-        frame.throwTo === undefined
-          ? leaf(uncaught)
-          : frame.throwTo(after, {
-              value: translateEngineError("TypeError", expression, context),
-              uncaught,
-            }),
+        throwTypeError(after, expression, context, frame),
       ),
     );
   }
@@ -564,7 +571,20 @@ const translateExpressionStatement = (
   if (assigned === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
-  return continueWith(assigned);
+  // A write to a property that can't change throws a TypeError, as scripts run in strict mode.
+  const written = ts.isBinaryExpression(expression)
+    ? expression.left
+    : ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)
+      ? expression.operand
+      : undefined;
+  const write = written === undefined ? undefined : getHeapWrite(written, path, context);
+  return write === undefined
+    ? continueWith(assigned)
+    : ifThenElse(
+        useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
+        continueWith(assigned),
+        throwTypeError(path, expression, context, frame),
+      );
 };
 
 const isCatchParameter = (node: ts.Node, name: string): boolean => {
@@ -637,11 +657,7 @@ const allocate = (
   const allocated = allocations.reduce<Bound>(
     (current, allocation) => {
       const name = context.names.getFresh("heap");
-      const ref = useJavaScript(
-        ":>",
-        [identifier("Ref"), apply("Len", [identifier(name)])],
-        context,
-      );
+      const ref = useJavaScript("Allocated", [identifier(name)], context);
       return {
         definitions: [
           ...current.definitions,
@@ -656,24 +672,32 @@ const allocate = (
     },
     { definitions: [], scope: path.scope },
   );
-  const rest = continueWith({ ...path, scope: allocated.scope });
-  const heap = allocated.scope.bindings.get(symbol);
-  if (!path.isLooping) {
-    return allocated.definitions.reduceRight(
-      (body, definition) => bindValue(definition.name, definition.body, body),
-      rest,
-    );
-  }
-  return letIn(allocated.definitions, heap === undefined ? rest : forceHeap(heap, rest));
+  return allocated.definitions.reduceRight(
+    (body, definition) => bindOnce(path, definition.name, definition.body, body),
+    continueWith({ ...path, scope: allocated.scope }),
+  );
 };
 
-// Evaluates a heap where a statement changes it, as TLA+ evaluates definitions only where they're
-// used, so that a change tla-ts can't make stops the run there rather than once the heap is read.
-// An action binds the heap with \E instead, since it evaluates a LET definition that may call
-// Assert again at each reference, and each heap refers to the one before it. The rest is an IF's
-// branch, not a conjunct, as a loop's body gives values rather than a formula.
-const forceHeap = (heap: Expression, rest: Formula) =>
-  ifThenElse(apply("=", [heap, heap]), rest, leaf(boolean(false)));
+// Evaluates a heap, or a change to one, where a statement makes it, as TLA+ evaluates definitions
+// only where they're used, so that a change tla-ts can't make stops the run there rather than once
+// the heap is read. An action binds it with \E, since it evaluates a LET definition that may call
+// Assert again at each reference, and each heap refers to the one before it. A loop's body gives
+// values rather than a formula, so it forces a LET definition in an IF instead.
+const bindOnce = (path: Path, name: string, value: Expression, rest: Formula) =>
+  path.isLooping
+    ? letIn(
+        [define(name, [], value)],
+        ifThenElse(apply("=", [identifier(name), identifier(name)]), rest, leaf(boolean(false))),
+      )
+    : bindValue(name, value, rest);
+
+// Throws the TypeError that JavaScript throws where a change to an object fails.
+const throwTypeError = (path: Path, node: ts.Node, context: Context, frame: Frame) => {
+  const uncaught = apply("Assert", [boolean(false), string("TypeError")]);
+  return frame.throwTo === undefined
+    ? leaf(uncaught)
+    : frame.throwTo(path, { value: translateEngineError("TypeError", node, context), uncaught });
+};
 
 // Names the heap after a statement changes it, so that later statements share it.
 const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => Formula) => {
@@ -683,16 +707,18 @@ const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => F
     return continueWith(path);
   }
   const name = context.names.getFresh("heap");
-  const rest = continueWith({
-    ...path,
-    scope: {
-      ...path.scope,
-      bindings: new Map([...path.scope.bindings, [symbol, identifier(name)]]),
-    },
-  });
-  return path.isLooping
-    ? letIn([define(name, [], heap)], forceHeap(identifier(name), rest))
-    : bindValue(name, heap, rest);
+  return bindOnce(
+    path,
+    name,
+    heap,
+    continueWith({
+      ...path,
+      scope: {
+        ...path.scope,
+        bindings: new Map([...path.scope.bindings, [symbol, identifier(name)]]),
+      },
+    }),
+  );
 };
 
 const translateDeclarations = (
@@ -1217,6 +1243,7 @@ export const translateScript = (
       : [],
   );
   const scope = createStateScope(context);
+  if (context.heap !== undefined) context.prelude.add("JavaScript");
   return translateStatements(
     statements,
     {
@@ -1225,7 +1252,7 @@ export const translateScript = (
         bindings:
           context.heap === undefined
             ? scope.bindings
-            : new Map([...scope.bindings, [context.heap, tuple([])]]),
+            : new Map([...scope.bindings, [context.heap, identifier("EmptyHeap")]]),
         uninitialized: new Set(declared),
       },
       mutable: new Set(context.variables.keys()),

@@ -1,4 +1,6 @@
 import ts from "@typescript/typescript6";
+import { types } from "node:util";
+import { runInNewContext } from "node:vm";
 import { check, type Value } from "../../src";
 import { parseModule } from "../../src/parser";
 import { printModule } from "../../src/printer";
@@ -20,16 +22,15 @@ const getCanonical = (value: unknown): string => {
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
     return JSON.stringify(value);
   }
-  if (value instanceof Set) return formatSet([...value].map(getCanonical));
-  const entries: [unknown, unknown][] =
-    value instanceof Map
-      ? [...value]
-      : Array.isArray(value)
-        ? value.map((element, index) => [index + 1, element])
-        : Object.entries(value as object).map((entry) => [
-            /^-?\d+$/.test(entry[0]) ? Number(entry[0]) : entry[0],
-            entry[1],
-          ]);
+  if (types.isSet(value)) return formatSet([...value].map(getCanonical));
+  const entries: [unknown, unknown][] = types.isMap(value)
+    ? [...value]
+    : Array.isArray(value)
+      ? value.map((element, index) => [index + 1, element])
+      : Object.entries(value as object).map((entry) => [
+          /^-?\d+$/.test(entry[0]) ? Number(entry[0]) : entry[0],
+          entry[1],
+        ]);
   return formatFunction(entries.map((entry) => [getCanonical(entry[0]), getCanonical(entry[1])]));
 };
 
@@ -39,7 +40,7 @@ const getEntry = (value: Value, isKey: (key: Value) => boolean) => {
   return position === -1 ? undefined : value.range[position];
 };
 
-// A script's objects are references (Ref :> n) into its heap, which print as the object.
+// A script's objects are references (Ref :> n) into its heap's objects, which print as the object.
 const getCanonicalTla = (value: Value, heap?: Value): string => {
   const getInner = (inner: Value) => getCanonicalTla(inner, heap);
   if (typeof value !== "object") return JSON.stringify(value);
@@ -51,10 +52,11 @@ const getCanonicalTla = (value: Value, heap?: Value): string => {
     value,
     (key) => typeof key === "object" && key.kind === "ModelValue" && key.name === "Ref",
   );
+  const objects = heap === undefined ? undefined : getEntry(heap, (key) => key === "objects");
   const object =
-    reference === undefined || heap === undefined
+    reference === undefined || objects === undefined
       ? undefined
-      : getEntry(heap, (key) => key === reference);
+      : getEntry(objects, (key) => key === reference);
   const values = object === undefined ? undefined : getEntry(object, (key) => key === "values");
   if (values !== undefined) return getInner(values);
   if (value.kind === "Interval") {
@@ -77,8 +79,9 @@ const runJavaScript = (source: string) => {
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ESNext },
   }).outputText;
+  // A fresh realm, so that a script that changes a built-in object doesn't change this one's.
   const exports: { getResult?: () => unknown } = {};
-  new Function("exports", output)(exports);
+  runInNewContext(output, { exports });
   if (exports.getResult === undefined) throw new Error("The module must export getResult");
   return exports.getResult();
 };

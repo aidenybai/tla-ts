@@ -324,6 +324,23 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const source = Object.getOwnPropertyDescriptor(RegExp.prototype, "source")!;`,
     ],
     [
+      "[box.a, caught, Object.getOwnPropertyDescriptor(Math, 'PI')!.writable, constant, Object.isFrozen(Math), Object.isExtensible(Math)]",
+      `const box = { a: 1 };
+      Object.freeze(box);
+      let caught = "none";
+      try {
+        box.a = 2;
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      let constant = "none";
+      try {
+        Object.defineProperty(Math, "PI", { value: 3 });
+      } catch (error) {
+        constant = error instanceof TypeError ? "TypeError" : "other";
+      }`,
+    ],
+    [
       "objects.map((object) => Array.prototype.filter.call(object, () => true).length)",
       `const base = { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1 };
       const objects = [{ ...base, length: undefined }, { ...base, length: null }, { ...base, length: true }, { ...base, length: false }, { ...base, length: 0 }, { ...base, length: -3 }, { ...base, length: 2 }, { ...base, length: "" }, { ...base, length: "2" }, { ...base, length: "0002.0" }, { ...base, length: "2E0" }, { ...base, length: "2.3E-1" }, { ...base, length: "1e1" }, { ...base, length: "-4294967294" }, { ...base, length: "0x2" }, { ...base, length: "0X1" }, { ...base, length: "0o2" }, { ...base, length: "0b10" }, { ...base, length: "-0x2" }, { ...base, length: "one" }, { ...base, length: "1e" }, { ...base, length: "." }, { ...base, length: ".5" }, { ...base, length: "-Infinity" }];`,
