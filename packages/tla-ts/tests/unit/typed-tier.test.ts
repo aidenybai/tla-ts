@@ -23,6 +23,7 @@ describe("typed tier matches TLC", () => {
     ["SequenceOperators", 15],
     ["SubsetBounds", 881],
     ["RefinedBounds", 158],
+    ["RepeatedActions", 547],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([

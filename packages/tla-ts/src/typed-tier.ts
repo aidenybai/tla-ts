@@ -1925,6 +1925,8 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
 interface Pending {
   expression: Expression;
   scope: TierScope;
+  // The definitions this conjunct expands, which the rest of the conjunction doesn't.
+  inlining: Definition[];
 }
 
 const compileStep = (
@@ -1956,12 +1958,16 @@ const compileStep = (
   const [first, ...rest] = pending;
   const expression = first.expression;
   const frame = { scope: first.scope, primed };
-  const continueWith = (scope: TierScope, expressions: Expression[]) =>
+  const continueWith = (scope: TierScope, expressions: Expression[], inlining = first.inlining) =>
     compileStep(
       program,
-      [...expressions.map((inner) => ({ expression: inner, scope })), ...rest],
+      [...expressions.map((inner) => ({ expression: inner, scope, inlining })), ...rest],
       primed,
     );
+  const continueInto = (definition: Definition, scope: TierScope) =>
+    first.inlining.includes(definition)
+      ? unsupported()
+      : continueWith(scope, [definition.body], [...first.inlining, definition]);
   switch (expression.kind) {
     case "And":
       return continueWith(first.scope, expression.operands);
@@ -2006,8 +2012,7 @@ const compileStep = (
     case "Identifier": {
       const binding = first.scope.get(expression.name);
       if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
-        const definition = binding.definition;
-        return inline(program, definition, () => continueWith(binding.scope, [definition.body]));
+        return continueInto(binding.definition, binding.scope);
       }
       const definition = binding ? undefined : resolveDefinition(program, expression.name);
       if (
@@ -2015,7 +2020,7 @@ const compileStep = (
         definition.params.length === 0 &&
         !isConstantLevel(definition, program.environment)
       ) {
-        return inline(program, definition, () => continueWith(new Map(), [definition.body]));
+        return continueInto(definition, new Map());
       }
       break;
     }
@@ -2032,9 +2037,7 @@ const compileStep = (
     case "Apply": {
       const expansion = getExpansion(program, expression, frame);
       if (expansion) {
-        return inline(program, expansion.definition, () =>
-          continueWith(expansion.scope, [expansion.definition.body]),
-        );
+        return continueInto(expansion.definition, expansion.scope);
       }
       const args = expression.args;
       // TLC runs the right side of A => B as an action where A holds.
@@ -2572,7 +2575,11 @@ interface CompiledSpec {
 
 const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const unprimed = program.variableTypes.map(() => undefined);
-  const next = compileStep(program, [{ expression: check.next, scope: new Map() }], unprimed);
+  const next = compileStep(
+    program,
+    [{ expression: check.next, scope: new Map(), inlining: [] }],
+    unprimed,
+  );
   const compilePredicate = (expression: Expression) =>
     expectType(compileValue(program, expression, { scope: new Map(), primed: unprimed }), BOOL);
   const invariants = check.invariants.map(compilePredicate);
