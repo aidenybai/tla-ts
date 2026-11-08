@@ -540,7 +540,7 @@ export const createSmtlibReader = (
       )
         throw new SmtUnsupportedError("indexed sorts");
       if (BigInt(width.text) === 0n)
-        throw new SmtParseError("bit-vector size must be greater than zero", width);
+        throw new SmtParseError("bit-vector size must be greater than zero", sexpr.end);
       return manager.mkBvSort(Number(width.text));
     }
     const sort = sorts.get(sexpr.text);
