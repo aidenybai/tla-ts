@@ -36,7 +36,7 @@ if (getVersion(TLAPM_BINARY, ["--version"]) !== REVISION.slice(0, 7)) {
   // HACK: tlapm's own release workflow retries the build, which fails at random (tlapm#88).
   runStep("for attempt in 1 2 3 4 5; do make clean && make && exit 0; done; exit 1", checkout);
   rmSync(TLAPM_DIRECTORY, { recursive: true, force: true });
-  runStep(`dune install --relocatable --prefix ${TLAPM_DIRECTORY}`, checkout);
+  runStep(`dune install --relocatable --prefix _build/tlapm && mv _build/tlapm ${TLAPM_DIRECTORY}`, checkout);
   rmSync(checkout, { recursive: true, force: true });
 }
 const z3Link = join(TLAPM_BACKENDS, "z3");
