@@ -34,6 +34,7 @@ describe("typed tier matches TLC", () => {
     ["RecordMembership", 18],
     ["MaskGroups", 97],
     ["UnionSets", 1417],
+    ["UnionMembership", 161],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([
@@ -43,11 +44,12 @@ describe("typed tier matches TLC", () => {
   });
 
   it.each([
-    ["ActionFails", "Falls"],
-    ["InitialFails", "StartsLow"],
-  ])("reports the property %s violates, as TLC does", async (name, property) => {
+    ["ActionFails", "liveness-violation", "Falls"],
+    ["InitialFails", "liveness-violation", "StartsLow"],
+    ["UnionOutside", "invariant-violation", "TypeOK"],
+  ])("reports the property %s violates, as TLC does", async (name, status, property) => {
     const result = await checkFixture(name, true);
-    expect([result.status, result.violation?.name]).toEqual(["liveness-violation", property]);
+    expect([result.status, result.violation?.name]).toEqual([status, property]);
   });
 
   it("branches on the right side of => only with warnings off, like TLC", async () => {
