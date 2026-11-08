@@ -68,6 +68,7 @@ export const MESSAGE_CODE = {
   version: 2262,
   depthFirstModelChecking: 2271,
   noSpecificationButProperty: 2257,
+  fairnessTautology: 2258,
   noFairnessButProperty: 2259,
   counterExample: 2264,
   checkingTemporalEnd: 2267,

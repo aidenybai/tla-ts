@@ -102,6 +102,8 @@ interface Specification {
   next: Expression | undefined;
   scope: Scope | undefined;
   temporals: ScopedExpression[];
+  // Whether TLC takes every temporal formula of the spec for a part of its only property.
+  isPropertyFairness: boolean;
 }
 
 interface Properties {
@@ -294,6 +296,7 @@ const getSpecification = (
       next: getOperator(config.next, "next state action"),
       scope: undefined,
       temporals: [],
+      isPropertyFairness: false,
     };
   }
   if (config.init !== undefined || config.next !== undefined) {
@@ -311,6 +314,10 @@ const getSpecification = (
       `The value of ${config.specification} is equal to ${formatValue(value)}`,
     );
   }
+  // TLC tags a temporal formula of the spec as a part of a property when it reached the formula
+  // through a definition of the property's name.
+  const property = config.properties.length === 1 ? config.properties[0] : undefined;
+  const untagged = { isFound: false };
   expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
@@ -366,6 +373,7 @@ const getSpecification = (
     }
     const level = getLevel(conjunct, item.scope, environment);
     if (level === TEMPORAL_LEVEL) {
+      if (property === undefined || !item.path.includes(property)) untagged.isFound = true;
       temporals.push(item);
       return;
     }
@@ -414,6 +422,7 @@ const getSpecification = (
     next: nextActions.length === 0 ? undefined : getReference(nextActions[0], initConjuncts.length),
     scope,
     temporals,
+    isPropertyFairness: temporals.length > 0 && !untagged.isFound,
   };
 };
 
@@ -828,6 +837,17 @@ export const createSearch = (
   const configInvariants = getInvariants(config.invariants, environment);
   const spec = getSpecification(config, environment, getVariableOrder, onProgress);
   const properties = getProperties(config, environment, onProgress);
+  const live = config.properties[0];
+  const liveRange = live && getDefinition(live, environment)?.location.range;
+  const specName = config.specification;
+  const specRange = specName && getDefinition(specName, environment)?.location.range;
+  if (spec.isPropertyFairness && liveRange && specRange) {
+    onProgress?.({
+      kind: "warning",
+      code: MESSAGE_CODE.fairnessTautology,
+      text: `Implied-temporal checking is a tautology.\nThe temporal formula ${live} at ${formatRange(liveRange)} equals\nthe fairness constraints of the behavior specification ${specName} at ${formatRange(specRange)}.\nTherefore, checking whether ${specName} => ${live} using TLC will never result in a violation of ${live}.`,
+    });
+  }
   const invariants = getStateChecks([...configInvariants, ...properties.invariants], environment);
   // The invariants TLC evaluates, each of which may have several conjuncts among the checks.
   const invariantPredicates = [
