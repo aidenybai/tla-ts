@@ -241,6 +241,12 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
         kind: "def",
         definition: { kind: "real", name, symbol, params, body },
       });
+    } else if (token.kind === "keyword" && token.text === "$sig") {
+      expect("ident");
+      expect("open");
+      while (isAt("string")) next();
+      expect("close");
+      expect("string");
     } else throw new TlaZenonError(`Zenon: line ${token.line}: unsupported phrase ${token.text}`);
   }
   return phrases;
