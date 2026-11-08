@@ -1963,7 +1963,7 @@ describe("evaluation errors match TLC", () => {
       ],
       [
         "SelectSeq(<<1>>, LAMBDA e: 1) = <<>>",
-        "The second argument of SelectSeq should be a operator, but instead it is:\n1",
+        "The second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator LAMBDA>",
       ],
       ["Cardinality(Nat) = 0", "Attempted to compute cardinality of the value\nNat"],
       ...[
