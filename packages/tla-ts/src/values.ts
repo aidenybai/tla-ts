@@ -25,6 +25,9 @@ export interface SetValue {
   elements: Value[];
   // A set enumeration's unsorted elements, duplicates included, until TLC normalizes it.
   writtenElements: Value[] | undefined;
+  // Whether TLC has normalized the set, so that it checks membership by binary search with
+  // compareTo instead of element by element with equals.
+  isNormalized: boolean;
   hash: number;
   fingerprint: number;
   isFingerprinted: boolean;
@@ -480,10 +483,17 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   kind: "Set",
   elements,
   writtenElements: undefined,
+  isNormalized: false,
   hash: 0,
   fingerprint: 0,
   isFingerprinted: false,
 });
+
+export const createNormalizedSet = (elements: Value[]): SetValue => {
+  const set = createSortedSet(elements);
+  set.isNormalized = true;
+  return set;
+};
 
 export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue => ({
   kind: "Function",
@@ -1054,12 +1064,8 @@ const searchLikeTlc = (element: Value, sorted: Value[]) => {
 const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
   elements.some((member) => callTracedMethod(member, () => equalsLikeTlc(member, element)));
 
-// The sets TLC has normalized, whose membership ValueVec.search checks by binary search with
-// compareTo instead of element by element.
-const normalizedSets = new WeakSet<SetValue>();
-
 export const getWrittenElements = (set: SetValue | MixedSetValue) =>
-  set.kind === "MixedSet" || normalizedSets.has(set)
+  set.kind === "MixedSet" || set.isNormalized
     ? set.elements
     : (set.writtenElements ?? set.elements);
 
@@ -1068,7 +1074,7 @@ export const getWrittenElements = (set: SetValue | MixedSetValue) =>
 export const markNormalized = (value: Value): void => {
   if (typeof value !== "object") return;
   if (value.kind === "Set") {
-    normalizedSets.add(value);
+    value.isNormalized = true;
     value.elements.forEach(markNormalized);
   }
   if (value.kind === "Function") {
@@ -2006,7 +2012,7 @@ const isInSortedSet = (element: Value, set: SetValue) =>
   findSortedIndex(set.elements, element) !== -1;
 
 const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
-  normalizedSets.has(set)
+  set.isNormalized
     ? searchLikeTlc(element, set.elements).isFound
     : isElementOfLikeTlc(element, getWrittenElements(set));
 
@@ -2733,8 +2739,8 @@ export const formatNormalizedCopies = (values: Value[]) => {
     switch (value.kind) {
       case "Set":
         value.elements.forEach(normalize);
-        if (normalizedSets.has(value)) return;
-        normalizedSets.add(value);
+        if (value.isNormalized) return;
+        value.isNormalized = true;
         markedSets.push(value);
         return;
       case "MixedSet":
@@ -2772,7 +2778,9 @@ export const formatNormalizedCopies = (values: Value[]) => {
     values.forEach(normalize);
     return values.map((value) => formatValue(value, true, true));
   } finally {
-    markedSets.forEach((set) => normalizedSets.delete(set));
+    markedSets.forEach((set) => {
+      set.isNormalized = false;
+    });
   }
 };
 

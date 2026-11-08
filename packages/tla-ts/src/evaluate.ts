@@ -37,7 +37,7 @@ import {
   createEnumeratedSet,
   createSortedFunction,
   createSortedRecord,
-  createSortedSet,
+  createNormalizedSet,
   createWrittenRecord,
   createTuple,
   formatValue,
@@ -1776,7 +1776,7 @@ const compileSetComprehension = (
       const base = set(context);
       // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
       if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
-      return createSortedSet(
+      return createNormalizedSet(
         toFiniteSet(base).elements.filter((element) => {
           const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
           if (typeof value !== "boolean") {
