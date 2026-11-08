@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getHeapStatistics } from "node:v8";
 import { isMainThread, parentPort, Worker } from "node:worker_threads";
 import {
   Agent,
@@ -67,6 +68,11 @@ interface TestRun {
   id: string;
   isPassed: boolean;
   reason: string;
+}
+
+interface TestResult {
+  run: TestRun;
+  heapBytes: number;
 }
 
 // The fields of each parse node type, from engine262's declarations, with whether each is a
@@ -937,10 +943,10 @@ const createRunner = () => {
   };
 };
 
-// Each worker runs this many tests, then exits and is replaced, so its memory stays bounded.
-const TESTS_PER_WORKER = 100;
 const WORKER_COUNT = Math.min(4, availableParallelism());
 const WORKER_HEAP_MB = 2048;
+// Loading ESCore takes seconds, so a worker is replaced only once its heap passes half its limit.
+const WORKER_REPLACEMENT_BYTES = (WORKER_HEAP_MB / 2) * 1024 * 1024;
 // One run at a time on the machine, across every worktree, since each run takes several GB.
 const LOCK_DIRECTORY = join(tmpdir(), "tla-ts-test262.lock");
 
@@ -977,13 +983,16 @@ const acquireLock = async () => {
 // process is the unit the main process replaces.
 if (!isMainThread) {
   const run = createRunner();
-  parentPort?.on("message", (path: string) => parentPort?.postMessage(run(path)));
+  parentPort?.on("message", (path: string) => {
+    const result: TestResult = { run: run(path), heapBytes: getHeapStatistics().used_heap_size };
+    parentPort?.postMessage(result);
+  });
 } else if (process.send) {
   const worker = new Worker(new URL(import.meta.url), {
     // The evaluator recurses once per step of a script, so a long loop needs a deep stack.
     resourceLimits: { stackSizeMb: 256, maxOldGenerationSizeMb: WORKER_HEAP_MB },
   });
-  worker.on("message", (run: TestRun) => process.send?.(run));
+  worker.on("message", (result: TestResult) => process.send?.(result));
   process.on("message", (path: string) => worker.postMessage(path));
   worker.on("error", (error) => {
     console.error(`worker crashed: ${String(error).split("\n")[0]}`);
@@ -1024,17 +1033,17 @@ if (!isMainThread) {
       const host = fork(fileURLToPath(import.meta.url), {
         stdio: ["ignore", "inherit", "pipe", "ipc"],
       });
-      const current = { path: "", reason: "worker exited", sent: 0 };
+      const current = { path: "", reason: "worker exited" };
       const send = () => {
-        if (queue.next >= paths.length || current.sent === TESTS_PER_WORKER) return host.kill();
-        current.sent++;
+        if (queue.next >= paths.length) return host.kill();
         current.path = paths[queue.next++];
         host.send(current.path);
       };
-      host.on("message", (run: TestRun) => {
+      host.on("message", (result: TestResult) => {
         current.path = "";
-        report(run);
-        send();
+        report(result.run);
+        if (result.heapBytes > WORKER_REPLACEMENT_BYTES) host.kill();
+        else send();
       });
       // A worker out of memory prints V8's report, of which the first line says why.
       host.stderr?.on("data", (data: Buffer) => {
