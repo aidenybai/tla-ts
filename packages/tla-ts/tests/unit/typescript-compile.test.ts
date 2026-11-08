@@ -254,6 +254,26 @@ describe("top-level statements", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("run a call that needs statements before the call it is the first argument of", async () => {
+    const getSource = (expected: boolean) => `
+      let checked = 0;
+      function check(value: unknown, expected: unknown) {
+        if (value !== expected) throw new Error("unexpected");
+        checked++;
+      }
+      function isThrown() {
+        try {
+          throw new TypeError("thrown");
+        } catch {
+          return true;
+        }
+      }
+      check(isThrown(), ${expected});
+    `;
+    expect(getTrace(await checkModel(getSource(true)))).toEqual([{ checked: "1" }]);
+    expect((await checkModel(getSource(false))).failure?.message).toContain("unexpected");
+  });
+
   it("treat a var as a let, even when declared again", async () => {
     const result = await checkModel(`
       var count = 1;

@@ -930,7 +930,9 @@ const translateNode = (
   if (ts.isElementAccessExpression(node)) {
     return translateElementAccess(node, scope, context, isDefined);
   }
-  if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
+  if (ts.isCallExpression(node)) {
+    return scope.results.get(node) ?? translateCall(node, scope, context, isDefined);
+  }
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
   const functionValue = getFunctionValue(node, context);
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);

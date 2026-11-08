@@ -419,6 +419,30 @@ const translateCallStatement = (
   continueWith: (path: Path, value?: Expression) => Formula,
   isGenerator = false,
 ): Formula => {
+  const first = expression.arguments.at(0);
+  if (
+    first !== undefined &&
+    ts.isCallExpression(first) &&
+    !path.scope.results.has(first) &&
+    isStatementCall(first, path, context)
+  ) {
+    return translateCallStatement(first, path, context, frame, (after, value) =>
+      translateCallStatement(
+        expression,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, [first, value ?? getUndefined(context)]]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
+        isGenerator,
+      ),
+    );
+  }
   const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
     argumentNodes.map((argument) => translateExpression(argument, path.scope, context));
   const heapSymbol = context.heap;
@@ -786,6 +810,21 @@ const isHeapCall = (
   const callee =
     (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
+};
+
+// Whether a function has a try statement of its own, which only statements can run.
+const hasTry = (node: ts.Node): boolean =>
+  ts.isTryStatement(node) || (!ts.isFunctionLike(node) && (ts.forEachChild(node, hasTry) ?? false));
+
+// A call that only statements can run, which a call that evaluates it first runs before itself.
+const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) => {
+  const symbol = getSymbol(node.expression, context.checker);
+  const callee =
+    (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
+  return (
+    isHeapCall(node, path, context) ||
+    (callee?.body !== undefined && ts.forEachChild(callee.body, hasTry) === true)
+  );
 };
 
 // Makes the objects that a node's object literals create, before the statement that evaluates
