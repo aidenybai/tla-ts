@@ -6,7 +6,7 @@ import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { grow, shrink } from "./array";
 import type { DatatypeDef } from "./datatype-decl-plugin";
-import { AlgebraicManager, type Anum } from "./nlsat/algebraic";
+import { AlgebraicManager, Anum } from "./nlsat/algebraic";
 import type { Mpf } from "./mpf";
 import type { ResourceLimit } from "./rlimit";
 
@@ -1714,6 +1714,11 @@ export class AstManager {
     return this.algebraicNumerals[this.values[expr]].value;
   }
 
+  private getAnumOrNumeral(expr: number) {
+    if (this.isAlgebraicNumeral(expr)) return this.getAlgebraicValue(expr);
+    return this.isNumeral(expr) ? new Anum(this.getRationalValue(expr)) : undefined;
+  }
+
   getAlgebraicId(expr: number) {
     return this.algebraicNumerals[this.values[expr]].id;
   }
@@ -1912,6 +1917,8 @@ export class AstManager {
     const op = this.getOp(expr);
     return (
       op === OP_NUM ||
+      op === OP_PI ||
+      op === OP_E ||
       op === OP_TRUE ||
       op === OP_FALSE ||
       op === OP_MODEL_VALUE ||
@@ -1942,6 +1949,7 @@ export class AstManager {
     if (this.getOp(current) === OP_DT_CONSTRUCTOR || this.getOp(current) === OP_FPA_FP)
       return this.mapArgs(current, (arg) => this.isValue(arg)).every((isValue) => isValue);
     if (this.getOp(current) >= OP_FPA_NUM && this.getOp(current) <= OP_FPA_MINUS_ZERO) return true;
+    if (this.getOp(current) === OP_ALGEBRAIC_NUM) return true;
     return current === expr && this.isUniqueValue(expr);
   }
 
@@ -1964,6 +1972,14 @@ export class AstManager {
       (family === FAMILY_USER ? this.funcDecls[this.decls[second]].family : family) !== FAMILY_ARITH
     )
       return false;
+    const firstValue = this.getAnumOrNumeral(first);
+    const secondValue = this.getAnumOrNumeral(second);
+    if (
+      firstValue !== undefined &&
+      secondValue !== undefined &&
+      (this.isAlgebraicNumeral(first) || this.isAlgebraicNumeral(second))
+    )
+      return this.am.compare(firstValue, secondValue) !== 0;
     const isOffsetOf = (sum: number, term: number) => {
       if (this.getOp(sum) !== OP_ADD || this.getNumArgs(sum) !== 2) return false;
       const first = this.getArg(sum, 0);

@@ -1,6 +1,5 @@
 // Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_DIV, OP_DIV0, OP_IDIV, OP_IDIV0, OP_MOD, OP_MOD0 } from "./ast";
-import { SmtUnsupportedError } from "../../../errors";
 import { Enode } from "./enode";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
@@ -141,11 +140,12 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     )
       return this.getValueExpr(thVar);
     // nlsat's value, zero for an integer whose value is not one.
-    const value = this.getNlValue(nla, thVar).value;
+    const value = this.getNlValue(nla, thVar);
     if (this.isIntVar(thVar))
-      return this.manager.mkNumeral(value instanceof Rational && value.isInt() ? value.num : 0n);
-    if (!(value instanceof Rational)) throw new SmtUnsupportedError("an irrational model value");
-    return this.manager.mkRealNumeral(value);
+      return this.manager.mkNumeral(
+        value.value instanceof Rational && value.value.isInt() ? value.value.num : 0n,
+      );
+    return this.manager.mkAlgebraicNumeral(value);
   }
 
   private isEq(first: number, second: number) {
