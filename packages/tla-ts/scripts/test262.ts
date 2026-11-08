@@ -229,11 +229,33 @@ const loosen = () => {
           : declared.name.getEnd();
       edits.set(end, isRest ? ": unknown[]" : ": unknown");
     }
+    // A function that reads this may be a constructor, whose instance gets any property.
+    const receiving =
+      diagnostic.code === 2683
+        ? ts.findAncestor(
+            node,
+            (ancestor) => ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor),
+          )
+        : undefined;
+    if (
+      receiving !== undefined &&
+      (ts.isFunctionDeclaration(receiving) || ts.isFunctionExpression(receiving))
+    ) {
+      edits.set(
+        receiving.parameters.pos,
+        receiving.parameters.length === 0
+          ? "this: { [key: string]: unknown }"
+          : "this: { [key: string]: unknown }, ",
+      );
+    }
     // A test may call new on a function that isn't a constructor, to check that it throws.
     const created = ts.findAncestor(node, ts.isNewExpression);
     if (diagnostic.code === 7009 && created !== undefined) {
       edits.set(created.expression.getStart(), "(");
-      edits.set(created.expression.getEnd(), " as unknown as new (...args: unknown[]) => unknown)");
+      edits.set(
+        created.expression.getEnd(),
+        " as unknown as new (...args: unknown[]) => { [key: string]: unknown })",
+      );
     }
     const literal = ts.findAncestor(node, ts.isObjectLiteralExpression);
     if (diagnostic.code === 2322 && literal && isDescriptor(checker.getContextualType(literal))) {
