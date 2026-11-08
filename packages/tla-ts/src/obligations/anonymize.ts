@@ -13,6 +13,7 @@ import {
   findNamed,
   getBoundFresh,
   getErrorNote,
+  getErrorSetting,
   getFresh,
   getLocalDefn,
   getLocusPrefix,
@@ -27,6 +28,7 @@ import {
   type Expr,
   type ExprCore,
   type Hyp,
+  type Locus,
   type Warn,
   type ParenForm,
   type Scope,
@@ -34,6 +36,8 @@ import {
   type Sequent,
   type WhereDefined,
 } from "./expression";
+import { renderDoc } from "./format";
+import { printExpression } from "./printer";
 import { resolveSubexpression } from "./subexpression";
 import { getTime } from "./temporal";
 import {
@@ -141,6 +145,7 @@ export const createAnonymizer = (
     if (!found) {
       const message = `Operator "${name}" not found`;
       onWarning(getErrorNote(from.location, message));
+      onWarning(getErrorSetting(from.location, message));
       throw new TlaProofError(message, { failure: "Expr.Anon: 4" });
     }
     const index = found.depth + 1;
@@ -151,10 +156,11 @@ export const createAnonymizer = (
         if (definition.kind === "Operator") {
           return standardForm(index, hyp.whereDefined, definition.body, args, from);
         }
-        if (definition.kind === "Recursive")
-          throw new TlaProofError("Recursive operators not supported by TLAPS", {
-            failure: "Expr.Anon: Recursive",
-          });
+        if (definition.kind === "Recursive") {
+          const message = "Recursive operators not supported by TLAPS";
+          onWarning(getErrorSetting(hyp.location, message));
+          throw new TlaProofError(message, { failure: "Expr.Anon: Recursive" });
+        }
         return anonApply(index, args, from);
       }
       case "Fresh":
@@ -193,6 +199,7 @@ export const createAnonymizer = (
       }
       const message = `Operator "${prefix}" not found`;
       if (selector) onWarning(getErrorNote(from.location, message));
+      onWarning(getErrorSetting(from.location, message));
       throw new TlaProofError(message, {
         failure: `Expr.Anon: ${selector ? ANON_SELECTOR_FAILURES[selector.kind] : "1EMPTY"}`,
       });
@@ -202,7 +209,14 @@ export const createAnonymizer = (
       hyp.kind !== "Defn" ||
       (hyp.definition.kind !== "Operator" && hyp.definition.kind !== "Bpragma")
     ) {
-      throw new TlaProofError("invalid subexpression reference");
+      onWarning(
+        getErrorNote(
+          from.location,
+          `invalid subexpression reference in:  ${renderDoc(printExpression([], from))}`,
+        ),
+      );
+      onWarning(getErrorSetting(from.location, "invalid subexpression reference"));
+      throw new TlaProofError("invalid subexpression reference", { failure: "Expr.Anon: 3" });
     }
     const index = found.depth + 1;
     if (selectors.length === 0 && isInstance) {
@@ -251,21 +265,30 @@ export const createAnonymizer = (
         return {
           ...expression,
           expression: expr(context, expression.expression),
-          form: anonParenForm(context, expression.form),
+          form: anonParenForm(context, expression.form, expression.location),
         };
       default:
         return visit(context, expression);
     }
   };
 
-  const anonParenForm = (context: AnonContext, form: ParenForm): ParenForm => {
+  const anonParenForm = (
+    context: AnonContext,
+    form: ParenForm,
+    location: Locus | undefined,
+  ): ParenForm => {
     if (form.kind !== "Nlabel") return form;
     return {
       kind: "Xlabel",
       label: form.label,
       indices: form.names.map((name) => {
         const found = findNamed(context.scope, name);
-        if (!found) throw new TlaProofError(`Identifier "${name}" in label parameters not found`);
+        if (!found) {
+          const message = `Identifier "${name}" in label parameters not found`;
+          onWarning(getErrorNote(location, message));
+          onWarning(getErrorSetting(location, message));
+          throw new TlaProofError(message, { failure: "Expr.Anon" });
+        }
         return { name, index: found.depth + 1 };
       }),
     };

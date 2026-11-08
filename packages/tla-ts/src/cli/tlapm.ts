@@ -105,12 +105,35 @@ const UNPROVED_ENDING = [
   "",
 ].join("\n");
 
-const generateObligations = (generate: () => ModuleObligations[]) => {
+// Errors.loc and Errors.msg, which each Errors.set replaces and prepends to.
+interface ErrorSetting {
+  location?: string;
+  message: string;
+}
+
+// Tlapm_lib.init: when tlapm ends abnormally, the toolbox reports what Errors.set recorded, or a bug.
+const generateObligations = (
+  generate: (errorSetting: ErrorSetting) => ModuleObligations[],
+  isToolbox: boolean,
+) => {
+  const errorSetting: ErrorSetting = { message: "" };
   try {
-    return generate();
+    return generate(errorSetting);
   } catch (error) {
     if (!(error instanceof TlaProofError)) throw error;
     console.error(` tlapm ending abnormally with ${error.exception}\n`);
+    if (!isToolbox) return undefined;
+    if (errorSetting.message === "")
+      printToolboxMessage([
+        "type:error",
+        "url:http://tla.msr-inria.inria.fr/bugs",
+        `msg:Oops, this seems to be a bug in TLAPM.\nPlease give feedback to developers.\n\n\n ${error.exception}\n`,
+      ]);
+    else
+      printToolboxMessage([
+        "type:warning",
+        `msg:${errorSetting.location === undefined ? "" : `${errorSetting.location}\n\n`}${errorSetting.message}`,
+      ]);
     return undefined;
   }
 };
@@ -349,7 +372,7 @@ export const runTlapm = async (args: string[]) => {
     getLibraryDirectories(parsed),
   );
   const moduleNames = new Set<string>();
-  const modules = generateObligations(() => {
+  const modules = generateObligations((errorSetting) => {
     const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
     if (missingIndex !== -1) {
       const missing = files[missingIndex];
@@ -371,6 +394,11 @@ export const runTlapm = async (args: string[]) => {
         lines,
         printing,
         onWarning: (warning) => {
+          if (warning.channel === "error") {
+            errorSetting.location = warning.locus && getLocusText(warning.locus);
+            errorSetting.message = `${warning.text}\n\n${errorSetting.message}`;
+            return;
+          }
           if (warning.channel === "stdout") return console.log(warning.text);
           const isToolboxMessage =
             warning.channel === "toolbox" || warning.channel === "toolboxOnly";
@@ -380,7 +408,7 @@ export const runTlapm = async (args: string[]) => {
         },
       },
     );
-  });
+  }, isToolbox);
   if (!modules) return TLAPM_FAILURE_STATUS;
   const cacheDirectory =
     parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
