@@ -1746,8 +1746,10 @@ export const generateSanySpecification = (
           : findNameOrKeyword(cursor.value, param.name);
         const paramSpan = getOperatorSpan(index, param.arity);
         cursor.value = paramSpan.end + 1;
+        // SANY keeps the spelling of a prefix parameter, so ~ _ does not redefine \lnot.
+        const isPrefix = param.arity === 1 && isToken(file, index + 1, "_");
         return createFormalParam(
-          resolveSynonym(param.name),
+          isPrefix ? (file.tokens[index].spelling ?? param.name) : resolveSynonym(param.name),
           param.arity,
           getSpanLocation(file, paramSpan),
           isAdded,
