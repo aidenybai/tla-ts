@@ -1,6 +1,7 @@
 // Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_ARITH,
+  KIND_APP,
   OP_ADD,
   OP_DIV,
   OP_DIV0,
@@ -10,6 +11,7 @@ import {
   OP_MOD0,
   OP_MUL,
   OP_NUM,
+  OP_POWER,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
@@ -43,6 +45,8 @@ interface Scope {
   assertedAtomsLimit: number;
   numVars: number;
 }
+
+const MAX_POWER_DEGREE = 10n;
 
 interface LinearizedSum {
   vars: number[];
@@ -96,7 +100,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return column;
   }
 
-  private mkVar(expr: number) {
+  protected mkVar(expr: number) {
     const node = this.getInternalizedEnode(expr);
     if (this.isAttachedToVar(node)) return node.getThVar(this.id);
     const thVar = this.varEnodes.length;
@@ -197,6 +201,34 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
       this.solver.registerExistingTerms();
       this.ensureNla().addMonic(this.registerVar(thVar), vars);
     }
+    return thVar;
+  }
+
+  private getPowerDegree(power: number) {
+    const manager = this.manager;
+    if (manager.kinds[manager.getArg(power, 0)] !== KIND_APP) return undefined;
+    const degree = this.getExtendedNumeral(manager.getArg(power, 1));
+    return degree !== undefined &&
+      degree.isInt() &&
+      degree.num > 0n &&
+      degree.num <= MAX_POWER_DEGREE
+      ? Number(degree.num)
+      : undefined;
+  }
+
+  private internalizePower(power: number, degree: number) {
+    this.internalizeArgs(power);
+    const hasVar = this.context.isEInternalized(power) && this.isAttachedExpr(power);
+    this.mkEnode(power);
+    const thVar = this.mkVar(power);
+    if (hasVar) return thVar;
+    const base = this.manager.getArg(power, 0);
+    this.internalizeTermCore(base);
+    const baseVar = this.mkVar(base);
+    const vars = Array.from({ length: degree }, () => this.registerVar(baseVar));
+    const nla = this.ensureNla();
+    this.solver.registerExistingTerms();
+    nla.addMonic(this.registerVar(thVar), vars);
     return thVar;
   }
 
@@ -303,6 +335,9 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
       } else if (op === OP_MUL) {
         addVar(index, this.internalizeMul(term));
         index++;
+      } else if (op === OP_POWER && this.getPowerDegree(term) !== undefined) {
+        addVar(index, this.internalizePower(term, this.getPowerDegree(term)!));
+        index++;
       } else if (op === OP_NUM) {
         addVar(index, this.internalizeNumeral(term, manager.getRationalValue(term)));
         index++;
@@ -373,6 +408,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
               toEnsureVar.push(arg);
             }
           } else if (op !== OP_TO_INT && op !== OP_DIV0) {
+            if (op === OP_POWER) this.ensureNla();
             this.foundUnsupported(term);
             for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
               const arg = manager.getArg(term, argIndex);

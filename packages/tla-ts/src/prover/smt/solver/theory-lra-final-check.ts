@@ -1,5 +1,16 @@
 // Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
-import { OP_ADD, OP_GE, OP_LE, OP_MUL, OP_TO_REAL, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
+import {
+  OP_ADD,
+  OP_GE,
+  OP_LE,
+  OP_MUL,
+  OP_POWER,
+  OP_POWER0,
+  OP_TO_REAL,
+  SORT_BOOL,
+  SORT_INT,
+  SORT_REAL,
+} from "./ast";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./theory";
 import { TheoryJustification } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -46,8 +57,44 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     if (nlaStatus === FC_GIVEUP) result = FC_GIVEUP;
     if (this.assumeEqs()) return FC_CONTINUE;
     if (this.unsupportedTerms.length > 0) this.initVariableValues();
-    // eval_unsupported gives up on every term but powers, which are not supported here.
-    return this.unsupportedTerms.some((term) => context.isRelevant(term)) ? FC_GIVEUP : result;
+    for (const term of this.unsupportedTerms) {
+      if (!context.isRelevant(term)) continue;
+      const status = this.evalUnsupported(term);
+      if (status === FC_CONTINUE) return FC_CONTINUE;
+      if (status === FC_GIVEUP) result = FC_GIVEUP;
+    }
+    return result;
+  }
+
+  private evalUnsupported(term: number) {
+    const manager = this.manager;
+    const op = manager.getOp(term);
+    if (op === OP_POWER0) return FC_DONE;
+    if (op !== OP_POWER) return FC_GIVEUP;
+    const base = manager.getArg(term, 0);
+    const exponent = manager.getArg(term, 1);
+    const isZero = (expr: number) =>
+      manager.isNumeral(expr) && manager.getRationalValue(expr).isZero();
+    if (isZero(base) && isZero(exponent)) return FC_DONE;
+    const nla = this.nla;
+    if (nla === undefined) return FC_GIVEUP;
+    const status = nla.checkPower(
+      this.getLpVar(term),
+      this.getLpVar(base),
+      this.getLpVar(exponent),
+    );
+    if (status === L_TRUE) return FC_DONE;
+    if (status === L_FALSE) {
+      this.addLemmas(nla);
+      return FC_CONTINUE;
+    }
+    return FC_GIVEUP;
+  }
+
+  private getLpVar(expr: number) {
+    const thVar = this.mkVar(expr);
+    this.solver.registerExistingTerms();
+    return this.registerVar(thVar);
   }
 
   private checkNla(level: number) {

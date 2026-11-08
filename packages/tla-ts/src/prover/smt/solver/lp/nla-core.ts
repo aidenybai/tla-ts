@@ -33,6 +33,7 @@ import { MonomialBounds } from "./nla-monomial-bounds";
 import { Monotone } from "./nla-monotone";
 import { Order } from "./nla-order";
 import { Patcher } from "./nla-patcher";
+import { checkPower } from "./nla-powers";
 import { Tangents } from "./nla-tangents";
 import { NlaThrottle } from "./nla-throttle";
 import {
@@ -607,6 +608,12 @@ export class NlaCore {
 
   isCanceled() {
     return this.settings.isCanceled();
+  }
+
+  checkPower(result: number, base: number, exponent: number) {
+    this.clear();
+    if (this.lra.isFeasible()) this.lra.getRidOfInfEps();
+    return checkPower(this, result, base, exponent);
   }
 
   checkBoundedDivisions() {

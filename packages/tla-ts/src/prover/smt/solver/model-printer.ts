@@ -14,6 +14,7 @@ import {
   OP_DIV0,
   OP_IDIV0,
   OP_MOD0,
+  OP_POWER0,
 } from "./ast";
 import { ObjHashtable } from "./hashtable";
 import type { ProtoModel } from "./proto-model";
@@ -36,7 +37,7 @@ import {
 const TAB_SIZE = 2;
 
 const CONSIDERED_UNINTERPRETED_OPS = new Map([
-  [FAMILY_ARITH, new Set([OP_DIV0, OP_IDIV0, OP_MOD0])],
+  [FAMILY_ARITH, new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0])],
   [FAMILY_BV, new Set([OP_BSDIV0, OP_BUDIV0, OP_BSREM0, OP_BUREM0, OP_BSMOD0])],
 ]);
 
