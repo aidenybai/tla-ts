@@ -1913,7 +1913,9 @@ export const createSmtlibReader = (
       const coerced = coerce(body, range);
       if (manager.sorts[coerced] !== range)
         throw new SmtParseError(
-          `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[body])}`,
+          isConst
+            ? "invalid constant definition, sort mismatch"
+            : "invalid function/constant definition, sort mismatch",
           list.end,
         );
       manager.incRef(coerced);
