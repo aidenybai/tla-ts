@@ -43,11 +43,13 @@ import {
   isOverriddenSet,
   computeLikeTlcOnFailure,
   isReducibleSet,
+  markNormalized,
   markStreamedSet,
   isSetValue,
   toFiniteSet,
   getSortedUnion,
   getValueKey,
+  getWrittenElements,
   isEqualLikeTlc,
   createEnumeratedSet,
   EMPTY_SET,
@@ -70,7 +72,9 @@ interface StandardModule {
 const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
 
+// SpecProcessor defines BOOLEAN as a normalized set enumeration.
 const BOOLEAN_SET = createSet([false, true]);
+markNormalized(BOOLEAN_SET);
 
 // Merging the sets pairwise in a balanced tree compares each element about log2 of their count
 // times.
@@ -93,7 +97,7 @@ const combineReducible = (
   set: ReducibleSet,
   other: Value,
 ): Value => {
-  const elements = set.kind === "Interval" ? toFiniteSet(set).elements : set.elements;
+  const elements = set.kind === "Interval" ? toFiniteSet(set).elements : getWrittenElements(set);
   if (operator !== "\\cup") {
     const isKept = operator === "\\cap";
     return createEnumeratedSet(
@@ -147,11 +151,20 @@ export const CORE_OPERATORS: Builtin[] = [
     defineOperator(operator, 2, (args) => {
       const left = getValue(args, 0, operator);
       const right = getValue(args, 1, operator);
+      // A set enumeration filters itself by membership in an interval, which TLC never
+      // enumerates then.
+      const isFilteredByInterval =
+        operator !== "\\cup" &&
+        typeof right === "object" &&
+        right.kind === "Interval" &&
+        typeof left === "object" &&
+        left.kind !== "Interval";
       if (
         isReducibleSet(left) &&
         isReducibleSet(right) &&
         !isMixedSet(left) &&
-        !isMixedSet(right)
+        !isMixedSet(right) &&
+        !isFilteredByInterval
       ) {
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =

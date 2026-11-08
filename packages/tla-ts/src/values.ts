@@ -20,9 +20,12 @@ interface LazySet {
   isFingerprinted?: boolean;
 }
 
+// TLC keeps the elements of a set enumeration in the order it computed them, duplicates and all,
+// until it normalizes the set. writtenElements holds that order when it isn't sorted.
 export interface SetValue {
   kind: "Set";
   elements: Value[];
+  writtenElements: Value[] | undefined;
   hash: number;
   fingerprint: number;
   isFingerprinted: boolean;
@@ -475,6 +478,7 @@ export const createModelValue = (name: string): ModelValue => {
 export const createSortedSet = (elements: Value[]): SetValue => ({
   kind: "Set",
   elements,
+  writtenElements: undefined,
   hash: 0,
   fingerprint: 0,
   isFingerprinted: false,
@@ -1057,6 +1061,13 @@ const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
 // compareTo instead of element by element.
 const normalizedSets = new WeakSet<SetValue>();
 
+// SetEnumValue#member and the set operations of Reducible go through the elements of a set that
+// TLC hasn't normalized in the order TLC computed them.
+export const getWrittenElements = (set: SetValue | MixedSetValue) =>
+  set.kind === "MixedSet" || normalizedSets.has(set)
+    ? set.elements
+    : (set.writtenElements ?? set.elements);
+
 // IValue.deepNormalize, which TLC applies to the constants of the config and the constant
 // definitions it computes as it starts.
 export const markNormalized = (value: Value): void => {
@@ -1095,13 +1106,16 @@ export const createSet = (elements: Value[]): SetValue => {
 
 // TLC builds a set enumeration without sorting it, so one whose elements it can't compare still
 // evaluates.
-export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue =>
-  computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
+export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
+  const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
     createSet,
     (mixed) => ({ kind: "MixedSet", elements: mixed }),
     elements,
     undefined,
   );
+  if (set.kind === "Set" && set.elements !== elements) set.writtenElements = elements;
+  return set;
+};
 
 export const EMPTY_SET = createSortedSet([]);
 
@@ -1988,7 +2002,7 @@ const isInSortedSet = (element: Value, set: SetValue) =>
 const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
   normalizedSets.has(set)
     ? searchLikeTlc(element, set.elements).isFound
-    : isElementOfLikeTlc(element, set.elements);
+    : isElementOfLikeTlc(element, getWrittenElements(set));
 
 const isElementOfSet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
