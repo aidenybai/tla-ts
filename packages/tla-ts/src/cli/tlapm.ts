@@ -24,7 +24,7 @@ import {
   type BackendSettings,
   type ProofAttempt,
 } from "../prover/prove";
-import { TLAPS_MODULE } from "../prover/tlaps-module";
+import { TLAPM_LIBRARY } from "../prover/tlapm-library";
 import type { Decision } from "../prover/verdict";
 import { getTlapmPaths } from "../prover/tlapm/tlapm";
 import {
@@ -354,7 +354,7 @@ export const runTlapm = async (args: string[]) => {
     if (option.name === "--line") return start === 0 ? WHOLE_MODULE : { start, end: start };
     return range;
   }, WHOLE_MODULE);
-  // tlapm also searches each module's directory. Without tlapm, TLAPS is tla-ts's copy.
+  // tlapm also searches each module's directory. Without tlapm, its library is tla-ts's copy.
   const directories = modulePaths.reduce(
     (found, path) => (found.includes(dirname(path)) ? found : [dirname(path), ...found]),
     getLibraryDirectories(parsed),
@@ -376,7 +376,8 @@ export const runTlapm = async (args: string[]) => {
           .map((directory) => `${directory}/${name}.tla`)
           .find((path) => existsSync(path));
         if (file !== undefined) return { file, source: readFileSync(file, "utf8") };
-        return name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined;
+        const source = TLAPM_LIBRARY.get(name);
+        return source === undefined ? undefined : { file: `${name}.tla`, source };
       },
       {
         lines,

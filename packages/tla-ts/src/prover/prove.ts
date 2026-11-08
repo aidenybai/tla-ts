@@ -31,7 +31,7 @@ import { encodeSmt } from "./smt/encode";
 import type { EncodingSession } from "./smt/rewrite";
 import { encodeZenon } from "./zenon/encode";
 import type { TlapmResult } from "./tlapm/tlapm";
-import { TLAPS_MODULE } from "./tlaps-module";
+import { TLAPM_LIBRARY } from "./tlapm-library";
 import type { Decision } from "./verdict";
 
 interface ObligationBase {
@@ -620,7 +620,7 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
     (moduleName) => {
       const source = options.loadModule?.(moduleName);
       if (source !== undefined) modules.set(moduleName, source);
-      const loaded = source ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
+      const loaded = source ?? TLAPM_LIBRARY.get(moduleName);
       return loaded === undefined ? undefined : { file: `${moduleName}.tla`, source: loaded };
     },
   );

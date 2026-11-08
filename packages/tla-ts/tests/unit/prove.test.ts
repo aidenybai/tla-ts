@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { prove, type ProofObligation, type ProveOptions, TlaUnsupportedError } from "../../src";
 import { getObligations } from "../../src/obligations";
 import { encodeForBackend } from "../../src/prover/prove";
-import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
+import { TLAPM_LIBRARY } from "../../src/prover/tlapm-library";
 
 // HourClock and Simple come from tlaplus/Examples. Each .smt file is the input tlapm sent to its
 // SMT solver for that obligation.
@@ -32,7 +32,7 @@ const encodeFixture = (name: string, id: number) => {
   const obligation = getObligations(
     [{ file: `${name}.tla`, source: loadModule(name) ?? "" }],
     (moduleName) => {
-      const source = loadModule(moduleName) ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
+      const source = loadModule(moduleName) ?? TLAPM_LIBRARY.get(moduleName);
       return source === undefined ? undefined : { file: `${moduleName}.tla`, source };
     },
   )
