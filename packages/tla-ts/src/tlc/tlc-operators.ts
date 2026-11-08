@@ -157,7 +157,6 @@ const normalizeDeeply = (value: Value): void => {
   if (value.kind === "Function") value.range.forEach(normalizeDeeply);
 };
 
-// TLCEval#convert: Value#toSetEnum, or else Value#toFcnRcd, or else the value itself.
 const convertLikeTlcEval = (value: Value): Value => {
   if (typeof value !== "object") return value;
   switch (value.kind) {

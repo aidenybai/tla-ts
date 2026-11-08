@@ -51,7 +51,6 @@ export interface ScopedExpression {
 // a conjunct's location, or the name of the definition the part is the body of.
 interface ExpandedExpression extends ScopedExpression {
   name: string | undefined;
-  // The names of the definitions the expansion entered to reach the expression.
   path: string[];
 }
 
