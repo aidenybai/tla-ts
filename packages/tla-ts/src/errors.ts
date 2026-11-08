@@ -193,6 +193,15 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
+// A NullPointerException in a standard module's Java code. It keeps the name TlaEvaluationError,
+// and index.ts doesn't export it.
+export class TlaNullPointerError extends TlaEvaluationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+  }
+}
+
 export class TlaUnsupportedOperationError extends TlaEvaluationError {
   constructor(message: string) {
     super(message);

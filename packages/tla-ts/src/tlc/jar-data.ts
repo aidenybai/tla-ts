@@ -929,6 +929,55 @@ _PrintCounts == PrintT(_Counts)
 // them in TLC's errors.
 export const TLC_JAVA_METHODS = new Map([
   [
+    "Bags",
+    new Map([
+      [
+        "IsABag",
+        "public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value)",
+      ],
+      [
+        "BagCardinality",
+        "public static tlc2.value.impl.IntValue tlc2.module.Bags.BagCardinality(tlc2.value.impl.Value)",
+      ],
+      [
+        "BagIn",
+        "public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "CopiesIn",
+        "public static tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "\\oplus",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagCup(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "\\ominus",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagDiff(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "BagUnion",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagUnion(tlc2.value.impl.Value)",
+      ],
+      [
+        "\\sqsubseteq",
+        "public static tlc2.value.IBoolValue tlc2.module.Bags.SqSubseteq(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "BagOfAll",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagOfAll(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "BagToSet",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagToSet(tlc2.value.impl.Value)",
+      ],
+      [
+        "SetToBag",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.SetToBag(tlc2.value.impl.Value)",
+      ],
+    ]),
+  ],
+  [
     "FiniteSets",
     new Map([
       [

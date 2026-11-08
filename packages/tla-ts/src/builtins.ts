@@ -1,4 +1,4 @@
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { TlaEvaluationError, TlaModuleError, TlaNullPointerError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import {
   formatValue,
@@ -229,14 +229,15 @@ export const getJavaClassName = (value: Value) => {
 
 export const getKindString = (value: Value) => KIND_STRINGS[getJavaClassName(value)];
 
+const getJavaOverrideMessage = (signature: string, message: string) =>
+  `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`;
+
 export const createJavaOverrideError = (signature: string, message: string) =>
-  new TlaEvaluationError(
-    `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`,
-  );
+  new TlaEvaluationError(getJavaOverrideMessage(signature, message));
 
 // TLC reports a failure inside an operator's Java method as a failure of the method, except an
-// EvalException that the method raises itself. A method that evaluates its own arguments reports
-// every failure that way.
+// EvalException that the method raises itself, and as an EvalException for a NullPointerException.
+// A method that evaluates its own arguments reports every failure as a failure of the method.
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
   const reportAsJavaFailure =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
@@ -251,6 +252,9 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
         if (!isWrapped) throw error;
         // The wrapping error replaces a FingerprintException that a set with a source raised.
         if (setTrace.sets) setTrace.sets.length = depth;
+        if (builtin.isLazy !== true && error instanceof TlaNullPointerError) {
+          throw new TlaModuleError(getJavaOverrideMessage(signature, error.message));
+        }
         throw createJavaOverrideError(signature, error.message);
       }
     };

@@ -560,7 +560,7 @@ export const getStandardModule = (
     case "Json":
       return { extends: [], operators: createJsonOperators(files) };
     case "Bags":
-      return { extends: [], operators: createBagsOperators(builtins) };
+      return { extends: [], operators: withJavaMethods("Bags", createBagsOperators(builtins)) };
     case "TLCExt":
       return { extends: [], operators: createTlcExtOperators(print, runtime) };
     default:
