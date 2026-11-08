@@ -54,11 +54,15 @@ export const getErrorClass = (
   return inherited === undefined ? undefined : [symbol, ...inherited];
 };
 
-export const getConstructor = (symbol: ts.Symbol, context: Context, preferred = symbol.name) => {
-  const existing = context.constructors.get(symbol);
+export const getConstructor = (
+  key: ts.Symbol | ts.Node,
+  context: Context,
+  preferred = "name" in key && typeof key.name === "string" ? key.name : "function",
+) => {
+  const existing = context.constructors.get(key);
   if (existing !== undefined) return identifier(existing);
   const name = context.names.getFresh(preferred);
-  context.constructors.set(symbol, name);
+  context.constructors.set(key, name);
   return identifier(name);
 };
 

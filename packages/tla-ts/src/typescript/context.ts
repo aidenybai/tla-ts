@@ -22,7 +22,7 @@ export interface Context {
   output: OperatorDefinition[];
   // String literals of @symmetric types, which become model values.
   modelValues: Map<string, string>;
-  constructors: Map<ts.Symbol, string>;
+  constructors: Map<ts.Symbol | ts.Node, string>;
   // Model values and helper operators that the spec uses.
   prelude: Set<"Null" | "Undefined" | "Rem" | "Quot" | "JavaScript">;
   // The calls that the exported function being compiled makes and tla-ts can't compile.
@@ -55,7 +55,9 @@ export type FunctionNode =
   | ts.ArrowFunction
   | ts.FunctionExpression
   | ts.MethodDeclaration
-  | ts.ConstructorDeclaration;
+  | ts.ConstructorDeclaration
+  | ts.GetAccessorDeclaration
+  | ts.SetAccessorDeclaration;
 
 export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 
@@ -223,6 +225,28 @@ const isPlainMethod = (node: ts.Node): node is ts.MethodDeclaration =>
   !ts.isPrivateIdentifier(node.name) &&
   !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
 
+export const isClassAccessor = (
+  node: ts.Node,
+): node is ts.GetAccessorDeclaration | ts.SetAccessorDeclaration =>
+  (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
+  node.body !== undefined &&
+  (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name));
+
+// The getter of a heap class that a property read names, which the read checks the object still
+// holds.
+export const getClassGetter = (node: ts.PropertyAccessExpression, context: Context) => {
+  if (context.heap === undefined) return undefined;
+  const getter = getSymbol(node.name, context.checker)?.declarations?.find(
+    ts.isGetAccessorDeclaration,
+  );
+  return getter !== undefined &&
+    isClassAccessor(getter) &&
+    ts.isClassLike(getter.parent) &&
+    isHeapClass(getter.parent, context)
+    ? getter
+    : undefined;
+};
+
 const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&
   (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
@@ -321,6 +345,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context) => 
         ts.isSemicolonClassElement(member) ||
         (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
         isPlainMethod(member) ||
+        isClassAccessor(member) ||
         (ts.isPropertyDeclaration(member) && !isStatic(member) && ts.isIdentifier(member.name)),
     ) &&
     !isAssigned(symbol, node.getSourceFile(), context);
@@ -381,7 +406,7 @@ export const getObjectMethod = (node: ts.Node | undefined, context: Context) =>
     : undefined;
 
 export interface CalledMethod {
-  method: ts.MethodDeclaration;
+  method: ts.MethodDeclaration | ts.GetAccessorDeclaration;
   receiver: ts.Expression;
   key: string;
 }

@@ -9,6 +9,7 @@ import {
   getRunConstructor,
   getSymbol,
   getUndefined,
+  isClassAccessor,
   isHeapClass,
   isStatementNew,
   isMethodCall,
@@ -95,7 +96,7 @@ const getConstantResult = (node: FunctionNode, context: Context) => {
 // literal.
 const getModelValue = (
   node: FunctionNode,
-  symbol: ts.Symbol,
+  symbol: ts.Symbol | ts.Node,
   preferred: string,
   context: Context,
 ) => {
@@ -123,11 +124,27 @@ export const translateFunctionValue = (
 };
 
 // A model value that names a method of an object literal.
-export const getMethodValue = (method: ts.MethodDeclaration, context: Context) => {
+export const getMethodValue = (
+  method: ts.MethodDeclaration | ts.GetAccessorDeclaration,
+  context: Context,
+) => {
+  if (ts.isGetAccessorDeclaration(method)) return getAccessorValue(method, context);
   const symbol = getSymbol(method.name, context.checker);
   if (symbol === undefined) throw new TlaTypeScriptError("Name this method", method);
   return getModelValue(method, symbol, `${method.name.getText()}Method`, context);
 };
+
+// A getter or setter has its own value, though it shares its property's symbol.
+export const getAccessorValue = (
+  accessor: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+  context: Context,
+) =>
+  getModelValue(
+    accessor,
+    accessor,
+    `${accessor.name.getText()}${ts.isGetAccessorDeclaration(accessor) ? "Getter" : "Setter"}`,
+    context,
+  );
 
 // The table of the constant functions that a script holds, which the JavaScript module calls as
 // getters and setters.
@@ -228,6 +245,23 @@ const translateClass = (
     useJavaScript("Define", [object, key, value, ...flags.map(boolean)], context);
   const defineMethods = (object: Expression, isStatic: boolean) =>
     node.members.reduce((current, member) => {
+      const isStaticMember = ((ts.canHaveModifiers(member) && ts.getModifiers(member)) || []).some(
+        (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+      );
+      if (isClassAccessor(member)) {
+        return isStaticMember === isStatic
+          ? useJavaScript(
+              "DefineAccessor",
+              [
+                current,
+                translateMemberKey(member.name, scope, context),
+                string(ts.isGetAccessorDeclaration(member) ? "get" : "set"),
+                getAccessorValue(member, context),
+              ],
+              context,
+            )
+          : current;
+      }
       const method = getObjectMethod(member, context);
       const isStaticMethod = (method === undefined ? [] : (ts.getModifiers(method) ?? [])).some(
         (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,

@@ -12,6 +12,7 @@ import type { Expression } from "../ast";
 import {
   type Context,
   getCalledMethod,
+  getClassGetter,
   getCallee,
   getElement,
   getFunction,
@@ -32,12 +33,18 @@ import {
   translateInstanceOf,
   translateNewError,
 } from "./exceptions";
-import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
+import {
+  getDefinition,
+  translateGetterCall,
+  translateHelperCall,
+  translateLocalCall,
+} from "./functions";
 import {
   getHeap,
   isCreation,
   isDescription,
   isNewObject,
+  getMethodValue,
   translateHoldsMethod,
   translateFunctionValue,
   translateObjectValue,
@@ -759,6 +766,19 @@ const translatePropertyAccess = (
   if (intrinsic !== undefined) return intrinsic;
   const receiver = node.expression;
   const name = node.name.text;
+  const getter = getClassGetter(node, context);
+  if (getter !== undefined) {
+    const heap = getHeap(scope, node, context);
+    const value = translateObjectValue(receiver, scope, context);
+    return ifExpression(
+      apply("=", [
+        useJavaScript("GetterOf", [heap, value, string(name)], context),
+        getMethodValue(getter, context),
+      ]),
+      translateGetterCall(node, { method: getter, receiver, key: name }, scope, context),
+      useJavaScript("Get", [heap, value, string(name)], context),
+    );
+  }
   if (getKind(receiver, context) === "object" || isHeapBuiltIn(receiver, scope, context)) {
     return useJavaScript(
       "Get",

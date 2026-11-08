@@ -457,6 +457,28 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ["['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]", "const box = {};"],
     ["[Reflect.has === Reflect.has, Reflect.has === Reflect.get]", "const box = {};"],
     [
+      "[counter.next, Counter.zero, typeof described.get, typeof described.set, described.enumerable, Object.getOwnPropertyNames(Counter.prototype), replaced.value]",
+      `var Counter = class {
+        count = 1;
+        get next() {
+          return this.count + 1;
+        }
+        set next(value: number) {}
+        static get zero() {
+          return 0;
+        }
+      };
+      const counter = new Counter();
+      const described = Object.getOwnPropertyDescriptor(Counter.prototype, "next")!;
+      var Replaced = class {
+        get value() {
+          return 1;
+        }
+      };
+      Object.defineProperty(Replaced.prototype, "value", { value: 2 });
+      const replaced = new Replaced();`,
+    ],
+    [
       "[made === again, typeof made, Object.getPrototypeOf(made) === Object.prototype, 'x' in made, 'x' in again]",
       `interface ObjectConstructor {
         new (value?: null): object;

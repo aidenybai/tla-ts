@@ -235,6 +235,23 @@ export const translateLocalCall = (
   return value;
 };
 
+// A read of a property that a heap class's getter computes.
+export const translateGetterCall = (
+  node: ts.Node,
+  called: CalledMethod,
+  scope: Scope,
+  context: Context,
+) => {
+  if (context.inProgress.has(called.method)) {
+    throw new TlaTypeScriptError("A getter can't read its own property", node);
+  }
+  rejectCaught(node, called.method, scope, context);
+  context.inProgress.add(called.method);
+  const value = inlineCall(called.method, [], scope, context, called);
+  context.inProgress.delete(called.method);
+  return value;
+};
+
 // A function body that computes a value, as a TLA+ expression.
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);

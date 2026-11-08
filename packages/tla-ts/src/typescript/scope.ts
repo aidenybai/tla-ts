@@ -33,7 +33,7 @@ export interface Scope {
 
 export interface Receiver {
   value: Expression;
-  method: ts.MethodDeclaration | ts.ConstructorDeclaration;
+  method: ts.MethodDeclaration | ts.ConstructorDeclaration | ts.GetAccessorDeclaration;
 }
 
 export interface Bound {

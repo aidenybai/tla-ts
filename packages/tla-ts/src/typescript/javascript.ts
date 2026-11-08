@@ -360,6 +360,14 @@ AccessorOf(heap, ref, key) ==
        [] object.prototype = Null -> Undefined
        [] OTHER -> AccessorOf(heap, object.prototype, key)
 
+RECURSIVE GetterOf(_, _, _)
+GetterOf(heap, ref, key) ==
+  LET object == Lookup(heap, ref)
+  IN CASE key \\in DOMAIN object.values ->
+            IF object.attributes[key].kind = "accessor" THEN object.values[key].get ELSE Undefined
+       [] object.prototype = Null -> Undefined
+       [] OTHER -> GetterOf(heap, object.prototype, key)
+
 RECURSIVE IsWritable(_, _, _)
 IsWritable(heap, ref, key) ==
   LET object == Lookup(heap, ref)
@@ -492,6 +500,13 @@ LOCAL Apply(object, key, descriptor) ==
                                 kind |-> CASE isNowAccessor -> "accessor"
                                            [] isKept /\\ ~has("value") -> object.attributes[key].kind
                                            [] OTHER -> "data"]) @@ @]
+
+\\* A class's getter or setter, which keeps the other half of an accessor that the class defined.
+DefineAccessor(object, key, field, function) ==
+  Apply(object, key, [fields |-> {field, "enumerable", "configurable"}, isAccessor |-> TRUE,
+                      isData |-> FALSE, isValid |-> TRUE, value |-> Undefined, get |-> function,
+                      set |-> function, writable |-> FALSE, enumerable |-> FALSE,
+                      configurable |-> TRUE])
 
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==
