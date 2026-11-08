@@ -373,6 +373,11 @@ const isOverriddenComparison = (left: Value, right: Value) =>
     right.kind === "SequenceSet"
   );
 
+const createOverriddenComparisonError = (left: Value, right: Value) =>
+  new TlaEvaluationError(
+    `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right, true)}`,
+  );
+
 // TLC implements Nat, Int, STRING, Seq(S), and Any in Java classes that compare only with each
 // other and with model values. Comparing one with any other set is an error, worded by the class of
 // the left operand.
@@ -386,11 +391,7 @@ const compareOverriddenSets = (
       `Attempted to ${verb} the set ${formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true)} with the value:\n${formatValue(right, true)}`,
     );
   }
-  if (!isOverriddenSet(right)) {
-    throw new TlaEvaluationError(
-      `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right, true)}`,
-    );
-  }
+  if (!isOverriddenSet(right)) throw createOverriddenComparisonError(left, right);
   const leftName = left.kind === "InfiniteSet" ? left.name : undefined;
   const rightName = right.kind === "InfiniteSet" ? right.name : undefined;
   if (leftName !== undefined && leftName === rightName) return 0;
@@ -439,6 +440,7 @@ export const compareValues = (left: Value, right: Value): number => {
     }
     const isLeftSet = isSetValue(left);
     if (isLeftSet !== isSetValue(right)) {
+      if (isOverriddenSet(left)) throw createOverriddenComparisonError(left, right);
       throw new TlaEvaluationError(
         `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
       );
@@ -452,6 +454,7 @@ export const compareValues = (left: Value, right: Value): number => {
   checkModelValueTypes(left, right, false);
   if (isModelValue(left)) return -1;
   if (isModelValue(right)) return 1;
+  if (isOverriddenSet(left)) throw createOverriddenComparisonError(left, right);
   throw new TlaEvaluationError(
     `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
   );
