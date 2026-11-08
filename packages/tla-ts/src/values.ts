@@ -1314,7 +1314,13 @@ export const isEnumerable = (value: Value): boolean => {
     case "ProductSet":
       return value.factors.every(isEnumerable) || getEmptiness(value) === true;
     case "Union":
-      return isEnumerable(value.base) && getStreamedElements(value.base).every(isEnumerable);
+      return (
+        isEnumerable(value.base) &&
+        (isEnumeratedSet(value.base)
+          ? getWrittenElements(value.base)
+          : getStreamedElements(value.base)
+        ).every(isEnumerable)
+      );
     case "SetOperation":
       if (value.operator === "\\cup") return isEnumerable(value.left) && isEnumerable(value.right);
       if (value.operator === "\\cap") return isEnumerable(value.left) || isEnumerable(value.right);
