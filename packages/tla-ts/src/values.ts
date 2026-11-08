@@ -1893,7 +1893,10 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
-  if (value.kind === "LazyFunction" && isOverriddenSet(value.domain)) {
+  if (
+    value.kind === "LazyFunction" &&
+    (!isSetValue(value.domain) || isOverriddenSet(value.domain))
+  ) {
     throw new TlaEvaluationError(
       "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
     );
