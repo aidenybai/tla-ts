@@ -102,7 +102,6 @@ interface SmtProblem {
 interface ApplicationFrame {
   head: SmtToken;
   indices: number[];
-  // A qualified identifier, such as (as const S), makes its application itself.
   build?: (args: number[]) => number;
   list: SmtList;
   start: number;
@@ -341,8 +340,6 @@ const ARRAY_OPS = new Map([
 ]);
 const ARRAY_EXTENSION_OPS = new Map([["default", OP_ARRAY_DEFAULT]]);
 
-// The builtins that a declaration reference names without a signature, which basic_decl_plugin
-// gives one.
 const UNARY_BOOL_REFS = new Map([["not", OP_NOT]]);
 const BINARY_BOOL_REFS = new Map([
   ["and", OP_AND],
@@ -374,7 +371,6 @@ interface MappedDecl {
 }
 const ARRAY_EXTENSION_LOGICS = new Set(["HORN", "ALL"]);
 
-// smt_logics::logic_has_array.
 const isArrayLogic = (logic: string | undefined) =>
   logic === undefined ||
   logic.startsWith("QF_A") ||
@@ -916,7 +912,6 @@ export const createSmtlibReader = (
     return manager.mkApp(decl, args, signature.range);
   };
 
-  // parse_func_decl_ref: a declared function, or a builtin by name and signature.
   const parseFuncDeclRef = (sexpr: SExpr): MappedDecl => {
     if (sexpr.kind === "symbol") {
       const decl = funcs.get(sexpr.text);

@@ -32,7 +32,6 @@ export class ArrayRewriter {
     return mkArrayApp(this.manager, op, args, parameters);
   }
 
-  // compare_args over the indices from start in each term.
   private compareArgs(count: number, first: number, firstStart: number, second: number[]) {
     const manager = this.manager;
     for (let index = 0; index < count; index++) {
@@ -196,7 +195,6 @@ export class ArrayRewriter {
     return false;
   }
 
-  // mk_eq(e, lhs, rhs, fmls): the equalities of lhs and rhs at each index that e stores to.
   private pushStoreEqs(store: number, lhs: number, rhs: number, eqs: number[]) {
     const manager = this.manager;
     for (let current = store; this.isOp(current, OP_STORE); current = manager.getArg(current, 0)) {

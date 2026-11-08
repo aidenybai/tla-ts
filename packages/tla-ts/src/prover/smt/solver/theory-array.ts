@@ -49,7 +49,6 @@ export class TheoryArray extends Theory {
   private maps: Enode[][] = [];
   private parentMaps: Enode[][] = [];
   private axiom1Todo: Enode[] = [];
-  // Pairs of a store and a select.
   private axiom2Todo: Enode[] = [];
   private extensionalityTodo: Enode[] = [];
   private sortSkolems = new Map<number, number[]>();

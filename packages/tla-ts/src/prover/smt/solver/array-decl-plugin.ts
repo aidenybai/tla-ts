@@ -168,7 +168,6 @@ export const mkArrayApp = (
   return manager.mkApp(decl, args, manager.funcDecls[decl].range);
 };
 
-// mk_as_array: a constant whose array sort is the signature of the declaration it stands for.
 export const mkAsArray = (manager: AstManager, decl: number) => {
   const funcDecl = manager.funcDecls[decl];
   const sort = manager.mkArraySort([...funcDecl.domain, funcDecl.range]);

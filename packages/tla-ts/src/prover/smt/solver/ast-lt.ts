@@ -89,7 +89,6 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   return { name: builtin.name, parameters: [], domain: builtin.domain, range };
 };
 
-// An array sort's parameters are its sorts, which compare in turn.
 const compareSorts = (manager: AstManager, first: number, second: number): number => {
   if (first === second) return 0;
   const byName =

@@ -353,7 +353,6 @@ export class AstManager {
   sortNames: string[] = ["Bool", "Int", "Real"];
   private sortFamilies: number[] = [FAMILY_BASIC, FAMILY_ARITH, FAMILY_ARITH];
   private sortWidths: number[] = [0, 0, 0];
-  // The sorts an array sort takes: its domain, then its range.
   private sortParameters: number[][] = [[], [], []];
   private sortSizes: bigint[] = [2n, SORT_SIZE_INFINITE, SORT_SIZE_INFINITE];
   private arraySorts = new Map<string, number>();
@@ -775,7 +774,6 @@ export class AstManager {
     return sort;
   }
 
-  // array_decl_plugin::mk_sort, which also counts the elements of the sort.
   mkArraySort(parameters: number[]) {
     const key = parameters.join(",");
     const existing = this.arraySorts.get(key);
@@ -840,8 +838,6 @@ export class AstManager {
     return this.sortSizes[sort];
   }
 
-  // The parameters of a const declaration are its array sort, those of map and as-array the
-  // declaration they take, and that of array-ext the index of its domain.
   mkArrayDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.arrayDecls.get(key);
