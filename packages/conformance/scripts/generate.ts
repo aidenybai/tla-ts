@@ -9,6 +9,7 @@ interface Template {
   name: string;
   ref: string;
   render: (value: string) => string;
+  tlcBugValues?: string[];
 }
 
 const UNARY_TEMPLATES: Template[] = [
@@ -65,7 +66,42 @@ const UNARY_TEMPLATES: Template[] = [
     ref: "tlc2/value/impl/SubsetValue.java",
     render: (value) => `SUBSET ${value}`,
   },
-  { name: "union_of", ref: "tlc2/value/impl/UnionValue.java", render: (value) => `UNION ${value}` },
+  {
+    name: "union_of",
+    ref: "tlc2/value/impl/UnionValue.java",
+    render: (value) => `UNION ${value}`,
+    // TLC's error names its Java enumerator object, not the value.
+    tlcBugValues: [
+      "bag",
+      "colon_greater",
+      "double_at",
+      "false",
+      "function_empty",
+      "function_lazy",
+      "function_pair_domain",
+      "function_strings",
+      "function",
+      "int_minimum",
+      "int_negative",
+      "int_one",
+      "int_maximum",
+      "int",
+      "int_zero",
+      "record_nested",
+      "nat",
+      "record",
+      "model_value",
+      "seq_set",
+      "string_escapes",
+      "string_empty",
+      "string_a",
+      "string_set",
+      "true",
+      "tuple_mixed",
+      "tuple_empty",
+      "tuple",
+    ],
+  },
   {
     name: "domain",
     ref: "tlc2/tool/impl/Tool.java#OPCODE_domain",
@@ -244,6 +280,22 @@ const UNARY_TEMPLATES: Template[] = [
     name: "tuple_pattern",
     ref: "tlc2/util/Context.java",
     render: (value) => `{a : <<a, b>> \\in ${value}}`,
+    // TLC's message for a binder that doesn't match ends in its unfilled %1.
+    tlcBugValues: [
+      "boolean_set",
+      "interval",
+      "set_cup",
+      "set_cap",
+      "set_diff",
+      "set_ints",
+      "set_filter",
+      "set_map",
+      "set_of_functions",
+      "set_nested",
+      "set_of_records",
+      "subset",
+      "union",
+    ],
   },
   {
     name: "apply_function",
@@ -354,6 +406,7 @@ const generateOperatorMatrix = () =>
         `${template.name} applied to ${value.name}, a ${value.valueClass}.`,
         template.ref,
         template.render(value.text),
+        template.tlcBugValues?.includes(value.name),
       ),
     ),
   );

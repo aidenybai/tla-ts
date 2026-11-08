@@ -3,6 +3,7 @@ description: union_of applied to record, a RecordValue.
 ref: tlc2/value/impl/UnionValue.java
 features:
   - value-matrix
+  - tlc-bug
 flags:
   - expression
 contexts:

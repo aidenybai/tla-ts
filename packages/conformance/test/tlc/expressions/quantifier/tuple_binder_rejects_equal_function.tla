@@ -1,7 +1,7 @@
 (*---
 description: "TLC rejects a tuple binder on a function value whose domain is 1..2, although that function equals a tuple in TLA+."
 ref: "tlc2/tool/ContextEnumerator.java#nextElement"
-features: [tlc-bug]
+features: [tlc-bug, tlc-bug]
 flags: [expression]
 outcome: evaluation-failure
 ---*)
