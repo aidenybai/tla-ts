@@ -170,6 +170,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
   types: [
     "[typeof 1, typeof 'a', typeof true, typeof undefined, typeof null, typeof { a: 1 }, typeof [1]]",
     "[typeof TypeError, typeof (() => 1)]",
+    "[Array.isArray([1]), Array.isArray([[1], [2]]), Array.isArray(1), Array.isArray('a'), Array.isArray(undefined)]",
     [
       "[getType(1), getType('a'), getType('TRUE'), getType(false), getType(undefined), getType(null), getType([1]), getType(new Set([1])), getType(TypeError), getType(new TypeError('t'))]",
       "const getType = (value: unknown) => typeof value;",

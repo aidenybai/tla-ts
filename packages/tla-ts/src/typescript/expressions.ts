@@ -28,7 +28,7 @@ import {
   translateNewError,
 } from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
-import { isComparable, translateTypeOf, useJavaScript } from "./javascript";
+import { getTypeNames, isComparable, translateTypeOf, useJavaScript } from "./javascript";
 import { rejectBeforeDeclaration, type Scope } from "./scope";
 import {
   apply,
@@ -329,6 +329,16 @@ const translateCall = (
   const method = node.expression.name.text;
   const global = ts.isIdentifier(receiver) ? receiver.text : undefined;
   if (global === "Math") return translateMath(node, method, scope, context);
+  if (global === "Array" && method === "isArray" && node.arguments.length === 1) {
+    const argument = node.arguments[0];
+    translateExpression(argument, scope, context);
+    const names = getTypeNames(context.checker.getTypeAtLocation(argument));
+    if (getKind(argument, context) === "sequence" && names?.every((name) => name === "object")) {
+      return boolean(true);
+    }
+    if (names?.every((name) => name !== "object" && name !== "function")) return boolean(false);
+    throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
+  }
   if (global === "Object" && method === "is" && node.arguments.length === 2) {
     if (node.arguments.some((argument) => isObject(context.checker.getTypeAtLocation(argument)))) {
       throw new TlaTypeScriptError("TLA+ compares objects by value, not by identity", node);
