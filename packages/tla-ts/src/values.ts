@@ -851,7 +851,9 @@ const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: 
   const functionValue = toFiniteFunction(left);
   const isTuple = left.kind === "Function" && getSequenceElements(functionValue) !== undefined;
   if (isTuple) {
-    const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
+    const tuple = isFunctionValue(right)
+      ? getSequenceElements(getFunctionClass(left) === "tuple" ? right : toFiniteFunction(right))
+      : undefined;
     if (!tuple) return compareTlcFunctions({ ...functionValue, low: 1 }, left, right);
     return (
       functionValue.range.length - tuple.length ||
@@ -966,7 +968,9 @@ const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: V
   const functionValue = toFiniteFunction(left);
   const isTuple = left.kind === "Function" && getSequenceElements(functionValue) !== undefined;
   if (isTuple) {
-    const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
+    const tuple = isFunctionValue(right)
+      ? getSequenceElements(getFunctionClass(left) === "tuple" ? right : toFiniteFunction(right))
+      : undefined;
     if (!tuple) return equalsTlcFunctions({ ...functionValue, low: 1 }, left, right);
     return (
       functionValue.range.length === tuple.length &&
