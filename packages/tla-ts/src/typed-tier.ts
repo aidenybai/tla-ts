@@ -447,6 +447,23 @@ const isMask = (type: Type, plains: Plains) => {
 const getElements = (value: Value) =>
   isEnumerable(value) ? toFiniteSet(value).elements : unsupported();
 
+// Sizes a set of subsets, functions, records or tuples from its parts, before enumerating it.
+const getSize = (value: Value): number => {
+  if (typeof value !== "object") return unsupported();
+  switch (value.kind) {
+    case "Subset":
+      return 2 ** getSize(value.base);
+    case "FunctionSet":
+      return getSize(value.range) ** getSize(value.domain);
+    case "RecordSet":
+      return value.sets.reduce((size: number, set) => size * getSize(set), 1);
+    case "ProductSet":
+      return value.factors.reduce((size: number, set) => size * getSize(set), 1);
+    default:
+      return getElements(value).length;
+  }
+};
+
 const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
   const resolved = resolveType(type);
   if (resolved.kind === "Int") return typeof value === "number" ? value : unsupported();
@@ -918,8 +935,8 @@ const compileBound = (
         header: (name) => `for (let ${name} = ${value.low}; ${name} <= ${value.high}; ${name}++)`,
       };
     }
+    if (getSize(value) > MAXIMUM_CONSTANT_SET) return unsupported();
     const elements = getElements(value);
-    if (elements.length > MAXIMUM_CONSTANT_SET) return unsupported();
     const element: Type = createVar();
     elements.forEach((inner) => unify(element, getValueType(inner, program.plains)));
     const getCode = once(() =>
@@ -1057,6 +1074,63 @@ const compileMembership = (
       emit: () => `${element.emit()}.every((${name}) => ${inner.emit()})`,
     };
   }
+  if (setExpression.kind === "Identifier" && !frame.scope.has(setExpression.name)) {
+    const global = findGlobalName(setExpression.name, program.environment);
+    const body =
+      global?.kind === "Definition" &&
+      global.definition.kind === "Operator" &&
+      global.definition.params.length === 0
+        ? global.definition.body
+        : undefined;
+    const isStructural =
+      body?.kind === "RecordSet" ||
+      body?.kind === "FunctionSet" ||
+      (body?.kind === "Apply" && (body.operator === "SUBSET" || body.operator === "Seq"));
+    if (body && isStructural) {
+      return compileMembership(program, element, body, { scope: new Map(), primed: frame.primed });
+    }
+  }
+  // TLC tests membership in a set of records field by field, without enumerating it.
+  if (setExpression.kind === "RecordSet") {
+    const fields = [...setExpression.fields].sort((left, right) =>
+      left.name < right.name ? -1 : 1,
+    );
+    const names = fields.map((field) => field.name);
+    const types = fields.map((): Type => createVar());
+    unify(element.type, createRecord(names, types));
+    const record = getName(program, "r");
+    const getShape = () => {
+      const resolved = resolveType(element.type);
+      return resolved.kind === "Rec" ? resolved : unsupported();
+    };
+    const tests = fields.map((field, index) =>
+      compileMembership(
+        program,
+        {
+          type: types[index],
+          emit: () => {
+            const resolved = getShape();
+            const offset = resolved.shapes.length === 1 ? 0 : 1;
+            return `${record}[${resolved.shapes[getShapeIndex(resolved, names)].indexOf(field.name) + offset}]`;
+          },
+        },
+        field.value,
+        frame,
+      ),
+    );
+    return {
+      type: BOOL,
+      emit: () => {
+        const resolved = getShape();
+        const isShape =
+          resolved.shapes.length === 1
+            ? []
+            : [`${record}[0] === ${getShapeIndex(resolved, names)}`];
+        const checks = [...isShape, ...tests.map((test) => test.emit())];
+        return `((${record}) => ${checks.join(" && ")})(${element.emit()})`;
+      },
+    };
+  }
   if (setExpression.kind === "Apply" && setExpression.args.length === 1) {
     const operator = setExpression.operator;
     const isBuiltin = resolveDefinition(program, operator) === undefined;
@@ -1128,8 +1202,8 @@ const compileMembership = (
         },
       };
     }
+    if (getSize(value) > MAXIMUM_CONSTANT_SET) return unsupported();
     const elements = getElements(value);
-    if (elements.length > MAXIMUM_CONSTANT_SET) return unsupported();
     if (elements.length === 0) return { type: BOOL, emit: () => "false" };
     elements.forEach((inner) => unify(element.type, getValueType(inner, program.plains)));
     const bounds = getIntervalBounds(elements);
