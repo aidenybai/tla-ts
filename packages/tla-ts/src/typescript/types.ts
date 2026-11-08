@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } from "../ast";
-import { type Context, getUndefined, translateString, type Unknown } from "./context";
+import { type Context, getUndefined, isHeapClass, translateString, type Unknown } from "./context";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -64,9 +64,18 @@ const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
 const LIBRARY_OBJECTS = new Set(["PropertyDescriptor", "PropertyDescriptorMap"]);
 
 // An object type, or the object type, which any object may have.
-const isPlainObject = (type: ts.Type, checker: ts.TypeChecker) => {
+const isPlainObject = (type: ts.Type, context: Context) => {
+  const checker = context.checker;
   const symbol = type.getSymbol();
   if ((type.flags & ts.TypeFlags.NonPrimitive) !== 0) return true;
+  const declaration = symbol?.valueDeclaration;
+  if (
+    declaration !== undefined &&
+    ts.isClassLike(declaration) &&
+    isHeapClass(declaration, context)
+  ) {
+    return true;
+  }
   return (
     (type.flags & ts.TypeFlags.Object) !== 0 &&
     !checker.isArrayType(type) &&
@@ -88,12 +97,12 @@ const isPlainObject = (type: ts.Type, checker: ts.TypeChecker) => {
 // Whether a value of a type may be an object in the heap.
 export const hasHeapType = (type: ts.Type, context: Context) =>
   context.heap !== undefined &&
-  (type.isUnion() ? type.types : [type]).some((member) => isPlainObject(member, context.checker));
+  (type.isUnion() ? type.types : [type]).some((member) => isPlainObject(member, context));
 
 export const isHeapType = (type: ts.Type, node: ts.Node | undefined, context: Context) => {
   if (context.heap === undefined) return false;
   const members = type.isUnion() ? type.types : [type];
-  const objects = members.filter((member) => isPlainObject(member, context.checker));
+  const objects = members.filter((member) => isPlainObject(member, context));
   if (objects.length > 0 && objects.length < members.length) {
     throw new TlaTypeScriptError("Give this either objects or other values", node);
   }

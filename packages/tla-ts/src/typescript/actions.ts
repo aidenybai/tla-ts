@@ -8,10 +8,14 @@ import {
   getCallee,
   getElement,
   getFunction,
+  getNewClass,
+  getRunConstructor,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
+  isHeapClass,
   isMethodCall,
+  isStatementNew,
   share,
   isInlined,
   getGenerator,
@@ -49,6 +53,7 @@ import {
   initialize,
   rejectBeforeDeclaration,
   rejectNestedPattern,
+  type Receiver,
   type Scope,
 } from "./scope";
 import {
@@ -478,23 +483,61 @@ const translateCallStatement = (
       );
     }
   }
-  const getCallback = (node: ts.Expression) => {
-    const symbol = getSymbol(node, context.checker);
-    return (symbol && path.scope.functions.get(symbol)) ?? getCallee(node, context);
-  };
   const callee = isGenerator
     ? getGenerator(expression.expression, context)
-    : (called?.method ?? getCallback(expression.expression));
+    : (called?.method ?? getCallback(expression.expression, path, context));
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
+  const call = inlineBody(
+    expression,
+    callee,
+    expression.arguments,
+    getReceiver(path.scope, context, called),
+    path,
+    context,
+    frame,
+    continueWith,
+    isGenerator,
+  );
+  return called === undefined
+    ? call
+    : ifThenElse(
+        translateHoldsMethod(called, path.scope, context),
+        call,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which method this call runs"),
+          ]),
+        ),
+      );
+};
+
+const getCallback = (node: ts.Expression, path: Path, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  return (symbol && path.scope.functions.get(symbol)) ?? getCallee(node, context);
+};
+
+// Runs a function's body as statements, for a call or a new that a statement makes.
+const inlineBody = (
+  node: ts.CallExpression | ts.NewExpression,
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  receiver: Receiver | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+  isGenerator: boolean,
+): Formula => {
   if (frame.inlining.has(callee)) {
-    throw new TlaTypeScriptError("Functions that change state can't call themselves", expression);
+    throw new TlaTypeScriptError("Functions that change state can't call themselves", node);
   }
   const callbacks = callee.parameters.flatMap(
     (parameter, position): [ts.Symbol, FunctionNode][] => {
-      const argument = expression.arguments.at(position);
-      const callback = argument && getCallback(argument);
+      const argument = argumentNodes.at(position);
+      const callback = argument && getCallback(argument, path, context);
       const symbol = getSymbol(parameter.name, context.checker);
       return callback !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
     },
@@ -508,11 +551,14 @@ const translateCallStatement = (
   };
   const bound = bindValues(
     callee.parameters.filter((_, position) => isValue(position)),
-    translateArguments(expression.arguments.filter((_, position) => isValue(position))),
+    argumentNodes
+      .filter((_, position) => isValue(position))
+      .map((argument) => translateExpression(argument, path.scope, context)),
     path.scope,
     context,
   );
   const calleeBody = callee.body;
+  if (calleeBody === undefined) throw new TlaTypeScriptError("Give this a body", callee);
   const body = ts.isBlock(calleeBody)
     ? calleeBody.statements
     : [
@@ -523,9 +569,9 @@ const translateCallStatement = (
   const scope = {
     ...bound.scope,
     functions: new Map([...bound.scope.functions, ...callbacks]),
-    receiver: getReceiver(path.scope, context, called),
+    receiver,
   };
-  const call = translateJoined(expression, path, context, continueWith, (next) => {
+  return translateJoined(node, path, context, continueWith, (next) => {
     const afterCall = (inner: Path, value?: Expression) =>
       next({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } }, value);
     return letIn(
@@ -541,18 +587,38 @@ const translateCallStatement = (
       }),
     );
   });
-  return called === undefined
-    ? call
-    : ifThenElse(
-        translateHoldsMethod(called, path.scope, context),
-        call,
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string("tla-ts can't tell which method this call runs"),
-          ]),
-        ),
-      );
+};
+
+// The constructor that a new of a heap class runs, where a statement runs it.
+const getConstructorRun = (node: ts.Expression, context: Context) => {
+  const created = getNewClass(node, context);
+  return created !== undefined && ts.isNewExpression(node) && isStatementNew(node)
+    ? getRunConstructor(created)
+    : undefined;
+};
+
+// A new of a heap class whose constructor runs statements, which runs them with the instance
+// that the statement allocated as this, and gives the instance.
+const translateConstruction = (
+  expression: ts.NewExpression,
+  constructor: ts.ConstructorDeclaration,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const instance = translateObjectValue(expression, path.scope, context);
+  return inlineBody(
+    expression,
+    constructor,
+    expression.arguments ?? [],
+    { value: instance, method: constructor },
+    path,
+    context,
+    frame,
+    (after) => continueWith(after, instance),
+    false,
+  );
 };
 
 const translateExpressionStatement = (
@@ -568,6 +634,10 @@ const translateExpressionStatement = (
   if (ts.isCallExpression(expression)) {
     return translateCallStatement(expression, path, context, frame, continueWith);
   }
+  const constructor = getConstructorRun(expression, context);
+  if (constructor !== undefined && ts.isNewExpression(expression)) {
+    return translateConstruction(expression, constructor, path, context, frame, continueWith);
+  }
   if (ts.isYieldExpression(expression)) {
     const yielded = expression.expression;
     const isSimple =
@@ -576,6 +646,36 @@ const translateExpressionStatement = (
       throw new TlaTypeScriptError("Unsupported yield", expression);
     }
     return frame.yieldTo(path);
+  }
+  const newAssigned =
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isNewExpression(expression.right)
+      ? expression.right
+      : undefined;
+  const assignedConstructor = newAssigned && getConstructorRun(newAssigned, context);
+  if (
+    newAssigned !== undefined &&
+    assignedConstructor !== undefined &&
+    ts.isBinaryExpression(expression)
+  ) {
+    return translateConstruction(
+      newAssigned,
+      assignedConstructor,
+      path,
+      context,
+      frame,
+      (after, value) =>
+        continueWith(
+          assignPattern(
+            expression.left,
+            newAssigned,
+            value ?? getUndefined(context),
+            after,
+            context,
+          ),
+        ),
+    );
   }
   if (
     ts.isBinaryExpression(expression) &&
@@ -777,7 +877,7 @@ const translateDeclarations = (
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
   const initializer = declaration.initializer;
-  if (isInlined(initializer)) {
+  if (isInlined(initializer, context)) {
     return translateDeclarations(
       declarations.slice(1),
       { ...path, scope: initialize(path.scope, declaration, context) },
@@ -787,6 +887,25 @@ const translateDeclarations = (
     );
   }
   return allocate(initializer, path, context, (allocated) => {
+    const constructor = initializer && getConstructorRun(initializer, context);
+    if (constructor !== undefined && initializer !== undefined && ts.isNewExpression(initializer)) {
+      return translateConstruction(
+        initializer,
+        constructor,
+        allocated,
+        context,
+        frame,
+        (after, value) =>
+          bindDeclaration(
+            declarations,
+            value ?? getUndefined(context),
+            after,
+            context,
+            frame,
+            continueWith,
+          ),
+      );
+    }
     if (initializer !== undefined && isHeapCall(initializer, allocated, context)) {
       return translateCallStatement(initializer, allocated, context, frame, (after, value) =>
         bindDeclaration(
@@ -1251,6 +1370,19 @@ const translateStatements = (
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
+  if (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) {
+    const symbol = statement.name && getSymbol(statement.name, context.checker);
+    return allocate(statement, path, context, (inner) => {
+      const ref = inner.scope.allocated.get(statement);
+      if (symbol === undefined || ref === undefined) {
+        throw new TlaTypeScriptError("Name this class", statement);
+      }
+      return continueWith({
+        ...inner,
+        scope: { ...inner.scope, bindings: new Map([...inner.scope.bindings, [symbol, ref]]) },
+      });
+    });
+  }
   if (ts.isVariableStatement(statement)) {
     return translateDeclarations(
       statement.declarationList.declarations,

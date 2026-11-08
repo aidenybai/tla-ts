@@ -28,7 +28,9 @@ const isScript = (sourceFile: ts.SourceFile) =>
 const translateInitial = (variable: Variable, context: Context) => {
   const declaration = variable.declaration;
   const name = context.variables.get(variable.symbol);
-  if (name === undefined) throw new TlaTypeScriptError("Unknown variable", declaration);
+  if (name === undefined || !ts.isVariableDeclaration(declaration)) {
+    throw new TlaTypeScriptError("Unknown variable", declaration);
+  }
   const initializer = declaration.initializer;
   if (initializer === undefined) {
     const type = context.checker.getTypeAtLocation(declaration.name);
@@ -72,14 +74,15 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"));
   const context = createContext(program.checker);
   const sourceFile = program.sourceFile;
-  // A script, with no exported functions, gives the objects it makes, or reads through Object or
-  // hasOwnProperty, identity with a heap. The heap binds to the symbol of lib's PropertyKey type,
+  // A script, with no exported functions, gives the objects and classes it makes, or reads through
+  // Object or hasOwnProperty, identity with a heap. The heap binds to the symbol of lib's PropertyKey type,
   // which no value can have.
   const heap = program.checker
     .getSymbolsInScope(sourceFile, ts.SymbolFlags.TypeAlias)
     .find((symbol) => symbol.name === "PropertyKey");
   const usesObjects = (node: ts.Node): boolean =>
     ts.isObjectLiteralExpression(node) ||
+    (ts.isClassLike(node) && node.heritageClauses === undefined) ||
     (ts.isPropertyAccessExpression(node) &&
       ((ts.isIdentifier(node.expression) && node.expression.text === "Object") ||
         node.name.text === "hasOwnProperty")) ||

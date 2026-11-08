@@ -78,6 +78,9 @@ Allocate(heap, object) == [heap EXCEPT !.objects = Append(@, object)]
 
 Allocated(heap) == Ref :> Len(heap.objects)
 
+\\* The ref that the object an offset past the last one on the heap will have.
+NextRef(heap, offset) == Ref :> (Len(heap.objects) + offset)
+
 LOCAL BuiltInKey(ref) == IF IsRef(ref) THEN ref[Ref] ELSE ref
 
 LOCAL IsBuiltIn(ref) ==
@@ -117,6 +120,17 @@ Put(object, key, value) ==
   ELSE [object EXCEPT !.keys = Append(@, key),
                       !.values = (key :> value) @@ @,
                       !.attributes = (key :> Writable) @@ @]
+
+\\* A property that a class defines, with its attributes.
+Define(object, key, value, isWritable, isEnumerable, isConfigurable) ==
+  [object EXCEPT !.keys = IF key \\in DOMAIN object.values THEN @ ELSE Append(@, key),
+                 !.values = (key :> value) @@ @,
+                 !.attributes = (key :> [writable |-> isWritable, enumerable |-> isEnumerable,
+                                         configurable |-> isConfigurable, kind |-> "data"]) @@ @]
+
+\\* The object of a class's constructor, which inherits from Function.prototype.
+ClassObject(functionPrototype) ==
+  [EmptyObject EXCEPT !.isCallable = TRUE, !.prototype = functionPrototype]
 
 LOCAL IsIndex(key) ==
   /\\ Len(key) > 0

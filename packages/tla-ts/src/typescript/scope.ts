@@ -30,7 +30,7 @@ export interface Scope {
 
 export interface Receiver {
   value: Expression;
-  method: ts.MethodDeclaration;
+  method: ts.MethodDeclaration | ts.ConstructorDeclaration;
 }
 
 export interface Bound {

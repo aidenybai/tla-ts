@@ -1,11 +1,12 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getSymbol, getUndefined, share } from "./context";
+import { type Context, getHeapClass, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
-import { getEngineError } from "./heap";
+import { getEngineError, getHeap, translateObjectValue } from "./heap";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
+import { getKind } from "./types";
 import { apply, field, identifier, ifExpression, junction, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
@@ -135,6 +136,22 @@ const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
 };
 
 export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
+  if (getHeapClass(node.right, context) !== undefined && getKind(node.left, context) === "object") {
+    const heap = getHeap(scope, node, context);
+    return useJavaScript(
+      "IsPrototypeOf",
+      [
+        heap,
+        useJavaScript(
+          "Get",
+          [heap, translateExpression(node.right, scope, context), string("prototype")],
+          context,
+        ),
+        translateObjectValue(node.left, scope, context),
+      ],
+      context,
+    );
+  }
   const symbol = getSymbol(node.right, context.checker);
   const classes = getErrorClass(symbol, context.checker);
   if (symbol === undefined || classes === undefined) {

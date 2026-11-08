@@ -1,20 +1,25 @@
 import ts from "@typescript/typescript6";
+import type { Expression } from "../ast";
 import {
   type CalledMethod,
   type Context,
+  getNewClass,
   getObjectMethod,
+  getRunConstructor,
   getSymbol,
   getUndefined,
+  isHeapClass,
+  isStatementNew,
   isMethodCall,
   type MethodCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor } from "./exceptions";
 import { translateExpression } from "./expressions";
-import { isBuiltInObject, translateBuiltInObject } from "./intrinsics";
+import { isBuiltInObject, translateBuiltInObject, translateFunctionPrototype } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { apply, identifier, string } from "./tla";
+import { apply, boolean, identifier, number, string } from "./tla";
 import { getKind, isHeapType, isNumberLike } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -115,7 +120,7 @@ export const translateObject = (
         context,
       );
     }
-    const method = getObjectMethod(property);
+    const method = getObjectMethod(property, context);
     if (method !== undefined) {
       return useJavaScript(
         "Put",
@@ -139,8 +144,122 @@ export const translateObject = (
 };
 
 // The heap after a node from getAllocated adds the object it makes.
-export const translateAllocated = (node: ts.Expression, scope: Scope, context: Context) => {
+// The constructor object and the prototype that a class makes, prototype first, so the
+// constructor object is the last on the heap.
+const translateClass = (
+  node: ts.ClassLikeDeclaration,
+  heap: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
+  const define = (object: Expression, key: Expression, value: Expression, flags: boolean[]) =>
+    useJavaScript("Define", [object, key, value, ...flags.map(boolean)], context);
+  const defineMethods = (object: Expression, isStatic: boolean) =>
+    node.members.reduce((current, member) => {
+      const method = getObjectMethod(member, context);
+      const isStaticMethod = (method === undefined ? [] : (ts.getModifiers(method) ?? [])).some(
+        (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+      );
+      return method === undefined || isStaticMethod !== isStatic
+        ? current
+        : define(
+            current,
+            translateMemberKey(method.name, scope, context),
+            getMethodValue(method, context),
+            [true, false, true],
+          );
+    }, object);
+  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const parameters = constructor?.parameters ?? [];
+  const length = parameters.findIndex(
+    (parameter) =>
+      parameter.initializer !== undefined ||
+      parameter.dotDotDotToken !== undefined ||
+      parameter.questionToken !== undefined,
+  );
+  const named = ts.isClassExpression(node) ? node.parent : node;
+  const name =
+    node.name?.text ??
+    (ts.isVariableDeclaration(named) && ts.isIdentifier(named.name) ? named.name.text : "");
+  const prototype = defineMethods(
+    define(identifier("EmptyObject"), string("constructor"), getRef(2), [true, false, true]),
+    false,
+  );
+  const object = defineMethods(
+    define(
+      define(
+        define(
+          useJavaScript("ClassObject", [translateFunctionPrototype(node, context)], context),
+          string("length"),
+          number(length === -1 ? parameters.length : length),
+          [false, false, true],
+        ),
+        string("name"),
+        string(name),
+        [false, false, true],
+      ),
+      string("prototype"),
+      getRef(1),
+      [false, false, false],
+    ),
+    true,
+  );
+  return useJavaScript(
+    "Allocate",
+    [useJavaScript("Allocate", [heap, prototype], context), object],
+    context,
+  );
+};
+
+// An instance of a heap class with its fields, before the constructor runs.
+const translateInstance = (
+  node: ts.NewExpression,
+  created: ts.ClassLikeDeclaration,
+  heap: Expression,
+  scope: Scope,
+  context: Context,
+) =>
+  created.members.reduce(
+    (object, member) =>
+      ts.isPropertyDeclaration(member) && ts.isIdentifier(member.name)
+        ? useJavaScript(
+            "Put",
+            [
+              object,
+              string(member.name.text),
+              member.initializer === undefined
+                ? getUndefined(context)
+                : translateExpression(member.initializer, scope, context),
+            ],
+            context,
+          )
+        : object,
+    useJavaScript(
+      "WithPrototype",
+      [
+        identifier("EmptyObject"),
+        useJavaScript(
+          "Get",
+          [heap, translateExpression(node.expression, scope, context), string("prototype")],
+          context,
+        ),
+      ],
+      context,
+    ),
+  );
+
+export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
+  if (ts.isClassLike(node)) return translateClass(node, heap, scope, context);
+  const created = getNewClass(node, context);
+  if (created !== undefined && ts.isNewExpression(node)) {
+    return useJavaScript(
+      "Allocate",
+      [heap, translateInstance(node, created, heap, scope, context)],
+      context,
+    );
+  }
   if (ts.isObjectLiteralExpression(node)) {
     return useJavaScript("Allocate", [heap, translateObject(node, scope, context)], context);
   }
@@ -228,12 +347,9 @@ export const isAllocation = (node: ts.Node, context: Context): node is ts.CallEx
 // Functions make none. An operand that only sometimes runs makes its object literals anyway, as
 // making an object that nothing reads can't be seen, but not its descriptions and creations,
 // which may stop the run.
-export const getAllocated = (
-  node: ts.Node,
-  context: Context,
-  isSometimes = false,
-): ts.Expression[] => {
-  if (context.heap === undefined || ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
+export const getAllocated = (node: ts.Node, context: Context, isSometimes = false): ts.Node[] => {
+  if (context.heap === undefined || ts.isFunctionLike(node)) return [];
+  if (ts.isClassLike(node)) return isHeapClass(node, context) && !isSometimes ? [node] : [];
   if (ts.isOptionalChain(node)) return [];
   if (ts.isConditionalExpression(node)) {
     return [
@@ -258,13 +374,18 @@ export const getAllocated = (
       ...getAllocated(node.right, context, isSometimes),
     ];
   }
-  const nested: ts.Expression[] = [];
+  const nested: ts.Node[] = [];
   ts.forEachChild(node, (child) => {
     nested.push(...getAllocated(child, context, isSometimes));
   });
+  const created = getNewClass(node, context);
   const isAllocated =
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
-    (!isSometimes && isAllocation(node, context));
+    (!isSometimes && isAllocation(node, context)) ||
+    (!isSometimes &&
+      created !== undefined &&
+      ts.isNewExpression(node) &&
+      (getRunConstructor(created) === undefined || isStatementNew(node)));
   return isAllocated ? [...nested, node] : nested;
 };
 

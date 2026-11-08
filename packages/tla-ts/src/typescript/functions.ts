@@ -257,7 +257,7 @@ const translatePure = (
     const bound = statement.declarationList.declarations.reduce<Bound>(
       (current, declaration) => {
         const initializer = declaration.initializer;
-        if (isInlined(initializer)) return current;
+        if (isInlined(initializer, context)) return current;
         const value =
           initializer === undefined
             ? getUndefined(context)

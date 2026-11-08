@@ -15,9 +15,11 @@ import {
   getCallee,
   getElement,
   getFunction,
+  getNewClass,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
+  isHeapClass,
   isMethodCall,
   share,
   translateString,
@@ -920,6 +922,16 @@ const translateNode = (
   }
   if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
+  const isHeapObject =
+    (ts.isClassExpression(node) && isHeapClass(node, context)) ||
+    getNewClass(node, context) !== undefined;
+  if (isHeapObject) {
+    const allocated = scope.allocated.get(node);
+    if (allocated === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return allocated;
+  }
   if (ts.isNewExpression(node)) {
     const classes = getErrorClass(getSymbol(node.expression, context.checker), context.checker);
     return classes === undefined

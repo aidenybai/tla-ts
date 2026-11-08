@@ -51,7 +51,8 @@ export type FunctionNode =
   | ts.FunctionDeclaration
   | ts.ArrowFunction
   | ts.FunctionExpression
-  | ts.MethodDeclaration;
+  | ts.MethodDeclaration
+  | ts.ConstructorDeclaration;
 
 export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 
@@ -146,14 +147,22 @@ export const getClass = (node: ts.Node | undefined, context: Context) => {
     node === undefined ? undefined : getSymbol(node, context.checker)?.valueDeclaration;
   if (declaration === undefined) return undefined;
   const found = ts.isVariableDeclaration(declaration) ? declaration.initializer : declaration;
-  return found !== undefined && ts.isClassLike(found) && isInert(found) ? found : undefined;
+  return found !== undefined &&
+    ts.isClassLike(found) &&
+    isInert(found) &&
+    !isHeapClass(found, context)
+    ? found
+    : undefined;
 };
 
 // Whether a variable's initializer is a function or a class, which tla-ts inlines where it's used
 // instead of storing.
-export const isInlined = (node: ts.Node | undefined) =>
+export const isInlined = (node: ts.Node | undefined, context: Context) =>
   getAnyFunction(node) !== undefined ||
-  (node !== undefined && ts.isClassExpression(node) && isInert(node));
+  (node !== undefined &&
+    ts.isClassExpression(node) &&
+    isInert(node) &&
+    !isHeapClass(node, context));
 
 // The method that a getter like `get method() { return this.#method; }` returns.
 const getReturnedMethod = (getter: ts.GetAccessorDeclaration, context: Context) => {
@@ -202,16 +211,143 @@ const isOnce = (node: ts.Node): boolean =>
   ts.isSourceFile(node) ||
   (!ts.isFunctionLike(node) && !ts.isIterationStatement(node, false) && isOnce(node.parent));
 
-// A plain method of an object literal that a script makes once, which a value can name, since
-// each call checks that the property still holds it.
-export const getObjectMethod = (node: ts.Node | undefined) =>
-  node !== undefined &&
+const isPlainMethod = (node: ts.Node): node is ts.MethodDeclaration =>
   ts.isMethodDeclaration(node) &&
-  ts.isObjectLiteralExpression(node.parent) &&
   node.asteriskToken === undefined &&
   node.body !== undefined &&
-  !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
-  isOnce(node.parent)
+  !ts.isComputedPropertyName(node.name) &&
+  !ts.isPrivateIdentifier(node.name) &&
+  !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+
+const isStatic = (node: ts.Node) =>
+  ts.canHaveModifiers(node) &&
+  (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
+
+// Whether an assignment's target writes a name, alone or in a pattern.
+const isWrittenBy = (target: ts.Node, symbol: ts.Symbol, context: Context): boolean => {
+  if (ts.isIdentifier(target)) return getSymbol(target, context.checker) === symbol;
+  if (ts.isParenthesizedExpression(target) || ts.isSpreadElement(target)) {
+    return isWrittenBy(target.expression, symbol, context);
+  }
+  if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    return isWrittenBy(target.left, symbol, context);
+  }
+  if (ts.isArrayLiteralExpression(target)) {
+    return target.elements.some((element) => isWrittenBy(element, symbol, context));
+  }
+  if (!ts.isObjectLiteralExpression(target)) return false;
+  return target.properties.some((property) =>
+    ts.isPropertyAssignment(property)
+      ? isWrittenBy(property.initializer, symbol, context)
+      : ts.isShorthandPropertyAssignment(property)
+        ? isWrittenBy(property.name, symbol, context)
+        : ts.isSpreadAssignment(property) && isWrittenBy(property.expression, symbol, context),
+  );
+};
+
+// Whether a script assigns to a name anywhere.
+const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean => {
+  const target =
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ? node.left
+      : (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+          (node.operator === ts.SyntaxKind.PlusPlusToken ||
+            node.operator === ts.SyntaxKind.MinusMinusToken)
+        ? node.operand
+        : (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+            !ts.isVariableDeclarationList(node.initializer)
+          ? node.initializer
+          : undefined;
+  return (
+    (target !== undefined && isWrittenBy(target, symbol, context)) ||
+    (ts.forEachChild(node, (child) => isAssigned(symbol, child, context) || undefined) ?? false)
+  );
+};
+
+const heapClasses = new WeakMap<ts.ClassLikeDeclaration, boolean>();
+
+// A class that a script evaluates once into objects on the heap: a constructor object with the
+// static methods, and its prototype with the other methods. Its name never changes, so a new or
+// a method call can find the class it names.
+export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context) => {
+  if (context.heap === undefined) return false;
+  const known = heapClasses.get(node);
+  if (known !== undefined) return known;
+  const declared = ts.isClassExpression(node) ? node.parent : node;
+  const nameNode =
+    ts.isClassDeclaration(node) || !ts.isVariableDeclaration(declared) ? node.name : declared.name;
+  const symbol =
+    nameNode === undefined || !ts.isIdentifier(nameNode)
+      ? undefined
+      : getSymbol(nameNode, context.checker);
+  const isHeap =
+    node.heritageClauses === undefined &&
+    symbol !== undefined &&
+    (ts.isClassDeclaration(node) || ts.isVariableDeclaration(declared)) &&
+    isOnce(node) &&
+    node.members.every(
+      (member) =>
+        ts.isSemicolonClassElement(member) ||
+        (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
+        isPlainMethod(member) ||
+        (ts.isPropertyDeclaration(member) && !isStatic(member) && ts.isIdentifier(member.name)),
+    ) &&
+    !isAssigned(symbol, node.getSourceFile(), context);
+  heapClasses.set(node, isHeap);
+  return isHeap;
+};
+
+// The heap class that a name names.
+export const getHeapClass = (node: ts.Expression, context: Context) => {
+  const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  const found =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : declaration;
+  return found !== undefined && ts.isClassLike(found) && isHeapClass(found, context)
+    ? found
+    : undefined;
+};
+
+// The heap class that a new names.
+export const getNewClass = (node: ts.Node, context: Context) =>
+  ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
+
+// A class's constructor, when its body runs statements.
+export const getRunConstructor = (node: ts.ClassLikeDeclaration) =>
+  node.members.find(
+    (member): member is ts.ConstructorDeclaration =>
+      ts.isConstructorDeclaration(member) && (member.body?.statements.length ?? 0) > 0,
+  );
+
+// Whether a new is all that a statement evaluates, besides the variable it initializes or
+// assigns, so the statement can run the constructor.
+export const isStatementNew = (node: ts.NewExpression) => {
+  const parent = node.parent;
+  return (
+    ts.isExpressionStatement(parent) ||
+    (ts.isVariableDeclaration(parent) &&
+      parent.initializer === node &&
+      ts.isIdentifier(parent.name) &&
+      ts.isVariableStatement(parent.parent.parent)) ||
+    (ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.right === node &&
+      ts.isIdentifier(parent.left) &&
+      ts.isExpressionStatement(parent.parent))
+  );
+};
+
+// A plain method that a script makes once, of an object literal or a heap class, which a value can
+// name, since each call checks that the property still holds it.
+export const getObjectMethod = (node: ts.Node | undefined, context: Context) =>
+  node !== undefined &&
+  isPlainMethod(node) &&
+  (ts.isObjectLiteralExpression(node.parent)
+    ? isOnce(node.parent)
+    : ts.isClassLike(node.parent) && isHeapClass(node.parent, context))
     ? node
     : undefined;
 
@@ -235,7 +371,7 @@ export const getCalledMethod = (
   if (!ts.isIdentifier(name) && !ts.isPrivateIdentifier(name) && !ts.isStringLiteralLike(name)) {
     return undefined;
   }
-  const method = getObjectMethod(getSymbol(name, context.checker)?.valueDeclaration);
+  const method = getObjectMethod(getSymbol(name, context.checker)?.valueDeclaration, context);
   return method === undefined ? undefined : { method, receiver: node.expression, key: name.text };
 };
 

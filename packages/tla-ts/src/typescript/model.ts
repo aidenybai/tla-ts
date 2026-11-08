@@ -6,17 +6,19 @@ import {
   getSymbol,
   hasObjectLiteral,
   type HelperDeclaration,
+  isHeapClass,
   isInlined,
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
+import { getAllocated } from "./heap";
 import { VALUE_TAGS } from "./properties";
 import { getLocation, identifier, set } from "./tla";
 
 export interface Variable {
   name: string;
   symbol: ts.Symbol;
-  declaration: ts.VariableDeclaration;
+  declaration: ts.VariableDeclaration | ts.ClassDeclaration;
 }
 
 // An exported function, which becomes an action, an invariant, or a property its tag names.
@@ -87,8 +89,9 @@ const isLet = (declared: Declared, context: Context) => {
       !ts.isIdentifier(declaration.name) ||
       (context.heap !== undefined &&
         declaration.initializer !== undefined &&
-        hasObjectLiteral(declaration.initializer))) &&
-    !isInlined(declaration.initializer)
+        (hasObjectLiteral(declaration.initializer) ||
+          getAllocated(declaration.initializer, context).length > 0))) &&
+    !isInlined(declaration.initializer, context)
   );
 };
 
@@ -196,6 +199,14 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     context.variables.set(symbol, identifier(name, getLocation(declared.identifier)));
     return [{ name, symbol, declaration }];
   });
+  const classes = statements.flatMap((statement) => {
+    if (!ts.isClassDeclaration(statement) || !isHeapClass(statement, context)) return [];
+    const symbol = statement.name && getSymbol(statement.name, context.checker);
+    if (statement.name === undefined || symbol === undefined) return [];
+    const name = context.names.getFresh(statement.name.text);
+    context.variables.set(symbol, identifier(name, getLocation(statement.name)));
+    return [{ name, symbol, declaration: statement }];
+  });
   const helpers = declarations.filter((declared) => !isLet(declared, context));
   const exported = helpers.flatMap((declared) => {
     const declaration = declared.declaration;
@@ -207,8 +218,12 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     return [{ ...declared, node, body: node.body, tags: tags.get(statement) ?? new Map() }];
   });
   return {
-    variables,
-    script: statements.filter((statement) => !isDeclaration(statement)),
+    variables: [...variables, ...classes],
+    script: statements.filter(
+      (statement) =>
+        !isDeclaration(statement) ||
+        (ts.isClassDeclaration(statement) && isHeapClass(statement, context)),
+    ),
     exported: exported.map((definition) => ({
       ...definition,
       name: context.names.getFresh(definition.name),

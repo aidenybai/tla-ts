@@ -348,6 +348,28 @@ const CASES: Record<string, (string | [string, string])[]> = {
       box.bump(2);`,
     ],
     [
+      "[counter.read(), Counter.make(), typeof Counter, Counter.name, Counter.length, counter instanceof Counter, Object.getPrototypeOf(counter) === Counter.prototype, Object.getOwnPropertyNames(Counter.prototype), Object.hasOwn(counter, 'bump')]",
+      `class Counter {
+        count = 0;
+        step: number;
+        constructor(step: number) {
+          this.step = step;
+        }
+        bump() {
+          this.count = this.count + this.step;
+        }
+        read() {
+          return this.count;
+        }
+        static make() {
+          return 7;
+        }
+      }
+      const counter = new Counter(2);
+      counter.bump();
+      counter.bump();`,
+    ],
+    [
       "has(point)",
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],
