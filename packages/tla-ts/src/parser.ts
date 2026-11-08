@@ -984,6 +984,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         const params = getNames(accept("(") ? parseSeparated(expectName) : []);
         if (params.names.length > 0) expect(")");
         expect("::");
+        const head = getRange(start);
         const body = parseExpression();
         // TLAplusParser.labelDoesNotChangeParse.
         if (
@@ -1000,6 +1001,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           name,
           params: params.names,
           paramRanges: params.ranges,
+          head,
           body,
           location,
         };

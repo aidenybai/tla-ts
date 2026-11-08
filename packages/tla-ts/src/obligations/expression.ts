@@ -158,7 +158,7 @@ interface ExceptSpec {
 
 export type ParenForm =
   | { kind: "Syntax" }
-  | { kind: "Nlabel"; label: string; names: string[] }
+  | { kind: "Nlabel"; label: string; names: string[]; location?: Locus }
   | { kind: "Xlabel"; label: string; indices: { name: string; index: number }[] };
 
 export interface Param {

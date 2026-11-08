@@ -28,7 +28,6 @@ import {
   type Expr,
   type ExprCore,
   type Hyp,
-  type Locus,
   type Warn,
   type ParenForm,
   type Scope,
@@ -265,18 +264,14 @@ export const createAnonymizer = (
         return {
           ...expression,
           expression: expr(context, expression.expression),
-          form: anonParenForm(context, expression.form, expression.location),
+          form: anonParenForm(context, expression.form),
         };
       default:
         return visit(context, expression);
     }
   };
 
-  const anonParenForm = (
-    context: AnonContext,
-    form: ParenForm,
-    location: Locus | undefined,
-  ): ParenForm => {
+  const anonParenForm = (context: AnonContext, form: ParenForm): ParenForm => {
     if (form.kind !== "Nlabel") return form;
     return {
       kind: "Xlabel",
@@ -285,8 +280,8 @@ export const createAnonymizer = (
         const found = findNamed(context.scope, name);
         if (!found) {
           const message = `Identifier "${name}" in label parameters not found`;
-          onWarning(getErrorNote(location, message));
-          onWarning(getErrorSetting(location, message));
+          onWarning(getErrorNote(form.location, message));
+          onWarning(getErrorSetting(form.location, message));
           throw new TlaProofError(message, { failure: "Expr.Anon" });
         }
         return { name, index: found.depth + 1 };

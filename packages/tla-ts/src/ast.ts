@@ -296,11 +296,13 @@ export interface FairnessExpression {
   location: SourceLocation;
 }
 
+// head is the range of the label up to its ::.
 export interface LabelExpression {
   kind: "Label";
   name: string;
   params: string[];
   paramRanges?: SourceRange[];
+  head?: SourceRange;
   body: Expression;
   location: SourceLocation;
 }

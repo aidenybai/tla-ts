@@ -617,7 +617,12 @@ export const createSource = (
           {
             kind: "Parens",
             expression: recurse(expression.body),
-            form: { kind: "Nlabel", label: expression.name, names: expression.params },
+            form: {
+              kind: "Nlabel",
+              label: expression.name,
+              names: expression.params,
+              location: expression.head && getRangeLocus(expression.head),
+            },
           },
           { location },
         );
