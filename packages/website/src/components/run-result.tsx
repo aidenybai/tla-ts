@@ -38,7 +38,6 @@ interface RunStatusProps {
   onOpen: () => void;
 }
 
-// The last verdict, which reopens the drawer after it's closed.
 export const RunStatus = ({ result, onOpen }: RunStatusProps) => (
   <button
     type="button"
@@ -63,8 +62,7 @@ interface RunDrawerProps {
   onClose: () => void;
 }
 
-// Slides up over the code inside the block, so the page never moves. Mount it once per result,
-// so a new trace plays from the start.
+// Mount it once per result, so a new trace plays from the start.
 export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
   const stepCount = result ? Math.max(result.trace.length, result.rows.length) : 0;
   const playback = usePlayback(stepCount);
