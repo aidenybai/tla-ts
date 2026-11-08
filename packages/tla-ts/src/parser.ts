@@ -1557,9 +1557,10 @@ const parse = (
       const name = advance().text;
       return { name, arity: accept("_") ? 2 : 1, location };
     }
-    const isPrefixKeyword =
-      peek().kind === "Keyword" && DEFINABLE_PREFIX_OPERATORS.has(peek().text);
-    if ((peek().kind === "Operator" || isPrefixKeyword) && isAt("_", 1)) {
+    const isPrefixOperator =
+      peek().kind !== "String" &&
+      (DEFINABLE_PREFIX_OPERATORS.has(peek().text) || (isTlapm && peek().kind === "Operator"));
+    if (isPrefixOperator && isAt("_", 1)) {
       const operator = advance().text;
       advance();
       return { name: operator === "-" ? "-." : operator, arity: 1, location };
