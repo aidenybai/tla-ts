@@ -18,9 +18,7 @@ Test == PrintT(([{1} -> {2, 3}]) \ (Int))
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    <<2>>
-    is an element of Int.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module diff_set_of_functions__int failed.
     2158:0 Attempted to check if the value:
     <<2>>
     is an element of Int.

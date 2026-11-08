@@ -18,6 +18,6 @@ Test == PrintT(LET b15086 == ((CHOOSE b15087 \in UNION {{1, 2}, {x \in 1..3 : x 
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 32 to line 14, col 114 of module random_09722
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09722 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 32 to line 14, col 114 of module random_09722
 ---*)

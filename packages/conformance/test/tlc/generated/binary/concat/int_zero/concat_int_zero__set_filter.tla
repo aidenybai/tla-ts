@@ -18,8 +18,7 @@ Test == PrintT((0) \o ({x \in 1..3 : x > 1}))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module concat_int_zero__set_filter failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     0
 ---*)

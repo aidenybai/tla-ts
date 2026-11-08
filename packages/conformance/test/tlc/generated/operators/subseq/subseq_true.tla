@@ -18,8 +18,7 @@ Test == PrintT(SubSeq(TRUE, 1, 1))
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SubSeq should be a sequence, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module subseq_true failed.
     2169:0 The first argument of SubSeq should be a sequence, but instead it is:
     TRUE
 ---*)

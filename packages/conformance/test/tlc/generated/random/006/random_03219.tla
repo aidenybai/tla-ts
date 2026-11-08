@@ -20,6 +20,6 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 26 to line 14, col 32 of module random_03219
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 144 to line 14, col 171 of module random_03219
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03219 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 144 to line 14, col 171 of module random_03219
 ---*)

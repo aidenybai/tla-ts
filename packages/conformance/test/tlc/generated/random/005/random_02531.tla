@@ -18,10 +18,7 @@ Test == PrintT([[a |-> Len(SelectSeq(<<1, 2>>, LAMBDA e : e > 0)), b |-> (([x \i
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compute the number of elements in the overridden value Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02531 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

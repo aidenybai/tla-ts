@@ -18,10 +18,7 @@ Test == PrintT(<<([b7819 \in SubSeq(<<1>>, 3, 3) |-> (b7819 \div 2147483647)])[C
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1>>
-    , but instead it is
-    3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05029 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1>>
     , but instead it is

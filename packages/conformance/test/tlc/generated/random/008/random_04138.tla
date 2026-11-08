@@ -18,9 +18,7 @@ Test == PrintT({CASE (\A b6514 \in (1..3 \cup {2, 1, 3}) : (~FALSE)) -> LET b651
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    [a |-> 2, b |-> TRUE]
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04138 failed.
     2158:0 Attempted to check if the value:
     [a |-> 2, b |-> TRUE]
     is an element of Nat.

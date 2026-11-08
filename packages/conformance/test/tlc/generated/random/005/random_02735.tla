@@ -18,8 +18,7 @@ Test == PrintT((((IF TRUE THEN -1 ELSE 0 * LET b4316 == 2 IN 2147483647) .. Head
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
-    2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02735 failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
     2147483647
 ---*)

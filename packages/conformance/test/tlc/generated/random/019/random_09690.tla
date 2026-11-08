@@ -18,8 +18,7 @@ Test == PrintT([[a |-> (-IF TRUE THEN 1 ELSE -1), b |-> (([a |-> 1] = [a |-> 1, 
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of @@ should be a function, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09690 failed.
     2169:0 The second argument of @@ should be a function, but instead it is:
     TRUE
 ---*)

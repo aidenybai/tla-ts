@@ -18,8 +18,7 @@ Test == PrintT(SubSeq((SubSeq(([a |-> 1, b |-> TRUE] \o <<1>>), LET b5273 == -1 
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    [a |-> 1, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03318 failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     [a |-> 1, b |-> TRUE]
 ---*)

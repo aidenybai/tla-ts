@@ -20,10 +20,7 @@ D == x
 all:
   exit: 151
   transcript: |-
-    2281:1 The configuration file substitutes constant N with non-constant D - specifically: @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
-    line 16, col 6 to line 16, col 6 of module non_constant_rhs_for_constant
-    2281:1 The configuration file substitutes constant N with non-constant D - specifically: @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier x is either undefined or not an operator.
+    2281:1 The configuration file substitutes constant N with non-constant D - specifically:
+    2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 16, col 6 to line 16, col 6 of module non_constant_rhs_for_constant
 ---*)

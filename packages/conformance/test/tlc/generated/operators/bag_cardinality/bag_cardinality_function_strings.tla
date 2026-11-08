@@ -18,9 +18,7 @@ Test == PrintT(BagCardinality([x \in {"a", "b"} |-> x]))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying BagCardinality to the following value,
-    which is not a bag:
-    [a |-> "a", b |-> "b"]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module bag_cardinality_function_strings failed.
     2176:0 Applying BagCardinality to the following value,
     which is not a bag:
     [a |-> "a", b |-> "b"]

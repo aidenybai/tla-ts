@@ -18,9 +18,7 @@ Test == PrintT(((-2147483647 - 1)) \in (Seq({1})))
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    -2147483648
-    is an element of Seq({1}).
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module in_seq_set__int_minimum failed.
     2158:0 Attempted to check if the value:
     -2147483648
     is an element of Seq({1}).

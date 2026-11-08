@@ -18,8 +18,7 @@ Test == PrintT(Cardinality({(CASE FALSE -> 2 [] OTHER -> 1 + IF TRUE THEN 2 ELSE
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [a |-> {}, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04910 failed.
     2181:0 Attempted to compute cardinality of the value
     [a |-> {}, b |-> TRUE]
 ---*)

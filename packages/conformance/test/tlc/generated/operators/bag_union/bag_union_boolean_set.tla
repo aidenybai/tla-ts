@@ -18,9 +18,7 @@ Test == PrintT(BagUnion(BOOLEAN))
 all:
   exit: 10
   transcript: |-
-    2177:0 Attempted to apply BagUnion to the following set, whose
-    element is not a bag:
-    {FALSE, TRUE}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module bag_union_boolean_set failed.
     2177:0 Attempted to apply BagUnion to the following set, whose
     element is not a bag:
     {FALSE, TRUE}

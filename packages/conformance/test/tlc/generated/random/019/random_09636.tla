@@ -18,8 +18,7 @@ Test == PrintT([SubSeq(SubSeq(Tail(<<3, 1, 2>>), Cardinality({x \in 1..3 : x > 1
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09636 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     0
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT(Tail((({2147483647 : b569 \in {}} \subseteq (1..3 \cup {x \in 1..
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00339 failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     TRUE
 ---*)

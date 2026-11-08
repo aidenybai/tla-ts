@@ -18,10 +18,7 @@ Test == PrintT([b7786 \in ({(CHOOSE b7788 \in {1} : TRUE) : b7787 \in (2..1 \cap
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntervalValue tlc2.module.Integers.DotDot(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
-    but it produced the following error:
-    Cannot cast tlc2.value.impl.FcnRcdValue to tlc2.value.impl.IntValue
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05006 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntervalValue tlc2.module.Integers.DotDot(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
     but it produced the following error:

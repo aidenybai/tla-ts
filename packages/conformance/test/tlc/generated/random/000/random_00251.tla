@@ -18,6 +18,6 @@ Test == PrintT(([((CHOOSE f \in [{0} \cup {1} -> {1, 2} \ {1}] : TRUE) @@ (21474
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00251 failed.
     2178:0 Overflow when computing 2+2147483647
 ---*)

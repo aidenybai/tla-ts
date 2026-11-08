@@ -18,6 +18,6 @@ Test == PrintT(DOMAIN [b2286 \in ((1 + -1) .. LET b2287 == 2 IN 3) |-> Head(Tail
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01430 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

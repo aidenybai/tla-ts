@@ -18,6 +18,6 @@ Test == PrintT(Cardinality({b6213 \in [[a |-> 7, b |-> FALSE] EXCEPT !.a = @ + (
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 7+2147483644
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03949 failed.
     2178:0 Overflow when computing 7+2147483644
 ---*)

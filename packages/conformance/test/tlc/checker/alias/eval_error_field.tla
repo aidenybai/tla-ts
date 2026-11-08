@@ -26,7 +26,9 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     /\ x = 0
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2179:0 @!@!@\nThe second argument of \\div is 0.\n@!@!@ENDMSG 2179 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2179:0 \nThe second argument of \\div is 0.\n
     2217:4 2: <Next line 15, col 9 to line 15, col 18 of module eval_error_field>
     d = 1
     2217:4 3: <Next line 15, col 9 to line 15, col 18 of module eval_error_field>

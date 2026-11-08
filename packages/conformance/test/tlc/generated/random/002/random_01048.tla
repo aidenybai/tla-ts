@@ -18,8 +18,7 @@ Test == PrintT(Head((<<(2 % 2), (CHOOSE r \in [a : 1..2] : TRUE)>> \o Tail(SortS
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01048 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     [a |-> 1]
 ---*)

@@ -18,11 +18,7 @@ Test == PrintT(([x \in {1}, y \in {2} |-> x + y]) @@ ([a |-> [b |-> <<1>>]]))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check equality of string "a" with non-string:
-    <<1, 2>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module merge_function_pair_domain__record_nested failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

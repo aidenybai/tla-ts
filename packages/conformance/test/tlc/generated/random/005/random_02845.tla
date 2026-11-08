@@ -18,8 +18,7 @@ Test == PrintT((SortSeq(<<LET b4513 == -1 IN b4513, CASE TRUE -> 3 [] OTHER -> S
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02845 failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     TRUE
 ---*)

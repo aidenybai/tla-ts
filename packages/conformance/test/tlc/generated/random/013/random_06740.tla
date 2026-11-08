@@ -18,8 +18,7 @@ Test == PrintT((Len(Append(Append(Nat, 0), LET b10326 == 0 IN b10326)) % CASE (\
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06740 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     Nat
 ---*)

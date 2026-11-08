@@ -18,6 +18,6 @@ Test == PrintT([a |-> ((CHOOSE b7795 \in DOMAIN [x \in 1..2 |-> x] : CASE TRUE -
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 25 to line 14, col 101 of module random_05011
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05011 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 25 to line 14, col 101 of module random_05011
 ---*)

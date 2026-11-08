@@ -18,6 +18,6 @@ Test == PrintT((Head(<<(CHOOSE b7818 \in 1..3 : <<5, 6>>), (-0)>>) :> ((([x \in 
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 25 to line 14, col 56 of module random_05028
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05028 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 25 to line 14, col 56 of module random_05028
 ---*)

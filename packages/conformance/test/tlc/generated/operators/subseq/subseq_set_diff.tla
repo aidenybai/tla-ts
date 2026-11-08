@@ -18,8 +18,7 @@ Test == PrintT(SubSeq({1, 2} \ {2}, 1, 1))
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SubSeq should be a sequence, but instead it is:
-    {1}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module subseq_set_diff failed.
     2169:0 The first argument of SubSeq should be a sequence, but instead it is:
     {1}
 ---*)

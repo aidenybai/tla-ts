@@ -18,8 +18,7 @@ Test == PrintT(Tail(STRING))
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    STRING
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module tail_string_set failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     STRING
 ---*)

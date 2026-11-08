@@ -18,8 +18,7 @@ Test == PrintT(((([[a |-> 1] EXCEPT !.a = 7] < (CHOOSE b8444 \in SUBSET {1} : TR
 all:
   exit: 10
   transcript: |-
-    2266:0 The first argument of < should be an integer, but instead it is:
-    [a |-> 7]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05453 failed.
     2266:0 The first argument of < should be an integer, but instead it is:
     [a |-> 7]
 ---*)

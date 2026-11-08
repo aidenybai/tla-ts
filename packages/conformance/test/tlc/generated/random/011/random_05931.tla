@@ -18,8 +18,7 @@ Test == PrintT(Append(SortSeq((~(3 = 1)), LAMBDA p, q : p < q), ((CHOOSE b9143 \
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05931 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     TRUE
 ---*)

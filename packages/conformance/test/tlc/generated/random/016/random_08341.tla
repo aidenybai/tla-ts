@@ -18,8 +18,7 @@ Test == PrintT([a |-> Cardinality(((CHOOSE f \in [{0} \cup {1} -> 1..2] : TRUE) 
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    (0 :> 1 @@ 1 :> 1 @@ 2 :> 2147483647 @@ 3 :> 2147483647)
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08341 failed.
     2181:0 Attempted to compute cardinality of the value
     (0 :> 1 @@ 1 :> 1 @@ 2 :> 2147483647 @@ 3 :> 2147483647)
 ---*)

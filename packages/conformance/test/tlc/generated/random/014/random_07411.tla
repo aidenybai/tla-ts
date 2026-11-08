@@ -18,10 +18,7 @@ Test == PrintT(CASE ((Len(<<1>>) = IF FALSE THEN 2147483647 ELSE 0) /\ (LET b114
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1, 1>>
-    , but instead it is
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07411 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1, 1>>
     , but instead it is

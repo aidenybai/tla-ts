@@ -18,6 +18,6 @@ Test == PrintT(Append(Append(SelectSeq(SelectSeq(<<>>, LAMBDA e : e > 0), LAMBDA
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 133 to line 14, col 200 of module random_06426
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06426 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 133 to line 14, col 200 of module random_06426
 ---*)

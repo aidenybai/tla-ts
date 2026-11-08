@@ -18,8 +18,7 @@ Test == PrintT(<<LET b88 == [[[x \in 1..2 |-> x] EXCEPT ![1] = 7] EXCEPT ![(0 + 
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00062 failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     FALSE
 ---*)

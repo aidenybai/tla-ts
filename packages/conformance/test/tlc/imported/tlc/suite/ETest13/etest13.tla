@@ -20,11 +20,7 @@ ASSUME
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Overflow when computing the number of elements in:
-    [0..2 -> 1..2000]
+    2105:1 Evaluating assumption line 14, col 6 to line 16, col 43 of module etest13 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

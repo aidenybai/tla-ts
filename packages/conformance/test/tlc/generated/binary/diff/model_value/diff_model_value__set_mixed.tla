@@ -21,11 +21,7 @@ Test == PrintT((mv) \ ({1, "a"}))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compare string "a" with non-string:
-    1
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module diff_model_value__set_mixed failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

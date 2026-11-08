@@ -18,8 +18,7 @@ Test == PrintT((IF (([a |-> 1] = [a |-> 1, b |-> TRUE]) /\ ([a |-> 1] <=> TRUE))
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    {}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06485 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     {}
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT(SubSeq((Tail(Append(<<>>, 1)) \o LET b11472 == (2 - 0) IN LET b11
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
-    2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07443 failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
     2147483647
 ---*)

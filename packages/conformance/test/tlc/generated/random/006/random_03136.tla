@@ -18,6 +18,6 @@ Test == PrintT([(((0 - 1) \div (1 \div 3)) :> Len(<<3, 2147483647>>)) EXCEPT ![C
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03136 failed.
     2179:0 The second argument of \div is 0.
 ---*)

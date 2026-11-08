@@ -21,8 +21,7 @@ Test == PrintT((SUBSET {1, 2}) \o (mv))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    {{}, {1}, {2}, {1, 2}}
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module concat_subset__model_value failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     {{}, {1}, {2}, {1, 2}}
 ---*)

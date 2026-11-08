@@ -28,13 +28,19 @@ all:
     2264:1 The following behavior constitutes a counter-example:
     2217:4 1: <Initial predicate>
     /\ x = 0
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n@!@!@ENDMSG 2154 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2154:0 \nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n
     2217:4 2: <Next line 15, col 9 to line 15, col 27 of module safety_like_alias_error>
     /\ x = 1
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n@!@!@ENDMSG 2154 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2154:0 \nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n
     2217:4 3: <Next line 15, col 9 to line 15, col 27 of module safety_like_alias_error>
     /\ x = 2
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n@!@!@ENDMSG 2154 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2154:0 \nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n
     2199:0 3 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.
 ---*)

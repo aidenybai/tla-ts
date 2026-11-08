@@ -18,6 +18,6 @@ Test == PrintT((LET b12932 == IF (\A b12933 \in {1} : [a |-> 1]) THEN (2 * 3) EL
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 35 to line 14, col 63 of module random_08359
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08359 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 35 to line 14, col 63 of module random_08359
 ---*)

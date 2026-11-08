@@ -18,9 +18,7 @@ Test == PrintT(BagToSet({1, 2} \X {3}))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying BagToSet to the following value,
-    which is not a function with a finite domain:
-    {<<1, 3>>, <<2, 3>>}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module bag_to_set_cross failed.
     2176:0 Applying BagToSet to the following value,
     which is not a function with a finite domain:
     {<<1, 3>>, <<2, 3>>}

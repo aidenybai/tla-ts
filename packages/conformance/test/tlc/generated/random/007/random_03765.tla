@@ -18,14 +18,7 @@ Test == PrintT(({(LET b5935 == b5934 IN b5935 - (-b5934)) : b5934 \in ({b5936 : 
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to enumerate S \cup T when S:
-    {2, 6, 14}
-    and T:
-    -1
-    are not both enumerable
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03765 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

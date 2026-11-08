@@ -18,8 +18,7 @@ Test == PrintT(SortSeq(Head(((2 - 7) :> [a |-> 3, b |-> FALSE])), LAMBDA p, q : 
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    (-5 :> [a |-> 3, b |-> FALSE])
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00897 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     (-5 :> [a |-> 3, b |-> FALSE])
 ---*)

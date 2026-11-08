@@ -18,8 +18,7 @@ Test == PrintT(((1 :> 2) @@ (2 :> 3)) \o ({1} \cup {2}))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
-    {1, 2}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module concat_double_at__set_cup failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
     {1, 2}
 ---*)

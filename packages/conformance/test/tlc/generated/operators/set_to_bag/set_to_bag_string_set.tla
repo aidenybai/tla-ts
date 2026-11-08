@@ -18,9 +18,7 @@ Test == PrintT(SetToBag(STRING))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying BagToSet to the following value,
-    which is not a function with a finite domain:
-    STRING
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module set_to_bag_string_set failed.
     2176:0 Applying BagToSet to the following value,
     which is not a function with a finite domain:
     STRING

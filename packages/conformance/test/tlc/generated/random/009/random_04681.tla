@@ -18,6 +18,6 @@ Test == PrintT([a |-> (([[a |-> 1] EXCEPT !.a = @ + -1] * (2147483647 \div 0)) <
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04681 failed.
     2179:0 The second argument of \div is 0.
 ---*)

@@ -18,9 +18,7 @@ Test == PrintT((((([a |-> 1]).a < Head(<<1>>)) => (Append(<<1, 2>>, 7) = (CHOOSE
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {}
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08553 failed.
     2158:0 Attempted to check if the value:
     {}
     is an element of Nat.

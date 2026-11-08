@@ -18,8 +18,7 @@ Test == PrintT(([x \in {1}, y \in {2} |-> x + y]) @@ (FALSE))
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of @@ should be a function, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module merge_function_pair_domain__false failed.
     2169:0 The second argument of @@ should be a function, but instead it is:
     FALSE
 ---*)

@@ -24,8 +24,7 @@ Spec == Init /\ [][Next]_pc /\ \A p \in {q \in S : pc[q] = 0} : WF_pc(Step(p))
 all:
   exit: 255
   transcript: |-
-    2280:0 In evaluation, the identifier pc is either undefined or not an operator.
-    line 20, col 52 to line 20, col 53 of module forall_of_non_constant_set
+    2213:1 TLC cannot handle the temporal formula line 20, col 32 to line 20, col 78 of module forall_of_non_constant_set:
     2280:0 In evaluation, the identifier pc is either undefined or not an operator.
     line 20, col 52 to line 20, col 53 of module forall_of_non_constant_set
 ---*)

@@ -18,11 +18,7 @@ Test == PrintT(CASE (Append(<<2, 1>>, IF FALSE THEN 2 ELSE 3) = ([[a |-> 1, b |-
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check equality of the set {} with the value:
-    "a"
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02638 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

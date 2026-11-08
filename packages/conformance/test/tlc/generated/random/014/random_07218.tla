@@ -18,10 +18,7 @@ Test == PrintT((UNION {UNION {{b11091 : b11091 \in {1}}, {b11092 \in {2, 1, 3} :
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<7>>
-    , but instead it is
-    2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07218 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<7>>
     , but instead it is

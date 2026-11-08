@@ -18,8 +18,7 @@ Test == PrintT([a |-> Head(((FALSE => FALSE) \/ ({} \subseteq 2..1))), b |-> ((C
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07030 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     TRUE
 ---*)

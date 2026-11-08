@@ -18,13 +18,7 @@ Test == PrintT(({x \in 1..3 : x > 1}) \cup ([a : {1, 2}]))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compare record:
-    [a |-> 1]
-    with non-record
-    3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module cup_set_filter__set_of_records failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

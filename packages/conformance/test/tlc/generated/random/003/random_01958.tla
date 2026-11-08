@@ -18,14 +18,7 @@ Test == PrintT({b3085 \in {b3086 \in ((3 \div 7) \cup {3, 0}) : (\E b3087 \in ({
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to enumerate S \cup T when S:
-    {0, 3}
-    and T:
-    0
-    are not both enumerable
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01958 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

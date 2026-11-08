@@ -18,8 +18,7 @@ Test == PrintT([a |-> Len(SubSeq(Append(<<3, 1, 2>>, 0), {1, 2147483647}, Select
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    {1, 2147483647}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06661 failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     {1, 2147483647}
 ---*)

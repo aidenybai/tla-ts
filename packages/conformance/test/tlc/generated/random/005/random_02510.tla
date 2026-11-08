@@ -18,6 +18,6 @@ Test == PrintT((((({} \subseteq {x \in 1..3 : x > 1}) => (\E b3960 \in 1..3 : {1
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 59 to line 14, col 81 of module random_02510
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02510 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 59 to line 14, col 81 of module random_02510
 ---*)

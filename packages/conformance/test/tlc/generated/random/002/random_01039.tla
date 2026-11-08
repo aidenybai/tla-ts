@@ -18,6 +18,6 @@ Test == PrintT([[[a |-> (3 - 1), b |-> (TRUE /\ TRUE)] EXCEPT !.a = Cardinality(
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2147483647*2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01039 failed.
     2178:0 Overflow when computing 2147483647*2147483647
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT([((IF TRUE THEN 2147483647 ELSE -1 :> (2 * 2)) @@ [b1319 \in UNIO
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of @@ should be a function, but instead it is:
-    2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00807 failed.
     2169:0 The first argument of @@ should be a function, but instead it is:
     2147483647
 ---*)

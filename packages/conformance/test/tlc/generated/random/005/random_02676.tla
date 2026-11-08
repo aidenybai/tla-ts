@@ -18,10 +18,7 @@ Test == PrintT((LET b4227 == (Cardinality(Nat) - IF TRUE THEN 0 ELSE 0) IN (([x 
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.Integers.Divide(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
-    but it produced the following error:
-    Cannot cast tlc2.value.impl.FcnRcdValue to tlc2.value.impl.IntValue
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02676 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.Integers.Divide(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
     but it produced the following error:

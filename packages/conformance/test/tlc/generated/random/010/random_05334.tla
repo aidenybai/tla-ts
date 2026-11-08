@@ -18,8 +18,7 @@ Test == PrintT(Tail(({CASE FALSE -> b8247 [] OTHER -> b8247 : b8247 \in DOMAIN (
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    {1, 2, 3}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05334 failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     {1, 2, 3}
 ---*)

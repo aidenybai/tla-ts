@@ -20,12 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 32 to line 14, col 37 of module random_09774
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to enumerate S \ T when S:
-    Nat
-    is not enumerable.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09774 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

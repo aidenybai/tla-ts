@@ -18,6 +18,6 @@ Test == PrintT(LET b2691 == Head(<<(2 + 1), (CHOOSE b2692 \in 1..3 : TRUE)>>) IN
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01686 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

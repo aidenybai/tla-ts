@@ -18,8 +18,7 @@ Test == PrintT((UNION {(Cardinality([a |-> 1, b |-> TRUE]) .. Len(<<1, 2>>)), UN
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [a |-> 1, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05105 failed.
     2181:0 Attempted to compute cardinality of the value
     [a |-> 1, b |-> TRUE]
 ---*)

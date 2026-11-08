@@ -18,8 +18,7 @@ Test == PrintT((STRING) @@ (STRING))
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of @@ should be a function, but instead it is:
-    STRING
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module merge_string_set__string_set failed.
     2169:0 The first argument of @@ should be a function, but instead it is:
     STRING
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT(((Append((-1 \o <<>>), Head(<<>>)) = (-(7 * 0))) \/ (\E b14644 \i
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09435 failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     1
 ---*)

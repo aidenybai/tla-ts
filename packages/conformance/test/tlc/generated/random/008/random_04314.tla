@@ -18,6 +18,6 @@ Test == PrintT([a |-> (Cardinality({b6800 : b6800 \in {1}}) + (LET b6801 == 1 IN
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04314 failed.
     2179:0 The second argument of \div is 0.
 ---*)

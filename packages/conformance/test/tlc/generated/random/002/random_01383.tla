@@ -18,8 +18,7 @@ Test == PrintT(((((2 \div 2) :> IF FALSE THEN 2147483647 ELSE -1) @@ [b2207 \in 
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01383 failed.
     2181:0 Attempted to compute cardinality of the value
     Nat
 ---*)

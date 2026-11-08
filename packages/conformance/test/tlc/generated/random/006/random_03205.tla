@@ -18,8 +18,7 @@ Test == PrintT(SortSeq(SelectSeq(Append(SubSeq(<<>>, 2, [x \in 1..2 |-> x]), IF 
 all:
   exit: 10
   transcript: |-
-    2169:0 The third argument of SubSeq should be a natural number, but instead it is:
-    <<1, 2>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03205 failed.
     2169:0 The third argument of SubSeq should be a natural number, but instead it is:
     <<1, 2>>
 ---*)

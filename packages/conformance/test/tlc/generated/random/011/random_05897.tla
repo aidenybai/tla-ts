@@ -18,8 +18,7 @@ Test == PrintT(SelectSeq(SortSeq(Tail((SUBSET {1} \cup {1, 2})), LAMBDA p, q : p
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    {1, 2} \cup {{}, {1}}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05897 failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     {1, 2} \cup {{}, {1}}
 ---*)

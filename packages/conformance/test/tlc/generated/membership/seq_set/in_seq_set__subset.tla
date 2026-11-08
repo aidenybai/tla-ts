@@ -18,9 +18,7 @@ Test == PrintT((SUBSET {1, 2}) \in (Seq({1})))
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {{}, {1}, {2}, {1, 2}}
-    is an element of Seq({1}).
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module in_seq_set__subset failed.
     2158:0 Attempted to check if the value:
     {{}, {1}, {2}, {1, 2}}
     is an element of Seq({1}).

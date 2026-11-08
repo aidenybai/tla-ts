@@ -18,8 +18,7 @@ Test == PrintT(BOOLEAN < 2)
 all:
   exit: 10
   transcript: |-
-    2266:0 The first argument of < should be an integer, but instead it is:
-    {FALSE, TRUE}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module less_left_boolean_set failed.
     2266:0 The first argument of < should be an integer, but instead it is:
     {FALSE, TRUE}
 ---*)

@@ -18,6 +18,6 @@ Test == PrintT(([a |-> ([b2163 \in {1} |-> b2163])[Head(<<>>)], b |-> (SubSeq(<<
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01359 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

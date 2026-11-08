@@ -20,6 +20,6 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 25 to line 14, col 28 of module random_05224
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05224 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

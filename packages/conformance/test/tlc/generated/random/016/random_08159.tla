@@ -18,8 +18,7 @@ Test == PrintT(SortSeq(((\A b12622 \in DOMAIN <<5, 6>> : (~FALSE)) <=> (\A b1262
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08159 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     TRUE
 ---*)

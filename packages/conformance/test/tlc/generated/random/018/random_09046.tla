@@ -18,8 +18,7 @@ Test == PrintT({CASE ([[a |-> 1] EXCEPT !.a = @ + <<>>] = (CHOOSE r \in [a : {1,
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09046 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     2
 ---*)

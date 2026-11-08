@@ -18,8 +18,7 @@ Test == PrintT([SortSeq(Append(SubSeq(<<3, 1, 2>>, {x \in 1..3 : x > 1}, 7), ([x
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    {2, 3}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07330 failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     {2, 3}
 ---*)

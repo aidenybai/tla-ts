@@ -18,6 +18,6 @@ Test == PrintT(CASE (((-1 \div 0) % (CHOOSE b5359 \in {} : FALSE)) < LET b5360 =
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03379 failed.
     2179:0 The second argument of \div is 0.
 ---*)

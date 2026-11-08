@@ -20,8 +20,7 @@ Prop == \A n \in {x} : <>(x = n)
 all:
   exit: 255
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 16, col 19 to line 16, col 19 of module forall_non_constant_set_temporal_body
+    2213:1 TLC cannot handle the temporal formula line 16, col 9 to line 16, col 32 of module forall_non_constant_set_temporal_body:
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 16, col 19 to line 16, col 19 of module forall_non_constant_set_temporal_body
 ---*)

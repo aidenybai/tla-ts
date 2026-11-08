@@ -25,8 +25,7 @@ all:
   exit: 10
   transcript: |-
     2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
-    2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
-    line 18, col 9 to line 18, col 17 of module config_operator_temporal_in_assume
+    2105:1 Evaluating assumption line 19, col 8 to line 19, col 12 of module config_operator_temporal_in_assume failed.
     2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
     line 18, col 9 to line 18, col 17 of module config_operator_temporal_in_assume
 ---*)

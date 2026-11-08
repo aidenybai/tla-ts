@@ -18,11 +18,7 @@ Test == PrintT(Cardinality(((UNION {2..1, SUBSET {1}} \cup {b4339 \in {2, 1, 3} 
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compare the set {} with the value:
-    1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02748 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

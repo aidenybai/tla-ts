@@ -18,8 +18,7 @@ Test == PrintT(((Cardinality(UNION {{2, 1, 3}, 2..1}) * Len(Append(-1, 2))) \in 
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06167 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     -1
 ---*)

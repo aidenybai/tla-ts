@@ -20,10 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 21 to line 14, col 28 of module random_02982
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<3, 1, 2>>
-    , but instead it is
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02982 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<3, 1, 2>>
     , but instead it is

@@ -18,8 +18,7 @@ Test == PrintT(Head("a\"b\\c\n"))
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    "a\"b\\c\n"
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module head_string_escapes failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     "a\"b\\c\n"
 ---*)

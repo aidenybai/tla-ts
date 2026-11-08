@@ -18,8 +18,7 @@ Test == PrintT([a |-> LET b2255 == (CHOOSE b2256 \in {7 : b2257 \in 2..1} : (<<1
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    {1} \cup {{}, {1}}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01416 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     {1} \cup {{}, {1}}
 ---*)
