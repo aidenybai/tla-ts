@@ -83,6 +83,7 @@ import { getTlcFingerprints } from "./tlc/fingerprint";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
 import type { TlcVersion } from "./tlc/version";
+import { runTypedSearch } from "./typed-tier";
 import {
   combineHash,
   createModelValue,
@@ -1337,6 +1338,34 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  const typedChecks =
+    !options.isContinued &&
+    options.isFingerprintDistanceSkipped === true &&
+    options.dump === undefined &&
+    config.view === undefined &&
+    !hasPostconditions &&
+    !search.isSymmetric &&
+    !search.isImpure()
+      ? search.getTypedChecks()
+      : undefined;
+  const typed =
+    typedChecks &&
+    runTypedSearch(environment, { ...typedChecks, isDeadlockChecked: config.checkDeadlock });
+  if (typed) {
+    options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
+    return {
+      status: "success",
+      violation: undefined,
+      failure: undefined,
+      generatedStates: typed.generatedStates,
+      distinctStates: typed.distinctStates,
+      queuedStates: 0,
+      depth: typed.generatedStates === 0 ? 0 : Math.max(typed.depth, 1),
+      initialStates: typed.initialStates,
+      outDegrees: typed.outDegrees,
+      fingerprintDistance: undefined,
+    };
+  }
   if (spec.init !== undefined) {
     try {
       forEachInitialState(

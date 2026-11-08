@@ -577,6 +577,10 @@ interface Search {
   isImpure: () => boolean;
   // TLC drops a constraint that is a true constant formula.
   isConstrained: boolean;
+  // Undefined when a check needs the interpreter.
+  getTypedChecks: () =>
+    | { init: Expression; next: Expression; invariants: Expression[]; constraints: Expression[] }
+    | undefined;
   // With -continue, TLC goes on to the successors of a state that violates an invariant, whose
   // successors it checks in full.
   findViolatedInvariant: (
@@ -859,6 +863,23 @@ export const createSearch = (
             );
     },
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
+    getTypedChecks: () => {
+      const isInterpreted =
+        spec.scope !== undefined ||
+        [...invariants, ...constraints].some((check) => check.scope !== undefined) ||
+        actionConstraints.length > 0 ||
+        properties.actionProperties.length > 0 ||
+        properties.liveness.length > 0 ||
+        properties.initialPredicates.length > 0;
+      return isInterpreted || spec.init === undefined || spec.next === undefined
+        ? undefined
+        : {
+            init: spec.init,
+            next: spec.next,
+            invariants: invariantPredicates.map((invariant) => invariant.predicate),
+            constraints: [...new Set(constraints.map((constraint) => constraint.predicate))],
+          };
+    },
     getTlcOrder,
     getStoredFingerprints: (count, getState, getFingerprints) =>
       view !== undefined || isFingerprintedLikeTlc
