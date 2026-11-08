@@ -3,6 +3,7 @@ description: tuple_pattern applied to set_map, a SetEnumValue.
 ref: tlc2/util/Context.java
 features:
   - value-matrix
+  - tlc-bug
 flags:
   - expression
 contexts:

@@ -1,6 +1,8 @@
 (*---
 description: "A set map whose tuple binder meets a tuple of the wrong length reports an argument mismatch."
 ref: "tlc2/tool/ContextEnumerator.java#nextElement"
+features:
+  - tlc-bug
 flags: [expression]
 outcome: evaluation-failure
 ---*)
