@@ -554,6 +554,9 @@ export const translateToString = (node: ts.Expression, scope: Scope, context: Co
   if (isBooleanLike(node, context)) return ifExpression(value, string("true"), string("false"));
   if (flags & ts.TypeFlags.Null) return string("null");
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
+  if (getTypeNames(context.checker.getTypeAtLocation(node), context.checker) === undefined) {
+    return useJavaScript("StringOf", [value], context);
+  }
   throw new TlaTypeScriptError(`Convert this to a string explicitly: ${node.getText()}`, node);
 };
 
