@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
+import { JAVASCRIPT_OPERATORS } from "./javascript";
 import { createNames, type Names } from "./names";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -56,7 +57,7 @@ export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 
 export const createContext = (checker: ts.TypeChecker): Context => ({
   checker,
-  names: createNames(),
+  names: createNames(JAVASCRIPT_OPERATORS),
   variables: new Map(),
   definitions: new Map(),
   inProgress: new Set(),

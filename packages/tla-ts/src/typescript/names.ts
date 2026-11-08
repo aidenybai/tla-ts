@@ -101,7 +101,7 @@ export interface Names {
   getFresh: (base: string) => string;
 }
 
-export const createNames = (): Names => {
+export const createNames = (reserved: ReadonlySet<string>): Names => {
   const used = new Set<string>();
   // The next index to try for each name, so that many names that sanitize alike stay quick.
   const nextIndices = new Map<string, number>();
@@ -111,7 +111,9 @@ export const createNames = (): Names => {
       const name = /[A-Za-z]/.test(sanitized) ? sanitized : `v${sanitized}`;
       const getIndex = (index: number): number => {
         const candidate = index === 0 ? name : `${name}_${index}`;
-        return used.has(candidate) || RESERVED.has(candidate) ? getIndex(index + 1) : index;
+        return used.has(candidate) || RESERVED.has(candidate) || reserved.has(candidate)
+          ? getIndex(index + 1)
+          : index;
       };
       const index = getIndex(nextIndices.get(name) ?? 0);
       const fresh = index === 0 ? name : `${name}_${index}`;

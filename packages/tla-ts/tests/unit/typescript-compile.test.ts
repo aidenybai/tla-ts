@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { check, type CheckResult, formatValue } from "../../src";
 import { describe, expect, it } from "vite-plus/test";
+import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
 
 const checkModel = (source: string) => check(compile(source));
@@ -803,6 +804,14 @@ describe("errors", () => {
     ],
   ])("rejects %s in a script", (_, source, message) => {
     expect(() => compile(source)).toThrow(message);
+  });
+
+  it("renames a function that the JavaScript module defines", async () => {
+    const compiled = compile(
+      "function Join(value: number) {\n  return value + 1;\n}\nconst box = { a: 1 };\nlet result = Join(box.a);",
+    );
+    const result = await check({ ...compiled, source: printModule(compiled.source) });
+    expect(result.status).toBe("deadlock");
   });
 
   it("rejects a class whose member names run code", () => {

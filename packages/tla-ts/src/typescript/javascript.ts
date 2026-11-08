@@ -494,6 +494,11 @@ IsFrozen(heap, ref) ==
 
 ===============================================================================`;
 
+// The operators that the JavaScript module exports, which a spec that extends it can't redefine.
+export const JAVASCRIPT_OPERATORS: ReadonlySet<string> = new Set(
+  [...JAVASCRIPT_MODULE.matchAll(/^([A-Z]\w*)(?:\(| ==)/gm)].map((match) => match[1]),
+);
+
 export const useJavaScript = (operator: string, args: Expression[], context: Context) => {
   context.prelude.add("JavaScript");
   return apply(operator, args);
