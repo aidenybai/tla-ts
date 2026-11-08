@@ -16,6 +16,30 @@ interface SmtCheck {
   numInstances: number;
 }
 
+// What the ufnia tactic and the SMT kernel make of the assertions: the lbool of the search, the
+// context that searched, or none when the preprocessing decided the goal.
+export const solveAssertions = (manager: AstManager, assertions: number[], isMbqi = true) => {
+  const goal = applyUfniaTactic(manager, assertions);
+  // and_then runs smt_tactic only on a goal that the preprocessing left undecided.
+  if (goal.isInconsistent || goal.forms.size === 0) {
+    manager.limit.release();
+    return { result: goal.isInconsistent ? L_FALSE : L_TRUE, context: undefined };
+  }
+  // smt_tactic makes the context, which makes its asserted formulas first, and asserts the goal.
+  // setup_context then makes the theories, before the formulas are reduced.
+  const asserted = new AssertedFormulas(manager);
+  const context = new Context(manager, { isMbqi, relevancyLevel: 2 });
+  for (const assertion of goal.forms.items) asserted.assertExpr(assertion);
+  context.setupContext();
+  context.internalizeAssertions(asserted);
+  const result = context.search();
+  manager.limit.release();
+  return { result, context };
+};
+
+export const getVerdict = (result: number): Verdict =>
+  result === L_FALSE ? "unsat" : result === L_TRUE ? "sat" : "unknown";
+
 // The verdict, and the number of quantifier instances the search made.
 export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   const manager = new AstManager(
@@ -32,24 +56,10 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
     incremental.assertExpr(assertion);
   });
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
-  const goal = applyUfniaTactic(manager, problem.assertions);
-  // and_then runs smt_tactic only on a goal that the preprocessing left undecided.
-  if (goal.isInconsistent || goal.forms.size === 0) {
-    manager.limit.release();
-    return { verdict: goal.isInconsistent ? "unsat" : "sat", numInstances: 0 };
-  }
-  // smt_tactic makes the context, which makes its asserted formulas first, and asserts the goal.
-  // setup_context then makes the theories, before the formulas are reduced.
-  const asserted = new AssertedFormulas(manager);
-  const context = new Context(manager, { isMbqi: true, relevancyLevel: 2 });
-  for (const assertion of goal.forms.items) asserted.assertExpr(assertion);
-  context.setupContext();
-  context.internalizeAssertions(asserted);
-  const result = context.search();
-  manager.limit.release();
+  const solved = solveAssertions(manager, problem.assertions);
   return {
-    verdict: result === L_FALSE ? "unsat" : result === L_TRUE ? "sat" : "unknown",
-    numInstances: context.qmanager.getNumInstances(),
+    verdict: getVerdict(solved.result),
+    numInstances: solved.context?.qmanager.getNumInstances() ?? 0,
   };
 };
 
