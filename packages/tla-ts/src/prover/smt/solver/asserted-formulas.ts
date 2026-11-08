@@ -62,8 +62,8 @@ class PatternInferenceRw extends RewriterTpl {
 // greater.
 const isGreater = (manager: AstManager, left: number, right: number): boolean => {
   if (left === right) return false;
-  const isLeftValue = manager.isUniqueValue(left);
-  const isRightValue = manager.isUniqueValue(right);
+  const isLeftValue = manager.isValue(left);
+  const isRightValue = manager.isValue(right);
   if (!isLeftValue && isRightValue) return true;
   if (isLeftValue && !isRightValue) return false;
   if (manager.depths[left] !== manager.depths[right])
