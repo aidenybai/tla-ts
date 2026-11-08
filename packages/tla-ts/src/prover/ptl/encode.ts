@@ -1,7 +1,5 @@
-// tlapm's PTL backend up to the text it sends LS4 (Pltl.process_obligation, Prep.flatten, and
-// Ls4's printer): temporal operators reduce to [], <> and prime, assumptions that hold
-// always get a [], and every other subformula becomes an atom named by a hash of its printed form.
-// The text is the negated obligation.
+// tlapm's PTL backend up to the text it sends LS4 (Pltl.process_obligation, Prep.flatten, and Ls4's
+// printer).
 
 import {
   bumpBy,
@@ -27,9 +25,8 @@ import { getLevelInfo } from "../../obligations/levels";
 import { expandAction, expandFairness, expandLeadsto, getTime } from "../../obligations/temporal";
 import { getHashName, LEVEL_NUMBER_PREFIXES, LEVEL_PREFIXES } from "../prep/action";
 
-// Coalesce.rename_with_loc: each declared name gets its kind in front, or its level for a definition,
-// as in VARIABLE_x_ and CONSTANT_i_, so atoms print with the names tlapm hashes. A variable a
-// temporal quantifier binds keeps its name.
+// Coalesce.rename_with_loc: each name gets its kind or level in front, as in VARIABLE_x_, so atoms
+// hash as in tlapm.
 const renameSequent = (scope: Scope | undefined, sequent: Sequent): Sequent => {
   const [inner, context] = mapAccumulate(
     scope,
@@ -99,8 +96,6 @@ interface PreparedHyps {
   context: Hyp[];
 }
 
-// Pltl.expand_domains and Pltl.box_assumptions: NEW x \in S becomes NEW x and the fact x \in S, and
-// each visible fact that holds always gets a [].
 const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
   if (expression.kind !== "Sequent")
     return mapScoped(scope, expression, prepareHyps, adjoin, "all");
@@ -165,8 +160,7 @@ const UNARY: Partial<Record<Builtin, string>> = {
   Prime: "next",
 };
 
-// Prep.flatten, which tlapm applies after Pltl.process_obligation has made every equality an atom:
-// TRUE drops out of the conjunctions of each visible fact, and a fact left with nothing disappears.
+// Prep.flatten, which tlapm applies after Pltl.process_obligation has made every equality an atom.
 const removeTrue = (expression: Expr): Expr | undefined => {
   if (expression.kind === "Internal" && expression.builtin === "TRUE") return undefined;
   if (expression.kind === "List" && expression.bullet !== "Or") {
@@ -188,10 +182,8 @@ const removeTrue = (expression: Expr): Expr | undefined => {
 
 const TRUE_TEXT = "(cc | ~ cc)";
 
-// The text tlapm sends LS4 for an obligation after Prep.normalize_expand.
 export const encodePtl = (sequent: Sequent): string => {
-  // Ls4's printer. A sequent becomes an implication from its visible facts, joined by &, and
-  // Prep.flatten applies to the facts of the outermost one.
+  // Prep.flatten applies only to the facts of the outermost sequent.
   const print = (hyps: Hyp[], expression: Expr, isOutermost = false): string => {
     const recurse = (inner: Expr) => print(hyps, inner);
     switch (expression.kind) {
@@ -234,7 +226,6 @@ export const encodePtl = (sequent: Sequent): string => {
         return facts.length === 0 ? goal : `(${facts.join(" & ")} -> ${goal})`;
       }
     }
-    // Pltl.coalesce_fol names an atom as Coalesce does.
     return getHashName(hyps, expression);
   };
   const renamed = renameDeclarations(undefined, { kind: "Sequent", sequent });

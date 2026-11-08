@@ -1,8 +1,4 @@
-// A conflict-driven clause learning SAT solver for the clauses of one tableau node. A literal is a
-// variable number, negated when below zero. The solver keeps what it learns across calls, which add
-// clauses or assume literals. It decides each open variable false first, so a model sets few
-// variables, and a model holds 1 for each true variable and -1 for each false one. It gives up at
-// the first conflict after isExpired turns true.
+// Decides each open variable false first, so a model sets few variables.
 
 const getIndex = (literal: number) => (literal > 0 ? 2 * literal : -2 * literal + 1);
 
@@ -28,8 +24,7 @@ export const createSolver = (variableCount: number, isExpired: () => boolean) =>
     watches[getIndex(clause[0])].push(clause);
     watches[getIndex(clause[1])].push(clause);
   };
-  // Moves each watch off a literal that turned false, and returns the clause of a conflict. The
-  // literal a clause implies sits first in it.
+  // The literal a clause implies sits first in it.
   const propagate = () => {
     for (; state.head < trail.length; state.head++) {
       const falsified = -trail[state.head];
@@ -61,8 +56,6 @@ export const createSolver = (variableCount: number, isExpired: () => boolean) =>
     levelStarts.length = level;
     state.head = trail.length;
   };
-  // Resolves the conflict back to the first literal of the current level that all its paths pass
-  // through, and returns the learned clause with that literal first.
   const analyze = (conflict: number[]) => {
     const learned = [0];
     const current = levelStarts.length;
@@ -105,7 +98,6 @@ export const createSolver = (variableCount: number, isExpired: () => boolean) =>
     assign(open[0], undefined);
     if (propagate()) state.isUnsatisfiable = true;
   };
-  // A model of the clauses in which every assumed literal holds, or unsat when there is none.
   const solve = (assumptions: number[]): Int8Array | "unsat" | "unknown" => {
     backtrack(0);
     if (state.isUnsatisfiable) return "unsat";
