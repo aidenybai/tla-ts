@@ -11,7 +11,9 @@ import {
   getRunConstructor,
   getSymbol,
   getUndefined,
+  getPrivateKey,
   isPlainAccessor,
+  isPrivateMember,
   isHeapClass,
   isHeapFunction,
   isOnce,
@@ -30,7 +32,7 @@ import {
 } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { createStateScope, type Scope } from "./scope";
-import { apply, boolean, functionFrom, identifier, number, record, string } from "./tla";
+import { apply, boolean, functionFrom, identifier, junction, number, record, string } from "./tla";
 import { getKind, isEvery, isHeapType, isNumberLike } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -162,19 +164,54 @@ export const translateConstantFunctions = (context: Context) =>
 
 // Whether the object a call's receiver names still holds the method the call inlines, since a
 // script may replace it.
-export const translateHoldsMethod = (called: CalledMethod, scope: Scope, context: Context) =>
-  apply("=", [
-    useJavaScript(
-      "Get",
-      [
-        getHeap(scope, called.receiver, context),
-        translateObjectValue(called.receiver, scope, context),
-        string(called.key),
-      ],
-      context,
-    ),
-    getMethodValue(called.method, context),
-  ]);
+export const translateHoldsMethod = (
+  called: CalledMethod,
+  scope: Scope,
+  context: Context,
+): Expression => {
+  const getter = called.getter;
+  if (getter !== undefined) {
+    return junction("And", [
+      apply("=", [
+        useJavaScript(
+          "GetterOf",
+          [
+            getHeap(scope, called.receiver, context),
+            translateObjectValue(called.receiver, scope, context),
+            string(called.key),
+          ],
+          context,
+        ),
+        getAccessorValue(getter, context),
+      ]),
+      translateHoldsMethod(
+        {
+          ...called,
+          key: ts.isComputedPropertyName(called.method.name)
+            ? called.method.name.getText()
+            : called.method.name.text,
+          getter: undefined,
+        },
+        scope,
+        context,
+      ),
+    ]);
+  }
+  return isPrivateMember(called.method)
+    ? translateHasPrivate(called.method, called.receiver, scope, context)
+    : apply("=", [
+        useJavaScript(
+          "Get",
+          [
+            getHeap(scope, called.receiver, context),
+            translateObjectValue(called.receiver, scope, context),
+            string(called.key),
+          ],
+          context,
+        ),
+        getMethodValue(called.method, context),
+      ]);
+};
 
 export const translateObject = (
   node: ts.ObjectLiteralExpression,
@@ -260,6 +297,7 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
       const isStaticMember = ((ts.canHaveModifiers(member) && ts.getModifiers(member)) || []).some(
         (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
       );
+      if (isPrivateMember(member)) return current;
       if (isPlainAccessor(member)) {
         return isStaticMember === isStatic
           ? useJavaScript(
@@ -329,33 +367,48 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
   );
 };
 
-// An instance of a heap class with its fields, before the constructor runs.
+// An instance of a heap class with its fields, before the constructor runs. An instance of a class
+// with private methods or accessors has the class's key in its private names first.
 const translateInstance = (
   node: ts.NewExpression,
   created: HeapClass,
   heap: Expression,
   scope: Scope,
   context: Context,
-) =>
-  (ts.isClassLike(created) ? created.members : []).reduce<Expression>(
-    (object, member) =>
-      ts.isPropertyDeclaration(member) && ts.isIdentifier(member.name)
+) => {
+  const members = ts.isClassLike(created) ? created.members : [];
+  const branded = members.find(
+    (member) => isPrivateMember(member) && !ts.isPropertyDeclaration(member),
+  );
+  const empty =
+    branded === undefined
+      ? identifier("EmptyObject")
+      : useJavaScript(
+          "PrivateAdd",
+          [identifier("EmptyObject"), string(getPrivateKey(branded, context)), boolean(true)],
+          context,
+        );
+  return members.reduce<Expression>(
+    (object, member) => {
+      if (!ts.isPropertyDeclaration(member)) return object;
+      const value =
+        member.initializer === undefined
+          ? getUndefined(context)
+          : translateExpression(member.initializer, scope, context);
+      return ts.isPrivateIdentifier(member.name)
         ? useJavaScript(
-            "Put",
-            [
-              object,
-              string(member.name.text),
-              member.initializer === undefined
-                ? getUndefined(context)
-                : translateExpression(member.initializer, scope, context),
-            ],
+            "PrivateAdd",
+            [object, string(getPrivateKey(member, context)), value],
             context,
           )
-        : object,
+        : ts.isIdentifier(member.name)
+          ? useJavaScript("Put", [object, string(member.name.text), value], context)
+          : object;
+    },
     useJavaScript(
       "WithPrototype",
       [
-        identifier("EmptyObject"),
+        empty,
         useJavaScript(
           "Get",
           [heap, translateExpression(node.expression, scope, context), string("prototype")],
@@ -364,6 +417,25 @@ const translateInstance = (
       ],
       context,
     ),
+  );
+};
+
+// Whether an object has the private names of a private member's class, so that it holds the field,
+// or a call can run the method or accessor.
+export const translateHasPrivate = (
+  member: ts.ClassElement,
+  receiver: ts.Expression,
+  scope: Scope,
+  context: Context,
+) =>
+  useJavaScript(
+    "HasPrivate",
+    [
+      getHeap(scope, receiver, context),
+      translateObjectValue(receiver, scope, context),
+      string(getPrivateKey(member, context)),
+    ],
+    context,
   );
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {

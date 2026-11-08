@@ -70,7 +70,7 @@ LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE
 
 EmptyObject ==
   [keys |-> <<>>, values |-> <<>>, attributes |-> <<>>, extensible |-> TRUE,
-   prototype |-> ObjectPrototype, isCallable |-> FALSE, isOpaque |-> FALSE]
+   prototype |-> ObjectPrototype, isCallable |-> FALSE, isOpaque |-> FALSE, privates |-> <<>>]
 
 \\* A heap holds the objects a script makes, and the built-in objects it has changed, by key.
 EmptyHeap == [objects |-> <<>>, changed |-> <<>>]
@@ -121,6 +121,22 @@ WithPrototype(object, value) ==
   CASE value = Null \\/ IsRef(value) -> [object EXCEPT !.prototype = value]
     [] TypeOf(value) \\in {"object", "function"} -> Assert(FALSE, "tla-ts can't make this a prototype")
     [] OTHER -> object
+
+\\* An object's private names hold its private fields, and its class's key where the class has
+\\* private methods or accessors. Only objects that a script makes have them.
+PrivateAdd(object, key, value) == [object EXCEPT !.privates = (key :> value) @@ @]
+
+HasPrivate(heap, ref, key) == IsHeap(ref) /\\ key \\in DOMAIN heap.objects[ref[Ref]].privates
+
+PrivateGet(heap, ref, key) ==
+  IF HasPrivate(heap, ref, key)
+  THEN heap.objects[ref[Ref]].privates[key]
+  ELSE Assert(FALSE, "tla-ts can't throw the TypeError of reading a private name an object lacks")
+
+PrivateSet(heap, ref, key, value) ==
+  IF HasPrivate(heap, ref, key)
+  THEN [heap EXCEPT !.objects[ref[Ref]].privates[key] = value]
+  ELSE Assert(FALSE, "tla-ts can't throw the TypeError of writing a private name an object lacks")
 
 \\* A write to a property whose value TLA+ can't represent gives it one.
 Put(object, key, value) ==

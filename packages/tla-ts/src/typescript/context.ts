@@ -221,13 +221,41 @@ export const isOnce = (node: ts.Node): boolean =>
   ts.isSourceFile(node) ||
   (!ts.isFunctionLike(node) && !ts.isIterationStatement(node, false) && isOnce(node.parent));
 
-const isPlainMethod = (node: ts.Node): node is ts.MethodDeclaration =>
+const isMethodShape = (node: ts.Node): node is ts.MethodDeclaration =>
   ts.isMethodDeclaration(node) &&
   node.asteriskToken === undefined &&
   node.body !== undefined &&
   !ts.isComputedPropertyName(node.name) &&
-  !ts.isPrivateIdentifier(node.name) &&
   !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+
+export const isPrivateMember = (node: ts.Node) =>
+  (ts.isClassElement(node) || ts.isAccessor(node)) &&
+  node.name !== undefined &&
+  ts.isPrivateIdentifier(node.name);
+
+const isPlainMethod = (node: ts.Node): node is ts.MethodDeclaration =>
+  isMethodShape(node) && !isPrivateMember(node);
+
+// A private method of an instance, which no property holds, so only its class can call it.
+const isPrivateMethod = (node: ts.Node): node is ts.MethodDeclaration =>
+  isMethodShape(node) && isPrivateMember(node) && !isStatic(node);
+
+const brands = new WeakMap<ts.Node, string>();
+
+// The key that an object's private names hold a private field's value under, or that marks it
+// with its class's private methods and accessors. Two classes can name private members alike.
+export const getPrivateKey = (member: ts.ClassElement, context: Context) => {
+  const owner = member.parent;
+  const brand =
+    brands.get(owner) ??
+    context.names.getFresh(
+      ts.isClassLike(owner) && owner.name !== undefined ? owner.name.text : "Class",
+    );
+  brands.set(owner, brand);
+  return ts.isPropertyDeclaration(member) && ts.isPrivateIdentifier(member.name)
+    ? `${brand}${member.name.text}`
+    : brand;
+};
 
 const isLiteralKey = (node: ts.Node) =>
   ts.isStringLiteral(node) || ts.isNumericLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
@@ -239,6 +267,7 @@ export const isPlainAccessor = (
   node.body !== undefined &&
   (ts.isIdentifier(node.name) ||
     isLiteralKey(node.name) ||
+    (ts.isPrivateIdentifier(node.name) && !isStatic(node)) ||
     (ts.isComputedPropertyName(node.name) && isLiteralKey(node.name.expression)));
 
 // The key that obj.name, obj["name"], or obj[0] reads, as a property key.
@@ -383,8 +412,11 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context) => 
         ts.isSemicolonClassElement(member) ||
         (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
         isPlainMethod(member) ||
+        isPrivateMethod(member) ||
         isPlainAccessor(member) ||
-        (ts.isPropertyDeclaration(member) && !isStatic(member) && ts.isIdentifier(member.name)),
+        (ts.isPropertyDeclaration(member) &&
+          !isStatic(member) &&
+          (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name))),
     ) &&
     !isAssigned(symbol, node.getSourceFile(), context);
   heapClasses.set(node, isHeap);
@@ -496,11 +528,22 @@ export const isStatementNew = (node: ts.NewExpression) => {
   );
 };
 
+// The member of a heap class that a private name names.
+export const getPrivateMember = (name: ts.PrivateIdentifier, context: Context) => {
+  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  return declaration !== undefined &&
+    ts.isClassElement(declaration) &&
+    ts.isClassLike(declaration.parent) &&
+    isHeapClass(declaration.parent, context)
+    ? declaration
+    : undefined;
+};
+
 // A plain method that a script makes once, of an object literal or a heap class, which a value can
 // name, since each call checks that the property still holds it.
 export const getObjectMethod = (node: ts.Node | undefined, context: Context) =>
   node !== undefined &&
-  isPlainMethod(node) &&
+  (isPlainMethod(node) || isPrivateMethod(node)) &&
   (ts.isObjectLiteralExpression(node.parent)
     ? isOnce(node.parent)
     : ts.isClassLike(node.parent) && isHeapClass(node.parent, context))
@@ -511,6 +554,8 @@ export interface CalledMethod {
   method: ts.MethodDeclaration | ts.GetAccessorDeclaration;
   receiver: ts.Expression;
   key: string;
+  // A getter like `get method() { return this.#method; }` that the call reads the method through.
+  getter?: ts.GetAccessorDeclaration;
 }
 
 // The object method that a callee such as obj.name or obj["name"] reads, which the call checks
@@ -527,8 +572,20 @@ export const getCalledMethod = (
   if (!ts.isIdentifier(name) && !ts.isPrivateIdentifier(name) && !ts.isStringLiteralLike(name)) {
     return undefined;
   }
-  const method = getObjectMethod(getSymbol(name, context.checker)?.valueDeclaration, context);
-  return method === undefined ? undefined : { method, receiver: node.expression, key: name.text };
+  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const getter =
+    declaration !== undefined &&
+    ts.isGetAccessorDeclaration(declaration) &&
+    isPlainAccessor(declaration) &&
+    ts.isClassLike(declaration.parent) &&
+    isHeapClass(declaration.parent, context)
+      ? declaration
+      : undefined;
+  const returned = getter === undefined ? undefined : getReturnedMethod(getter, context);
+  const method = getObjectMethod(returned ?? declaration, context);
+  return method === undefined
+    ? undefined
+    : { method, receiver: node.expression, key: name.text, getter };
 };
 
 // The function that a callee or callback names: one written in place, one declared elsewhere, or

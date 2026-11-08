@@ -493,6 +493,50 @@ const CASES: Record<string, (string | [string, string])[]> = {
       holed.length = 20;`,
     ],
     [
+      "[counter.getX(), counter.callM(), counter.readA(), stored, Counter.has(counter), Counter.has(other), Counter.has({}), other.getX(), Object.keys(counter).length]",
+      `let stored: unknown = "none";
+      class Counter {
+        #x = 1;
+        #m() {
+          return 40;
+        }
+        get #a() {
+          return "got";
+        }
+        set #a(value: unknown) {
+          stored = value;
+        }
+        bump() {
+          this.#x = this.#x + 1;
+        }
+        getX() {
+          return this.#x;
+        }
+        callM() {
+          return this.#m() + 2;
+        }
+        readA() {
+          return this.#a;
+        }
+        writeA() {
+          this.#a = "set";
+        }
+        static has(object: object) {
+          return #x in object;
+        }
+      }
+      class Other {
+        #x = 5;
+        getX() {
+          return this.#x;
+        }
+      }
+      const counter = new Counter();
+      counter.bump();
+      counter.writeA();
+      const other = new Other();`,
+    ],
+    [
       "[typeof retyped.value, typeof (retyped.value)]",
       `const retyped = { value: 1 };
       Object.defineProperty(retyped, "value", { value: "text" });`,

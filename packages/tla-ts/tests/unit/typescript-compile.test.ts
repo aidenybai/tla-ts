@@ -406,6 +406,38 @@ describe("top-level statements", () => {
     );
   });
 
+  it("call a private method that a getter returns", async () => {
+    const result = await checkModel(`
+      let calls = 0;
+      class Counter {
+        #count(step: number) {
+          calls = calls + step;
+        }
+        get count() {
+          return this.#count;
+        }
+      }
+      new Counter().count(2);
+    `);
+    expect(getTrace(result)?.[0]).toMatchObject({ calls: "2" });
+  });
+
+  it("stop the check when an object lacks a private name it reads", async () => {
+    const result = await checkModel(`
+      class Counter {
+        #x = 1;
+        static read(object: Counter) {
+          return object.#x;
+        }
+      }
+      const other = { x: 1 };
+      let read = Counter.read(other as unknown as Counter);
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't throw the TypeError of reading a private name an object lacks",
+    );
+  });
+
   it("stop the check when they throw", async () => {
     const result = await checkModel(`
       let count = 1;

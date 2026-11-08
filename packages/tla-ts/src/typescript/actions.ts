@@ -18,6 +18,9 @@ import {
   getElement,
   getFunction,
   getNewClass,
+  isPrivateMember,
+  getPrivateMember,
+  getPrivateKey,
   getParameters,
   getRunConstructor,
   getSymbol,
@@ -47,6 +50,7 @@ import {
   isAllocation,
   isObjectChange,
   translateAllocated,
+  translateHasPrivate,
   translateHoldsMethod,
   translateObjectChange,
   translateObjectValue,
@@ -153,6 +157,7 @@ interface HeapWrite {
 
 const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWrite | undefined => {
   if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+  if (ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)) return undefined;
   const receiver = node.expression;
   const isBuiltIn = context.heap !== undefined && isBuiltInObject(receiver, context);
   if (!isBuiltIn && getKind(receiver, context) !== "object") return undefined;
@@ -187,6 +192,29 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
       );
     }
     return { symbol, current, update: (getValue) => getValue(current) };
+  }
+  const privateMember =
+    ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)
+      ? getPrivateMember(node.name, context)
+      : undefined;
+  if (privateMember !== undefined && ts.isPropertyAccessExpression(node)) {
+    if (!ts.isPropertyDeclaration(privateMember)) {
+      throw new TlaTypeScriptError("Write only to private fields and setters", node);
+    }
+    const symbol = context.heap;
+    const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
+    if (symbol === undefined || heap === undefined || !path.mutable.has(symbol)) {
+      throw new TlaTypeScriptError("Change objects only in statements", node);
+    }
+    const ref = translateObjectValue(node.expression, path.scope, context);
+    const key = string(getPrivateKey(privateMember, context));
+    const current = useJavaScript("PrivateGet", [heap, ref, key], context);
+    return {
+      symbol,
+      current,
+      update: (getValue) =>
+        useJavaScript("PrivateSet", [heap, ref, key, getValue(current)], context),
+    };
   }
   const write = getHeapWrite(node, path, context);
   if (write !== undefined) {
@@ -1031,14 +1059,16 @@ const translateExpressionStatement = (
     const target = expression.left;
     const object = translateObjectValue(target.expression, path.scope, context);
     return ifThenElse(
-      apply("=", [
-        useJavaScript(
-          "SetterOf",
-          [getHeap(path.scope, target, context), object, string(setterKey)],
-          context,
-        ),
-        getAccessorValue(setter, context),
-      ]),
+      isPrivateMember(setter)
+        ? translateHasPrivate(setter, target.expression, path.scope, context)
+        : apply("=", [
+            useJavaScript(
+              "SetterOf",
+              [getHeap(path.scope, target, context), object, string(setterKey)],
+              context,
+            ),
+            getAccessorValue(setter, context),
+          ]),
       inlineBody(
         expression,
         setter,

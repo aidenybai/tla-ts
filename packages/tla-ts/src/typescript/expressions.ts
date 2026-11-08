@@ -23,6 +23,10 @@ import {
   getTopLevelDeclaration,
   getUndefined,
   isHeapClass,
+  getObjectMethod,
+  isPrivateMember,
+  getPrivateMember,
+  getPrivateKey,
   isHeapFunction,
   isMethodCall,
   share,
@@ -47,6 +51,7 @@ import {
   isDescription,
   isNewObject,
   getMethodValue,
+  translateHasPrivate,
   translateHoldsMethod,
   translateFunctionValue,
   translateObjectValue,
@@ -633,6 +638,13 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     return kind === ts.SyntaxKind.EqualsEqualsEqualsToken ? isSame : not(isSame);
   }
   if (kind === ts.SyntaxKind.InKeyword) {
+    if (ts.isPrivateIdentifier(node.left)) {
+      const member = getPrivateMember(node.left, context);
+      if (member === undefined) {
+        throw new TlaTypeScriptError("Unsupported private name", node.left);
+      }
+      return translateHasPrivate(member, node.right, scope, context);
+    }
     const container = getKind(node.right, context);
     // A script's heap holds the built-in objects too, such as Number.
     if (container === "object" || (container === "other" && context.heap !== undefined)) {
@@ -769,6 +781,13 @@ const translateGetterRead = (
   if (getter === undefined || key === undefined) return undefined;
   const heap = getHeap(scope, node, context);
   const value = translateObjectValue(node.expression, scope, context);
+  if (isPrivateMember(getter)) {
+    return ifExpression(
+      translateHasPrivate(getter, node.expression, scope, context),
+      translateGetterCall(node, { method: getter, receiver: node.expression, key }, scope, context),
+      apply("Assert", [boolean(false), string(PRIVATE_TYPE_ERROR)]),
+    );
+  }
   return ifExpression(
     apply("=", [
       useJavaScript("GetterOf", [heap, value, string(key)], context),
@@ -776,6 +795,45 @@ const translateGetterRead = (
     ]),
     translateGetterCall(node, { method: getter, receiver: node.expression, key }, scope, context),
     useJavaScript("Get", [heap, value, string(key)], context),
+  );
+};
+
+const PRIVATE_TYPE_ERROR =
+  "tla-ts can't throw the TypeError of using a private name an object lacks";
+
+// A private field's value, a private method, or what a private getter gives.
+const translatePrivateRead = (
+  node: ts.PropertyAccessExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const getterRead = translateGetterRead(node, scope, context);
+  if (getterRead !== undefined) return getterRead;
+  const member = ts.isPrivateIdentifier(node.name)
+    ? getPrivateMember(node.name, context)
+    : undefined;
+  if (member === undefined) throw new TlaTypeScriptError("Unsupported private name", node.name);
+  if (ts.isPropertyDeclaration(member)) {
+    return useJavaScript(
+      "PrivateGet",
+      [
+        getHeap(scope, node, context),
+        translateObjectValue(node.expression, scope, context),
+        string(getPrivateKey(member, context)),
+      ],
+      context,
+    );
+  }
+  const method = getObjectMethod(member, context);
+  return ifExpression(
+    translateHasPrivate(member, node.expression, scope, context),
+    method === undefined
+      ? apply("Assert", [
+          boolean(false),
+          string("tla-ts can't throw the TypeError of reading an accessor without a getter"),
+        ])
+      : getMethodValue(method, context),
+    apply("Assert", [boolean(false), string(PRIVATE_TYPE_ERROR)]),
   );
 };
 
@@ -787,6 +845,7 @@ const translatePropertyAccess = (
   if (node.questionDotToken !== undefined) {
     throw new TlaTypeScriptError("Optional chaining isn't supported", node);
   }
+  if (ts.isPrivateIdentifier(node.name)) return translatePrivateRead(node, scope, context);
   const declared = translateDeclared(node, getSymbol(node, context.checker), scope, context);
   if (declared !== undefined) return declared;
   const intrinsic = translateIntrinsic(node, scope, context);
