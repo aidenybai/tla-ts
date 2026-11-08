@@ -11,6 +11,7 @@ import {
   OP_ADD,
   OP_AND,
   OP_ARRAY_DEFAULT,
+  OP_ARRAY_MAP,
   OP_CONST_ARRAY,
   OP_DISTINCT,
   OP_DIV,
@@ -42,7 +43,7 @@ import {
   SORT_REAL,
   isArithSort,
 } from "./ast";
-import { getArraySignature } from "./array-decl-plugin";
+import { getArraySignature, getMapSignature } from "./array-decl-plugin";
 import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
@@ -339,6 +340,38 @@ const ARRAY_OPS = new Map([
   ["store", OP_STORE],
 ]);
 const ARRAY_EXTENSION_OPS = new Map([["default", OP_ARRAY_DEFAULT]]);
+
+// The builtins that a declaration reference names without a signature, which basic_decl_plugin
+// gives one.
+const UNARY_BOOL_REFS = new Map([["not", OP_NOT]]);
+const BINARY_BOOL_REFS = new Map([
+  ["and", OP_AND],
+  ["or", OP_OR],
+  ["=>", OP_IMPLIES],
+  ["xor", OP_XOR],
+]);
+
+const REAL_RANGE_OPS = new Set([OP_DIV, OP_TO_REAL]);
+const INT_RANGE_OPS = new Set([OP_IDIV, OP_MOD, OP_TO_INT]);
+const DOMAIN_RANGE_OPS = new Set([OP_ADD, OP_SUB, OP_MUL, OP_ABS]);
+
+// mk_func_decl of a builtin ignores the range of the reference and gives its own.
+const getBuiltinRange = (op: number, domain: number[]) =>
+  op === OP_ITE
+    ? domain[1]
+    : REAL_RANGE_OPS.has(op)
+      ? SORT_REAL
+      : INT_RANGE_OPS.has(op)
+        ? SORT_INT
+        : DOMAIN_RANGE_OPS.has(op)
+          ? domain[0]
+          : SORT_BOOL;
+
+interface MappedDecl {
+  decl: number;
+  domain: readonly number[];
+  range: number;
+}
 const ARRAY_EXTENSION_LOGICS = new Set(["HORN", "ALL"]);
 
 // smt_logics::logic_has_array.
@@ -883,6 +916,50 @@ export const createSmtlibReader = (
     return manager.mkApp(decl, args, signature.range);
   };
 
+  // parse_func_decl_ref: a declared function, or a builtin by name and signature.
+  const parseFuncDeclRef = (sexpr: SExpr): MappedDecl => {
+    if (sexpr.kind === "symbol") {
+      const decl = funcs.get(sexpr.text);
+      if (decl !== undefined) return { decl, ...manager.funcDecls[decl] };
+      const unary = UNARY_BOOL_REFS.get(sexpr.text);
+      if (unary !== undefined) return { decl: unary, domain: [SORT_BOOL], range: SORT_BOOL };
+      const binary = BINARY_BOOL_REFS.get(sexpr.text);
+      if (binary !== undefined)
+        return { decl: binary, domain: [SORT_BOOL, SORT_BOOL], range: SORT_BOOL };
+      throw new SmtUnsupportedError(`the declaration reference ${sexpr.text}`);
+    }
+    const name = sexpr.kind === "list" ? sexpr.items[0] : undefined;
+    const domainList = sexpr.kind === "list" ? sexpr.items[1] : undefined;
+    const rangeSort = sexpr.kind === "list" ? sexpr.items[2] : undefined;
+    if (!isSymbol(name) || domainList?.kind !== "list" || rangeSort === undefined)
+      throw new SmtUnsupportedError("the declaration reference");
+    const domain = domainList.items.map((item) => parseSort(item, "Invalid function name"));
+    const range = parseSort(rangeSort, "Invalid function name");
+    const declared = funcs.get(name.text);
+    if (declared !== undefined) return { decl: declared, domain, range };
+    const builtin = CHAINABLE_OPS.get(name.text) ?? BUILTIN_OPS.get(name.text);
+    if (builtin === undefined)
+      throw new SmtUnsupportedError(`the declaration reference ${name.text}`);
+    return { decl: builtin, domain, range: getBuiltinRange(builtin, domain) };
+  };
+
+  const mkMapTerm = (mapped: MappedDecl, args: number[], at: SExpr) => {
+    const signature = getMapSignature(
+      manager,
+      mapped,
+      args.map((arg) => manager.sorts[arg]),
+    );
+    if (typeof signature === "string") throw new SmtParseError(signature, at);
+    const decl = manager.mkArrayDecl(
+      OP_ARRAY_MAP,
+      signature.name,
+      [mapped.decl],
+      signature.domain,
+      signature.range,
+    );
+    return manager.mkApp(decl, args, signature.range);
+  };
+
   const getArrayOp = (name: string) =>
     hasArrays
       ? (ARRAY_OPS.get(name) ?? (hasArrayExtensions ? ARRAY_EXTENSION_OPS.get(name) : undefined))
@@ -1021,6 +1098,24 @@ export const createSmtlibReader = (
             head: name,
             indices: [],
             build: (args) => mkArrayTerm(OP_CONST_ARRAY, args, [sort], current.end),
+            list: current,
+            start: results.length,
+            next: 1,
+          });
+          return;
+        }
+        if (
+          hasArrays &&
+          hasArrayExtensions &&
+          isSymbol(head.items[0], "_") &&
+          isSymbol(name, "map") &&
+          head.items.length === 3
+        ) {
+          const mapped = parseFuncDeclRef(head.items[2]);
+          frames.push({
+            head: name,
+            indices: [],
+            build: (args) => mkMapTerm(mapped, args, current.end),
             list: current,
             start: results.length,
             next: 1,

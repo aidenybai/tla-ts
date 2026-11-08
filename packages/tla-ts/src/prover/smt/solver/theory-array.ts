@@ -755,9 +755,10 @@ export class TheoryArray extends Theory {
     return true;
   }
 
-  private mkRewrittenApp(decl: number, args: number[]) {
+  private mkMappedApp(map: Enode, args: number[]) {
     const manager = this.manager;
-    const app = manager.mkApp(decl, args, manager.funcDecls[decl].range);
+    const decl = manager.funcDecls[map.decl].parameters[0];
+    const app = manager.mkApp(decl, args, manager.getArrayRange(manager.sorts[map.owner]));
     manager.incRef(app);
     const rewritten = this.context.rewriter.rewrite(app);
     manager.decRef(app);
@@ -770,10 +771,9 @@ export class TheoryArray extends Theory {
     if (!this.addFingerprint(map.owner, manager.ids[map.owner], this.getIndexArgs(select)))
       return false;
     const indices = this.getIndexArgs(select).map((node) => node.owner);
-    const decl = manager.funcDecls[manager.decls[map.owner]].parameters[0];
     const selects = manager.mapArgs(map.owner, (arg) => this.mkSelect([arg, ...indices]));
     const mapSelect = this.mkSelect([map.owner, ...indices]);
-    const applied = this.mkRewrittenApp(decl, selects);
+    const applied = this.mkMappedApp(map, selects);
     context.internalize(mapSelect, false);
     context.internalize(applied, false);
     const result = this.tryAssignEq(mapSelect, applied);
@@ -785,9 +785,8 @@ export class TheoryArray extends Theory {
     const context = this.context;
     const manager = this.manager;
     if (!this.addFingerprint(THEORY_DATA, DEFAULT_MAP_FINGERPRINT, [map])) return false;
-    const decl = manager.funcDecls[manager.decls[map.owner]].parameters[0];
-    const applied = this.mkRewrittenApp(
-      decl,
+    const applied = this.mkMappedApp(
+      map,
       manager.mapArgs(map.owner, (arg) => this.mkDefault(arg)),
     );
     const mapDefault = this.mkDefault(map.owner);

@@ -107,7 +107,8 @@ export class ArrayRewriter {
       if (this.isOp(array, OP_ARRAY_MAP)) {
         const decl = manager.funcDecls[manager.decls[array]].parameters[0];
         const selects = manager.mapArgs(array, (arg) => this.mkApp(OP_SELECT, [arg, ...indices]));
-        return { expr: manager.mkApp(decl, selects, manager.funcDecls[decl].range), depth: 2 };
+        const range = manager.getArrayRange(manager.sorts[array]);
+        return { expr: manager.mkApp(decl, selects, range), depth: 2 };
       }
       if (this.isOp(array, OP_AS_ARRAY)) {
         const decl = manager.funcDecls[manager.decls[array]].parameters[0];

@@ -851,7 +851,8 @@ export class AstManager {
       op === OP_CONST_ARRAY
         ? this.sortHashes[parameter]
         : op === OP_ARRAY_MAP || op === OP_AS_ARRAY
-          ? this.getDeclHash(parameter)
+          ? // A builtin declaration hashes by the signature of each application, which a map lacks.
+            (this.getDeclHash(parameter) ?? 0)
           : parameter,
     );
     this.declHashes[decl] = this.getFuncDeclHash(

@@ -65,14 +65,13 @@ const getConstSignature = (
   return { name: "const", domain: argSorts, range: sort };
 };
 
-const getMapSignature = (
+export const getMapSignature = (
   manager: AstManager,
-  decl: number,
+  mapped: { domain: readonly number[]; range: number },
   argSorts: number[],
 ): ArraySignature | string => {
-  const funcDecl = manager.funcDecls[decl];
-  if (argSorts.length !== funcDecl.domain.length)
-    return `map expects to take as many arguments as the function being mapped, it was given ${argSorts.length} but expects ${funcDecl.domain.length}`;
+  if (argSorts.length !== mapped.domain.length)
+    return `map expects to take as many arguments as the function being mapped, it was given ${argSorts.length} but expects ${mapped.domain.length}`;
   if (argSorts.length === 0) return "don't use map on constants";
   const arity = manager.getArrayArity(argSorts[0]);
   for (let index = 0; index < argSorts.length; index++) {
@@ -87,12 +86,12 @@ const getMapSignature = (
         manager.getSortParameters(argSorts[0])[position]
       )
         return `map expects all arguments to have the same array domain, this is not the case for argument ${index}`;
-    if (manager.getArrayRange(sort) !== funcDecl.domain[index])
+    if (manager.getArrayRange(sort) !== mapped.domain[index])
       return `map expects the argument at position ${index} to have the array range the same as the function`;
   }
   const range = manager.mkArraySort([
     ...manager.getSortParameters(argSorts[0]).slice(0, -1),
-    funcDecl.range,
+    mapped.range,
   ]);
   return { name: "map", domain: argSorts, range };
 };
@@ -133,7 +132,7 @@ export const getArraySignature = (
     case OP_CONST_ARRAY:
       return getConstSignature(manager, parameters[0], argSorts);
     case OP_ARRAY_MAP:
-      return getMapSignature(manager, parameters[0], argSorts);
+      return getMapSignature(manager, manager.funcDecls[parameters[0]], argSorts);
     case OP_ARRAY_DEFAULT:
       return getDefaultSignature(manager, argSorts);
     case OP_ARRAY_EXT:
