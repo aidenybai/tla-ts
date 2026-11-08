@@ -226,15 +226,16 @@ export const createTlcExtOperators = (
       isStateLevel: true,
     },
     defineStateOperator("Trace", 0, (_, context) => {
-      const state = context?.state;
-      if (!context || !state || !isCompleteState(state)) {
-        const unassigned = (context?.environment.variables ?? []).filter(
-          (_, index) => state?.[index] === undefined,
-        );
+      const variables = context?.environment.variables ?? [];
+      // TLC evaluates an assumption in an empty state, which assigns none of the variables.
+      const state = context?.state ?? variables.map(() => undefined);
+      if (!context || !isCompleteState(state)) {
+        const unassigned = variables.filter((_, index) => state[index] === undefined);
         throw new TlaEvaluationError(
           `In evaluating TLCExt!Trace, the state is not completely specified yet (variable${unassigned.length > 1 ? "s" : ""} ${unassigned.join(", ")} undefined).`,
         );
       }
+      if (!context.state) return createTuple([createRecord([])]);
       return createTuple(
         runtime.getBehavior(state).map((step) => toStateRecord(step, context.environment)),
       );
@@ -279,13 +280,14 @@ export const createTlcExtOperators = (
     defineLazyOperator("TLCDefer", 1, () => true),
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     defineLazyOperator("PickSuccessor", 1, (args, context) => {
-      const next = context?.next;
-      if (!next || !isCompleteState(next)) {
+      // Outside an action, TLC's successor is an empty state, which assigns none of the variables.
+      const next = context?.next ?? (context?.environment.variables ?? []).map(() => undefined);
+      if (!isCompleteState(next)) {
         throw new TlaNullPointerError(
           'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null',
         );
       }
-      if (runtime.isSeen(next)) return true;
+      if (context?.next && runtime.isSeen(next)) return true;
       const guard = getOperator(args, 0, "PickSuccessor");
       const isPicked = guard.call([]);
       if (typeof isPicked !== "boolean") {
@@ -293,7 +295,7 @@ export const createTlcExtOperators = (
           `In evaluating TLCExt!PickSuccessor, a non-boolean expression (${getKindString(isPicked)}) was used as the condition of an IF.\n${guard.expression ? describeNode(guard.expression) : ""}`,
         );
       }
-      if (isPicked) return true;
+      if (isPicked || !context?.next) return true;
       throw new TlaUnsupportedError(
         "PickSuccessor needs interactive input to extend the behavior with a new state",
       );
