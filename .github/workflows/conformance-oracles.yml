@@ -80,6 +80,8 @@ jobs:
           ocaml-compiler: "5.5.2"
           opam-disable-sandboxing: true
       - run: pnpm --filter @tla-ts/conformance fetch-tlapm
+        env:
+          OPAMSWITCH: ${{ github.workspace }}
       - run: pnpm --filter @tla-ts/conformance conformance --host tlapm --time-limit 300 --memory-limit 4096 --shard ${{ matrix.shard }}/2
         env:
           CONFORMANCE_WORKERS: 3
