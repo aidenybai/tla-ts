@@ -1,4 +1,4 @@
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
   createModuleArgumentError,
   createOverflowError,
@@ -215,7 +215,7 @@ export const CORE_OPERATORS: Builtin[] = [
                 written === leftSet.elements &&
                 (added.length === 0 || compareValues(written[written.length - 1], added[0]) < 0);
               if (written.length + added.length > SET_BOUND) {
-                throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+                throw new TlaSetBoundError(SET_BOUND_MESSAGE);
               }
               if (isSorted && !leftSet.isNormalized) return merged;
               const union = merged === leftSet ? createSortedSet(merged.elements) : merged;

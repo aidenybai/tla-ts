@@ -13,7 +13,12 @@ import {
   type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
+import {
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaSetBoundError,
+  TlaUnassignedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import { MESSAGE_CODE } from "./tlc/messages";
@@ -1180,6 +1185,10 @@ const traceEvaluator =
       }
       return value;
     } catch (error) {
+      if (error instanceof TlaSetBoundError && !callStack.isFrozen) {
+        callStack.expressions.length = 0;
+        callStack.isFrozen = true;
+      }
       const failed = error instanceof Error ? callStack.failures.get(error) : undefined;
       if (error instanceof Error) callStack.failures.set(error, expression);
       const receiver = getReceiver(expression, callStack.values);

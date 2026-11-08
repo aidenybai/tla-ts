@@ -1,4 +1,4 @@
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import { prettyPrint } from "./pretty-print";
 import { isEvalException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
@@ -185,7 +185,7 @@ export const SET_BOUND = 1000000;
 export const SET_BOUND_MESSAGE = `Attempted to construct a set with too many elements (>${SET_BOUND}).`;
 
 export const addBoundedElement = (elements: Value[], element: Value) => {
-  if (elements.length === SET_BOUND) throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+  if (elements.length === SET_BOUND) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
   elements.push(element);
 };
 
@@ -1599,7 +1599,7 @@ const enumerateSet = (
       const elements: Value[] = [];
       getUnionSets(value).forEach((set, index) => {
         const unionSet = getUnionSet(set, index, value);
-        if (isBeyondSetBound(unionSet)) throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+        if (isBeyondSetBound(unionSet)) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
         getStreamedElements(unionSet).forEach((element) => addBoundedElement(elements, element));
       });
       return toFiniteSet(createEnumeratedSet(elements)).elements;
@@ -1631,12 +1631,12 @@ const enumerateSet = (
         if (isBeyondSetBound(value.left)) {
           // TLC opens the right set's enumerator before it streams the left set past the bound.
           getStreamedElements(value.right);
-          throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+          throw new TlaSetBoundError(SET_BOUND_MESSAGE);
         }
         const left = getStreamedElements(value.left);
         const right = isBeyondSetBound(value.right) ? undefined : getStreamedElements(value.right);
         if (!right || left.length + right.length > SET_BOUND) {
-          throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+          throw new TlaSetBoundError(SET_BOUND_MESSAGE);
         }
         return toFiniteSet(createEnumeratedSet([...left, ...right])).elements;
       }
@@ -1978,7 +1978,7 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 // A sorted set as TLC builds it unsorted, by adding each element it doesn't hold yet.
 export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   const elements = set.elements;
-  if (elements.length > SET_BOUND) throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+  if (elements.length > SET_BOUND) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
   const isAdded = Array.from({ length: elements.length }, () => false);
   const written = added.filter((element) => {
     const index = findSortedIndex(elements, element);

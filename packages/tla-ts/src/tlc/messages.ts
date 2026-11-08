@@ -1,8 +1,10 @@
 import {
   getErrorExitCode,
+  getUnexpectedException,
   STACK_OVERFLOW_MESSAGE,
   TlaEvaluationError,
   TlaModuleError,
+  TlaSetBoundError,
   TlaStackOverflowError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
@@ -392,6 +394,8 @@ export const withHeadline = (error: unknown, code: number, headline: string) => 
 
 export const isHeadedError = (error: Error) => headedErrors.has(error);
 
+const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
+
 const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
 
 // TLC 1.7.4 wraps an error in adding a successor in a RuntimeException naming its class.
@@ -467,7 +471,9 @@ export const getFailureMessage = (
     };
   }
   const isUnexpected = isNextState && !message.startsWith(UNEXPECTED_HEADLINE);
-  const prefix = isUnexpected ? UNEXPECTED_EXCEPTION : "";
+  const exception =
+    error instanceof TlaSetBoundError ? WRONG_INVOCATION_EXCEPTION : UNEXPECTED_EXCEPTION;
+  const prefix = isUnexpected ? exception : "";
   return {
     code: MESSAGE_CODE.general,
     message: `${prefix}${message}`,

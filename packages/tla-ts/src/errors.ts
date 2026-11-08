@@ -178,6 +178,14 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
+// TLC's WrongInvocationException, which its CallStackTool records no call stack for.
+export class TlaSetBoundError extends TlaEvaluationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+  }
+}
+
 export class TlaNullPointerError extends TlaEvaluationError {
   constructor(message: string) {
     super(message);
