@@ -274,6 +274,17 @@ describe("top-level statements", () => {
     expect((await checkModel(getSource(false))).failure?.message).toContain("unexpected");
   });
 
+  it("pass a built-in function to a call as a value", async () => {
+    const result = await checkModel(`
+      function check(left: unknown, right: unknown) {
+        const box = {};
+        if (left !== right) throw new Error("different");
+      }
+      check(Reflect.has, Reflect.has);
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
   it("treat a var as a let, even when declared again", async () => {
     const result = await checkModel(`
       var count = 1;

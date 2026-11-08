@@ -563,7 +563,7 @@ const inlineBody = (
       const argument = argumentNodes.at(position);
       const callback = argument && getCallback(argument, path, context);
       const symbol = getSymbol(parameter.name, context.checker);
-      return callback !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
+      return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
     },
   );
   const isValue = (position: number) => {
