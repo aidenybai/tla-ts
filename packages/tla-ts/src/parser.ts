@@ -380,6 +380,12 @@ const isOperatorExpression = (expression: Expression) =>
       ? INFIX_OPERATORS.has(expression.operator)
       : POSTFIX_OPERATORS.has(expression.operator)));
 
+// SANY's \land and \lor are infix operators only, not bullets.
+const isBullet = (token: Token) =>
+  (token.text === "/\\" || token.text === "\\/") &&
+  token.spelling !== "\\land" &&
+  token.spelling !== "\\lor";
+
 const isOperatorName = (text: string) =>
   INFIX_OPERATORS.has(text) || POSTFIX_OPERATORS.has(text) || text === "-.";
 
@@ -857,7 +863,11 @@ const parse = (
     const bullet = advance();
     cursor.offsideColumns.push(bullet.column);
     const operands = [parseExpression()];
-    while (peekRaw().text === bullet.text && peekRaw().column === bullet.column) {
+    while (
+      isBullet(peekRaw()) &&
+      peekRaw().text === bullet.text &&
+      peekRaw().column === bullet.column
+    ) {
       cursor.index++;
       operands.push(parseExpression());
     }
@@ -1276,7 +1286,7 @@ const parse = (
     operators.preceding = undefined;
     const token = peek();
     const location = getLocation(token);
-    if (token.kind === "Operator" && (token.text === "/\\" || token.text === "\\/")) {
+    if (token.kind === "Operator" && isBullet(token)) {
       return parseJunctionList();
     }
     if (token.kind === "Operator" || token.kind === "Keyword") {
