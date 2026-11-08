@@ -2812,6 +2812,8 @@ const HELPERS = {
 };
 
 const RESERVED_BYTES = 1 << 18;
+// Copying the encoding of a value costs more than writing it below this many scalars.
+const MAXIMUM_WRITTEN_SIZE = 16;
 const INTEGER_ESCAPE = 254;
 const ATOM_ESCAPE = 255;
 const MAXIMUM_SCALAR_BYTES = 6;
@@ -3194,6 +3196,15 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   };
   const writers = program.variableTypes.map((type, index) => getWriter(codec, type, `v${index}`));
   const readers = program.variableTypes.map((type) => getReader(codec, type));
+  // A successor keeps the values of its parent it doesn't change, so it copies their encodings from
+  // the parent's, where decode marks where each variable ends.
+  const stateWriters = program.variableTypes.map((type, index) => {
+    const isSmall = !hasVariableSize(type) && getFixedSize(type) <= MAXIMUM_WRITTEN_SIZE;
+    if (isSmall || isMaskType(codec, resolveType(type))) return writers[index];
+    const from = `X[${index}]`;
+    const to = `X[${index + 1}]`;
+    return `if (v${index} === E[${index}]) { t = ${to} - ${from}; if (n + t + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; } for (let k = ${from}; k < ${to}; k++) d[n++] = Y[k]; } else { ${writers[index]} }`;
+  });
   const images = check.symmetry ?? [];
   const imageWrites = program.variableTypes.map((type, index) =>
     getImageWriter(program, codec, images, type, `v${index}`),
@@ -3232,7 +3243,8 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     .forEach((id, rank) => {
       ranks[id] = rank;
     });
-  const source = `let d, n, i, t, W;
+  const source = `let d, n, i, t, W, Y, E = [];
+  const X = new Int32Array(${program.variableTypes.length + 1});
   const rv = (first) => { let zigzag = first & 127; let shift = 7; let byte; do { byte = d[i++]; zigzag |= (byte & 127) << shift; shift += 7; } while (byte >= 128); return (zigzag >>> 1) ^ -(zigzag & 1); };
   ${codec.functions.join("\n")}
   ${program.comparers.functions.join("\n")}
@@ -3249,11 +3261,19 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       if (arena.size + ${RESERVED_BYTES} > arena.data.length) H.addPage(arena);
       d = arena.data;
       n = arena.size;
-      ${writers.join(" ")}
+      ${stateWriters.join(" ")}
       while ((n & 3) !== 0) d[n++] = 0;
       arena.size = n;
     },
-    decode: (data, start) => { d = data; i = start; return [${readers.join(", ")}]; },
+    decode: (data, start) => {
+      d = data;
+      i = start;
+      Y = data;
+      X[0] = start;
+      ${readers.map((reader, index) => `const value${index} = ${reader}; X[${index + 1}] = i;`).join(" ")}
+      E = [${readers.map((_, index) => `value${index}`).join(", ")}];
+      return E;
+    },
     writeKey: (state, arena) => {
       ${unpack}
       W = arena;
