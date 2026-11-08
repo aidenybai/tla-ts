@@ -958,15 +958,17 @@ const compileBound = (
 };
 
 const compileBounds = (program: Program, bounds: Bound[], frame: Frame) => {
-  const loops: { name: string; element: Type; header: string }[] = [];
+  const loops: { name: string; element: Type; header: (name: string) => string }[] = [];
   const scope = bounds.reduce<TierScope>((current, bound) => {
     if (bound.pattern.kind !== "Name") return unsupported();
     const loop = compileBound(program, bound.set, { ...frame, scope: current });
     const name = getName(program, "q");
-    loops.push({ name, element: loop.element, header: loop.header(name) });
+    loops.push({ name, element: loop.element, header: loop.header });
     return bindCode(current, bound.pattern.name, loop.element, name);
   }, frame.scope);
-  return { scope, loops, headers: loops.map((loop) => loop.header).join(" ") };
+  // A later conjunct can still refine the type of a bound, so its loop is chosen at emit.
+  const getHeaders = () => loops.map((loop) => loop.header(loop.name)).join(" ");
+  return { scope, loops, getHeaders };
 };
 
 const compileQuantifier = (
@@ -983,7 +985,7 @@ const compileQuantifier = (
   return {
     type: BOOL,
     emit: () =>
-      `(() => { ${bounds.headers} { if (${isForall ? "!" : ""}(${body.emit()})) return ${!isForall}; } return ${isForall}; })()`,
+      `(() => { ${bounds.getHeaders()} { if (${isForall ? "!" : ""}(${body.emit()})) return ${!isForall}; } return ${isForall}; })()`,
   };
 };
 
@@ -1620,7 +1622,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       return {
         type: bounds.loops[0].element,
         emit: () =>
-          `(() => { ${bounds.headers} { if (${predicate.emit()}) return ${bounds.loops[0].name}; } return H.deopt(); })()`,
+          `(() => { ${bounds.getHeaders()} { if (${predicate.emit()}) return ${bounds.loops[0].name}; } return H.deopt(); })()`,
       };
     }
     case "SetEnumeration": {
@@ -1657,8 +1659,8 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         type,
         emit: () =>
           isMask(type, program.plains)
-            ? `(() => { let ${result} = 0; ${bounds.headers} { if (${predicate.emit()}) ${result} |= H.bit(${loop.name}); } return ${result}; })()`
-            : `(() => { const ${result} = []; ${bounds.headers} { if (${predicate.emit()}) ${result}.push(${loop.name}); } return ${result}; })()`,
+            ? `(() => { let ${result} = 0; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result} |= H.bit(${loop.name}); } return ${result}; })()`
+            : `(() => { const ${result} = []; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result}.push(${loop.name}); } return ${result}; })()`,
       };
     }
     case "SetMap": {
@@ -1673,8 +1675,8 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         type,
         emit: () =>
           isMask(type, program.plains)
-            ? `(() => { let ${result} = 0; ${bounds.headers} { ${result} |= H.bit(${element.emit()}); } return ${result}; })()`
-            : `(() => { const ${result} = []; ${bounds.headers} { ${result}.push(${element.emit()}); } return H.normalize(${getComparerCode(program, element.type)}, ${result}); })()`,
+            ? `(() => { let ${result} = 0; ${bounds.getHeaders()} { ${result} |= H.bit(${element.emit()}); } return ${result}; })()`
+            : `(() => { const ${result} = []; ${bounds.getHeaders()} { ${result}.push(${element.emit()}); } return H.normalize(${getComparerCode(program, element.type)}, ${result}); })()`,
       };
     }
     case "Tuple": {
@@ -1853,7 +1855,7 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
       const isExists = expression.kind === "Exists";
       return counted(
         () =>
-          `(() => { let ${total} = ${isExists ? 0 : 1}; ${bounds.headers} { ${
+          `(() => { let ${total} = ${isExists ? 0 : 1}; ${bounds.getHeaders()} { ${
             isExists
               ? `${total} += ${body.emit()};`
               : `${total} *= ${body.emit()}; if (${total} === 0) return 0;`
@@ -1956,7 +1958,7 @@ const compileStep = (
     case "Exists": {
       const bounds = compileBounds(program, expression.bounds, frame);
       const body = continueWith(bounds.scope, [expression.body]);
-      return () => `${bounds.headers} { ${body()} }`;
+      return () => `${bounds.getHeaders()} { ${body()} }`;
     }
     case "If": {
       const condition = expectType(compileValue(program, expression.condition, frame), BOOL);
