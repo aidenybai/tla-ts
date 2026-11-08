@@ -2835,7 +2835,7 @@ const getReader = (codec: Codec, type: Type): string => {
 };
 
 // For each image, the position each key of a function's domain moves to, unless no key moves.
-const getMovedPositions = (images: ImageTable[], domain: Plain[]) => {
+const getMovedPositions = (images: ImageTable[], domain: Value[]) => {
   const positions = images.map((table) =>
     Int32Array.from(domain, (key) => {
       const image = permuteValue(key, table);
