@@ -220,12 +220,22 @@ Has(heap, ref, key) ==
   \\/ key \\in DOMAIN Own(heap, ref)
   \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
 
+\\* An error is a record of its constructor, its message and its name.
+LOCAL IsError(value) ==
+  SubSeq(ToString(value), 1, 1) = "[" /\\ DOMAIN value = {"constructor", "message", "name"}
+
+\\* An error inherits its other properties from its constructor's prototype. The message of an error
+\\* that JavaScript throws differs between engines, and tla-ts gives it none.
 RECURSIVE Get(_, _, _)
 Get(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
-  IN CASE key \\in DOMAIN object.values -> Value(object, key)
-       [] object.prototype = Null -> Undefined
-       [] OTHER -> Get(heap, object.prototype, key)
+  IF ~IsRef(ref) /\\ IsError(ref)
+  THEN CASE key = "message" /\\ ref.message # "" -> ref.message
+         [] key = "message" -> Assert(FALSE, "tla-ts can't read the message of this error")
+         [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
+  ELSE LET object == Lookup(heap, ref)
+       IN CASE key \\in DOMAIN object.values -> Value(object, key)
+            [] object.prototype = Null -> Undefined
+            [] OTHER -> Get(heap, object.prototype, key)
 
 LOCAL IsDigitText(text) ==
   \\A position \\in 1..Len(text) : SubSeq(text, position, position) \\in Digits \\ {"-"}

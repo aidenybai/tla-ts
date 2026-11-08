@@ -417,6 +417,18 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[thrown.constructor === TypeError, thrown.constructor === Error, thrown.name, thrown.toString === Error.prototype.toString]",
+      `const box = {};
+      let caught: unknown;
+      try {
+        Object.defineProperty(box, "a", { value: 1 });
+        Object.defineProperty(box, "a", { value: 2 });
+      } catch (error) {
+        caught = error;
+      }
+      const thrown = caught as { constructor: unknown; name: string };`,
+    ],
+    [
       "[caught, 'a' in box, box.b]",
       `const box: { b?: number } = {};
       Object.defineProperty(box, "b", { value: 1 });

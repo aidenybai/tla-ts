@@ -70,9 +70,16 @@ const getNative = (name: string, node: ts.Node, context: Context) => {
   return symbol;
 };
 
+// A script's heap reads an error's properties through its constructor's prototype.
+const includeError = (name: string, context: Context) => {
+  context.builtIns.add(name);
+  context.builtIns.add(`${name}.prototype`);
+};
+
 // An error that JavaScript itself throws, such as the TypeError of a failed defineProperty.
 export const translateEngineError = (name: string, node: ts.Node, context: Context) => {
   const symbol = getNative(name, node, context);
+  includeError(name, context);
   return record("Record", [
     { name: "constructor", value: getConstructor(symbol, context) },
     { name: "message", value: string("") },
@@ -103,6 +110,7 @@ export const translateNewError = (
         : translateExpression(message, scope, context);
   const native = classes.find(isNative);
   if (native === undefined) throw new TlaTypeScriptError("Unknown error class", node);
+  if (native === classes[0]) includeError(native.name, context);
   return record("Record", [
     { name: "constructor", value: getConstructor(classes[0], context) },
     { name: "message", value },
