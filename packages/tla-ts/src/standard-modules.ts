@@ -143,6 +143,20 @@ export const CORE_OPERATORS: Builtin[] = [
       right.kind === "Subset" &&
       isEnumerable(left.base);
     if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
+    if (typeof left === "object" && left.kind === "Interval") {
+      // IntervalValue#isSubsetEq answers for an interval within another without enumerating it,
+      // and otherwise stops at the first element outside the right set.
+      const isWithin =
+        typeof right === "object" &&
+        right.kind === "Interval" &&
+        right.low <= left.low &&
+        right.high >= left.high;
+      if (isWithin) return true;
+      for (let element = left.low; element <= left.high; element++) {
+        if (!isElementOf(element, right)) return false;
+      }
+      return true;
+    }
     return isSubsetOf(toFiniteSet(left).elements, right);
   }),
   // TLC defers the set operations of values that aren't sets to the enumeration or the membership
