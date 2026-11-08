@@ -561,6 +561,26 @@ const inlineBody = (
   if (frame.inlining.has(callee)) {
     throw new TlaTypeScriptError("Functions that change state can't call themselves", node);
   }
+  // A parameter's default makes its objects whether or not the call passes the parameter, as
+  // making an object that nothing reads can't be seen.
+  const defaults = callee.parameters
+    .flatMap((parameter) => getAllocated(parameter, context))
+    .filter((allocation) => !path.scope.allocated.has(allocation));
+  if (defaults.length > 0) {
+    return allocateAll(defaults, path, context, (allocated) =>
+      inlineBody(
+        node,
+        callee,
+        argumentNodes,
+        receiver,
+        allocated,
+        context,
+        frame,
+        continueWith,
+        isGenerator,
+      ),
+    );
+  }
   const callbacks = callee.parameters.flatMap(
     (parameter, position): [ts.Symbol, FunctionNode][] => {
       const argument = argumentNodes.at(position);
@@ -921,9 +941,16 @@ const allocate = (
   path: Path,
   context: Context,
   continueWith: (path: Path) => Formula,
+): Formula =>
+  allocateAll(node === undefined ? [] : getAllocated(node, context), path, context, continueWith);
+
+const allocateAll = (
+  allocations: ts.Node[],
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
 ): Formula => {
   const symbol = context.heap;
-  const allocations = node === undefined ? [] : getAllocated(node, context);
   if (symbol === undefined || allocations.length === 0) return continueWith(path);
   const allocated = allocations.reduce<Bound>(
     (current, allocation) => {

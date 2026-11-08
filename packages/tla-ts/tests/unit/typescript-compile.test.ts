@@ -285,6 +285,18 @@ describe("top-level statements", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("make the objects of a parameter's default", async () => {
+    const result = await checkModel(`
+      let total = 0;
+      const add = ({ x, y } = { x: 4, y: 5 }) => {
+        total += x + y;
+      };
+      add();
+      add({ x: 1, y: 1 });
+    `);
+    expect(getTrace(result)?.[0]?.total).toBe("11");
+  });
+
   it("run setters as statements", async () => {
     const result = await checkModel(`
       let total = 0;
