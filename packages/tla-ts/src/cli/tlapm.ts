@@ -232,7 +232,7 @@ const proveModule = async (
     onReport: (report, obligation) => {
       report.attempts.forEach((attempt) => {
         if (attempt.errorOutput !== undefined && !attempt.isReused)
-          process.stderr.write(attempt.errorOutput);
+          process.stdout.write(attempt.errorOutput);
       });
       if (!settings.isToolbox) return;
       if (report.obligation.status === "trivial")

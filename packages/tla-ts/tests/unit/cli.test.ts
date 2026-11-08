@@ -1345,9 +1345,6 @@ describe("tlapm -N prints obligations as tlapm does", () => {
 // over that cache, and .nofp and .cleanfp to stdout with --nofp and --cleanfp.
 const readRecording = (name: string) => readFileSync(join(FIXTURES, "tlapm-cli", name), "utf8");
 
-// tlapm copies to stdout what Zenon writes to stderr, which tla-ts's Zenon doesn't write.
-const withoutZenonOutput = (output: string) => output.replaceAll(/^Zenon error: .*\n/gm, "");
-
 describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () => {
   // The time each backend took varies from run to run.
   const withoutTimeUsed = (output: string) =>
@@ -1363,7 +1360,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
   it("prints the obligations it couldn't prove and ends abnormally", () => {
     const result = runTlapm("tlapm-cli", ["Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(withoutZenonOutput(readRecording("Failures.stdout")));
+    expect(result.stdout).toBe(readRecording("Failures.stdout"));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
@@ -1377,7 +1374,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version b91fb6c\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
+      /^\n\\\* TLAPM version b91fb6c\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n(Zenon error: exhausted search space without finding a proof\n){2}\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
     );
     expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
   });
@@ -1451,7 +1448,7 @@ describe("tlapm shares its cache with tlapm", () => {
   it.each(["--nofp", "--cleanfp"])("proves again under %s", (option) => {
     const result = runTlapmIn(copyWithCache(), [option, "Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(withoutZenonOutput(readRecording(`Failures.${option.slice(2)}`)));
+    expect(result.stdout).toBe(readRecording(`Failures.${option.slice(2)}`));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
