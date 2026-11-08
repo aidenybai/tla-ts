@@ -13,7 +13,8 @@ import {
 } from "./table";
 import { TlaIsabelleError } from "../../../errors";
 import { allConst, isProtected, mkEquals, mkImplies, mkTerm, protect } from "./logic";
-import { listOfSeq } from "./seq";
+import type { Limits } from "./interrupt";
+import { emptySeq, listOfSeq, mapsSeq, seqOfList, singleSeq, type Seq } from "./seq";
 import { eqThm } from "./tactical";
 import {
   foldVars,
@@ -35,11 +36,13 @@ import { normType, type TyEnv } from "./type";
 import {
   axiomThm,
   bicompose,
+  biresolution,
   forallElim,
   forallIntr,
   incrIndexesThm,
   instantiate,
   instantiateTypes,
+  nprems,
   rs,
   type Instantiation,
   type Thm,
@@ -262,3 +265,26 @@ export const compNoFlatten = (thm: Thm, count: number, index: number, rule: Thm)
   if (results.length !== 1) throw new TlaIsabelleError("THM", `comp_no_flatten ${index}`);
   return results[0];
 };
+
+// Drule.multi_resolves: Isar's multi-resolution, which resolves each fact in turn with the next
+// premise of each rule.
+export const multiResolves = (
+  limits: Limits,
+  facts: readonly Thm[],
+  rules: readonly Thm[],
+): Seq<Thm> =>
+  mapsSeq(
+    (rule) =>
+      facts.reduceRight<Seq<Thm>>(
+        (results, fact, index) =>
+          mapsSeq(
+            (thm) =>
+              index + 1 > nprems(thm)
+                ? emptySeq
+                : biresolution(limits, false, [{ isElim: false, rule: fact }], index + 1, thm),
+            results,
+          ),
+        singleSeq(rule),
+      ),
+    seqOfList(rules),
+  );

@@ -33,6 +33,12 @@ export class ResourceLimit {
     return !this.isCanceled;
   }
 
+  // Starts the work over with a new deadline, as a script does for each check-sat.
+  restart(deadline: number) {
+    this.deadline = deadline;
+    this.isCanceled = false;
+  }
+
   // tactic::checkpoint: counts a step, and throws once the work is canceled.
   checkpoint() {
     if (!this.inc()) throw new SmtCanceledError();

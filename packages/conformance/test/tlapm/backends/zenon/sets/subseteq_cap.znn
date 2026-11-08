@@ -1,7 +1,13 @@
 (*---
-description: Zenon proves U \subseteq S \cap T from both inclusions with the not_subseteq_cap rule.
+description: >-
+  Zenon proves U \subseteq S \cap T from both inclusions, but its not_subseteq_cap rule builds ~(U
+  \subseteq T) for both branches where the lemma in Zenon.thy needs ~(U \subseteq S) and ~(U
+  \subseteq T), so Isabelle can't check the proof. The bug is in zenon/ext_tla.ml#newnodes_prop,
+  which uses e3 for both hypotheses of subseteq_cap and not_subseteq_cap.
 ref: zenon/ext_tla.ml#newnodes_prop
 outcome: unsat
+features:
+  - tlapm-bug
 ---*)
 ;; obligation #1
 $goal (=> (/\ (TLA.subseteq a_CONSTANTunde_Uunde_a a_CONSTANTunde_Sunde_a)

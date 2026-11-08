@@ -1,17 +1,18 @@
 // Ported from Isabelle2025's Pure/Isar/method.ML (method syntax, combinators, SIMPLE_METHOD,
 // finish), the assume_rule_tac and norm_hhf_tac of Pure/goal.ML, and the methods the theories
-// tlapm writes use: auto, force and clarsimp (Provers/clasimp.ML), blast (Provers/blast.ML),
-// iprover (Tools/intuitionistic.ML) and intro. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// tlapm writes use: auto, force and clarsimp (Provers/clasimp.ML), blast (Provers/blast.ML), fast
+// (Provers/classical.ML), simp (Pure/simplifier.ML), iprover (Tools/intuitionistic.ML) and intro.
+// Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
+// contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { asmRl, isNormHhf, normHhfEq, reflexiveThm, termI } from "../pure/drule";
+import { asmRl, isNormHhf, multiResolves, normHhfEq, reflexiveThm, termI } from "../pure/drule";
 import { isEquals, stripImpPrems, stripAssumsConcl } from "../pure/logic";
 import { addSimps, emptySimpset, type Simpset } from "../pure/raw-simplifier";
 import { genericRewriteGoalTac } from "../pure/rewriter";
 import { filterSeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
 import { atomizePremsTac } from "../pure/object-logic";
-import { normHhf } from "../pure/simplifier";
+import { asmFullSimpTac, normHhf } from "../pure/simplifier";
 import type { Limits } from "../pure/interrupt";
 import { assumeTac, eresolveTac, flexflexTac, matchTac, resolveTac } from "../pure/tactic";
 import {
@@ -43,6 +44,7 @@ import { autoTac, clarsimpTac, forceTac, type ClasimpContext } from "../provers/
 import {
   addUnsafeDest,
   addUnsafeIntro,
+  fastTac,
   withClaset,
   type ClassicalContext,
 } from "../provers/classical";
@@ -57,11 +59,11 @@ interface Modifier {
 
 type MethodText =
   | {
-      readonly kind: "auto" | "blast" | "force" | "clarsimp";
+      readonly kind: "auto" | "blast" | "fast" | "force" | "clarsimp";
       readonly modifiers: readonly Modifier[];
     }
-  | { readonly kind: "iprover" }
-  | { readonly kind: "intro"; readonly facts: readonly string[] }
+  | { readonly kind: "iprover" | "simp" }
+  | { readonly kind: "intro" | "rule"; readonly facts: readonly string[] }
   | { readonly kind: "then"; readonly methods: readonly MethodText[] }
   | { readonly kind: "try"; readonly method: MethodText };
 
@@ -127,13 +129,21 @@ export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
     switch (name) {
       case "auto":
       case "blast":
+      case "fast":
       case "force":
       case "clarsimp":
         return { kind: name, modifiers: hasArgs ? modifiers() : [] };
       case "iprover":
-        return { kind: "iprover" };
+      case "simp":
+        return { kind: name };
       case "intro":
         return { kind: "intro", facts: hasArgs ? facts() : [] };
+      // Classical's rule without rules picks them from the context, which this port does not keep.
+      case "rule": {
+        const rules = hasArgs ? facts() : [];
+        if (rules.length === 0) throw new TlaIsabelleError("ERROR", "Unsupported method: rule");
+        return { kind: "rule", facts: rules };
+      }
       default:
         throw new TlaIsabelleError("ERROR", `Undefined method: ${name}`);
     }
@@ -223,6 +233,21 @@ const evaluate = (context: ProofContext, text: MethodText): Method => {
     case "blast":
       return (facts) =>
         simpleMethodHead(context, facts, context.blastTac(withModifiers(context, text.modifiers)));
+    case "fast":
+      return (facts) =>
+        simpleMethodHead(
+          context,
+          facts,
+          fastTac(withModifiers(context, text.modifiers), context.atomizeRules),
+        );
+    // Simplifier's simp method: asm_full_simp_tac on the first goal, with the facts inserted.
+    case "simp":
+      return (facts) =>
+        simpleMethodHead(context, facts, (index) =>
+          changedProp(
+            asmFullSimpTac({ limits: context.limits, simpset: context.simpset, bounds: 0 })(index),
+          ),
+        );
     case "iprover":
       return (facts) =>
         simpleMethodHead(
@@ -239,6 +264,21 @@ const evaluate = (context: ProofContext, text: MethodText): Method => {
         return simpleMethodHead(context, facts, (index) =>
           changedProp(repeatAllNew(matchTac(context.limits, rules))(index)),
         );
+      };
+    // Method.rule_tac: resolves the goal with the rules, each first resolved with the facts.
+    case "rule":
+      return (facts) => {
+        const rules = getFacts(context, text.facts);
+        return thenAllNew(
+          (index) => (state) =>
+            facts.length === 0
+              ? resolveTac(context.limits, rules)(index)(state)
+              : mapsSeq(
+                  (rule) => resolveTac(context.limits, [rule])(index)(state),
+                  multiResolves(context.limits, facts, rules),
+                ),
+          normHhfTac(context.limits),
+        )(1);
       };
     case "then": {
       const methods = text.methods.map((method) => evaluate(context, method));
