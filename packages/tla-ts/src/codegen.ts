@@ -2,6 +2,7 @@ import { getChildren, isLocallyResolved, type Expression } from "./ast";
 import {
   bindValue,
   expectBoolean,
+  expectBooleanBody,
   findGlobalName,
   createConditionError,
   createJunctionError,
@@ -68,6 +69,7 @@ const GENERATED_KINDS = new Set([
 
 const createGeneratedHelpers = () => ({
   bool: expectBoolean,
+  body: expectBooleanBody,
   condition: (value: Value, expression: Expression) => {
     if (typeof value !== "boolean") throw createConditionError(expression, value);
     return value;
@@ -158,7 +160,6 @@ const generateQuantifier = (
   frame: Frame,
 ) => {
   const isForall = expression.kind === "Forall";
-  const description = JSON.stringify(isForall ? "the body of \\A" : "the body of \\E");
   const name = `quantifier${generator.counter++}`;
   const outerLocals = [...frame.locals.values()];
   const bodyFrame = {
@@ -178,7 +179,7 @@ const generateQuantifier = (
     if (bound.pattern.kind === "Name") bodyFrame.locals.set(bound.pattern.name, local);
     return local;
   });
-  const test = `if (bool(${generateExpression(generator, expression.body, bodyFrame)}, ${description}) !== ${isForall}) return ${!isForall};`;
+  const test = `if (body(${generateExpression(generator, expression.body, bodyFrame)}, ${addReference(generator, expression)}) !== ${isForall}) return ${!isForall};`;
   // enumerate returns an array, or an interval, which has a low end, to step through.
   const loops = elements.reduce((code, element, index) => {
     const position = createLocal(generator);

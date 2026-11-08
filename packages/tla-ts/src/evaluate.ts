@@ -437,6 +437,16 @@ export const expectBoolean = (value: Value, description: string) => {
   return value;
 };
 
+// Tool.eval names the whole quantifier or CHOOSE whose body isn't a boolean.
+export const expectBooleanBody = (value: Value, expression: Expression) => {
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(
+      `TLC expected a boolean value, but did not find one. ${describeRange(expression)}`,
+    );
+  }
+  return value;
+};
+
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
 
@@ -1456,7 +1466,6 @@ const compileQuantifier = (
   environment: Environment,
 ): Evaluator => {
   const isForall = expression.kind === "Forall";
-  const description = isForall ? "the body of \\A" : "the body of \\E";
   const body = getEvaluator(expression.body, environment);
   const bound = expression.bounds[0];
   if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
@@ -1466,9 +1475,9 @@ const compileQuantifier = (
       const isFound = someElement(
         getQuantifierElements(set(context), bound.set, environment.runtime.version),
         (element) =>
-          expectBoolean(
+          expectBooleanBody(
             body(withScope(context, bindValue(context.scope, name, element))),
-            description,
+            expression,
           ) !== isForall,
       );
       return isFound ? !isForall : isForall;
@@ -1484,7 +1493,7 @@ const compileQuantifier = (
       );
       const visit = (index: number, scope: Scope | undefined): boolean => {
         if (index < 0) {
-          return expectBoolean(body(withScope(context, scope)), description) !== isForall;
+          return expectBooleanBody(body(withScope(context, scope)), expression) !== isForall;
         }
         return someElement(lists[index], (element) =>
           visit(index - 1, bindValue(scope, names[index], element)),
@@ -1497,7 +1506,7 @@ const compileQuantifier = (
     const isFound = forEachBinding(
       bounds,
       context,
-      (scope) => expectBoolean(body(withScope(context, scope)), description) !== isForall,
+      (scope) => expectBooleanBody(body(withScope(context, scope)), expression) !== isForall,
     );
     return isFound ? !isForall : isForall;
   };
@@ -1726,7 +1735,7 @@ const compileSetComprehension = (
   if (!set) {
     return () => {
       throw new TlaEvaluationError(
-        `TLC cannot evaluate an unbounded CHOOSE at ${describeLocation(expression)}`,
+        `TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\n${describeRange(expression)}`,
       );
     };
   }
@@ -1743,7 +1752,7 @@ const compileSetComprehension = (
     const elements = getNormalizedElements(base, set, context.environment.runtime.version);
     someElement(elements, (element) => {
       const scope = bindPattern(context.scope, expression.pattern, element);
-      if (!expectBoolean(body(withScope(context, scope)), "the body of CHOOSE")) return false;
+      if (!expectBooleanBody(body(withScope(context, scope)), expression)) return false;
       chosen.value = getBoundValue(expression.pattern, scope);
       return true;
     });
@@ -1913,8 +1922,9 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return compileQuantifier(expression, environment);
     case "UnboundedQuantifier":
       return () => {
+        const operator = expression.quantifier === "Forall" ? "\\A" : "\\E";
         throw new TlaEvaluationError(
-          `TLC cannot evaluate an unbounded quantifier at ${describeLocation(expression)}`,
+          `TLC attempted to evaluate an unbounded ${operator}.\nMake sure that the expression is of form ${operator} x \\in S: P(x).\n${describeRange(expression)}`,
         );
       };
     case "Choose":
