@@ -329,7 +329,7 @@ const translateDeclarations = (
   const symbol = ts.isIdentifier(declaration.name)
     ? getSymbol(declaration.name, context.checker)
     : undefined;
-  const isLet = (declaration.parent.flags & ts.NodeFlags.Let) !== 0;
+  const isLet = (declaration.parent.flags & ts.NodeFlags.Const) === 0;
   const mutable = isLet && symbol !== undefined ? new Set([...path.mutable, symbol]) : path.mutable;
   return letIn(
     bound.definitions,

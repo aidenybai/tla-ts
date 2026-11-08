@@ -72,7 +72,7 @@ const isExported = (node: ts.Declaration) =>
 
 const isLet = (declared: Declared) =>
   ts.isVariableDeclaration(declared.declaration) &&
-  (declared.declaration.parent.flags & ts.NodeFlags.Let) !== 0;
+  (declared.declaration.parent.flags & ts.NodeFlags.Const) === 0;
 
 // The string literals of a @symmetric type become model values, which TLC can permute.
 const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context) => {
@@ -106,13 +106,9 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
     return [{ name: statement.name.text, declaration: statement }];
   }
   if (!ts.isVariableStatement(statement)) return [];
-  const flags = statement.declarationList.flags;
   return statement.declarationList.declarations.map((declaration) => {
     if (!ts.isIdentifier(declaration.name)) {
       throw new TlaTypeScriptError("Declare one name at a time", declaration);
-    }
-    if ((flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-      throw new TlaTypeScriptError("Use let for state and const for everything else", declaration);
     }
     return { name: declaration.name.text, declaration };
   });
@@ -136,6 +132,7 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     if (isExported(declaration) || symbol === undefined) {
       throw new TlaTypeScriptError("State variables can't be exported", declaration);
     }
+    if (context.variables.has(symbol)) return [];
     const name = context.names.getFresh(declared.name);
     context.variables.set(symbol, name);
     return [{ name, declaration }];

@@ -121,6 +121,10 @@ const CASES: Record<string, Case[]> = {
       statements: "let local = 1; local += 2; local *= local; count = local;",
     },
     {
+      variables: "count = 0",
+      statements: "var local = 1; local += 2; count = local;",
+    },
+    {
       variables: "phase: 'a' | 'b' | 'c' = 'b', count = 0",
       statements: `switch (phase) {
         case 'a':

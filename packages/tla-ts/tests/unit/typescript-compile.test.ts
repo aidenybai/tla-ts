@@ -244,6 +244,15 @@ describe("top-level statements", () => {
     expect(getTrace(result)).toEqual([{ count: "2" }]);
   });
 
+  it("treat a var as a let, even when declared again", async () => {
+    const result = await checkModel(`
+      var count = 1;
+      var count = 2;
+      count++;
+    `);
+    expect(getTrace(result)).toEqual([{ count: "3" }]);
+  });
+
   it("stop the check when they throw", async () => {
     const result = await checkModel(`
       let count = 1;
