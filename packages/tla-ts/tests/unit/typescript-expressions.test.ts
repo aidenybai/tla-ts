@@ -71,6 +71,8 @@ const CASES: Record<string, (string | [string, string])[]> = {
     "[1, 2, 3].includes(4)",
     "[3, 1, 3].indexOf(3)",
     "[3, 1, 3].indexOf(4)",
+    "[[1, 2, 1].includes(1, 1), [1, 2].includes(1, 1), [1, 2].includes(1, -2), [1, 2].includes(2, -9)]",
+    "[[3, 1, 3].indexOf(3, 1), [3, 1, 3].indexOf(3, -1), [3, 1].indexOf(3, 1), [3, 1].indexOf(1, -5)]",
     "[1, 2, 3].map((value) => value * 2).indexOf(2 + 2)",
     "[1, 2, 3].filter((value) => value > 1).at(-1)",
     "[1, 2, 3, 4].slice(1)",

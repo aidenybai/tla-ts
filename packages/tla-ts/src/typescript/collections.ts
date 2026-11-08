@@ -380,6 +380,31 @@ const translateSequenceOperation = (
         translateCallback(argument, inner, context),
       );
     };
+  // Whether the element at a position is the one that includes() or indexOf() looks for, from the
+  // fromIndex that counts back from the end when it's negative.
+  const withSearch = (use: (isFound: (position: Expression) => Expression) => Expression) =>
+    share(translate(argument), "value", context, (value) => {
+      const getEqual = (position: Expression) => apply("=", [index(sequence, [position]), value]);
+      const from = node.arguments[1];
+      if (
+        from === undefined ||
+        context.checker.getTypeAtLocation(from).flags & ts.TypeFlags.Undefined
+      ) {
+        return use(getEqual);
+      }
+      const start = ts.isNumericLiteral(from)
+        ? translate(from)
+        : share(translate(from), "from", context, (shared) =>
+            ifExpression(
+              apply("<", [shared, number(0)]),
+              apply("+", [getLength(), shared]),
+              shared,
+            ),
+          );
+      return share(start, "start", context, (shared) =>
+        use((position) => junction("And", [apply(">", [position, shared]), getEqual(position)])),
+      );
+    });
   const operations = new Map<string, () => Expression>([
     [
       "at",
@@ -393,34 +418,38 @@ const translateSequenceOperation = (
     ],
     [
       "includes",
-      () => {
-        const position = context.names.getFresh("index");
-        return quantify(
-          "Exists",
-          [bound(position, getDomain(sequence))],
-          apply("=", [index(sequence, [identifier(position)]), translate(argument)]),
-        );
-      },
+      () =>
+        withSearch((isFound) => {
+          const position = context.names.getFresh("index");
+          return quantify(
+            "Exists",
+            [bound(position, getDomain(sequence))],
+            isFound(identifier(position)),
+          );
+        }),
     ],
     [
       "indexOf",
       () =>
-        share(translate(argument), "value", context, (value) => {
+        withSearch((isFound) => {
           const position = context.names.getFresh("index");
           const earlier = context.names.getFresh("earlier");
-          const isFound = apply("=", [index(sequence, [identifier(position)]), value]);
           return ifExpression(
-            quantify("Exists", [bound(position, getDomain(sequence))], isFound),
+            quantify(
+              "Exists",
+              [bound(position, getDomain(sequence))],
+              isFound(identifier(position)),
+            ),
             apply("-", [
               choose(
                 position,
                 getDomain(sequence),
                 junction("And", [
-                  isFound,
+                  isFound(identifier(position)),
                   quantify(
                     "Forall",
                     [getEarlier(earlier, position)],
-                    apply("#", [index(sequence, [identifier(earlier)]), value]),
+                    not(isFound(identifier(earlier))),
                   ),
                 ]),
               ),
