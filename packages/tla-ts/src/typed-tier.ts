@@ -1924,6 +1924,35 @@ const growBytes = (bytes: Bytes) => {
   bytes.data = grown;
 };
 
+// Distinct states are kept in fixed pages, so the arena grows without copying. A state never spans
+// two pages, and its start is the page's index times PAGE_SIZE plus its offset in the page.
+interface Arena {
+  pages: Uint8Array[];
+  data: Uint8Array;
+  size: number;
+  start: number;
+}
+
+const PAGE_BITS = 24;
+const PAGE_SIZE = 1 << PAGE_BITS;
+const MAXIMUM_PAGES = 2 ** (31 - PAGE_BITS);
+
+const createArena = (): Arena => {
+  const page = new Uint8Array(PAGE_SIZE);
+  return { pages: [page], data: page, size: 0, start: 0 };
+};
+
+const addPage = (arena: Arena) => {
+  const length = arena.size - arena.start;
+  if (arena.pages.length === MAXIMUM_PAGES || length + RESERVED_BYTES > PAGE_SIZE) deopt();
+  const page = new Uint8Array(PAGE_SIZE);
+  page.set(arena.data.subarray(arena.start, arena.size));
+  arena.pages.push(page);
+  arena.data = page;
+  arena.start = 0;
+  arena.size = length;
+};
+
 const writeVarint = (data: Uint8Array, at: number, value: number) => {
   let zigzag = ((value << 1) ^ (value >> 31)) >>> 0;
   let cursor = at;
@@ -2145,11 +2174,13 @@ const HELPERS = {
     lookup.get(hashPlain(key))?.find((entry) => isSame(entry.key, key))?.position ?? -1,
   isIn: (buckets: Map<number, Plain[]>, plain: Plain) =>
     buckets.get(hashPlain(plain))?.some((item) => isSame(item, plain)) === true,
-  grow: growBytes,
+  addPage,
   varint: writeVarint,
 };
 
 const RESERVED_BYTES = 1 << 18;
+const INTEGER_ESCAPE = 254;
+const ATOM_ESCAPE = 255;
 const MAXIMUM_SCALAR_BYTES = 6;
 
 const getFixedSize = (type: Type): number => {
@@ -2187,8 +2218,10 @@ const getWriter = (codec: Codec, type: Type, code: string): string => {
   if (resolved.kind === "Int" || resolved.kind === "Str" || isMaskType(codec, resolved)) {
     return `t = ${code}; if (t >= 0 && t < 128) d[n++] = t; else n = H.varint(d, n, t);`;
   }
+  // A byte below 64 is an integer and one from 64 to 127 is an atom. Other values follow an escape
+  // byte as varints.
   if (resolved.kind === "Mix") {
-    return `t = ${code}; if (t >= ${ATOM_BASE}) { d[n++] = 1; t -= ${ATOM_BASE}; } else d[n++] = 0; if (t >= 0 && t < 128) d[n++] = t; else n = H.varint(d, n, t);`;
+    return `t = ${code}; if (t >= 0 && t < 64) d[n++] = t; else if (t >= ${ATOM_BASE} && t < ${ATOM_BASE + 64}) d[n++] = t - ${ATOM_BASE - 64}; else { if (t >= ${ATOM_BASE}) { d[n++] = ${ATOM_ESCAPE}; t -= ${ATOM_BASE}; } else d[n++] = ${INTEGER_ESCAPE}; if (t >= 0 && t < 128) d[n++] = t; else n = H.varint(d, n, t); }`;
   }
   if (resolved.kind === "Seq" || resolved.kind === "Set") {
     return `${getSequenceWriter(codec, resolved)}(${code});`;
@@ -2218,7 +2251,7 @@ const getSequenceWriter = (codec: Codec, type: SeqType | SetType) => {
   codec.writers.set(type, name);
   const element = `${name}e`;
   codec.functions.push(
-    `const ${name} = (${name}s) => { t = ${name}s.length; if (t < 128) d[n++] = t; else n = H.varint(d, n, t); for (const ${element} of ${name}s) { if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.grow(W); d = W.data; } ${getWriter(codec, type.element, element)} } };`,
+    `const ${name} = (${name}s) => { t = ${name}s.length; if (t < 128) d[n++] = t; else n = H.varint(d, n, t); for (const ${element} of ${name}s) { if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; } ${getWriter(codec, type.element, element)} } };`,
   );
   return name;
 };
@@ -2229,7 +2262,7 @@ const getReader = (codec: Codec, type: Type): string => {
   if (resolved.kind === "Int" || resolved.kind === "Str" || isMaskType(codec, resolved))
     return "((t = d[i++]) < 128 ? t : rv(t))";
   if (resolved.kind === "Mix") {
-    return `(d[i++] === 1 ? ${ATOM_BASE} + ((t = d[i++]) < 128 ? t : rv(t)) : ((t = d[i++]) < 128 ? t : rv(t)))`;
+    return `((t = d[i++]) < 64 ? t : t < 128 ? t + ${ATOM_BASE - 64} : t === ${ATOM_ESCAPE} ? ${ATOM_BASE} + ((t = d[i++]) < 128 ? t : rv(t)) : ((t = d[i++]) < 128 ? t : rv(t)))`;
   }
   if (resolved.kind === "Seq" || resolved.kind === "Set") {
     const known = codec.readers.get(resolved);
@@ -2262,7 +2295,7 @@ interface CompiledSpec {
   next: (state: Plain[], emit: (successor: Plain[]) => void) => void;
   invariants: ((state: Plain[]) => boolean)[];
   constraints: ((state: Plain[]) => boolean)[];
-  encode: (state: Plain[], bytes: Bytes) => void;
+  encode: (state: Plain[], arena: Arena) => void;
   decode: (data: Uint8Array, start: number) => Plain[];
 }
 
@@ -2305,14 +2338,15 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     next: (state, emit) => { ${unpack} ${nextCode} },
     invariants: [${invariantCodes.join(", ")}],
     constraints: [${constraintCodes.join(", ")}],
-    encode: (state, bytes) => {
+    encode: (state, arena) => {
       ${unpack}
-      W = bytes;
-      if (bytes.size + ${RESERVED_BYTES} > bytes.data.length) H.grow(bytes);
-      d = bytes.data;
-      n = bytes.size;
+      W = arena;
+      arena.start = arena.size;
+      if (arena.size + ${RESERVED_BYTES} > arena.data.length) H.addPage(arena);
+      d = arena.data;
+      n = arena.size;
       ${writers.join(" ")}
-      bytes.size = n;
+      arena.size = n;
     },
     decode: (data, start) => { d = data; i = start; return [${readers.join(", ")}]; },
   };`;
@@ -2394,10 +2428,9 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     return false;
   });
   const compiled = compileSpec(program, check);
-  const bytes: Bytes = { data: new Uint8Array(1 << 22), size: 0 };
+  const arena = createArena();
   const starts = { data: new Int32Array(1 << 16), size: 0 };
   const table: StateTable = { slots: new Int32Array(1 << 18), mask: (1 << 17) - 1 };
-  pushWord(starts, 0);
   const statistics = { generated: 0, distinct: 0, depth: 0 };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
   const isInModel = (state: Plain[]) =>
@@ -2420,33 +2453,35 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     table.mask = mask;
   };
   const addEncoded = () => {
-    const start = starts.data[starts.size - 1];
-    const end = bytes.size;
-    const hash = hashBytes(bytes.data, start, end);
-    const length = end - start;
+    const data = arena.data;
+    const start = arena.start;
+    const length = arena.size - start;
+    const hash = hashBytes(data, start, arena.size);
     const slots = table.slots;
     for (let slot = hash & table.mask; ; slot = (slot + 1) & table.mask) {
       const entry = slots[slot * 2 + 1];
       if (entry === 0) {
         slots[slot * 2] = hash;
         slots[slot * 2 + 1] = ++statistics.distinct;
-        pushWord(starts, end);
+        pushWord(starts, (arena.pages.length - 1) * PAGE_SIZE + start);
         if (statistics.distinct * 8 > slots.length * 3) grow();
         return true;
       }
       if (slots[slot * 2] !== hash) continue;
-      const index = entry - 1;
-      const otherStart = starts.data[index];
-      if (starts.data[index + 1] - otherStart !== length) continue;
+      // No encoding is a prefix of another, so two states of different lengths differ before the
+      // shorter one ends.
+      const other = starts.data[entry - 1];
+      const page = arena.pages[other >>> PAGE_BITS];
+      const otherStart = other & (PAGE_SIZE - 1);
       let isSameState = true;
       for (let offset = 0; offset < length; offset++) {
-        if (bytes.data[otherStart + offset] !== bytes.data[start + offset]) {
+        if (page[otherStart + offset] !== data[start + offset]) {
           isSameState = false;
           break;
         }
       }
       if (isSameState) {
-        bytes.size = start;
+        arena.size = start;
         return false;
       }
     }
@@ -2457,7 +2492,7 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
       checkInvariants(state);
       return false;
     }
-    compiled.encode(state, bytes);
+    compiled.encode(state, arena);
     const isNew = addEncoded();
     if (isNew) checkInvariants(state);
     return isNew;
@@ -2484,7 +2519,8 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
       level.depth++;
       level.end = statistics.distinct;
     }
-    const state = compiled.decode(bytes.data, starts.data[index]);
+    const start = starts.data[index];
+    const state = compiled.decode(arena.pages[start >>> PAGE_BITS], start & (PAGE_SIZE - 1));
     expansion.successors = 0;
     expansion.newStates = 0;
     compiled.next(state, onSuccessor);
