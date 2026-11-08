@@ -16,6 +16,8 @@ const CASES: [string, string][] = [
   ["incrementing a value that isn't a number", "let value: any = true; value++; count = value;"],
   ["integers past 32 bits", "count = 2147483648;"],
   ["object rest elements", "const { a, ...others } = record; count = a ?? 0;"],
+  ["calling a generator", "const make = function* () { count++; }; make();"],
+  ["calling an async function", "const run = async () => { count++; }; run();"],
   ["rest parameters", "const add = (...more: number[]) => more.length; count = add(1, 2);"],
   ["string methods as values", "count = label.includes.length;"],
   ["properties of functions", "count = step.length;"],

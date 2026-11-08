@@ -97,7 +97,10 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
 export const getFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
   if (node === undefined) return undefined;
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
-    return node;
+    const isPlain =
+      node.asteriskToken === undefined &&
+      !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+    return isPlain ? node : undefined;
   }
   return ts.isVariableDeclaration(node) ? getFunction(node.initializer) : undefined;
 };
