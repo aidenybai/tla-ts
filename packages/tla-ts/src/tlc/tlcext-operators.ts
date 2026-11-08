@@ -129,7 +129,6 @@ export const setTlcValue = (
   );
 };
 
-// SemanticNode#toString: a numeral's image, or else the node's location.
 const describeNode = (expression: Expression) =>
   expression.kind === "Number"
     ? (expression.text ?? String(expression.value))
