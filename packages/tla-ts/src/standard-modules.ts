@@ -27,6 +27,7 @@ import { createTlcOperators } from "./tlc/tlc-operators";
 import { TLC_JAVA_METHODS } from "./tlc/jar-data";
 import {
   addBoundedElement,
+  createUnsortedCopy,
   forEachElement,
   isBeyondSetBound,
   createSet,
@@ -245,20 +246,22 @@ export const CORE_OPERATORS: Builtin[] = [
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getValue(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) => {
     const outer = getValue(args, 0, "UNION");
-    const sets = isEnumeratedSet(outer) ? outer.elements.filter(isEnumeratedSet) : [];
-    if (!isEnumeratedSet(outer) || sets.length !== outer.elements.length) {
+    const written = isEnumeratedSet(outer) ? getWrittenElements(outer) : [];
+    const sets = written.filter(isEnumeratedSet);
+    if (!isEnumeratedSet(outer) || sets.length !== written.length) {
       return markStreamedSet({ kind: "Union", base: outer });
     }
+    // TLC adds each set's elements in written order, and only those not yet in the union.
+    const added = sets.flatMap(getWrittenElements);
     if (isMixedSet(outer) || sets.some(isMixedSet)) {
       const union: MixedSetValue = { kind: "MixedSet", elements: [] };
-      sets.forEach((set) =>
-        set.elements.forEach((member) => {
-          if (!isElementOf(member, union)) union.elements.push(member);
-        }),
-      );
+      added.forEach((member) => {
+        if (!isElementOf(member, union)) addBoundedElement(union.elements, member);
+      });
       return createEnumeratedSet(union.elements);
     }
-    return sets.length === 0 ? EMPTY_SET : getBalancedUnion(sets.map(toFiniteSet), 0, sets.length);
+    if (sets.length === 0) return EMPTY_SET;
+    return createUnsortedCopy(getBalancedUnion(sets.map(toFiniteSet), 0, sets.length), added);
   }),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");

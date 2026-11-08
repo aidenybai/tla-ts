@@ -1951,6 +1951,24 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
   return -1;
 };
 
+// A sorted set as TLC builds it unsorted, by adding each element it doesn't hold yet.
+export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
+  const elements = set.elements;
+  if (elements.length > SET_BOUND) throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+  const isAdded = Array.from({ length: elements.length }, () => false);
+  const written = added.filter((element) => {
+    const index = findSortedIndex(elements, element);
+    if (isAdded[index]) return false;
+    isAdded[index] = true;
+    return true;
+  });
+  const copy = createSortedSet(elements);
+  if (written.some((element, index) => element !== elements[index])) {
+    copy.writtenElements = written;
+  }
+  return copy;
+};
+
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
   if (
