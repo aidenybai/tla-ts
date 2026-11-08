@@ -1,22 +1,40 @@
 import ts from "@typescript/typescript6";
+import type { Expression } from "../ast";
 import { type Context, getSymbol } from "./context";
 import type { Sections } from "./emit";
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition } from "./expressions";
-import { indent, letIn, render, text } from "./formula";
 import { getDefinition, readsState, translateBody } from "./functions";
 import type { Exported, Model } from "./model";
 import { bindNames, createStateScope, declareParameter, type Scope } from "./scope";
+import {
+  apply,
+  bound,
+  boxAction,
+  call,
+  define,
+  defineAt,
+  getLocation,
+  identifier,
+  letExpression,
+  locate,
+  prime,
+  quantify,
+  temporal,
+} from "./tla";
 import { collectUnknowns, defineWithUnknowns, getDomain } from "./types";
 
-const TEMPORAL_OPERATORS = new Map([
-  ["eventually", "<>"],
-  ["alwaysEventually", "[]<>"],
-  ["eventuallyAlways", "<>[]"],
+const TEMPORAL_OPERATORS = new Map<string, (value: Expression) => Expression>([
+  ["eventually", (value) => temporal("Eventually", value)],
+  ["alwaysEventually", (value) => temporal("Always", temporal("Eventually", value))],
+  ["eventuallyAlways", (value) => temporal("Eventually", temporal("Always", value))],
 ]);
 
 // Tags whose functions become named predicates that the config lists in a section.
-const PREDICATE_TAGS = new Map<string, keyof Sections>([
+const PREDICATE_TAGS = new Map<
+  string,
+  "constraints" | "actionConstraints" | "views" | "postconditions" | "assumptions"
+>([
   ["constraint", "constraints"],
   ["actionConstraint", "actionConstraints"],
   ["view", "views"],
@@ -42,7 +60,7 @@ const getPreviousScope = (definition: Exported, context: Context): Scope => {
     throw new TlaTypeScriptError("Take the state before the step as one parameter", parameters[0]);
   }
   return {
-    bindings: new Map([...context.variables].map((entry) => [entry[0], `${entry[1]}'`])),
+    bindings: new Map([...context.variables].map((entry) => [entry[0], prime(entry[1])])),
     previous: getSymbol(parameters[0].name, context.checker),
   };
 };
@@ -53,7 +71,7 @@ const getLeadsToTarget = (
   parameters: string[],
   model: Model,
   context: Context,
-) => {
+): Expression => {
   const targetName = definition.tags.get("leadsTo") ?? "";
   const target = model.topLevel.get(targetName);
   if (target === undefined) {
@@ -63,12 +81,12 @@ const getLeadsToTarget = (
     );
   }
   const exported = model.exported.find((candidate) => candidate.declaration === target);
-  if (exported !== undefined) return exported.name;
+  if (exported !== undefined) return identifier(exported.name);
   const targetDefinition = getDefinition(target, context);
-  const values = parameters.slice(0, targetDefinition.parameters.length);
-  return values.length === 0
-    ? targetDefinition.name
-    : `${targetDefinition.name}(${values.join(", ")})`;
+  return call(
+    targetDefinition.name,
+    parameters.slice(0, targetDefinition.parameters.length).map((name) => identifier(name)),
+  );
 };
 
 export const translateProperty = (
@@ -93,34 +111,36 @@ export const translateProperty = (
   const scope = hasPreviousState
     ? getPreviousScope(definition, context)
     : bindNames(createStateScope(context), quantified);
-  const forAll =
-    quantified.length === 0
-      ? ""
-      : `\\A ${quantified.map((parameter) => `${parameter.name} \\in ${parameter.domain}`).join(", ")} : `;
-  const value = indent(translateBody(definition.body, scope, context), "  ");
+  const forAll = (body: Expression) =>
+    quantify(
+      "Forall",
+      quantified.map((parameter) => bound(parameter.name, parameter.domain)),
+      body,
+    );
+  const value = translateBody(definition.body, scope, context);
   const operator = TEMPORAL_OPERATORS.get(tag);
   const predicate = PREDICATE_TAGS.get(tag);
-  if (operator !== undefined) {
-    sections.temporal.push(`${name} ==\n  ${forAll}${operator}(${value})`);
+  const addTemporal = (body: Expression) => {
+    sections.temporal.push(defineAt(node, name, [], body));
     sections.properties.push(name);
-  }
+  };
+  if (operator !== undefined) addTemporal(forAll(operator(value)));
   if (tag === "leadsTo") {
     const parameters = quantified.map((parameter) => parameter.name);
     const target = getLeadsToTarget(definition, parameters, model, context);
-    sections.temporal.push(`${name} ==\n  ${forAll}(${value}) ~> ${target}`);
-    sections.properties.push(name);
+    addTemporal(forAll(apply("~>", [value, target])));
   }
   if (tag === "always") {
-    sections.temporal.push(
-      node.parameters.length === 0
-        ? `${name} ==\n  [](${value})`
-        : `${name} ==\n  [][${value}]_vars`,
+    addTemporal(
+      temporal(
+        "Always",
+        node.parameters.length === 0 ? value : boxAction(value, identifier("vars")),
+      ),
     );
-    sections.properties.push(name);
   }
-  if (tag === "initially") sections.init.push(value);
+  if (tag === "initially") sections.init.push(locate(value, getLocation(node)));
   if (predicate !== undefined) {
-    sections.predicates.push(`${name} ==\n  ${value}`);
+    sections.predicates.push(defineAt(node, name, [], value));
     sections[predicate].push(name);
   }
 };
@@ -137,16 +157,25 @@ export const translateCall = (definition: Exported, sections: Sections, context:
   const body = collectUnknowns(definition.node, context, () =>
     translateBody(definition.body, bindNames(createStateScope(context), quantified), context),
   );
-  const value = body.value;
   // TLC evaluates a LET definition only when something uses it.
-  const call = render(
-    letIn([`${result} ==\n  ${indent(value, "  ")}`], text(`${result} = ${result}`)),
+  const checked = letExpression(
+    [define(result, [], body.value)],
+    apply("=", [identifier(result), identifier(result)]),
   );
-  const checked =
-    quantified.length === 0
-      ? call
-      : `\\A ${quantified.map((parameter) => `${parameter.name} \\in ${parameter.domain}`).join(", ")} :\n  ${indent(call, "  ")}`;
-  sections.predicates.push(defineWithUnknowns(definition.name, "\\A", checked, body.unknowns));
+  sections.predicates.push(
+    defineWithUnknowns(
+      definition.node,
+      definition.name,
+      [],
+      "Forall",
+      quantify(
+        "Forall",
+        quantified.map((parameter) => bound(parameter.name, parameter.domain)),
+        checked,
+      ),
+      body.unknowns,
+    ),
+  );
   const isStateLevel = readsState(
     definition.declaration,
     context,
@@ -168,6 +197,8 @@ export const translateInvariant = (definition: Exported, sections: Sections, con
       ? translateBody(body, scope, context)
       : translateCondition(body, scope, context),
   );
-  sections.predicates.push(defineWithUnknowns(definition.name, "\\A", value.value, value.unknowns));
+  sections.predicates.push(
+    defineWithUnknowns(definition.node, definition.name, [], "Forall", value.value, value.unknowns),
+  );
   sections.invariants.push(definition.name);
 };

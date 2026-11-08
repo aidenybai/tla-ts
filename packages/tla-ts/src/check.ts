@@ -98,7 +98,6 @@ import {
 } from "./values";
 
 export interface CheckOptions {
-  // A spec's text, or a module that a compiler built without one.
   source: string | Module;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;

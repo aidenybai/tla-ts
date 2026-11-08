@@ -1,8 +1,8 @@
 import ts from "@typescript/typescript6";
-import { getUpdatedValue, MUTATING_METHODS } from "./collections";
+import type { ExceptPathStep, Expression } from "../ast";
+import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
   type Context,
-  formatString,
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
@@ -10,10 +10,11 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateKey } from "./expressions";
-import { and, DISABLED, type Formula, letIn, text, wrap, wrapEquated } from "./formula";
+import { and, DISABLED, type Formula, letIn, leaf } from "./formula";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import { bindPattern, bindValues, createStateScope, type Scope } from "./scope";
-import { getField, getKind } from "./types";
+import { apply, except, exceptAt, index, number, prime, string, tuple, unchanged } from "./tla";
+import { getField, getKind, getPathStep } from "./types";
 
 interface Path {
   scope: Scope;
@@ -24,13 +25,13 @@ interface Path {
 
 interface Target {
   symbol: ts.Symbol;
-  current: string;
-  // The path to the changed part, as an EXCEPT selector such as .field[2].
-  selector: string;
+  current: Expression;
+  // The path to the changed part, as in the EXCEPT selector .field[2].
+  selector: ExceptPathStep[];
 }
 
 interface Removed {
-  value: string;
+  value: Expression;
   path: Path;
 }
 
@@ -69,19 +70,19 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         node,
       );
     }
-    return { symbol, current, selector: "" };
+    return { symbol, current, selector: [] };
   }
   if (ts.isPropertyAccessExpression(node)) {
     if (getKind(node.expression, context) !== "other") {
       throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
     }
     const target = getTarget(node.expression, path, context);
-    return { ...target, selector: `${target.selector}${getField(node.name.text)}` };
+    return { ...target, selector: [...target.selector, getPathStep(node.name.text)] };
   }
   if (ts.isElementAccessExpression(node)) {
     const target = getTarget(node.expression, path, context);
     const key = translateKey(node, path.scope, context);
-    return { ...target, selector: `${target.selector}[${key}]` };
+    return { ...target, selector: [...target.selector, { kind: "Index", args: [key] }] };
   }
   if (
     isMethodCall(node) &&
@@ -91,7 +92,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
   ) {
     const target = getTarget(node.expression.expression, path, context);
     const key = translateExpression(node.arguments[0], path.scope, context);
-    return { ...target, selector: `${target.selector}[${key}]` };
+    return { ...target, selector: [...target.selector, { kind: "Index", args: [key] }] };
   }
   throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
 };
@@ -100,13 +101,13 @@ const assign = (
   node: ts.Expression,
   path: Path,
   context: Context,
-  getValue: (current: string) => string,
+  getValue: (current: Expression) => Expression,
 ): Path => {
   const target = getTarget(node, path, context);
   const value =
-    target.selector === ""
+    target.selector.length === 0
       ? getValue(target.current)
-      : `[${wrap(target.current)} EXCEPT !${target.selector} = ${wrapEquated(getValue("@"))}]`;
+      : except(target.current, [{ path: target.selector, value: getValue(exceptAt()) }]);
   return {
     scope: { ...path.scope, bindings: new Map([...path.scope.bindings, [target.symbol, value]]) },
     mutable: path.mutable,
@@ -119,19 +120,19 @@ const assign = (
 const assignPattern = (
   target: ts.Expression,
   source: ts.Expression | undefined,
-  value: string,
+  value: Expression,
   path: Path,
   context: Context,
 ): Path => {
   if (ts.isArrayLiteralExpression(target)) {
-    return target.elements.reduce((current, element, index) => {
+    return target.elements.reduce((current, element, position) => {
       if (ts.isOmittedExpression(element)) return current;
       if (ts.isSpreadElement(element)) {
         throw new TlaTypeScriptError("Rest elements can't be assigned", element);
       }
       const sourceElement =
         source !== undefined && ts.isArrayLiteralExpression(source)
-          ? source.elements[index]
+          ? source.elements[position]
           : undefined;
       return sourceElement !== undefined && !ts.isSpreadElement(sourceElement)
         ? assignPattern(
@@ -141,7 +142,7 @@ const assignPattern = (
             current,
             context,
           )
-        : assignPattern(element, undefined, `${wrap(value)}[${index + 1}]`, current, context);
+        : assignPattern(element, undefined, index(value, [number(position + 1)]), current, context);
     }, path);
   }
   if (ts.isObjectLiteralExpression(target)) {
@@ -150,7 +151,7 @@ const assignPattern = (
         return assignPattern(
           property.name,
           undefined,
-          `${wrap(value)}${getField(property.name.text)}`,
+          getField(value, property.name.text),
           current,
           context,
         );
@@ -159,7 +160,7 @@ const assignPattern = (
         return assignPattern(
           property.initializer,
           undefined,
-          `${wrap(value)}${getField(property.name.text)}`,
+          getField(value, property.name.text),
           current,
           context,
         );
@@ -186,9 +187,10 @@ const getRemovedValue = (
   if (getKind(receiver, context) !== "sequence") return undefined;
   const sequence = translateExpression(receiver, path.scope, context);
   return {
-    value: method === "shift" ? `Head(${sequence})` : `${wrap(sequence)}[Len(${sequence})]`,
+    value:
+      method === "shift" ? apply("Head", [sequence]) : index(sequence, [apply("Len", [sequence])]),
     path: assign(receiver, path, context, (current) =>
-      method === "shift" ? `Tail(${current})` : `SubSeq(${current}, 1, Len(${current}) - 1)`,
+      method === "shift" ? apply("Tail", [current]) : removeLast(current),
     ),
   };
 };
@@ -199,7 +201,9 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     const operator = INCREMENT_OPERATORS.get(expression.operator);
     return operator === undefined
       ? undefined
-      : assign(expression.operand, path, context, (current) => `${wrap(current)} ${operator} 1`);
+      : assign(expression.operand, path, context, (current) =>
+          apply(operator, [current, number(1)]),
+        );
   }
   if (!ts.isBinaryExpression(expression)) return undefined;
   const kind = expression.operatorToken.kind;
@@ -212,13 +216,8 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
       ? "\\o"
       : COMPOUND_OPERATORS.get(kind);
   if (operator === undefined) return undefined;
-  const value = wrap(translateExpression(expression.right, path.scope, context));
-  return assign(
-    expression.left,
-    path,
-    context,
-    (current) => `${wrap(current)} ${operator} ${value}`,
-  );
+  const value = translateExpression(expression.right, path.scope, context);
+  return assign(expression.left, path, context, (current) => apply(operator, [current, value]));
 };
 
 const translateCallStatement = (
@@ -236,12 +235,12 @@ const translateCallStatement = (
     const method = expression.expression.name.text;
     const isConsole = receiver.getText() === "console";
     if (isConsole && method === "log") {
-      const value = values.length === 1 ? values[0] : `<<${values.join(", ")}>>`;
-      return and([text(`PrintT(${value})`), continueWith(path)]);
+      const value = values.length === 1 ? values[0] : tuple(values);
+      return and([leaf(apply("PrintT", [value])), continueWith(path)]);
     }
     if (isConsole && method === "assert") {
-      const message = values[1] ?? formatString("Assertion failed");
-      return and([text(`Assert(${values[0]}, ${message})`), continueWith(path)]);
+      const message = values[1] ?? string("Assertion failed");
+      return and([leaf(apply("Assert", [values[0], message])), continueWith(path)]);
     }
     if (MUTATING_METHODS.has(method)) {
       const kind = getKind(receiver, context);
@@ -387,7 +386,7 @@ const translateStatements = (
     if (frame.breakTo === undefined) throw new TlaTypeScriptError("Unsupported break", statement);
     return frame.breakTo(path);
   }
-  if (ts.isThrowStatement(statement)) return text(translateThrow(statement, path.scope, context));
+  if (ts.isThrowStatement(statement)) return leaf(translateThrow(statement, path.scope, context));
   if (ts.isSwitchStatement(statement)) {
     return translateSwitch(
       statement,
@@ -427,13 +426,13 @@ export const translateAction = (
       name: entry[1],
       value: path.scope.bindings.get(entry[0]) ?? entry[1],
     }));
-    const unchanged = assignments.filter((assignment) => assignment.value === assignment.name);
+    const kept = assignments.filter((assignment) => assignment.value === assignment.name);
     return and([
       ...assignments
         .filter((assignment) => assignment.value !== assignment.name)
-        .map((assignment) => text(`${assignment.name}' = ${wrapEquated(assignment.value)}`)),
-      ...(unchanged.length > 0
-        ? [text(`UNCHANGED <<${unchanged.map((assignment) => assignment.name).join(", ")}>>`)]
+        .map((assignment) => leaf(apply("=", [prime(assignment.name), assignment.value]))),
+      ...(kept.length > 0
+        ? [leaf(unchanged(tuple(kept.map((assignment) => assignment.name))))]
         : []),
     ]);
   };
@@ -449,7 +448,7 @@ export const translateScript = (statements: readonly ts.Statement[], context: Co
   const finish = (path: Path) =>
     and(
       [...context.variables].map((entry) =>
-        text(`${entry[1]} = ${wrapEquated(path.scope.bindings.get(entry[0]) ?? entry[1])}`),
+        leaf(apply("=", [entry[1], path.scope.bindings.get(entry[0]) ?? entry[1]])),
       ),
     );
   return translateStatements(

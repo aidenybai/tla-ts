@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { check, type CheckResult } from "../../src";
 import { describe, expect, it } from "vite-plus/test";
-import { compile } from "../../src/typescript/compile";
+import { compileChecked } from "./typescript-harness";
 
 // Each directory holds a spec from tlaplus/Examples, its config, and a TypeScript port of it.
 const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
@@ -32,7 +32,7 @@ describe("ports of tlaplus/Examples check like the originals", () => {
         },
       });
       const path = join(directory, model);
-      const ported = await check(compile(readFileSync(path, "utf8"), path));
+      const ported = await check(compileChecked(readFileSync(path, "utf8"), path));
       expect(original.failure?.message).toBeUndefined();
       expect(ported.failure?.message).toBeUndefined();
       expect(getSummary(ported)).toEqual(getSummary(original));

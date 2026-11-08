@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { Module } from "../ast";
 
 // A spec tla-ts compiled from the TypeScript file at path. specPath is where its module would be
 // if it were a file, though tla-ts checks it without writing one.
 export interface CompiledInput {
   path: string;
   specPath: string;
-  source: string;
+  source: Module;
   config: string;
 }
 

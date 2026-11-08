@@ -6,11 +6,14 @@ import {
   getSymbol,
   type HelperDeclaration,
 } from "./context";
+import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { VALUE_TAGS } from "./properties";
+import { getLocation, identifier, set } from "./tla";
 
 export interface Variable {
   name: string;
+  symbol: ts.Symbol;
   declaration: ts.VariableDeclaration;
 }
 
@@ -35,7 +38,7 @@ export interface Model {
   // Top-level functions and constants by their TypeScript names, which @leadsTo refers to.
   topLevel: Map<string, HelperDeclaration>;
   // The model values of each @symmetric type, as a TLA+ set.
-  symmetrySets: string[];
+  symmetrySets: Expression[];
   isDeadlockChecked: boolean;
 }
 
@@ -87,9 +90,9 @@ const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context
       throw new TlaTypeScriptError(`"${member.value}" can't name a TLA+ model value`, statement);
     }
     context.modelValues.set(member.value, name);
-    return name;
+    return identifier(name);
   });
-  return `{${names.join(", ")}}`;
+  return set(names);
 };
 
 const isInertClass = (statement: ts.Statement) =>
@@ -161,8 +164,8 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     }
     if (context.variables.has(symbol)) return [];
     const name = context.names.getFresh(declared.name);
-    context.variables.set(symbol, name);
-    return [{ name, declaration }];
+    context.variables.set(symbol, identifier(name, getLocation(declaration.name)));
+    return [{ name, symbol, declaration }];
   });
   const helpers = declarations.filter((declared) => !isLet(declared));
   const exported = helpers.flatMap((declared) => {

@@ -488,11 +488,7 @@ describe("calls tla-ts can't compile", () => {
 
   it("chooses any value of a function that only a declaration file declares", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/unknowns/cart.ts");
-    const spec = compile(readFileSync(path, "utf8"), path);
-    expect(spec.source).toContain(
-      "\\* cart.ts:9:17 fetchPrice(item) isn't compiled, so fetchPrice is any value of its type",
-    );
-    const result = await check(spec);
+    const result = await check(compile(readFileSync(path, "utf8"), path));
     expect(result.status).toBe("invariant-violation");
     expect(getTrace(result)).toEqual([{ total: "0" }, { total: "-3" }]);
   });

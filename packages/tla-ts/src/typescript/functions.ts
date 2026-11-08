@@ -1,8 +1,8 @@
 import ts from "@typescript/typescript6";
+import type { Expression } from "../ast";
 import {
   type Context,
   type Definition,
-  formatString,
   type FunctionNode,
   getCallee,
   getFunction,
@@ -12,7 +12,7 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
-import { type Formula, ifThenElse, indent, letIn, render, text, wrap } from "./formula";
+import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
 import {
   type Bound,
   bindNames,
@@ -22,6 +22,18 @@ import {
   declareParameters,
   type Scope,
 } from "./scope";
+import {
+  apply,
+  boolean,
+  call,
+  defineAt,
+  getLocation,
+  identifier,
+  junction,
+  lambda,
+  locate,
+  string,
+} from "./tla";
 import { translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
@@ -65,9 +77,10 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   // An operator parameter declares how many arguments it takes, as in F(_, _).
   const declared = parameters.map((parameter) => {
     const signatures = context.checker.getTypeAtLocation(parameter.node.name).getCallSignatures();
-    return signatures.length === 0
-      ? parameter.name
-      : `${parameter.name}(${signatures[0].parameters.map(() => "_").join(", ")})`;
+    return {
+      name: parameter.name,
+      arity: signatures.length === 0 ? 0 : signatures[0].parameters.length,
+    };
   });
   const definition: Definition = {
     name: context.names.getFresh(declaration.name.getText()),
@@ -80,9 +93,7 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   if (body === undefined) throw new TlaTypeScriptError("Give this a value", declaration);
   const value = translateBody(body, bindNames(createStateScope(context), parameters), context);
   context.inProgress.delete(declaration);
-  const head =
-    declared.length === 0 ? definition.name : `${definition.name}(${declared.join(", ")})`;
-  context.output.push(`${head} ==\n  ${indent(value, "  ")}`);
+  context.output.push(defineAt(declaration, definition.name, declared, value));
   return definition;
 };
 
@@ -101,7 +112,7 @@ const inlineCall = (
     context,
   );
   const value = translateBody(callee.body, bound.scope, context);
-  return bound.definitions.length === 0 ? value : render(letIn(bound.definitions, text(value)));
+  return render(letIn(bound.definitions, leaf(value)));
 };
 
 // A function argument to an operator parameter, as a LAMBDA or an operator's name.
@@ -109,11 +120,14 @@ const translateOperatorArgument = (node: ts.Expression, scope: Scope, context: C
   if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
     const parameters = declareParameters(node.parameters, context);
     const body = translateBody(node.body, bindNames(scope, parameters), context);
-    return `LAMBDA ${parameters.map((parameter) => parameter.name).join(", ")} : ${body}`;
+    return lambda(
+      parameters.map((parameter) => parameter.name),
+      body,
+    );
   }
   const symbol = getSymbol(node, context.checker);
   const declaration = getTopLevelDeclaration(symbol);
-  if (declaration !== undefined) return getDefinition(declaration, context).name;
+  if (declaration !== undefined) return identifier(getDefinition(declaration, context).name);
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
   if (binding === undefined) throw new TlaTypeScriptError("Pass a function here", node);
   return binding;
@@ -136,18 +150,17 @@ export const translateHelperCall = (
     if (initializer === undefined) throw new TlaTypeScriptError("Give this a body", declaration);
     return translateExpression(initializer, scope, context);
   }
-  if (definition.parameters.length === 0) return definition.name;
   const values = definition.parameters.map((parameter, index) => {
     const argument = argumentNodes.at(index);
     if (argument === undefined) {
       context.prelude.add("Undefined");
-      return "Undefined";
+      return identifier("Undefined");
     }
-    return parameter.includes("(")
+    return parameter.arity > 0
       ? translateOperatorArgument(argument, scope, context)
       : translateExpression(argument, scope, context);
   });
-  return `${definition.name}(${values.join(", ")})`;
+  return call(definition.name, values);
 };
 
 // A call to a function declared inside another, which is inlined.
@@ -169,7 +182,7 @@ export const translateLocalCall = (node: ts.CallExpression, scope: Scope, contex
 };
 
 // A function body that computes a value, as a TLA+ expression.
-export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): string => {
+export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
   return render(
     translatePure(body.statements, scope, context, () => {
@@ -217,9 +230,9 @@ const translatePure = (
   if (ts.isReturnStatement(statement)) {
     if (statement.expression === undefined)
       throw new TlaTypeScriptError("Return a value", statement);
-    return text(translateExpression(statement.expression, scope, context));
+    return leaf(translateExpression(statement.expression, scope, context));
   }
-  if (ts.isThrowStatement(statement)) return text(translateThrow(statement, scope, context));
+  if (ts.isThrowStatement(statement)) return leaf(translateThrow(statement, scope, context));
   if (ts.isSwitchStatement(statement)) {
     return translateSwitch(
       statement,
@@ -237,8 +250,8 @@ export const translateThrow = (statement: ts.ThrowStatement, scope: Scope, conte
   const message =
     ts.isNewExpression(thrown) && thrown.arguments?.[0] !== undefined
       ? translateExpression(thrown.arguments[0], scope, context)
-      : formatString(thrown.getText());
-  return `Assert(FALSE, ${message})`;
+      : string(thrown.getText());
+  return locate(apply("Assert", [boolean(false), message]), getLocation(statement));
 };
 
 // An if statement as an IF. Without an else, the false branch is the rest of the statements.
@@ -271,7 +284,7 @@ export const translateSwitch = (
   translateClause: (statements: readonly ts.Statement[]) => Formula,
   translateRest: () => Formula,
 ): Formula => {
-  const subject = wrap(translateExpression(statement.expression, scope, context));
+  const subject = translateExpression(statement.expression, scope, context);
   const clauses = statement.caseBlock.clauses;
   const translateFrom = (start: number): Formula => {
     if (start === clauses.length) return translateRest();
@@ -294,13 +307,16 @@ export const translateSwitch = (
       last !== undefined && ts.isBreakStatement(last) ? body.slice(0, -1) : body,
     );
     if (group.some(ts.isDefaultClause)) return formula;
-    const condition = group
+    const conditions = group
       .filter(ts.isCaseClause)
-      .map(
-        (clause) => `${subject} = ${wrap(translateExpression(clause.expression, scope, context))}`,
-      )
-      .join(" \\/ ");
-    return ifThenElse(condition, formula, translateFrom(start + group.length));
+      .map((clause) =>
+        apply("=", [subject, translateExpression(clause.expression, scope, context)]),
+      );
+    return ifThenElse(
+      conditions.length === 1 ? conditions[0] : junction("Or", conditions),
+      formula,
+      translateFrom(start + group.length),
+    );
   };
   return translateFrom(0);
 };

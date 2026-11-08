@@ -1,17 +1,34 @@
-import { basename } from "node:path";
 import ts from "@typescript/typescript6";
-import { type Context, formatString, translateString, type Unknown } from "./context";
+import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } from "../ast";
+import { type Context, translateString, type Unknown } from "./context";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
-import { indent, wrap } from "./formula";
+import {
+  apply,
+  bound,
+  boolean,
+  defineAt,
+  field,
+  functionSet,
+  identifier,
+  index,
+  map,
+  number,
+  product,
+  quantify,
+  record,
+  set,
+  string,
+  tuple,
+} from "./tla";
 
 export type Kind = "sequence" | "set" | "map" | "string" | "other";
 
 // TLC needs a finite set of values for every type, so number, string, and arrays take these small
 // bounds.
-const INTEGERS = "-3..3";
+const getIntegers = () => apply("..", [number(-3), number(3)]);
 
-const STRINGS = '{"", "a", "b"}';
+const getStrings = () => set(["", "a", "b"].map(string));
 
 const MAX_ARRAY_LENGTH = 3;
 
@@ -68,9 +85,14 @@ export const isNumericKey = (key: string) => /^-?\d+$/.test(key);
 export const isFieldName = (key: string) => /^\w*[A-Za-z]\w*$/.test(key) && !KEYWORDS.has(key);
 
 // A key that can't be a record field, such as a keyword, selects a function by its string.
-export const getField = (key: string) => {
-  if (isNumericKey(key)) return `[${key}]`;
-  return isFieldName(key) ? `.${key}` : `[${formatString(key)}]`;
+export const getPathStep = (key: string): ExceptPathStep => {
+  if (isNumericKey(key)) return { kind: "Index", args: [number(Number(key))] };
+  return isFieldName(key) ? { kind: "Field", name: key } : { kind: "Index", args: [string(key)] };
+};
+
+export const getField = (value: Expression, key: string) => {
+  const step = getPathStep(key);
+  return step.kind === "Field" ? field(value, step.name) : index(value, step.args);
 };
 
 export const getPropertyKey = (name: ts.PropertyName) =>
@@ -78,22 +100,25 @@ export const getPropertyKey = (name: ts.PropertyName) =>
     ? name.text
     : undefined;
 
-const getLiteral = (type: ts.Type, context: Context) => {
+const getLiteral = (type: ts.Type, context: Context): Expression | undefined => {
   if (type.isStringLiteral()) return translateString(type.value, context);
-  if (type.isNumberLiteral()) return Number.isInteger(type.value) ? String(type.value) : undefined;
+  if (type.isNumberLiteral()) return Number.isInteger(type.value) ? number(type.value) : undefined;
   if (type.flags & ts.TypeFlags.BooleanLiteral) {
-    return context.checker.typeToString(type) === "true" ? "TRUE" : "FALSE";
+    return boolean(context.checker.typeToString(type) === "true");
   }
   if (type.flags & ts.TypeFlags.Null) {
     context.prelude.add("Null");
-    return "Null";
+    return identifier("Null");
   }
   if (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
     context.prelude.add("Undefined");
-    return "Undefined";
+    return identifier("Undefined");
   }
   return undefined;
 };
+
+export const isInfinite = (domain: Expression | Infinite): domain is Infinite =>
+  "message" in domain;
 
 const getInfinite = (type: ts.Type, reason: string, context: Context): Infinite => ({
   message: `${context.checker.typeToString(type)} isn't finite: ${reason}`,
@@ -101,46 +126,50 @@ const getInfinite = (type: ts.Type, reason: string, context: Context): Infinite 
 
 // The first type that has no end, or the domains of every type.
 const findDomains = (types: readonly ts.Type[], context: Context) =>
-  types.reduce<string[] | Infinite>((domains, type) => {
+  types.reduce<Expression[] | Infinite>((domains, type) => {
     if (!Array.isArray(domains)) return domains;
     const domain = findDomain(type, context);
-    return typeof domain === "string" ? [...domains, domain] : domain;
+    return isInfinite(domain) ? domain : [...domains, domain];
   }, []);
 
 // The set of every value that a finite type allows, which TLC enumerates.
-export const findDomain = (type: ts.Type, context: Context): string | Infinite => {
+export const findDomain = (type: ts.Type, context: Context): Expression | Infinite => {
   const checker = context.checker;
-  if (type.flags & ts.TypeFlags.Boolean) return "BOOLEAN";
+  if (type.flags & ts.TypeFlags.Boolean) return identifier("BOOLEAN");
   if (type.isUnion()) {
-    const literals = type.types.map((member) => getLiteral(member, context));
+    const literalTypes = type.types
+      .filter((member) => getLiteral(member, context) !== undefined)
+      .sort((left, right) =>
+        left.isNumberLiteral() && right.isNumberLiteral() ? left.value - right.value : 0,
+      );
     const others = findDomains(
-      type.types.filter((_, index) => literals[index] === undefined),
+      type.types.filter((member) => !literalTypes.includes(member)),
       context,
     );
     if (!Array.isArray(others)) return others;
-    const enumerated = literals
-      .filter((literal) => literal !== undefined)
-      .sort((left, right) =>
-        /^-?\d+$/.test(left) && /^-?\d+$/.test(right) ? Number(left) - Number(right) : 0,
-      );
-    return [...(enumerated.length > 0 ? [`{${enumerated.join(", ")}}`] : []), ...others]
-      .map((domain, _, domains) => (domains.length > 1 ? wrap(domain) : domain))
-      .join(" \\cup ");
+    const enumerated = literalTypes.flatMap((member) => getLiteral(member, context) ?? []);
+    return [...(enumerated.length > 0 ? [set(enumerated)] : []), ...others].reduce((left, right) =>
+      apply("\\cup", [left, right]),
+    );
   }
   const literal = getLiteral(type, context);
-  if (literal !== undefined) return `{${literal}}`;
-  if (type.flags & ts.TypeFlags.Number) return INTEGERS;
-  if (type.flags & ts.TypeFlags.String) return STRINGS;
+  if (literal !== undefined) return set([literal]);
+  if (type.flags & ts.TypeFlags.Number) return getIntegers();
+  if (type.flags & ts.TypeFlags.String) return getStrings();
   if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
     const elements = findDomains(
       isTypeReference(type) ? checker.getTypeArguments(type) : [],
       context,
     );
     if (!Array.isArray(elements)) return elements;
-    if (isSetType(type)) return `SUBSET ${wrap(elements[0])}`;
+    if (isSetType(type)) return apply("SUBSET", [elements[0]]);
     if (isMapType(type)) {
       const keys = context.names.getFresh("keys");
-      return `UNION {[${keys} -> ${elements[1]}] : ${keys} \\in SUBSET ${wrap(elements[0])}}`;
+      return apply("UNION", [
+        map(functionSet(identifier(keys), elements[1]), [
+          bound(keys, apply("SUBSET", [elements[0]])),
+        ]),
+      ]);
     }
     const isFixed =
       isTypeReference(type) &&
@@ -154,16 +183,20 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
         context,
       );
     }
-    if (elements.length === 0) return "{<<>>}";
-    if (elements.length > 1) return elements.map(wrap).join(" \\X ");
+    if (elements.length === 0) return set([tuple([])]);
+    if (elements.length > 1) return product(elements);
     const element = context.names.getFresh("element");
-    return `{<<${element}>> : ${element} \\in ${elements[0]}}`;
+    return map(tuple([identifier(element)]), [bound(element, elements[0])]);
   }
   if (checker.isArrayType(type) && isTypeReference(type)) {
     const element = findDomain(checker.getTypeArguments(type)[0], context);
-    if (typeof element !== "string") return element;
+    if (isInfinite(element)) return element;
     const length = context.names.getFresh("length");
-    return `UNION {[1..${length} -> ${element}] : ${length} \\in 0..${MAX_ARRAY_LENGTH}}`;
+    return apply("UNION", [
+      map(functionSet(apply("..", [number(1), identifier(length)]), element), [
+        bound(length, apply("..", [number(0), number(MAX_ARRAY_LENGTH)])),
+      ]),
+    ]);
   }
   const properties = type.getProperties();
   const isRecord =
@@ -192,22 +225,31 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
   if (unnamed !== undefined)
     return getInfinite(type, `TLA+ can't name the field ${unnamed}`, context);
   if (!keys.some(isNumericKey)) {
-    return `[${keys.map((key, index) => `${key} : ${fields[index]}`).join(", ")}]`;
+    return record(
+      "RecordSet",
+      keys.map((key, position) => ({ name: key, value: fields[position] })),
+    );
   }
-  if (!keys.every(isNumericKey) || fields.some((field) => field !== fields[0])) {
+  const fieldTypes = properties.map((property) => checker.getTypeOfSymbol(property));
+  if (!keys.every(isNumericKey) || fieldTypes.some((fieldType) => fieldType !== fieldTypes[0])) {
     return {
       message: `${checker.typeToString(type)} has numeric keys, so every key must be a number with the same value type`,
     };
   }
-  return `[{${keys
-    .map(Number)
-    .sort((left, right) => left - right)
-    .join(", ")}} -> ${fields[0]}]`;
+  return functionSet(
+    set(
+      keys
+        .map(Number)
+        .sort((left, right) => left - right)
+        .map(number),
+    ),
+    fields[0],
+  );
 };
 
 export const getDomain = (type: ts.Type, node: ts.Node, context: Context) => {
   const domain = findDomain(type, context);
-  if (typeof domain !== "string") throw new TlaTypeScriptError(domain.message, node);
+  if (isInfinite(domain)) throw new TlaTypeScriptError(domain.message, node);
   return domain;
 };
 
@@ -224,7 +266,7 @@ export const translateUnknown = (
   if (
     unknowns === undefined ||
     ts.findAncestor(node.parent, ts.isFunctionLike) !== unknowns.owner ||
-    typeof domain !== "string"
+    isInfinite(domain)
   ) {
     throw new TlaTypeScriptError(message, node);
   }
@@ -233,7 +275,7 @@ export const translateUnknown = (
     : node.expression.getText();
   const name = context.names.getFresh(callee);
   unknowns.values.push({ name, domain, node });
-  return name;
+  return identifier(name);
 };
 
 // Compiles an exported function, and returns the calls in it that tla-ts can't compile.
@@ -246,21 +288,22 @@ export const collectUnknowns = <T>(owner: ts.Node, context: Context, translate: 
 };
 
 // A definition whose body holds for each value, \E in an action and \A in a check, of the calls it
-// makes that tla-ts can't compile. A comment above it names each call.
+// makes that tla-ts can't compile.
 export const defineWithUnknowns = (
-  head: string,
-  quantifier: "\\E" | "\\A",
-  body: string,
+  node: ts.Node,
+  name: string,
+  params: OperatorParam[],
+  quantifier: "Exists" | "Forall",
+  body: Expression,
   unknowns: Unknown[],
-) => {
-  const comments = unknowns.map((unknown) => {
-    const sourceFile = unknown.node.getSourceFile();
-    const position = sourceFile.getLineAndCharacterOfPosition(unknown.node.getStart());
-    return `\\* ${basename(sourceFile.fileName)}:${position.line + 1}:${position.character + 1} ${unknown.node.getText()} isn't compiled, so ${unknown.name} is any value of its type`;
-  });
-  const bound =
-    unknowns.length === 0
-      ? body
-      : `${quantifier} ${unknowns.map((unknown) => `${unknown.name} \\in ${unknown.domain}`).join(", ")} :\n  ${indent(body, "  ")}`;
-  return [...comments, `${head} ==\n  ${indent(bound, "  ")}`].join("\n");
-};
+): OperatorDefinition =>
+  defineAt(
+    node,
+    name,
+    params,
+    quantify(
+      quantifier,
+      unknowns.map((unknown) => bound(unknown.name, unknown.domain)),
+      body,
+    ),
+  );

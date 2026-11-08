@@ -90,7 +90,7 @@ const RELATIONS = [
   "::=",
 ];
 
-const INFIX_OPERATORS = new Map<string, InfixOperator>([
+export const INFIX_OPERATORS = new Map<string, InfixOperator>([
   ["=>", createInfix(1, 1, false)],
   ["<=>", createInfix(2, 2, false)],
   ["~>", createInfix(2, 2, false)],

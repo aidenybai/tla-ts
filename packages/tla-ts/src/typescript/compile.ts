@@ -1,26 +1,33 @@
-import { basename } from "node:path";
 import ts from "@typescript/typescript6";
 import { translateScript, writesState } from "./actions";
 import { type Context, createContext } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
-import { indent, render, wrapEquated } from "./formula";
+import { render } from "./formula";
 import { translateBody } from "./functions";
 import { type Exported, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
 import { createStateScope } from "./scope";
+import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
+import { apply, getLocation, getModuleName, locate } from "./tla";
 import { getDomain } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
-  const initializer = variable.declaration.initializer;
+  const declaration = variable.declaration;
+  const name = context.variables.get(variable.symbol);
+  if (name === undefined) throw new TlaTypeScriptError("Unknown variable", declaration);
+  const initializer = declaration.initializer;
   if (initializer === undefined) {
-    const type = context.checker.getTypeAtLocation(variable.declaration.name);
-    return `${variable.name} \\in ${getDomain(type, variable.declaration, context)}`;
+    const type = context.checker.getTypeAtLocation(declaration.name);
+    return locate(
+      apply("\\in", [name, getDomain(type, declaration, context)]),
+      getLocation(declaration),
+    );
   }
   const value = translateBody(initializer, createStateScope(context), context);
-  return `${variable.name} = ${indent(wrapEquated(value), "     ")}`;
+  return locate(apply("=", [name, value]), getLocation(declaration));
 };
 
 // An exported function is a property if a tag says so, an action if it changes state, and an
@@ -58,12 +65,8 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   sections.init.push(
     ...(model.script.every(ts.isVariableStatement)
       ? model.variables.map((variable) => translateInitial(variable, context))
-      : [render(translateScript(model.script, context))]),
+      : [locate(render(translateScript(model.script, context)), getLocation(model.script[0]))]),
   );
   for (const definition of model.exported) translateExported(definition, model, sections, context);
-  const moduleName = basename(fileName, ".ts")
-    .split(/[^A-Za-z0-9]+/)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join("");
-  return emit(moduleName, model, sections, context);
+  return emit(getModuleName(fileName), program.sourceFile, model, sections, context);
 };

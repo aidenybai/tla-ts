@@ -494,8 +494,7 @@ export const getTlcStringOrder = (
   const findInstantiation = createSearch((module) => module.instances);
   const parsedUnits = new Set<string | undefined>([undefined]);
   const dependencies = new Map<string | undefined, string[]>();
-  // A module without source text has no tokens to intern, so its strings come only from its
-  // literals, and order differently than TLC orders those of the same module as text.
+  // Without source text, only string literals are interned, unlike TLC reading the text.
   if (typeof source !== "string") SANY_NODE_NAMES.forEach(intern);
   getParsedTexts(getUnitTokens(undefined)).forEach((text, index) => {
     if (index === 3) SANY_NODE_NAMES.forEach(intern);

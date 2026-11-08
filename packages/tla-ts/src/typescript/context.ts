@@ -1,24 +1,25 @@
 import ts from "@typescript/typescript6";
+import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { createNames, type Names } from "./names";
+import { identifier, letExpression, define, string } from "./tla";
 
 export interface Definition {
   name: string;
-  // The operator's parameters as TLA+ declares them, such as "x" or "F(_)".
-  parameters: string[];
+  parameters: OperatorParam[];
   readsState: boolean;
 }
 
 export interface Context {
   checker: ts.TypeChecker;
   names: Names;
-  variables: Map<ts.Symbol, string>;
+  variables: Map<ts.Symbol, Expression>;
   // Helper functions and constants, compiled when first referenced.
   definitions: Map<ts.Declaration, Definition>;
   // Helpers being compiled or inlined, to detect recursion.
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
-  // Rendered definitions, each after the definitions it uses.
-  output: string[];
+  // Definitions, each after the definitions it uses.
+  output: OperatorDefinition[];
   // String literals of @symmetric types, which become model values.
   modelValues: Map<string, string>;
   // Model values and helper operators that the spec uses.
@@ -29,7 +30,7 @@ export interface Context {
 
 export interface Unknown {
   name: string;
-  domain: string;
+  domain: Expression;
   node: ts.Node;
 }
 
@@ -106,33 +107,23 @@ export const getFunction = (node: ts.Node | undefined): FunctionNode | undefined
 export const getCallee = (node: ts.Expression, context: Context) =>
   getFunction(node) ?? getFunction(getSymbol(node, context.checker)?.valueDeclaration);
 
-const ESCAPES = new Map([
-  ["\\", "\\\\"],
-  ['"', '\\"'],
-  ["\n", "\\n"],
-  ["\t", "\\t"],
-  ["\r", "\\r"],
-  ["\f", "\\f"],
-]);
+export const translateString = (value: string, context: Context) => {
+  const modelValue = context.modelValues.get(value);
+  return modelValue === undefined ? string(value) : identifier(modelValue);
+};
 
-// TLA+ strings escape only these characters, and hold any other as it is.
-export const formatString = (value: string) =>
-  `"${value.replace(/[\\"\n\t\r\f]/g, (character) => ESCAPES.get(character) ?? character)}"`;
-
-export const translateString = (value: string, context: Context) =>
-  context.modelValues.get(value) ?? formatString(value);
-
-// A name, a number, a string, or the @ of an EXCEPT, which costs nothing to repeat.
-const isTrivial = (value: string) => /^(@|[A-Za-z_]\w*'?|-?\d+|"[^"\\]*")$/.test(value);
+const isTrivial = (value: Expression): boolean =>
+  ["Identifier", "Number", "String", "ExceptAt"].includes(value.kind) ||
+  (value.kind === "Prime" && isTrivial(value.expression));
 
 // Binds a value that an expression repeats to a LET definition, so that TLC evaluates it once.
 export const share = (
-  value: string,
+  value: Expression,
   base: string,
   context: Context,
-  use: (shared: string) => string,
+  use: (shared: Expression) => Expression,
 ) => {
   if (isTrivial(value)) return use(value);
   const name = context.names.getFresh(base);
-  return `(LET ${name} == ${value} IN ${use(name)})`;
+  return letExpression([define(name, [], value)], use(identifier(name)));
 };

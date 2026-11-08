@@ -7,9 +7,9 @@ import {
   translateSet,
   translateSize,
 } from "./collections";
+import type { Expression } from "../ast";
 import {
   type Context,
-  formatString,
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
@@ -18,12 +18,32 @@ import {
   translateString,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { wrap, wrapEquated } from "./formula";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
 import type { Scope } from "./scope";
 import {
+  apply,
+  boolean,
+  bound,
+  choose,
+  except,
+  getLocation,
+  identifier,
+  ifExpression,
+  index,
+  junction,
+  locate,
+  not,
+  number,
+  quantify,
+  record,
+  set,
+  string,
+  tuple,
+} from "./tla";
+import {
   getField,
   getKind,
+  getPathStep,
   getPropertyKey,
   isBooleanLike,
   isFieldName,
@@ -34,7 +54,7 @@ import {
 
 interface Field {
   key: string;
-  value: string;
+  value: Expression;
 }
 
 const BINARY_OPERATORS = new Map([
@@ -57,9 +77,12 @@ const ORDERING_OPERATORS = new Set([
 ]);
 
 const LOGICAL_OPERATORS = new Map([
-  [ts.SyntaxKind.AmpersandAmpersandToken, "/\\"],
-  [ts.SyntaxKind.BarBarToken, "\\/"],
+  [ts.SyntaxKind.AmpersandAmpersandToken, "And" as const],
+  [ts.SyntaxKind.BarBarToken, "Or" as const],
 ]);
+
+const concatenate = (parts: Expression[]) =>
+  parts.reduce((left, right) => apply("\\o", [left, right]));
 
 // The key of an element access, which counts from 1 in a sequence where JavaScript counts from 0.
 export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, context: Context) => {
@@ -68,13 +91,13 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
     return translateExpression(key, scope, context);
   }
   return ts.isNumericLiteral(key)
-    ? String(Number(key.text) + 1)
-    : `${wrap(translateExpression(key, scope, context))} + 1`;
+    ? number(Number(key.text) + 1)
+    : apply("+", [translateExpression(key, scope, context), number(1)]);
 };
 
 const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, context: Context) => {
   // Runs of plain elements become tuples, and each spread array stays a sequence of its own.
-  const parts = node.elements.reduce<(string | string[])[]>((result, element) => {
+  const parts = node.elements.reduce<(Expression | Expression[])[]>((result, element) => {
     if (!ts.isSpreadElement(element)) {
       const value = translateExpression(element, scope, context);
       const last = result.at(-1);
@@ -90,21 +113,26 @@ const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, co
     }
     return [...result, translateExpression(element.expression, scope, context)];
   }, []);
-  const sequences = parts.map((part) => (Array.isArray(part) ? `<<${part.join(", ")}>>` : part));
-  if (sequences.length === 0) return "<<>>";
-  return sequences.length === 1 ? sequences[0] : sequences.map(wrap).join(" \\o ");
+  if (parts.length === 0) return tuple([]);
+  return concatenate(parts.map((part) => (Array.isArray(part) ? tuple(part) : part)));
 };
+
+const mergeEntries = (entries: [Expression, Expression][]) =>
+  entries.map((entry) => apply(":>", entry)).reduce((left, right) => apply("@@", [left, right]));
 
 const formatRecord = (fields: Field[], node: ts.Node) => {
   if (fields.every((field) => isNumericKey(field.key))) {
-    return fields.map((field) => `(${field.key} :> ${field.value})`).join(" @@ ");
+    return mergeEntries(fields.map((field) => [number(Number(field.key)), field.value]));
   }
   if (fields.some((field) => isNumericKey(field.key))) {
     throw new TlaTypeScriptError("Give an object only numeric keys or none", node);
   }
   return fields.every((field) => isFieldName(field.key))
-    ? `[${fields.map((field) => `${field.key} |-> ${field.value}`).join(", ")}]`
-    : fields.map((field) => `(${formatString(field.key)} :> ${field.value})`).join(" @@ ");
+    ? record(
+        "Record",
+        fields.map((field) => ({ name: field.key, value: field.value })),
+      )
+    : mergeEntries(fields.map((field) => [string(field.key), field.value]));
 };
 
 const translateObjectLiteral = (
@@ -154,13 +182,17 @@ const translateObjectLiteral = (
     if (isUpdate) {
       const changes = updates.map((property) => {
         const key = getKey(property);
-        if (key !== undefined) return `!${getField(key)} = ${wrapEquated(getValue(property))}`;
+        if (key !== undefined) return { path: [getPathStep(key)], value: getValue(property) };
         if (property.name === undefined || !ts.isComputedPropertyName(property.name)) {
           throw new TlaTypeScriptError("Unsupported object member", property);
         }
-        return `![${translateExpression(property.name.expression, scope, context)}] = ${wrapEquated(getValue(property))}`;
+        const computed = translateExpression(property.name.expression, scope, context);
+        return {
+          path: [{ kind: "Index" as const, args: [computed] }],
+          value: getValue(property),
+        };
       });
-      return `[${wrap(value)} EXCEPT ${changes.join(", ")}]`;
+      return except(value, changes);
     }
   }
   // Otherwise each field takes its value from the last member that sets it.
@@ -184,7 +216,7 @@ const translateObjectLiteral = (
         return {
           key,
           value: ts.isSpreadAssignment(member)
-            ? `${wrap(translateExpression(member.expression, scope, context))}${getField(key)}`
+            ? getField(translateExpression(member.expression, scope, context), key)
             : getValue(member),
         };
       }),
@@ -193,7 +225,7 @@ const translateObjectLiteral = (
 };
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
-  const translate = (inner: ts.Expression) => wrap(translateExpression(inner, scope, context));
+  const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
   const argument = node.arguments[0];
   if ((method === "floor" || method === "trunc") && node.arguments.length === 1) {
     const division = ts.isParenthesizedExpression(argument) ? argument.expression : argument;
@@ -208,35 +240,37 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     }
     const left = translate(division.left);
     const right = translate(division.right);
-    if (method === "floor") return `${left} \\div ${right}`;
+    if (method === "floor") return apply("\\div", [left, right]);
     context.prelude.add("Quot");
-    return `Quot(${left}, ${right})`;
+    return apply("Quot", [left, right]);
   }
   if (method === "abs" && node.arguments.length === 1) {
-    return share(
-      translate(argument),
-      "value",
-      context,
-      (value) => `IF ${value} < 0 THEN -${value} ELSE ${value}`,
+    return share(translate(argument), "value", context, (value) =>
+      ifExpression(apply("<", [value, number(0)]), apply("-.", [value]), value),
     );
   }
   if ((method === "min" || method === "max") && node.arguments.length > 0) {
     const comparison = method === "min" ? "<=" : ">=";
     if (node.arguments.length === 1 && ts.isSpreadElement(argument)) {
-      const set = wrap(translateSet(argument.expression, scope, context));
+      const values = translateSet(argument.expression, scope, context);
       const candidate = context.names.getFresh("candidate");
       const other = context.names.getFresh("other");
-      return `CHOOSE ${candidate} \\in ${set} : \\A ${other} \\in ${set} : ${candidate} ${comparison} ${other}`;
+      return choose(
+        candidate,
+        values,
+        quantify(
+          "Forall",
+          [bound(other, values)],
+          apply(comparison, [identifier(candidate), identifier(other)]),
+        ),
+      );
     }
     return node.arguments
       .map(translate)
       .reduce((result, inner) =>
         share(result, "best", context, (best) =>
-          share(
-            inner,
-            "value",
-            context,
-            (value) => `IF ${best} ${comparison} ${value} THEN ${best} ELSE ${value}`,
+          share(inner, "value", context, (value) =>
+            ifExpression(apply(comparison, [best, value]), best, value),
           ),
         ),
       );
@@ -259,8 +293,11 @@ const translateCall = (
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
     if (operator === undefined) return translateLocalCall(node, scope, context);
+    if (operator.kind !== "Identifier") {
+      throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
+    }
     const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
-    return `${operator}(${values.join(", ")})`;
+    return apply(operator.name, values);
   }
   const receiver = node.expression.expression;
   const method = node.expression.name.text;
@@ -270,10 +307,10 @@ const translateCall = (
     if (node.arguments.some((argument) => isObject(context.checker.getTypeAtLocation(argument)))) {
       throw new TlaTypeScriptError("TLA+ compares objects by value, not by identity", node);
     }
-    const values = node.arguments.map((argument) =>
-      wrap(translateExpression(argument, scope, context)),
+    return apply(
+      "=",
+      node.arguments.map((argument) => translateExpression(argument, scope, context)),
     );
-    return `${values[0]} = ${values[1]}`;
   }
   const constructed =
     global === "Object" && method === "fromEntries"
@@ -285,23 +322,22 @@ const translateCall = (
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
 const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
-  return getKind(node, context) === "string" ? value : `ToString(${value})`;
+  return getKind(node, context) === "string" ? value : apply("ToString", [value]);
 };
 
 const translateTemplate = (node: ts.TemplateExpression, scope: Scope, context: Context) => {
-  const parts = [
-    ...(node.head.text === "" ? [] : [formatString(node.head.text)]),
+  return concatenate([
+    ...(node.head.text === "" ? [] : [string(node.head.text)]),
     ...node.templateSpans.flatMap((span) => {
       const value = translateToString(span.expression, scope, context);
-      return span.literal.text === "" ? [value] : [value, formatString(span.literal.text)];
+      return span.literal.text === "" ? [value] : [value, string(span.literal.text)];
     }),
-  ];
-  return parts.length === 1 ? parts[0] : parts.map(wrap).join(" \\o ");
+  ]);
 };
 
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
-  const translate = (inner: ts.Expression) => wrap(translateExpression(inner, scope, context));
+  const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
   const isString =
     getKind(node.left, context) === "string" || getKind(node.right, context) === "string";
   const logical = LOGICAL_OPERATORS.get(kind);
@@ -312,29 +348,33 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
         node,
       );
     }
-    return `${translate(node.left)} ${logical} ${translate(node.right)}`;
+    return junction(logical, [translate(node.left), translate(node.right)]);
   }
   if (kind === ts.SyntaxKind.PlusToken && isString) {
-    const left = wrap(translateToString(node.left, scope, context));
-    return `${left} \\o ${wrap(translateToString(node.right, scope, context))}`;
+    return apply("\\o", [
+      translateToString(node.left, scope, context),
+      translateToString(node.right, scope, context),
+    ]);
   }
-  if (kind === ts.SyntaxKind.PlusToken) return `${translate(node.left)} + ${translate(node.right)}`;
+  if (kind === ts.SyntaxKind.PlusToken)
+    return apply("+", [translate(node.left), translate(node.right)]);
   if (kind === ts.SyntaxKind.PercentToken) {
     context.prelude.add("Rem");
-    return `Rem(${translateExpression(node.left, scope, context)}, ${translateExpression(node.right, scope, context)})`;
+    return apply("Rem", [translate(node.left), translate(node.right)]);
   }
   if (kind === ts.SyntaxKind.QuestionQuestionToken) {
     context.prelude.add("Null");
     context.prelude.add("Undefined");
-    return share(
-      translate(node.left),
-      "value",
-      context,
-      (value) => `IF ${value} \\in {Null, Undefined} THEN ${translate(node.right)} ELSE ${value}`,
+    return share(translate(node.left), "value", context, (value) =>
+      ifExpression(
+        apply("\\in", [value, set([identifier("Null"), identifier("Undefined")])]),
+        translate(node.right),
+        value,
+      ),
     );
   }
   if (kind === ts.SyntaxKind.InKeyword) {
-    return `${translate(node.left)} \\in DOMAIN ${translate(node.right)}`;
+    return apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
   }
   if (kind === ts.SyntaxKind.SlashToken) {
     throw new TlaTypeScriptError("Write division as Math.floor(a / b) or Math.trunc(a / b)", node);
@@ -349,7 +389,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       node.operatorToken,
     );
   }
-  return `${translate(node.left)} ${operator} ${translate(node.right)}`;
+  return apply(operator, [translate(node.left), translate(node.right)]);
 };
 
 // A field of the state before the step, which is the variable's unprimed value.
@@ -366,7 +406,7 @@ const translateEnumMember = (node: ts.Node, symbol: ts.Symbol, context: Context)
       ? context.checker.getConstantValue(declaration)
       : undefined;
   if (typeof value === "string") return translateString(value, context);
-  if (typeof value === "number" && Number.isInteger(value)) return String(value);
+  if (typeof value === "number" && Number.isInteger(value)) return number(value);
   throw new TlaTypeScriptError("Unsupported enum member", node);
 };
 
@@ -385,13 +425,13 @@ const translateDeclared = (
   // A function passes as its operator's name, and a constant as its value.
   return getFunction(declaration) === undefined
     ? translateHelperCall(declaration, undefined, scope, context)
-    : getDefinition(declaration, context).name;
+    : identifier(getDefinition(declaration, context).name);
 };
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") {
     context.prelude.add("Undefined");
-    return "Undefined";
+    return identifier("Undefined");
   }
   const symbol = getSymbol(node, context.checker);
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
@@ -437,7 +477,7 @@ const translatePropertyAccess = (
   }
   const size =
     name === "length" || name === "size" ? translateSize(receiver, scope, context) : undefined;
-  return size ?? `${wrap(translateExpression(receiver, scope, context))}${getField(name)}`;
+  return size ?? getField(translateExpression(receiver, scope, context), name);
 };
 
 const translateElementAccess = (
@@ -445,8 +485,9 @@ const translateElementAccess = (
   scope: Scope,
   context: Context,
 ) => {
-  const value = wrap(translateExpression(node.expression, scope, context));
-  return `${value}[${translateKey(node, scope, context)}]`;
+  return index(translateExpression(node.expression, scope, context), [
+    translateKey(node, scope, context),
+  ]);
 };
 
 export const translateCondition = (node: ts.Expression, scope: Scope, context: Context) => {
@@ -462,7 +503,7 @@ export const translateNegatedCondition = (
   node: ts.Expression,
   scope: Scope,
   context: Context,
-): string => {
+): Expression => {
   if (ts.isParenthesizedExpression(node)) {
     return translateNegatedCondition(node.expression, scope, context);
   }
@@ -472,9 +513,9 @@ export const translateNegatedCondition = (
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
     const left = translateNegatedCondition(node.left, scope, context);
     const right = translateNegatedCondition(node.right, scope, context);
-    return `${wrap(left)} /\\ ${wrap(right)}`;
+    return junction("And", [left, right]);
   }
-  return `~${wrap(translateCondition(node, scope, context))}`;
+  return not(translateCondition(node, scope, context));
 };
 
 // An expression as a TLA+ expression. Under a non-null assertion, isDefined skips the check that a
@@ -484,7 +525,14 @@ export const translateExpression = (
   scope: Scope,
   context: Context,
   isDefined = false,
-): string => {
+): Expression => locate(translateNode(node, scope, context, isDefined), getLocation(node));
+
+const translateNode = (
+  node: ts.Expression,
+  scope: Scope,
+  context: Context,
+  isDefined: boolean,
+): Expression => {
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
@@ -500,31 +548,35 @@ export const translateExpression = (
     if (!Number.isInteger(Number(node.text))) {
       throw new TlaTypeScriptError(`Only integers are supported: ${node.text}`, node);
     }
-    return String(Number(node.text));
+    return number(Number(node.text));
   }
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return translateString(node.text, context);
   }
   if (ts.isTemplateExpression(node)) return translateTemplate(node, scope, context);
-  if (node.kind === ts.SyntaxKind.TrueKeyword) return "TRUE";
-  if (node.kind === ts.SyntaxKind.FalseKeyword) return "FALSE";
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return boolean(true);
+  if (node.kind === ts.SyntaxKind.FalseKeyword) return boolean(false);
   if (node.kind === ts.SyntaxKind.NullKeyword) {
     context.prelude.add("Null");
-    return "Null";
+    return identifier("Null");
   }
   if (ts.isIdentifier(node)) return translateIdentifier(node, scope, context);
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
     if (!isBooleanLike(node.operand, context)) {
       throw new TlaTypeScriptError("! needs a boolean, so compare explicitly", node);
     }
-    return `~${wrap(translateExpression(node.operand, scope, context))}`;
+    return not(translateExpression(node.operand, scope, context));
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
-    return `-${wrap(translateExpression(node.operand, scope, context))}`;
+    return apply("-.", [translateExpression(node.operand, scope, context)]);
   }
   if (ts.isBinaryExpression(node)) return translateBinary(node, scope, context);
   if (ts.isConditionalExpression(node)) {
-    return `IF ${translateCondition(node.condition, scope, context)} THEN ${translateExpression(node.whenTrue, scope, context)} ELSE ${translateExpression(node.whenFalse, scope, context)}`;
+    return ifExpression(
+      translateCondition(node.condition, scope, context),
+      translateExpression(node.whenTrue, scope, context),
+      translateExpression(node.whenFalse, scope, context),
+    );
   }
   if (ts.isArrayLiteralExpression(node)) return translateArrayLiteral(node, scope, context);
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);

@@ -1,5 +1,7 @@
 import ts from "@typescript/typescript6";
 import { check, type Value } from "../../src";
+import { parseModule } from "../../src/parser";
+import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
 
 // Values print as strings that are equal for equal TLA+ values. Sets ignore order, and arrays,
@@ -63,9 +65,34 @@ const runJavaScript = (source: string) => {
   return exports.getResult();
 };
 
+const isWrittenField = (key: string) =>
+  /^(location|text|isBulleted|prefixEnds)$|[rR]anges?$/.test(key);
+
+const getParsedShape = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(getParsedShape);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter((entry) => !isWrittenField(entry[0]) && entry[1] !== undefined)
+      .map((entry) => [entry[0], getParsedShape(entry[1])]),
+  );
+};
+
+// Compiles a TypeScript module, and checks that its TLA+ text parses back to the same module.
+export const compileChecked = (source: string, fileName?: string) => {
+  const spec = compile(source, fileName);
+  const parsed = parseModule(printModule(spec.source));
+  if (JSON.stringify(getParsedShape(parsed)) !== JSON.stringify(getParsedShape(spec.source))) {
+    throw new Error(
+      `The printed module doesn't parse back to the module:\n${printModule(spec.source)}`,
+    );
+  }
+  return spec;
+};
+
 // The last state that the compiled spec reaches, where no action can run any more.
 const runTla = async (source: string) => {
-  const result = await check(compile(source));
+  const result = await check(compileChecked(source));
   const state = result.violation?.trace.at(-1)?.state;
   if (result.status !== "deadlock" || state === undefined) {
     throw new Error(`Expected a deadlock, got ${result.status}: ${result.failure?.message ?? ""}`);
