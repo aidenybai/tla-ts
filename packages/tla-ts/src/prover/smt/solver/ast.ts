@@ -59,8 +59,7 @@ export const OP_MOD0 = 29;
 export const OP_UNINTERPRETED = 30;
 const OP_MODEL_VALUE = 31;
 
-// bv_op_kind, past the ops of the other families: a bit-vector op's Z3 kind is its op less
-// BV_OP_BASE.
+// Z3's bv_op_kind of a bit-vector op is its op less BV_OP_BASE.
 const BV_OP_BASE = 100;
 export const OP_BV_NUM = BV_OP_BASE;
 export const OP_BNEG = BV_OP_BASE + 3;
@@ -155,7 +154,6 @@ export interface FuncDecl {
   isSkolem: boolean;
   // Z3's small id of the declaration, which its matcher hashes.
   smallId: number;
-  // The integer parameters of a bit-vector declaration, such as the bounds of an extract.
   parameters: number[];
 }
 
@@ -353,13 +351,9 @@ export class AstManager {
   readonly flatLiterals = new FlatLiterals(this);
   funcDecls: FuncDecl[] = [];
   sortNames: string[] = ["Bool", "Int", "Real"];
-  // The family of each sort, whose theory gets its terms' equalities and sort constraints.
   private sortFamilies: number[] = [FAMILY_BASIC, FAMILY_ARITH, FAMILY_ARITH];
-  // The width of each bit-vector sort, and 0 for the other sorts.
   private sortWidths: number[] = [0, 0, 0];
   private numUserSorts = 0;
-  // bv_decl_plugin's sorts by width and declarations by signature, which it keeps once it makes
-  // them.
   private bvSorts = new Map<number, number>();
   private bvDecls = new Map<string, number>();
   private sortHashes = [
@@ -781,7 +775,6 @@ export class AstManager {
     return this.sortNames.length - 1;
   }
 
-  // bv_decl_plugin::get_bv_sort.
   mkBvSort(width: number) {
     const existing = this.bvSorts.get(width);
     if (existing !== undefined) return existing;
@@ -804,9 +797,6 @@ export class AstManager {
     return this.sortFamilies[sort] === FAMILY_BV;
   }
 
-  // A bit-vector declaration other than a numeral's. The plugin keeps those it makes, except the
-  // declarations of concat, extract, the extensions, repeat and the rotations, which their
-  // applications hold, as a signature.
   mkBvDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.bvDecls.get(key);
@@ -832,8 +822,6 @@ export class AstManager {
     return decl;
   }
 
-  // mk_numeral of a bit-vector: the value modulo 2^width. Like an arithmetic numeral, its
-  // declaration has the parameters (value, width) and is made with its first application.
   mkBvNumeral(value: bigint, width: number) {
     const modulus = 1n << BigInt(width);
     const normalized = ((value % modulus) + modulus) % modulus;
@@ -872,7 +860,6 @@ export class AstManager {
     return this.getOp(expr) === OP_BV_NUM;
   }
 
-  // The value of a bit-vector numeral, from 0 to 2^width - 1.
   getBvNumeralValue(expr: number) {
     return this.numeralValues[this.values[expr]].num;
   }

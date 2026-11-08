@@ -1,7 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/bv_rewriter.cpp, mk_extract_proc.cpp), MIT license, see
-// z3-license.txt. The rewrites of bit-vector terms, with elim_sign_ext, bit2bool, bv_sort_ac and
-// bv_le2extract on and blast_eq_value, bv_extract_prop, bv_not_simpl, bv_ite2id and bv_le_extra
-// off, as bv_rewriter_params sets them.
+// z3-license.txt. It has elim_sign_ext, bit2bool, bv_sort_ac and bv_le2extract on and
+// blast_eq_value, bv_extract_prop, bv_not_simpl, bv_ite2id and bv_le_extra off.
 import { isAstLess } from "./ast-lt";
 import {
   type AstManager,
@@ -92,7 +91,6 @@ import type { Rewrite } from "./rewriter-tpl";
 
 type Result = number | Rewrite | undefined;
 
-// The bv_rewriter_params that differ between the simplifier's callers.
 export interface BvRewriterOptions {
   readonly isHiDiv0: boolean;
   readonly isMul2concat: boolean;
@@ -104,7 +102,6 @@ export const DEFAULT_BV_OPTIONS: Omit<BvRewriterOptions, "isHiDiv0"> = {
   isSplitConcatEq: false,
 };
 
-// The Boolean rewrites that mk_bit2bool applies with a bool_rewriter of its own.
 export interface BoolRewrites {
   mkEq: (left: number, right: number) => number;
   mkIte: (condition: number, thenExpr: number, elseExpr: number) => number;
@@ -114,16 +111,13 @@ const rewrite = (expr: number, depth: number): Rewrite => ({ expr, depth });
 
 const getPowerOfTwo = (bits: number) => 1n << BigInt(bits);
 
-// mod: the remainder that has the sign of the divisor's absolute value.
 const getMod = (value: bigint, modulus: bigint) => ((value % modulus) + modulus) % modulus;
 
-// rational::is_power_of_two: the exponent, or -1.
 const getPowerOfTwoExponent = (value: bigint) => {
   if (value <= 0n || (value & (value - 1n)) !== 0n) return -1;
   return value.toString(2).length - 1;
 };
 
-// rational::mult_inverse: the inverse of an odd value modulo 2^bits.
 const getMultInverse = (value: bigint, bits: number) => {
   if (value === 1n) return 1n;
   if (value % 2n === 0n) return undefined;
@@ -210,7 +204,6 @@ export class BvRewriter extends PolyRewriter {
     return mkBvApp(this.manager, op, args, parameters);
   }
 
-  // bv_util::norm.
   private norm(value: bigint, width: number, isSigned = false) {
     const normalized = getMod(value, getPowerOfTwo(width));
     return isSigned && normalized >= getPowerOfTwo(width - 1)
@@ -262,8 +255,6 @@ export class BvRewriter extends PolyRewriter {
     return this.manager.mkApp(OP_OR, args, SORT_BOOL);
   }
 
-  // mk_extract_proc: an extract of an extract extracts from its argument, and an extract of every
-  // bit is the term itself.
   mkExtractTerm(high: number, low: number, arg: number) {
     let target = arg;
     let newHigh = high;
@@ -469,7 +460,6 @@ export class BvRewriter extends PolyRewriter {
     return typeof result === "number" ? result : result.expr;
   }
 
-  // The expr_ref wrapper of mk_bv_add: the result of one rewrite, or the sum itself.
   private mkBvAddExpr(first: number, second: number) {
     const result = this.mkBvAdd([first, second]);
     return result === undefined ? this.app(OP_BADD, [first, second]) : this.getExpr(result);
@@ -483,8 +473,6 @@ export class BvRewriter extends PolyRewriter {
     return rewrite(this.manager.mkNot(this.app(OP_SLEQ, [second, first])), 2);
   }
 
-  // mk_bvsadd_over_underflow: the sum of two positives is not positive, or that of two negatives is
-  // negative.
   private mkBvsaddOverUnderflow(first: number, second: number) {
     const zero = this.mkZero(this.getSize(first));
     const sum = this.mkBvAddExpr(first, second);
@@ -532,7 +520,6 @@ export class BvRewriter extends PolyRewriter {
     return last;
   }
 
-  // mk_leq_core: an unsigned or signed comparison.
   private mkLeqCore(isSigned: boolean, first: number, second: number): Result {
     const manager = this.manager;
     if (first === second) return manager.trueExpr;
@@ -563,8 +550,6 @@ export class BvRewriter extends PolyRewriter {
       if (first1 === lower) return manager.trueExpr;
       if (first1 === upper) return rewrite(manager.mkEq(first, second), 1);
     }
-    // (bvsle (+ x (* -1 (srem_i x c1))) c2) is (bvsle x (+ c1 c2 -1)) when c2 is a positive
-    // multiple of the positive c1 and the sum does not overflow.
     if (isSigned && second1 !== undefined && this.isBinary(first, OP_BADD)) {
       const summand = manager.getArg(first, 0);
       const product = manager.getArg(first, 1);
@@ -596,7 +581,6 @@ export class BvRewriter extends PolyRewriter {
           );
       }
     }
-    // (bvule c1 (+ c2 a)).
     if (!isSigned && first1 !== undefined && this.isBinary(second, OP_BADD)) {
       const offset = this.getNumeral(manager.getArg(second, 0));
       if (offset !== undefined) {
@@ -828,8 +812,6 @@ export class BvRewriter extends PolyRewriter {
     return undefined;
   }
 
-  // The division of a term by a term that may be zero: by hi_div0, the division itself, and
-  // otherwise an ite with the uninterpreted division by zero.
   private mkDivisionByTerm(
     first: number,
     second: number,
@@ -901,7 +883,6 @@ export class BvRewriter extends PolyRewriter {
     return this.app(OP_BSREM_I, [first, second]);
   }
 
-  // is_x_minus_one: a sum of two arguments, one of them all ones.
   private getXMinusOne(expr: number) {
     const manager = this.manager;
     if (!this.isAdd(expr) || manager.getNumArgs(expr) !== 2) return undefined;
@@ -931,7 +912,6 @@ export class BvRewriter extends PolyRewriter {
       if (dividend === 0n || isMinusOne) return first;
       return this.app(OP_BUREM_I, [first, second]);
     }
-    // urem(0, x) is ite(x = 0, urem0(0), 0), and urem(x - 1, x) is ite(x = 0, urem0(-1), x - 1).
     if (dividend === 0n) {
       const isZero = manager.mkEq(second, first);
       return rewrite(this.mkIteTerm(isZero, this.app(OP_BUREM0, [first]), first), 2);
@@ -989,7 +969,6 @@ export class BvRewriter extends PolyRewriter {
     return rewrite(this.mkExtractTerm(size - 1, 0, inner), 1);
   }
 
-  // bv_util::mk_sbv2int_as_ubv2int: if e <_s 0 then ubv2int(e) - 2^n else ubv2int(e).
   private mkSbv2intAsUbv2int(arg: number) {
     const manager = this.manager;
     const unsigned = this.app(OP_UBV2INT, [arg]);
@@ -1234,7 +1213,6 @@ export class BvRewriter extends PolyRewriter {
       }
     }
     if (constant === allOnes) return this.mkBv(constant, size);
-    // (bvor (concat x #x00) (concat #x00 y)) is (concat x y).
     if (
       newArgs.length === 2 &&
       numCoeffs === 0 &&
@@ -1334,7 +1312,6 @@ export class BvRewriter extends PolyRewriter {
         constant ^= allOnes;
       } else same.add(atom);
     }
-    // (bvxor a 0011) is (concat ((_ extract 3 2) a) ((_ extract 1 0) (bvnot a))).
     if (constant !== 0n && numCoeffs === args.length - 1) {
       let term = -1;
       for (const arg of args) {
@@ -1540,7 +1517,6 @@ export class BvRewriter extends PolyRewriter {
     }
   }
 
-  // mk_mul_hoist: (* (bvshl z u) x) is (bvshl (* z x) u).
   private mkMulHoist(args: number[]): Result {
     if (args.length <= 1) return undefined;
     for (let index = 0; index < args.length; index++) {
@@ -1564,7 +1540,6 @@ export class BvRewriter extends PolyRewriter {
           ? this.mkMulHoist(manager.getArgs(result))
           : undefined;
     if (hoisted !== undefined) return hoisted;
-    // mul2concat: a product with a power of two is a concatenation with zeros.
     const product =
       result === undefined
         ? args.length === 2
@@ -1590,7 +1565,6 @@ export class BvRewriter extends PolyRewriter {
     return ((value >> BigInt(index)) & 1n) === 1n ? manager.trueExpr : manager.falseExpr;
   }
 
-  // mk_bit2bool of an equality of bit-vectors of one bit.
   private mkBit2boolEq(inputLeft: number, inputRight: number): Result {
     const manager = this.manager;
     if (this.getSize(inputLeft) !== 1) return undefined;
@@ -1618,7 +1592,6 @@ export class BvRewriter extends PolyRewriter {
     return undefined;
   }
 
-  // mk_eq_concat: an equality of concatenations splits into equalities of extracts.
   private mkEqConcat(left: number, right: number): Rewrite {
     const manager = this.manager;
     const leftArgs = this.isConcat(left) ? manager.getArgs(left) : [left];
@@ -1694,7 +1667,6 @@ export class BvRewriter extends PolyRewriter {
     );
   }
 
-  // mk_mul_eq: c * x = a is x = c^-1 * a for an odd c.
   private mkMulEq(left: number, right: number): Result {
     const manager = this.manager;
     if (this.isBinary(left, OP_BMUL)) {
@@ -1780,7 +1752,6 @@ export class BvRewriter extends PolyRewriter {
     return undefined;
   }
 
-  // isolate_term: t1 + t2 = c is t1 = c - t2, which is cheaper to bit-blast.
   private isolateTerm(inputLeft: number, inputRight: number) {
     const manager = this.manager;
     const isOrdered = this.isNumeral(inputLeft) && this.isAdd(inputRight);
@@ -1832,7 +1803,6 @@ export class BvRewriter extends PolyRewriter {
     return undefined;
   }
 
-  // is_eq_bit: an equality of a term and a numeral of one bit, as the term and the bit.
   getEqBit(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_EQ) return undefined;

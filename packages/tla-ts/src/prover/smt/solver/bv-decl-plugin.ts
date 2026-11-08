@@ -73,8 +73,7 @@ import {
   SORT_INT,
 } from "./ast";
 
-// The binary operators whose domain and range are the sort of their arguments, and whether they are
-// associative.
+// The ops whose arguments and result share a sort, with their names and whether associative.
 const BINARY_OPS = new Map<number, [string, boolean]>([
   [OP_BADD, ["bvadd", true]],
   [OP_BSUB, ["bvsub", false]],
@@ -133,7 +132,6 @@ const PREDICATES = new Map<number, string>([
   [OP_BSSUB_OVFL, "bvssubo"],
 ]);
 
-// get_op_names: the SMT-LIB names of the operators, with Z3's extensions for the default logic.
 export const BV_OP_NAMES = new Map<string, number>([
   ["bvneg", OP_BNEG],
   ["bvnego", OP_BNEG_OVFL],
@@ -213,8 +211,6 @@ interface BvSignature {
   range: number;
 }
 
-// mk_func_decl: the signature of an operator on arguments of the given sorts, or an error message
-// when they do not fit it.
 export const getBvSignature = (
   manager: AstManager,
   op: number,
@@ -326,7 +322,6 @@ export const getBvSignature = (
   }
 };
 
-// m_manager.mk_app(get_fid(), op, ...) of bv_util.
 export const mkBvApp = (
   manager: AstManager,
   op: number,

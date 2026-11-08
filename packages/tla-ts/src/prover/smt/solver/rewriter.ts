@@ -60,7 +60,6 @@ export interface RewriterOptions {
   readonly isPullingCheapIte?: boolean;
   readonly isKeepingDistinct?: boolean;
   readonly bv?: BvRewriterOptions;
-  // flat_and_or, on by default: a conjunction or disjunction takes in the arguments of nested ones.
   readonly isFlatAndOr?: boolean;
 }
 
@@ -391,8 +390,6 @@ export class Rewriter extends RewriterTpl {
     return true;
   }
 
-  // reduce_eq: the equality rewrites of the arguments' theory, then those of an equality of
-  // ubv2int terms and apply_tamagotchi.
   private reduceEq(left: number, right: number) {
     const manager = this.manager;
     const sort = manager.sorts[left];

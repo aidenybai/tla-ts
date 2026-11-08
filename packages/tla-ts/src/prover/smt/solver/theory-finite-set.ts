@@ -1,7 +1,5 @@
-// Ported from Z3 (src/smt/theory_finite_set.cpp), MIT license, see z3-license.txt. setup_unknown
-// registers theory_finite_set, which the port has only for what it does on problems without finite
-// sets: its first final check makes a set.range declaration, which initializes the plugin, and each
-// one's assume_eqs draws a random value.
+// Ported from Z3 (src/smt/theory_finite_set.cpp), MIT license, see z3-license.txt. The port keeps
+// only its final check on problems without finite sets, which inits the plugin and draws a value.
 import { FAMILY_FINITE_SET } from "./ast";
 import type { Context } from "./context";
 import { FC_DONE, Theory } from "./theory";

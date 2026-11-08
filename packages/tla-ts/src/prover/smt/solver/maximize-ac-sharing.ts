@@ -14,8 +14,7 @@ interface SharingEntry {
 // MAX_NUM_ARGS_FOR_OPT: pairs are reused only for fewer arguments.
 const MAX_NUM_ARGS_FOR_OPT = 128;
 
-// Z3 registers the kinds of bvadd, bvmul, bvor and bvand, and compares the kind without the family.
-// bvmul has the kind of or and of +, so the associative ones of those are shared too.
+// Z3 compares kinds without the family, and bvmul's kind is also that of or and +.
 const SHARED_OPS = new Set([OP_BADD, OP_BMUL, OP_BOR, OP_BAND, OP_OR, OP_ADD]);
 
 export class MaxBvSharing extends RewriterTpl {
@@ -36,7 +35,6 @@ export class MaxBvSharing extends RewriterTpl {
     const op = manager.funcDecls[decl].op;
     if (!this.isInit || !SHARED_OPS.has(op) || args.length <= 2) return -1;
     return manager.withTemporaries(() => {
-      // A bit-vector numeral first stays out of the tree, and applies to it.
       const numeral = manager.isBvNumeral(args[0]) ? args[0] : -1;
       const pending = numeral === -1 ? [...args] : args.slice(1);
       // Reuses the pairs made before, the first pair found first. Z3 scans every pair again after

@@ -225,7 +225,6 @@ export const runSmtlibScript = (
       isBeyondOptimization(state.manager, [...state.assertions, ...state.objectives])
     )
       throw new SmtUnsupportedError("optimization beyond linear arithmetic");
-    // scoped_rlimit: the rlimit bounds the steps of this check-sat.
     state.manager.limit.push(settings.rlimit);
     try {
       print(

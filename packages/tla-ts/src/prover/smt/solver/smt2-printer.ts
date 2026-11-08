@@ -229,8 +229,6 @@ const formatSort = (manager: AstManager, sort: number) =>
     ? mkSeq1([mkText(String(manager.getBvSize(sort)))], "_ BitVec")
     : mkText(getQuotedName(manager.sortNames[sort]));
 
-// pp_bv_literal: a hexadecimal literal when the width is a multiple of four and a binary one
-// otherwise, of the value as a negative number with bv_neg.
 const formatBvNumeral = (manager: AstManager, options: PrintOptions, expr: number) => {
   const width = manager.getBvSize(manager.sorts[expr]);
   const value = manager.getBvNumeralValue(expr);
@@ -244,7 +242,6 @@ const formatBvNumeral = (manager: AstManager, options: PrintOptions, expr: numbe
   return isNegative ? mkSeq1([mkText(literal)], "bvneg") : mkText(literal);
 };
 
-// pp_fdecl: an indexed declaration, such as an extract, prints with its indices.
 const getDeclName = (manager: AstManager, decl: number) => {
   const funcDecl = manager.funcDecls[decl];
   const name = getQuotedName(funcDecl.name);

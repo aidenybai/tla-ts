@@ -92,8 +92,7 @@ interface SmtParams {
 }
 
 export class Context extends Internalizer {
-  // setup_context makes the theories after the first formulas are asserted, so the fields start
-  // unassigned. m_theory_set holds them in the order they are registered, and m_theories by family.
+  // setupContext makes the theories after the first assertions, so arith starts unassigned.
   arith!: TheoryLra;
   readonly theories: Theory[] = [];
   private theoryByFamily: (Theory | undefined)[] = [];
@@ -137,7 +136,6 @@ export class Context extends Internalizer {
     this.registerPlugin(new TheoryFiniteSet(this));
   }
 
-  // register_plugin initializes each theory it registers.
   private registerPlugin(theory: Theory) {
     this.theories.push(theory);
     this.theoryByFamily[theory.id] = theory;
@@ -757,8 +755,6 @@ export class Context extends Internalizer {
     return true;
   }
 
-  // is_shared: whether a class is shared between theories, whose equalities model-based theory
-  // combination assumes.
   isShared(node: Enode) {
     const root = node.root;
     if (this.manager.getOp(root.owner) === OP_ITE) return true;

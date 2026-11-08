@@ -308,7 +308,6 @@ export class ProtoModel {
     return created;
   }
 
-  // arith_factory's values are the integers, of either sort, and bv_factory's the numerals.
   private mkIndexedValue(index: number, sort: number) {
     const manager = this.manager;
     return isArithSort(sort)
@@ -367,7 +366,6 @@ export class ProtoModel {
     if (sort === SORT_BOOL || this.finiteSorts.has(sort)) return null;
     const set = this.getValueSet(sort);
     const start = this.nextValue.get(sort) ?? 0;
-    // A bit-vector sort of fewer than 32 bits has a size, past which no value is fresh.
     const manager = this.manager;
     const maxSize =
       manager.isBvSort(sort) && manager.getBvSize(sort) < 32 ? 2 ** manager.getBvSize(sort) : -1;

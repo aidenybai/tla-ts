@@ -1,16 +1,12 @@
 // Ported from Z3 (src/ast/rewriter/bit_blaster/bit_blaster_tpl_def.h,
-// src/ast/rewriter/bit_blaster/bit_blaster.cpp), MIT license, see z3-license.txt. The circuits of
-// the bit-vector operators over Boolean bits, the least significant first, built with a
-// bool_rewriter without flat_and_or and with bb_ext_gates off. Each circuit pushes the bits it makes
-// to out, which holds a reference to each, and a single gate comes with a reference the caller
-// releases, like the expr_ref Z3 assigns it to.
+// src/ast/rewriter/bit_blaster/bit_blaster.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
 import type { AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { assign, assignOwned, release } from "./expr-ref";
 import { Rewriter } from "./rewriter";
 
-// A bool_rewriter with the default parameters, which set_flat_and_or(false) turns flat_and_or off.
+// Z3's default bool_rewriter parameters, after set_flat_and_or(false).
 const BOOL_REWRITER_OPTIONS = {
   isEliminatingAnd: false,
   arith: TACTIC_ARITH_OPTIONS,
@@ -27,7 +23,6 @@ export class BitBlaster {
     this.rewriter = new Rewriter(manager, BOOL_REWRITER_OPTIONS);
   }
 
-  // checkpoint: the circuits of the multiplier, the divisions and the shifts count steps.
   private checkpoint() {
     if (!this.manager.limit.inc()) throw new SmtCanceledError();
   }
@@ -37,12 +32,10 @@ export class BitBlaster {
     return expr;
   }
 
-  // An expr_ref that goes out of scope.
   private drop(expr: number) {
     this.manager.decRef(expr);
   }
 
-  // An expr_ref_vector that goes out of scope releases its expressions in order.
   private dropAll(exprs: number[]) {
     for (const expr of exprs) this.manager.decRef(expr);
   }
@@ -50,8 +43,6 @@ export class BitBlaster {
   private isBoolConst(expr: number) {
     return expr === this.manager.trueExpr || expr === this.manager.falseExpr;
   }
-
-  // The gates of bit_blaster_cfg, which bool_rewriter builds.
 
   mkNot(arg: number) {
     return this.own(this.rewriter.mkNot(arg));
@@ -69,10 +60,8 @@ export class BitBlaster {
     return this.own(this.rewriter.mkEq(first, second));
   }
 
-  // The gates that Z3 assigns to the expr_ref that holds one of their arguments take its reference
-  // as previous and release it when the result is assigned, before their temporaries go.
+  // previous: the argument's expr_ref Z3 assigns the result to, released before the temporaries.
 
-  // mk_xor: (= (not a) b), whose negation the temporary holds.
   mkXor(first: number, second: number, previous = -1) {
     const negation = this.mkNot(first);
     const result = this.mkIff(negation, second);
@@ -131,7 +120,6 @@ export class BitBlaster {
     return disjunction;
   }
 
-  // sort_args: the three arguments in the order of their ids.
   private sortArgs(first: number, second: number, third: number) {
     const ids = this.manager.ids;
     return [first, second, third].sort((left, right) => ids[left] - ids[right]);
@@ -157,8 +145,6 @@ export class BitBlaster {
     return result;
   }
 
-  // Numerals.
-
   private getNumeral(bits: Bits) {
     const manager = this.manager;
     let value = 0n;
@@ -182,8 +168,6 @@ export class BitBlaster {
         ),
       );
   }
-
-  // Arithmetic.
 
   mkNeg(bits: Bits, out: number[]) {
     const manager = this.manager;
@@ -227,7 +211,7 @@ export class BitBlaster {
     release(manager, carryIn);
   }
 
-  // mk_subtracter: a + (not b) + 1, and the carry out of the last bit, which is a >= b.
+  // The carry out of the last bit, which it returns, is first >= second.
   mkSubtracter(first: Bits, second: Bits, out: number[]) {
     const manager = this.manager;
     let carryIn = this.own(manager.trueExpr);
@@ -310,7 +294,6 @@ export class BitBlaster {
     this.dropAll(carryIns);
   }
 
-  // mk_const_case_multiplier: a case split on the bits that are not constants, when there are few.
   private mkConstCaseMultiplier(first: Bits, second: Bits, out: number[]) {
     const size = first.length;
     let caseSize = 1;
@@ -365,7 +348,6 @@ export class BitBlaster {
     this.dropAll(whenTrue);
   }
 
-  // mk_udiv_urem: restoring division, a bit of the quotient for each bit of the dividend.
   private mkUdivUrem(first: Bits, second: Bits, quotient: number[], remainder: number[]) {
     const manager = this.manager;
     const size = first.length;
@@ -432,8 +414,6 @@ export class BitBlaster {
     this.dropAll(negated);
   }
 
-  // mk_sdiv: by the signs when they are known, and otherwise the quotient of the absolute values
-  // with the sign that they give.
   mkSdiv(first: Bits, second: Bits, out: number[]) {
     const manager = this.manager;
     const size = first.length;
@@ -534,7 +514,6 @@ export class BitBlaster {
     this.dropAll(absFirst);
   }
 
-  // mk_smod: the remainder of the absolute values, adjusted by the signs, and zero when it is zero.
   mkSmod(first: Bits, second: Bits, out: number[]) {
     const size = first.length;
     const firstSign = first[size - 1];
@@ -574,7 +553,6 @@ export class BitBlaster {
     this.dropAll(absFirst);
   }
 
-  // mk_eq: the conjunction of the equivalences of the bits.
   mkEq(first: Bits, second: Bits) {
     const equivalences: number[] = [];
     for (let index = 0; index < first.length; index++)
@@ -605,8 +583,6 @@ export class BitBlaster {
     for (let index = 0; index < amount; index++) out.push(this.own(this.manager.falseExpr));
   }
 
-  // mk_shl, mk_lshr and mk_ashr: by a numeral, a fixed shift, and otherwise a barrel shifter whose
-  // stages shift by the powers of two below the size, then the fill when a higher bit is set.
   private mkShift(bits: Bits, amountBits: Bits, isLeft: boolean, fill: number, out: number[]) {
     const manager = this.manager;
     const size = bits.length;
@@ -661,8 +637,6 @@ export class BitBlaster {
     this.mkShift(bits, amountBits, false, bits[bits.length - 1], out);
   }
 
-  // mk_ext_rotate_left_right: by a numeral, a fixed rotation, and otherwise a stage for each bit of
-  // the amount that is not false, rotating by its power of two modulo the size.
   private mkExtRotate(bits: Bits, amountBits: Bits, isLeft: boolean, out: number[]) {
     const size = bits.length;
     const amount = this.getNumeral(amountBits);
@@ -699,7 +673,6 @@ export class BitBlaster {
     this.mkExtRotate(bits, amountBits, false, out);
   }
 
-  // mk_le: a <= b from the least significant bit up, with the signs swapped when signed.
   private mkLe(first: Bits, second: Bits, isSigned: boolean) {
     const size = first.length;
     let negation = this.mkNot(first[0]);
@@ -725,8 +698,6 @@ export class BitBlaster {
   mkUle(first: Bits, second: Bits) {
     return this.mkLe(first, second, false);
   }
-
-  // Bitwise.
 
   mkNotBits(bits: Bits, out: number[]) {
     for (const bit of bits) out.push(this.mkNot(bit));
@@ -773,8 +744,6 @@ export class BitBlaster {
   mkComp(first: Bits, second: Bits, out: number[]) {
     out.push(this.mkEq(first, second));
   }
-
-  // Overflow predicates.
 
   mkUmulNoOverflow(first: Bits, second: Bits) {
     const manager = this.manager;

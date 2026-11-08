@@ -87,7 +87,6 @@ export class PolyRewriter {
     return this.manager.getRationalValue(expr);
   }
 
-  // normalize: a coefficient as a value of the current sort.
   protected normalize(value: Rational) {
     return value;
   }
@@ -153,8 +152,6 @@ export class PolyRewriter {
     return this.isNumeral(expr) ? -1 : manager.ids[expr];
   }
 
-  // mon_lt: ast_lt when the rewriter does not move the monomials of an inequality to its left-hand
-  // side, and the ordinals otherwise.
   private isMonomialLess(first: number, second: number) {
     return this.options.isArithIneqLhs
       ? this.getOrdinal(first) < this.getOrdinal(second)

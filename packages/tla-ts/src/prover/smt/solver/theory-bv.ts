@@ -1,8 +1,6 @@
 // Ported from Z3 (src/smt/theory_bv.h, src/smt/theory_bv.cpp, src/util/union_find.h), MIT license,
-// see z3-license.txt. The theory of bit-vectors, which blasts each term into a literal per bit and
-// keeps the bits of equal terms equal. It has the parameters of setup_unknown: bv_reflect on, no
-// congruence closure on its terms, the definitions of le atoms asserted eagerly, no watched
-// disequalities, and no bound on the size it blasts.
+// see z3-license.txt. It has setup_unknown's parameters: bv_reflect on, no congruence closure on
+// its terms, le atoms' definitions asserted eagerly, no watched disequalities, no size bound.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   FAMILY_BV,
@@ -76,7 +74,6 @@ import { Theory } from "./theory";
 
 const NULL_THEORY_ID = -1;
 
-// var_pos_occ: a variable and the position of a bit in it, on the list of the bit's atom.
 interface VarPosOcc {
   readonly thVar: number;
   readonly index: number;
@@ -88,14 +85,13 @@ interface BitAtom {
   occs: VarPosOcc | null;
 }
 
-// le_atom: an atom and the literal of its circuit, which the overflow predicates also use.
+// le_atom, which the overflow predicates also use.
 interface LeAtom {
   readonly isBit: false;
   readonly literal: Literal;
   readonly def: Literal;
 }
 
-// zero_one_bit: a bit of the class that is the true or the false literal, and its variable.
 interface ZeroOneBit {
   readonly owner: number;
   readonly index: number;
@@ -108,7 +104,6 @@ interface BvDiseq {
   readonly index: number;
 }
 
-// The operators blasted bit by bit from the bits of their arguments.
 type Blast = (blaster: BitBlaster, bits: number[][], parameter: number, out: number[]) => void;
 
 const UNARY_BLASTS = new Map<number, Blast>([
@@ -191,7 +186,6 @@ const DIV0_OPS: ReadonlySet<number> = new Set([
   OP_BSMOD0,
 ]);
 
-// bit_eq_justification: a bit takes the value of the bit at its position in an equal variable.
 class BitEqJustification extends Justification {
   constructor(
     readonly fromTheory: number,
@@ -208,7 +202,6 @@ class BitEqJustification extends Justification {
   }
 }
 
-// fixed_eq_justification: two variables are equal since their bits have the same values.
 class FixedEqJustification extends Justification {
   constructor(
     readonly fromTheory: number,
@@ -229,10 +222,8 @@ class FixedEqJustification extends Justification {
 
 export class TheoryBv extends Theory {
   private blaster: BitBlaster;
-  // m_trail_stack: the theory's own trail, with the scopes of the context.
   private trail: (() => void)[] = [];
   private trailLimits: number[] = [];
-  // m_find: the union-find over the variables.
   private finds: number[] = [];
   private sizes: number[] = [];
   private nexts: number[] = [];
@@ -263,7 +254,6 @@ export class TheoryBv extends Theory {
     return current;
   }
 
-  // union_find::merge: the smaller class joins the larger one.
   private merge(inputFirst: number, inputSecond: number) {
     const firstRoot = this.find(inputFirst);
     const secondRoot = this.find(inputSecond);
@@ -388,7 +378,6 @@ export class TheoryBv extends Theory {
     return created;
   }
 
-  // literal2expr: the expression of a literal, which the caller releases.
   private literalToExpr(literal: Literal) {
     const manager = this.manager;
     const atom = this.context.boolVar2Expr[getVar(literal)];
@@ -404,7 +393,6 @@ export class TheoryBv extends Theory {
     return expr;
   }
 
-  // get_bits: the expressions of the bits, which the caller releases.
   private getBits(thVar: number) {
     return this.bits[thVar].map((bit) => this.literalToExpr(bit));
   }
@@ -491,7 +479,6 @@ export class TheoryBv extends Theory {
     this.findWpos(thVar);
   }
 
-  // find_wpos: an unassigned bit to watch, from the watched one around, or else the value is fixed.
   private findWpos(thVar: number) {
     const context = this.context;
     const bits = this.bits[thVar];
@@ -540,7 +527,6 @@ export class TheoryBv extends Theory {
     context.mkThAxiom(literals);
   }
 
-  // get_fixed_value: the value of the bits up to the first that is unassigned, and whether all are.
   private getFixedValue(thVar: number) {
     const context = this.context;
     let value = 0n;
@@ -557,7 +543,6 @@ export class TheoryBv extends Theory {
     return { value, isFixed };
   }
 
-  // fixed_var_eh: a variable whose bits are all assigned equals the last one with the same value.
   private fixedVarEh(thVar: number) {
     const value = this.getFixedValue(thVar).value;
     const size = this.getBvSize(thVar);
@@ -744,7 +729,6 @@ export class TheoryBv extends Theory {
     return this.getBits(this.getVar(this.getInternalizedEnode(this.manager.getArg(term, index))));
   }
 
-  // The atom and the literal of its circuit, equivalent by two axioms.
   private mkDefinedAtom(atom: number, circuit: number) {
     const context = this.context;
     this.manager.incRef(circuit);
@@ -805,7 +789,6 @@ export class TheoryBv extends Theory {
     if (manager.isBvSort(manager.sorts[this.getExpr(first)])) this.expandDiseq(first, second);
   }
 
-  // expand_diseq: two variables differ in a bit, unless they already do.
   private expandDiseq(inputFirst: number, inputSecond: number) {
     const context = this.context;
     const manager = this.manager;
@@ -842,7 +825,6 @@ export class TheoryBv extends Theory {
     this.propagateBits();
   }
 
-  // propagate_bits: the value of each queued bit goes to the bits at its position in its class.
   private propagateBits() {
     const context = this.context;
     const queue = this.propQueue;
@@ -953,7 +935,6 @@ export class TheoryBv extends Theory {
     return DIV0_OPS.has(decl.op);
   }
 
-  // merge_eh: the bits of the two classes take each other's values, unless they conflict.
   private mergeEh(firstRoot: number, secondRoot: number, first: number, second: number) {
     if (!this.mergeZeroOneBits(firstRoot, secondRoot)) return;
     const context = this.context;
@@ -1001,8 +982,6 @@ export class TheoryBv extends Theory {
     this.propagateBits();
   }
 
-  // merge_zero_one_bits: the constant bits of the second class join the first's, unless a position
-  // holds true in one and false in the other.
   private mergeZeroOneBits(firstRoot: number, secondRoot: number) {
     const secondBits = this.zeroOneBits[secondRoot];
     if (secondBits.length === 0) return true;
@@ -1025,7 +1004,6 @@ export class TheoryBv extends Theory {
     return true;
   }
 
-  // unmerge_eh: the constant bits of the root keep those of its own class.
   private unmergeEh(root: number) {
     const bits = this.zeroOneBits[root];
     for (let index = bits.length - 1; index >= 0; index--)
@@ -1057,7 +1035,6 @@ export class TheoryBv extends Theory {
     }
   }
 
-  // mk_literal: the literal of an expression, which becomes relevant.
   private mkLiteral(expr: number) {
     const context = this.context;
     const manager = this.manager;
@@ -1071,8 +1048,6 @@ export class TheoryBv extends Theory {
     return isNot ? negate(literal) : literal;
   }
 
-  // theory::mk_eq: the literal of the equality, true for the same terms and false for distinct
-  // values.
   private mkEq(first: number, second: number, isGateContext: boolean) {
     const context = this.context;
     const manager = this.manager;
@@ -1086,8 +1061,6 @@ export class TheoryBv extends Theory {
     return literal;
   }
 
-  // mk_bv_divrem_bound: the divisor is zero, or the quotient or remainder is bounded by the
-  // dividend or the divisor.
   private assertDivremBoundAxiom(term: number) {
     const manager = this.manager;
     const op = manager.getOp(term);

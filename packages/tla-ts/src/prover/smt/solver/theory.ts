@@ -1,8 +1,4 @@
 // Ported from Z3 (src/smt/smt_theory.h, src/smt/smt_theory.cpp), MIT license, see z3-license.txt.
-// A theory plugin of the SMT kernel. The context owns the E-graph and the Boolean search, and hands
-// each theory the atoms and terms of its family, the equalities and disequalities between its
-// variables, and the assignments of its atoms. A theory variable numbers the enodes the theory
-// knows, and the context keeps it on the enode's list under the theory's id, its family.
 import { shrink } from "./array";
 import type { AstManager, FuncDecl } from "./ast";
 import type { Context } from "./context";
@@ -15,7 +11,6 @@ export const FC_CONTINUE = 1;
 export const FC_GIVEUP = 2;
 
 export abstract class Theory {
-  // m_var2enode and m_var2enode_lim.
   protected varEnodes: Enode[] = [];
   private varEnodeLimits: number[] = [];
 
@@ -76,7 +71,6 @@ export abstract class Theory {
     this.varEnodeLimits.push(this.varEnodes.length);
   }
 
-  // get_old_num_vars: the number of variables before the last numScopes scopes.
   protected getOldNumVars(numScopes: number) {
     return this.varEnodeLimits[this.varEnodeLimits.length - numScopes];
   }
@@ -103,7 +97,6 @@ export abstract class Theory {
     return false;
   }
 
-  // is_beta_redex: a parent of another family that does not make the class shared.
   isBetaRedex(_parent: Enode, _node: Enode) {
     return false;
   }
@@ -120,8 +113,7 @@ export abstract class Theory {
 
   initModel(_model: ProtoModel) {}
 
-  // mk_value: the value of a class whose root has a variable of the theory, or undefined for a fresh
-  // value of its sort.
+  // undefined stands for a fresh value of the sort.
   mkValue(_node: Enode): number | undefined {
     return undefined;
   }

@@ -8,10 +8,8 @@ import { SmtCanceledError } from "../../../errors";
 export class ResourceLimit {
   // m_count: the steps taken, which MBQI also uses as a random seed.
   count = 0;
-  // m_suspend: while set, the work goes on even once it is canceled.
   isSuspended = false;
   private isCanceled = false;
-  // m_limit and m_limits: the count past which the work stops, and those of the enclosing scopes.
   private limit = Infinity;
   private limits: number[] = [];
   // Watches for a full collection while the used size is past the threshold.
@@ -38,7 +36,6 @@ export class ResourceLimit {
     return this.isSuspended || (!this.isCanceled && this.count <= this.limit);
   }
 
-  // push: a scope that stops the work after delta more steps, or never for 0.
   push(delta: number) {
     this.limits.push(this.limit);
     this.limit = Math.min(delta === 0 ? Infinity : this.count + delta, this.limit);

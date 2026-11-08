@@ -90,13 +90,11 @@ interface Macro {
 interface SmtProblem {
   assertions: number[];
   hasCheckSat: boolean;
-  // The option rlimit: the steps that check-sat may take, or 0 for no bound.
   rlimit: number;
 }
 
 interface ApplicationFrame {
   head: SmtToken;
-  // The indices of an indexed identifier, such as the bounds of an extract.
   indices: number[];
   list: SmtList;
   start: number;
@@ -306,7 +304,6 @@ const CHAINABLE_OPS = new Map<string, number>([
   [">", OP_GT],
 ]);
 
-// The bit-vector operators that Z3 adds to the logics it names.
 const BV_EXTENSION_NAMES = new Set([
   "bvumul_noovfl",
   "bvsmul_noovfl",
@@ -805,7 +802,6 @@ export const createSmtlibReader = (
     return manager.mkApp(decl, args, signature.range);
   };
 
-  // parse_qualified_name for (_ bvN w).
   const parseBvNumeral = (list: SmtList) => {
     const name = list.items[1];
     const value = isSymbol(name) ? /^bv([0-9]+)$/.exec(name.text) : null;

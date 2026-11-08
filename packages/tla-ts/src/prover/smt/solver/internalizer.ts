@@ -123,7 +123,6 @@ export abstract class Internalizer {
   // bool_var_data: two words per variable. The first holds the level of its assignment and the BV_
   // flags, the second the level of its internalization.
   private boolVarData = new Int32Array(2048);
-  // The theory of each variable with BV_THEORY, which gets its assignments.
   private boolVarTheories: number[] = [];
   justifications: BJustification[] = [];
   activity: number[] = [];
@@ -562,7 +561,6 @@ export abstract class Internalizer {
     return this.hasBoolVarFlag(boolVar, BV_EQ | BV_ENODE | BV_THEORY | BV_QUANTIFIER);
   }
 
-  // get_var_theory: the theory of the atom, or -1.
   getBoolVarTheory(boolVar: BoolVar) {
     return this.hasBoolVarFlag(boolVar, BV_THEORY) ? this.boolVarTheories[boolVar] : -1;
   }

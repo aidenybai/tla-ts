@@ -11,8 +11,6 @@ export interface Antecedents {
 
 export abstract class Justification {
   isMarked = false;
-  // get_from_theory: the theory that propagated the equality, which the context does not send it
-  // back to, or -1.
   readonly fromTheory: number = -1;
   abstract getAntecedents(antecedents: Antecedents): void;
 }
@@ -47,7 +45,6 @@ const IS_INTERPRETED = 64;
 // The number of arguments, in the bits of flags above the Boolean fields.
 const NUM_ARGS_SHIFT = 7;
 
-// th_var_list: the theory variables of a node past the first, which the node holds inline.
 export class ThVarCell {
   constructor(
     public thId: number,
@@ -66,8 +63,7 @@ export class Enode {
   // two are equal.
   transTarget: Enode | null = null;
   transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
-  // m_th_var_list: the first theory variable and its theory, -1 when there is none, then the
-  // others in the order they were added.
+  // The first theory variable inline, -1 when there is none, then the rest in the order added.
   thVar = -1;
   thId = -1;
   thNext: ThVarCell | null = null;
@@ -182,7 +178,6 @@ export class Enode {
     return count;
   }
 
-  // The theories and variables of the list, in its order.
   forEachThVar(visit: (thId: number, thVar: number) => void) {
     if (this.thVar < 0) return;
     visit(this.thId, this.thVar);
@@ -235,7 +230,6 @@ export class Enode {
     }
   }
 
-  // restore_theory_vars: the list keeps the variables whose node is still in this class.
   restoreThVars(getEnode: (thId: number, thVar: number) => Enode) {
     const kept: [number, number][] = [];
     this.forEachThVar((thId, thVar) => {
