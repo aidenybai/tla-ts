@@ -344,6 +344,9 @@ export const rankString = (text: string) => {
 
 export const getRankedStringCount = () => stringOrder.size;
 
+export const getRankedString = (rank: number) =>
+  Object.keys(stringOrder.ranks).find((text) => stringOrder.ranks[text] === rank);
+
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
 const compareStrings = (left: string, right: string) => {
