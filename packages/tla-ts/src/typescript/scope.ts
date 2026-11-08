@@ -1,8 +1,9 @@
 import ts from "@typescript/typescript6";
-import { type Context, getSymbol } from "./context";
+import { type Context, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import type { Expression, OperatorDefinition } from "../ast";
-import { define, identifier, index, number } from "./tla";
+import { translateExpression } from "./expressions";
+import { apply, define, identifier, ifExpression, index, number } from "./tla";
 import { getField, getPropertyKey } from "./types";
 
 export interface Scope {
@@ -115,19 +116,34 @@ export const bindPattern = (
   };
 };
 
-// Binds parameters to argument values with LET definitions, as when inlining a call.
+// Binds parameters to argument values with LET definitions, as when inlining a call. A parameter
+// takes its default value when its argument is missing or undefined.
 export const bindValues = (
-  patterns: ts.BindingName[],
+  parameters: readonly ts.ParameterDeclaration[],
   values: Expression[],
   scope: Scope,
   context: Context,
 ) =>
-  patterns.reduce<Bound>(
-    (current, pattern, index) => {
-      if (index >= values.length) context.prelude.add("Undefined");
+  parameters.reduce<Bound>(
+    (current, parameter, position) => {
+      if (parameter.dotDotDotToken !== undefined) {
+        throw new TlaTypeScriptError("Rest parameters aren't supported", parameter);
+      }
+      const value = values.at(position);
+      const initializer = parameter.initializer;
+      const getDefault = () =>
+        initializer === undefined
+          ? getUndefined(context)
+          : translateExpression(initializer, current.scope, context);
       const bound = bindPattern(
-        pattern,
-        values[index] ?? identifier("Undefined"),
+        parameter.name,
+        value === undefined
+          ? getDefault()
+          : initializer === undefined
+            ? value
+            : share(value, "argument", context, (shared) =>
+                ifExpression(apply("=", [shared, getUndefined(context)]), getDefault(), shared),
+              ),
         current.scope,
         context,
       );

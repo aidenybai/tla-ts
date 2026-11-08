@@ -107,7 +107,7 @@ const inlineCall = (
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
   const bound = bindValues(
-    callee.parameters.map((parameter) => parameter.name),
+    callee.parameters,
     argumentNodes.map((argument) => translateExpression(argument, scope, context)),
     scope,
     context,
@@ -182,11 +182,7 @@ export const translateLocalCall = (node: ts.CallExpression, scope: Scope, contex
 // A function body that computes a value, as a TLA+ expression.
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
-  return render(
-    translatePure(body.statements, scope, context, () => {
-      throw new TlaTypeScriptError("This function must return a value on every path", body);
-    }),
-  );
+  return render(translatePure(body.statements, scope, context, () => leaf(getUndefined(context))));
 };
 
 const translatePure = (
@@ -226,9 +222,9 @@ const translatePure = (
     );
   }
   if (ts.isReturnStatement(statement)) {
-    if (statement.expression === undefined)
-      throw new TlaTypeScriptError("Return a value", statement);
-    return leaf(translateExpression(statement.expression, scope, context));
+    return statement.expression === undefined
+      ? leaf(getUndefined(context))
+      : leaf(translateExpression(statement.expression, scope, context));
   }
   if (ts.isThrowStatement(statement)) return leaf(translateThrow(statement, scope, context));
   if (ts.isSwitchStatement(statement)) {

@@ -203,6 +203,12 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ],
     ["[getOr(), getOr(2)]", "const getOr = (value?: number) => value ?? 7;"],
     [
+      "run()",
+      "const run = () => { const add = (value: number, step = 1) => value + step; return [add(1), add(1, undefined), add(1, 5)]; };",
+    ],
+    ["run()", "const run = () => { const nothing = () => {}; return nothing(); };"],
+    ["call()", "let call = () => 4;"],
+    [
       "count(new Set([1, 2, 3]))",
       "const count = (values: Set<number>) => { const isLarge = (value: number) => value > 1; return [...values].filter(isLarge).length; };",
     ],

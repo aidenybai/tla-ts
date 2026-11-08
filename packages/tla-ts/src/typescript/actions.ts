@@ -264,12 +264,7 @@ const translateCallStatement = (
   if (frame.inlining.has(helper)) {
     throw new TlaTypeScriptError("Helpers that change state can't call themselves", expression);
   }
-  const bound = bindValues(
-    helperFunction.parameters.map((parameter) => parameter.name),
-    values,
-    path.scope,
-    context,
-  );
+  const bound = bindValues(helperFunction.parameters, values, path.scope, context);
   const body = ts.isBlock(helperFunction.body)
     ? helperFunction.body.statements
     : [ts.factory.createExpressionStatement(helperFunction.body)];
