@@ -98,11 +98,18 @@ const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context
   return set(names);
 };
 
+const isName = (node: ts.Expression): boolean =>
+  ts.isIdentifier(node) || (ts.isPropertyAccessExpression(node) && isName(node.expression));
+
 const isInertClass = (statement: ts.Statement) =>
   ts.isClassDeclaration(statement) &&
+  (statement.heritageClauses ?? []).every((clause) =>
+    clause.types.every((type) => isName(type.expression)),
+  ) &&
   !statement.members.some(
     (member) =>
       ts.isClassStaticBlockDeclaration(member) ||
+      (member.name !== undefined && ts.isComputedPropertyName(member.name)) ||
       (ts.isPropertyDeclaration(member) &&
         member.initializer !== undefined &&
         (ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Static) !== 0),

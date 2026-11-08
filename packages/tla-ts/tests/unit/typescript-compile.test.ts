@@ -738,6 +738,12 @@ describe("errors", () => {
     );
   });
 
+  it("rejects a class whose member names run code", () => {
+    expect(() => compile(`let count = 0;\nclass Counter {\n  [count++]() {}\n}`)).toThrow(
+      "spec.ts:2:1 Unsupported statement",
+    );
+  });
+
   it("rejects a class that runs code as the module loads", () => {
     expect(() =>
       compile(`let count = 0;\nclass Counter {\n  static {\n    count++;\n  }\n}`),
