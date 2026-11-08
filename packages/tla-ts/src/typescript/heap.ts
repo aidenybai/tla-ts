@@ -558,8 +558,11 @@ export const isObjectChange = (node: ts.Node): node is MethodCall =>
     isConstruct(node));
 
 // The error that JavaScript itself may throw where a node runs.
+// The error that JavaScript itself may throw where a node runs, which instanceof checks for: a
+// failed definition or Reflect.construct, or a new of a value that isn't a constructor.
 export const getEngineError = (node: ts.Node) =>
-  isObjectChange(node) && (node.expression.name.text.startsWith("define") || isConstruct(node))
+  (isObjectChange(node) && (node.expression.name.text.startsWith("define") || isConstruct(node))) ||
+  ts.isNewExpression(node)
     ? "TypeError"
     : undefined;
 

@@ -469,6 +469,16 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ["['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]", "const box = {};"],
     ["[Reflect.has === Reflect.has, Reflect.has === Reflect.get]", "const box = {};"],
     [
+      "created",
+      `const box = {};
+      let created = "none";
+      try {
+        new (Array.prototype.map as unknown as new () => unknown)();
+      } catch (error) {
+        created = error instanceof TypeError ? "TypeError" : "other";
+      }`,
+    ],
+    [
       "[C.prototype['0.1'], keys['16'], keys.s, first, stringSet]",
       `let stringSet: unknown;
       class C {

@@ -136,11 +136,13 @@ const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
   const visit = (child: ts.Node) => {
     const thrown = getEngineError(child);
-    const created = ts.isNewExpression(child)
-      ? getSymbol(child.expression, context.checker)
-      : thrown && getNative(thrown, child, context);
-    const classes = getErrorClass(created, context.checker);
-    if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
+    [
+      ts.isNewExpression(child) ? getSymbol(child.expression, context.checker) : undefined,
+      thrown && getNative(thrown, child, context),
+    ].forEach((created) => {
+      const classes = getErrorClass(created, context.checker);
+      if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
+    });
     ts.forEachChild(child, visit);
   };
   visit(node.getSourceFile());
