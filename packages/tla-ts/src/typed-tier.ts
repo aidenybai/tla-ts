@@ -2438,21 +2438,26 @@ const UNION: Kept = { isCommonKept: true, isLeftKept: true, isRightKept: true };
 const INTERSECTION: Kept = { isCommonKept: true, isLeftKept: false, isRightKept: false };
 const DIFFERENCE: Kept = { isCommonKept: false, isLeftKept: true, isRightKept: false };
 
-const getBitCount = (bits: number) => {
-  let count = 0;
-  for (let rest = bits; rest !== 0; rest &= rest - 1) count++;
-  return count;
-};
-
 // TLC enumerates SUBSET S by size, and subsets of one size in the order of S. With the first
 // element of S as the highest bit, that is each size's selections from the largest down.
 const getSelections = (count: number) => {
   if (count > MAXIMUM_SUBSET_BASE) deopt();
-  const bySize: number[][] = Array.from({ length: count + 1 }, () => []);
-  for (let selection = (1 << count) - 1; selection >= 0; selection--) {
-    bySize[getBitCount(selection)].push(selection);
+  const all = (1 << count) - 1;
+  const selections = [0];
+  for (let size = 1; size <= count; size++) {
+    const last = (1 << size) - 1;
+    let selection = last << (count - size);
+    selections.push(selection);
+    while (selection !== last) {
+      // Gosper's hack steps the complement to the next larger set of its size.
+      const rest = ~selection & all;
+      const lowest = rest & -rest;
+      const ripple = rest + lowest;
+      selection = ~((((ripple ^ rest) >>> 2) / lowest) | ripple) & all;
+      selections.push(selection);
+    }
   }
-  return bySize.flat();
+  return selections;
 };
 
 const getBits = (mask: number) =>
