@@ -1568,7 +1568,9 @@ const compileFunctionConstruction = (
         keys,
         keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
       );
-      return isReducibleSet(domain) ? functionValue : markLambdaFunction(functionValue);
+      if (isReducibleSet(domain)) return functionValue;
+      functionValue.lambdaDomain = domain;
+      return markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
     const sets = bounds.map((item) =>

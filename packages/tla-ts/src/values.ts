@@ -44,6 +44,8 @@ export interface FunctionValue {
   fingerprint: number;
   writtenKeys: Value[] | undefined;
   functionClass: FunctionClass | undefined;
+  // The set a lambda ranges over, which TLC's DOMAIN returns until it builds the function.
+  lambdaDomain: Value | undefined;
   isFingerprinted: boolean;
 }
 
@@ -519,6 +521,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   fingerprint: 0,
   writtenKeys: undefined,
   functionClass: undefined,
+  lambdaDomain: undefined,
   isFingerprinted: false,
 });
 
@@ -2405,6 +2408,7 @@ export const getDomain = (functionValue: Value): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction")
     return functionValue.domain;
   const finite = toFiniteFunction(functionValue);
+  if (finite.functionClass === "lambda" && finite.lambdaDomain) return finite.lambdaDomain;
   const interval = getDomainInterval(finite.domain);
   if (interval) return interval;
   const set = createSortedSet(finite.domain);
@@ -2458,6 +2462,7 @@ export const updateFunction = (
     getFunctionClass(finite),
   );
   updated.writtenKeys = finite.writtenKeys;
+  updated.lambdaDomain = finite.lambdaDomain;
   if (finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH) {
     const nextHash = getValueHash(next);
     if (nextHash !== UNFINGERPRINTABLE_HASH) {
