@@ -22,6 +22,10 @@ const CASES: [string, string][] = [
     "instanceof on a value that isn't caught or an error",
     "const value: unknown = count; if (value instanceof Error) count = 1;",
   ],
+  [
+    "an unsupported value returned from an inlined call",
+    "const getLength = () => { return step.length; }; getLength();",
+  ],
   ["rest parameters", "const add = (...more: number[]) => more.length; count = add(1, 2);"],
   ["string methods as values", "count = label.includes.length;"],
   ["properties of functions", "count = step.length;"],

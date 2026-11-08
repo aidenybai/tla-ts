@@ -1,5 +1,12 @@
 import ts from "@typescript/typescript6";
-import { type Context, getElement, getSymbol, getUndefined, share } from "./context";
+import {
+  type Context,
+  type FunctionNode,
+  getElement,
+  getSymbol,
+  getUndefined,
+  share,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
@@ -11,6 +18,7 @@ export interface Scope {
   bindings: Map<ts.Symbol, Expression>;
   // The parameter that names the state before a step, in action properties and constraints.
   previous: ts.Symbol | undefined;
+  functions: Map<ts.Symbol, FunctionNode>;
 }
 
 export interface Bound {
@@ -32,9 +40,11 @@ interface Named {
 export const createStateScope = (context: Context): Scope => ({
   bindings: new Map(context.variables),
   previous: undefined,
+  functions: new Map(),
 });
 
 export const bindNames = (scope: Scope, named: Named[]): Scope => ({
+  ...scope,
   bindings: new Map([
     ...scope.bindings,
     ...named.flatMap((item): [ts.Symbol, Expression][] =>
@@ -43,7 +53,6 @@ export const bindNames = (scope: Scope, named: Named[]): Scope => ({
         : [[item.symbol, typeof item.name === "string" ? identifier(item.name) : item.name]],
     ),
   ]),
-  previous: scope.previous,
 });
 
 export const declareParameter = (

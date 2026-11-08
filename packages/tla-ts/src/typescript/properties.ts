@@ -60,6 +60,7 @@ const getPreviousScope = (definition: Exported, context: Context): Scope => {
     throw new TlaTypeScriptError("Take the state before the step as one parameter", parameters[0]);
   }
   return {
+    ...createStateScope(context),
     bindings: new Map([...context.variables].map((entry) => [entry[0], prime(entry[1])])),
     previous: getSymbol(parameters[0].name, context.checker),
   };

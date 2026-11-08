@@ -217,6 +217,12 @@ const CASES: Record<string, Case[]> = {
   helpers: [
     {
       variables: "count = 0",
+      statements: "twice(() => { count += 1; }); twice(add);",
+      setup:
+        "const add = () => { count += 10; };\nconst twice = (run: () => void) => { run(); run(); };",
+    },
+    {
+      variables: "count = 0",
       statements: "bump(); bump();",
       setup: "const bump = () => { count++; };",
     },

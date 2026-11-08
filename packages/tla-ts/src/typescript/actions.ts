@@ -3,6 +3,8 @@ import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
   type Context,
+  type FunctionNode,
+  getCallee,
   getElement,
   getFunction,
   getSymbol,
@@ -71,8 +73,8 @@ interface Frame {
   exit: (path: Path) => Formula;
   breakTo: ((path: Path) => Formula) | undefined;
   continueTo: ((path: Path) => Formula) | undefined;
-  // Helpers being inlined, to reject recursion.
-  inlining: Set<ts.Declaration>;
+  // Functions being inlined, to reject recursion.
+  inlining: Set<ts.Node>;
 }
 
 const COMPOUND_OPERATORS = new Map([
@@ -312,18 +314,19 @@ const translateCallStatement = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  const values = expression.arguments.map((argument) =>
-    translateExpression(argument, path.scope, context),
-  );
+  const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
+    argumentNodes.map((argument) => translateExpression(argument, path.scope, context));
   if (isMethodCall(expression)) {
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
     const isConsole = receiver.getText() === "console";
     if (isConsole && method === "log") {
+      const values = translateArguments(expression.arguments);
       const value = values.length === 1 ? values[0] : tuple(values);
       return and([leaf(apply("PrintT", [value])), continueWith(path)]);
     }
     if (isConsole && method === "assert") {
+      const values = translateArguments(expression.arguments);
       const message = values[1] ?? string("Assertion failed");
       return and([leaf(apply("Assert", [values[0], message])), continueWith(path)]);
     }
@@ -340,29 +343,52 @@ const translateCallStatement = (
       );
     }
   }
-  // A helper that changes state runs inline, as part of the action.
-  const helper = getTopLevelDeclaration(getSymbol(expression.expression, context.checker));
-  const helperFunction = getFunction(helper);
-  if (helper === undefined || helperFunction?.body === undefined) {
+  const getCallback = (node: ts.Expression) => {
+    const symbol = getSymbol(node, context.checker);
+    return (symbol && path.scope.functions.get(symbol)) ?? getCallee(node, context);
+  };
+  const callee = getCallback(expression.expression);
+  if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
-  if (frame.inlining.has(helper)) {
-    throw new TlaTypeScriptError("Helpers that change state can't call themselves", expression);
+  if (frame.inlining.has(callee)) {
+    throw new TlaTypeScriptError("Functions that change state can't call themselves", expression);
   }
-  const bound = bindValues(helperFunction.parameters, values, path.scope, context);
-  const body = ts.isBlock(helperFunction.body)
-    ? helperFunction.body.statements
-    : [ts.factory.createExpressionStatement(helperFunction.body)];
+  const callbacks = callee.parameters.flatMap(
+    (parameter, position): [ts.Symbol, FunctionNode][] => {
+      const argument = expression.arguments.at(position);
+      const callback = argument && getCallback(argument);
+      const symbol = getSymbol(parameter.name, context.checker);
+      return callback !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
+    },
+  );
+  const isValue = (position: number) => {
+    const parameter = callee.parameters.at(position);
+    return (
+      parameter === undefined ||
+      !callbacks.some((entry) => entry[0] === getSymbol(parameter.name, context.checker))
+    );
+  };
+  const bound = bindValues(
+    callee.parameters.filter((_, position) => isValue(position)),
+    translateArguments(expression.arguments.filter((_, position) => isValue(position))),
+    path.scope,
+    context,
+  );
+  const body = ts.isBlock(callee.body)
+    ? callee.body.statements
+    : [ts.factory.createExpressionStatement(callee.body)];
   const afterCall = (inner: Path) =>
     continueWith({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } });
+  const scope = { ...bound.scope, functions: new Map([...bound.scope.functions, ...callbacks]) };
   return letIn(
     bound.definitions,
-    translateStatements(body, { ...path, scope: bound.scope }, context, {
+    translateStatements(body, { ...path, scope }, context, {
       next: afterCall,
       exit: afterCall,
       breakTo: undefined,
       continueTo: undefined,
-      inlining: new Set([...frame.inlining, helper]),
+      inlining: new Set([...frame.inlining, callee]),
     }),
   );
 };
@@ -600,6 +626,11 @@ const translateIterations = (
   );
 };
 
+const hasCall = (node: ts.Node): boolean =>
+  ts.isCallExpression(node) ||
+  ts.isNewExpression(node) ||
+  (ts.forEachChild(node, (child) => hasCall(child) || undefined) ?? false);
+
 const translateStatements = (
   statements: readonly ts.Statement[],
   path: Path,
@@ -635,9 +666,16 @@ const translateStatements = (
     );
   }
   if (ts.isReturnStatement(statement)) {
-    if (statement.expression !== undefined) {
+    const returned = statement.expression;
+    if (returned === undefined) return frame.exit(path);
+    if (frame.inlining.size === 0) {
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
+    if (ts.isCallExpression(returned)) {
+      return translateCallStatement(returned, path, context, frame, frame.exit);
+    }
+    if (hasCall(returned)) throw new TlaTypeScriptError("Unsupported return", statement);
+    translateExpression(returned, path.scope, context);
     return frame.exit(path);
   }
   if (ts.isBreakStatement(statement)) {
