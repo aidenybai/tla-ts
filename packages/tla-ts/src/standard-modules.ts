@@ -321,7 +321,7 @@ const getSequenceOrString = (args: BuiltinArgument[], index: number, message: st
   return typeof value === "string" ? value : getSequenceArgument(args, index, message);
 };
 
-const getIndexArgument = (args: BuiltinArgument[], index: number, position: string) => {
+const getSubSeqIndex = (args: BuiltinArgument[], index: number, position: string) => {
   const value = getValue(args, index, "SubSeq");
   if (typeof value !== "number") {
     throw createModuleArgumentError(position, "SubSeq", "natural number", value);
@@ -395,8 +395,8 @@ const createSequencesOperators = (version: TlcVersion) =>
     }),
     defineOperator("SubSeq", 3, (args) => {
       const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
-      const start = getIndexArgument(args, 1, "second");
-      const end = getIndexArgument(args, 2, "third");
+      const start = getSubSeqIndex(args, 1, "second");
+      const end = getSubSeqIndex(args, 2, "third");
       if (start > end) return sliceSequence(sequence, 0, 0);
       const outOfDomain =
         start < 1 || start > sequence.length
