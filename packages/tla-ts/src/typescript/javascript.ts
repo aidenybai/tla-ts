@@ -4,6 +4,7 @@ import { type Context, getSymbol } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import type { Scope } from "./scope";
+import { getKind } from "./types";
 import { apply, boolean, ifExpression, number, string } from "./tla";
 
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
@@ -637,7 +638,14 @@ export const getTypeNames = (type: ts.Type, checker: ts.TypeChecker): string[] |
 export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context: Context) => {
   const names = getTypeNames(context.checker.getTypeAtLocation(node.expression), context.checker);
   const known = names && [...new Set(names.map((name) => (name === "null" ? "object" : name)))];
-  if (known?.length === 1) return string(known[0]);
+  // Object.defineProperty can give a property a value of another type than TypeScript's.
+  const read = ts.isParenthesizedExpression(node.expression)
+    ? node.expression.expression
+    : node.expression;
+  const isProperty =
+    (ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)) &&
+    getKind(read.expression, context) === "object";
+  if (known?.length === 1 && !isProperty) return string(known[0]);
   if (context.modelValues.size > 0) {
     throw new TlaTypeScriptError("typeof can't tell a @symmetric value from a function", node);
   }
