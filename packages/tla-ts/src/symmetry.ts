@@ -26,7 +26,7 @@ import { createStateImages, type StateImages } from "./symmetry-images";
 type Images = Map<number, ModelValue>;
 
 // The image of each model value by rank, or nothing for one the permutation doesn't move.
-type ImageTable = (ModelValue | undefined)[];
+export type ImageTable = (ModelValue | undefined)[];
 
 export interface SymmetryGroup {
   images: ImageTable[];
@@ -259,7 +259,7 @@ const permuteRangeOverDomain = (domain: Value[], images: Value[], range: Value[]
 
 // Value#permute: the value with each model value replaced by its image. A value the permutation
 // doesn't move is returned itself, so that comparing it with itself stops at identity.
-const permuteValue = (value: Value, images: ImageTable): Value => {
+export const permuteValue = (value: Value, images: ImageTable): Value => {
   if (typeof value !== "object") return value;
   const kind = value.kind;
   if (kind === "ModelValue") return images[value.rank] ?? value;
