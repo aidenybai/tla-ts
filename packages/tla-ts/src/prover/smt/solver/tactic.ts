@@ -30,6 +30,7 @@ import { ctxSimplify } from "./ctx-simplify";
 import type { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Der } from "./der";
+import { runFpa2Bv } from "./fpa2bv-tactic";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { propagateValues } from "./propagate-values";
 import { ProtoModel } from "./proto-model";
@@ -358,6 +359,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
+  ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
   [
     "snf",
@@ -880,14 +882,13 @@ interface TacticCheck {
   model: ProtoModel | undefined;
 }
 
-const convertModel = (goal: Goal, model: ProtoModel) => {
-  for (let index = goal.converters.length - 1; index >= 0; index--) {
-    const entry = goal.converters[index];
-    if (entry.def === -1) model.unregisterDecl(entry.decl);
-    else throw new SmtUnsupportedError("the definitions of model converters");
-  }
-  return model;
-};
+const convertModel = (goal: Goal, model: ProtoModel) =>
+  goal.converters.reduceRight((converted, entry) => {
+    if ("convert" in entry) return entry.convert(converted);
+    if (entry.def !== -1) throw new SmtUnsupportedError("the definitions of model converters");
+    converted.unregisterDecl(entry.decl);
+    return converted;
+  }, model);
 
 export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   const goals = (() => {

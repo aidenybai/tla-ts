@@ -109,8 +109,8 @@ class CtxSimplifier {
     if (isFalse || manager.getOp(atom) !== OP_EQ) return;
     const lhs = manager.getArg(atom, 0);
     const rhs = manager.getArg(atom, 1);
-    const isRhsValue = manager.isUniqueValue(rhs);
-    if (!isRhsValue && !manager.isUniqueValue(lhs)) return;
+    const isRhsValue = manager.isValue(rhs);
+    if (!isRhsValue && !manager.isValue(lhs)) return;
     const term = isRhsValue ? lhs : rhs;
     if (!this.isShared(term)) return;
     if (isMakingScope) this.scopes.push(this.trail.size);

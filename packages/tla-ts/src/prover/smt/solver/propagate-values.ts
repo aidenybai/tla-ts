@@ -40,13 +40,10 @@ export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) 
     if (manager.isNot(rewritten) && occs.has(manager.getArg(rewritten, 0)))
       substitution.set(manager.getArg(rewritten, 0), manager.falseExpr);
     if (manager.getOp(rewritten) !== OP_EQ) return;
-    if (
-      manager.isUniqueValue(manager.getArg(rewritten, 0)) &&
-      occs.has(manager.getArg(rewritten, 1))
-    )
+    if (manager.isValue(manager.getArg(rewritten, 0)) && occs.has(manager.getArg(rewritten, 1)))
       substitution.set(manager.getArg(rewritten, 1), manager.getArg(rewritten, 0));
     else if (
-      manager.isUniqueValue(manager.getArg(rewritten, 1)) &&
+      manager.isValue(manager.getArg(rewritten, 1)) &&
       occs.has(manager.getArg(rewritten, 0))
     )
       substitution.set(manager.getArg(rewritten, 0), manager.getArg(rewritten, 1));

@@ -23,12 +23,16 @@ export interface ConverterEntry {
   def: number;
 }
 
+interface ModelConversion {
+  convert: (model: ProtoModel) => ProtoModel;
+}
+
 export class Goal {
   readonly forms: RefVector;
   isInconsistent = false;
   depth = 0;
   precision = PRECISE;
-  converters: ConverterEntry[] = [];
+  converters: (ConverterEntry | ModelConversion)[] = [];
   model: ProtoModel | undefined;
 
   constructor(readonly manager: AstManager) {
@@ -70,6 +74,10 @@ export class Goal {
     this.manager.incDeclRef(decl);
     if (def !== -1) this.manager.incRef(def);
     this.converters = [...this.converters, { decl, def }];
+  }
+
+  addModelConversion(convert: (model: ProtoModel) => ProtoModel) {
+    this.converters = [...this.converters, { convert }];
   }
 
   isDecidedSat() {

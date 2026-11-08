@@ -3,6 +3,7 @@ import {
   FAMILY_ARRAY,
   FAMILY_BV,
   FAMILY_DATATYPE,
+  FAMILY_FPA,
   FAMILY_MODEL_VALUE,
   FAMILY_USER,
   KIND_APP,
@@ -12,6 +13,7 @@ import {
   OP_DT_ACCESSOR,
   OP_DT_CONSTRUCTOR,
   OP_DT_RECOGNISER,
+  OP_FPA_NUM,
   OP_ITE,
   OP_NUM,
   OP_PATTERN,
@@ -34,6 +36,7 @@ const PARAM_INT = 0;
 const PARAM_AST = 1;
 const PARAM_SYMBOL = 2;
 const PARAM_RATIONAL = 3;
+const PARAM_EXTERNAL = 6;
 
 const compareValues = (first: number, second: number) =>
   first === second ? 0 : first < second ? -1 : 1;
@@ -114,10 +117,13 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
       domain: decl.domain,
       range,
     };
-  if (decl.family === FAMILY_BV)
+  if (decl.family === FAMILY_BV || decl.family === FAMILY_FPA)
     return {
       name: decl.name,
-      parameters: decl.parameters.flatMap((parameter) => [PARAM_INT, parameter]),
+      parameters: decl.parameters.flatMap((parameter) => [
+        decl.op === OP_FPA_NUM ? PARAM_EXTERNAL : PARAM_INT,
+        parameter,
+      ]),
       domain: decl.domain,
       range,
     };
@@ -129,7 +135,8 @@ const compareSorts = (manager: AstManager, first: number, second: number): numbe
   if (first === second) return 0;
   const byName =
     compareNames(manager.sortNames[first], manager.sortNames[second]) ||
-    compareValues(manager.getBvSize(first), manager.getBvSize(second));
+    compareValues(manager.getBvSize(first), manager.getBvSize(second)) ||
+    compareValues(manager.getSbits(first), manager.getSbits(second));
   if (byName !== 0) return byName;
   const firstParameters = manager.getSortParameters(first);
   const secondParameters = manager.getSortParameters(second);
@@ -155,7 +162,12 @@ const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
     decl.family === FAMILY_MODEL_VALUE
   )
     return false;
-  if (decl.family === FAMILY_BV || decl.family === FAMILY_ARRAY || decl.family === FAMILY_DATATYPE)
+  if (
+    decl.family === FAMILY_BV ||
+    decl.family === FAMILY_ARRAY ||
+    decl.family === FAMILY_DATATYPE ||
+    decl.family === FAMILY_FPA
+  )
     return true;
   const index = decl.op === OP_ITE ? 1 : 0;
   return (

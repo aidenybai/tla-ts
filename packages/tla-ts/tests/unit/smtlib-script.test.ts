@@ -251,8 +251,29 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "true", "true", "false"]);
   });
 
+  // z3test's regressions/smt2/fp-rem-1.smt2, with what Z3 prints for it.
+  it("decides floating-point terms with the smt core and with the fpa2bv tactic", () => {
+    expect(
+      run([
+        "(set-logic QF_FP)",
+        "(define-sort FPN () (_ FloatingPoint 11 53))",
+        "(declare-const x FPN)",
+        "(assert (= x (fp.rem (_ +zero 11 53) (fp #b0 #b01111111111 #x0000000000000))))",
+        "(check-sat)",
+        "(check-sat-using smt)",
+        "(check-sat-using (then fpa2bv smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "sat",
+      "(\n  (define-fun x () (_ FloatingPoint 11 53)\n    (_ +zero 11 53))\n)",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
-    expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
+    expect(() => run(["(declare-const f RegLan)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);
   });
 
