@@ -1,5 +1,4 @@
-// A port of OCaml's Format module, which tlapm uses to lay out obligations. Only the parts tlapm
-// reaches are ported: boxes, breaks, forced newlines and text.
+// A port of the parts of OCaml's Format module that tlapm reaches.
 
 type BoxKind = "h" | "v" | "hv" | "hov" | "b" | "fits";
 
@@ -238,7 +237,6 @@ const flush = (formatter: Formatter) => {
   return formatter.output.join("");
 };
 
-// pp_print_newline: flush, print a newline, and start over with no open boxes.
 const flushNewline = (formatter: Formatter) => {
   flush(formatter);
   const output = [...formatter.output, "\n"];
@@ -278,8 +276,8 @@ const parseOpen = (directive: string): Command => {
   };
 };
 
-// Interprets the subset of OCaml format strings that tlapm's printers use, so ported printers read
-// like the OCaml they come from. Each %s or %a consumes one argument.
+// The subset of OCaml format strings that tlapm's printers use, so ported printers read like the
+// OCaml.
 export const format = (pattern: string, ...args: (string | Doc)[]): Doc => {
   const doc: Doc = [];
   let argumentIndex = 0;

@@ -1,5 +1,4 @@
-// A port of tlapm's Backend.Zenon: an obligation as the input of Zenon's TLA+ front end, a $hyp for
-// each visible fact and a $goal, naming identifiers as Isabelle does.
+// A port of tlapm's Backend.Zenon.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
@@ -74,9 +73,7 @@ const getSuccessors = (integer: string) => {
   return `${"(TLA.fapply TLA.Succ ".repeat(count)}0${")".repeat(count)}`;
 };
 
-// pp_print_obligation: the text tlapm writes to the .znn file it hands Zenon, for an obligation
-// that Backend.Prep has shipped. Unsupported in the goal fails the obligation and in a fact omits
-// it.
+// Unsupported in the goal fails the obligation and in a fact omits it.
 export const encodeZenon = (id: number, sequent: Sequent) => {
   const context = createContext();
   const adjoin = (name: string) => pushName(context, pickle(name));
@@ -175,7 +172,6 @@ export const encodeZenon = (id: number, sequent: Sequent) => {
     );
   };
 
-  // A sequent inside an expression, as an implication under quantifiers.
   const printNestedSequent = (sequent: Sequent): Doc => {
     if (sequent.context.length === 0) return printExpr(sequent.active);
     const hyp = sequent.context[0];

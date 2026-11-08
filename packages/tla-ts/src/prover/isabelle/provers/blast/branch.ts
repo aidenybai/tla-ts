@@ -1,8 +1,5 @@
 // Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Operations on branches: naive substitution for equalities, closing a branch by complementary
-// literals, and the pruning of choice points.
 
 import { orElseGoal, thenGoal, type GoalTactic } from "../../pure/tactical";
 import { assumeTac, eqAssumeTac, ematchTac } from "../../pure/tactic";
@@ -33,7 +30,6 @@ import {
 const negate = (state: BlastState, term: BlastTerm) =>
   mkBlastApp(mkBlastConst(state.context.data.notName), term);
 
-// Converts a *Goal* to an ordinary negation.
 export const negOfGoal = (state: BlastState, term: BlastTerm) => {
   const goal = destConstApp(term, GOAL_NAME);
   return goal === undefined ? term : negate(state, goal);
@@ -44,15 +40,13 @@ const negOfGoal2 = (state: BlastState, formula: Formula): Formula => ({
   md: formula.md,
 });
 
-// Converts the goals to negations in the safe parts of a branch. They could have been moved there
-// from the literals by an equality substitution.
+// Goals could have been moved to the safe parts from the literals by an equality substitution.
 export const negOfGoals = (state: BlastState, pairs: readonly Level[]): Level[] =>
   pairs.map((level) => ({
     safe: level.safe.map((formula) => negOfGoal2(state, formula)),
     unsafe: level.unsafe,
   }));
 
-// Replaces the atomic term old by new, returning the very same term where nothing changes.
 const substAtomic = (old: BlastTerm, replacement: BlastTerm, term: BlastTerm): BlastTerm => {
   if (term.kind === "Var" && term.ref.value !== undefined)
     return substAtomic(old, replacement, term.ref.value);
@@ -68,7 +62,6 @@ const substAtomic = (old: BlastTerm, replacement: BlastTerm, term: BlastTerm): B
   return blastAconv(term, old) ? replacement : term;
 };
 
-// Eta-contracts a term from outside, just enough to reduce it to an atom.
 const etaContractAtom = (term: BlastTerm): BlastTerm => {
   if (term.kind !== "Abs") return term;
   const body = etaContract2(term.body);
@@ -106,8 +99,6 @@ const substOccur = (term: BlastTerm, other: BlastTerm) => {
   return occEq(other);
 };
 
-// Takes apart an equality and orients it to eliminate a Skolem term or a free variable, or gives
-// undefined (DEST_EQ) if it has no substitutable side.
 const orientEquality = (state: BlastState, term: BlastTerm): [BlastTerm, BlastTerm] | undefined => {
   if (
     term.kind !== "App" ||
@@ -132,8 +123,7 @@ interface Substituted {
   readonly kept: readonly Formula[];
 }
 
-// Substitutes through the branch if the formula is an equality with a substitutable variable.
-// Moves the affected formulae and literals back to the safe formulae, but it is not clear where
+// Moves the affected formulae and literals back to the safe formulae, though it is not clear where
 // they should go: this could make proofs fail.
 export const equalSubst = (
   state: BlastState,
@@ -184,7 +174,6 @@ export const equalSubst = (
   };
 };
 
-// Tries to unify complementary literals, giving the tactic that closes the branch.
 const eAssumeTac = (state: BlastState) => orElseGoal(eqAssumeTac, assumeTac(state.context.limits));
 
 // contr_tac: trying eq_contr_tac first increases the effort, slowing reconstruction.
@@ -229,12 +218,10 @@ const hasSkolem = (term: BlastTerm): boolean => {
   }
 };
 
-// Attaches the may-duplicate flag to new formulae: those with Skolem terms may be duplicated.
+// Formulae with Skolem terms may be duplicated.
 export const joinMd = (md: boolean, terms: readonly BlastTerm[]): Formula[] =>
   terms.map((term) => ({ term, md: hasSkolem(term) || md }));
 
-// Whether any of the last count assignments of the trail below top occurs in vars or their
-// instantiations.
 const clashVar = (state: BlastState, vars: readonly BlastTerm[], count: number, top: number) => {
   if (vars.length === 0) return false;
   for (
@@ -249,9 +236,8 @@ const clashVar = (state: BlastState, vars: readonly BlastTerm[], count: number, 
   return false;
 };
 
-// Deletes the choice points for goals the latest inference proved, provided no variable of the
-// next branch was updated. nbrs is the number of branches just before closing this one. Does not
-// prune at the very end, to allow backtracking over bad proofs.
+// Prunes only if no variable of the next branch was updated, and not at the very end, to allow
+// backtracking over bad proofs.
 export const prune = (
   state: BlastState,
   nbrs: number,
@@ -275,8 +261,7 @@ export const prune = (
 export const nextVars = (brs: readonly Branch[]) =>
   brs.length === 0 ? [] : brs[0].vars.map((ref) => mkBlastVar(ref));
 
-// Adds the literal, handling *Goal* and detecting duplicates. A new *Goal* turns the other goals
-// into negations.
+// A new *Goal* turns the other goals into negations.
 export const addLit = (state: BlastState, term: BlastTerm, lits: readonly BlastTerm[]) => {
   const goal = destConstApp(term, GOAL_NAME);
   if (goal === undefined) return insTerm(term, lits);

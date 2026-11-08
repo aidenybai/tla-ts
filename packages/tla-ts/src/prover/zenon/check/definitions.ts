@@ -1,6 +1,3 @@
-// The check of unfolding a definition: a real definition from the input, or a pseudo-definition
-// that Zenon reads off a hypothesis.
-
 import type { Definition } from "../parse";
 import {
   app,
@@ -14,8 +11,7 @@ import {
   type Term,
 } from "./terms";
 
-// Checks that `unfolded` is `folded` with occurrences of the defined symbol replaced by its body,
-// going through applications and negations as Zenon does.
+// Goes through applications and negations as Zenon does.
 const isUnfolding = (
   checker: Checker,
   definition: Definition,
@@ -67,7 +63,6 @@ const getBound = (origin: Term) => {
   return { bound, matrix };
 };
 
-// A pseudo-definition stands for its hypothesis, \A params : f(params) = body or <=> body.
 const isDefinedBy = (checker: Checker, definition: Definition, origin: Term) => {
   const quantified = getBound(origin);
   const bound = quantified.bound;

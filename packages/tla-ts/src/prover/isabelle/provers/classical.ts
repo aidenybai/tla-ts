@@ -1,9 +1,5 @@
-// Ported from Isabelle2025's Provers/classical.ML. Copyright (c) 1986-2025 University of
-// Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// The classical reasoner: rule sets of safe and unsafe introduction and elimination rules, and
-// the tactics that search with them. The rules Isabelle/TLA+ declares come with the logic; a
-// method adds more with intro: and dest:.
+// Ported from Isabelle2025's Provers/classical.ML. Copyright (c) 1986-2025 University of Cambridge,
+// Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { revcutRl, thinRl, zeroVarIndexes, makeElim } from "../pure/drule";
@@ -51,8 +47,6 @@ import {
 } from "../pure/tactic";
 import { assumption, biresolution, nprems, premsOf, rs, rsn, type Thm } from "../pure/thm";
 
-// A rule as the user gave it, as the nets use it, and as the complete search duplicates it, each
-// with its swapped forms for negated assumptions.
 export interface ClassicalRule {
   readonly rule: Thm;
   readonly internal: Thm;
@@ -80,7 +74,6 @@ export interface Claset {
   readonly dup: NetPair<TaggedRule>;
 }
 
-// CLASSICAL_DATA: the object logic's rules for the classical reasoner.
 export interface ClassicalData {
   // P --> Q ==> (~ R ==> P) ==> (Q ==> R) ==> R
   readonly impElim: Thm;
@@ -90,7 +83,6 @@ export interface ClassicalData {
   readonly swap: Thm;
   // (~ P ==> P) ==> P
   readonly classical: Thm;
-  // The object logic's Trueprop, which Object_Logic.elim_concl looks through.
   readonly judgment: string;
   readonly hypSubstTacs: readonly ((limits: Limits) => GoalTactic)[];
 }
@@ -106,8 +98,6 @@ export const withClaset = (context: ClassicalContext, claset: Claset): Classical
   claset,
 });
 
-// classical_rule: strengthens an elimination rule whose conclusion is a variable, so that the
-// negated conclusion becomes available to every case.
 const classicalRule = (data: ClassicalData, rule: Thm, limits: Limits): Thm => {
   const concl = premsOf(rule).length === 0 ? rule.prop : stripAssumsConcl(rule.prop);
   const body =
@@ -136,7 +126,6 @@ const classicalRule = (data: ClassicalData, rule: Thm, limits: Limits): Thm => {
   return aconv(result.prop, rule.prop) ? rule : result;
 };
 
-// swapify: the rules that eliminate ~A from the rules that introduce A.
 const swapify = (data: ClassicalData, rules: readonly Thm[]) =>
   rules.flatMap((rule) =>
     listOfSeq(biresolution(undefined, false, [{ isElim: false, rule }], 2, data.swap)),
@@ -144,8 +133,6 @@ const swapify = (data: ClassicalData, rules: readonly Thm[]) =>
 
 const dupIntr = (data: ClassicalData, rule: Thm) => zeroVarIndexes(rs(rule, data.classical));
 
-// Drule.rule_by_tactic: runs the tactic on the rule with its variables fixed.
-// Tactic.rule_by_tactic
 const ruleByTactic = (tactic: Tactic, rule: Thm): Thm =>
   zeroVarIndexes(
     trade((fixed) => {
@@ -182,7 +169,6 @@ const insertRules = (
 const isMember = (rules: readonly ClassicalRule[], rule: ClassicalRule) =>
   rules.some((other) => aconv(other.rule.prop, rule.rule.prop));
 
-// addI: an unsafe introduction rule, which intro: declares.
 export const addUnsafeIntro = (context: ClassicalContext, rule: Thm): Claset => {
   const claset = context.claset;
   if (
@@ -212,7 +198,6 @@ export const addUnsafeIntro = (context: ClassicalContext, rule: Thm): Claset => 
   };
 };
 
-// addE: an unsafe elimination rule.
 const addUnsafeElim = (context: ClassicalContext, rule: Thm): Claset => {
   const claset = context.claset;
   if (nprems(rule) < 1) throw new TlaIsabelleError("ERROR", "Ill-formed elimination rule");
@@ -234,7 +219,6 @@ const addUnsafeElim = (context: ClassicalContext, rule: Thm): Claset => {
   };
 };
 
-// addD: an unsafe destruction rule, which dest: declares.
 export const addUnsafeDest = (context: ClassicalContext, rule: Thm): Claset => {
   if (nprems(rule) < 1) throw new TlaIsabelleError("ERROR", "Ill-formed destruction rule");
   return addUnsafeElim(context, makeElim(rule));
@@ -246,13 +230,11 @@ const updateWrappers = (wrappers: readonly Wrapper[], wrapper: Wrapper) =>
     ? wrappers.map((other) => (other.name === wrapper.name ? wrapper : other))
     : [wrapper, ...wrappers];
 
-// addSafter: a safe tactic to try after safe_step_tac fails.
 export const addSafter = (claset: Claset, name: string, tactic: GoalTactic): Claset => ({
   ...claset,
   swrappers: updateWrappers(claset.swrappers, { name, wrap: (inner) => orElseGoal(inner, tactic) }),
 });
 
-// addbefore: a tactic to try before the unsafe step tactic, with backtracking.
 export const addbefore = (claset: Claset, name: string, tactic: GoalTactic): Claset => ({
   ...claset,
   uwrappers: updateWrappers(claset.uwrappers, { name, wrap: (inner) => appendGoal(tactic, inner) }),
@@ -264,14 +246,12 @@ const appSWrappers = (context: ClassicalContext, tactic: GoalTactic) =>
 export const appWrappers = (context: ClassicalContext, tactic: GoalTactic) =>
   context.claset.uwrappers.reduce((result, wrapper) => wrapper.wrap(result), tactic);
 
-// contr_tac: solves a goal that assumes both P and ~P.
 const contrTac = (context: ClassicalContext): GoalTactic =>
   thenGoal(
     eresolveTac(context.limits, [context.data.notElim]),
     orElseGoal(eqAssumeTac, assumeTac(context.limits)),
   );
 
-// eq_mp_tac: from P --> Q and P, keeps Q, without instantiating variables.
 const eqMpTac =
   (context: ClassicalContext): GoalTactic =>
   (index) =>
@@ -280,7 +260,6 @@ const eqMpTac =
       eqAssumeTac(index),
     );
 
-// safe_step_tac: one safe inference, by matching rather than unification.
 const safeStepTac = (context: ClassicalContext): GoalTactic =>
   appSWrappers(
     context,
@@ -293,7 +272,6 @@ const safeStepTac = (context: ClassicalContext): GoalTactic =>
     ]),
   );
 
-// safe_steps_tac: safe inferences on goal index for as long as they apply.
 export const safeStepsTac =
   (context: ClassicalContext): GoalTactic =>
   (index) =>
@@ -301,7 +279,6 @@ export const safeStepsTac =
       condTac(hasFewerPrems(index), noTac, (state) => safeStepTac(context)(index)(state)),
     );
 
-// safe_tac: safe inferences on all goals for as long as they apply.
 export const safeTac = (context: ClassicalContext): Tactic =>
   repeatDeterm1(firstGoalTac(safeStepsTac(context)));
 
@@ -325,7 +302,6 @@ const eqContrTac =
 const eqAssumeContrTac = (context: ClassicalContext) =>
   orElseGoal(eqAssumeTac, eqContrTac(context));
 
-// bimatch2_tac: two-way branching only where one branch closes at once.
 const bimatch2Tac =
   (context: ClassicalContext, netpair: NetPair<TaggedRule>): GoalTactic =>
   (index) =>
@@ -346,7 +322,6 @@ const clarifyStepTac = (context: ClassicalContext): GoalTactic =>
     ]),
   );
 
-// clarify_tac: safe steps that do not split the goal.
 export const clarifyTac = (context: ClassicalContext): GoalTactic =>
   selectGoal(repeatDeterm(clarifyStepTac(context)(1)));
 
@@ -365,7 +340,6 @@ const instStepTac = (context: ClassicalContext): GoalTactic =>
 export const unsafeStepTac = (context: ClassicalContext): GoalTactic =>
   biresolveFromNetsTac(context.limits, context.claset.unsafe);
 
-// step_tac: a safe step, or else an unsafe one.
 const stepTac =
   (context: ClassicalContext): GoalTactic =>
   (index) =>
@@ -380,15 +354,12 @@ export const fastTac = (context: ClassicalContext, atomizeRules: readonly Thm[])
     selectGoal(depthSolve(stepTac(context)(1))),
   );
 
-// Drule.size_of_thm, the sizef of Isabelle/TLA+'s Classical: the size of the proposition with its
-// flex-flex pairs.
 const sizeOfThm = (thm: Thm) =>
   thm.tpairs.reduce(
     (size, pair) => size + 2 + sizeOfTerm(pair[0]) + sizeOfTerm(pair[1]),
     sizeOfTerm(thm.prop),
   );
 
-// first_best_tac: best-first search with step_tac on the first goal.
 export const firstBestTac = (context: ClassicalContext, atomizeRules: readonly Thm[]): GoalTactic =>
   thenGoal(
     atomizePremsTac(context.limits, atomizeRules),

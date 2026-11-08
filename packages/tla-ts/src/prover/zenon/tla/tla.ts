@@ -1,7 +1,4 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// The TLA+ extension: rules for set theory, functions, records, tuples, CHOOSE, IF and CASE, and
-// rewriting a subterm with an equality on the branch.
 
 import {
   FALSE,
@@ -50,7 +47,6 @@ const OTHER_SYMBOLS = [
   "TLA.box",
 ];
 
-// The symbols that hypotheses can't define, as Zenon's predef with the tla extension.
 export const PREDEFINED_SYMBOLS = [
   "=",
   ...SET_CONSTRUCTORS,
@@ -75,7 +71,7 @@ const definition = (
   },
 });
 
-// Zenon's built_in_defs. Expressions belong to one run of the prover, so each run builds them.
+// Expressions belong to one run of the prover, so each run builds them.
 export const getBuiltInDefinitions = (exprs: Expressions): Phrase[] => {
   const bound = exprs.evar("x");
   const isInSet = exprs.eapp("TLA.in", [bound, exprs.evar("S")]);
@@ -122,7 +118,6 @@ export const getBuiltInDefinitions = (exprs: Expressions): Phrase[] => {
   ];
 };
 
-// The elements of a set given by enumeration, and whether it may hold more.
 const getSetValues = (set: Expr): [Expr[], boolean] => {
   if (isVariable(set, "TLA.emptyset")) return [[], false];
   if (isApp(set, "TLA.upair", 2)) return [set.args, false];
@@ -238,7 +233,6 @@ const getChoiceNodes = (literal: Literal): Item[] | undefined => {
   return undefined;
 };
 
-// The bounded quantifier over an enumerated set in \A x : x \in S => P or ~\E x : x \in S /\ P.
 const getEnumeratedQuantifier = (formula: Expr) => {
   const isEnumerated = (set: Expr) =>
     isVariable(set, "TLA.emptyset") ||
@@ -326,8 +320,6 @@ const getPropNodes = (context: TlaContext, formula: Expr, goalness: number): Ite
   );
 };
 
-// Zenon's newnodes_inst_bounded: instantiates \A x \in S : P and ~\E x \in S : P with the terms
-// known to be in S.
 const getBoundedInstances = (context: TlaContext, formula: Expr, goalness: number): Node[] => {
   const exprs = context.exprs;
   const index = context.index;

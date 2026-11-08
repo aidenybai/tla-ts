@@ -1,7 +1,5 @@
-// Ported from Isabelle2025's Provers/hypsubst.ML. Copyright (c) 1986-2025 University of
-// Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Substitution using an equality assumption x = t: eliminates x from the subgoal.
+// Ported from Isabelle2025's Provers/hypsubst.ML. Copyright (c) 1986-2025 University of Cambridge,
+// Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, revcutRl, thinRl, zeroVarIndexes } from "../pure/drule";
@@ -77,9 +75,7 @@ interface HypsubstContext {
   readonly data: HypsubstData;
 }
 
-// The equality offers no variable to eliminate.
 class NoMatch {}
-// The subgoal has no suitable equality.
 class EqVar {}
 
 const isTermError = (error: unknown) =>
@@ -96,8 +92,7 @@ const inspectContract = (term: Term) => {
 const hasVars = (term: Term) => (flagsOf(term) & HAS_VAR) !== 0;
 const hasTVars = (term: Term) => existsType((type) => maxidxOfTyp(type) >= 0, term);
 
-// inspect_pair: true to use the equality as it is, false to reorient it first, with the variable
-// to substitute.
+// True to use the equality as it is, false to reorient it first.
 const inspectPair = (
   isBound: boolean,
   isNoVars: boolean,
@@ -127,8 +122,6 @@ const inspectPair = (
   throw new NoMatch();
 };
 
-// eq_var: the number of assumptions before a substitutable equality, its orientation, and whether
-// it eliminates a free variable.
 const eqVar = (
   data: HypsubstData,
   isBound: boolean,
@@ -190,7 +183,6 @@ const withEqVar = (build: (goal: Term, index: number) => Tactic): GoalTactic =>
     }
   });
 
-// mk_eqs: the equality as a rewrite rule that eliminates its variable.
 const mkEqs = (data: HypsubstData, isBound: boolean, thm: Thm): Thm[] => {
   try {
     const [left, right] = data.destEq(data.destTrueprop(thm.prop));
@@ -354,8 +346,7 @@ const revDupElim = (thm: Thm) => {
   return result;
 };
 
-// hyp_subst_tac with hypsubst_thin off, its default: substitutes for free or bound variables and
-// drops equalities on bound variables.
+// With hypsubst_thin off, its default: drops equalities on bound variables.
 export const hypSubstTac =
   (context: HypsubstContext): GoalTactic =>
   (index) =>
@@ -386,7 +377,7 @@ const reverseNTac = (context: HypsubstContext, count: number, index: number): Ta
           ),
         );
 
-// all_imp_intr_tac: reintroduces the hypotheses, leaving the changed ones at the end.
+// Leaves the changed hypotheses at the end.
 const allImpIntrTac = (context: HypsubstContext, hyps: readonly Term[], index: number): Tactic => {
   const imptac =
     (count: number, remaining: readonly Term[]): Tactic =>
@@ -407,8 +398,7 @@ const allImpIntrTac = (context: HypsubstContext, hyps: readonly Term[], index: n
   return imptac(0, [...hyps].reverse());
 };
 
-// blast_hyp_subst_tac: the version for blast, which moves the hypotheses the substitution changes
-// to the front.
+// The version for blast, which moves the hypotheses the substitution changes to the front.
 export const blastHypSubstTac = (context: HypsubstContext): GoalTactic =>
   withEqVar((goal, index) => {
     const [count, [orientation]] = eqVar(context.data, false, false, false, goal);

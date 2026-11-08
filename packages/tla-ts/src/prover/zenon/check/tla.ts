@@ -1,6 +1,3 @@
-// The checks of the TLA+ extension's rules for booleans, CHOOSE, natural numbers, bounded
-// quantifiers and equal propositions, after the lemmas in Zenon.thy that justify them.
-
 import type { PlainRuleName } from "../proof";
 import {
   ensure,
@@ -18,8 +15,6 @@ import {
   type Term,
 } from "./terms";
 
-// From P and a = b, or ~P and a = b, where P is one side: P differs from that side, or the other
-// side holds.
 const getPropositionEqualitySpec = (
   args: Term[],
   isNegated: boolean,

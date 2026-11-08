@@ -1,7 +1,5 @@
 // Ported from Isabelle2025's Pure/envir.ML. Copyright (c) 1986-2025 University of Cambridge,
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Environments of assignments to schematic variables, and beta and eta normalization.
 
 import { TlaIsabelleError } from "../../../errors";
 import {
@@ -63,7 +61,6 @@ const initEnvir = emptyEnvir(-1);
 
 export const isEmptyEnvir = (envir: Envir) => isEmptyTable(envir.tenv) && isEmptyTable(envir.tyenv);
 
-// radixstring (26, "a", n)
 const radixString = (value: number): string => {
   const digits: number[] = [];
   let remaining = value;
@@ -74,7 +71,6 @@ const radixString = (value: number): string => {
   return digits.map((digit) => String.fromCharCode(97 + digit)).join("");
 };
 
-// Envir.genvars: fresh variables with an index above every present one.
 export const genvars = (name: string, envir: Envir, types: readonly Typ[]): [Envir, Var[]] => {
   const index = envir.maxidx + 1;
   const vars = types.map((type, position) =>
@@ -88,7 +84,6 @@ export const genvar = (name: string, envir: Envir, type: Typ): [Envir, Var] => {
   return [updated, vars[0]];
 };
 
-// Envir.lookup1: lookup without chasing type assignments, for environments from matching.
 export const lookup1 = (tenv: TEnv, variable: Var): Term | undefined => {
   const binding = lookupTable(tenv, variable);
   if (binding === undefined) return undefined;
@@ -120,7 +115,6 @@ export const update = (variable: Var, term: Term, envir: Envir): Envir => {
   };
 };
 
-// Envir.above: whether the least index updated exceeds limit.
 export const above = (envir: Envir, limit: number) => {
   const term = minTable(envir.tenv);
   const type = minTable(envir.tyenv);
@@ -129,7 +123,6 @@ export const above = (envir: Envir, limit: number) => {
   );
 };
 
-// Envir.vupdate: an assignment that suppresses higher indexes between variables.
 export const vupdate = (variable: Var, term: Term, envir: Envir): Envir => {
   if (term.kind !== "Var") return update(variable, term, envir);
   if (variable.name === term.name && variable.index === term.index) return envir;
@@ -191,7 +184,6 @@ const normTerm2 = (envir: Envir, term: Term): Term => {
   }
 };
 
-// Envir.norm_term: instantiates the environment and beta-normalizes.
 export const normTerm = (envir: Envir, term: Term): Term => {
   if (isEmptyEnvir(envir) && !couldBetaContract(term)) return term;
   return isEmptyTable(envir.tyenv) ? normTerm1(envir.tenv, term) : normTerm2(envir, term);
@@ -199,7 +191,6 @@ export const normTerm = (envir: Envir, term: Term): Term => {
 
 export const betaNorm = (term: Term) => normTerm(initEnvir, term);
 
-// Envir.head_norm: normalizes the head only, for unification.
 export const headNorm = (envir: Envir, term: Term): Term => {
   if ((flagsOf(term) & (HAS_VAR | HAS_REDEX)) === 0) return term;
   switch (term.kind) {
@@ -250,7 +241,6 @@ const etaSame = (term: Term): Term => {
   return term;
 };
 
-// Envir.eta_contract
 export const etaContract = (term: Term) => (couldEtaContract(term) ? etaSame(term) : term);
 
 export const aeconv = (left: Term, right: Term) =>
@@ -275,7 +265,6 @@ export const envBinderTypes = (envir: Envir, type: Typ): Typ[] => {
   return [];
 };
 
-// Envir.fastype: the type of a term, chasing type assignments at applications.
 export const fastype = (envir: Envir, types: readonly Typ[], term: Term): Typ => {
   switch (term.kind) {
     case "App": {
@@ -295,7 +284,6 @@ export const fastype = (envir: Envir, types: readonly Typ[], term: Term): Typ =>
   }
 };
 
-// Envir.subst_term: instantiates without chasing variables.
 const substTermAux = (tyenv: TyEnv, tenv: TEnv, term: Term): Term => {
   if (maxidxOfTerm(term) < 0) return term;
   switch (term.kind) {

@@ -1,7 +1,4 @@
 // Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-//
-// Zenon's newnodes: each rule in turn suggests nodes for a formula added to a branch, until one
-// says that the rest don't apply.
 
 import type { Relations } from "./eqrel";
 import {

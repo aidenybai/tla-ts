@@ -1,5 +1,5 @@
-// tlapm's expansions of temporal operators (Expr.Tla_norm), constant detection (Expr.Constness), and
-// the time of a fact (Expr.Temporal_props): a fact holds always when it is closed under [].
+// tlapm's Expr.Tla_norm, Expr.Constness and Expr.Temporal_props, where a fact holds always when it
+// is closed under [].
 
 import {
   adjoin,
@@ -27,7 +27,6 @@ const applyUnchanged = (expression: Expr) => applyBuiltin("UNCHANGED", [expressi
 const getEquality = (expression: Expr) =>
   applyBuiltin("Eq", [applyBuiltin("Prime", [expression], expression), expression], expression);
 
-// E_tla_norm.rewrite_unch: UNCHANGED <<x, <<y>>>> as x' = x /\ y' = y.
 export const rewriteUnchanged = (expression: Expr): Expr => {
   const flatten = (inner: Expr): Expr[] =>
     inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
@@ -275,8 +274,7 @@ export const isConstant = (scope: Scope | undefined, expression: Expr): boolean 
   }
 };
 
-// Temporal_props.box_closure: whether the formula is equivalent to [] of itself, judged by its
-// shape. Under a negation or on the left of =>, <> takes the place of [].
+// Under a negation or on the left of =>, <> takes the place of [].
 const isClosed = (scope: Scope | undefined, expression: Expr, isBox: boolean): boolean => {
   if (isConstant(scope, expression)) return true;
   if (expression.kind === "Internal")
@@ -313,8 +311,6 @@ export const getTime = (scope: Scope | undefined, expression: Expr): Time =>
     ? "Always"
     : "Now";
 
-// Temporal_props.check_time_change: a proof stays in the always scope while no fact it assumes
-// holds only now.
 export const getScopeTime = (context: Hyp[], time: Time): Time =>
   time === "Always" && context.some((hyp) => hyp.kind === "Fact" && hyp.time === "Now")
     ? "Now"

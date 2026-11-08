@@ -1,6 +1,4 @@
-// A port of tlapm's Proof.Simplify, which rewrites each proof into the steps Proof.Gen handles:
-// BY becomes USE steps and an OBVIOUS QED, and HAVE, TAKE, WITNESS, CASE and PICK become
-// assertions.
+// A port of tlapm's Proof.Simplify, which rewrites each proof into the steps Proof.Gen handles.
 
 import { TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
@@ -58,8 +56,6 @@ const isBinary = (
 const getMessage = (pattern: string, ...args: (string | Doc)[]) =>
   renderDoc(format(pattern, ...args));
 
-// Visit.hyps_of_bounds_unditto: dittos repeat the previous domain, and each domain shifts past the
-// names bound before it.
 const getBoundHyps = (bounds: Bound[]): Hyp[] =>
   expandDittoes(bounds).map((bound, index): Hyp => {
     const domain =
@@ -97,7 +93,6 @@ const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
     : shifted;
 };
 
-// A WITNESS proves each membership and subset it relies on, then the goal from them.
 const getWitnessProof = (step: Step, sideFacts: Expr[]): Proof => {
   if (sideFacts.length === 0 || step.isSuppressed) return { kind: "Obvious", ...getProps(step) };
   const steps = sideFacts.map((item, index): Step => {

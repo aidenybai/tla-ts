@@ -1,10 +1,7 @@
 // Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Paulson's generic tableau prover with proof reconstruction. It converts subgoal 1 to
-// prototerms, Skolemizing its parameters, searches for a tableau proof with the claset's rules,
-// and replays the proof with Isabelle tactics, so the kernel checks every result. Blast ignores
-// the claset's wrappers and the elimination rules whose conclusion is not a formula variable.
+// Blast ignores the claset's wrappers and the elimination rules whose conclusion is not a formula
+// variable.
 
 import { TlaIsabelleError } from "../../../../errors";
 import { selectGoal } from "../../pure/goal";
@@ -46,7 +43,6 @@ import {
 
 export type { BlastContext } from "./state";
 
-// Blast's depth_limit configuration option.
 const DEPTH_LIMIT = 20;
 
 // TRANS: the subgoal has no translation, such as one applying an unknown to a non-parameter.
@@ -73,11 +69,9 @@ const discardForalls = (term: Term): Term =>
 interface SubgoalVar {
   readonly key: string;
   readonly ref: VarRef;
-  // The parameters the variable is applied to.
   readonly bounds: readonly number[];
 }
 
-// Translates a subgoal, Skolemizing all its parameters.
 const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
   const vars: SubgoalVar[] = [];
   const tvars: VarEntry[] = [];
@@ -141,8 +135,8 @@ interface EveryTrail {
   readonly next: EveryTrail | undefined;
 }
 
-// EVERY, as a loop: Isabelle's EVY and evyBack call each other in tail position, so backtracking
-// over a long reconstruction must not grow the stack.
+// Isabelle's EVY and evyBack call each other in tail position, so this loops to keep backtracking
+// over a long reconstruction from growing the stack.
 const everyTac =
   (tactics: readonly Tactic[]): Tactic =>
   (start) => {
@@ -189,7 +183,6 @@ const initBranch = (terms: readonly BlastTerm[], lim: number): Branch => ({
   lim,
 });
 
-// The tableau engine and proof reconstruction on subgoal 1, with depth limit lim.
 const rawBlast =
   (context: BlastContext, lim: number): Tactic =>
   (goalState) => {
@@ -230,7 +223,6 @@ const rawBlast =
     }
   };
 
-// Blast.depth_tac: blast with a fixed depth limit.
 export const blastDepthTac =
   (context: BlastContext, limit: number): GoalTactic =>
   (index) =>
@@ -238,7 +230,6 @@ export const blastDepthTac =
       thenTac(atomizePremsTac(context.limits, context.data.atomize)(1), rawBlast(context, limit)),
     )(index);
 
-// Search.DEEPEN (1, lim) from depth m on goal 1.
 const deepen =
   (context: BlastContext, limit: number, depth: number): Tactic =>
   (state): Seq<Thm> =>
@@ -246,7 +237,6 @@ const deepen =
       ? emptySeq
       : orElse(rawBlast(context, depth), deepen(context, limit, depth + 1))(state);
 
-// Blast.blast_tac: iterative deepening up to the depth limit.
 export const blastTac =
   (context: BlastContext): GoalTactic =>
   (index) =>

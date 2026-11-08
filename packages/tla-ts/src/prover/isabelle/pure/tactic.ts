@@ -100,7 +100,6 @@ export interface NetPair<Tagged> {
   readonly elim: Net<Tagged>;
 }
 
-// Tactic.insert_tagged_brl
 export const insertTaggedBrl = <Tagged extends { isElim: boolean; rule: Thm }>(
   tagged: Tagged,
   netpair: NetPair<Tagged>,
@@ -109,8 +108,8 @@ export const insertTaggedBrl = <Tagged extends { isElim: boolean; rule: Thm }>(
     ? { intro: netpair.intro, elim: insertTermNet(majorPremOf(tagged.rule), tagged, netpair.elim) }
     : { intro: insertTermNet(conclOf(tagged.rule), tagged, netpair.intro), elim: netpair.elim };
 
-// Library.order_list: by tag, dropping all but the last item with each tag. The lists are short,
-// so this sorts them by insertion, which keeps items with equal tags in order as Isabelle's sort.
+// The lists are short, so this sorts them by insertion, which keeps items with equal tags in order
+// as Isabelle's sort.
 export const orderList = <Item>(items: readonly { tag: number; item: Item }[]): Item[] => {
   const sorted = [...items];
   for (let index = 1; index < sorted.length; index += 1) {
@@ -127,7 +126,6 @@ export const orderList = <Item>(items: readonly { tag: number; item: Item }[]): 
   return result;
 };
 
-// Tactic.biresolution_from_nets_tac
 export const biresolutionFromNetsTac = <Tagged extends { isElim: boolean; rule: Thm }>(
   limits: Limits,
   order: (rules: Tagged[]) => BiresRule[],
@@ -158,7 +156,6 @@ export const biresolveFromNetsTac = (limits: Limits, netpair: NetPair<TaggedRule
 export const bimatchFromNetsTac = (limits: Limits, netpair: NetPair<TaggedRule>) =>
   biresolutionFromNetsTac(limits, orderTagged, true, netpair);
 
-// The number of new subgoals of a rule.
 export const subgoalsOfBrl = (brule: { isElim: boolean; rule: Thm }) =>
   brule.isElim ? nprems(brule.rule) - 1 : nprems(brule.rule);
 

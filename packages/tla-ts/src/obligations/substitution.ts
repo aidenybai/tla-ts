@@ -63,7 +63,6 @@ const applyIndex = (substitution: Substitution, index: number, from: Expr): Expr
 export const substituteExprs = (substitution: Substitution, expressions: Expr[]) =>
   expressions.map((expression) => substituteExpr(substitution, expression));
 
-// Beta-reduces a lambda applied to arguments, as E_subst.normalize does.
 export const normalizeApply = (operator: Expr, args: Expr[]): ExprCore => {
   if (operator.kind === "Lambda") {
     if (operator.params.length !== args.length) throw new TlaProofError("Arity mismatch");

@@ -75,8 +75,7 @@ type StepCore =
 export const getStepName = (step: StepNumber) =>
   step.kind === "Named" ? `<${step.level}>${step.label}` : `<${step.level}>`;
 
-// Std.unique: one counter for the whole run, shared by the parser, anonymization, and
-// simplification, so anonymous step names match tlapm's.
+// One counter for the whole run, as Std.unique, so anonymous step names match tlapm's.
 export interface Counter {
   value: number;
 }

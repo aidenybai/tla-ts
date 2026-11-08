@@ -1,5 +1,4 @@
-// Expr.Action.implication_to_enabled, the ENABLEDaxioms frontend: it proves a rule about ENABLED
-// from facts of the form the rule needs.
+// A port of tlapm's Expr.Action.implication_to_enabled, the ENABLEDaxioms frontend.
 
 import { TlapmBugError, TlaProverError } from "../../errors";
 import { shiftExpr } from "../../obligations/substitution";
@@ -43,7 +42,6 @@ const getEnabled = (expression: Expr) =>
     ? expression.args[0]
     : undefined;
 
-// Both operands of the connective, when each is an ENABLED.
 const getEnabledOperands = (expression: Expr, builtin: Builtin) => {
   const operands = getOperands(expression, builtin);
   const left = operands && getEnabled(operands[0]);
@@ -51,7 +49,6 @@ const getEnabledOperands = (expression: Expr, builtin: Builtin) => {
   return left && right ? [left, right] : undefined;
 };
 
-// E_visit.collect_primed_vars: the variables under a prime, an UNCHANGED, or a subscript.
 const getPrimedVariables = (scope: Scope | undefined, expression: Expr) => {
   const names = new Set<string>();
   const visit = (state: { scope: Scope | undefined; isPrimed: boolean }, inner: Expr): Expr => {
@@ -93,7 +90,6 @@ const isDisjoint = (scope: Scope | undefined, left: Expr, right: Expr) => {
   return [...getPrimedVariables(scope, right)].every((name) => !leftNames.has(name));
 };
 
-// check_active: the rule the goal's form calls for, with the operands the facts must mention.
 const getRule = (scope: Scope | undefined, goal: Expr): Rule | undefined => {
   const getLevelOf = (expression: Expr) => getLevelInfo(scope, expression).level;
   const assertActions = (left: Expr, right: Expr) => {
@@ -138,9 +134,7 @@ const getRule = (scope: Scope | undefined, goal: Expr): Rule | undefined => {
   return implication && { name: "implies", left: implication[0], right: implication[1] };
 };
 
-// implication_to_enabled: the goal follows by the rule its form calls for when a visible fact is
-// the rule's premise and others say that both operands are in BOOLEAN, or the premise is an
-// equivalence. The goal then becomes TRUE; otherwise tlapm records the obligation as not tried.
+// When no rule applies, tlapm records the obligation as not tried.
 export const implicationToEnabled = (
   sequent: Sequent,
   locus: Locus | undefined,

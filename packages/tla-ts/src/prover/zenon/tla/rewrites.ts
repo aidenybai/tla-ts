@@ -1,7 +1,4 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// Rewriting a subterm: unfolding a definition, evaluating a function application, IF, CASE or a
-// formula used as a term, or replacing the subterm with an equal one from the branch.
 
 import { TlaZenonError } from "../../../errors";
 import {
@@ -113,7 +110,6 @@ const getRewrites = (
       ],
     );
   };
-  // Rewrites the term with the equalities on the branch whose other side has one of these heads.
   const makeEqualityRewrites = (wrapped: Expr, heads: string[], subterm: Expr) => {
     const hasGoodHead = (other: Expr) =>
       (other.kind === "app" || other.kind === "var") &&
@@ -394,8 +390,6 @@ const hasExistential = (exprs: Expressions, index: Index, choice: BinderExpr) =>
   return index.isMember(exprs.eex(choice.args[0], choice.symbol, body));
 };
 
-// Zenon's find_rewrites: the rewrites of the outermost subterm that has some, looking through
-// applications and negations.
 const findRewrites = (
   context: TlaContext,
   isInTerm: boolean,

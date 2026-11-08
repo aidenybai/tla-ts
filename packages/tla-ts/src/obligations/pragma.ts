@@ -1,5 +1,5 @@
-// tlapm's method pragmas: the new (*{ by (prover:"zenon"; timeout:@) }*) after a definition, which
-// E_parser.read_new_method reads into a Bpragma, and the old (*{ by (zenon) }*) of Method_prs.
+// tlapm's method pragmas: the new (*{ by (prover:"zenon"; timeout:@) }*) after a definition, and
+// the old (*{ by (zenon) }*) of Method_prs.
 
 import type { Locus } from "./expression";
 
@@ -41,7 +41,6 @@ const skipBlanks = (lines: string[], position: Position) => {
   }
 };
 
-// Where the pragma after start opens, past blanks and line ends.
 export const findPragma = (lines: string[], start: Position) => {
   const position = { ...start };
   skipBlanks(lines, position);
@@ -88,7 +87,6 @@ const getValue = (token: Token | undefined): PragmaValue | undefined => {
   return isPunct(token, "@") ? { kind: "Default" } : undefined;
 };
 
-// The methods of Method_prs's old pragma syntax, by the name Method.prover_meth_of_tac gives them.
 const OLD_METHODS = new Map([
   ["smt", "smt"],
   ["cvc3", "cvc4"],
@@ -117,16 +115,12 @@ const OLD_METHODS = new Map([
   ["trivial", "trivial"],
 ]);
 
-// An old-style method, with the tactic an isabelle method takes and the timeout in seconds an
-// isabelle or zenon method may take.
 export interface OldMethod {
   name: string;
   tactic?: string;
   timeout?: number;
 }
 
-// Method_prs.read_method: the (*{ by (zenon) }*) after a BY, OBVIOUS, proof step, theorem, or
-// axiom, which names one method, isabelle with a tactic, or zenon with a timeout and a fallback.
 export const readOldMethod = (lines: string[], start: Position) => {
   const tokens = tokenizePragma(lines, start);
   if (!tokens) return undefined;
@@ -166,8 +160,7 @@ export const readOldMethod = (lines: string[], start: Position) => {
   return index === tokens.length ? method : undefined;
 };
 
-// read_new_method: by (hint: value; ...), repeated, where a value is a string, a number, or @ for
-// the argument the definition is applied to.
+// A value is a string, a number, or @ for the argument the definition is applied to.
 export const readNewMethod = (lines: string[], start: Position, file: string) => {
   const tokens = tokenizePragma(lines, start);
   if (!tokens) return undefined;

@@ -1,6 +1,3 @@
-// The Isabelle/TLA+ object logic that tlapm ships, decoded from logic-data.ts: its constants, the
-// theorems its theories prove, and the order of the simpset and the classical rule nets.
-
 import { axiomThm, type Thm } from "../pure/thm";
 import type { ClassicalRule } from "../provers/classical";
 import {
@@ -61,7 +58,6 @@ interface LogicJson {
 export interface ConstInfo {
   readonly type: Typ;
   readonly typargs: readonly TypargPosition[];
-  // The right-hand side of an abbreviation, which parsing unfolds.
   readonly abbreviation: Term | undefined;
 }
 
@@ -82,7 +78,6 @@ export interface LogicNetPair<Item> {
 
 export interface TlaLogic {
   readonly consts: ReadonlyMap<string, ConstInfo>;
-  // The constant each unqualified name stands for.
   readonly constNames: ReadonlyMap<string, string>;
   readonly facts: ReadonlyMap<string, readonly Thm[]>;
   readonly factNames: ReadonlyMap<string, string>;

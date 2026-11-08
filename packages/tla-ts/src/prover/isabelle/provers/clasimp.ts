@@ -1,8 +1,6 @@
 // Ported from Isabelle2025's Provers/clasimp.ML and the prune_params_tac of Pure/tactic.ML.
 // Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
 // contributors, see LICENSE.
-//
-// The classical reasoner combined with the simplifier: auto, clarsimp and force.
 
 import { trivForallEquality } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
@@ -49,11 +47,9 @@ import {
 export interface ClasimpContext {
   readonly classical: ClassicalContext;
   readonly simp: SimpContext;
-  // Blast.depth_tac, the Blast argument of the Clasimp functor.
   readonly blastDepthTac: (context: ClassicalContext, limit: number) => GoalTactic;
 }
 
-// addss: the simplifier as an unsafe wrapper.
 const addss = (context: ClasimpContext): ClassicalContext =>
   withClaset(
     context.classical,
@@ -62,7 +58,6 @@ const addss = (context: ClasimpContext): ClassicalContext =>
     ),
   );
 
-// addSss: the simplifier as a safe wrapper.
 const addSss = (context: ClasimpContext): ClassicalContext =>
   withClaset(
     context.classical,
@@ -97,7 +92,6 @@ const nodupDepthTac =
       ),
     )(index)(state);
 
-// prune_params_tac: drops the parameters that no goal uses.
 const pruneParamsTac = (simp: SimpContext): Tactic => {
   const empty = { ...simp, simpset: emptySimpset };
   const context = { ...empty, simpset: addSimps(empty, [trivForallEquality]) };
@@ -137,7 +131,6 @@ const mkAutoTac = (context: ClasimpContext, depth: number, nodupDepth: number): 
 
 export const autoTac = (context: ClasimpContext) => mkAutoTac(context, 4, 2);
 
-// force_tac: aims to solve the goal outright, with clarify, the simplifier and best-first search.
 export const forceTac = (context: ClasimpContext, atomizeRules: readonly Thm[]): GoalTactic => {
   const classical = addss(context);
   return selectGoal(

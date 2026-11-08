@@ -1,5 +1,4 @@
-// A port of tlapm's obligation printer: E_fmt with Fmtutil's minimal parenthesization, and the
-// identifier renaming in Ctx.
+// A port of tlapm's obligation printer: E_fmt with Fmtutil's minimal parenthesization.
 
 import { TlaProofError } from "../errors";
 import {
@@ -16,8 +15,7 @@ import {
 import { format, formatDelimited, renderDoc, text, type Doc } from "./format";
 import { getStandardForm, lookupOperator } from "./operators";
 
-// Ctx, which names each binder apart from the names in scope by adding a salt, as a mutable stack:
-// printers bind and unbind names in strict nesting order.
+// A mutable stack, since printers bind and unbind names in strict nesting order.
 interface Ident {
   rep: string;
   salt: number;
@@ -38,7 +36,7 @@ export const createContext = (): Context => ({
   defined: new Map(),
 });
 
-// The name of the binder index places in, counting from 1 for the innermost.
+// Counts from 1 for the innermost binder.
 export const getBoundName = (context: Context, index: number) => {
   const ident = context.stack[context.stack.length - index];
   return ident && getIdentName(ident);
@@ -627,7 +625,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
     }
   };
 
-  // pp_print_defn: returns the definition's document and binds its name for what follows.
+  // Binds the definition's name for what follows.
   const printDefinition = (definition: Defn): Doc => {
     switch (definition.kind) {
       case "Operator":
@@ -681,7 +679,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
     }
   };
 
-  // pp_print_hyp: prints the hypothesis in the context before it, then binds it.
+  // Prints the hypothesis in the context before it, then binds it.
   const printHyp = (hyp: Hyp): Doc => {
     switch (hyp.kind) {
       case "Fresh": {

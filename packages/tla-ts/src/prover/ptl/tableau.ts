@@ -1,7 +1,4 @@
-// Decides satisfiability of propositional linear temporal logic over infinite traces, the logic LS4
-// decides. A tableau node is the set of formulas that must hold now. A SAT call per step picks the
-// atoms and the formulas the next node must hold, and the formula is satisfiable when a reachable
-// strongly connected component can fulfill every eventuality it postpones.
+// Decides propositional LTL over infinite traces, the logic LS4 decides.
 
 import type { Verdict } from "../verdict";
 import { createSolver } from "./sat";
@@ -131,10 +128,8 @@ const createTable = () => {
   return { normals, normalize };
 };
 
-// Every way to satisfy the formulas now, keeping only the steps that require the fewest next
-// formulas and leave the fewest eventualities pending. A step that requires more of both can only
-// do what a smaller one can, so dropping it keeps the decision complete. Undefined once isExpired
-// turns true.
+// Keeps only the steps that need the fewest next formulas and pending eventualities, since a larger
+// step can only do what a smaller one can.
 const getSteps = (
   normals: Normal[],
   formulas: number[],
@@ -216,8 +211,8 @@ const getSteps = (
   for (;;) {
     const model = solver.solve([]);
     if (typeof model === "string") return model === "unsat" ? steps : undefined;
-    // Drops each chosen variable that a model with no other choice can do without. A variable one
-    // pass keeps stays needed as the set shrinks, so the set that remains is minimal.
+    // A variable one pass keeps stays needed as the set shrinks, so the set that remains is
+    // minimal.
     const minimal = choices.reduce<Int8Array | undefined>((current, choice) => {
       if (current?.[choice] !== 1) return current;
       const unchosen = choices.filter((other) => current[other] !== 1);
@@ -235,7 +230,6 @@ const getSteps = (
   }
 };
 
-// Whether the formula is satisfiable, or unknown once isExpired turns true.
 export const getSatisfiability = (formula: PtlFormula, isExpired: () => boolean): Verdict => {
   const table = createTable();
   const nodes: number[][] = [];
@@ -256,7 +250,6 @@ export const getSatisfiability = (formula: PtlFormula, isExpired: () => boolean)
     if (!steps) return "unknown";
     edges.push(steps.map((step) => ({ target: getNode(step.next), pending: step.pending })));
   }
-  // Tarjan's algorithm, checking each component as it closes.
   const indices = new Int32Array(nodes.length).fill(-1);
   const lowlinks = new Int32Array(nodes.length);
   const components = new Int32Array(nodes.length).fill(-1);

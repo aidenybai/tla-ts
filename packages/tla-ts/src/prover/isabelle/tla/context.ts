@@ -1,6 +1,3 @@
-// The proof context of a theory tlapm writes, as the Isabelle/TLA+ heap sets it up: its simpset,
-// claset, context rules and atomize rules, and Blast instantiated as PredicateLogic.thy does.
-
 import { TlaIsabelleError } from "../../../errors";
 import type { ProofContext } from "../isar/method";
 import { emptyNet } from "../pure/net";

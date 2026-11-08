@@ -1,5 +1,4 @@
-// Converts the tla-ts AST into tlapm's parse trees: expressions name operators opaquely until
-// anonymization resolves them, and proof steps get tlapm's levels and anonymous step numbers.
+// Converts the tla-ts AST into tlapm's parse trees.
 
 import type {
   AssumeProve,
@@ -149,7 +148,6 @@ export const createSource = (
     return method ? { location: withPragma(location), method } : { location };
   };
 
-  // Module.Parser's with_meth, which wraps the expression a method follows.
   const withExpressionMethod = (expression: Expr, range: SourceRange | undefined): Expr => {
     const method = getMethod(range);
     return method ? at({ kind: "With", expression, method }, expression) : expression;
@@ -174,7 +172,6 @@ export const createSource = (
     });
   };
 
-  // A name with ! selects through instances, which anonymization resolves by joining the names.
   const convertName = (
     name: string,
     args: Expr[],

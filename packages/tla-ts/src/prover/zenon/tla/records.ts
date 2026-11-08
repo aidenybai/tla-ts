@@ -1,6 +1,4 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// The rules for tuples and records.
 
 import { compareExprs, isApp, type Expr } from "../expr";
 import { stableSort } from "../ocaml";
@@ -25,7 +23,7 @@ const getStringName = (expression: Expr) =>
     ? expression.args[0].symbol
     : undefined;
 
-// Zenon's check_record_labels on sorted fields: false for Invalid_record, a repeated label.
+// False for Zenon's Invalid_record, a repeated label.
 const hasDistinctLabels = (pairs: [Expr, Expr][]) => {
   for (let index = 0; index + 1 < pairs.length; index++) {
     const left = pairs[index][0];

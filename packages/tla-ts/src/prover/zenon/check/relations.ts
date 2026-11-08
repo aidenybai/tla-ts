@@ -1,6 +1,5 @@
-// Whether the hypotheses make a relation reflexive, symmetric or transitive, which Zenon's rules for
-// relations other than = rely on. The property holds when no way for the relation to hold among
-// three elements satisfies the ground instances of the hypotheses and breaks the property.
+// A property holds when no way for the relation to hold among three elements satisfies the ground
+// instances of the hypotheses and breaks the property.
 
 import type { CheckContext, RelationProperty, Term } from "./terms";
 
@@ -16,10 +15,8 @@ const ELEMENTS = [0, 1, 2];
 // The type Zenon gives a variable that its binder leaves untyped, which ranges over everything.
 const UNTYPED = "zenon_U";
 
-// The ground instances of a hypothesis over three elements. A universal quantifier where the
-// hypothesis asserts it, or an existential where it denies it, becomes a test over the three
-// elements, which the hypothesis implies. Undefined when the hypothesis says anything but how the
-// relation holds between bound variables, so that it's left out.
+// Undefined when the hypothesis says anything but how the relation holds between bound variables,
+// so that it's left out.
 const getGroundTest = (
   formula: Term,
   symbol: string,
@@ -92,7 +89,6 @@ const getGroundTest = (
   }
 };
 
-// = has every property. Another relation has the ones the hypotheses give it.
 export const createRelationProperties = (context: CheckContext) => {
   const cache = new Map<string, boolean>();
   const hasProperty = (symbol: string, property: RelationProperty) => {

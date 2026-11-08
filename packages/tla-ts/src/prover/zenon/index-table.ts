@@ -1,8 +1,5 @@
 // Ported from Zenon's index.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-//
-// The formulas on the current branch, indexed by head symbol, by the sides of equalities and
-// transitive relations, and the cache of proved lemmas. Formulas are added and removed in LIFO
-// order as the search descends and backtracks. Lists keep Zenon's order, latest first.
+// Lists keep Zenon's order, latest first.
 
 import {
   isNegatedRelation,
@@ -27,7 +24,6 @@ interface Suspect {
   records: LemmaRecord[];
 }
 
-// A stack of values per key, as a Hashtbl with Hashtbl.add and Hashtbl.remove.
 const pushValue = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
   const values = table.get(key);
   if (values === undefined) table.set(key, [value]);
@@ -44,7 +40,7 @@ const popValue = <Key, Value>(table: Map<Key, Value[]>, key: Key) => {
 const getLatestFirst = <Key, Value>(table: Map<Key, Value[]>, key: Key) =>
   [...(table.get(key) ?? [])].reverse();
 
-// Zenon's head of a term, or undefined for No_head. Taus and metavariables are heads by identity.
+// Taus and metavariables are heads by identity.
 type Head = string | Expr;
 
 export const getHead = (expression: Expr): Head | undefined => {
@@ -72,8 +68,7 @@ export const getHead = (expression: Expr): Head | undefined => {
 const getHeadKey = (head: Head) =>
   typeof head === "string" ? head : head.kind === "tau" ? "t." : "";
 
-// Zenon's add_element and remove_element on a table of lists. Removing from a one-element list
-// drops the key whatever the element, as Zenon does.
+// Removing from a one-element list drops the key whatever the element, as Zenon does.
 const addElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
   const values = table.get(key);
   if (values === undefined) table.set(key, [value]);
@@ -91,7 +86,6 @@ const removeElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Va
 
 const getValues = <Key, Value>(table: Map<Key, Value[]>, key: Key) => getLatestFirst(table, key);
 
-// Keys pair a relation with a head. Heads that are expressions are told apart by identity.
 const getHeadId = (head: Head) => (typeof head === "string" ? `s${head}` : `e${head.id}`);
 
 const getRelationKey = (relation: string, head: Head) => `${relation}\u0000${getHeadId(head)}`;
@@ -129,7 +123,6 @@ export const createIndex = (exprs: Expressions) => {
   const withGoalness = <Formula extends Expr>(list: Formula[]): [Formula, number][] =>
     list.map((formula) => [formula, getGoalness(formula)]);
 
-  // Zenon's negpos: a negation under the head of its operand, anything else under its own head.
   const actOnHead = (
     formula: Expr,
     action: <Formula extends Expr>(
@@ -240,7 +233,7 @@ export const createIndex = (exprs: Expressions) => {
     if (lemma !== undefined) lemma.isPresent = false;
   };
 
-  // Zenon's add_trans, which stops at the first side without a head. False means No_head.
+  // Stops at the first side without a head, as Zenon's add_trans. False means No_head.
   const addTrans = (formula: RelationExpr) => {
     const leftHead = getHead(formula.args[0]);
     if (leftHead === undefined) return false;
@@ -276,8 +269,8 @@ export const createIndex = (exprs: Expressions) => {
     suspects.unshift([{ proof, cursor: 0, records }]);
   };
 
-  // A cached lemma whose conclusions are all on the branch. A lemma waits on the first conclusion
-  // that is missing, and is checked again when that formula comes back.
+  // A lemma waits on the first conclusion that is missing, and is checked again when that formula
+  // comes back.
   const searchLemma = (): Proof | undefined => {
     for (const formula of newFormulas) {
       const record = lemmas.get(formula);

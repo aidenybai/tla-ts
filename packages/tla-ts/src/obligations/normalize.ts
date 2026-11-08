@@ -1,5 +1,4 @@
-// A port of tlapm's Module.Elab: normalization anonymizes a module unit by unit and expands each
-// instance into the units of the module it instantiates.
+// A port of tlapm's Module.Elab.
 
 import { TlaProofError, TlapmBugError } from "../errors";
 import { lambdify } from "./action";
@@ -93,8 +92,7 @@ const lambdifyUnit = (pipeline: Pipeline, scope: Scope | undefined, unit: Module
   return { ...unit, definition: { ...definition, body } };
 };
 
-// lambdify_enabled_cdot: the ENABLED and \cdot of each definition and theorem statement bind
-// their variables before instantiation substitutes for them. A theorem that cannot be lambdified
+// Variables bind before instantiation substitutes for them, and a theorem that cannot be lambdified
 // states TRUE.
 const lambdifyUnits = (
   pipeline: Pipeline,
@@ -110,7 +108,6 @@ const lambdifyUnits = (
     return [adjoinAll(current, getUnitHyps(lambdified)), lambdified];
   });
 
-// apply_subst: each parameter declaration of the instancee gives way to its substitute.
 const applyParameters = (units: ModuleUnit[], substitutes: Map<string, Expr>) => {
   const body: ModuleUnit[] = [];
   let size = 0;
@@ -143,8 +140,6 @@ const applyParameters = (units: ModuleUnit[], substitutes: Map<string, Expr>) =>
   return body;
 };
 
-// resub_for: references to the instancee's own units become applications to the instance
-// arguments, which the definitions now bind themselves.
 const getLocalSubstitution = (
   count: number,
   argumentCount: number,
@@ -172,8 +167,6 @@ const addParameters = (expression: Expr, args: string[]): Expr => {
     : at({ kind: "Lambda", params, body: expression }, expression);
 };
 
-// localize: names the instancee's units under the instance name, salting its local definitions, and
-// abstracts each over the instance arguments.
 const localize = (
   pipeline: Pipeline,
   units: ModuleUnit[],
@@ -265,8 +258,6 @@ const localize = (
   return body;
 };
 
-// localize_axioms: an axiom becomes a hypothesis of each theorem after it, and a named one also a
-// definition.
 const localizeAxioms = (units: ModuleUnit[]) => {
   const body: ModuleUnit[] = [];
   let rest = units;
@@ -322,7 +313,6 @@ const getParameters = (module: Mule) =>
     ),
   );
 
-// Module.Elab.instantiate: the units of an instantiated module, in the context of the instance.
 const instantiate = (
   pipeline: Pipeline,
   modules: Map<string, Mule>,
@@ -391,7 +381,6 @@ const instantiate = (
   );
 };
 
-// make_defs: the definitions among the units an INSTANCE inside a LET or DEFINE stands for.
 export const expandInstance = (
   pipeline: Pipeline,
   scope: Scope | undefined,
@@ -430,9 +419,6 @@ export const expandInstance = (
   return definitions;
 };
 
-// Module.Elab.normalize: anonymizes each unit in the context of the ones before it, expands
-// instances, merges repeated definitions, and simplifies the proofs of important modules. The
-// result also joins the modules that later instances can name.
 export const normalize = (
   pipeline: Pipeline,
   modules: Map<string, Mule>,

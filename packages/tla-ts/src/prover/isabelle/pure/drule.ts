@@ -1,6 +1,6 @@
-// Ported from Isabelle2025's Pure/drule.ML, Pure/term_subst.ML and the basic rules of Pure.thy.
-// Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
-// contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/drule.ML, Pure/term_subst.ML and Pure.thy. Copyright (c)
+// 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
+// LICENSE.
 
 import { cleanName, emptyNameContext, variantList, variantName, type NameContext } from "./name";
 import {
@@ -97,7 +97,6 @@ export const trivForallEquality = axiomThm(
   mkEquals(mkApp(allConst(typeA), mkAbs("x", typeA, propVar("V"))), propVar("V")),
 );
 
-// Drule.norm_hhf_eq: (PROP ?phi ==> (!!x. PROP ?psi x)) == (!!x. PROP ?phi ==> PROP ?psi x).
 export const normHhfEq = axiomThm(
   mkEquals(
     mkImplies(
@@ -118,7 +117,6 @@ export const normHhfEq = axiomThm(
   ),
 );
 
-// Drule.is_norm_hhf: no quantifier right of an implication and no beta redex.
 export const isNormHhf = (isProtecting: boolean, term: Term): boolean => {
   if (term.kind === "Const") return term.name !== "Pure.sort_constraint";
   if (term.kind === "Abs") return isNormHhf(isProtecting, term.body);
@@ -137,7 +135,6 @@ export const isNormHhf = (isProtecting: boolean, term: Term): boolean => {
   return isNormHhf(isProtecting, term.fun) && isNormHhf(isProtecting, term.arg);
 };
 
-// Drule.outer_params: the outermost parameters, named apart.
 const outerParams = (term: Term) => {
   const vars = stripAllVars(term);
   const names = variantList(
@@ -147,7 +144,6 @@ const outerParams = (term: Term) => {
   return vars.map((variable, index) => ({ name: names[index], type: variable.type }));
 };
 
-// Variable.gen_all: the outermost parameters become schematic variables.
 export const genAll = (thm: Thm) => {
   const index = Math.max(thm.maxidx, -1) + 1;
   return outerParams(thm.prop).reduce(
@@ -156,7 +152,6 @@ export const genAll = (thm: Thm) => {
   );
 };
 
-// Thm.forall_intr_vars: quantifies the schematic variables in order of appearance.
 export const forallIntrVars = (thm: Thm) => {
   const vars = fullProps(thm).reduce(
     (result, term) =>
@@ -178,7 +173,6 @@ const variantBound = (name: string, used: NameContext) =>
 
 const fullProps = (thm: Thm) => [...thm.tpairs.flatMap((pair) => [pair[0], pair[1]]), thm.prop];
 
-// Drule.zero_var_indexes: renames the schematic variables apart with index 0.
 export const zeroVarIndexes = (thm: Thm): Thm => {
   const terms = fullProps(thm);
   const tvars = terms.reduce(
@@ -227,10 +221,8 @@ export const zeroVarIndexes = (thm: Thm): Thm => {
   return instantiate(insts, instantiateTypes(tyenv, thm));
 };
 
-// Tactic.make_elim: turns a destruction rule into an elimination rule.
 export const makeElim = (rule: Thm) => zeroVarIndexes(rs(rule, revcutRl));
 
-// Drule.compose: resolves tha into premise index of thb without lifting, with a unique result.
 const compose = (tha: Thm, index: number, thb: Thm): Thm => {
   const results = listOfSeq(
     bicompose(
@@ -246,12 +238,9 @@ const compose = (tha: Thm, index: number, thb: Thm): Thm => {
   return results[0];
 };
 
-// COMP_INCR
 export const compIncr = (tha: Thm, thb: Thm) =>
   compose(tha, 1, incrIndexesThm(tha.maxidx + 1, thb));
 
-// Drule.comp_no_flatten: composes th, keeping its first count premises, into premise index of
-// rule.
 export const compNoFlatten = (thm: Thm, count: number, index: number, rule: Thm): Thm => {
   const results = listOfSeq(
     bicompose(

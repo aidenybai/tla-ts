@@ -1,5 +1,3 @@
-// The checks of Zenon's rules for connectives, quantifiers and the cut.
-
 import type { PlainRuleName } from "../proof";
 import {
   and,

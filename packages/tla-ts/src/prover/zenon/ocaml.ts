@@ -1,8 +1,5 @@
-// The parts of OCaml's standard library whose exact behavior steers Zenon's search.
-//
-// Hashtbl.hash on the values Zenon hashes: strings, and the (int, string list) pairs that Expr
-// hashes. Zenon orders record fields by these hashes. Ints are 63-bit in OCaml, so an int is a
-// high part in [-2^30, 2^30) and a low part in [0, 2^32).
+// Zenon orders record fields by Hashtbl.hash. OCaml ints are 63-bit, so an int is a high part in
+// [-2^30, 2^30) and a low part in [0, 2^32).
 
 const TWO_32 = 4294967296;
 const TWO_31 = 2147483648;
@@ -28,8 +25,6 @@ const finalMix = (hash: number) => {
   return ((second ^ (second >>> 16)) >>> 0) & 0x3fffffff;
 };
 
-// A string's UTF-8 bytes as the little-endian words that caml_hash_mix_string mixes, the last one
-// partial.
 interface StringWords {
   words: number[];
   length: number;
@@ -61,8 +56,7 @@ const mixInt = (hash: number, high: number, low: number) => {
   return mix(hash, (taggedHigh ^ (taggedHigh < 0 ? -1 : 0) ^ taggedLow) | 0);
 };
 
-// Hashtbl.hash on strings and on (int, string list) pairs. It keeps each string's words and hash,
-// because Zenon hashes the same variable names over and over.
+// Keeps each string's words and hash, because Zenon hashes the same variable names over and over.
 export const createHasher = () => {
   const stringWords = new Map<string, StringWords>();
   const stringHashes = new Map<string, number>();
@@ -117,8 +111,7 @@ export const combine = (left: Int63, right: Int63): Int63 => {
 
 export const toInt63 = (value: number): Int63 => ({ high: 0, low: value });
 
-// The merges of OCaml's List.stable_sort, on arrays. Each returns its result reversed, as OCaml's
-// rev_merge and rev_merge_rev do.
+// Each merge returns its result reversed, as OCaml's rev_merge and rev_merge_rev do.
 const mergeReversed = <Item>(
   first: Item[],
   second: Item[],

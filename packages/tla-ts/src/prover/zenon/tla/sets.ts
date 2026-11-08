@@ -1,6 +1,4 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// The rules for sets: membership in each kind of set, set equality and inclusion.
 
 import { isApp, type Expr } from "../expr";
 import type { Priority } from "../node";
@@ -239,7 +237,6 @@ export const getSetEqualityNodes = (literal: Literal): Item[] | undefined => {
   return undefined;
 };
 
-// A metavariable in a set, against the disequalities of that set.
 export const getMetaMembershipNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
   const index = literal.context.index;

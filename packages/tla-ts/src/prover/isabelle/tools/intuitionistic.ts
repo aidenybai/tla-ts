@@ -1,10 +1,7 @@
-// Ported from Isabelle2025's Tools/intuitionistic.ML and the rule order of
-// Pure/Isar/context_rules.ML. Copyright (c) 1986-2025 University of Cambridge, Technische
-// Universitaet Muenchen, and contributors, see LICENSE.
-//
-// iprover: intuitionistic proof search with the context rules, the rules declared intro, elim and
-// dest. Isabelle/TLA+ declares no context rule wrappers, so Swrap and wrap leave tactics as they
-// are.
+// Ported from Isabelle2025's Tools/intuitionistic.ML and Pure/Isar/context_rules.ML. Copyright (c)
+// 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
+// LICENSE.
+// Isabelle/TLA+ declares no context rule wrappers, so Swrap and wrap leave tactics as they are.
 
 import { remdupsRl } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
@@ -42,7 +39,6 @@ export interface ContextRule {
 
 export interface IntuitionisticContext {
   readonly limits: Limits;
-  // Context_Rules.netpair_bang and Context_Rules.netpair.
   readonly safeRules: NetPair<ContextRule>;
   readonly rules: NetPair<ContextRule>;
 }
@@ -127,6 +123,5 @@ const intproverTac = (
     )(index);
   });
 
-// Intuitionistic.prover_tac with the default depth limit.
 export const proverTac = (context: IntuitionisticContext): GoalTactic =>
   selectGoal(deepen(2, 20, (limit) => intproverTac(context, [], 0, limit), 4)(1));

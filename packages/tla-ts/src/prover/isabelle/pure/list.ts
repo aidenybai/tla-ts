@@ -1,5 +1,4 @@
-// ML's lists: each shares its tail, so that adding to the front takes constant time and keeps the
-// rest of the list alive only through the new cell.
+// Each list shares its tail, so adding to the front takes constant time.
 
 export interface List<Item> {
   readonly head: Item;

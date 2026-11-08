@@ -1,6 +1,5 @@
-// The classical reasoner and hypsubst as PredicateLogic.thy and SetTheory.thy of Isabelle/TLA+
-// instantiate them (BSD licensed, see LICENSE): the Hypsubst and Classical functor arguments, the
-// claset with its nets as the reference heap orders them, and SetTheory's bspec wrapper.
+// The classical reasoner and hypsubst as Isabelle/TLA+'s PredicateLogic.thy and SetTheory.thy
+// instantiate them (BSD licensed, see LICENSE).
 
 import { TlaIsabelleError } from "../../../errors";
 import { emptyNet } from "../pure/net";
@@ -92,7 +91,6 @@ export const getClaset = (logic: TlaLogic, limits: Limits): Claset => {
     unsafe: toNetPair(logic.claset.unsafe),
     dup: toNetPair(logic.claset.dup),
   };
-  // SetTheory.thy: ctxt addbefore ("bspec", fn ctxt' => dresolve_tac ctxt' @{thms bspec} THEN' assume_tac ctxt')
   const bspec: GoalTactic = thenGoal(
     dresolveTac(limits, [getFact(logic, "SetTheory.bspec")]),
     assumeTac(limits),

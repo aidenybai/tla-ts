@@ -2,13 +2,11 @@
 
 type OcamlValue = number | string | OcamlValue[];
 
-// String.compare: byte by byte, on the UTF-8 bytes. Code units order the same way for the ASCII
-// names tlapm compares.
+// Code units order like String.compare's UTF-8 bytes for the ASCII names tlapm compares.
 export const compareStrings = (left: string, right: string) =>
   left < right ? -1 : left > right ? 1 : 0;
 
-// Stdlib.compare on ints, strings, and lists, where a list is smaller than any longer list it
-// starts.
+// A list is smaller than any longer list it starts, as in Stdlib.compare.
 export const compareValues = (left: OcamlValue, right: OcamlValue): number => {
   if (typeof left === "number" && typeof right === "number") return left - right;
   if (typeof left === "string" && typeof right === "string") return compareStrings(left, right);

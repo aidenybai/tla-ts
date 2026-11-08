@@ -1,7 +1,4 @@
 // Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-//
-// The rules for equality and other relations: instances that unify a metavariable, matching a
-// literal against its negation, congruence, reflexivity, symmetry and transitivity.
 
 import { TlaZenonError } from "../../errors";
 import {

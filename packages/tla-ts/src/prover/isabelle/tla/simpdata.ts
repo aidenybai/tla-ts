@@ -1,10 +1,7 @@
 // The simplifier as Isabelle/TLA+ sets it up in simplifier_setup.ML and PredicateLogic.thy (BSD
-// licensed, see LICENSE): how theorems become rewrite rules, the solvers, the neq simproc, and the
-// simpset of the reference heap.
-//
-// The heap's only looper, "split PredicateLogic.cond", is left out: its rule splitCond has the
-// premise isBool(Q(x)), so Splitter.split_tac never composes it with a goal and the looper always
-// fails.
+// licensed, see LICENSE).
+// The heap's only looper, "split PredicateLogic.cond", is left out: splitCond's premise
+// isBool(Q(x)) never lets Splitter.split_tac compose it with a goal.
 
 import { TlaIsabelleError } from "../../../errors";
 import { genAll, reflexiveThm } from "../pure/drule";
@@ -62,7 +59,6 @@ const getRewriting = (logic: TlaLogic) => {
   const eqReflection = fact("eq_reflection");
   const eqTrueI = fact("eqTrueI");
   const neqToEqFalse = rs(fact("neq_conv_eq_False"), eqReflection);
-  // Simpdata.mk_eq
   const mkEq = (thm: Thm): Thm => {
     const conclusion = conclOf(thm);
     const concl = conclusion.kind === "App" ? conclusion : undefined;
@@ -78,8 +74,6 @@ const getRewriting = (logic: TlaLogic) => {
       return rs(thm, neqToEqFalse);
     return rs(rs(thm, eqTrueI), eqReflection);
   };
-  // The final Simpdata.mksimps_pairs: the rules that split a premise by its outermost operator,
-  // and whether to simplify what they give.
   const pairs = new Map<string, { rules: Thm[]; isSimplified: boolean }>([
     ["PredicateLogic.not", { rules: [fact("boolifyFalseI")], isSimplified: true }],
     ["PredicateLogic.iff", { rules: [fact("iffThenBoolifyEqual")], isSimplified: true }],
@@ -93,7 +87,6 @@ const getRewriting = (logic: TlaLogic) => {
       { rules: [rs(fact("if_bool_equiv_conj"), fact("iffD1"))], isSimplified: false },
     ],
   ]);
-  // Simpdata.mk_atomize
   const atoms = (context: SimpContext, thm: Thm): Thm[] => {
     const concl = conclOf(thm);
     if (!(concl.kind === "App" && isConstApp("PredicateLogic.Trueprop", 1, concl))) return [thm];
@@ -167,7 +160,6 @@ const getSolvers = (logic: TlaLogic): { unsafe: Solver; safe: Solver } => {
   };
 };
 
-// PredicateLogic.thy's neq simproc: rewrites x = y to FALSE given y ~= x or (y = x) = FALSE.
 const getNeqProc = (logic: TlaLogic) => {
   const fact = (name: string) => getFact(logic, `PredicateLogic.${name}`);
   const eqReflection = fact("eq_reflection");

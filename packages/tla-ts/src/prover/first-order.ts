@@ -1,5 +1,4 @@
-// What backend/zenon.ml and backend/isabelle.ml share in printing an obligation that Backend.Prep
-// has shipped.
+// What backend/zenon.ml and backend/isabelle.ml share in printing an obligation.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../errors";
 import { popNames, type Context } from "../obligations/printer";
@@ -35,7 +34,6 @@ const CHARACTER_NAMES: Record<string, string> = {
   "~": "tild_",
 };
 
-// isabelle_tlaplus_keys, then Isabelle_keywords.v, then other_keys.
 const FORBIDDEN = new Set(
   [
     "All Append Bijections Case CaseArm CaseOther Char Choice EnumFuncSet Ex Fcn FuncSet INTER Id",
@@ -90,7 +88,6 @@ const getCharacterName = (character: string) => {
   return name;
 };
 
-// Tla_parser.pickle: renames an identifier that some backend would reject.
 export const pickle = (name: string) => {
   const characters = [...name];
   const isPlain =
@@ -102,7 +99,6 @@ export const pickle = (name: string) => {
   return `a_${characters.map((character) => getCharacterName(character) ?? character).join("")}a`;
 };
 
-// The temporal operators neither backend has a counterpart for, by the name tlapm reports.
 const TEMPORAL_OPERATORS: Partial<Record<Builtin, [string, number]>> = {
   Leadsto: ["Leadsto", 2],
   ENABLED: ["ENABLED", 1],
@@ -113,7 +109,6 @@ const TEMPORAL_OPERATORS: Partial<Record<Builtin, [string, number]>> = {
   Diamond: ["<>", 1],
 };
 
-// Why a backend can't print an application of builtin, which it reports as where.
 export const getUnprintableError = (builtin: Builtin, arity: number, where: string) => {
   const isFrontend = builtin === "Prime" || builtin === "StrongPrime" || builtin === "UNCHANGED";
   if (isFrontend && arity === 1) return new TlapmBugError();
@@ -128,8 +123,7 @@ interface SplitQuantifier {
   inner: Expr;
 }
 
-// A quantifier's first bound binds around a quantifier over the others, which move under it. A
-// ditto after the first bound copies its domain.
+// A ditto after the first bound copies its domain.
 export const splitFirstBound = (
   quantifier: "Forall" | "Exists",
   bounds: Bound[],
@@ -161,8 +155,7 @@ export const splitFirstBound = (
   };
 };
 
-// tlapm prints a fact to a formatter that drops its output first, to omit an unsupported one: the
-// fact's print, or the error that omits it once the names it bound are out of scope.
+// tlapm prints a fact to a formatter that drops its output first, to omit an unsupported one.
 export const printFact = <Printed>(context: Context, print: () => Printed) => {
   const depth = context.stack.length;
   try {

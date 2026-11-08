@@ -1,6 +1,3 @@
-// Decides a theory tlapm writes for Isabelle, as tlapm's Isabelle backend runs it: use_thy on the
-// heap of Isabelle/TLA+ succeeds or fails.
-
 import { isStackOverflow, TlaIsabelleError } from "../../errors";
 import type { DecideOptions, Verdict } from "../verdict";
 import { parseProofText, terminalProof } from "./isar/method";

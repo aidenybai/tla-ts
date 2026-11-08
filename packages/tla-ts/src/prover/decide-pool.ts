@@ -1,5 +1,3 @@
-// Worker threads that decide the obligations prove sends them, the earliest obligation first.
-
 import { TlaProverError } from "../errors";
 import { spawnWorker, type WorkerHandle } from "../worker";
 import type { DecideOptions, Decision } from "./verdict";
@@ -10,8 +8,6 @@ export interface DecideRequest {
   timeLimitMs: number;
 }
 
-// A backend's decision, or the message of the TlaProverError it threw, which prove turns into a
-// result.
 export type DecideResponse = Decision | { error: string };
 
 interface PendingDecision {
@@ -28,7 +24,6 @@ export interface DecidePool {
     options: DecideOptions,
     priority: number,
   ) => Promise<Decision>;
-  // Rejects every decision not yet made with reason, and stops the workers.
   terminate: (reason: unknown) => void;
 }
 

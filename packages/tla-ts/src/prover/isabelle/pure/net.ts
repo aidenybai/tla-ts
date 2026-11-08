@@ -42,7 +42,6 @@ const makeNode = <Item>(): Extract<Net<Item>, { kind: "Net" }> => ({
   atoms: emptyTable(fastStringOrd),
 });
 
-// Net.key_of_term: preorder keys, with any term headed by a variable or an abstraction as a Var.
 export const keyOfTerm = (term: Term): NetKey[] => {
   const keys: NetKey[] = [];
   const add = (current: Term) => {
@@ -68,8 +67,8 @@ export const keyOfTerm = (term: Term): NetKey[] => {
   return keys;
 };
 
-// Net.insert: raises nothing on a duplicate here; insert_safe semantics with eq. It walks down
-// the keys and rebuilds the path bottom-up, so a long key list can't exhaust the stack.
+// Raises nothing on a duplicate. Walks down the keys and rebuilds the path bottom-up, so a long key
+// list can't exhaust the stack.
 export const insertNet = <Item>(
   isEqual: (left: Item, right: Item) => boolean,
   keys: readonly NetKey[],
@@ -107,7 +106,6 @@ export const insertTermNet = <Item>(term: Term, item: Item, net: Net<Item>) =>
 const newNet = <Item>(node: Extract<Net<Item>, { kind: "Net" }>): Net<Item> =>
   isEmptyNet(node.comb) && isEmptyNet(node.var) && isEmptyTable(node.atoms) ? emptyNet : node;
 
-// Net.delete: undefined where Isabelle raises DELETE.
 const deleteNet = <Item>(
   isEqual: (left: Item, right: Item) => boolean,
   keys: readonly NetKey[],
@@ -152,7 +150,6 @@ export const deleteTermSafe = <Item>(
   net: Net<Item>,
 ) => deleteNet(isEqual, keyOfTerm(term), item, net) ?? net;
 
-// The lists of nets that matching conses up, as Isabelle's lists.
 type Nets<Item> = { readonly head: Net<Item>; readonly tail: Nets<Item> } | undefined;
 
 const toArray = <Item>(nets: Nets<Item>) => {

@@ -1,6 +1,4 @@
-// What Backend.Prep does to an obligation before a backend's frontend: normalize_expand, which
-// expands definitions, runs Expr.Elab.normalize and the frontend methods the obligation cites, then
-// trivial and flatten.
+// What Backend.Prep does to an obligation before a backend's frontend.
 
 import { TlapmBugError, TlaProofError, TlaProverError } from "../../errors";
 import { expandActionOperators, lambdify } from "../../obligations/action";
@@ -52,9 +50,7 @@ const expandDefinitionsAndPragmas = createDefinitionExpander(true);
 
 const expandDefinitions = createDefinitionExpander(false);
 
-// expand_defs: each visible operator definition and each pragma, whatever its visibility,
-// substitutes into the rest of the obligation and leaves the context. Toolbox.expand_defs leaves
-// the pragmas.
+// Each pragma substitutes whatever its visibility, and Toolbox.expand_defs leaves the pragmas.
 export const expandDefs = (sequent: Sequent, isPragmaExpanded = true): Sequent => {
   const expanded = (isPragmaExpanded ? expandDefinitionsAndPragmas : expandDefinitions)(
     sequent.context,
@@ -66,7 +62,6 @@ type ExceptSpec = Extract<Expr, { kind: "Except" }>["specs"][number];
 
 const TEMPORAL_BUILTINS = new Set(["BoxTrue", "BoxFalse", "Diamond", "Actplus", "Leadsto", "Cdot"]);
 
-// The expressions of a hypothesis that Visit.iter visits, none for a hidden one.
 const getVisitedExprs = (hyp: Hyp): Expr[] => {
   switch (hyp.kind) {
     case "Fresh":
@@ -99,7 +94,6 @@ const isNonTemporal = (expression: Expr): boolean => {
   return getChildren(expression).every(isNonTemporal);
 };
 
-// Elab.let_normalize: each LET definition is substituted into the rest of the LET.
 const normalizeLet = (expression: Expr): Expr => {
   if (expression.kind !== "Let") return mapChildren(expression, normalizeLet);
   const [definition, ...definitions] = expression.definitions;
@@ -126,7 +120,6 @@ const isSameHead = (left: ExceptPoint, right: ExceptPoint) =>
     ? right.kind === "Dot" && left.field === right.field
     : right.kind === "Apply" && isEqualExpr(left.expression, right.expression);
 
-// The field of a record constructor that a point names, as a field or as a string argument.
 const getRecordField = (record: Expr, point: ExceptPoint) => {
   const name =
     point.kind === "Dot"
@@ -139,8 +132,8 @@ const getRecordField = (record: Expr, point: ExceptPoint) => {
     : undefined;
 };
 
-// Elab.except_normalize: [f EXCEPT p1 = b1, ...] folds left to right into f, sharing each prefix of
-// adjacent updates and updating a record constructor in place on a field it has.
+// Folds left to right, sharing each prefix of adjacent updates and updating a record constructor in
+// place on a field it has.
 const normalizeExcept = (expression: Expr): Expr => {
   if (expression.kind !== "Except") return mapChildren(expression, normalizeExcept);
   const except = expression;
@@ -172,7 +165,6 @@ const normalizeExcept = (expression: Expr): Expr => {
   return apply(normalizeExcept(except.function), mapExceptSpecs(except.specs, normalizeExcept));
 };
 
-// let_normalize on each hypothesis, and whether the context so far is non_temporal.
 const normalizeLetContext = createContextMap(true, (isContextNonTemporal, hyp) => [
   isContextNonTemporal && getVisitedExprs(hyp).every(isNonTemporal),
   mapHyp(hyp, normalizeLet, "all"),
@@ -183,8 +175,6 @@ const normalizeExceptContext = createContextMap(undefined, (_state, hyp) => [
   mapHyp(hyp, normalizeExcept, "all"),
 ]);
 
-// Elab.normalize, on an obligation as a sequent expression, as Prep.normalize_expr calls it: LET
-// definitions inline, and the updates of an EXCEPT fold into the function they update.
 export const normalizeSequent = (sequent: Sequent): Sequent => {
   const inlined = normalizeLetContext(sequent.context);
   const active = normalizeLet(sequent.active);
@@ -196,8 +186,7 @@ export const normalizeSequent = (sequent: Sequent): Sequent => {
     : { context: inlined.context, active };
 };
 
-// expand_enabled_cdot: the first frontend the methods cite, in tlapm's order, transforms the
-// obligation. Its soundness checks throw a TlaProverError, as tlapm then runs no backend.
+// Only the first frontend the methods cite, in tlapm's order, transforms the obligation.
 const expandEnabledCdot = (
   sequent: Sequent,
   locus: Locus | undefined,
@@ -243,7 +232,6 @@ const expandEnabledCdot = (
   return result.sequent;
 };
 
-// normalize_expand: expand_defs, Elab.normalize, then the frontends the obligation cites.
 export const normalizeExpand = (
   obligation: {
     sequent: Sequent;
@@ -262,8 +250,8 @@ export const normalizeExpand = (
     onWarning,
   );
 
-// trivial: the goal is TRUE, or find_fact finds it as a hypothesis, visible or not: a fact
-// alpha-equivalent to it, or the x \in S of a declaration NEW x \in S.
+// The goal is TRUE or a hypothesis, visible or not: an alpha-equivalent fact, or the x \in S of NEW
+// x \in S.
 export const isTrivial = (sequent: Sequent) =>
   (sequent.active.kind === "Internal" && sequent.active.builtin === "TRUE") ||
   sequent.context.some((hyp, index) => {
@@ -278,7 +266,6 @@ export const isTrivial = (sequent: Sequent) =>
 
 const isUnbounded = (bound: Bound) => bound.domain.kind === "NoDomain";
 
-// extract_equalities: the equalities in a conjunction, apart from the rest of it.
 const extractEqualities = (expression: Expr): [Expr[], Expr | undefined] => {
   if (expression.kind === "List" && (expression.bullet === "And" || expression.bullet === "Refs")) {
     const parts = expression.items.map(extractEqualities);
@@ -315,7 +302,7 @@ const extractEqualities = (expression: Expr): [Expr[], Expr | undefined] => {
   return [[], expression];
 };
 
-// flatten: each visible fact becomes the rest of it, then its equalities.
+// Each visible fact becomes the rest of it, then its equalities.
 export const flatten = (sequent: Sequent): Sequent => {
   const context: Hyp[] = [];
   const substitution = sequent.context.reduce<Substitution>((current, hyp) => {

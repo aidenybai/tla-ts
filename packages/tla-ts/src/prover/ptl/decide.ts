@@ -1,5 +1,4 @@
-// Decides the text tlapm sends LS4, as LS4 does: unsat when the negated obligation has no model,
-// which proves the obligation.
+// Decides the text tlapm sends LS4, as LS4 does.
 
 import { TlaSyntaxError } from "../../errors";
 import type { DecideOptions, Verdict } from "../verdict";

@@ -25,7 +25,6 @@ export const getUnbounded = (names: string[]): Bound[] =>
 const getFactors = (domain: Expr | undefined, names: string[]) =>
   domain?.kind === "Product" && domain.factors.length === names.length ? domain.factors : undefined;
 
-// Each name is the matching item of the tuple: x == t[1], y == t[2].
 const getItemDefinitions = (tuple: string, names: string[]): Defn[] =>
   names.map((name, index) => ({
     kind: "Operator",
@@ -50,8 +49,7 @@ const getNamedBound = (bound: Extract<TuplyBound, { kind: "Name" }>): Bound => (
   domain: bound.domain,
 });
 
-// \E <<x, y>> \in A \X B: P becomes \E x \in A, y \in B: P, and \E <<x, y>> \in S: P becomes
-// \E x, y: <<x, y>> \in S /\ P. Each domain quantifies separately, the last one innermost.
+// Each domain quantifies separately, the last one innermost.
 export const expandQuant = (
   quantifier: "Forall" | "Exists",
   bounds: TuplyBound[],
@@ -91,8 +89,6 @@ export const expandQuant = (
   }, body);
 };
 
-// CHOOSE <<x, y>> \in A \X B: P binds t \in A \X B with x == t[1], y == t[2], and any other
-// domain binds t with \E x, y: t = <<x, y>> /\ P. {<<x, y>> \in S: P} binds t the same way.
 export const expandChoose = (
   binder: { kind: "Choose"; domain: Expr | undefined } | { kind: "SetSt"; domain: Expr },
   names: string[],
@@ -117,8 +113,7 @@ export const expandChoose = (
   };
 };
 
-// A set or function constructor binds each tuple as fcn#x, with its names defined in a LET around
-// the value. A set constructor over a matching product binds the names to its factors instead.
+// A set constructor over a matching product binds the names to its factors.
 const expandConstructorBounds = (bounds: TuplyBound[], value: Expr, isSetOf: boolean) => {
   const expanded = bounds.map((bound): { bounds: Bound[]; definitions: Defn[] } => {
     if (bound.kind === "Name") return { bounds: [getNamedBound(bound)], definitions: [] };

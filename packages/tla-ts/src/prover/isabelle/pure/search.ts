@@ -1,13 +1,11 @@
-// Ported from Isabelle2025's Pure/search.ML, iterative deepening and best-first search.
-// Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
-// contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/search.ML. Copyright (c) 1986-2025 University of Cambridge,
+// Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { listOfSeq, makeSeq, seqOfList } from "./seq";
 import { eqThm, hasFewerPrems, noTac, orElse, type GoalTactic, type Tactic } from "./tactical";
 import { termOrd } from "./term-ord";
 import type { Thm } from "./thm";
 
-// DEEPEN: tries the tactic with limits from start up to limit in steps of increment.
 export const deepen =
   (
     increment: number,
@@ -29,13 +27,10 @@ interface Sized {
   readonly thm: Thm;
 }
 
-// Thm_Heap's order: by size, then by proposition.
 const compareSized = (left: Sized, right: Sized) =>
   left.size - right.size || termOrd(left.thm.prop, right.thm.prop);
 
-// BEST_FIRST: searches the states the tactic produces, smallest first, for one that satisfies
-// the predicate. A sorted list stands in for Thm_Heap: both yield the least state under the same
-// total order.
+// A sorted list stands in for Thm_Heap: both yield the least state under the same total order.
 export const bestFirst =
   (isSatisfied: (state: Thm) => boolean, size: (state: Thm) => number, tactic: Tactic): Tactic =>
   (state) => {

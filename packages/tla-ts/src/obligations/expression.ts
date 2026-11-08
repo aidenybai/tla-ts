@@ -236,7 +236,6 @@ type DefnCore =
 
 export type Visibility = "Visible" | "Hidden";
 
-// When a fact holds: at every point of a behavior, or only at the current one.
 export type Time = "Now" | "Always";
 
 // A step or a DEFINE in a proof keeps the time of the scope it is made in.
@@ -260,8 +259,8 @@ type HypCore =
       whereDefined: WhereDefined;
       visibility: Visibility;
       isLocal: boolean;
-      // Module.Elab judges whether each module definition is constant. One that anonymization meets
-      // in a proof, such as a step or a DEFINE, has no judgment, so tlapm never counts it constant.
+      // A definition that anonymization meets in a proof has no constness judgment, so tlapm never
+      // counts it constant.
       isConstnessUnset?: boolean;
     }
   | { kind: "Fact"; expression: Expr; visibility: Visibility; time: Time; useLocation?: Locus };
@@ -354,7 +353,6 @@ export const mapAccumulate = <State, Item, Result>(
   return [final, results];
 };
 
-// A mapped context prefix: the hypothesis its last key maps to, if any, and the state after it.
 interface MappedPrefix<State> {
   state: State;
   hyp: Hyp | undefined;
@@ -362,9 +360,8 @@ interface MappedPrefix<State> {
   next: WeakMap<Hyp, MappedPrefix<State>>;
 }
 
-// mapAccumulate over a context that maps each prefix of keys once, as the obligations of a module
-// share most of their context by identity. The input at each position must depend on the keys up
-// to it alone, and the step on the input, its key, and the state.
+// Maps each prefix of keys once, as a module's obligations share most of their context. Each input
+// must depend only on the keys up to it.
 export const createContextMap = <State>(
   initial: State,
   step: (state: State, input: Hyp, key: Hyp) => [State, Hyp | undefined],
@@ -417,8 +414,6 @@ export const getFact = (
   location: Locus | undefined,
 ) => ({ kind: "Fact", expression, visibility, time, location }) satisfies Hyp;
 
-// What a quantifier binds each name as, a LAMBDA each parameter, and a LET each definition, as
-// Visit.map does.
 export const getBoundFresh = (bound: Bound) => getFresh(bound.name, bound.level);
 
 export const getParamFresh = (param: Param) => getFresh(param.name, "Unknown", param.shape);
@@ -432,7 +427,6 @@ export const getLocalDefn = (definition: Defn) =>
     isLocal: true,
   }) satisfies Hyp;
 
-// The node without its properties, as tlapm's e.core.
 export const stripProps = (expression: Expr): ExprCore => {
   if (!expression.location && !expression.isAtomic) return expression;
   const { location: _location, isAtomic: _isAtomic, ...core } = expression;
@@ -472,9 +466,8 @@ export const mapHyp = (hyp: Hyp, map: (inner: Expr) => Expr, hyps: "visible" | "
   return { ...hyp, expression: map(hyp.expression) };
 };
 
-// Visit.map, threading a state through each binder: a scope or a substitution. Visit.map_visible_hyp
-// binds hidden hypotheses without visiting them, and Visit.map visits them too. Children map in
-// OCaml evaluation order, last constructor argument first, which decides the error tlapm reports.
+// Children map in OCaml evaluation order, last constructor argument first, which decides the error
+// tlapm reports.
 export const mapScoped = <State>(
   state: State,
   expression: Expr,

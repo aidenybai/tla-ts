@@ -1,9 +1,6 @@
-// Ported from Isabelle2025's Pure/Isar/method.ML (method syntax, combinators, SIMPLE_METHOD,
-// finish), the assume_rule_tac and norm_hhf_tac of Pure/goal.ML, and the methods the theories
-// tlapm writes use: auto, force and clarsimp (Provers/clasimp.ML), blast (Provers/blast.ML), fast
-// (Provers/classical.ML), simp (Pure/simplifier.ML), iprover (Tools/intuitionistic.ML) and intro.
-// Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
-// contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/Isar/method.ML, Pure/goal.ML and the methods the theories tlapm
+// writes use. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen,
+// and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { asmRl, isNormHhf, multiResolves, normHhfEq, reflexiveThm, termI } from "../pure/drule";
@@ -67,13 +64,11 @@ type MethodText =
   | { readonly kind: "then"; readonly methods: readonly MethodText[] }
   | { readonly kind: "try"; readonly method: MethodText };
 
-// The methods of by: the initial one, and the terminal one that qed runs.
 interface ProofText {
   readonly initial: MethodText;
   readonly terminal: MethodText | undefined;
 }
 
-// What a proof method reads from the Isabelle proof context.
 export interface ProofContext {
   readonly limits: Limits;
   readonly simpset: Simpset;
@@ -91,7 +86,6 @@ const syntaxError = (token: OuterToken | undefined) =>
     `Outer syntax error at: ${token === undefined ? "end of input" : token.text}`,
   );
 
-// Method.parse for the proof methods of by.
 export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
   let position = 0;
   const peek = () => tokens[position];
@@ -172,7 +166,6 @@ export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
 const getFacts = (context: ProofContext, names: readonly string[]) =>
   names.flatMap((name) => context.getFact(name));
 
-// Method.sections: the claset the modifiers declare.
 const withModifiers = (context: ProofContext, modifiers: readonly Modifier[]): ClassicalContext =>
   modifiers.reduce(
     (classical, modifier) =>
@@ -198,7 +191,6 @@ const getClasimp = (context: ProofContext, classical: ClassicalContext): Clasimp
 const insertAllTac = (context: ProofContext, facts: readonly Thm[]) =>
   allGoals((index) => insertTac(context.limits, facts, index));
 
-// SIMPLE_METHOD'
 const simpleMethodHead = (context: ProofContext, facts: readonly Thm[], tactic: GoalTactic) =>
   thenGoal((index) => insertTac(context.limits, facts, index), tactic)(1);
 
@@ -292,7 +284,6 @@ const evaluate = (context: ProofContext, text: MethodText): Method => {
   }
 };
 
-// Goal.norm_hhf_tac
 const normHhfTac = (limits: Limits): GoalTactic => {
   const empty = { limits, simpset: emptySimpset, bounds: 0 };
   const context = { ...empty, simpset: addSimps(empty, [normHhfEq]) };
@@ -311,12 +302,10 @@ const normHhfTac = (limits: Limits): GoalTactic => {
   );
 };
 
-// Goal.assume_rule_tac: solves a goal with one of its non-atomic premises.
 const assumeRuleTac = (limits: Limits): GoalTactic =>
   thenGoal(
     normHhfTac(limits),
     subgoal((goal, index) => {
-      // Variable.focus_cterm and Variable.export: the parameters become schematic variables.
       const params = stripAllVars(goal);
       const names = variantList(
         addFreeNames(goal, []),
@@ -346,7 +335,6 @@ const assumeRuleTac = (limits: Limits): GoalTactic =>
     }),
   );
 
-// Method.assm_tac
 const assmTac = (limits: Limits): GoalTactic => {
   const condRtac = (isRule: (concl: Term) => boolean, rule: Thm) =>
     subgoal((goal, index) =>
@@ -368,7 +356,6 @@ const assmTac = (limits: Limits): GoalTactic => {
   );
 };
 
-// Method.all_assm_tac
 const allAssmTac =
   (limits: Limits) =>
   (index: number): Tactic =>
@@ -380,9 +367,6 @@ const allAssmTac =
           allAssmTac(limits)(index + 1),
         )(state);
 
-// Proof.local_terminal_proof: by initial terminal runs the initial method with the facts, then
-// the terminal one without them and Method.finish, and succeeds on the first result that leaves
-// no goal.
 export const terminalProof = (
   context: ProofContext,
   text: ProofText,

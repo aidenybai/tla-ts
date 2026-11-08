@@ -1,6 +1,5 @@
-// Ported from Isabelle2025's Pure/conv.ML, conversions: functions from a term to a theorem that
-// it equals another. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet
-// Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/conv.ML. Copyright (c) 1986-2025 University of Cambridge,
+// Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { destEquals, destImplies, implies, isImplies } from "./logic";
@@ -24,11 +23,9 @@ const isReflexive = (eq: Thm) => {
   return aconv(lhs, rhs);
 };
 
-// Drule.imp_cong_rule
 export const impCongRule = (first: Thm, second: Thm) =>
   combination(combination(reflexive(implies), first), second);
 
-// Conv.prems_conv ~1: converts every premise.
 export const premsConv =
   (convert: Conversion): Conversion =>
   (term) =>
@@ -36,8 +33,6 @@ export const premsConv =
       ? impCongRule(convert(destImplies(term)[0]), premsConv(convert)(destImplies(term)[1]))
       : reflexive(term);
 
-// Conv.params_conv ~1: converts the body under every outer parameter, fixed as a fresh free
-// variable.
 export const paramsConv = (convert: Conversion): Conversion => {
   const under =
     (names: NameContext): Conversion =>
@@ -60,7 +55,6 @@ export const paramsConv = (convert: Conversion): Conversion => {
   return (term) => under(makeNameContext(addFreeNames(term, [])))(term);
 };
 
-// Conv.gconv_rule: converts goal index of a state.
 export const gconvRule = (convert: Conversion, index: number, state: Thm): Thm => {
   if (index < 1 || index > nprems(state)) throw new TlaIsabelleError("THM", `gconv_rule ${index}`);
   const eq = convert(premOf(state, index));
@@ -72,7 +66,6 @@ export const gconvRule = (convert: Conversion, index: number, state: Thm): Thm =
   return permutePrems(0, 1 - index, converted);
 };
 
-// Conv.fconv_rule: converts a theorem's proposition.
 export const fconvRule = (convert: Conversion, thm: Thm): Thm => {
   const eq = convert(thm.prop);
   return isReflexive(eq) ? thm : equalElim(eq, thm);

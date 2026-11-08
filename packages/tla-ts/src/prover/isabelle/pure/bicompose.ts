@@ -1,7 +1,5 @@
 // Ported from Isabelle2025's Pure/thm.ML. Copyright (c) 1986-2025 University of Cambridge,
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// The term operations behind Thm.bicompose, which builds the theorem itself in thm.ts.
 
 import { TlaIsabelleError } from "../../../errors";
 import { normTerm, type Envir } from "./envir";
@@ -54,8 +52,6 @@ const makeDistinct = (pairs: readonly [string, string][]) => {
   return table;
 };
 
-// Thm.rename_bvars: renames bound variables and some unknowns of the new premises after the
-// names in the disagreement pairs.
 export const renameBvars = (
   dpairs: readonly Tpair[],
   tpairs: readonly Tpair[],

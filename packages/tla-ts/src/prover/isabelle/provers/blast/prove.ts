@@ -1,10 +1,6 @@
 // Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// The tableau prover, based on leanTaP. It works on a list of branches, each with its unexpanded
-// formulae, its literals and a bound on unsafe expansions. Every inference records the tactic
-// that replays it; once all branches close, the continuation reconstructs the proof. Each
-// recursion level that can be backtracked to owns a token, and a choice point raises it.
+// Each recursion level that can be backtracked to owns a token, and a choice point raises it.
 
 import type { Seq } from "../../pure/seq";
 import type { GoalTactic } from "../../pure/tactical";
@@ -46,13 +42,13 @@ import {
   type VarRef,
 } from "./term";
 
-// The tactics that replay the inferences so far, latest first.
+// Latest first.
 type Tactics = List<GoalTactic> | undefined;
 
 export type Continuation = (tactics: Tactics, choices: Choices) => Seq<Thm>;
 
-// A step either finishes the search or continues the same branches without a choice point, which
-// blast.ML does by a tail call. prv loops on the latter, so a long search can't exhaust the stack.
+// blast.ML continues the same branches by a tail call; prv loops on such steps, so a long search
+// can't exhaust the stack.
 type Step =
   | { readonly kind: "done"; readonly result: Seq<Thm> }
   | {
@@ -76,7 +72,6 @@ export const prove = (
   const safeList = [context.claset.safe0, context.claset.safep];
   const unsafeList = [context.claset.unsafe];
 
-  // Applies a safe rule only, possibly allowing instantiation; defers any unsafe formulae.
   const safeStep = (tactics: Tactics, choices: Choices, brs: readonly Branch[]): Step => {
     const token = {};
     const branch = brs[0];
@@ -90,7 +85,6 @@ export const prove = (
     const nxtVars = nextVars(rest);
     const formula = norm(head.safe[0].term);
     const rules = netMkRules(state, formula, branch.vars, safeList);
-    // Makes the new branches, decrementing lim if instantiations occur.
     const newBr = (vars: readonly VarRef[], lim: number, prems: TableauRule["prems"]): Branch[] => [
       ...prems.map((prem): Branch => {
         const level = { safe: joinMd(md, prem), unsafe: [] };
@@ -105,8 +99,6 @@ export const prove = (
       }),
       ...rest,
     ];
-    // Seeks a matching rule; if unifiable, adds its premises to the branch. Undefined is
-    // NEWBRANCHES.
     const deeper = (): Seq<Thm> | undefined => {
       for (let position = 0; position < rules.length; position += 1) {
         const rule = rules[position];
@@ -128,15 +120,12 @@ export const prove = (
           return prv(nextTactics, nextChoices, newBr(vars, lim, rule.prems));
         } catch (error) {
           if (!isBacktrackTo(error, token)) throw error;
-          // Backtracks at this level, resetting variables and trying another rule, or to the
-          // previous level.
           if (!isUpdated) return backtrack(choices);
           clearTo(state, ntrl);
         }
       }
       return undefined;
     };
-    // Tries to close the branch by unifying the formula with a literal. Undefined is CLOSEF.
     const closeF = (literals: readonly BlastTerm[]): Seq<Thm> | undefined => {
       for (const literal of literals) {
         const tactic = tryClose(state, formula, literal);
@@ -151,7 +140,6 @@ export const prove = (
       }
       return undefined;
     };
-    // Tries to unify a queued formula, safe or unsafe, with the formula.
     const closeFl = (levels: readonly Level[]): Seq<Thm> | undefined => {
       for (const level of levels) {
         const closed =
@@ -173,7 +161,6 @@ export const prove = (
     const closed = closeF(branch.lits) ?? closeFl(pairs) ?? deeper();
     if (closed !== undefined) return done(closed);
     if (netMkRules(state, formula, branch.vars, unsafeList).length === 0)
-      // There are no plausible unsafe rules: the formula becomes a literal.
       return {
         kind: "next",
         tactics,
@@ -183,7 +170,6 @@ export const prove = (
           ...rest,
         ],
       };
-    // The formula admits some unsafe rules: try them later.
     const deferred: Formula = { term: negOfGoal(state, formula), md };
     return {
       kind: "next",
@@ -201,7 +187,6 @@ export const prove = (
     };
   };
 
-  // No safe steps are possible at any level: applies an unsafe rule.
   const unsafeStep = (tactics: Tactics, choices: Choices, brs: readonly Branch[]): Step => {
     const token = {};
     const branch = brs[0];
@@ -243,9 +228,7 @@ export const prove = (
         const isUpdated = ntrl < state.trail.length;
         const vars = varsInVars(branch.vars);
         const newVars = addPremsVars(rule.prems, vars);
-        // Duplicates the formula if md permits.
         const isDup = md;
-        // Decrements lim extra if updates occur.
         const lim = isUpdated ? branch.lim - (1 + log4(rules.length)) : branch.lim - 1;
         // Allows backtracking from a rule application if other matching rules exist, if the rule
         // updated variables, or if it introduced no new variables, so that it is not a standard
@@ -273,7 +256,6 @@ export const prove = (
     if (branch.lim < 1) return backtrack(choices);
     const closed = deeper();
     if (closed !== undefined) return done(closed);
-    // If no rule closes the branch, the formula becomes a literal.
     return {
       kind: "next",
       tactics,
@@ -300,7 +282,6 @@ export const prove = (
     let brs = branches;
     for (;;) {
       checkInterrupt(context.limits);
-      // All branches closed.
       if (brs.length === 0) return cont(tactics, choices);
       const branch = brs[0];
       const head = branch.pairs[0];
@@ -319,7 +300,6 @@ export const prove = (
         continue;
       }
       if (branch.pairs.length > 1) {
-        // No more safe formulae: transfers the unsafe ones down a level.
         const below = branch.pairs[1];
         brs = [
           {
