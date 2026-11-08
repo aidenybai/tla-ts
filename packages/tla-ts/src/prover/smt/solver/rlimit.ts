@@ -11,6 +11,9 @@ export class ResourceLimit {
   // m_suspend: while set, the work goes on even once it is canceled.
   isSuspended = false;
   private isCanceled = false;
+  // m_limit and m_limits: the count past which the work stops, and those of the enclosing scopes.
+  private limit = Infinity;
+  private limits: number[] = [];
   // Watches for a full collection while the used size is past the threshold.
   private profiler: GCProfiler | null = null;
 
@@ -32,7 +35,20 @@ export class ResourceLimit {
       this.isCanceled = true;
       this.release();
     }
-    return this.isSuspended || !this.isCanceled;
+    return this.isSuspended || (!this.isCanceled && this.count <= this.limit);
+  }
+
+  // push: a scope that stops the work after delta more steps, or never for 0.
+  push(delta: number) {
+    this.limits.push(this.limit);
+    this.limit = Math.min(delta === 0 ? Infinity : this.count + delta, this.limit);
+    this.isCanceled = false;
+  }
+
+  pop() {
+    this.count = Math.min(this.count, this.limit);
+    this.limit = this.limits.pop() ?? Infinity;
+    this.isCanceled = false;
   }
 
   restart(deadline: number) {

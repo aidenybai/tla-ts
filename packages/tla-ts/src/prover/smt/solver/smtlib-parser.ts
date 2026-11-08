@@ -90,6 +90,8 @@ interface Macro {
 interface SmtProblem {
   assertions: number[];
   hasCheckSat: boolean;
+  // The option rlimit: the steps that check-sat may take, or 0 for no bound.
+  rlimit: number;
 }
 
 interface ApplicationFrame {
@@ -1102,9 +1104,19 @@ export const parseSmtlib = (
   const commands = createCommandReader(text);
   const reader = createSmtlibReader(manager);
   const assertions: number[] = [];
+  let rlimit = 0;
   for (let list = commands.read(); list !== undefined; list = commands.read()) {
     const name = expectSymbol(list.items[0], "invalid command, symbol expected", list).text;
-    if (name === "check-sat") return { assertions, hasCheckSat: true };
+    if (name === "check-sat") return { assertions, hasCheckSat: true, rlimit };
+    const option = list.items[1];
+    const value = list.items[2];
+    if (
+      name === "set-option" &&
+      option?.kind === "keyword" &&
+      option.text === ":rlimit" &&
+      value?.kind === "numeral"
+    )
+      rlimit = Number(value.text);
     if (DECLARATIONS.has(name)) {
       if (name === "define-fun" || name === "define-sort" || name === "define-const")
         throw new SmtUnsupportedError(`the command ${name} is not supported`);
@@ -1116,5 +1128,5 @@ export const parseSmtlib = (
     } else if (name === "push" || name === "pop")
       throw new SmtUnsupportedError(`the command ${name} is not supported`);
   }
-  return { assertions, hasCheckSat: false };
+  return { assertions, hasCheckSat: false, rlimit };
 };

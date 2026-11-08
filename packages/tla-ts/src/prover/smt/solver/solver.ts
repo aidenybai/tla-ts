@@ -54,6 +54,8 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
     incremental.assertExpr(assertion);
   });
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
+  // cmd_context::check_sat bounds the steps of the search by the rlimit from the count so far.
+  manager.limit.push(problem.rlimit);
   const solved = solveAssertions(manager, problem.assertions);
   return {
     verdict: getVerdict(solved.result),

@@ -187,6 +187,7 @@ export const runSmtlibScript = (
     isPrintingSuccess: false,
     isMbqi: true,
     isHiDiv0: true,
+    rlimit: 0,
     printOptions: { ...DEFAULT_PRINT_OPTIONS },
     parserOptions: { isIgnoringBadPatterns: true },
   };
@@ -224,6 +225,8 @@ export const runSmtlibScript = (
       isBeyondOptimization(state.manager, [...state.assertions, ...state.objectives])
     )
       throw new SmtUnsupportedError("optimization beyond linear arithmetic");
+    // scoped_rlimit: the rlimit bounds the steps of this check-sat.
+    state.manager.limit.push(settings.rlimit);
     try {
       print(
         getVerdict(
@@ -233,6 +236,8 @@ export const runSmtlibScript = (
     } catch (error) {
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
       print("unknown");
+    } finally {
+      state.manager.limit.pop();
     }
   };
   const parseFormulas = (items: SmtList["items"]) =>
@@ -353,6 +358,8 @@ export const runSmtlibScript = (
       const isTrue = isSymbol(value, "true");
       if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
+      if (optionName === ":rlimit" && value?.kind === "numeral")
+        settings.rlimit = Number(value.text);
       if (optionName === ":rewriter.hi_div0") {
         settings.isHiDiv0 = isTrue;
         script.state.manager.isHiDiv0 = isTrue;
