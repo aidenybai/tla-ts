@@ -312,13 +312,18 @@ export class PddMemoryOutError extends TlaError {
   }
 }
 
+// Z3 reports a parse error at the line and column of the token it was reading.
+interface SmtPosition {
+  line: number;
+  column: number;
+}
+
 // The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
-// Z3 reports it at the line and column of the token it was reading.
 export class SmtParseError extends TlaError {
   line: number;
   column: number;
 
-  constructor(message: string, position: { line: number; column: number }) {
+  constructor(message: string, position: SmtPosition) {
     super(message);
     this.name = "SmtParseError";
     this.line = position.line;
