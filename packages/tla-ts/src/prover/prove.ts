@@ -404,8 +404,9 @@ const proveWithBackends = async (
       continue;
     }
     if (!run.isProving) continue;
-    // Prep.prove_with: the Trivial method proves anything, and the Fail method nothing.
-    if (method.prover === "trivial") return getProvedReport(method.prover);
+    // Prep.prove_with: the Trivial method stops without a result, and the Fail method proves nothing.
+    if (method.prover === "trivial")
+      return getUnprovedReport(obligation, "failed", "the trivial method", attempts);
     if (method.prover === "fail") {
       failures.push({ reason: "the fail method", isDecided: true });
       continue;
