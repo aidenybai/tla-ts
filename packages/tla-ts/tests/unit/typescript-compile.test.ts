@@ -725,12 +725,12 @@ describe("errors", () => {
     ).toThrow("spec.ts:2:38 Write division as Math.floor(a / b) or Math.trunc(a / b)");
   });
 
-  it("rejects for-in loops", () => {
+  it("rejects for-in loops over values that aren't objects", () => {
     expect(() =>
       compile(
         `let count = 0;\nexport const step = () => {\n  for (const key in { a: 1 }) count++;\n};`,
       ),
-    ).toThrow("spec.ts:3:3 for-in isn't supported");
+    ).toThrow("spec.ts:3:21 for-in iterates only objects");
   });
 
   it("rejects typeof on an unknown value beside @symmetric values", () => {
