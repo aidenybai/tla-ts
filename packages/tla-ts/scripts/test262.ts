@@ -85,6 +85,71 @@ const getNodeError = (source: string) => {
 
 const getFirstLine = (text: string) => text.split("\n")[0];
 
+// TypeScript's errors for a declaration whose type it can't infer, such as an unannotated
+// parameter.
+const IMPLICIT_ANY_ERRORS = new Set([
+  7005, 7006, 7008, 7010, 7019, 7031, 7032, 7033, 7034, 7043, 7044, 7045, 7046, 7047, 7048, 7049,
+  7050,
+]);
+
+const PROGRAM_PATH = "/test262.ts";
+
+const file = { text: "", version: 0 };
+
+const service = ts.createLanguageService({
+  getCompilationSettings: () => ({
+    strict: true,
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.ESNext,
+    moduleDetection: ts.ModuleDetectionKind.Force,
+    lib: ["lib.esnext.d.ts"],
+    types: [],
+  }),
+  getScriptFileNames: () => [PROGRAM_PATH],
+  getScriptVersion: (path) => (path === PROGRAM_PATH ? String(file.version) : "0"),
+  getScriptSnapshot: (path) => {
+    const text = path === PROGRAM_PATH ? file.text : ts.sys.readFile(path);
+    return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
+  },
+  getCurrentDirectory: () => "/",
+  getDefaultLibFileName: ts.getDefaultLibFilePath,
+  fileExists: (path) => path === PROGRAM_PATH || ts.sys.fileExists(path),
+  readFile: (path) => (path === PROGRAM_PATH ? file.text : ts.sys.readFile(path)),
+});
+
+// test262 is JavaScript, so its functions and variables have no types. This annotates them as
+// TypeScript's "Infer type from usage" fix does, with unknown where it infers any.
+const annotate = (text: string) => {
+  file.text = text;
+  file.version += 1;
+  for (;;) {
+    const fix = service
+      .getSemanticDiagnostics(PROGRAM_PATH)
+      .values()
+      .filter((diagnostic) => IMPLICIT_ANY_ERRORS.has(diagnostic.code))
+      .flatMap((diagnostic) => {
+        const start = diagnostic.start ?? 0;
+        const end = start + (diagnostic.length ?? 0);
+        return service.getCodeFixesAtPosition(PROGRAM_PATH, start, end, [diagnostic.code], {}, {});
+      })
+      .find((candidate) => candidate.fixName === "inferFromUsage");
+    if (fix === undefined) return file.text;
+    const annotated = fix.changes
+      .flatMap((change) => change.textChanges)
+      .toSorted((left, right) => right.span.start - left.span.start)
+      .reduce(
+        (current, change) =>
+          current.slice(0, change.span.start) +
+          change.newText.replaceAll(/\bany\b/g, "unknown") +
+          current.slice(change.span.start + change.span.length),
+        file.text,
+      );
+    if (annotated === file.text) return file.text;
+    file.text = annotated;
+    file.version += 1;
+  }
+};
+
 // TLC stops when a value has no TLA+ form, which only a run finds, rather than giving a different
 // answer than Node.
 const UNREPRESENTABLE = [
@@ -160,13 +225,13 @@ const runTest = async (path: string): Promise<TestRun> => {
   const skipReason = getSkipReason(metadata);
   if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
   if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
-  const program = `${HARNESS}\n${source}`;
-  const nodeError = getNodeError(program);
+  const annotated = annotate(`${HARNESS}\n${source}`);
+  const nodeError = getNodeError(annotated);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
   try {
-    const result = await check({ ...compile(program, "test262.ts"), onPrint: () => {} });
+    const result = await check({ ...compile(annotated, "test262.ts"), onPrint: () => {} });
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }
