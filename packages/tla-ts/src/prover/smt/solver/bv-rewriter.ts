@@ -99,8 +99,7 @@ export interface BvRewriterOptions {
   readonly isSplitConcatEq: boolean;
 }
 
-export const DEFAULT_BV_OPTIONS: BvRewriterOptions = {
-  isHiDiv0: true,
+export const DEFAULT_BV_OPTIONS: Omit<BvRewriterOptions, "isHiDiv0"> = {
   isMul2concat: false,
   isSplitConcatEq: false,
 };

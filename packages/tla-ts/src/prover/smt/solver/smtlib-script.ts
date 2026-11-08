@@ -77,7 +77,7 @@ const SIMPLIFY_PARAMETERS = new Set([
   ":split_concat_eq",
 ]);
 
-const getRewriterOptions = (items: SExpr[]): RewriterOptions => {
+const getRewriterOptions = (manager: AstManager, items: SExpr[]): RewriterOptions => {
   const parameters = new Map<string, boolean>();
   for (let index = 0; index < items.length; index += 2) {
     const keyword = items[index];
@@ -99,7 +99,7 @@ const getRewriterOptions = (items: SExpr[]): RewriterOptions => {
       isGcdRounding: getParameter(":gcd_rounding"),
     },
     bv: {
-      isHiDiv0: parameters.get(":hi_div0") ?? true,
+      isHiDiv0: parameters.get(":hi_div0") ?? manager.isHiDiv0,
       isMul2concat: getParameter(":mul2concat"),
       isSplitConcatEq: getParameter(":split_concat_eq"),
     },
@@ -107,7 +107,7 @@ const getRewriterOptions = (items: SExpr[]): RewriterOptions => {
 };
 
 const NAMED_TACTICS = new Map<string, (manager: AstManager, goal: Goal) => void>([
-  ["simplify", (manager, goal) => simplifyGoal(manager, goal, getRewriterOptions([]))],
+  ["simplify", (manager, goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, []))],
   ["propagate-values", propagateValues],
   ["ctx-simplify", ctxSimplify],
   ["skip", () => {}],
@@ -129,7 +129,7 @@ const runTactic = (manager: AstManager, tactic: SExpr, goal: Goal): void => {
     return;
   }
   if (tactic.kind === "list" && isSymbol(head, "!") && isSymbol(tactic.items[1], "simplify")) {
-    simplifyGoal(manager, goal, getRewriterOptions(tactic.items.slice(2)));
+    simplifyGoal(manager, goal, getRewriterOptions(manager, tactic.items.slice(2)));
     return;
   }
   throw new SmtUnsupportedError("the tactic expression");
@@ -186,6 +186,7 @@ export const runSmtlibScript = (
   const settings = {
     isPrintingSuccess: false,
     isMbqi: true,
+    isHiDiv0: true,
     printOptions: { ...DEFAULT_PRINT_OPTIONS },
     parserOptions: { isIgnoringBadPatterns: true },
   };
@@ -193,6 +194,7 @@ export const runSmtlibScript = (
     const manager = new AstManager(
       new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
     );
+    manager.isHiDiv0 = settings.isHiDiv0;
     return {
       manager,
       reader: createSmtlibReader(manager, undefined, settings.parserOptions),
@@ -311,7 +313,7 @@ export const runSmtlibScript = (
         throw new SmtParseError("invalid simplify command, argument expected", list.end);
       const term = script.state.reader.parseTerm(list.items[1]);
       manager.incRef(term);
-      const rewriter = new Rewriter(manager, getRewriterOptions(list.items.slice(2)));
+      const rewriter = new Rewriter(manager, getRewriterOptions(manager, list.items.slice(2)));
       const simplified = rewriter.rewrite(term);
       rewriter.cleanup();
       display(simplified);
@@ -351,6 +353,10 @@ export const runSmtlibScript = (
       const isTrue = isSymbol(value, "true");
       if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
+      if (optionName === ":rewriter.hi_div0") {
+        settings.isHiDiv0 = isTrue;
+        script.state.manager.isHiDiv0 = isTrue;
+      }
       if (optionName === ":parser.ignore_bad_patterns")
         settings.parserOptions.isIgnoringBadPatterns = isTrue;
       const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);

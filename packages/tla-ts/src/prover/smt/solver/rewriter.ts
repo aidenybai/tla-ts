@@ -105,7 +105,8 @@ export class Rewriter extends RewriterTpl {
   ) {
     super(manager);
     this.arith = new ArithRewriter(manager, options.arith);
-    this.bv = new BvRewriter(manager, options.arith, options.bv ?? DEFAULT_BV_OPTIONS, {
+    const bvOptions = options.bv ?? { ...DEFAULT_BV_OPTIONS, isHiDiv0: manager.isHiDiv0 };
+    this.bv = new BvRewriter(manager, options.arith, bvOptions, {
       mkEq: (left, right) => this.mkEq(left, right),
       mkIte: (condition, thenExpr, elseExpr) => {
         const result = this.mkIte(condition, thenExpr, elseExpr);

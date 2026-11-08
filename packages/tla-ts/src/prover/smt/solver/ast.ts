@@ -423,6 +423,8 @@ export class AstManager {
   private isFiniteSetPluginInitialized = false;
   readonly trueExpr: number;
   readonly falseExpr: number;
+  // The global parameter rewriter.hi_div0, which each rewriter reads when it is made.
+  isHiDiv0 = true;
 
   constructor(readonly limit: ResourceLimit) {
     for (const builtin of BUILTIN_DECLS)
