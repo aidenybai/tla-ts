@@ -621,7 +621,8 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   }
   if (kind === ts.SyntaxKind.InKeyword) {
     const container = getKind(node.right, context);
-    if (container === "object") {
+    // A script's heap holds the built-in objects too, such as Number.
+    if (container === "object" || (container === "other" && context.heap !== undefined)) {
       return useJavaScript(
         "Has",
         [

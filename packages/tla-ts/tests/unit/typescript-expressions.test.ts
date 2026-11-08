@@ -451,6 +451,10 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]",
+      "const box = {};",
+    ],
+    [
       "[read({}), read({ x: 2 })]",
       "var read = ({ x = 1 }) => x;",
     ],
