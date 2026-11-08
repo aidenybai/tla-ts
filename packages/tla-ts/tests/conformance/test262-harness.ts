@@ -7,6 +7,11 @@ function assert(mustBeTrue: unknown, message?: string) {
   if (mustBeTrue !== true) throw new Test262Error(message ?? "Expected true");
 }
 
+// oxlint-disable-next-line no-unused-vars
+function $DONOTEVALUATE(): never {
+  throw "Test262: This statement should not be evaluated.";
+}
+
 namespace assert {
   export function sameValue(actual: unknown, expected: unknown, message?: string) {
     if (!Object.is(actual, expected)) {
