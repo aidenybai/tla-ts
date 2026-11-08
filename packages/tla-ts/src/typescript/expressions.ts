@@ -358,8 +358,35 @@ const translateCall = (
     if (getKind(argument, context) === "sequence" && names?.every((name) => name === "object")) {
       return boolean(true);
     }
-    if (names?.every((name) => name !== "object" && name !== "function")) return boolean(false);
+    if (
+      getKind(argument, context) === "object" ||
+      names?.every((name) => name !== "object" && name !== "function")
+    ) {
+      return boolean(false);
+    }
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
+  }
+  const isPrototypeHasOwn =
+    method === "call" &&
+    ts.isPropertyAccessExpression(receiver) &&
+    receiver.name.text === "hasOwnProperty" &&
+    receiver.expression.getText() === "Object.prototype";
+  const owned =
+    method === "hasOwnProperty" && node.arguments.length === 1
+      ? [receiver, node.arguments[0]]
+      : (global === "Object" && method === "hasOwn") || isPrototypeHasOwn
+        ? node.arguments
+        : [];
+  if (owned.length === 2 && getKind(owned[0], context) === "object") {
+    return useJavaScript(
+      "HasOwn",
+      [
+        getHeap(scope, node, context),
+        translateExpression(owned[0], scope, context),
+        translatePropertyKey(owned[1], scope, context),
+      ],
+      context,
+    );
   }
   if (global === "Object" && method === "is" && node.arguments.length === 2) {
     if (

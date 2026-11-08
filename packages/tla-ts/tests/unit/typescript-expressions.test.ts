@@ -236,6 +236,14 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ],
     ["[box === 1, 1 === box]", "const box: {} = {};"],
     [
+      "[point.hasOwnProperty('a'), point.hasOwnProperty('toString'), Object.hasOwn(point, 1), Object.prototype.hasOwnProperty.call(point, 'b'), Array.isArray(point)]",
+      "const point = { a: 1, 1: 2 };",
+    ],
+    [
+      "has(point)",
+      "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
+    ],
+    [
       "[point.x, point === other]",
       "const make = () => ({ x: 4 });\nconst point = make();\nconst other = make();",
     ],

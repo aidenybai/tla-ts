@@ -63,6 +63,8 @@ PutAll(object, values, keys) ==
 
 Spread(object, heap, ref) == PutAll(object, Own(heap, ref), heap[ref[Ref]].keys)
 
+HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
+
 Has(heap, ref, key) ==
   IF key \\in DOMAIN Own(heap, ref) THEN TRUE
   ELSE IF key \\in Inherited THEN Assert(FALSE, "tla-ts can't read what objects inherit")

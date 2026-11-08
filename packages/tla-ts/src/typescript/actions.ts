@@ -549,6 +549,7 @@ const rejectCatchRedeclaration = (declaration: ts.VariableDeclaration) => {
 const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
   if (ts.isObjectLiteralExpression(node)) return true;
   const isRead =
+    (ts.isIdentifier(node) && getKind(node, context) === "object") ||
     ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       getKind(node.expression, context) === "object") ||
     (ts.isBinaryExpression(node) &&
@@ -924,10 +925,17 @@ const translateIterations = (
   );
 };
 
-const hasCall = (node: ts.Node): boolean =>
-  ts.isCallExpression(node) ||
+// A call to a built-in function that changes nothing, which an expression can make.
+const isLibraryCall = (node: ts.CallExpression, context: Context) =>
+  getWritten(node) === undefined &&
+  (context.checker.getResolvedSignature(node)?.getDeclaration()?.getSourceFile()
+    .isDeclarationFile ??
+    false);
+
+const hasCall = (node: ts.Node, context: Context): boolean =>
+  (ts.isCallExpression(node) && !isLibraryCall(node, context)) ||
   ts.isNewExpression(node) ||
-  (ts.forEachChild(node, (child) => hasCall(child) || undefined) ?? false);
+  (ts.forEachChild(node, (child) => hasCall(child, context) || undefined) ?? false);
 
 const translateTry = (
   statement: ts.TryStatement,
@@ -1027,10 +1035,10 @@ const translateStatements = (
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
     return allocate(returned, path, context, (inner) => {
-      if (ts.isCallExpression(returned)) {
+      if (ts.isCallExpression(returned) && !isLibraryCall(returned, context)) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }
-      if (hasCall(returned)) throw new TlaTypeScriptError("Unsupported return", statement);
+      if (hasCall(returned, context)) throw new TlaTypeScriptError("Unsupported return", statement);
       return frame.exit(inner, translateExpression(returned, inner.scope, context));
     });
   }
