@@ -268,11 +268,12 @@ const createArithmeticOperators = (module: string) => {
       }
       return ((left % right) + right) % right;
     }),
-    defineOperator("..", 2, (args) => ({
-      kind: "Interval",
-      low: getJavaInteger(getValue(args, 0, ".."), dotDotSignature),
-      high: getJavaInteger(getValue(args, 1, ".."), dotDotSignature),
-    })),
+    defineOperator("..", 2, (args) => {
+      const low = getValue(args, 0, "..");
+      // TLC's MethodHandle casts the last argument first.
+      const high = getJavaInteger(getValue(args, 1, ".."), dotDotSignature);
+      return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high };
+    }),
   ];
 };
 
