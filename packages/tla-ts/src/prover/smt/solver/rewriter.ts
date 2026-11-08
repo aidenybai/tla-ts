@@ -35,6 +35,15 @@ import {
   OP_IMPLIES,
   OP_IS_INT,
   OP_POWER,
+  OP_SIN,
+  OP_COS,
+  OP_TAN,
+  OP_ASIN,
+  OP_ACOS,
+  OP_ATAN,
+  OP_SINH,
+  OP_COSH,
+  OP_TANH,
   OP_ITE,
   OP_LE,
   OP_LT,
@@ -472,6 +481,22 @@ export class Rewriter extends RewriterTpl {
         return this.arith.mkIsInt(args[0]);
       case OP_POWER:
         return this.arith.mkPower(args[0], args[1]) ?? -1;
+      case OP_SIN:
+        return this.arith.mkSin(args[0]) ?? -1;
+      case OP_COS:
+        return this.arith.mkCos(args[0]) ?? -1;
+      case OP_TAN:
+        return this.arith.mkTan(args[0]) ?? -1;
+      case OP_ASIN:
+        return this.arith.mkAsin(args[0]) ?? -1;
+      case OP_ACOS:
+        return this.arith.mkAcos(args[0]) ?? -1;
+      case OP_ATAN:
+        return this.arith.mkAtan(args[0]) ?? -1;
+      case OP_SINH:
+      case OP_COSH:
+      case OP_TANH:
+        return this.arith.mkHyperbolic(op, args[0]) ?? -1;
       default:
         return -1;
     }

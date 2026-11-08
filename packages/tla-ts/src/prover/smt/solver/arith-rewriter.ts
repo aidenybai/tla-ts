@@ -2,10 +2,22 @@
 import {
   FAMILY_ARITH,
   KIND_APP,
+  OP_ACOS,
+  OP_ACOSH,
   OP_ADD,
+  OP_ASIN,
+  OP_ASINH,
+  OP_ATAN,
+  OP_ATANH,
+  OP_COS,
+  OP_COSH,
   OP_DIV,
   OP_GE,
+  OP_PI,
   OP_POWER,
+  OP_SIN,
+  OP_SINH,
+  OP_TAN,
   OP_IDIV,
   OP_ITE,
   OP_LE,
@@ -46,7 +58,13 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   maxDegree: 64,
 };
 
+const HALF = Rational.of(1n, 2n);
 const TWO = Rational.of(2n);
+
+const getHalfTurns = (k: Rational) => {
+  const floor = k.floor();
+  return Rational.of(getEuclideanMod(floor.num, 2n)).add(k).sub(floor);
+};
 
 const getCeilDiv = (dividend: bigint, divisor: bigint) => -getEuclideanDiv(-dividend, divisor);
 
@@ -560,6 +578,250 @@ export class ArithRewriter extends PolyRewriter {
     const value = manager.getAlgebraicValue(base);
     if (!this.options.isAnumSimp || am.degree(value) > maxDegree) return undefined;
     return finish(am.root(am.power(value, Number(numerator)), Number(y.den)));
+  }
+
+  private isPi(expr: number) {
+    return this.manager.getOp(expr) === OP_PI;
+  }
+
+  private isBinary(expr: number, op: number) {
+    const manager = this.manager;
+    return manager.getOp(expr) === op && manager.getNumArgs(expr) === 2;
+  }
+
+  private getPiMultiple(expr: number) {
+    const manager = this.manager;
+    if (this.isPi(expr)) return Rational.one;
+    if (!this.isBinary(expr, OP_MUL) || !this.isPi(manager.getArg(expr, 1))) return undefined;
+    const coefficient = manager.getArg(expr, 0);
+    return manager.isNumeral(coefficient) ? this.getValue(coefficient) : undefined;
+  }
+
+  private getPiOffset(expr: number) {
+    const manager = this.manager;
+    if (manager.getOp(expr) !== OP_ADD) return undefined;
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const term = manager.getArg(expr, index);
+      const k = this.getPiMultiple(term);
+      if (k !== undefined) return { k, term };
+    }
+    return undefined;
+  }
+
+  private isPiTimesToReal(first: number, second: number) {
+    const manager = this.manager;
+    return (
+      (this.isPi(first) && manager.getOp(second) === OP_TO_REAL) ||
+      (manager.getOp(first) === OP_TO_REAL && this.isPi(second))
+    );
+  }
+
+  private isTwoPiInteger(expr: number) {
+    const manager = this.manager;
+    if (!this.isBinary(expr, OP_MUL)) return false;
+    const coefficient = manager.getArg(expr, 0);
+    const product = manager.getArg(expr, 1);
+    if (!manager.isNumeral(coefficient)) return false;
+    const k = this.getValue(coefficient);
+    return (
+      k.isInt() &&
+      getEuclideanMod(k.num, 2n) === 0n &&
+      this.isBinary(product, OP_MUL) &&
+      this.isPiTimesToReal(manager.getArg(product, 0), manager.getArg(product, 1))
+    );
+  }
+
+  private isPiInteger(expr: number) {
+    const manager = this.manager;
+    if (!this.isBinary(expr, OP_MUL)) return false;
+    const first = manager.getArg(expr, 0);
+    const second = manager.getArg(expr, 1);
+    if (!manager.isNumeral(first)) return this.isPiTimesToReal(first, second);
+    if (!this.getValue(first).isInt() || !this.isBinary(second, OP_MUL)) return false;
+    return this.isPiTimesToReal(manager.getArg(second, 0), manager.getArg(second, 1));
+  }
+
+  private findSummand(expr: number, isMatching: (term: number) => boolean) {
+    const manager = this.manager;
+    if (manager.getOp(expr) !== OP_ADD) return undefined;
+    for (let index = 0; index < manager.getNumArgs(expr); index++)
+      if (isMatching(manager.getArg(expr, index))) return manager.getArg(expr, index);
+    return undefined;
+  }
+
+  private mkReal(value: Rational) {
+    return this.manager.mkRealNumeral(value);
+  }
+
+  private mkRealApp(op: number, args: number[]) {
+    return this.manager.mkApp(op, args, SORT_REAL);
+  }
+
+  private mkSqrt(value: Rational) {
+    return this.mkPowerApp(this.mkReal(value), this.mkReal(HALF));
+  }
+
+  private mkSinValue(k: Rational) {
+    const turns = getHalfTurns(k);
+    const isNegative = turns.compare(Rational.one) >= 0;
+    const kPrime = isNegative ? turns.sub(Rational.one) : turns;
+    const mkSigned = (expr: number) => (isNegative ? this.mkRealApp(OP_UMINUS, [expr]) : expr);
+    const is = (num: bigint, den: bigint) => kPrime.equals(Rational.of(num, den));
+    if (kPrime.isZero() || kPrime.equals(Rational.one)) return this.mkReal(Rational.zero);
+    if (is(1n, 2n)) return this.mkReal(isNegative ? Rational.minusOne : Rational.one);
+    if (is(1n, 6n) || is(5n, 6n)) return this.mkReal(Rational.of(isNegative ? -1n : 1n, 2n));
+    if (is(1n, 4n) || is(3n, 4n)) return mkSigned(this.mkSqrt(HALF));
+    if (is(1n, 3n) || is(2n, 3n))
+      return mkSigned(this.mkRealApp(OP_DIV, [this.mkSqrt(Rational.of(3n)), this.mkReal(TWO)]));
+    const isLow = is(1n, 12n) || is(11n, 12n);
+    if (isLow || is(5n, 12n) || is(7n, 12n)) {
+      const six = this.mkSqrt(Rational.of(6n));
+      const two = this.mkSqrt(TWO);
+      const sum = this.mkRealApp(isLow ? OP_SUB : OP_ADD, [six, two]);
+      return mkSigned(this.mkRealApp(OP_DIV, [sum, this.mkReal(Rational.of(4n))]));
+    }
+    return undefined;
+  }
+
+  private mkWithoutTerm(op: number, arg: number, term: number, isNegated: boolean) {
+    const app = this.mkRealApp(op, [this.mkRealApp(OP_SUB, [arg, term])]);
+    return isNegated ? this.reduce(this.mkRealApp(OP_UMINUS, [app]), 3) : this.reduce(app, 2);
+  }
+
+  private mkSinCos(arg: number, isSin: boolean): number | Rewrite | undefined {
+    const manager = this.manager;
+    const op = manager.getOp(arg);
+    const inverse = manager.getNumArgs(arg) === 1 ? manager.getArg(arg, 0) : -1;
+    if (op === (isSin ? OP_ASIN : OP_ACOS)) return inverse;
+    if (isSin && op === OP_ACOS) {
+      const square = this.mkRealApp(OP_MUL, [inverse, inverse]);
+      const difference = this.mkRealApp(OP_SUB, [this.mkReal(Rational.one), square]);
+      return this.reduce(this.mkPowerApp(difference, this.mkReal(HALF)), Infinity);
+    }
+    if (manager.isNumeral(arg) && this.getValue(arg).isZero())
+      return isSin ? arg : this.mkReal(Rational.one);
+    const multiple = this.getPiMultiple(arg);
+    const value =
+      multiple === undefined ? undefined : this.mkSinValue(isSin ? multiple : multiple.add(HALF));
+    if (value !== undefined) return this.reduce(value, Infinity);
+    const offset = this.getPiOffset(arg);
+    if (offset !== undefined) {
+      const turns = getHalfTurns(offset.k);
+      const quarter = turns.isZero()
+        ? 0
+        : turns.equals(HALF)
+          ? 1
+          : turns.equals(Rational.one)
+            ? 2
+            : turns.equals(Rational.of(3n, 2n))
+              ? 3
+              : -1;
+      if (quarter !== -1) {
+        // sin(x + q pi/2) is sin, cos, -sin, -cos, and cos(x + q pi/2) is cos, -sin, -cos, sin.
+        const shifted = isSin ? quarter : quarter + 1;
+        return this.mkWithoutTerm(
+          shifted % 2 === 0 ? OP_SIN : OP_COS,
+          arg,
+          offset.term,
+          shifted % 4 >= 2,
+        );
+      }
+    }
+    const term = this.findSummand(arg, (summand) => this.isTwoPiInteger(summand));
+    if (term !== undefined) return this.mkWithoutTerm(isSin ? OP_SIN : OP_COS, arg, term, false);
+    return undefined;
+  }
+
+  mkSin(arg: number) {
+    return this.mkSinCos(arg, true);
+  }
+
+  mkCos(arg: number) {
+    return this.mkSinCos(arg, false);
+  }
+
+  mkTan(arg: number): number | Rewrite | undefined {
+    const manager = this.manager;
+    if (manager.getOp(arg) === OP_ATAN) return manager.getArg(arg, 0);
+    if (manager.isNumeral(arg) && this.getValue(arg).isZero()) return arg;
+    const multiple = this.getPiMultiple(arg);
+    if (multiple !== undefined) {
+      const sine = this.mkSinValue(multiple);
+      if (sine === undefined) return undefined;
+      if (this.isZero(sine)) return sine;
+      const cosine = this.mkSinValue(multiple.add(HALF));
+      if (cosine === undefined || this.isZero(cosine)) return undefined;
+      return this.reduce(this.mkRealApp(OP_DIV, [sine, cosine]), Infinity);
+    }
+    const offset = this.getPiOffset(arg);
+    if (offset !== undefined && offset.k.isInt())
+      return this.mkWithoutTerm(OP_TAN, arg, offset.term, false);
+    const term = this.findSummand(arg, (summand) => this.isPiInteger(summand));
+    if (term !== undefined) return this.mkWithoutTerm(OP_TAN, arg, term, false);
+    return undefined;
+  }
+
+  private mkPiMultiple(num: bigint, den: bigint) {
+    return this.reduce(
+      this.mkRealApp(OP_MUL, [this.mkReal(Rational.of(num, den)), this.manager.piExpr]),
+      2,
+    );
+  }
+
+  // Like Z3, asin(-x) = -asin(x) even outside [-1, 1].
+  private mkNegated(op: number, arg: number) {
+    return this.reduce(this.mkRealApp(OP_UMINUS, [this.mkRealApp(op, [arg])]), 2);
+  }
+
+  mkAsin(arg: number) {
+    const manager = this.manager;
+    if (manager.isNumeral(arg)) {
+      const k = this.getValue(arg);
+      if (k.isZero()) return arg;
+      if (k.compare(Rational.minusOne) < 0) return this.mkNegated(OP_ASIN, this.mkReal(k.neg()));
+      if (k.compare(Rational.one) > 0) return undefined;
+      const sign = k.isNegative() ? -1n : 1n;
+      const magnitude = k.abs();
+      if (magnitude.equals(Rational.one)) return this.mkPiMultiple(sign, 2n);
+      if (magnitude.equals(HALF)) return this.mkPiMultiple(sign, 6n);
+    }
+    const negated = manager.getTimesMinusOneArg(arg);
+    return negated === undefined ? undefined : this.mkNegated(OP_ASIN, negated);
+  }
+
+  mkAcos(arg: number) {
+    const manager = this.manager;
+    if (!manager.isNumeral(arg)) return undefined;
+    const k = this.getValue(arg);
+    if (k.isZero()) return this.mkPiMultiple(1n, 2n);
+    if (k.equals(Rational.one)) return this.mkReal(Rational.zero);
+    if (k.equals(Rational.minusOne)) return manager.piExpr;
+    if (k.equals(HALF)) return this.mkPiMultiple(1n, 3n);
+    if (k.equals(HALF.neg())) return this.mkPiMultiple(2n, 3n);
+    return undefined;
+  }
+
+  mkAtan(arg: number) {
+    const manager = this.manager;
+    if (manager.isNumeral(arg)) {
+      const k = this.getValue(arg);
+      if (k.isZero()) return arg;
+      if (k.equals(Rational.one)) return this.mkPiMultiple(1n, 4n);
+      if (k.equals(Rational.minusOne)) return this.mkPiMultiple(-1n, 4n);
+      if (k.compare(Rational.minusOne) < 0) return this.mkNegated(OP_ATAN, this.mkReal(k.neg()));
+      return undefined;
+    }
+    const negated = manager.getTimesMinusOneArg(arg);
+    return negated === undefined ? undefined : this.mkNegated(OP_ATAN, negated);
+  }
+
+  mkHyperbolic(op: number, arg: number) {
+    const manager = this.manager;
+    const inverse = op === OP_SINH ? OP_ASINH : op === OP_COSH ? OP_ACOSH : OP_ATANH;
+    if (manager.getOp(arg) === inverse) return manager.getArg(arg, 0);
+    const negated = manager.getTimesMinusOneArg(arg);
+    if (negated === undefined) return undefined;
+    return op === OP_COSH ? this.mkRealApp(OP_COSH, [negated]) : this.mkNegated(op, negated);
   }
 
   mkDiv(left: number, right: number) {
