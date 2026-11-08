@@ -142,6 +142,17 @@ describe("nested module scoping matches SANY", () => {
     results.forEach((result) => expect(result.status).toBe("success"));
   });
 
+  it("reads a Naturals that loadModule gives, for the standard modules that use it too", async () => {
+    const naturals = "---- MODULE Naturals ----\na + b == 42\nFromFile == 7\n====";
+    const result = await checkSource("EXTENDS Naturals\nASSUME 1 + 1 = 2 /\\ FromFile = 7", {
+      Naturals: naturals,
+    });
+    expect(result.status).toBe("success");
+    await expect(
+      checkSource("EXTENDS Sequences\nASSUME TRUE", { Naturals: naturals }),
+    ).rejects.toThrow("Unknown operator: `Nat'");
+  });
+
   it("replaces ToJson of a user's Json module on master, but not on TLC 1.7.4, which has no Json class", async () => {
     const checkJson = (version: "master" | "1.7.4", json: string) =>
       check({
