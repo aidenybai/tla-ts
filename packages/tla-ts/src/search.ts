@@ -344,6 +344,11 @@ const getSpecification = (
             text: `The subscript of the next-state relation specified by the specification\ndoes not seem to contain the state variable ${name}`,
           }),
         );
+      if (nextActions.length > 0) {
+        throw new TlaConfigError(
+          "The specification contains more than one conjunct of the form [][Next]_v,\nbut TLC can handle only specifications with one next-state relation.",
+        );
+      }
       nextActions.push({ expression: conjunct.expression.action, scope: item.scope });
       return;
     }
@@ -366,16 +371,11 @@ const getSpecification = (
     }
     if (level === ACTION_LEVEL) {
       throw new TlaConfigError(
-        `TLC cannot handle the action-level conjunct of the specification ${config.specification}`,
+        `TLC cannot handle this conjunct of the spec:\n${describeRange(conjunct)}`,
       );
     }
     initConjuncts.push(item);
   });
-  if (nextActions.length > 1) {
-    throw new TlaConfigError(
-      `The specification ${config.specification} must contain at most one [][Next]_vars`,
-    );
-  }
   const items = [...initConjuncts, ...nextActions];
   const getName = (index: number) => `$specification${index}`;
   const scope = items.reduce<Scope | undefined>(

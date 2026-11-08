@@ -227,6 +227,11 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2237, "The spec is trivially false because %1% is false.", false],
   [2238, "TLC cannot handle subscript %1%", false],
   [2239, "TLC cannot handle this conjunct of the spec:\n%1%", false],
+  [
+    2240,
+    "The specification contains more than one conjunct of the form [][Next]_v,\nbut TLC can handle only specifications with one next-state relation.",
+    false,
+  ],
   [2241, "The property %1% is not correctly defined.", false],
   [2242, "The arity of the operator %1% is inconsistent in the configuration file.", false],
   [2244, "TLC can't handle real numbers.\n%1%", false],
