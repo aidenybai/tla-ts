@@ -1931,6 +1931,13 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
+  // FcnLambdaValue#toTuple enumerates the domain through toSetEnum, which is null for a set that a
+  // module overrides, such as Nat.
+  if (value.kind === "LazyFunction" && isOverriddenSet(value.domain)) {
+    throw new TlaEvaluationError(
+      "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
+    );
+  }
   const functionValue = toFiniteFunction(value);
   return functionValue.domain.every((key, index) => key === index + 1)
     ? functionValue.range
