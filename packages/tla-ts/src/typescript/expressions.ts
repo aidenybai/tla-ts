@@ -28,7 +28,7 @@ import {
   translateNewError,
 } from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
-import { getHeap, translatePropertyKey } from "./heap";
+import { getHeap, isDescription, translatePropertyKey } from "./heap";
 import { isBuiltInObject, translateIntrinsic } from "./intrinsics";
 import {
   getTypeNames,
@@ -392,6 +392,25 @@ const translateCall = (
     if (kind === "sequence" || kind === "set" || kind === "map") {
       return boolean(method === "isExtensible");
     }
+  }
+  if (isDescription(node, context)) {
+    const described = scope.allocated.get(node);
+    if (described === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return ifExpression(
+      useJavaScript(
+        "HasOwn",
+        [
+          getHeap(scope, node, context),
+          translateExpression(node.arguments[0], scope, context),
+          translatePropertyKey(node.arguments[1], scope, context),
+        ],
+        context,
+      ),
+      described,
+      getUndefined(context),
+    );
   }
   const isPrototypeHasOwn =
     method === "call" &&

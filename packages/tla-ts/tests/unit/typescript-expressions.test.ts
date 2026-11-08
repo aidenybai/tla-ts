@@ -280,6 +280,15 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[first!.value, first!.writable, second!.enumerable, second!.writable, missing === undefined, first === again]",
+      `const box = { a: 1 };
+      Object.defineProperty(box, "b", { value: 2 });
+      const first = Object.getOwnPropertyDescriptor(box, "a");
+      const second = Object.getOwnPropertyDescriptor(box, "b");
+      const missing = Object.getOwnPropertyDescriptor(box, "c");
+      const again = Object.getOwnPropertyDescriptor(box, "a");`,
+    ],
+    [
       "[copy.a, 'b' in copy, base.b]",
       `const base = { a: 1, b: 0 };
       Object.defineProperty(base, "b", { enumerable: false });

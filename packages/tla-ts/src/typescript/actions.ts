@@ -28,7 +28,7 @@ import {
   getAllocated,
   getHeap,
   isObjectChange,
-  translateObject,
+  translateAllocated,
   translateObjectChange,
   translatePropertyKey,
 } from "./heap";
@@ -635,7 +635,7 @@ const allocate = (
     (current, literal) => {
       const heap = getHeap(current.scope, literal, context);
       const name = context.names.getFresh("heap");
-      const object = translateObject(literal, current.scope, context);
+      const object = translateAllocated(literal, current.scope, context);
       const ref = useJavaScript(
         ":>",
         [identifier("Ref"), apply("Len", [identifier(name)])],

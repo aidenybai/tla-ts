@@ -82,6 +82,23 @@ export const translateObject = (
   }, identifier("EmptyObject"));
 };
 
+// The object that a node from getAllocated makes, before the heap holds it.
+export const translateAllocated = (node: ts.Expression, scope: Scope, context: Context) => {
+  if (ts.isObjectLiteralExpression(node)) return translateObject(node, scope, context);
+  if (!ts.isCallExpression(node) || !isDescription(node, context)) {
+    throw new TlaTypeScriptError("Unsupported object", node);
+  }
+  return useJavaScript(
+    "Describe",
+    [
+      getHeap(scope, node, context),
+      translateExpression(node.arguments[0], scope, context),
+      translatePropertyKey(node.arguments[1], scope, context),
+    ],
+    context,
+  );
+};
+
 // Whether an object literal becomes a heap object. One that a built-in function takes, such as
 // Array.from({ length: 2 }), does too, whatever type the function asks for.
 const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
@@ -101,9 +118,16 @@ const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
   );
 };
 
-// The object literals that evaluating a node always makes, innermost first. Functions and operands
-// that only sometimes run make none.
-export const getAllocated = (node: ts.Node, context: Context): ts.ObjectLiteralExpression[] => {
+export const isDescription = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  node.expression.expression.getText() === "Object" &&
+  node.expression.name.text === "getOwnPropertyDescriptor" &&
+  node.arguments.length >= 2 &&
+  getKind(node.arguments[0], context) === "object";
+
+// The object literals and descriptions that evaluating a node always makes, innermost first.
+// Functions and operands that only sometimes run make none.
+export const getAllocated = (node: ts.Node, context: Context): ts.Expression[] => {
   if (context.heap === undefined || ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
   if (ts.isOptionalChain(node)) return [];
   if (ts.isConditionalExpression(node)) return getAllocated(node.condition, context);
@@ -118,13 +142,14 @@ export const getAllocated = (node: ts.Node, context: Context): ts.ObjectLiteralE
       ...getAllocated(node.right, context),
     ];
   }
-  const nested: ts.ObjectLiteralExpression[] = [];
+  const nested: ts.Expression[] = [];
   ts.forEachChild(node, (child) => {
     nested.push(...getAllocated(child, context));
   });
-  return ts.isObjectLiteralExpression(node) && isObjectValue(node, context)
-    ? [...nested, node]
-    : nested;
+  const isAllocated =
+    (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
+    (ts.isCallExpression(node) && isDescription(node, context));
+  return isAllocated ? [...nested, node] : nested;
 };
 
 // The operators of the built-in functions that change an object's properties, with how many

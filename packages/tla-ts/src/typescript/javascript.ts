@@ -106,6 +106,18 @@ Has(heap, ref, key) ==
 
 Get(heap, ref, key) == IF Has(heap, ref, key) THEN Own(heap, ref)[key] ELSE Undefined
 
+Describe(heap, ref, key) ==
+  LET object == heap[ref[Ref]]
+      attributes == object.attributes[key]
+  IN IF key \\in DOMAIN object.values
+     THEN PutAll(EmptyObject,
+                 [value |-> object.values[key],
+                  writable |-> attributes.writable,
+                  enumerable |-> attributes.enumerable,
+                  configurable |-> attributes.configurable],
+                 <<"value", "writable", "enumerable", "configurable">>)
+     ELSE EmptyObject
+
 CanPut(heap, ref, key) ==
   LET object == heap[ref[Ref]]
   IN IF key \\in DOMAIN object.values THEN object.attributes[key].writable ELSE object.extensible
