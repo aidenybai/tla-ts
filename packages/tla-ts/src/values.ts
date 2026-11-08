@@ -456,6 +456,15 @@ export const compareValues = (left: Value, right: Value): number => {
     if (isLeftSet !== isSetValue(right)) {
       throw createComparisonError(left, right);
     }
+    // The sizes decide first, so an interval of another size never needs its elements.
+    if (leftKind === "Interval" && rightKind === "Set") {
+      const difference = getCardinality(left) - right.elements.length;
+      if (difference !== 0) return difference;
+    }
+    if (leftKind === "Set" && rightKind === "Interval") {
+      const difference = left.elements.length - getCardinality(right);
+      if (difference !== 0) return difference;
+    }
     if (isLeftSet) return compareSets(toFiniteSet(left), toFiniteSet(right));
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
   }
