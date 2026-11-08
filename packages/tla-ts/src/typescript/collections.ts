@@ -73,10 +73,13 @@ const translateCallback = (callback: ts.Expression, scope: Scope, context: Conte
 const translateTest = (callback: ts.Expression, scope: Scope, context: Context) => {
   const callee = getCallee(callback, context);
   const signature = callee && context.checker.getSignatureFromDeclaration(callee);
-  if (signature === undefined || !isBooleanType(signature.getReturnType())) {
+  if (signature === undefined) {
     throw new TlaTypeScriptError("Return a boolean from this test", callback);
   }
-  return translateCallback(callback, scope, context);
+  const result = translateCallback(callback, scope, context);
+  return isBooleanType(signature.getReturnType())
+    ? result
+    : useJavaScript("ToBoolean", [result], context);
 };
 
 const rejectIndex = (callback: ts.Expression, message: string, context: Context) => {

@@ -118,7 +118,6 @@ const CASES: [string, string][] = [
   ],
   ["a conversion whose type is unknown", "const value: unknown = label; count = Number(value);"],
   ["an unknown call in a callback", "values = values.map(() => Math.random());"],
-  ["a test that doesn't return a boolean", "values = values.filter((value) => value);"],
 ];
 
 it.each(CASES)("rejects %s", (_, statements) => {
