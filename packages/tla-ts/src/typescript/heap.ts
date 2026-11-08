@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import {
+  type CalledMethod,
   type Context,
   getObjectMethod,
   getSymbol,
@@ -64,23 +65,18 @@ export const getMethodValue = (method: ts.MethodDeclaration, context: Context) =
 
 // Whether the object a call's receiver names still holds the method the call inlines, since a
 // script may replace it.
-export const translateHoldsMethod = (
-  callee: ts.PropertyAccessExpression,
-  method: ts.MethodDeclaration,
-  scope: Scope,
-  context: Context,
-) =>
+export const translateHoldsMethod = (called: CalledMethod, scope: Scope, context: Context) =>
   apply("=", [
     useJavaScript(
       "Get",
       [
-        getHeap(scope, callee, context),
-        translateObjectValue(callee.expression, scope, context),
-        string(callee.name.text),
+        getHeap(scope, called.receiver, context),
+        translateObjectValue(called.receiver, scope, context),
+        string(called.key),
       ],
       context,
     ),
-    getMethodValue(method, context),
+    getMethodValue(called.method, context),
   ]);
 
 export const translateObject = (

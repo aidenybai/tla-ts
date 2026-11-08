@@ -215,11 +215,29 @@ export const getObjectMethod = (node: ts.Node | undefined) =>
     ? node
     : undefined;
 
-// The object method that a call's callee names, which the call checks the object still holds.
-export const getCalledMethod = (node: ts.Expression, context: Context) =>
-  context.heap !== undefined && ts.isPropertyAccessExpression(node)
-    ? getObjectMethod(getSymbol(node.name, context.checker)?.valueDeclaration)
-    : undefined;
+export interface CalledMethod {
+  method: ts.MethodDeclaration;
+  receiver: ts.Expression;
+  key: string;
+}
+
+// The object method that a callee such as obj.name or obj["name"] reads, which the call checks
+// the object still holds.
+export const getCalledMethod = (
+  node: ts.Expression,
+  context: Context,
+): CalledMethod | undefined => {
+  const isAccess =
+    context.heap !== undefined &&
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node));
+  if (!isAccess) return undefined;
+  const name = ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression;
+  if (!ts.isIdentifier(name) && !ts.isPrivateIdentifier(name) && !ts.isStringLiteralLike(name)) {
+    return undefined;
+  }
+  const method = getObjectMethod(getSymbol(name, context.checker)?.valueDeclaration);
+  return method === undefined ? undefined : { method, receiver: node.expression, key: name.text };
+};
 
 // The function that a callee or callback names: one written in place, one declared elsewhere, or
 // a method of a known class.

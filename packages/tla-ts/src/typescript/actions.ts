@@ -442,8 +442,8 @@ const translateCallStatement = (
       ),
     );
   }
-  const objectMethod = isGenerator ? undefined : getCalledMethod(expression.expression, context);
-  if (isMethodCall(expression) && objectMethod === undefined) {
+  const called = isGenerator ? undefined : getCalledMethod(expression.expression, context);
+  if (isMethodCall(expression) && called === undefined) {
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
     if (
@@ -484,7 +484,7 @@ const translateCallStatement = (
   };
   const callee = isGenerator
     ? getGenerator(expression.expression, context)
-    : (objectMethod ?? getCallback(expression.expression));
+    : (called?.method ?? getCallback(expression.expression));
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
@@ -537,10 +537,10 @@ const translateCallStatement = (
       }),
     );
   });
-  return objectMethod === undefined || !isMethodCall(expression)
+  return called === undefined
     ? call
     : ifThenElse(
-        translateHoldsMethod(expression.expression, objectMethod, path.scope, context),
+        translateHoldsMethod(called, path.scope, context),
         call,
         leaf(
           apply("Assert", [
@@ -848,7 +848,7 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       (symbol && path.scope.functions.get(symbol)) ??
       getCallee(node, context) ??
       getGenerator(node, context) ??
-      getCalledMethod(node, context)
+      getCalledMethod(node, context)?.method
     );
   };
   const visit = (node: ts.Node) => {

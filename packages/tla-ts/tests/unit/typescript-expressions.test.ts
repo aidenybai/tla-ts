@@ -316,7 +316,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const steps = [first, second];`,
     ],
     [
-      "[total, count, typeof counter.add, counter.add === other.add, Object.hasOwn(counter, 'add')]",
+      "[total, counter['double'](4), count, typeof counter.add, counter.add === other.add, Object.hasOwn(counter, 'add')]",
       `let count = 0;
       const counter = {
         add(step: number) {

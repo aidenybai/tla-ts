@@ -355,11 +355,11 @@ const translateCall = (
     throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
   }
   if (helper !== undefined) return translateHelperCall(helper, node, scope, context);
-  const objectMethod = getCalledMethod(node.expression, context);
-  if (objectMethod !== undefined && isMethodCall(node)) {
+  const called = getCalledMethod(node.expression, context);
+  if (called !== undefined) {
     return ifExpression(
-      translateHoldsMethod(node.expression, objectMethod, scope, context),
-      translateLocalCall(node, scope, context, objectMethod),
+      translateHoldsMethod(called, scope, context),
+      translateLocalCall(node, scope, context, called.method),
       apply("Assert", [boolean(false), string("tla-ts can't tell which method this call runs")]),
     );
   }
