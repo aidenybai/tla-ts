@@ -6,6 +6,7 @@ import {
   type Definition,
   type Expression,
   type OperatorDefinition,
+  type SourceLocation,
 } from "./ast";
 import { isConstantLevel } from "./dependencies";
 import { isStackOverflow, TlaError } from "./errors";
@@ -1233,6 +1234,43 @@ const compileApplication = (
   return unsupported();
 };
 
+// TLC applies a function definition that depends on the state without building it: once it finds
+// the argument in the domain, it goes on with the body there, as an action where one is expected.
+const getFunctionExpansion = (
+  program: Program,
+  expression: Expression & { kind: "FunctionApplication" },
+  frame: Frame,
+) => {
+  const target = expression.function;
+  if (target.kind !== "Identifier" || frame.scope.has(target.name)) return undefined;
+  const global = findGlobalName(target.name, program.environment);
+  if (global?.kind !== "Definition" || global.definition.kind !== "Function") return undefined;
+  const definition = global.definition;
+  if (isConstantLevel(definition, program.environment)) return undefined;
+  const bound = definition.bounds[0];
+  if (definition.isSelfReferential || definition.bounds.length !== 1) return unsupported();
+  if (bound.pattern.kind !== "Name") return unsupported();
+  const argument = compileValue(program, getArgument(expression.args, expression.location), frame);
+  const name = getName(program, "a");
+  const isInDomain = compileMembership(
+    program,
+    { type: argument.type, emit: () => name },
+    bound.set,
+    { ...frame, scope: new Map() },
+  );
+  return {
+    definition,
+    scope: bindCode(new Map(), bound.pattern.name, argument.type, name),
+    apply: (body: () => string) =>
+      `((${name}) => (${isInDomain.emit()} ? ${body()} : H.deopt()))(${argument.emit()})`,
+    declare: () => `const ${name} = ${argument.emit()}; if (!(${isInDomain.emit()})) H.deopt();`,
+  };
+};
+
+// TLC applies a function to several arguments as to the tuple of them.
+const getArgument = (args: Expression[], location: SourceLocation): Expression =>
+  args.length === 1 ? args[0] : { kind: "Tuple", elements: args, location };
+
 const compileExcept = (
   program: Program,
   expression: Expression & { kind: "Except" },
@@ -1248,8 +1286,7 @@ const compileExcept = (
         steps.push((container) => getFieldIndexCode(program, type, step.name, container));
         return getFieldType(resolved, step.name);
       }
-      if (step.args.length !== 1) return unsupported();
-      const argument = compileValue(program, step.args[0], frame);
+      const argument = compileValue(program, getArgument(step.args, expression.location), frame);
       if (resolved.kind === "Fn") {
         unify(argument.type, resolved.key);
         steps.push(() => getIndexCode(program, resolved, argument.emit()));
@@ -1744,11 +1781,17 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       };
     }
     case "FunctionApplication": {
-      if (expression.args.length !== 1) return unsupported();
+      const expansion = getFunctionExpansion(program, expression, frame);
+      if (expansion) {
+        const body = inline(program, expansion.definition, () =>
+          compileValue(program, expansion.definition.body, { ...frame, scope: expansion.scope }),
+        );
+        return { type: body.type, emit: () => expansion.apply(body.emit) };
+      }
       return compileApplication(
         program,
         compileValue(program, expression.function, frame),
-        compileValue(program, expression.args[0], frame),
+        compileValue(program, getArgument(expression.args, expression.location), frame),
       );
     }
     case "FunctionConstruction": {
@@ -1912,6 +1955,14 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
       }
       break;
     }
+    case "FunctionApplication": {
+      const expansion = getFunctionExpansion(program, expression, frame);
+      if (!expansion) break;
+      const ways = inline(program, expansion.definition, () =>
+        getWays(expansion.definition.body, expansion.scope),
+      );
+      return counted(() => expansion.apply(ways.emit));
+    }
     case "Let":
     case "Case":
       return unsupported();
@@ -2023,6 +2074,12 @@ const compileStep = (
         return continueInto(definition, new Map());
       }
       break;
+    }
+    case "FunctionApplication": {
+      const expansion = getFunctionExpansion(program, expression, frame);
+      if (!expansion) break;
+      const body = continueInto(expansion.definition, expansion.scope);
+      return () => `{ ${expansion.declare()} ${body()} }`;
     }
     case "Forall": {
       if (!isBranching(program, expression.body, frame.scope)) break;
