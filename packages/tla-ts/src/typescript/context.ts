@@ -27,6 +27,8 @@ export interface Context {
   // The calls that the exported function being compiled makes and tla-ts can't compile.
   unknowns: Unknowns | undefined;
   heap: ts.Symbol | undefined;
+  // The built-in objects, by path, that a script names.
+  builtIns: Set<string>;
 }
 
 export interface Unknown {
@@ -65,6 +67,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   prelude: new Set(),
   unknowns: undefined,
   heap: undefined,
+  builtIns: new Set(),
 });
 
 export const hasObjectLiteral = (node: ts.Node): boolean =>

@@ -256,7 +256,11 @@ export const emit = (
   const config = [
     "SPECIFICATION Spec",
     ...(modelValues.length > 0
-      ? ["CONSTANTS", ...modelValues.map((constant) => `  ${constant} = ${constant}`)]
+      ? [
+          "CONSTANTS",
+          ...modelValues.map((constant) => `  ${constant} = ${constant}`),
+          ...(isJavaScript ? ["  BuiltIns <- UsedBuiltIns"] : []),
+        ]
       : []),
     ...formatConfigSection("INVARIANTS", sections.invariants),
     ...formatConfigSection("PROPERTIES", sections.properties),

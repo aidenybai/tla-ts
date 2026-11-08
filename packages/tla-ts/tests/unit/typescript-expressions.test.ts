@@ -311,6 +311,15 @@ const CASES: Record<string, (string | [string, string])[]> = {
       "[point.x, point === other]",
       "const make = () => ({ x: 4 });\nconst point = make();\nconst other = make();",
     ],
+    [
+      "[abs.writable, abs.enumerable, abs.value === Math.abs, abs.value === Math.max, length.value, length.writable, length.configurable, prototype.value === Array.prototype, missing === undefined, typeof abs.value, typeof prototype.value, typeof source.get, source.set]",
+      `const abs = Object.getOwnPropertyDescriptor(Math, "abs")!;
+      const length = Object.getOwnPropertyDescriptor(Function, "length")!;
+      const prototype = Object.getOwnPropertyDescriptor(Array, "prototype")!;
+      const missing = Object.getOwnPropertyDescriptor(Math, "missing");
+      const source = Object.getOwnPropertyDescriptor(RegExp.prototype, "source")!;`,
+    ],
+    "[Date.prototype.hasOwnProperty('constructor'), Math.hasOwnProperty('missing'), Object.prototype.hasOwnProperty.call(Array.prototype, 'map'), Object.hasOwn(Function, 'length')]",
   ],
   helpers: [
     ["double(4)", "const double = (value: number) => value * 2;"],

@@ -1,12 +1,14 @@
 import ts from "@typescript/typescript6";
-import { type Context, getSymbol } from "./context";
+import { type Context, getSymbol, getUndefined } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { getHeap } from "./heap";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { boolean, identifier, string } from "./tla";
+import type { Expression } from "../ast";
+import { BUILT_INS } from "./built-ins";
+import { apply, boolean, identifier, number, record, string, tuple } from "./tla";
 import { getKind } from "./types";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
@@ -37,28 +39,23 @@ const isLibrary = (symbol: ts.Symbol) =>
   (symbol.declarations ?? []).length > 0 &&
   (symbol.declarations ?? []).every((declaration) => declaration.getSourceFile().isDeclarationFile);
 
+const NAMESPACES = new Set(["Math", "JSON", "Reflect", "Atomics"]);
+
 const getBuiltIn = (node: ts.Expression, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   return ts.isIdentifier(node) &&
-    (CONSTRUCTORS.has(node.text) || NATIVE_ERRORS.has(node.text)) &&
+    (CONSTRUCTORS.has(node.text) || NATIVE_ERRORS.has(node.text) || NAMESPACES.has(node.text)) &&
     symbol !== undefined &&
     isLibrary(symbol)
     ? node.text
     : undefined;
 };
 
-const isNativeError = (name: string) => NATIVE_ERRORS.has(name) && name !== "Error";
-
 // The prototype of a built-in object, which "null" names.
 const getParent = (name: string) => {
-  if (name === "Object.prototype") return "null";
-  if (name === "Function.prototype") return "Object.prototype";
-  if (name.endsWith(".prototype")) {
-    return isNativeError(name.slice(0, -".prototype".length))
-      ? "Error.prototype"
-      : "Object.prototype";
-  }
-  return isNativeError(name) ? "Error" : "Function.prototype";
+  const entry = BUILT_INS[name];
+  if (entry === undefined) throw new TlaTypeScriptError(`Unknown built-in: ${name}`);
+  return entry[0] ?? "null";
 };
 
 const isPlainFunction = (type: ts.Type) => {
@@ -78,14 +75,18 @@ const isPlainFunction = (type: ts.Type) => {
   );
 };
 
-// The built-in object that a node is, such as "Array" or "Array.prototype".
+// The built-in object that a node is, by its path in BUILT_INS, such as "Array.prototype".
 const getName = (node: ts.Expression, context: Context): string | undefined => {
   if (ts.isParenthesizedExpression(node)) return getName(node.expression, context);
   const builtIn = getBuiltIn(node, context);
   if (builtIn !== undefined) return builtIn;
-  if (ts.isPropertyAccessExpression(node) && node.name.text === "prototype") {
-    const owner = getBuiltIn(node.expression, context);
-    return owner === undefined ? undefined : `${owner}.prototype`;
+  if (ts.isPropertyAccessExpression(node)) {
+    const owner = getName(node.expression, context);
+    const property =
+      owner === undefined
+        ? undefined
+        : BUILT_INS[owner]?.[3].find((entry) => entry[0] === node.name.text && entry.length === 3);
+    return property?.[2].startsWith("o") ? property[2].slice(1) : undefined;
   }
   if (isPrototypeCall(node, context)) {
     const parent = getPrototype(node.arguments[0], context);
@@ -208,15 +209,13 @@ const getGlobal = (name: string, node: ts.Node, context: Context) => {
   return symbol;
 };
 
+const isConstructor = (name: string) => CONSTRUCTORS.has(name) || NATIVE_ERRORS.has(name);
+
 // A built-in constructor is a model value, as error constructors are. Function.prototype is one
-// too, as it's a function, and other prototypes are functions from a model value no program can
-// name.
-const translateBuiltIn = (name: string, node: ts.Node, context: Context) => {
-  if (name === "null") {
-    context.prelude.add("Null");
-    return identifier("Null");
-  }
-  if (!name.includes(".")) return getConstructor(getGlobal(name, node, context), context);
+// too, as it's a function, and other built-in objects are references by their paths, which no
+// object a program makes has.
+const getBuiltInValue = (name: string, node: ts.Node, context: Context) => {
+  if (isConstructor(name)) return getConstructor(getGlobal(name, node, context), context);
   if (name === "Function.prototype") {
     const prototype = context.checker
       .getTypeOfSymbol(getGlobal("Function", node, context))
@@ -225,6 +224,133 @@ const translateBuiltIn = (name: string, node: ts.Node, context: Context) => {
     return getConstructor(prototype, context, "FunctionPrototype");
   }
   return useJavaScript(":>", [identifier("Ref"), string(name)], context);
+};
+
+const translateBuiltIn = (name: string, node: ts.Node, context: Context) => {
+  if (name === "null") {
+    context.prelude.add("Null");
+    return identifier("Null");
+  }
+  if (context.heap !== undefined) context.builtIns.add(name);
+  return getBuiltInValue(name, node, context);
+};
+
+const MAX_INTEGER = 2 ** 31 - 1;
+
+// A property's value from BUILT_INS, or undefined for one TLA+ can't represent.
+const translateBuiltInProperty = (value: string, node: ts.Node, context: Context) => {
+  const payload = value.slice(1);
+  if (value.startsWith("o")) return getBuiltInValue(payload, node, context);
+  if (value.startsWith("s")) return string(payload);
+  if (value.startsWith("b")) return boolean(payload === "true");
+  if (value === "u") return getUndefined(context);
+  if (value === "l") return identifier("Null");
+  const parsed = Number(payload);
+  return value.startsWith("n") &&
+    Number.isInteger(parsed) &&
+    Math.abs(parsed) <= MAX_INTEGER &&
+    payload !== "-0"
+    ? number(parsed)
+    : undefined;
+};
+
+const getFunction = (entries: [Expression, Expression][]) =>
+  entries.length === 0
+    ? tuple([])
+    : entries
+        .map((entry) => apply(":>", [entry[0], entry[1]]))
+        .reduce((left, right) => apply("@@", [left, right]));
+
+// The built-in objects that a script's heap holds: those the script names, and their prototypes.
+export const translateBuiltIns = (node: ts.Node, context: Context) => {
+  const included = new Set<string>();
+  const include = (name: string | null) => {
+    const entry = name === null ? undefined : BUILT_INS[name];
+    if (name === null || entry === undefined || included.has(name)) return;
+    included.add(name);
+    include(entry[0]);
+  };
+  ["Object.prototype", ...context.builtIns].forEach(include);
+  // The objects that the included objects' properties hold, which typeof needs to tell apart.
+  const referenced = new Set(
+    [...included].flatMap((name) =>
+      BUILT_INS[name][3].flatMap((property) =>
+        property
+          .slice(2)
+          .filter((value) => value.startsWith("o") && !included.has(value.slice(1)))
+          .map((value) => value.slice(1)),
+      ),
+    ),
+  );
+  const getKey = (name: string) => {
+    const value = getBuiltInValue(name, node, context);
+    return value.kind === "Identifier" ? value : string(name);
+  };
+  const stubs = [...referenced].map((name): [Expression, Expression] => [
+    getKey(name),
+    record("Record", [
+      { name: "isCallable", value: boolean(BUILT_INS[name][1]) },
+      { name: "isOpaque", value: boolean(true) },
+    ]),
+  ]);
+  return getFunction([
+    ...stubs,
+    ...[...included].map((name): [Expression, Expression] => {
+      const entry = BUILT_INS[name];
+      const properties = entry[3];
+      const getAttributes = (flags: string, kind: string) =>
+        record("Record", [
+          { name: "writable", value: boolean(flags.includes("w")) },
+          { name: "enumerable", value: boolean(flags.includes("e")) },
+          { name: "configurable", value: boolean(flags.includes("c")) },
+          { name: "kind", value: string(kind) },
+        ]);
+      const translated = properties.map((property) => {
+        const key = string(property[0]);
+        const flags = property[1];
+        if (property.length === 4) {
+          const accessor = record("Record", [
+            {
+              name: "get",
+              value: translateBuiltInProperty(property[2], node, context) ?? getUndefined(context),
+            },
+            {
+              name: "set",
+              value: translateBuiltInProperty(property[3], node, context) ?? getUndefined(context),
+            },
+          ]);
+          return { key, value: accessor, attributes: getAttributes(flags, "accessor") };
+        }
+        const value = translateBuiltInProperty(property[2], node, context);
+        return {
+          key,
+          value: value ?? getUndefined(context),
+          attributes: getAttributes(flags, value === undefined ? "opaque" : "data"),
+        };
+      });
+      const prototype = entry[0];
+      const object = record("Record", [
+        { name: "keys", value: tuple(translated.map((property) => property.key)) },
+        {
+          name: "values",
+          value: getFunction(translated.map((property) => [property.key, property.value])),
+        },
+        {
+          name: "attributes",
+          value: getFunction(translated.map((property) => [property.key, property.attributes])),
+        },
+        { name: "extensible", value: boolean(entry[2]) },
+        {
+          name: "prototype",
+          value:
+            prototype === null ? identifier("Null") : getBuiltInValue(prototype, node, context),
+        },
+        { name: "isCallable", value: boolean(entry[1]) },
+        { name: "isOpaque", value: boolean(false) },
+      ]);
+      return [getKey(name), object];
+    }),
+  ]);
 };
 
 // Evaluates the value whose prototype a call asks for, which mustn't call anything that could

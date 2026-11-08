@@ -28,7 +28,13 @@ import {
   translateNewError,
 } from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
-import { getHeap, isCreation, isDescription, translatePropertyKey } from "./heap";
+import {
+  getHeap,
+  isCreation,
+  isDescription,
+  translateObjectValue,
+  translatePropertyKey,
+} from "./heap";
 import { isBuiltInObject, translateIntrinsic } from "./intrinsics";
 import {
   getTypeNames,
@@ -357,7 +363,9 @@ const translateCall = (
   const receiver = node.expression.expression;
   const method = node.expression.name.text;
   const global = ts.isIdentifier(receiver) ? receiver.text : undefined;
-  if (global === "Math") return translateMath(node, method, scope, context);
+  if (global === "Math" && method !== "hasOwnProperty") {
+    return translateMath(node, method, scope, context);
+  }
   if (global === "Array" && method === "isArray" && node.arguments.length === 1) {
     const argument = node.arguments[0];
     translateExpression(argument, scope, context);
@@ -418,7 +426,7 @@ const translateCall = (
         "HasOwn",
         [
           getHeap(scope, node, context),
-          translateExpression(node.arguments[0], scope, context),
+          translateObjectValue(node.arguments[0], scope, context),
           translatePropertyKey(node.arguments[1], scope, context),
         ],
         context,
@@ -438,12 +446,16 @@ const translateCall = (
       : (global === "Object" && method === "hasOwn") || isPrototypeHasOwn
         ? node.arguments
         : [];
-  if (owned.length === 2 && getKind(owned[0], context) === "object") {
+  const isOwner =
+    owned.length === 2 &&
+    (getKind(owned[0], context) === "object" ||
+      (context.heap !== undefined && isBuiltInObject(owned[0], context)));
+  if (isOwner) {
     return useJavaScript(
       "HasOwn",
       [
         getHeap(scope, node, context),
-        translateExpression(owned[0], scope, context),
+        translateObjectValue(owned[0], scope, context),
         translatePropertyKey(owned[1], scope, context),
       ],
       context,

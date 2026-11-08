@@ -88,6 +88,8 @@ const RESERVED = new Set([
   "Spec",
   "vars",
   "Ref",
+  "BuiltIns",
+  "UsedBuiltIns",
   "Null",
   "Undefined",
   "Perms",

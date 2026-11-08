@@ -23,6 +23,10 @@ export const getHeap = (scope: Scope, node: ts.Node, context: Context) => {
   return heap;
 };
 
+// An object, which may be a built-in one such as Math or Array.prototype.
+export const translateObjectValue = (node: ts.Expression, scope: Scope, context: Context) =>
+  translateBuiltInObject(node, context) ?? translateExpression(node, scope, context);
+
 const getNumericKey = (node: ts.NumericLiteral) => string(String(Number(node.text)));
 
 export const translatePropertyKey = (node: ts.Expression, scope: Scope, context: Context) => {
@@ -105,7 +109,7 @@ export const translateAllocated = (node: ts.Expression, scope: Scope, context: C
       "Describe",
       [
         heap,
-        translateExpression(node.arguments[0], scope, context),
+        translateObjectValue(node.arguments[0], scope, context),
         translatePropertyKey(node.arguments[1], scope, context),
       ],
       context,
@@ -121,7 +125,7 @@ export const translateAllocated = (node: ts.Expression, scope: Scope, context: C
     "Create",
     [
       heap,
-      translateBuiltInObject(prototype, context) ?? translateExpression(prototype, scope, context),
+      translateObjectValue(prototype, scope, context),
       properties === undefined
         ? getUndefined(context)
         : translateExpression(properties, scope, context),
@@ -154,7 +158,7 @@ export const isDescription = (node: ts.Node, context: Context) =>
   node.expression.expression.getText() === "Object" &&
   node.expression.name.text === "getOwnPropertyDescriptor" &&
   node.arguments.length >= 2 &&
-  getKind(node.arguments[0], context) === "object";
+  (getKind(node.arguments[0], context) === "object" || isBuiltInObject(node.arguments[0], context));
 
 // Object.create, with a prototype that tla-ts can tell is an object or null.
 export const isCreation = (node: ts.Node, context: Context) => {

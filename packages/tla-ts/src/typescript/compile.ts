@@ -1,17 +1,18 @@
 import ts from "@typescript/typescript6";
 import { translateScript, writesState } from "./actions";
 import { rejectSharing } from "./aliasing";
-import { type Context, createContext, hasObjectLiteral } from "./context";
+import { type Context, createContext } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
+import { translateBuiltIns } from "./intrinsics";
 import { type Exported, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
 import { createStateScope } from "./scope";
 import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
-import { apply, getLocation, getModuleName, identifier, locate } from "./tla";
+import { apply, define, getLocation, getModuleName, identifier, locate, tuple } from "./tla";
 import { getDomain } from "./types";
 
 const isScript = (sourceFile: ts.SourceFile) =>
@@ -71,12 +72,19 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"));
   const context = createContext(program.checker);
   const sourceFile = program.sourceFile;
-  // A script, with no exported functions, gives the objects it makes identity with a heap. The
-  // heap binds to the symbol of lib's PropertyKey type, which no value can have.
+  // A script, with no exported functions, gives the objects it makes, or reads through Object or
+  // hasOwnProperty, identity with a heap. The heap binds to the symbol of lib's PropertyKey type,
+  // which no value can have.
   const heap = program.checker
     .getSymbolsInScope(sourceFile, ts.SymbolFlags.TypeAlias)
     .find((symbol) => symbol.name === "PropertyKey");
-  if (heap !== undefined && isScript(sourceFile) && hasObjectLiteral(sourceFile)) {
+  const usesObjects = (node: ts.Node): boolean =>
+    ts.isObjectLiteralExpression(node) ||
+    (ts.isPropertyAccessExpression(node) &&
+      ((ts.isIdentifier(node.expression) && node.expression.text === "Object") ||
+        node.name.text === "hasOwnProperty")) ||
+    (ts.forEachChild(node, usesObjects) ?? false);
+  if (heap !== undefined && isScript(sourceFile) && usesObjects(sourceFile)) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
   }
@@ -101,5 +109,14 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
         ]),
   );
   for (const definition of model.exported) translateExported(definition, model, sections, context);
+  if (context.prelude.has("JavaScript")) {
+    context.output.push(
+      define(
+        "UsedBuiltIns",
+        [],
+        context.heap === undefined ? tuple([]) : translateBuiltIns(sourceFile, context),
+      ),
+    );
+  }
   return emit(getModuleName(fileName), program.sourceFile, model, sections, context);
 };
