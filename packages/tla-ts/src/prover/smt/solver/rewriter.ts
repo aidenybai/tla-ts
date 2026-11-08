@@ -1,5 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
 // license, see z3-license.txt.
+import { ArrayRewriter } from "./array-rewriter";
 import { ArithRewriter, KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { type BvRewriterOptions, BvRewriter, DEFAULT_BV_OPTIONS } from "./bv-rewriter";
 import type { ArithRewriterOptions } from "./poly-rewriter";
@@ -8,6 +9,7 @@ import { Der } from "./der";
 import {
   AstManager,
   FAMILY_ARITH,
+  FAMILY_ARRAY,
   FAMILY_BASIC,
   FAMILY_BV,
   KIND_APP,
@@ -82,6 +84,7 @@ interface ReduceFrame {
 export class Rewriter extends RewriterTpl {
   private arith: ArithRewriter;
   private bv: BvRewriter;
+  private array: ArrayRewriter;
   private substitution = new Map<number, number>();
   private unusedVarsEliminator: UnusedVarsEliminator;
   private der: Der;
@@ -104,6 +107,7 @@ export class Rewriter extends RewriterTpl {
         return typeof result === "number" ? result : result.expr;
       },
     });
+    this.array = new ArrayRewriter(manager);
     this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
     this.der = new Der(manager);
   }
@@ -373,7 +377,9 @@ export class Rewriter extends RewriterTpl {
       ? this.arith.mkEq(left, right)
       : manager.isBvSort(sort)
         ? this.bv.mkEqCore(left, right)
-        : undefined;
+        : manager.isArraySort(sort)
+          ? this.array.mkEqCore(left, right)
+          : undefined;
     if (theoryResult !== undefined) return theoryResult;
     if (manager.getOp(left) === OP_UBV2INT || manager.getOp(right) === OP_UBV2INT) {
       const bv2intResult = this.bv.mkEqBv2int(left, right);
@@ -396,6 +402,7 @@ export class Rewriter extends RewriterTpl {
     const manager = this.manager;
     const funcDecl = manager.funcDecls[decl];
     if (funcDecl.family === FAMILY_BV) return this.bv.mkAppCore(decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_ARRAY) return this.array.mkAppCore(funcDecl.op, args) ?? -1;
     const op = funcDecl.op;
     switch (op) {
       case OP_AND:

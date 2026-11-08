@@ -1,5 +1,6 @@
 // Ported from Z3 (src/ast/ast_lt.cpp, src/util/symbol.cpp), MIT license, see z3-license.txt.
 import {
+  FAMILY_ARRAY,
   FAMILY_BV,
   FAMILY_MODEL_VALUE,
   FAMILY_USER,
@@ -75,6 +76,8 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
       domain: [],
       range,
     };
+  if (decl.family === FAMILY_ARRAY)
+    return { name: decl.name, parameters: [], domain: decl.domain, range };
   if (decl.family === FAMILY_BV)
     return {
       name: decl.name,
@@ -86,11 +89,22 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   return { name: builtin.name, parameters: [], domain: builtin.domain, range };
 };
 
-const compareSorts = (manager: AstManager, first: number, second: number) =>
-  first === second
-    ? 0
-    : compareNames(manager.sortNames[first], manager.sortNames[second]) ||
-      compareValues(manager.getBvSize(first), manager.getBvSize(second));
+const compareSorts = (manager: AstManager, first: number, second: number): number => {
+  if (first === second) return 0;
+  const byName =
+    compareNames(manager.sortNames[first], manager.sortNames[second]) ||
+    compareValues(manager.getBvSize(first), manager.getBvSize(second));
+  if (byName !== 0) return byName;
+  const firstParameters = manager.getSortParameters(first);
+  const secondParameters = manager.getSortParameters(second);
+  const byCount = compareValues(firstParameters.length, secondParameters.length);
+  if (byCount !== 0) return byCount;
+  for (let index = 0; index < firstParameters.length; index++) {
+    const byParameter = compareSorts(manager, firstParameters[index], secondParameters[index]);
+    if (byParameter !== 0) return byParameter;
+  }
+  return 0;
+};
 
 // Whether two applications of the same declaration have the same key: a user declaration's is its
 // own, and a builtin's other than a numeral, model value or pattern follows from the sort of the
@@ -105,7 +119,7 @@ const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
     decl.family === FAMILY_MODEL_VALUE
   )
     return false;
-  if (decl.family === FAMILY_BV) return true;
+  if (decl.family === FAMILY_BV || decl.family === FAMILY_ARRAY) return true;
   const index = decl.op === OP_ITE ? 1 : 0;
   return (
     manager.sorts[first] === manager.sorts[second] &&

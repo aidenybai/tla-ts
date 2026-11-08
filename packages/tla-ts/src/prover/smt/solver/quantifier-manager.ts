@@ -3,7 +3,6 @@ import { CHECK_MODEL_RESTART, CHECK_MODEL_SAT, CHECK_MODEL_UNKNOWN, type Context
 import { FC_CONTINUE, FC_DONE } from "./theory";
 import { Mam } from "./e-matching";
 import type { Enode } from "./enode";
-import { FingerprintSet } from "./fingerprints";
 import { ModelChecker } from "./model-checker";
 import { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
@@ -23,7 +22,6 @@ export class DefaultQuantifierManager {
   private qiQueue: QiQueue;
   private mam: Mam;
   private lazyMam: Mam;
-  private fingerprints: FingerprintSet;
   private isActive = false;
   private lazyMatchingIndex = 0;
   private mbqi: Mbqi | null = null;
@@ -33,7 +31,6 @@ export class DefaultQuantifierManager {
     isMbqi: boolean,
   ) {
     this.qiQueue = new QiQueue(context);
-    this.fingerprints = new FingerprintSet(context.manager);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>
       this.addInstance(quantifier, bindings, maxGeneration);
     this.mam = new Mam(context, onMatch);
@@ -103,7 +100,6 @@ export class DefaultQuantifierManager {
     this.lazyMam.pushScope();
     this.mbqi?.finder.pushScope();
     this.qiQueue.push();
-    this.fingerprints.push();
   }
 
   pop(numScopes: number) {
@@ -111,7 +107,6 @@ export class DefaultQuantifierManager {
     this.lazyMam.popScope(numScopes);
     this.mbqi?.finder.popScope(numScopes);
     this.qiQueue.pop(numScopes);
-    this.fingerprints.pop(numScopes);
   }
 
   canPropagate() {
@@ -125,7 +120,11 @@ export class DefaultQuantifierManager {
 
   addInstance(quantifier: number, bindings: Enode[], maxGeneration: number) {
     const generation = Math.max(maxGeneration, this.getGeneration(quantifier));
-    const roots = this.fingerprints.insert(quantifier, bindings);
+    const roots = this.context.fingerprints.insert(
+      quantifier,
+      this.context.manager.ids[quantifier],
+      bindings,
+    );
     if (roots !== null) this.qiQueue.insert(quantifier, roots, generation);
   }
 

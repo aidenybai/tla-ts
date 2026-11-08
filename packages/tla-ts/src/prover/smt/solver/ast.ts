@@ -21,6 +21,7 @@ export const FAMILY_USER = 2;
 export const FAMILY_MODEL_VALUE = 3;
 export const FAMILY_FINITE_SET = 4;
 export const FAMILY_BV = 5;
+export const FAMILY_ARRAY = 6;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -127,6 +128,19 @@ export const OP_SBV2INT = BV_OP_BASE + 67;
 export const OP_CARRY = BV_OP_BASE + 68;
 export const OP_XOR3 = BV_OP_BASE + 69;
 
+const ARRAY_OP_BASE = 200;
+export const OP_STORE = ARRAY_OP_BASE;
+export const OP_SELECT = ARRAY_OP_BASE + 1;
+export const OP_CONST_ARRAY = ARRAY_OP_BASE + 2;
+export const OP_ARRAY_EXT = ARRAY_OP_BASE + 3;
+export const OP_ARRAY_DEFAULT = ARRAY_OP_BASE + 4;
+export const OP_ARRAY_MAP = ARRAY_OP_BASE + 5;
+export const OP_AS_ARRAY = ARRAY_OP_BASE + 11;
+
+// The number of elements of a sort, with -1 for an infinite sort and -2 for a very big one.
+export const SORT_SIZE_INFINITE = -1n;
+export const SORT_SIZE_VERY_BIG = -2n;
+
 const UNCACHED_BV_OPS: ReadonlySet<number> = new Set([
   OP_CONCAT,
   OP_SIGN_EXT,
@@ -203,6 +217,7 @@ const Z3_MODEL_VALUE_FAMILY = 3;
 const Z3_USER_SORT_FAMILY = 4;
 const Z3_ARITH_FAMILY = 5;
 const Z3_BV_FAMILY = 7;
+const Z3_ARRAY_FAMILY = 8;
 const Z3_RECFUN_FAMILY = 10;
 const Z3_NULL = 0xffffffff;
 // The name, Z3 decl kind and arity of each builtin, whose Z3 declaration has this many arguments
@@ -338,6 +353,10 @@ export class AstManager {
   sortNames: string[] = ["Bool", "Int", "Real"];
   private sortFamilies: number[] = [FAMILY_BASIC, FAMILY_ARITH, FAMILY_ARITH];
   private sortWidths: number[] = [0, 0, 0];
+  private sortParameters: number[][] = [[], [], []];
+  private sortSizes: bigint[] = [2n, SORT_SIZE_INFINITE, SORT_SIZE_INFINITE];
+  private arraySorts = new Map<string, number>();
+  private arrayDecls = new Map<string, number>();
   private numUserSorts = 0;
   private bvSorts = new Map<number, number>();
   private bvDecls = new Map<string, number>();
@@ -733,6 +752,8 @@ export class AstManager {
     this.sortNames.push(name);
     this.sortFamilies.push(FAMILY_USER);
     this.sortWidths.push(0);
+    this.sortParameters.push([]);
+    this.sortSizes.push(SORT_SIZE_INFINITE);
     this.mkSmallId();
     return this.sortNames.length - 1;
   }
@@ -744,11 +765,110 @@ export class AstManager {
     this.sortNames.push("bv");
     this.sortFamilies.push(FAMILY_BV);
     this.sortWidths.push(width);
+    this.sortParameters.push([]);
+    this.sortSizes.push(width < 64 ? 1n << BigInt(width) : SORT_SIZE_VERY_BIG);
     // bv_decl_plugin makes the sorts up to 64 bits when Z3 starts.
     if (width > 64) this.mkSmallId();
     const sort = this.sortNames.length - 1;
     this.bvSorts.set(width, sort);
     return sort;
+  }
+
+  mkArraySort(parameters: number[]) {
+    const key = parameters.join(",");
+    const existing = this.arraySorts.get(key);
+    if (existing !== undefined) return existing;
+    this.sortHashes.push(
+      combineHash(
+        getSymbolHash("Array"),
+        getInfoHash(
+          Z3_ARRAY_FAMILY,
+          0,
+          parameters.map((parameter) => this.sortHashes[parameter]),
+        ),
+      ),
+    );
+    this.sortNames.push("Array");
+    this.sortFamilies.push(FAMILY_ARRAY);
+    this.sortWidths.push(0);
+    this.sortParameters.push(parameters);
+    this.sortSizes.push(this.getArraySortSize(parameters));
+    this.mkSmallId();
+    const sort = this.sortNames.length - 1;
+    this.arraySorts.set(key, sort);
+    return sort;
+  }
+
+  private getArraySortSize(parameters: number[]) {
+    const sizes = parameters.map((parameter) => this.sortSizes[parameter]);
+    if (sizes[sizes.length - 1] === 1n) return 1n;
+    if (sizes.includes(SORT_SIZE_INFINITE)) return SORT_SIZE_INFINITE;
+    if (sizes.includes(SORT_SIZE_VERY_BIG)) return SORT_SIZE_VERY_BIG;
+    const domainSize = sizes.slice(0, -1).reduce((product, size) => product * size, 1n);
+    if (domainSize > 128n) return SORT_SIZE_VERY_BIG;
+    const size = sizes[sizes.length - 1] ** domainSize;
+    return size >= 1n << 64n ? SORT_SIZE_VERY_BIG : size;
+  }
+
+  isArraySort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_ARRAY;
+  }
+
+  getSortParameters(sort: number): readonly number[] {
+    return this.sortParameters[sort];
+  }
+
+  getArrayArity(sort: number) {
+    return this.sortParameters[sort].length - 1;
+  }
+
+  getArrayRange(sort: number) {
+    const parameters = this.sortParameters[sort];
+    return parameters[parameters.length - 1];
+  }
+
+  getSortName(sort: number): string {
+    if (this.isBvSort(sort)) return `(_ BitVec ${this.getBvSize(sort)})`;
+    if (!this.isArraySort(sort)) return this.sortNames[sort];
+    const parameters = this.sortParameters[sort].map((parameter) => this.getSortName(parameter));
+    return `(Array ${parameters.join(" ")})`;
+  }
+
+  getSortSize(sort: number) {
+    return this.sortSizes[sort];
+  }
+
+  mkArrayDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
+    const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
+    const existing = this.arrayDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    const parameterHashes = parameters.map((parameter) =>
+      op === OP_CONST_ARRAY
+        ? this.sortHashes[parameter]
+        : op === OP_ARRAY_MAP || op === OP_AS_ARRAY
+          ? // A builtin declaration hashes by the signature of each application, which a map lacks.
+            (this.getDeclHash(parameter) ?? 0)
+          : parameter,
+    );
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_ARRAY_FAMILY, op - ARRAY_OP_BASE, parameterHashes),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_ARRAY,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.arrayDecls.set(key, decl);
+    return decl;
   }
 
   getBvSize(sort: number) {
@@ -1074,7 +1194,10 @@ export class AstManager {
     }
     const nodeArgs = start > 0 ? this.argBuffer : args;
     // The slot comes first, since finding it may replace builtinHashes with one twice the size.
-    const hasOwnHash = funcDecl.family === FAMILY_USER || funcDecl.family === FAMILY_BV;
+    const hasOwnHash =
+      funcDecl.family === FAMILY_USER ||
+      funcDecl.family === FAMILY_BV ||
+      funcDecl.family === FAMILY_ARRAY;
     const builtinSlot =
       hasOwnHash || funcDecl.op === OP_PATTERN
         ? -1
@@ -1323,15 +1446,27 @@ export class AstManager {
     return this.numeralValues[this.values[expr]];
   }
 
-  isUniqueValue(expr: number) {
+  isUniqueValue(expr: number): boolean {
     const op = this.getOp(expr);
     return (
       op === OP_NUM ||
       op === OP_TRUE ||
       op === OP_FALSE ||
       op === OP_MODEL_VALUE ||
-      op === OP_BV_NUM
+      op === OP_BV_NUM ||
+      (op === OP_CONST_ARRAY && this.isUniqueValue(this.getArg(expr, 0)))
     );
+  }
+
+  isValue(expr: number): boolean {
+    let current = expr;
+    while (this.getOp(current) === OP_STORE) {
+      for (let index = 1; index < this.getNumArgs(current); index++)
+        if (!this.isValue(this.getArg(current, index))) return false;
+      current = this.getArg(current, 0);
+    }
+    if (this.getOp(current) === OP_CONST_ARRAY) return this.isValue(this.getArg(current, 0));
+    return current === expr && this.isUniqueValue(expr);
   }
 
   // are_distinct: the plugin of the first term's family, or of the second's for a user term, tells
