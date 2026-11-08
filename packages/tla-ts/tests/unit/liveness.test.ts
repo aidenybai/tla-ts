@@ -107,4 +107,13 @@ describe("liveness matches TLC", () => {
       );
     },
   );
+
+  it("finds the level of a spec whose initial predicate calls a recursive LET operator", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET RECURSIVE Loop(_)\n            Loop(i) == IF i < 1 THEN Loop(i + 1) ELSE i\n        IN  x = Loop(0)\nSpec == Init /\\ [][x' = x]_x\n====",
+      config: "SPECIFICATION Spec",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
 });

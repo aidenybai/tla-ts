@@ -20,6 +20,7 @@ import {
   resolveApplyOperator,
   resolveGlobalOperator,
   resolveOperator,
+  type Closure,
   type Context,
   type Environment,
   type Scope,
@@ -68,6 +69,8 @@ const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionLevels = new WeakMap<Definition, number>();
 
+const closureLevels = new WeakMap<Closure, number>();
+
 const definitionThunks = new WeakSet<Thunk>();
 
 const getConstantContext = (environment: Environment, scope: Scope | undefined): Context => ({
@@ -95,9 +98,13 @@ export const getLevel = (
     if (binding.kind === "Value") return CONSTANT_LEVEL;
     if (binding.kind === "Thunk") return getLevel(binding.expression, binding.scope, environment);
     const operator = binding.operator;
-    return operator.kind === "Closure"
-      ? getLevel(operator.body, operator.scope, environment)
-      : CONSTANT_LEVEL;
+    if (operator.kind !== "Closure") return CONSTANT_LEVEL;
+    const cached = closureLevels.get(operator);
+    if (cached !== undefined) return cached;
+    closureLevels.set(operator, CONSTANT_LEVEL);
+    const level = getLevel(operator.body, operator.scope, environment);
+    closureLevels.set(operator, level);
+    return level;
   };
   const getGlobalLevel = (name: string) => {
     if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
