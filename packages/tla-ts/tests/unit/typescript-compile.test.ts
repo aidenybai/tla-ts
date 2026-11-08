@@ -406,6 +406,17 @@ describe("top-level statements", () => {
     );
   });
 
+  it("reject properties of a value of type any in a script with objects", () => {
+    expect(() =>
+      compile(`
+        const box = {};
+        function Shape() {}
+        Shape.prototype.inner = { sides: 4 };
+        Shape.prototype.inner.sides = 3;
+      `),
+    ).toThrow("Give this value a type to use its properties");
+  });
+
   it("call a private method that a getter returns", async () => {
     const result = await checkModel(`
       let calls = 0;

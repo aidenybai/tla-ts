@@ -88,6 +88,7 @@ import {
   tuple,
 } from "./tla";
 import {
+  rejectAnyReceiver,
   getField,
   getKind,
   getPathStep,
@@ -877,6 +878,7 @@ const translatePropertyAccess = (
   ) {
     throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
   }
+  rejectAnyReceiver(receiver, context);
   return getField(translateExpression(receiver, scope, context), name);
 };
 
@@ -900,6 +902,7 @@ const translateElementAccess = (
       context,
     );
   }
+  rejectAnyReceiver(node.expression, context);
   const value = translateExpression(node.expression, scope, context);
   const key = translateKey(node, scope, context);
   if (kind === "sequence" && !isDefined) return getElement(value, key, context);

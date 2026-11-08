@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } from "../ast";
 import {
   type Context,
+  getHeapClass,
   getUndefined,
   isHeapClass,
   isHeapFunction,
@@ -119,6 +120,17 @@ export const isHeapType = (type: ts.Type, node: ts.Node | undefined, context: Co
   return objects.length > 0;
 };
 
+// In a script with objects, a value of type any may be an object, so its properties are unknown.
+export const rejectAnyReceiver = (node: ts.Expression, context: Context) => {
+  if (
+    context.heap !== undefined &&
+    (context.checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any) !== 0 &&
+    getKind(node, context) !== "object"
+  ) {
+    throw new TlaTypeScriptError("Give this value a type to use its properties", node);
+  }
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   const checker = context.checker;
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
@@ -126,7 +138,12 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isSetType(type)) return "set";
   if (isMapType(type)) return "map";
   if (isEvery(type, ts.TypeFlags.StringLike)) return "string";
-  return isHeapType(type, node, context) ? "object" : "other";
+  // TypeScript types the prototype of a function as any.
+  const isFunctionPrototype =
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "prototype" &&
+    getHeapClass(node.expression, context) !== undefined;
+  return isFunctionPrototype || isHeapType(type, node, context) ? "object" : "other";
 };
 
 export const isObject = (type: ts.Type): boolean =>

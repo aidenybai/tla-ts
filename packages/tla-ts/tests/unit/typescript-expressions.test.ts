@@ -486,6 +486,13 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[shape.sides, Shape.prototype.sides]",
+      `const box = {};
+      function Shape() {}
+      Shape.prototype.sides = 4;
+      const shape = new (Shape as unknown as new () => { [key: string]: unknown })();`,
+    ],
+    [
       "[Array.prototype.every.call(holed, (value: unknown, index: number) => index !== 5 || value === 10), Array.prototype.filter.call(holed, (value: unknown, index: number) => index > 0).length, Array.prototype.indexOf.call(holed, 10), Array.prototype.lastIndexOf.call(holed, 6), Array.prototype.reduce.call(holed, (sum: unknown, value: unknown, index: number) => (sum as number) + index, 0)]",
       `const holed: { [key: string]: unknown } = Object.create({ 1: 6 });
       holed[0] = 11;

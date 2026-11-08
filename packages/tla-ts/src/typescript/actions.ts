@@ -89,7 +89,14 @@ import {
   tuple,
   unchanged,
 } from "./tla";
-import { getField, getKind, getPathStep, isHeapType, isNumberLike } from "./types";
+import {
+  rejectAnyReceiver,
+  getField,
+  getKind,
+  getPathStep,
+  isHeapType,
+  isNumberLike,
+} from "./types";
 
 interface Path {
   scope: Scope;
@@ -160,6 +167,7 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
   if (ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)) return undefined;
   const receiver = node.expression;
   const isBuiltIn = context.heap !== undefined && isBuiltInObject(receiver, context);
+  rejectAnyReceiver(receiver, context);
   if (!isBuiltIn && getKind(receiver, context) !== "object") return undefined;
   const symbol = context.heap;
   const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
