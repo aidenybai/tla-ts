@@ -16,16 +16,6 @@ const CASES: [string, string][] = [
   ["incrementing a value that isn't a number", "let value: any = true; value++; count = value;"],
   ["integers past 32 bits", "count = 2147483648;"],
   ["object rest elements", "const { a, ...others } = record; count = a ?? 0;"],
-  ["calling a generator", "const make = function* () { count++; }; make();"],
-  ["calling an async function", "const run = async () => { count++; }; run();"],
-  [
-    "instanceof on a value that isn't caught or an error",
-    "const value: unknown = count; if (value instanceof Error) count = 1;",
-  ],
-  [
-    "an unsupported value returned from an inlined call",
-    "const getLength = () => { return step.length; }; getLength();",
-  ],
   ["rest parameters", "const add = (...more: number[]) => more.length; count = add(1, 2);"],
   ["string methods as values", "count = label.includes.length;"],
   ["properties of functions", "count = step.length;"],
@@ -37,7 +27,37 @@ const CASES: [string, string][] = [
   ["bitwise not", "count = ~count;"],
   ["delete", "delete record.a;"],
   ["optional chaining", "count = record?.a ?? 0;"],
-  ["try", "try { count++; } catch { count--; }"],
+  [
+    "a call that throws inside an expression in try",
+    "const getChecked = (): number => { throw new Error('no'); }; try { count = getChecked(); } catch { count = 0; }",
+  ],
+  ["throwing an array", "try { throw values; } catch { count = 0; }"],
+  ["calling a generator", "const make = function* () { count++; }; make();"],
+  ["calling an async function", "const run = async () => { count++; }; run();"],
+  [
+    "a var that redeclares a catch parameter",
+    "try { throw 1; } catch (error) { for (var error of [1]) count = 1; }",
+  ],
+  [
+    "an unsupported value returned from an inlined call",
+    "const getLength = () => { return step.length; }; getLength();",
+  ],
+  [
+    "nested destructuring in try",
+    "try { const [[first]] = [values]; count = first; } catch { count = 0; }",
+  ],
+  [
+    "a let used before its declaration in try",
+    "try { const read = () => later; count = read(); } catch { count = 0; } let later = 1;",
+  ],
+  [
+    "throwing out of a loop to a catch",
+    "try { while (count < 2) { throw new Error('a'); } } catch { count = 0; }",
+  ],
+  [
+    "instanceof on a value that isn't caught or an error",
+    "const value: unknown = count; if (value instanceof Error) count = 1;",
+  ],
   ["labels", "outer: { count++; }"],
   ["comma expressions", "count = (count++, count);"],
   ["sort", "values.sort();"],

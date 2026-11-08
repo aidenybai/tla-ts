@@ -28,7 +28,7 @@ import {
 } from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
 import { isComparable, translateTypeOf, useJavaScript } from "./javascript";
-import type { Scope } from "./scope";
+import { rejectBeforeDeclaration, type Scope } from "./scope";
 import {
   apply,
   boolean,
@@ -474,6 +474,7 @@ const translateDeclared = (
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  rejectBeforeDeclaration(node, scope, context);
   const symbol = getSymbol(node, context.checker);
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
   if (binding !== undefined) return binding;

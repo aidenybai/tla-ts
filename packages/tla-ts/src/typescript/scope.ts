@@ -19,6 +19,8 @@ export interface Scope {
   // The parameter that names the state before a step, in action properties and constraints.
   previous: ts.Symbol | undefined;
   functions: Map<ts.Symbol, FunctionNode>;
+  isCatching: boolean;
+  uninitialized: ReadonlySet<ts.Symbol>;
 }
 
 export interface Bound {
@@ -41,6 +43,8 @@ export const createStateScope = (context: Context): Scope => ({
   bindings: new Map(context.variables),
   previous: undefined,
   functions: new Map(),
+  isCatching: false,
+  uninitialized: new Set(),
 });
 
 export const bindNames = (scope: Scope, named: Named[]): Scope => ({
@@ -77,6 +81,47 @@ export const declareParameters = (
   parameters: readonly ts.ParameterDeclaration[],
   context: Context,
 ) => parameters.map((parameter) => declareParameter(parameter, context));
+
+export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const declaration = symbol?.valueDeclaration;
+  if (
+    !scope.isCatching ||
+    symbol === undefined ||
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+  ) {
+    return;
+  }
+  const isUninitialized = ts.isSourceFile(declaration.parent.parent.parent)
+    ? scope.uninitialized.has(symbol)
+    : node.getStart() < declaration.getStart();
+  if (isUninitialized) {
+    throw new TlaTypeScriptError(`Inside try, use ${node.text} after its declaration`, node);
+  }
+};
+
+export const initialize = (
+  scope: Scope,
+  declaration: ts.VariableDeclaration,
+  context: Context,
+): Scope => {
+  const symbol = getSymbol(declaration.name, context.checker);
+  return symbol === undefined || !scope.uninitialized.has(symbol)
+    ? scope
+    : {
+        ...scope,
+        uninitialized: new Set([...scope.uninitialized].filter((other) => other !== symbol)),
+      };
+};
+
+export const rejectNestedPattern = (node: ts.Node, scope: Scope) => {
+  if (scope.isCatching) {
+    throw new TlaTypeScriptError("Inside try, destructure one level at a time", node);
+  }
+};
 
 export const getDefaulted = (
   part: Expression,
@@ -118,6 +163,7 @@ export const bindPatternInline = (
   }
   return pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
+    if (!ts.isIdentifier(element.name)) rejectNestedPattern(element, current);
     const initializer = element.initializer;
     const withDefault = (part: Expression) => getDefaulted(part, initializer, current, context);
     if (ts.isArrayBindingPattern(pattern)) {

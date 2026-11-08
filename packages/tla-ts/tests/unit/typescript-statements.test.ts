@@ -214,6 +214,47 @@ const CASES: Record<string, Case[]> = {
       setup: "class MyError extends Error {}",
     },
   ],
+  exceptions: [
+    {
+      variables: "log: string[] = []",
+      statements:
+        "try { throw 'a'; } catch (error) { log.push(typeof error); if (error === 'a') log.push('same'); }",
+    },
+    {
+      variables: "log: string[] = []",
+      statements:
+        "try { check(1); check(5); log.push('unreachable'); } catch (error) { if (error instanceof MyError) log.push(error.message); if (error instanceof TypeError) log.push('type'); if (error instanceof Error) log.push('error'); } finally { log.push('finally'); }",
+      setup:
+        "class MyError extends Error {}\nconst check = (value: number) => { if (value > 2) throw new MyError('big'); log.push('ok'); };",
+    },
+    {
+      variables: "log: string[] = []",
+      statements:
+        "try { try { throw new TypeError('t'); } finally { log.push('inner'); } } catch (error) { if (error instanceof TypeError) log.push('outer'); }",
+    },
+    {
+      variables: "log: string[] = []",
+      statements:
+        "attempt(() => { throw new RangeError('r'); }); attempt(() => { log.push('ran'); });",
+      setup:
+        "const attempt = (run: () => void) => { try { run(); } catch { log.push('caught'); return; } log.push('none'); };",
+    },
+    {
+      variables: "log: string[] = []",
+      statements: "leave(); log.push('after');",
+      setup: "const leave = () => { try { return; } finally { log.push('finally'); } };",
+    },
+    {
+      variables: "log: string[] = []",
+      statements:
+        "for (const value of [1, 2, 3]) { try { if (value === 2) continue; if (value === 3) break; log.push('body'); } finally { log.push('finally'); } }",
+    },
+    {
+      variables: "log: string[] = []",
+      statements:
+        "try { try { throw 1; } catch (inner) { log.push('inner'); throw inner; } } catch (outer) { if (outer === 1) log.push('rethrown'); }",
+    },
+  ],
   helpers: [
     {
       variables: "count = 0",

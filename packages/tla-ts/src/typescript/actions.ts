@@ -21,6 +21,7 @@ import {
   translateToString,
 } from "./expressions";
 import { and, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
+import { translateThrown } from "./exceptions";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import {
   bindPattern,
@@ -28,6 +29,9 @@ import {
   createStateScope,
   getDefaulted,
   getOptionalField,
+  initialize,
+  rejectBeforeDeclaration,
+  rejectNestedPattern,
   type Scope,
 } from "./scope";
 import {
@@ -66,6 +70,11 @@ interface Removed {
   path: Path;
 }
 
+interface Thrown {
+  value: Expression;
+  uncaught: Expression;
+}
+
 interface Frame {
   // What follows the statements once they complete.
   next: (path: Path) => Formula;
@@ -73,6 +82,7 @@ interface Frame {
   exit: (path: Path) => Formula;
   breakTo: ((path: Path) => Formula) | undefined;
   continueTo: ((path: Path) => Formula) | undefined;
+  throwTo: ((path: Path, thrown: Thrown) => Formula) | undefined;
   // Functions being inlined, to reject recursion.
   inlining: Set<ts.Node>;
 }
@@ -100,6 +110,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     return getTarget(node.expression, path, context);
   }
   if (ts.isIdentifier(node)) {
+    rejectBeforeDeclaration(node, path.scope, context);
     const symbol = getSymbol(node, context.checker);
     const current = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
     if (symbol === undefined || current === undefined || !path.mutable.has(symbol)) {
@@ -182,6 +193,9 @@ const getDefaultedTarget = (node: ts.Expression) =>
     ? { target: node.left, initializer: node.right }
     : { target: node, initializer: undefined };
 
+const isPattern = (node: ts.Expression) =>
+  ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node);
+
 const assignPattern = (
   target: ts.Expression,
   source: ts.Expression | undefined,
@@ -196,6 +210,7 @@ const assignPattern = (
         throw new TlaTypeScriptError("Rest elements can't be assigned", element);
       }
       const defaulted = getDefaultedTarget(element);
+      if (isPattern(defaulted.target)) rejectNestedPattern(element, current.scope);
       const sourceElement =
         source !== undefined && ts.isArrayLiteralExpression(source)
           ? source.elements[position]
@@ -229,6 +244,7 @@ const assignPattern = (
         ? { target: property.name, initializer: property.objectAssignmentInitializer }
         : getDefaultedTarget(property.initializer);
       const key = property.name.text;
+      if (isPattern(defaulted.target)) rejectNestedPattern(property, current.scope);
       return assignPattern(
         defaulted.target,
         undefined,
@@ -388,6 +404,7 @@ const translateCallStatement = (
       exit: afterCall,
       breakTo: undefined,
       continueTo: undefined,
+      throwTo: frame.throwTo,
       inlining: new Set([...frame.inlining, callee]),
     }),
   );
@@ -413,6 +430,25 @@ const translateExpressionStatement = (
   return continueWith(assigned);
 };
 
+const isCatchParameter = (node: ts.Node, name: string): boolean => {
+  if (ts.isSourceFile(node) || ts.isFunctionLike(node)) return false;
+  const parameter = ts.isCatchClause(node) ? node.variableDeclaration?.name : undefined;
+  return (
+    (parameter !== undefined && ts.isIdentifier(parameter) && parameter.text === name) ||
+    isCatchParameter(node.parent, name)
+  );
+};
+
+const rejectCatchRedeclaration = (declaration: ts.VariableDeclaration) => {
+  if (
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+    ts.isIdentifier(declaration.name) &&
+    isCatchParameter(declaration.parent, declaration.name.text)
+  ) {
+    throw new TlaTypeScriptError("Name this var apart from the catch parameter", declaration);
+  }
+};
+
 // Binds each declared local to a LET definition. A let can change later, and a const can't.
 const translateDeclarations = (
   declarations: readonly ts.VariableDeclaration[],
@@ -422,10 +458,16 @@ const translateDeclarations = (
 ): Formula => {
   if (declarations.length === 0) return continueWith(path);
   const declaration = declarations[0];
+  rejectCatchRedeclaration(declaration);
   const rest = declarations.slice(1);
   const initializer = declaration.initializer;
   if (getFunction(initializer) !== undefined) {
-    return translateDeclarations(rest, path, context, continueWith);
+    return translateDeclarations(
+      rest,
+      { ...path, scope: initialize(path.scope, declaration, context) },
+      context,
+      continueWith,
+    );
   }
   const removed = initializer && getRemovedValue(initializer, path, context);
   const value =
@@ -444,7 +486,7 @@ const translateDeclarations = (
     bound.definitions,
     translateDeclarations(
       rest,
-      { ...afterCall, scope: bound.scope, mutable },
+      { ...afterCall, scope: initialize(bound.scope, declaration, context), mutable },
       context,
       continueWith,
     ),
@@ -563,6 +605,11 @@ const translateIterations = (
     },
     breakTo: done,
     continueTo: ts.isDoStatement(loop) ? testAgain : advance,
+    throwTo:
+      frame.throwTo &&
+      (() => {
+        throw new TlaTypeScriptError("Catch inside the loop, or throw after it ends", loop);
+      }),
   };
   const translateBody = (current: Path) => {
     if (iterated === undefined) {
@@ -577,6 +624,7 @@ const translateIterations = (
     if (declared.declarations.length !== 1) {
       throw new TlaTypeScriptError("Declare one element of a for-of", declared);
     }
+    rejectCatchRedeclaration(declared.declarations[0]);
     const bound = bindPattern(declared.declarations[0].name, element, current.scope, context);
     return letIn(
       bound.definitions,
@@ -630,6 +678,62 @@ const hasCall = (node: ts.Node): boolean =>
   ts.isCallExpression(node) ||
   ts.isNewExpression(node) ||
   (ts.forEachChild(node, (child) => hasCall(child) || undefined) ?? false);
+
+const translateTry = (
+  statement: ts.TryStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const isCatching = path.scope.isCatching;
+  const leave = (inner: Path, resume: (path: Path) => Formula) => {
+    const left = { ...inner, scope: { ...inner.scope, isCatching } };
+    const finallyBlock = statement.finallyBlock;
+    return finallyBlock === undefined
+      ? resume(left)
+      : translateStatements(finallyBlock.statements, left, context, { ...frame, next: resume });
+  };
+  const resumeWith = (resume: ((path: Path) => Formula) | undefined) =>
+    resume && ((inner: Path) => leave(inner, resume));
+  const rethrow = (inner: Path, thrown: Thrown) =>
+    leave(inner, (left) =>
+      frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(left, thrown),
+    );
+  const outer: Frame = {
+    ...frame,
+    next: (inner) => leave(inner, continueWith),
+    exit: (inner) => leave(inner, frame.exit),
+    breakTo: resumeWith(frame.breakTo),
+    continueTo: resumeWith(frame.continueTo),
+    throwTo: rethrow,
+  };
+  const catchClause = statement.catchClause;
+  const handle = (inner: Path, thrown: Thrown) => {
+    if (catchClause === undefined) return rethrow(inner, thrown);
+    const caught = { ...inner, scope: { ...inner.scope, isCatching } };
+    const declaration = catchClause.variableDeclaration;
+    const bound =
+      declaration === undefined
+        ? { definitions: [], scope: caught.scope }
+        : bindPattern(declaration.name, thrown.value, caught.scope, context);
+    return letIn(
+      bound.definitions,
+      translateStatements(
+        catchClause.block.statements,
+        { ...caught, scope: bound.scope },
+        context,
+        outer,
+      ),
+    );
+  };
+  return translateStatements(
+    statement.tryBlock.statements,
+    { ...path, scope: { ...path.scope, isCatching: true } },
+    context,
+    { ...outer, throwTo: handle },
+  );
+};
 
 const translateStatements = (
   statements: readonly ts.Statement[],
@@ -690,7 +794,16 @@ const translateStatements = (
     }
     return frame.continueTo(path);
   }
-  if (ts.isThrowStatement(statement)) return leaf(translateThrow(statement, path.scope, context));
+  if (ts.isThrowStatement(statement)) {
+    const uncaught = translateThrow(statement, path.scope, context);
+    if (frame.throwTo === undefined) return leaf(uncaught);
+    return frame.throwTo(path, {
+      value: translateThrown(statement.expression, path.scope, context),
+      uncaught,
+    });
+  }
+  if (ts.isTryStatement(statement))
+    return translateTry(statement, path, context, frame, continueWith);
   if (ts.isSwitchStatement(statement)) {
     return translateSwitch(
       statement,
@@ -746,6 +859,7 @@ export const translateAction = (
       exit: finish,
       breakTo: undefined,
       continueTo: undefined,
+      throwTo: undefined,
       inlining: new Set(),
     },
   );
@@ -758,10 +872,18 @@ export const translateScript = (statements: readonly ts.Statement[], context: Co
         leaf(apply("=", [entry[1], path.scope.bindings.get(entry[0]) ?? entry[1]])),
       ),
     );
+  const declared = statements.flatMap((statement) =>
+    ts.isVariableStatement(statement) &&
+    (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0
+      ? statement.declarationList.declarations.flatMap(
+          (declaration) => getSymbol(declaration.name, context.checker) ?? [],
+        )
+      : [],
+  );
   return translateStatements(
     statements,
     {
-      scope: createStateScope(context),
+      scope: { ...createStateScope(context), uninitialized: new Set(declared) },
       mutable: new Set(context.variables.keys()),
       isAssigned: false,
     },
@@ -771,6 +893,7 @@ export const translateScript = (statements: readonly ts.Statement[], context: Co
       exit: finish,
       breakTo: undefined,
       continueTo: undefined,
+      throwTo: undefined,
       inlining: new Set(),
     },
   );

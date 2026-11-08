@@ -60,6 +60,27 @@ export const readsState = (
   );
 };
 
+const mayThrow = (node: ts.Node, context: Context, visited = new Set<ts.Node>()): boolean => {
+  if (ts.isThrowStatement(node)) return true;
+  if (ts.isCallExpression(node)) {
+    const callee = getCallee(node.expression, context);
+    if (callee !== undefined && !visited.has(callee)) {
+      visited.add(callee);
+      if (mayThrow(callee, context, visited)) return true;
+    }
+  }
+  return ts.forEachChild(node, (child) => mayThrow(child, context, visited) || undefined) ?? false;
+};
+
+const rejectCaught = (node: ts.Node, callee: ts.Node, scope: Scope, context: Context) => {
+  if (scope.isCatching && mayThrow(callee, context)) {
+    throw new TlaTypeScriptError(
+      "Inside try, call a function that throws as its own statement",
+      node,
+    );
+  }
+};
+
 const getInitializer = (declaration: HelperDeclaration) =>
   ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
 
@@ -142,6 +163,7 @@ export const translateHelperCall = (
   scope: Scope,
   context: Context,
 ) => {
+  rejectCaught(node ?? declaration, declaration, scope, context);
   const definition = getDefinition(declaration, context);
   const argumentNodes = node?.arguments ?? [];
   if (definition.readsState && isStateModified(scope, context)) {
@@ -173,6 +195,7 @@ export const translateLocalCall = (node: ts.CallExpression, scope: Scope, contex
       node,
     );
   }
+  rejectCaught(node, callee, scope, context);
   context.inProgress.add(callee);
   const value = inlineCall(callee, node.arguments, scope, context);
   context.inProgress.delete(callee);

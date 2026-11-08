@@ -133,3 +133,17 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
     ]),
   );
 };
+
+export const translateThrown = (node: ts.Expression, scope: Scope, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  const names = getTypeNames(type);
+  const isPrimitive = names?.every((name) => name !== "object" && name !== "function") === true;
+  if (
+    !isPrimitive &&
+    getErrorClass(type.getSymbol(), context.checker) === undefined &&
+    !isCaught(node, context)
+  ) {
+    throw new TlaTypeScriptError("Throw an error or a primitive", node);
+  }
+  return translateExpression(node, scope, context);
+};
