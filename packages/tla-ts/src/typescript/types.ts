@@ -84,13 +84,16 @@ const isPlainObject = (type: ts.Type, context: Context) => {
     !isMapType(type) &&
     type.getCallSignatures().length === 0 &&
     type.getConstructSignatures().length === 0 &&
-    symbol !== undefined &&
-    (symbol.flags & ts.SymbolFlags.Class) === 0 &&
-    (symbol.declarations ?? []).length > 0 &&
-    (LIBRARY_OBJECTS.has(symbol.name) ||
-      (symbol.declarations ?? []).every(
-        (declaration) => !declaration.getSourceFile().isDeclarationFile,
-      ))
+    // A destructuring pattern without a type annotation implies an object literal type without
+    // a symbol.
+    (symbol === undefined
+      ? ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.ObjectLiteral) !== 0
+      : (symbol.flags & ts.SymbolFlags.Class) === 0 &&
+        (symbol.declarations ?? []).length > 0 &&
+        (LIBRARY_OBJECTS.has(symbol.name) ||
+          (symbol.declarations ?? []).every(
+            (declaration) => !declaration.getSourceFile().isDeclarationFile,
+          )))
   );
 };
 

@@ -451,6 +451,10 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[read({}), read({ x: 2 })]",
+      "var read = ({ x = 1 }) => x;",
+    ],
+    [
       "[thrown.constructor === TypeError, thrown.constructor === Error, thrown.name, thrown.toString === Error.prototype.toString]",
       `const box = {};
       let caught: unknown;
