@@ -1,10 +1,10 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import type { Context } from "./context";
+import { type Context, getSymbol } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import type { Scope } from "./scope";
-import { apply, string } from "./tla";
+import { apply, boolean, ifExpression, number, string } from "./tla";
 
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, TLC
@@ -73,4 +73,69 @@ export const isComparable = (left: ts.Expression, right: ts.Expression, context:
     names.flatMap((name) => name ?? []).filter((name) => name !== "null" && name !== "undefined"),
   );
   return kinds.size <= 1;
+};
+
+const CONVERSIONS = new Set(["Boolean", "String", "Number", "parseInt", "parseFloat"]);
+
+const PARSERS = new Map<string, (text: string) => number>([
+  ["Number", Number],
+  ["parseInt", (text) => Number.parseInt(text)],
+  ["parseFloat", Number.parseFloat],
+]);
+
+const getInteger = (value: number, node: ts.Node) => {
+  if (!Number.isInteger(value) || Object.is(value, -0) || Math.abs(value) > 2 ** 31 - 1) {
+    throw new TlaTypeScriptError(`Only integers are supported: ${node.getText()}`, node);
+  }
+  return number(value);
+};
+
+// A call to Boolean, String, Number, parseInt, or parseFloat, or undefined for any other call.
+export const translateConversion = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const callee = node.expression;
+  const declarations = getSymbol(callee, context.checker)?.declarations ?? [];
+  if (
+    !ts.isIdentifier(callee) ||
+    !CONVERSIONS.has(callee.text) ||
+    declarations.length === 0 ||
+    !declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+  ) {
+    return undefined;
+  }
+  const name = callee.text;
+  const unsupported = new TlaTypeScriptError(`Unsupported call: ${node.getText()}`, node);
+  const argument = node.arguments.at(0);
+  if (argument === undefined) {
+    if (name === "Boolean") return boolean(false);
+    if (name === "String") return string("");
+    if (name === "Number") return number(0);
+    throw unsupported;
+  }
+  if (node.arguments.length > 1) throw unsupported;
+  const parse = PARSERS.get(name);
+  if (parse !== undefined && ts.isStringLiteral(argument)) {
+    return getInteger(parse(argument.text), node);
+  }
+  const names = getTypeNames(context.checker.getTypeAtLocation(argument));
+  const kind = names?.length === 1 ? names[0] : undefined;
+  const value = translateExpression(argument, scope, context);
+  const isEmpty = kind === "undefined" || kind === "null";
+  if (name === "Boolean") {
+    if (kind === "boolean") return value;
+    if (kind === "number") return apply("#", [value, number(0)]);
+    if (kind === "string") return apply("#", [value, string("")]);
+    if (isEmpty || kind === "object" || kind === "function") return boolean(!isEmpty);
+  }
+  if (name === "String") {
+    if (kind === "string") return value;
+    if (kind === "number") return apply("ToString", [value]);
+    if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
+    if (isEmpty) return string(kind);
+  }
+  if (name === "Number") {
+    if (kind === "number") return value;
+    if (kind === "boolean") return ifExpression(value, number(1), number(0));
+    if (kind === "null") return number(0);
+  }
+  throw unsupported;
 };

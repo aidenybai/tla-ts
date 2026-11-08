@@ -99,6 +99,8 @@ const CASES: [string, string][] = [
     "a method of a class with fields",
     "class Box { size = 1; grow() { count++; } } new Box().grow();",
   ],
+  ["a conversion to a fraction", "count = Number('1.5');"],
+  ["a conversion whose type is unknown", "const value: unknown = count; label = String(value);"],
   ["an unknown call in a callback", "values = values.map(() => Math.random());"],
   ["a test that doesn't return a boolean", "values = values.filter((value) => value);"],
 ];

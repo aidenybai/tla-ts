@@ -28,7 +28,13 @@ import {
   translateNewError,
 } from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
-import { getTypeNames, isComparable, translateTypeOf, useJavaScript } from "./javascript";
+import {
+  getTypeNames,
+  isComparable,
+  translateConversion,
+  translateTypeOf,
+  useJavaScript,
+} from "./javascript";
 import { rejectBeforeDeclaration, type Scope } from "./scope";
 import {
   apply,
@@ -304,6 +310,8 @@ const translateCall = (
   context: Context,
   isDefined: boolean,
 ) => {
+  const converted = translateConversion(node, scope, context);
+  if (converted !== undefined) return converted;
   const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
   if (helper?.getSourceFile().isDeclarationFile) {
