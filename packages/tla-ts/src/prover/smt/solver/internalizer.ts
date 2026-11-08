@@ -4,7 +4,6 @@
 import { SmtInvariantError } from "../../../errors";
 import {
   AstManager,
-  FAMILY_ARITH,
   FAMILY_BASIC,
   FAMILY_USER,
   KIND_APP,
@@ -17,7 +16,6 @@ import {
   OP_OR,
   OP_XOR,
   SORT_BOOL,
-  isArithSort,
 } from "./ast";
 import { CaseSplitQueue } from "./case-split-queue";
 import { CgTable, getCongruenceJustification, isCongruent } from "./cg-table";
@@ -57,7 +55,7 @@ import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { RelevancyPropagator } from "./relevancy";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { sortNumbers } from "./sort";
-import type { TheoryLra } from "./theory-lra";
+import type { Theory } from "./theory";
 import { setAt, shrink } from "./array";
 import { StickyGenerations } from "./sticky-generations";
 
@@ -114,7 +112,7 @@ export abstract class Internalizer {
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
   private stickyGenerations = new StickyGenerations();
-  abstract readonly theory: TheoryLra;
+  abstract getTheory(family: number): Theory | undefined;
   abstract readonly qmanager: DefaultQuantifierManager;
 
   // Per Boolean variable. Like Z3's vectors, the arrays keep their size when a variable is deleted,
@@ -125,6 +123,8 @@ export abstract class Internalizer {
   // bool_var_data: two words per variable. The first holds the level of its assignment and the BV_
   // flags, the second the level of its internalization.
   private boolVarData = new Int32Array(2048);
+  // The theory of each variable with BV_THEORY, which gets its assignments.
+  private boolVarTheories: number[] = [];
   justifications: BJustification[] = [];
   activity: number[] = [];
   // Per literal.
@@ -562,7 +562,12 @@ export abstract class Internalizer {
     return this.hasBoolVarFlag(boolVar, BV_EQ | BV_ENODE | BV_THEORY | BV_QUANTIFIER);
   }
 
-  setVarTheory(boolVar: BoolVar) {
+  getBoolVarTheory(boolVar: BoolVar) {
+    return this.boolVarTheories[boolVar];
+  }
+
+  setVarTheory(boolVar: BoolVar, thId: number) {
+    setAt(this.boolVarTheories, boolVar, thId);
     if (this.scopeLevel > this.getInternLevel(boolVar)) {
       this.trailInts.push(boolVar);
       this.trailKinds.push(UNDO_VAR_THEORY);
@@ -873,17 +878,16 @@ export abstract class Internalizer {
     this.internalizeFormulaCore(expr, isGateContext);
     const boolVar = this.getBoolVar(expr);
     this.setBoolVarFlag(boolVar, BV_EQ, true);
-    if (this.manager.sorts[this.manager.getArg(expr, 0)] !== SORT_BOOL && this.isArithSort(expr))
-      this.theory.internalizeEqEh(expr);
-  }
-
-  private isArithSort(eq: number) {
-    return isArithSort(this.manager.sorts[this.manager.getArg(eq, 0)]);
+    const manager = this.manager;
+    this.getTheory(manager.getSortFamily(manager.sorts[manager.getArg(expr, 0)]))?.internalizeEqEh(
+      expr,
+      boolVar,
+    );
   }
 
   private internalizeTheoryAtom(expr: number, isGateContext: boolean) {
-    if (this.manager.getFamily(expr) !== FAMILY_ARITH || !this.theory.internalizeAtom(expr))
-      return false;
+    const theory = this.getTheory(this.manager.getFamily(expr));
+    if (theory === undefined || !theory.internalizeAtom(expr, isGateContext)) return false;
     const boolVar = this.getBoolVar(expr);
     if (!isGateContext) {
       const node = this.exprToEnode[expr];
@@ -1011,22 +1015,28 @@ export abstract class Internalizer {
       this.updateGeneration(existing);
       // The theory may have made a nested term, such as the 2 of (* 2 x), without a variable, which
       // it needs once the term occurs elsewhere.
-      if (manager.getFamily(expr) === FAMILY_ARITH && !this.theory.isAttachedToVar(existing)) {
-        this.theory.internalizeTerm(expr);
-      }
+      const theory = this.getTheory(manager.getFamily(expr));
+      if (theory !== undefined && !theory.isAttachedToVar(existing)) theory.internalizeTerm(expr);
       return;
     }
     if (manager.getOp(expr) === OP_ITE) {
       this.internalizeIteTerm(expr);
       return;
     }
-    if (manager.getFamily(expr) === FAMILY_ARITH && this.theory.internalizeTerm(expr)) return;
-    for (let index = 0; index < manager.getNumArgs(expr); index++) {
-      const arg = manager.getArg(expr, index);
-      this.internalizeRec(arg, false);
+    if (!this.getTheory(manager.getFamily(expr))?.internalizeTerm(expr)) {
+      for (let index = 0; index < manager.getNumArgs(expr); index++) {
+        const arg = manager.getArg(expr, index);
+        this.internalizeRec(arg, false);
+      }
+      if (this.exprToEnode[expr] === undefined) this.mkEnode(expr, false, false, true);
     }
-    if (this.exprToEnode[expr] !== undefined) return;
-    this.mkEnode(expr, false, false, true);
+    const node = this.exprToEnode[expr];
+    if (node !== undefined) this.applySortCnstr(expr, node);
+  }
+
+  private applySortCnstr(expr: number, node: Enode) {
+    const sort = this.manager.sorts[expr];
+    this.getTheory(this.manager.getSortFamily(sort))?.applySortCnstr(node, sort);
   }
 
   // mk_eq_atom: the side with the smaller id goes first.

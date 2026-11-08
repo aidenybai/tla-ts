@@ -1,17 +1,9 @@
 // Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt. Builds a
 // model from the current assignment: every relevant equivalence class gets a value, Booleans from
-// the assignment, integers from the arithmetic theory and other sorts from fresh model values, and
-// each congruence root of an uninterpreted function becomes an entry of its interpretation.
-import {
-  FAMILY_MODEL_VALUE,
-  FAMILY_USER,
-  type FuncDecl,
-  OP_DIV0,
-  OP_IDIV0,
-  OP_MOD0,
-  SORT_BOOL,
-  isArithSort,
-} from "./ast";
+// the assignment, the terms of a theory's sorts from the theory and other sorts from fresh model
+// values, and each congruence root of an uninterpreted function becomes an entry of its
+// interpretation.
+import { FAMILY_BASIC, FAMILY_USER, type FuncDecl, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { FuncInterp, ProtoModel } from "./proto-model";
@@ -21,19 +13,19 @@ export interface GeneratedModel {
   root2value: Map<Enode, number>;
 }
 
-// include_func_interp: the model interprets uninterpreted functions, theory_lra's divisions by zero,
-// and the decls of a family without a theory, such as model values, which stand for themselves.
-const isIncludedFuncInterp = (decl: FuncDecl) =>
-  decl.family === FAMILY_USER ||
-  decl.family === FAMILY_MODEL_VALUE ||
-  decl.op === OP_DIV0 ||
-  decl.op === OP_IDIV0 ||
-  decl.op === OP_MOD0;
+// include_func_interp: the model interprets uninterpreted functions, the decls that their theory
+// asks for, such as theory_lra's divisions by zero, and the decls of a family without a theory, such
+// as model values, which stand for themselves.
+const isIncludedFuncInterp = (context: Context, decl: FuncDecl) => {
+  if (decl.family === FAMILY_USER) return true;
+  if (decl.family === FAMILY_BASIC) return false;
+  return context.getTheory(decl.family)?.includeFuncInterp(decl) ?? true;
+};
 
 export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
   const model = new ProtoModel(manager);
-  context.theory?.initModel(model);
+  for (const theory of context.theories) theory.initModel(model);
   // register_existing_model_values.
   for (const node of context.enodes)
     if (node.root === node && context.isRelevant(node.owner) && manager.isModelValue(node.owner))
@@ -47,9 +39,9 @@ export const mkModel = (context: Context): GeneratedModel => {
         context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr,
       );
   }
-  // mk_values: the values of the arithmetic classes that the theory does not know are fresh, so
-  // they come after all the other values. Like Z3, that includes the class of a numeral without a
-  // theory variable, such as a coefficient.
+  // mk_values: the values of the classes of a theory's sort that the theory does not know are
+  // fresh, so they come after all the other values. Like Z3, that includes the class of a numeral
+  // without a theory variable, such as a coefficient.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
   for (const node of context.enodes) {
@@ -57,11 +49,12 @@ export const mkModel = (context: Context): GeneratedModel => {
     const expr = node.owner;
     if (!context.isRelevant(expr) && !manager.isUniqueValue(expr)) continue;
     const sort = manager.sorts[expr];
+    const theory = context.getTheory(manager.getSortFamily(sort));
     if (sort === SORT_BOOL)
       root2value.set(node, context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr);
-    else if (manager.isUniqueValue(expr) && !isArithSort(sort)) root2value.set(node, expr);
-    else if (isArithSort(sort)) {
-      const value = context.theory?.mkValue(node);
+    else if (manager.isModelValue(expr)) root2value.set(node, expr);
+    else if (theory !== undefined && theory.buildModels()) {
+      const value = node.getThVar(theory.id) < 0 ? undefined : theory.mkValue(node);
       if (value === undefined) freshRoots.push(node);
       else root2value.set(node, value);
     } else root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
@@ -79,7 +72,8 @@ export const mkModel = (context: Context): GeneratedModel => {
   // mk_func_interps.
   for (const node of context.enodes) {
     const expr = node.owner;
-    if (!context.isRelevant(expr) || !isIncludedFuncInterp(manager.funcDecls[node.decl])) continue;
+    if (!context.isRelevant(expr) || !isIncludedFuncInterp(context, manager.funcDecls[node.decl]))
+      continue;
     if (node.numArgs === 0) {
       model.registerConst(node.decl, getValue(node));
       continue;

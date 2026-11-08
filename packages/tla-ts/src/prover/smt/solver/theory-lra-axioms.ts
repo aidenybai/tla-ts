@@ -113,7 +113,8 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     const first = context.getEnode(this.manager.getArg(expr, 0));
     const second = context.getEnode(this.manager.getArg(expr, 1));
     if (first === undefined || second === undefined) return;
-    if (first.thVar >= 0 && second.thVar >= 0 && first !== second) this.mkEqAxioms(first, second);
+    if (this.getThVar(first) >= 0 && this.getThVar(second) >= 0 && first !== second)
+      this.mkEqAxioms(first, second);
   }
 
   newEqEh(first: number, second: number) {

@@ -3,14 +3,8 @@
 // quantifier with only multi-patterns keeps one of them eager and sends the rest to a lazy matcher
 // that runs in the final check. With MBQI, the model finder and the model checker turn candidate
 // models into instances.
-import {
-  CHECK_MODEL_RESTART,
-  CHECK_MODEL_SAT,
-  CHECK_MODEL_UNKNOWN,
-  FC_CONTINUE,
-  FC_DONE,
-  type Context,
-} from "./context";
+import { CHECK_MODEL_RESTART, CHECK_MODEL_SAT, CHECK_MODEL_UNKNOWN, type Context } from "./context";
+import { FC_CONTINUE, FC_DONE } from "./theory";
 import { Mam } from "./e-matching";
 import type { Enode } from "./enode";
 import { FingerprintSet } from "./fingerprints";

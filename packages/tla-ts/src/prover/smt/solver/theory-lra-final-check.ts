@@ -2,7 +2,7 @@
 // theory_lra: the integer solver and its branches and cuts, then nla on nonlinear terms, whose
 // lemmas become clauses.
 import { OP_ADD, OP_GE, OP_LE, OP_MUL, OP_TO_REAL, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
-import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./context";
+import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./theory";
 import { TheoryJustification } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { getVar, Literal, negate } from "./literal";
@@ -18,7 +18,12 @@ import { TheoryLraModel } from "./theory-lra-model";
 export abstract class TheoryLraFinalCheck extends TheoryLraModel {
   private lia = new IntSolver(this.solver);
 
-  finalCheckEh(level: number) {
+  // Level 2 also runs nlsat's full check.
+  override numFinalCheckLevels() {
+    return 2;
+  }
+
+  override finalCheckEh(level: number) {
     const context = this.context;
     if (this.propagateCore()) return FC_CONTINUE;
     this.isModelInitialized = false;
@@ -175,7 +180,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
       const atom = this.mkBound(this.lia.term, move.offset, !move.isUpper);
       this.context.assign(
         this.context.getLiteral(atom),
-        new TheoryJustification(this.coreLiterals, []),
+        new TheoryJustification(this.id, this.coreLiterals, []),
       );
     } else if (move.kind === "conflict") {
       this.explanation.clear();

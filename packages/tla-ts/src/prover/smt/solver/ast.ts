@@ -21,6 +21,7 @@ export const FAMILY_ARITH = 1;
 export const FAMILY_USER = 2;
 // Model values: the elements that a model gives to an uninterpreted sort.
 export const FAMILY_MODEL_VALUE = 3;
+export const FAMILY_FINITE_SET = 4;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -266,6 +267,8 @@ export class AstManager {
   readonly flatLiterals = new FlatLiterals(this);
   funcDecls: FuncDecl[] = [];
   sortNames: string[] = ["Bool", "Int", "Real"];
+  // The family of each sort, whose theory gets its terms' equalities and sort constraints.
+  private sortFamilies: number[] = [FAMILY_BASIC, FAMILY_ARITH, FAMILY_ARITH];
   private sortHashes = [
     combineHash(getSymbolHash("Bool"), getInfoHash(Z3_BASIC_FAMILY, 0, [])),
     combineHash(getSymbolHash("Int"), getInfoHash(Z3_ARITH_FAMILY, 1, [])),
@@ -676,8 +679,13 @@ export class AstManager {
       ),
     );
     this.sortNames.push(name);
+    this.sortFamilies.push(FAMILY_USER);
     this.mkSmallId();
     return this.sortNames.length - 1;
+  }
+
+  getSortFamily(sort: number) {
+    return this.sortFamilies[sort];
   }
 
   // The hash of a func_decl node: its name, range, info and domain.

@@ -27,7 +27,7 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     const op = manager.getOp(expr);
     const boolVar = context.mkBoolVar(expr);
     this.boolVarToBound[boolVar] = undefined;
-    context.setVarTheory(boolVar);
+    context.setVarTheory(boolVar, this.id);
     if (op === OP_IS_INT) {
       this.mkEnode(expr);
       if (!context.relevancy.isEnabled) this.mkIsIntAxiom(expr);

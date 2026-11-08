@@ -3,7 +3,7 @@
 // relevancy propagation, the arithmetic theory and quantifier instantiation, with Z3's default
 // parameters for UFNIA.
 import type { AssertedFormulas } from "./asserted-formulas";
-import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
+import { AstManager, FAMILY_BASIC, KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE } from "./ast";
 import { getCongruenceJustification, isCongruent } from "./cg-table";
 import { BJustification, type Clause, CLS_LEARNED, CLS_TH_LEMMA, HEADER_SIZE } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
@@ -34,12 +34,10 @@ import { mkModel } from "./model-generator";
 import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
+import { FC_CONTINUE, FC_DONE, FC_GIVEUP, Theory } from "./theory";
+import { TheoryFiniteSet } from "./theory-finite-set";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
-
-export const FC_DONE = 0;
-export const FC_CONTINUE = 1;
-export const FC_GIVEUP = 2;
 
 const ACTIVITY_LIMIT = 1e100;
 const INV_ACTIVITY_LIMIT = 1e-100;
@@ -53,8 +51,6 @@ const AGILITY_FACTOR = 0.9999;
 // The LGC_FIXED lemma garbage collection: lemma_gc_initial conflicts between collections, and the
 // activity and unassigned literal thresholds of del_inactive_lemmas2.
 const LEMMA_GC_INITIAL = 5000;
-// theory_lra::num_final_check_levels: level 2 also runs nlsat's full check.
-const NUM_ARITH_FINAL_CHECK_LEVELS = 2;
 const NEW_OLD_RATIO = 16;
 const OLD_CLAUSE_ACTIVITY = 500;
 const NEW_CLAUSE_RELEVANCY = 45;
@@ -95,9 +91,11 @@ interface SmtParams {
 }
 
 export class Context extends Internalizer {
-  // setup_context makes the theories after the first formulas are asserted, so the field starts
-  // unassigned.
-  theory!: TheoryLra;
+  // setup_context makes the theories after the first formulas are asserted, so the fields start
+  // unassigned. m_theory_set holds them in the order they are registered, and m_theories by family.
+  arith!: TheoryLra;
+  readonly theories: Theory[] = [];
+  private theoryByFamily: (Theory | undefined)[] = [];
   readonly qmanager: DefaultQuantifierManager;
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
   private readonly dynAck = new DynAckManager(this);
@@ -130,10 +128,22 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
-  // register_plugin initializes each theory it registers.
+  // setup_unknown registers every theory, of which the port has these.
   setupContext() {
-    this.theory = new TheoryLra(this);
-    this.theory.init();
+    this.arith = new TheoryLra(this);
+    this.registerPlugin(this.arith);
+    this.registerPlugin(new TheoryFiniteSet(this));
+  }
+
+  // register_plugin initializes each theory it registers.
+  private registerPlugin(theory: Theory) {
+    this.theories.push(theory);
+    this.theoryByFamily[theory.id] = theory;
+    theory.init();
+  }
+
+  getTheory(family: number) {
+    return family < 0 ? undefined : this.theoryByFamily[family];
   }
 
   // The search stops with unknown when the manager's resource limit cancels it.
@@ -266,7 +276,7 @@ export class Context extends Internalizer {
           }
         }
       } else if (this.hasBoolVarFlag(boolVar, BV_THEORY))
-        this.theory.assignEh(boolVar, value === L_TRUE);
+        this.getTheory(this.getBoolVarTheory(boolVar))?.assignEh(boolVar, value === L_TRUE);
       else if (this.hasBoolVarFlag(boolVar, BV_QUANTIFIER) && value === L_TRUE)
         this.qmanager.assignEh(this.boolVar2Expr[boolVar]);
       if (this.isInconsistent()) return false;
@@ -316,8 +326,14 @@ export class Context extends Internalizer {
     if (this.manager.kinds[expr] !== KIND_APP) return;
     const node = this.exprToEnode[expr];
     if (node !== undefined) this.qmanager.relevantEh(node);
-    if (this.manager.getFamily(expr) === FAMILY_ARITH || (node !== undefined && node.thVar >= 0))
-      this.theory.relevantEh(expr);
+    const propagated = this.getTheory(this.manager.getFamily(expr));
+    propagated?.relevantEh(expr);
+    if (node === undefined || node.thVar < 0) return;
+    if (this.theoryByFamily[node.thId] !== propagated)
+      this.theoryByFamily[node.thId]?.relevantEh(expr);
+    for (let cell = node.thNext; cell !== null; cell = cell.next)
+      if (this.theoryByFamily[cell.thId] !== propagated)
+        this.theoryByFamily[cell.thId]?.relevantEh(expr);
   }
 
   private propagateRelevancy(qhead: number) {
@@ -328,18 +344,32 @@ export class Context extends Internalizer {
     this.relevancy.propagate();
   }
 
+  // The queues hold a theory, then the two variables.
   private propagateThEqs() {
     const queue = this.thEqQueue;
-    for (let index = 0; index < queue.length && !this.isInconsistent(); index += 2)
-      this.theory.newEqEh(queue[index], queue[index + 1]);
+    for (let index = 0; index < queue.length && !this.isInconsistent(); index += 3)
+      this.theoryByFamily[queue[index]]?.newEqEh(queue[index + 1], queue[index + 2]);
     this.thEqQueue = [];
   }
 
   private propagateThDiseqs() {
     const queue = this.thDiseqQueue;
-    for (let index = 0; index < queue.length && !this.isInconsistent(); index += 2)
-      this.theory.newDiseqEh(queue[index], queue[index + 1]);
+    for (let index = 0; index < queue.length && !this.isInconsistent(); index += 3)
+      this.theoryByFamily[queue[index]]?.newDiseqEh(queue[index + 1], queue[index + 2]);
     this.thDiseqQueue = [];
+  }
+
+  private canTheoriesPropagate() {
+    for (const theory of this.theories) if (theory.canPropagate()) return true;
+    return false;
+  }
+
+  private propagateTheories() {
+    for (const theory of this.theories) {
+      theory.propagate();
+      if (this.isInconsistent()) return false;
+    }
+    return true;
   }
 
   canPropagate() {
@@ -348,7 +378,7 @@ export class Context extends Internalizer {
       this.relevancy.canPropagate() ||
       this.atomPropagationQueue.length > 0 ||
       this.qmanager.canPropagate() ||
-      this.theory.canPropagate() ||
+      this.canTheoriesPropagate() ||
       this.eqPropagationQueue.length > 0 ||
       this.thEqQueue.length > 0 ||
       this.thDiseqQueue.length > 0
@@ -367,8 +397,7 @@ export class Context extends Internalizer {
       this.propagateThEqs();
       this.propagateThDiseqs();
       if (this.isInconsistent()) return false;
-      this.theory.propagate();
-      if (this.isInconsistent()) return false;
+      if (!this.propagateTheories()) return false;
       if (!this.checkCanceled()) this.qmanager.propagate();
       if (this.isInconsistent()) return false;
       if (this.isResourceLimitExceeded()) {
@@ -381,9 +410,12 @@ export class Context extends Internalizer {
 
   // Equalities.
 
-  private getClosestVar(start: Enode) {
-    for (let node: Enode | null = start; node !== null; node = node.transTarget)
-      if (node.thVar >= 0) return node.thVar;
+  private getClosestVar(start: Enode, thId: number) {
+    if (thId < 0) return -1;
+    for (let node: Enode | null = start; node !== null; node = node.transTarget) {
+      const thVar = node.getThVar(thId);
+      if (thVar >= 0) return thVar;
+    }
     return -1;
   }
 
@@ -403,17 +435,19 @@ export class Context extends Internalizer {
     }
   }
 
-  private pushNewThEq(first: number, second: number) {
-    this.thEqQueue.push(first, second);
+  private pushNewThEq(thId: number, first: number, second: number) {
+    this.thEqQueue.push(thId, first, second);
   }
 
-  private pushNewThDiseq(first: number, second: number) {
-    const theory = this.theory;
+  private pushNewThDiseq(thId: number, first: number, second: number) {
+    const theory = this.theoryByFamily[thId];
+    if (theory === undefined) return;
     if (theory.getEnode(first).isInterpreted && theory.getEnode(second).isInterpreted) return;
-    this.thDiseqQueue.push(first, second);
+    this.thDiseqQueue.push(thId, first, second);
   }
 
-  private pushNewThDiseqs(root: Enode, thVar: number) {
+  private pushNewThDiseqs(root: Enode, thVar: number, thId: number) {
+    if (!this.theoryByFamily[thId]?.useDiseqs()) return;
     for (const parent of root.parents) {
       if (!parent.isEq) continue;
       if (this.assignment[mkLiteral(this.getBoolVar(parent.owner))] !== L_FALSE) continue;
@@ -424,10 +458,10 @@ export class Context extends Internalizer {
         lhs = rhs;
         rhs = saved;
       }
-      const rhsVar = this.getClosestVar(rhs);
-      const lhsVar = this.getClosestVar(lhs);
+      const rhsVar = this.getClosestVar(rhs, thId);
+      const lhsVar = this.getClosestVar(lhs, thId);
       const finalVar = lhsVar >= 0 ? lhsVar : thVar;
-      if (rhsVar >= 0 && finalVar !== rhsVar) this.pushNewThDiseq(finalVar, rhsVar);
+      if (rhsVar >= 0 && finalVar !== rhsVar) this.pushNewThDiseq(thId, finalVar, rhsVar);
     }
   }
 
@@ -435,39 +469,66 @@ export class Context extends Internalizer {
     const r2 = n2.root;
     const r1 = n1.root;
     if (r1.thVar < 0 && r2.thVar < 0) return;
-    const isFromTheory = justification.kind === "justification";
-    const v2 = this.getClosestVar(n2);
-    const v1 = this.getClosestVar(n1);
-    if (v2 >= 0 && v1 >= 0) {
-      if (!isFromTheory) this.pushNewThEq(v2, v1);
-    } else if (v1 < 0 && v2 >= 0) this.pushNewThDiseqs(r1, v2);
-    else if (v1 >= 0 && v2 < 0) {
-      r2.thVar = v1;
-      this.pushNewThDiseqs(r2, v1);
+    const fromTheory =
+      justification.kind === "justification" ? justification.justification.fromTheory : -1;
+    if (r2.thNext === null && r1.thNext === null) {
+      const t2 = r2.thId;
+      const t1 = r1.thId;
+      const v2 = this.getClosestVar(n2, t2);
+      const v1 = this.getClosestVar(n1, t1);
+      if (v2 >= 0 && v1 >= 0) {
+        if (t1 === t2) {
+          if (t1 !== fromTheory) this.pushNewThEq(t1, v2, v1);
+          return;
+        }
+        r2.addThVar(v1, t1);
+        this.pushNewThDiseqs(r2, v1, t1);
+        this.pushNewThDiseqs(r1, v2, t2);
+      } else if (v1 < 0 && v2 >= 0) this.pushNewThDiseqs(r1, v2, t2);
+      else if (v1 >= 0 && v2 < 0) {
+        r2.thVar = v1;
+        r2.thId = t1;
+        this.pushNewThDiseqs(r2, v1, t1);
+      }
+      return;
     }
+    r2.forEachThVar((t2) => {
+      const v2 = this.getClosestVar(n2, t2);
+      const v1 = this.getClosestVar(n1, t2);
+      if (v1 >= 0) {
+        if (t2 !== fromTheory) this.pushNewThEq(t2, v2, v1);
+      } else this.pushNewThDiseqs(r1, v2, t2);
+    });
+    r1.forEachThVar((t1) => {
+      const v1 = this.getClosestVar(n1, t1);
+      if (r2.getThVar(t1) >= 0) return;
+      r2.addThVar(v1, t1);
+      this.pushNewThDiseqs(r2, v1, t1);
+    });
   }
 
-  attachThVar(node: Enode, thVar: number) {
-    const oldVar = node.thVar;
+  attachThVar(node: Enode, theory: Theory, thVar: number) {
+    const thId = theory.id;
+    const oldVar = node.getThVar(thId);
     // A variable that an equality moved to the node's list, which the node's own replaces.
     if (oldVar >= 0) {
-      node.thVar = thVar;
+      node.replaceThVar(thVar, thId);
       this.pushTrail(() => {
-        node.thVar = oldVar;
+        node.replaceThVar(oldVar, thId);
       });
-      this.pushNewThEq(thVar, oldVar);
+      this.pushNewThEq(thId, thVar, oldVar);
       return;
     }
     const root = node.root;
-    const rootVar = root.thVar;
-    node.thVar = thVar;
-    this.trailInts.push(thVar);
+    const rootVar = root.getThVar(thId);
+    node.addThVar(thVar, thId);
+    this.trailInts.push(thId);
     this.trailNodes.push(node);
     this.trailKinds.push(UNDO_TH_VAR);
     if (rootVar < 0) {
-      if (root !== node) root.thVar = thVar;
-      this.pushNewThDiseqs(root, thVar);
-    } else if (root !== node) this.pushNewThEq(rootVar, thVar);
+      if (root !== node) root.addThVar(thVar, thId);
+      this.pushNewThDiseqs(root, thVar, thId);
+    } else if (root !== node) this.pushNewThEq(thId, rootVar, thVar);
   }
 
   addEq(inputN1: Enode, inputN2: Enode, justification: EqJustification) {
@@ -582,9 +643,10 @@ export class Context extends Internalizer {
       }
       case UNDO_TH_VAR: {
         const node = this.popTrailNode();
-        const thVar = this.popTrailInt();
-        node.thVar = -1;
-        if (node.root !== node && node.root.thVar === thVar) node.root.thVar = -1;
+        const thId = this.popTrailInt();
+        const thVar = node.getThVar(thId);
+        node.delThVar(thId);
+        if (node.root !== node && node.root.getThVar(thId) === thVar) node.root.delThVar(thId);
         return;
       }
       default:
@@ -628,7 +690,12 @@ export class Context extends Internalizer {
       parent.cg = congruent;
       if (congruent === parent) parent.generation = generation;
     }
-    if (r2.thVar >= 0 && this.theory.getEnode(r2.thVar).root !== r2) r2.thVar = -1;
+    if (r2.thNext === null) {
+      if (r2.thVar >= 0 && this.theoryByFamily[r2.thId]?.getEnode(r2.thVar).root !== r2) {
+        r2.thVar = -1;
+        r2.thId = -1;
+      }
+    } else r2.restoreThVars((thId, thVar) => this.theoryByFamily[thId]?.getEnode(thVar) ?? r2);
     n1.transTarget = null;
     this.invertTrans(r1);
   }
@@ -670,11 +737,38 @@ export class Context extends Internalizer {
   private addDiseq(n1: Enode, n2: Enode) {
     const r1 = n1.root;
     const r2 = n2.root;
-    if (r1 === r2) return r1.thVar >= 0;
-    const v1 = this.getClosestVar(n1);
-    const v2 = this.getClosestVar(n2);
-    if (v1 >= 0 && v2 >= 0) this.pushNewThDiseq(v1, v2);
+    if (r1 === r2) return this.theoryByFamily[r1.thId]?.useDiseqs() ?? false;
+    if (r1.thNext === null && r2.thNext === null) {
+      const t1 = r1.thId;
+      const v1 = this.getClosestVar(n1, t1);
+      const v2 = this.getClosestVar(n2, t1);
+      if (v1 >= 0 && v2 >= 0 && t1 === r2.thId && this.theoryByFamily[t1]?.useDiseqs())
+        this.pushNewThDiseq(t1, v1, v2);
+      return true;
+    }
+    r1.forEachThVar((t1) => {
+      if (!this.theoryByFamily[t1]?.useDiseqs()) return;
+      const v1 = this.getClosestVar(n1, t1);
+      const v2 = this.getClosestVar(n2, t1);
+      if (v2 >= 0) this.pushNewThDiseq(t1, v1, v2);
+    });
     return true;
+  }
+
+  // is_shared: whether a class is shared between theories, whose equalities model-based theory
+  // combination assumes.
+  isShared(node: Enode) {
+    const root = node.root;
+    if (this.manager.getOp(root.owner) === OP_ITE) return true;
+    if (root.thVar < 0) return false;
+    if (root.thNext !== null) return true;
+    if (this.qmanager.isShared(root)) return true;
+    for (const parent of root.parents) {
+      const family = this.manager.getFamily(parent.owner);
+      if (family === root.thId || family === FAMILY_BASIC) continue;
+      if (!this.getTheory(family)?.isBetaRedex(parent, root)) return true;
+    }
+    return this.getTheory(root.thId)?.isShared(root.thVar) ?? false;
   }
 
   // Theory combination: assume that two shared terms are equal.
@@ -687,7 +781,10 @@ export class Context extends Internalizer {
       const boolVar = this.getBoolVar(eq);
       this.setBoolVarFlag(boolVar, BV_EQ, true);
       this.setTrueFirstFlag(boolVar);
-      this.theory.internalizeEqEh(eq);
+      this.getTheory(this.manager.getSortFamily(this.manager.sorts[lhs.owner]))?.internalizeEqEh(
+        eq,
+        boolVar,
+      );
       isNew = true;
     }
     const boolVar = this.getBoolVar(eq);
@@ -722,7 +819,7 @@ export class Context extends Internalizer {
     this.scopeTrailLimits.push(this.trailKinds.length);
     this.relevancy.push();
     this.qmanager.push();
-    this.theory.pushScopeEh();
+    for (const theory of this.theories) theory.pushScopeEh();
   }
 
   private cacheGenerationOfExpr(expr: number, newLevel: number, visited: Set<number>) {
@@ -789,7 +886,7 @@ export class Context extends Internalizer {
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
     this.popTrail(this.scopeTrailLimits[newLevel]);
-    this.theory.popScopeEh(numScopes);
+    for (const theory of this.theories) theory.popScopeEh(numScopes);
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
@@ -988,21 +1085,14 @@ export class Context extends Internalizer {
     let level = 1;
     let maxLevel = 1;
     for (;;) {
-      const isTheory = this.finalCheckIndex === 0;
-      // Z3 registers every theory for UFNIA, and only arithmetic acts on tlapm's obligations. Of
-      // the theories between arithmetic and the quantifiers, theory_finite_set makes a set.range
-      // declaration, and its assume_eqs draws a random value.
-      if (!isTheory) {
-        this.manager.initFiniteSetPlugin();
-        this.getRandomValue();
-      }
-      const check = isTheory ? this.theory.finalCheckEh(level) : qmanager.finalCheckEh(true);
-      if (isTheory) maxLevel = Math.max(maxLevel, NUM_ARITH_FINAL_CHECK_LEVELS);
+      const theory = this.theories[this.finalCheckIndex];
+      const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
+      if (theory !== undefined) maxLevel = Math.max(maxLevel, theory.numFinalCheckLevels());
       // Z3 reads the cancel flag after each theory's final check, and a canceled check gives up.
-      const isCanceled = isTheory && this.checkCanceled();
+      const isCanceled = theory === this.arith && this.checkCanceled();
       if (isCanceled) failure = FAILURE_CANCELED;
-      else if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
-      this.finalCheckIndex = (this.finalCheckIndex + 1) % 2;
+      else if (theory !== undefined && check === FC_GIVEUP) failure = FAILURE_THEORY;
+      this.finalCheckIndex = (this.finalCheckIndex + 1) % (this.theories.length + 1);
       if (check === FC_CONTINUE) return FC_CONTINUE;
       if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
       if (this.finalCheckIndex !== oldIndex) continue;
@@ -1154,7 +1244,7 @@ export class Context extends Internalizer {
     this.numConflictsSinceRestart = 0;
     if (isForcedRestart || status === L_TRUE || this.agility < RESTART_AGILITY_THRESHOLD) {
       if (this.scopeLevel > currentLevel) this.popScope(this.scopeLevel - currentLevel);
-      if (!this.isInconsistent()) this.theory.restartEh();
+      for (const theory of this.theories) if (!this.isInconsistent()) theory.restartEh();
       if (!this.isInconsistent()) qmanager.restartEh();
       if (this.isInconsistent()) {
         this.resolveConflict();
@@ -1263,7 +1353,7 @@ export class Context extends Internalizer {
   search() {
     if (this.isInconsistent()) return L_FALSE;
     this.resetModel();
-    this.theory.initSearchEh();
+    for (const theory of this.theories) theory.initSearchEh();
     this.qmanager.initSearchEh();
     this.dynAck.initSearchEh();
     this.numConflicts = 0;

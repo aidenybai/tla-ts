@@ -19,7 +19,6 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { Enode } from "./enode";
 import { BoolVar, getVar, Literal } from "./literal";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -104,20 +103,16 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return column;
   }
 
-  isAttachedToVar(node: Enode) {
-    return node.thVar >= 0 && this.varEnodes[node.thVar] === node;
-  }
-
   private mkVar(expr: number) {
     const node = this.getInternalizedEnode(expr);
-    if (this.isAttachedToVar(node)) return node.thVar;
+    if (this.isAttachedToVar(node)) return node.getThVar(this.id);
     const thVar = this.varEnodes.length;
     this.varEnodes.push(node);
     while (this.bounds.length <= thVar) {
       this.bounds.push([]);
       this.unassignedBounds.push(0);
     }
-    this.context.attachThVar(node, thVar);
+    this.context.attachThVar(node, this, thVar);
     return thVar;
   }
 

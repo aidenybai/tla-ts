@@ -277,7 +277,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   private assignEq(first: number, second: number) {
     this.context.pushEq(this.getEnode(first), this.getEnode(second), {
       kind: "justification",
-      justification: new TheoryJustification(this.coreLiterals, []),
+      justification: new TheoryJustification(this.id, this.coreLiterals, []),
     });
   }
 
@@ -359,7 +359,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
             this.explanation.addPair(constraint, entry[0]);
           }
       }
-      context.assign(literal, new TheoryJustification(this.coreLiterals, []));
+      context.assign(literal, new TheoryJustification(this.id, this.coreLiterals, []));
     }
   }
 
@@ -400,6 +400,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.resetEvidence();
     this.numConflicts++;
     for (const constraint of this.explanation) this.setEvidence(constraint);
-    this.context.setConflict(new TheoryJustification(this.coreLiterals, []), null);
+    this.context.setConflict(new TheoryJustification(this.id, this.coreLiterals, []), null);
   }
 }

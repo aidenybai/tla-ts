@@ -11,6 +11,9 @@ interface Antecedents {
 
 export abstract class Justification {
   isMarked = false;
+  // get_from_theory: the theory that propagated the equality, which the context does not send it
+  // back to, or -1.
+  readonly fromTheory: number = -1;
   abstract getAntecedents(antecedents: Antecedents): void;
 }
 
@@ -44,6 +47,15 @@ const IS_INTERPRETED = 64;
 // The number of arguments, in the bits of flags above the Boolean fields.
 const NUM_ARGS_SHIFT = 7;
 
+// th_var_list: the theory variables of a node past the first, which the node holds inline.
+export class ThVarCell {
+  constructor(
+    public thId: number,
+    public thVar: number,
+    public next: ThVarCell | null,
+  ) {}
+}
+
 export class Enode {
   root: Enode = this;
   next: Enode = this;
@@ -54,7 +66,11 @@ export class Enode {
   // two are equal.
   transTarget: Enode | null = null;
   transJustification: EqJustification = AXIOM_EQ_JUSTIFICATION;
+  // m_th_var_list: the first theory variable and its theory, -1 when there is none, then the
+  // others in the order they were added.
   thVar = -1;
+  thId = -1;
+  thNext: ThVarCell | null = null;
   // The approximate label sets of the class, 64 bits in two words: the low 32 bits, then the high.
   lbls = 0;
   lblsHigh = 0;
@@ -151,6 +167,86 @@ export class Enode {
     this.setFlag(IS_INTERPRETED, value);
   }
 
+  getThVar(thId: number) {
+    if (this.thVar < 0) return -1;
+    if (this.thId === thId) return this.thVar;
+    for (let cell = this.thNext; cell !== null; cell = cell.next)
+      if (cell.thId === thId) return cell.thVar;
+    return -1;
+  }
+
+  getNumThVars() {
+    if (this.thVar < 0) return 0;
+    let count = 1;
+    for (let cell = this.thNext; cell !== null; cell = cell.next) count++;
+    return count;
+  }
+
+  // The theories and variables of the list, in its order.
+  forEachThVar(visit: (thId: number, thVar: number) => void) {
+    if (this.thVar < 0) return;
+    visit(this.thId, this.thVar);
+    for (let cell = this.thNext; cell !== null; cell = cell.next) visit(cell.thId, cell.thVar);
+  }
+
+  addThVar(thVar: number, thId: number) {
+    if (this.thVar < 0) {
+      this.thVar = thVar;
+      this.thId = thId;
+      this.thNext = null;
+      return;
+    }
+    const cell = new ThVarCell(thId, thVar, null);
+    if (this.thNext === null) {
+      this.thNext = cell;
+      return;
+    }
+    let last = this.thNext;
+    while (last.next !== null) last = last.next;
+    last.next = cell;
+  }
+
+  replaceThVar(thVar: number, thId: number) {
+    if (this.thId === thId) {
+      this.thVar = thVar;
+      return;
+    }
+    for (let cell = this.thNext; cell !== null; cell = cell.next)
+      if (cell.thId === thId) {
+        cell.thVar = thVar;
+        return;
+      }
+  }
+
+  delThVar(thId: number) {
+    if (this.thId === thId) {
+      const next = this.thNext;
+      this.thVar = next === null ? -1 : next.thVar;
+      this.thId = next === null ? -1 : next.thId;
+      this.thNext = next === null ? null : next.next;
+      return;
+    }
+    let previous: ThVarCell | null = null;
+    for (let cell = this.thNext; cell !== null; previous = cell, cell = cell.next) {
+      if (cell.thId !== thId) continue;
+      if (previous === null) this.thNext = cell.next;
+      else previous.next = cell.next;
+      return;
+    }
+  }
+
+  // restore_theory_vars: the list keeps the variables whose node is still in this class.
+  restoreThVars(getEnode: (thId: number, thVar: number) => Enode) {
+    const kept: [number, number][] = [];
+    this.forEachThVar((thId, thVar) => {
+      if (getEnode(thId, thVar).root === this) kept.push([thId, thVar]);
+    });
+    this.thVar = -1;
+    this.thId = -1;
+    this.thNext = null;
+    for (const entry of kept) this.addThVar(entry[1], entry[0]);
+  }
+
   addParent(parent: Enode) {
     if (this.parents.length === 0) this.parents = [parent];
     else this.parents.push(parent);
@@ -245,6 +341,7 @@ export class UnitResolutionJustification extends Justification {
 // ext_theory_propagation_justification: theory reasoning from literals and equalities.
 export class TheoryJustification extends Justification {
   constructor(
+    readonly fromTheory: number,
     private literals: Literal[],
     private eqs: Enode[],
   ) {
