@@ -12,12 +12,12 @@ import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { translateBody } from "./functions";
+import { useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Scope } from "./scope";
 import {
   apply,
   bound,
   choose,
-  except,
   filter,
   functionOf,
   identifier,
@@ -375,11 +375,11 @@ const translateSequenceOperation = (
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
   const argument = node.arguments[0];
   const getLength = () => apply("Len", [sequence]);
-  const isNegative = (inner: ts.Expression): inner is ts.PrefixUnaryExpression =>
-    ts.isPrefixUnaryExpression(inner) && inner.operator === ts.SyntaxKind.MinusToken;
-  // An index that may count back from the end, as slice() and at() take it.
-  const getOffset = (inner: ts.Expression) =>
-    isNegative(inner) ? apply("-", [getLength(), translate(inner.operand)]) : translate(inner);
+  // An index that counts back from the end when it's negative, as at() and slice() take it.
+  const getRelative = (inner: ts.Expression, operator: "RelativeIndex" | "ClampedIndex") =>
+    ts.isNumericLiteral(inner)
+      ? translate(inner)
+      : useJavaScript(operator, [translate(inner), getLength()], context);
   const orUndefined = (exists: Expression, value: Expression) => {
     if (isDefined) return value;
     return ifExpression(exists, value, getUndefined(context));
@@ -430,7 +430,7 @@ const translateSequenceOperation = (
     [
       "at",
       () => {
-        const position = apply("+", [getOffset(argument), number(1)]);
+        const position = apply("+", [getRelative(argument, "RelativeIndex"), number(1)]);
         return orUndefined(
           apply("\\in", [position, getDomain(sequence)]),
           index(sequence, [position]),
@@ -483,14 +483,12 @@ const translateSequenceOperation = (
     [
       "slice",
       () => {
-        const start = argument === undefined ? number(0) : getOffset(argument);
-        const end = node.arguments[1] === undefined ? undefined : getOffset(node.arguments[1]);
+        const start = argument === undefined ? number(0) : getRelative(argument, "ClampedIndex");
+        const end = node.arguments[1];
         const last =
           end === undefined
             ? getLength()
-            : share(end, "end", context, (shared) =>
-                ifExpression(apply("<", [shared, getLength()]), shared, getLength()),
-              );
+            : useJavaScript("ClampedIndex", [translate(end), getLength()], context);
         const first =
           start.kind === "Number" ? number(start.value + 1) : apply("+", [start, number(1)]);
         return apply("SubSeq", [sequence, first, last]);
@@ -509,12 +507,11 @@ const translateSequenceOperation = (
     [
       "with",
       () =>
-        except(sequence, [
-          {
-            path: [{ kind: "Index", args: [apply("+", [translate(argument), number(1)])] }],
-            value: translate(node.arguments[1]),
-          },
-        ]),
+        useJavaScript(
+          "SequenceWith",
+          [sequence, translate(argument), translate(node.arguments[1])],
+          context,
+        ),
     ],
     [
       "toReversed",

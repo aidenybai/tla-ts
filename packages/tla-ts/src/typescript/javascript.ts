@@ -24,6 +24,18 @@ TypeOf(value) ==
        [] first \\in {"[", "<", "{", "("} \\cup Digits -> "object"
        [] OTHER -> "function"
 
+RelativeIndex(index, length) == IF index < 0 THEN length + index ELSE index
+
+ClampedIndex(index, length) ==
+  LET relative == RelativeIndex(index, length)
+  IN IF relative < 0 THEN 0 ELSE IF relative > length THEN length ELSE relative
+
+SequenceWith(sequence, index, value) ==
+  LET relative == RelativeIndex(index, Len(sequence))
+  IN IF relative \\in 0..(Len(sequence) - 1)
+     THEN [sequence EXCEPT ![relative + 1] = value]
+     ELSE Assert(FALSE, "tla-ts can't throw the RangeError of with()")
+
 SameValue(left, right) ==
   /\\ TypeOf(left) = TypeOf(right)
   /\\ Assert(TypeOf(left) # "object" \\/ left = Null \\/ right = Null,

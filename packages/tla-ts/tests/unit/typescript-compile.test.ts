@@ -710,6 +710,15 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("TLA+ sequences can't have holes");
   });
 
+  it("fails the check where with() would throw a RangeError", async () => {
+    const result = await check(
+      compile(
+        `let values = [1];\nexport const step = () => { values = values.with(values.length, 3); };`,
+      ),
+    );
+    expect(result.failure?.message).toContain("tla-ts can't throw the RangeError of with()");
+  });
+
   it("rejects division without rounding", () => {
     expect(() =>
       compile(`let count = 8;\nexport const halve = () => { count = count / 2; };`),

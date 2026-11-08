@@ -92,6 +92,7 @@ const UNREPRESENTABLE = [
   "TLC can't handle a number this big",
   "TLA+ sequences can't have holes",
   "tla-ts can't compare objects by identity",
+  "tla-ts can't throw the RangeError of with()",
 ];
 
 const getFailedRun = (id: string, reason: string): TestRun => ({
