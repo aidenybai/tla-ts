@@ -34,6 +34,7 @@ export interface TestMetadata {
   config?: string;
   args?: string[];
   includes?: string[];
+  stack?: string;
 }
 
 export interface Recording {

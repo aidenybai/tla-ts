@@ -83,6 +83,7 @@ The metadata has these fields:
 | `config`      | The text of the `.cfg` file. Empty by default.                       |
 | `args`        | Extra TLC flags.                                                     |
 | `includes`    | Fixture files beside the test, which the runner copies with it.      |
+| `stack`       | TLC's JVM thread stack, such as `64m`. `2m` by default.              |
 
 A file without metadata is a fixture and doesn't run on its own.
 
