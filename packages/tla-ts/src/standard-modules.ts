@@ -206,7 +206,7 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getValue(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) => {
-    const outer = getSet(args, 0, "UNION");
+    const outer = getValue(args, 0, "UNION");
     const sets = isEnumeratedSet(outer) ? outer.elements.filter(isEnumeratedSet) : [];
     if (!isEnumeratedSet(outer) || sets.length !== outer.elements.length) {
       return markStreamedSet({ kind: "Union", base: outer });

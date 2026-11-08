@@ -5,6 +5,7 @@ import {
   defineHigherOrderOperator,
   defineOperator,
   getJavaClassName,
+  getKindString,
   getOperator,
   getValue,
   isOutOfRange,
@@ -12,6 +13,7 @@ import {
 import { TlaEvaluationError, TlaModuleError, TlaNullPointerError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import {
+  createEnumeratedSet,
   createFunction,
   createSet,
   createSortedFunction,
@@ -228,10 +230,12 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
   defineOperator("SubBag", 1, (args) => {
     const value = getValue(args, 0, "SubBag");
     if (!isFunctionValue(value)) {
-      throw new TlaEvaluationError(`DOMAIN expects a function but received ${formatValue(value)}`);
+      throw new TlaEvaluationError(
+        `Attempted to apply the operator DOMAIN to a non-function\n(${getKindString(value)})\nline 106, col 58 to line 106, col 65 of module Bags`,
+      );
     }
     const functionValue = toFiniteFunction(value);
-    const range = createSet(functionValue.range).elements;
+    const range = toFiniteSet(createEnumeratedSet(functionValue.range)).elements;
     const invalid = range.find((count) => typeof count !== "number");
     // A count that isn't an integer fails the comparison.
     if (invalid !== undefined) builtins.get(">=")?.evaluateBinary?.(range[0], invalid);

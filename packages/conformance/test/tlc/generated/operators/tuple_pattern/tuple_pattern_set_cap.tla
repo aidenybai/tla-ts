@@ -3,6 +3,7 @@ description: tuple_pattern applied to set_cap, a SetCapValue.
 ref: tlc2/util/Context.java
 features:
   - value-matrix
+  - tlc-bug
 flags:
   - expression
 contexts:

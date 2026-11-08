@@ -1,7 +1,7 @@
 (*---
 description: "TLC rejects a tuple binder on 1 :> 5 @@ 2 :> 6, although that function equals <<5, 6>> in TLA+."
 ref: "tlc2/tool/ContextEnumerator.java#nextElement"
-features: [tlc-bug]
+features: [tlc-bug, tlc-bug]
 flags: [expression]
 outcome: evaluation-failure
 ---*)
