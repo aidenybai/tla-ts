@@ -3250,6 +3250,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const nextCode = next();
   const invariantCodes = invariants.map(predicate);
   const constraintCodes = constraints.map(predicate);
+  const initialPredicateCodes = initialPredicates.map(predicate);
   const actionPropertyCodes = actionProperties.map(
     (property) =>
       `(state, next) => { ${unpack} const [${successor.join(", ")}] = next; return (${property.action.emit()}) || (${["true", ...property.unchanged].join(" && ")}); }`,
@@ -3270,7 +3271,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   return {
     next: (state, emit) => { ${unpack} ${nextCode} },
     invariants: [${invariantCodes.join(", ")}],
-    initialPredicates: [${initialPredicates.map(predicate).join(", ")}],
+    initialPredicates: [${initialPredicateCodes.join(", ")}],
     actionProperties: [${actionPropertyCodes.join(", ")}],
     constraints: [${constraintCodes.join(", ")}],
     encode: (state, arena) => {
