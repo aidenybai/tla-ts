@@ -74,7 +74,6 @@ const isExported = (node: HelperDeclaration) =>
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0 &&
   ts.isSourceFile(ts.isVariableDeclaration(node) ? node.parent.parent.parent : node.parent);
 
-// A let or var that holds a function is a helper, as a const is, since a state can't hold one.
 const isLet = (declared: Declared) =>
   ts.isVariableDeclaration(declared.declaration) &&
   (declared.declaration.parent.flags & ts.NodeFlags.Const) === 0 &&

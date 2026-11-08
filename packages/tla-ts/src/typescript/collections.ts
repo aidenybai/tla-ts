@@ -61,8 +61,6 @@ const getCallback = (callback: ts.Expression, context: Context) => {
 const translateCallback = (callback: ts.Expression, scope: Scope, context: Context) =>
   translateBody(getCallback(callback, context).body, scope, context);
 
-// A callback that filter(), every(), some(), and find() test elements with. JavaScript tests what it
-// returns for truthiness, which only a boolean has in TLA+.
 const translateTest = (callback: ts.Expression, scope: Scope, context: Context) => {
   const callee = getCallee(callback, context);
   const signature = callee && context.checker.getSignatureFromDeclaration(callee);
@@ -405,8 +403,6 @@ const translateSequenceOperation = (
         translateElement(argument, inner, context),
       );
     };
-  // Whether the element at a position is the one that includes() or indexOf() looks for, from the
-  // fromIndex that counts back from the end when it's negative.
   const withSearch = (use: (isFound: (position: Expression) => Expression) => Expression) =>
     share(translate(argument), "value", context, (value) => {
       const getEqual = (position: Expression) => apply("=", [index(sequence, [position]), value]);
@@ -620,7 +616,6 @@ const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) =>
   }
   const values = translateExpression(node.expression.expression, scope, context);
   const other = translateExpression(argument, scope, context);
-  // A Map is like a set of its keys.
   return operation(values, method !== "has" && kind === "map" ? getDomain(other) : other);
 };
 

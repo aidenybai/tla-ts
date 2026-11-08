@@ -18,7 +18,6 @@ export interface Context {
   // Helpers being compiled or inlined, to detect recursion.
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
-  // Definitions, each after the definitions it uses.
   output: OperatorDefinition[];
   // String literals of @symmetric types, which become model values.
   modelValues: Map<string, string>;

@@ -492,8 +492,6 @@ const translatePropertyAccess = (
   return getField(translateExpression(receiver, scope, context), name);
 };
 
-// A string's element is a string of one UTF-16 unit, as TLC's SubSeq takes it, or undefined past
-// its end.
 const translateElementAccess = (
   node: ts.ElementAccessExpression,
   scope: Scope,

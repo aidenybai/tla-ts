@@ -116,8 +116,7 @@ export const bindPattern = (
   };
 };
 
-// Binds parameters to argument values with LET definitions, as when inlining a call. A parameter
-// takes its default value when its argument is missing or undefined.
+// Binds parameters to argument values with LET definitions, as when inlining a call.
 export const bindValues = (
   parameters: readonly ts.ParameterDeclaration[],
   values: Expression[],

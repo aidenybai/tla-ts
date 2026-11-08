@@ -40,7 +40,6 @@ interface Path {
 interface Target {
   symbol: ts.Symbol;
   current: Expression;
-  // The new value of the symbol, given the new value of the target from its current value.
   update: (getValue: (current: Expression) => Expression) => Expression;
 }
 
@@ -104,7 +103,6 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     if (getKind(node.expression, context) !== "sequence") {
       return getPart(target, { kind: "Index", args: [key] });
     }
-    // An array grows by one when the index is its length, and JavaScript leaves a hole past that.
     return {
       ...target,
       update: (getValue) =>

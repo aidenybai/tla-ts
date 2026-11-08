@@ -78,7 +78,6 @@ const getParsedShape = (value: unknown): unknown => {
   );
 };
 
-// Compiles a TypeScript module, and checks that its TLA+ text parses back to the same module.
 export const compileChecked = (source: string, fileName?: string) => {
   const spec = compile(source, fileName);
   const parsed = parseModule(printModule(spec.source));

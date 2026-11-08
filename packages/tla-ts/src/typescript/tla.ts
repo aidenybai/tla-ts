@@ -35,7 +35,6 @@ export const getLocation = (node: ts.Node): SourceLocation => {
   };
 };
 
-// Gives a location to each node that a translation built without one.
 export const locate = <T extends Expression>(expression: T, location: SourceLocation): T => {
   if (expression.location !== UNLOCATED) return expression;
   expression.location = location;
