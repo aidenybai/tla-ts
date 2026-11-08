@@ -51,7 +51,6 @@ import {
 } from "./format";
 import { axiom, type Axiom } from "./table";
 
-// A symbol's declaration, or the comment that stands for it. SMT-LIB's own symbols have neither.
 export interface SymbolSpec {
   declaration: string | undefined;
   deps: string[];
@@ -71,8 +70,6 @@ export interface CollectState {
   anonymous: Map<string, number>;
 }
 
-// Smtlib.pp_print_obligation leaves out a second-order symbol, which Flatten replaces with a
-// first-order one for each use.
 const getOmittedDeclaration = (name: string) =>
   `; omitted declaration of 'TLA__${name}' (second-order)`;
 

@@ -234,7 +234,6 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
     { env: undefined, entries: [] },
   );
 
-// What Smtlib.pp_print_obligation prints before the logic.
 interface SmtHeader {
   version: string;
   id: number;
@@ -243,8 +242,8 @@ interface SmtHeader {
 }
 
 // Smtlib.pp_print_obligation: the logic, the sort, the builtin symbols by name, their axioms,
-// then the hypotheses in order, the goal last, each hypothesis followed by an empty line. It
-// throws a TlaUnsupportedError for what the encoding can't express, where tlapm's encoder fails.
+// then the hypotheses in order, the goal last. It throws a TlaUnsupportedError for what the
+// encoding can't express, where tlapm's encoder fails.
 export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: SmtHeader) => {
   const simplified = sortRecordFields(
     simplifyRecordEqualities({ kind: "Sequent", sequent: prepared }),
@@ -287,7 +286,6 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: S
         (hyp.definition.kind === "Operator" || hyp.definition.kind === "Recursive") &&
         !isExpanded(hyp),
     );
-  // pp_print_assert prints the name of an axiom, or of the goal, before it.
   const printCommand = (line: string) => {
     if (line.startsWith(";")) return line;
     const command = layOutCommand(printer.resolve(line));

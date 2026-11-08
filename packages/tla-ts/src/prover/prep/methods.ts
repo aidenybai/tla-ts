@@ -237,8 +237,6 @@ const DEFAULT_METHOD_NAMES: Record<string, string> = {
   ls4: "ls4",
 };
 
-// Params.parse_default_methods: the methods --method names, each with its default time unless
-// name:seconds gives one. Throws a TlaProverError, as Arg.Bad, for an unknown method.
 export const parseDefaultMethods = (text: string) =>
   text.split(",").map((entry): Method => {
     const separator = entry.indexOf(":");

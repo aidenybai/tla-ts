@@ -1,6 +1,3 @@
-// backend/smtlib.ml's layout of an SMT-LIB command: each s-expression is a Format box, so a long
-// term breaks across lines the way it does in the files tlapm writes.
-
 import { format, renderDoc, text, type Doc } from "../../obligations/format";
 
 type Sexp = string | Sexp[];
@@ -25,20 +22,12 @@ const parseSexp = (command: string): Sexp => {
 
 const printFlat = (sexp: Sexp): string =>
   typeof sexp === "string" ? sexp : `(${sexp.map(printFlat).join(" ")})`;
-
-// pp_print_sexpr.
 const printSexpr = (...docs: Doc[]): Doc => [format("@[<hov2>("), docs, format("@])")];
-
-// pp_box.
 const printBox = (doc: Doc) => format("@[<hov0>%a@]", doc);
-
-// pp_print_delimited ~sep:pp_print_space.
 const printSpaced = (docs: Doc[]) =>
   docs.flatMap((doc, index) => (index === 0 ? [doc] : [format("@ "), doc]));
 
 const getList = (sexp: Sexp | undefined) => (Array.isArray(sexp) ? sexp : []);
-
-// An annotation's attributes: each :pattern prints its terms as a list, and :named its name.
 const printAttributes = (attributes: Sexp[]): Doc[] =>
   attributes.flatMap((attribute, index) => {
     if (index % 2 === 1) return [];
@@ -49,8 +38,6 @@ const printAttributes = (attributes: Sexp[]): Doc[] =>
   });
 
 const printTerm = (sexp: Sexp): Doc => printBox(printExpression(sexp));
-
-// fmt_expr and pp_apply.
 const printExpression = (sexp: Sexp): Doc => {
   if (typeof sexp === "string") return text(sexp);
   const head = printFlat(sexp[0]);
@@ -87,8 +74,6 @@ const printExpression = (sexp: Sexp): Doc => {
     );
   return printSexpr(text(head), format("@ "), printSpaced(args.map(printTerm)));
 };
-
-// pp_print_declarefun and pp_print_assert; other commands print on one line.
 export const layOutCommand = (command: string) => {
   const sexp = getList(parseSexp(command));
   const head = sexp[0];

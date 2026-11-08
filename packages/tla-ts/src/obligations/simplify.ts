@@ -46,7 +46,6 @@ const getProps = (from: Step) => ({
 
 const getLevel = (step: StepNumber | undefined) => step?.level ?? 0;
 
-// A fact a step adds holds at the time its expression has in the context.
 const getVisibleFact = (context: Hyp[], expression: Expr, location: Locus | undefined) =>
   getFact(expression, "Visible", getTime(adjoinAll(undefined, context), expression), location);
 
@@ -98,8 +97,7 @@ const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
     : shifted;
 };
 
-// A WITNESS proves each membership and subset it relies on, then the goal from them. A suppressed
-// one skips them.
+// A WITNESS proves each membership and subset it relies on, then the goal from them.
 const getWitnessProof = (step: Step, sideFacts: Expr[]): Proof => {
   if (sideFacts.length === 0 || step.isSuppressed) return { kind: "Obvious", ...getProps(step) };
   const steps = sideFacts.map((item, index): Step => {

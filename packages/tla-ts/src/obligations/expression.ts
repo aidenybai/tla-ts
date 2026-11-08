@@ -10,8 +10,6 @@ export interface Locus {
   endColumn: number;
 }
 
-// The channel error is Errors.set, which records the locus and message that tlapm's toolbox reports
-// when tlapm ends abnormally.
 interface ObligationWarning {
   text: string;
   channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout" | "error";

@@ -973,7 +973,6 @@ export const createSource = (
               name: getCanonicalName(declaration.name),
               shape: declaration.arity,
             })),
-            // Module.Parser locates each RECURSIVE declaration at its whole unit.
             location: getLocus(
               unit.kind === "Constants" ? unit.declarations[0].location : unit.location,
             ),

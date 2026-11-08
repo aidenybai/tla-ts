@@ -99,8 +99,6 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
 
 type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown"; error?: string };
 
-// What Prove.prove prints on stderr when it gives up. Zenon never reaches the time limit tlapm
-// gives it, since tlapm stops it first.
 const FAILURE_ERRORS: Partial<Record<SearchFailure | "zenon error", string>> = {
   exhausted: "Zenon error: exhausted search space without finding a proof\n",
   "memory limit": "Zenon error: could not find a proof within the memory size limit\n",

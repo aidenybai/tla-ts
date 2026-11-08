@@ -8,8 +8,7 @@ import { decideSmt } from "./smt/solver/solver";
 import type { DecideOptions, Decision } from "./verdict";
 import { decideZenon } from "./zenon/decide";
 
-// Z3 prints its verdict. It rejects malformed input with an error, and tlapm counts that as a
-// failure.
+// Z3 rejects malformed input with an error, and tlapm counts that as a failure.
 const decideZ3 = (text: string, options: DecideOptions) => {
   try {
     const verdict = decideSmt(text, options);

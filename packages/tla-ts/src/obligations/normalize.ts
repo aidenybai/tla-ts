@@ -352,7 +352,6 @@ const instantiate = (
     if (substitutes.has(name)) continue;
     if (!findNamed(instanceScope, name)) {
       const message = `Required parameter ${name} for module ${instance.module} could not be inferred.`;
-      // Errors.err, which the toolbox reports as a warning before tlapm ends abnormally.
       pipeline.onWarning({
         text: `${getLocusPrefix(instance.location)}${message}\n`,
         channel: "toolbox",

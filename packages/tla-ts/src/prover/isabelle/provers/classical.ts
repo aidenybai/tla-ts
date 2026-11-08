@@ -374,7 +374,6 @@ const stepTac =
       appWrappers(context, orElseGoal(instStepTac(context), unsafeStepTac(context)))(index),
     );
 
-// fast_tac: depth-first search with step_tac on the first goal.
 export const fastTac = (context: ClassicalContext, atomizeRules: readonly Thm[]): GoalTactic =>
   thenGoal(
     atomizePremsTac(context.limits, atomizeRules),

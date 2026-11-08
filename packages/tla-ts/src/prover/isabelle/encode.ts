@@ -396,7 +396,6 @@ const printLemma = (sequent: Sequent) => {
     lines.push(`shows "${printExpr(sequent.active)}"`);
   };
 
-  // The lines printed before an unsupported operator, which tlapm leaves in the file it writes.
   const failure = (() => {
     try {
       printSequent(sequent);
@@ -414,14 +413,12 @@ const printLemma = (sequent: Sequent) => {
   };
 };
 
-// What thy_temp writes before the lemma: the obligation's location and fingerprint.
 interface ObligationSource {
   location: string;
   fingerprint: string;
 }
 
-// thy_temp: the theory tlapm writes for Isabelle to prove obligation id, named after its file. It
-// writes the lines before an unsupported operator, then fails.
+// thy_temp: the theory tlapm writes for Isabelle to prove obligation id.
 export const encodeIsabelle = (
   id: number,
   sequent: Sequent,
@@ -453,14 +450,13 @@ export const encodeIsabelle = (
   );
 };
 
-// A proof tlapm writes in the module's theory: Isabelle's tactic, or Zenon's Isar proof.
 interface IsabelleProof {
   id: number;
   sequent: Sequent;
   proof: string;
 }
 
-// Isabelle.thy_init, thy_write and thy_close. thy_write leaves out a lemma it can't print.
+// Isabelle.thy_init, thy_write and thy_close.
 export const encodeIsabelleTheory = (name: string, proofs: IsabelleProof[]) =>
   [
     `${getTheoryHeader(name, true).join("\n")}\n`,

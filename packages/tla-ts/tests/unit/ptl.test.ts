@@ -119,8 +119,6 @@ describe("PTL backend matches tlapm with LS4", () => {
     expect(getVerdict(["THEOREM ASSUME x = 1 PROVE [](x = 1)", "  BY PTL"])).toBe("sat");
   });
 
-  // tlapm b91fb6c judges the time of a CASE by its expression, so a constant case holds always even
-  // in a scope that holds only now.
   it("fails to split on constant cases under an assumption about an operator a proof defines", () => {
     const verdict = getVerdict([
       "THEOREM TRUE",

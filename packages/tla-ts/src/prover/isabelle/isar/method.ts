@@ -138,7 +138,6 @@ export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
         return { kind: name };
       case "intro":
         return { kind: "intro", facts: hasArgs ? facts() : [] };
-      // Classical's rule without rules picks them from the context, which this port does not keep.
       case "rule": {
         const rules = hasArgs ? facts() : [];
         if (rules.length === 0) throw new TlaIsabelleError("ERROR", "Unsupported method: rule");
@@ -240,7 +239,6 @@ const evaluate = (context: ProofContext, text: MethodText): Method => {
           facts,
           fastTac(withModifiers(context, text.modifiers), context.atomizeRules),
         );
-    // Simplifier's simp method: asm_full_simp_tac on the first goal, with the facts inserted.
     case "simp":
       return (facts) =>
         simpleMethodHead(context, facts, (index) =>
@@ -265,7 +263,6 @@ const evaluate = (context: ProofContext, text: MethodText): Method => {
           changedProp(repeatAllNew(matchTac(context.limits, rules))(index)),
         );
       };
-    // Method.rule_tac: resolves the goal with the rules, each first resolved with the facts.
     case "rule":
       return (facts) => {
         const rules = getFacts(context, text.facts);

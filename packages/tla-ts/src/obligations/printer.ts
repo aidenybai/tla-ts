@@ -149,7 +149,6 @@ const isWith = (expression: Expr): boolean => {
   return expression.kind === "With";
 };
 
-// The debug flags hidden and alldefs, and whether a temporal method was tried.
 export interface PrinterOptions {
   isShowingHidden?: boolean;
   isShowingAllDefinitions?: boolean;
@@ -192,7 +191,6 @@ const LEVEL_NAMES = {
 };
 
 // hyps names the indices beyond the printer's own context, as the hypothesis deque does in E_fmt.
-// For a temporal method, pp_print_time marks each fact that holds only now.
 const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
   const context = createContext();
   const printExpr = (expression: Expr): Doc => printMinimal(formatExpr(expression));
