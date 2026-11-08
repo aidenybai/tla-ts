@@ -1593,8 +1593,14 @@ const enumerateSet = (
           `Attempted to enumerate S \\ T when S:\n${formatValue(value.left)}\nis not enumerable.`,
         );
       }
-      if (value.operator === "\\cup")
-        return getSortedUnion(toFiniteSet(value.left), toFiniteSet(value.right)).elements;
+      if (value.operator === "\\cup") {
+        return computeLikeTlcOnFailure(
+          (left, right) => getSortedUnion(left, right).elements,
+          (left, right) => sortLikeTlc([...left.elements, ...right.elements]),
+          toFiniteSet(value.left),
+          toFiniteSet(value.right),
+        );
+      }
       const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
       const other = isLeftEnumerated ? value.right : value.left;
