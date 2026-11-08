@@ -51,6 +51,8 @@ export interface ScopedExpression {
 // a conjunct's location, or the name of the definition the part is the body of.
 interface ExpandedExpression extends ScopedExpression {
   name: string | undefined;
+  // The names of the definitions the expansion entered to reach the expression.
+  path: string[];
 }
 
 export interface TemporalProperty extends ScopedExpression {
@@ -183,6 +185,7 @@ export const expandTemporal = (
   // longer expands an operator applied to arguments.
   isSubstituted = false,
   name?: string,
+  path: string[] = [],
 ): ExpandedExpression[] => {
   const expand = (
     child: Expression,
@@ -200,6 +203,9 @@ export const expandTemporal = (
       isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
       childName,
+      definition?.kind === "Operator" && definition.params.length === 0
+        ? [...path, definition.name]
+        : path,
     );
   if (expression.kind === "And") {
     return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
@@ -211,7 +217,11 @@ export const expandTemporal = (
   if (expression.kind === "Identifier") {
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk") {
-      return expand(binding.expression, binding.scope);
+      return expand(
+        binding.expression,
+        binding.scope,
+        definitionThunks.has(binding) ? expression.name : name,
+      );
     }
     const definition = environment.constants.has(expression.name)
       ? undefined
@@ -275,7 +285,7 @@ export const expandTemporal = (
     if (expanded.length === 0) throw createTautologyError();
     return expanded;
   }
-  return [{ expression, scope, name }];
+  return [{ expression, scope, name, path }];
 };
 
 const bindLetDefinitions = (

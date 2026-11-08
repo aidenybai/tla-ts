@@ -102,6 +102,8 @@ interface Specification {
   next: Expression | undefined;
   scope: Scope | undefined;
   temporals: ScopedExpression[];
+  // Whether TLC takes every temporal formula of the spec for a part of its only property.
+  isPropertyFairness: boolean;
 }
 
 interface Properties {
@@ -294,6 +296,7 @@ const getSpecification = (
       next: getOperator(config.next, "next state action"),
       scope: undefined,
       temporals: [],
+      isPropertyFairness: false,
     };
   }
   if (config.init !== undefined || config.next !== undefined) {
@@ -311,6 +314,10 @@ const getSpecification = (
       `The value of ${config.specification} is equal to ${formatValue(value)}`,
     );
   }
+  // TLC tags a temporal formula of the spec as a part of a property when it reached the formula
+  // through a definition of the property's name.
+  const property = config.properties.length === 1 ? config.properties[0] : undefined;
+  const untagged = { isFound: false };
   expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
@@ -344,6 +351,11 @@ const getSpecification = (
             text: `The subscript of the next-state relation specified by the specification\ndoes not seem to contain the state variable ${name}`,
           }),
         );
+      if (nextActions.length > 0) {
+        throw new TlaConfigError(
+          "The specification contains more than one conjunct of the form [][Next]_v,\nbut TLC can handle only specifications with one next-state relation.",
+        );
+      }
       nextActions.push({ expression: conjunct.expression.action, scope: item.scope });
       return;
     }
@@ -361,21 +373,17 @@ const getSpecification = (
     }
     const level = getLevel(conjunct, item.scope, environment);
     if (level === TEMPORAL_LEVEL) {
+      if (property === undefined || !item.path.includes(property)) untagged.isFound = true;
       temporals.push(item);
       return;
     }
     if (level === ACTION_LEVEL) {
       throw new TlaConfigError(
-        `TLC cannot handle the action-level conjunct of the specification ${config.specification}`,
+        `TLC cannot handle this conjunct of the spec:\n${describeRange(conjunct)}`,
       );
     }
     initConjuncts.push(item);
   });
-  if (nextActions.length > 1) {
-    throw new TlaConfigError(
-      `The specification ${config.specification} must contain at most one [][Next]_vars`,
-    );
-  }
   const items = [...initConjuncts, ...nextActions];
   const getName = (index: number) => `$specification${index}`;
   const scope = items.reduce<Scope | undefined>(
@@ -414,6 +422,7 @@ const getSpecification = (
     next: nextActions.length === 0 ? undefined : getReference(nextActions[0], initConjuncts.length),
     scope,
     temporals,
+    isPropertyFairness: temporals.length > 0 && !untagged.isFound,
   };
 };
 
@@ -482,7 +491,17 @@ const getProperties = (
         return;
       }
       if (level === ACTION_LEVEL) {
-        throw new TlaConfigError(`The property ${name} is an action-level formula`);
+        const location = describeRange(conjunct);
+        const book = "Specifying Systems at https://lamport.azurewebsites.net/tla/book.html";
+        const advice =
+          conjunct.kind === "BoxAction"
+            ? `To check that action ${partName} holds in *every* step of the behavior, define a temporal property by applying the "always" temporal operator ([]) to the formula at ${location} (compare page 90 of ${book}).`
+            : conjunct.kind === "AngleAction"
+              ? `To check that infinitely many ${partName} steps occur, define a temporal property by applying the "always eventually" temporal operator combination ([]<>) to the formula at ${location} (compare page 91 of ${book}).`
+              : `To check that action ${partName} holds in *every* step of the behavior, define a temporal property: Let A be the formula at ${location}; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of ${book}).`;
+        throw new TlaConfigError(
+          `The formula ${partName} at ${location} is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. ${advice}`,
+        );
       }
       properties.liveness.push({ name, expression: conjunct, scope: item.scope });
     });
@@ -818,6 +837,17 @@ export const createSearch = (
   const configInvariants = getInvariants(config.invariants, environment);
   const spec = getSpecification(config, environment, getVariableOrder, onProgress);
   const properties = getProperties(config, environment, onProgress);
+  const live = config.properties[0];
+  const liveRange = live && getDefinition(live, environment)?.location.range;
+  const specName = config.specification;
+  const specRange = specName && getDefinition(specName, environment)?.location.range;
+  if (spec.isPropertyFairness && liveRange && specRange) {
+    onProgress?.({
+      kind: "warning",
+      code: MESSAGE_CODE.fairnessTautology,
+      text: `Implied-temporal checking is a tautology.\nThe temporal formula ${live} at ${formatRange(liveRange)} equals\nthe fairness constraints of the behavior specification ${specName} at ${formatRange(specRange)}.\nTherefore, checking whether ${specName} => ${live} using TLC will never result in a violation of ${live}.`,
+    });
+  }
   const invariants = getStateChecks([...configInvariants, ...properties.invariants], environment);
   // The invariants TLC evaluates, each of which may have several conjuncts among the checks.
   const invariantPredicates = [

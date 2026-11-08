@@ -1,5 +1,6 @@
-import { TlaConfigError } from "./errors";
-import { matchOperator, matchUnicodeToken } from "./lexer";
+import { getUnexpectedException, TlaConfigError } from "./errors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { matchBasedNumber, matchOperator, matchUnicodeToken } from "./lexer";
 import { formatLexicalError } from "./sany/lexer";
 import type { TlcVersion } from "./tlc/version";
 
@@ -137,7 +138,9 @@ const tokenizeConfig = (source: string) => {
       continue;
     }
     const line = cursor.line;
-    const number = /^\d+(?![A-Za-z_])/.exec(rest)?.[0];
+    const basedLength = matchBasedNumber(source, cursor.index);
+    const number =
+      basedLength > 0 ? rest.slice(0, basedLength) : /^\d+(?![A-Za-z_])/.exec(rest)?.[0];
     if (number) {
       tokens.push({ kind: "Number", text: number, line });
       skip(number);
@@ -158,7 +161,7 @@ const tokenizeConfig = (source: string) => {
         else addLexicalError(cursor.index, text);
         return tokens;
       }
-      tokens.push({ kind: "String", text: string[1], line });
+      tokens.push({ kind: "String", text, line });
       skip(text);
       continue;
     }
@@ -253,8 +256,21 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
   };
 
   const parseValue = (token: ConfigToken): ConfigValue => {
+    if (token.kind === "Number" && token.text.startsWith("\\")) {
+      throw setExitCode(
+        new TlaConfigError(
+          `${getUnexpectedException("java.lang.NumberFormatException")}For input string: "${token.text}"`,
+        ),
+        EXIT_STATUS.error,
+      );
+    }
     if (token.kind === "Number") return { kind: "Number", value: Number(token.text) };
-    if (token.kind === "String") return { kind: "String", value: token.text };
+    if (token.kind === "String" && token.text.includes("\\")) {
+      throw new TlaConfigError(
+        `TLC found an error in the configuration file:\nescape sequences are not supported in strings at line ${token.line}`,
+      );
+    }
+    if (token.kind === "String") return { kind: "String", value: token.text.slice(1, -1) };
     if (token.text === "TRUE" || token.text === "FALSE")
       return { kind: "Boolean", value: token.text === "TRUE" };
     if (token.text === "{") {

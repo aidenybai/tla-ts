@@ -483,7 +483,7 @@ const BASED_NUMBER_DIGITS = new Map([
 ]);
 
 // The length of a based numeral such as \b01 or \hFF at index, or 0.
-const matchBasedNumber = (source: string, index: number) => {
+export const matchBasedNumber = (source: string, index: number) => {
   if (source.charCodeAt(index) !== CODE_BACKSLASH) return 0;
   const digits = BASED_NUMBER_DIGITS.get(source.charAt(index + 1).toLowerCase());
   if (digits === undefined) return 0;

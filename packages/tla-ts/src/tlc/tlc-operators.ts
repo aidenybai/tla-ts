@@ -157,6 +157,23 @@ const normalizeDeeply = (value: Value): void => {
   if (value.kind === "Function") value.range.forEach(normalizeDeeply);
 };
 
+// TLCEval#convert: Value#toSetEnum, or else Value#toFcnRcd, or else the value itself.
+const convertLikeTlcEval = (value: Value): Value => {
+  if (typeof value !== "object") return value;
+  switch (value.kind) {
+    case "ModelValue":
+    case "Function":
+    case "MixedSet":
+    case "InfiniteSet":
+    case "SequenceSet":
+      return value;
+    case "LazyFunction":
+      return toFiniteFunction(value);
+    default:
+      return toFiniteSet(value);
+  }
+};
+
 export const createTlcOperators = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
@@ -203,11 +220,15 @@ export const createTlcOperators = (
   defineOperator("ToString", 1, (args) =>
     rankString(formatValue(getValue(args, 0, "ToString"), true)),
   ),
-  defineOperator("TLCEval", 1, (args) => {
-    const value = getValue(args, 0, "TLCEval");
-    normalizeDeeply(value);
-    return value;
-  }),
+  // The checker passes no context where TLC caches the value, which it then sorts.
+  {
+    ...defineLazyOperator("TLCEval", 1, (args, context) => {
+      const value = convertLikeTlcEval(getThunk(args, 0, "TLCEval")());
+      if (context === undefined) normalizeDeeply(value);
+      return value;
+    }),
+    isStateLevel: false,
+  },
   defineOperator("Permutations", 1, (args) => {
     const elements = toEnumeratedSet(getValue(args, 0, "Permutations"), "Permutations").elements;
     return createSet(

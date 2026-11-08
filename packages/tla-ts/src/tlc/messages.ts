@@ -3,6 +3,7 @@ import {
   STACK_OVERFLOW_MESSAGE,
   TlaEvaluationError,
   TlaModuleError,
+  TlaStackOverflowError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "../errors";
@@ -67,6 +68,7 @@ export const MESSAGE_CODE = {
   version: 2262,
   depthFirstModelChecking: 2271,
   noSpecificationButProperty: 2257,
+  fairnessTautology: 2258,
   noFairnessButProperty: 2259,
   counterExample: 2264,
   checkingTemporalEnd: 2267,
@@ -231,6 +233,11 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2237, "The spec is trivially false because %1% is false.", false],
   [2238, "TLC cannot handle subscript %1%", false],
   [2239, "TLC cannot handle this conjunct of the spec:\n%1%", false],
+  [
+    2240,
+    "The specification contains more than one conjunct of the form [][Next]_v,\nbut TLC can handle only specifications with one next-state relation.",
+    false,
+  ],
   [2241, "The property %1% is not correctly defined.", false],
   [2242, "The arity of the operator %1% is inconsistent in the configuration file.", false],
   [2244, "TLC can't handle real numbers.\n%1%", false],
@@ -244,6 +251,21 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   ],
   [2265, "TLC can't handle a number this big.\n%1%", false],
   [2266, "The %1% argument of %2% should be an %3%, but instead it is:\n%4%", true],
+  [
+    2272,
+    "The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action %1% holds in *every* step of the behavior, define a temporal property: Let A be the formula at %2%; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).",
+    false,
+  ],
+  [
+    2273,
+    'The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action %1% holds in *every* step of the behavior, define a temporal property by applying the "always" temporal operator ([]) to the formula at %2% (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).',
+    false,
+  ],
+  [
+    2274,
+    'The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that infinitely many %1% steps occur, define a temporal property by applying the "always eventually" temporal operator combination ([]<>) to the formula at %2% (compare page 91 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).',
+    false,
+  ],
   [2280, "In evaluation, the identifier %1% is either undefined or not an operator.\n%2%", false],
   [2281, "The configuration file substitutes constant %1% with non-constant %2%%3%", false],
   [2283, "The argument of %1% should be a %2%, but instead it is:\n%3%", true],
@@ -299,9 +321,10 @@ const getCodedMessagePatterns = () =>
   })));
 
 // The overflows of SetOfFcnsValue and SetOfTuplesValue, which TLC raises with a plain message that
-// reads like the coded overflow of SetOfRcdsValue and SubsetValue, and SetPredValue's tuple membership.
+// reads like the coded overflow of SetOfRcdsValue and SubsetValue, SetPredValue's tuple membership,
+// and the plain messages of Tool#enabled for ~> and -+-> that read like its coded one.
 const UNCODED_MESSAGE_PATTERN =
-  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+ : ))|\nis an element of a set of \d+-tuples\.$/;
+  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+ : ))|\nis an element of a set of \d+-tuples\.$|^In computing ENABLED, TLC encountered a temporal formula \(a (~> b|-\+-> formula)\)\./;
 
 export const getCodedMessage = (text: string): CodedMessage | undefined =>
   UNCODED_MESSAGE_PATTERN.test(text)
@@ -444,6 +467,15 @@ export const getFailureMessage = (
       code: headed.code,
       message,
       toolMessage: formatErrorMessage(error, true),
+    };
+  }
+  // TLC prints a StackOverflowError in the next states by its own code, and in the initial states
+  // as the text of a message it doesn't code.
+  if (error instanceof TlaStackOverflowError) {
+    return {
+      code: isNextState ? MESSAGE_CODE.stackOverflow : MESSAGE_CODE.general,
+      message,
+      toolMessage: message,
     };
   }
   if (isNextState && isEvalException(error)) {

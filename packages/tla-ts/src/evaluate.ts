@@ -253,6 +253,18 @@ export const describeRange = (expression: Expression) => {
   return range ? formatRange(range) : describeLocation(expression);
 };
 
+const TEMPORAL_FORMS = {
+  Always: "[]A",
+  Eventually: "<>A",
+  WeakFairness: "WF",
+  StrongFairness: "SF",
+};
+
+const createTemporalFormulaError = (form: string, expression: Expression) =>
+  new TlaEvaluationError(
+    `TLC encountered a temporal formula (${form}) when evaluating a predicate or action.\n${describeRange(expression)}`,
+  );
+
 // SANY prints a numeral as written and any other expression by its location.
 export const describeNode = (expression: Expression) =>
   expression.kind === "Number"
@@ -1444,9 +1456,12 @@ const compileApply = (
     const right = getEvaluator(args[1], environment);
     return (context) => isEquivalent(left(context), right(context), expression);
   }
-  if (expression.operator === "~>") {
+  if (expression.operator === "~>" || expression.operator === "-+->") {
     return () => {
-      throw new TlaEvaluationError("TLC cannot evaluate a temporal formula such as ~> in a state");
+      throw createTemporalFormulaError(
+        expression.operator === "~>" ? "a ~> b" : "a -+-> formula",
+        expression,
+      );
     };
   }
   const global = isLocallyResolved(expression)
@@ -1458,14 +1473,15 @@ const compileApply = (
     const domain = getDomainOperator(expression);
     return (context) => domain(operand(context));
   }
-  // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
+  // TLC caches the value of a constant TLCEval argument only where no context binds a name.
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
-    const operand = getEvaluator(args[0], environment);
-    if (contextualApplications.has(expression) || isNonconstant(args[0], environment)) {
-      return operand;
-    }
+    const isCached =
+      !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
     return (context) =>
-      context.scope === undefined ? global.evaluate([operand(context)]) : operand(context);
+      global.evaluate(
+        getLazyArguments(args, context),
+        isCached && context.scope === undefined ? undefined : context,
+      );
   }
   if (global?.kind === "Builtin" && global.name === "\\subseteq" && args.length === 2) {
     const left = getEvaluator(args[0], environment);
@@ -1982,6 +1998,12 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "UnboundedQuantifier":
       return () => {
         const operator = expression.quantifier === "Forall" ? "\\A" : "\\E";
+        if (expression.isTemporal) {
+          throw createTemporalFormulaError(
+            expression.quantifier === "Forall" ? "\\AA" : "\\EE",
+            expression,
+          );
+        }
         throw new TlaEvaluationError(
           `TLC attempted to evaluate an unbounded ${operator}.\nMake sure that the expression is of form ${operator} x \\in S: P(x).\n${describeRange(expression)}`,
         );
@@ -2087,9 +2109,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "WeakFairness":
     case "StrongFairness":
       return () => {
-        throw new TlaEvaluationError(
-          `TLC cannot evaluate a temporal formula in a state at ${describeLocation(expression)}`,
-        );
+        throw createTemporalFormulaError(TEMPORAL_FORMS[expression.kind], expression);
       };
   }
 };
