@@ -1,9 +1,3 @@
-// Ports the tests of TLC and SANY from a checkout of tlaplus/tlaplus into test/imported.
-// Usage: bun scripts/import-tlc.ts <checkout>
-//
-// Each ported test keeps the upstream test's spec, config, flags and declared exit status, and the
-// recording replaces the upstream Java assertions.
-
 import {
   cpSync,
   existsSync,
@@ -53,7 +47,6 @@ const EXIT_OUTCOMES: Record<string, Outcome> = {
   ERROR: "tlc-error",
 };
 
-// These need a running debugger, TLC's distribution, a prior run's state, or a file left behind.
 const UNPORTABLE_ARGUMENTS = new Set([
   "-debugger",
   "-recover",
@@ -92,7 +85,6 @@ const getOutcomeForExit = (exit: number) =>
 const renderTest = (metadata: TestMetadata, moduleText: string) =>
   `(*---\n${formatYaml(metadata)}\n---*)\n${moduleText}`;
 
-// The constructor's arguments, split at the top level.
 const getConstructorArguments = (java: string) => {
   const start = java.search(/\bsuper\s*\(/);
   if (start === -1) return undefined;
@@ -178,7 +170,6 @@ const portModelTest = (javaPath: string): PendingTest | undefined => {
   if (flags.some((flag) => UNPORTABLE_ARGUMENTS.has(flag))) return skip(`uses ${flags.join(" ")}`);
   const configIndex = flags.indexOf("-config");
   const configName = configIndex === -1 ? `${specName}.cfg` : basename(flags[configIndex + 1]);
-  // -config Spec.tla reads the configuration embedded in the module, which the test must keep.
   const isEmbeddedConfig = configName.endsWith(".tla");
   const args = [
     ...flags.filter(
@@ -265,7 +256,6 @@ const portErrorCorpus = () =>
           outcome: isWarning ? "success" : "parse-error",
         },
         fixtures: [],
-        // SANY's corpus tests ask only for the code, so a warning's module may fail for its own reason.
         isOutcomeObserved: isWarning,
       };
     });
@@ -276,8 +266,6 @@ const getSlug = (title: string) =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_|_$/g, "");
 
-// A corpus file holds cases as a title between lines of =, the module, a line of -, and a parse tree.
-// Only the syntax parser sees them upstream, so TLC's full front end decides their outcome here.
 const portParserCorpus = () =>
   listFiles(join(toolsDirectory, "test/tla2sany/corpus"))
     .filter((path) => path.endsWith(".txt"))
@@ -360,7 +348,6 @@ await runPool(pendingTests, WORKERS, async (pending) => {
     return;
   }
   const observed = getOutcomeForExit(result.exit);
-  // The Java test may rely on what the suite can't set, such as a classpath or a JVM property.
   if (!pending.isOutcomeObserved && !isDeclaredOutcome(test, result)) {
     skipped.push(`${test.id}: exits ${result.exit} here, not ${pending.metadata.outcome}`);
     rmSync(path, { force: true });

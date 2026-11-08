@@ -1,18 +1,15 @@
 import { MODULES, writeTest } from "./generate-common";
 
-// A fixed seed keeps the generated tests stable across runs of the generator.
 const SEED = 262;
 const TEST_COUNT = 10_000;
 const MAXIMUM_DEPTH = 4;
 const TESTS_PER_DIRECTORY = 500;
-// One expression in this many deliberately mixes types, to reach error paths inside nesting.
 const MISTYPED_RATE = 12;
 
 type ExpressionType = "int" | "bool" | "set" | "seq" | "record" | "function";
 
 const createRandom = (seed: number) => {
   const state = { value: seed };
-  // mulberry32, so that every platform draws the same sequence.
   const getNext = () => {
     state.value = (state.value + 0x6d2b79f5) | 0;
     const mixed = Math.imul(state.value ^ (state.value >>> 15), 1 | state.value);
@@ -33,7 +30,6 @@ const createGenerator = (getNext: () => number) => {
     return `b${counter.binder}`;
   };
 
-  // Sets stay small here, since SUBSET and function sets multiply their sizes.
   const getSmallSet = () =>
     pick([
       "{}",

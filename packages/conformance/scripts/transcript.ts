@@ -1,26 +1,17 @@
-// Reduces the output of TLC's -tool protocol to what must be the same on every host and every run.
-
 const MESSAGE_START = /^@!@!@STARTMSG (\d+):(\d+) @!@!@$/;
 const MESSAGE_END = /^@!@!@ENDMSG \d+ @!@!@$/;
 
-// The version, tuning hint, mode banners, phase markers, wall-clock end and periodic progress.
 const VOLATILE_CODES = new Set([2185, 2186, 2187, 2188, 2189, 2200, 2219, 2220, 2262, 2271, 2401]);
 
 const VOLATILE_LINE = /^(Parsing file |Semantic processing of module |Linting of module )/;
 const STACK_FRAME = /^\s+at [\w.$<>]+\(.*\)$/;
 const TIMESTAMP = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/g;
-// The usage text names the build by the time it was built.
 const BUILD_VERSION = /\bVersion \d{4}\.\d{2}\.\d{2}\.\d{6}\b/g;
 const DURATION = /\b(in) (\d+h )?(\d+min )?\d+(s|ms)\b/g;
-// TLC names a temporary invariant or a negated property after the clock.
-// Java's default toString prints an identity hash, such as UnionValue$Enumerator@1b2c3d.
 const OBJECT_IDENTITY = /\b([\w.$]+)@[0-9a-f]{5,8}\b/g;
 const GENERATED_NAME = /\b(__DebuggerExpr__|__DebuggerModule__|_PossibleModule_|neg_prop_)\d+/g;
-// TLCGet("config").install is the path of the checker's own jar, and its length decides where TLC
-// breaks the line.
 const INSTALL_FIELD = /install \|->\s+"[^"]*"/g;
 
-// The harness's own bookkeeping for a state-space wrapper, which only the checker prints.
 const STATE_SPACE_CODES = new Set([2190, 2192, 2193, 2194, 2199, 2267, 2268]);
 
 export interface TranscriptOptions {
@@ -77,6 +68,5 @@ export const normalizeTranscript = (output: string, options: TranscriptOptions) 
   return kept.join("\n");
 };
 
-// The sequence of message codes, which ignores how a host words each message.
 export const getMessageCodes = (transcript: string) =>
   [...transcript.matchAll(/^(\d+):\d+ /gm)].map((match) => match[1]).join(" ");
