@@ -1065,9 +1065,15 @@ const getDefinitionBody = (program: Program, expression: Expression, frame: Fram
 const isUnion = (program: Program, expression: Expression & { kind: "Apply" }, frame: Frame) =>
   expression.args.length === 2 && isBuiltin(program, frame, expression.operator, "\\cup");
 
+const getApplied = (program: Program, expression: Expression, frame: Frame) =>
+  expression.kind === "Apply" && !frame.scope.has(expression.operator)
+    ? resolveDefinition(program, expression.operator)
+    : undefined;
+
 // Whether membership in a set is tested on its parts rather than by enumerating it.
 const isStructural = (program: Program, expression: Expression, frame: Frame): boolean => {
-  const body = getDefinitionBody(program, expression, frame);
+  const body =
+    getDefinitionBody(program, expression, frame) ?? getApplied(program, expression, frame)?.body;
   if (body) return isStructural(program, body, { scope: new Map(), primed: frame.primed });
   if (expression.kind === "Apply" && isUnion(program, expression, frame)) {
     return expression.args.some((set) => isStructural(program, set, frame));
@@ -1075,6 +1081,7 @@ const isStructural = (program: Program, expression: Expression, frame: Frame): b
   return (
     expression.kind === "RecordSet" ||
     expression.kind === "FunctionSet" ||
+    expression.kind === "SetFilter" ||
     (expression.kind === "Apply" &&
       (expression.operator === "SUBSET" || expression.operator === "Seq"))
   );
@@ -1106,6 +1113,43 @@ const compileMembership = (
   const body = getDefinitionBody(program, setExpression, frame);
   if (body && isStructural(program, body, { scope: new Map(), primed: frame.primed })) {
     return compileMembership(program, element, body, { scope: new Map(), primed: frame.primed });
+  }
+  const applied = getApplied(program, setExpression, frame);
+  if (
+    setExpression.kind === "Apply" &&
+    applied &&
+    isStructural(program, applied.body, { scope: new Map(), primed: frame.primed })
+  ) {
+    const expansion = getExpansion(program, setExpression, frame);
+    if (expansion) {
+      return inline(program, expansion.definition, () =>
+        compileMembership(program, element, expansion.definition.body, {
+          ...frame,
+          scope: expansion.scope,
+        }),
+      );
+    }
+  }
+  // TLC tests membership in {x \in S : P} as membership in S, then P of the element.
+  if (setExpression.kind === "SetFilter" && setExpression.bound.pattern.kind === "Name") {
+    const name = getName(program, "e");
+    const isInSet = compileMembership(
+      program,
+      { type: element.type, emit: () => name },
+      setExpression.bound.set,
+      frame,
+    );
+    const predicate = expectType(
+      compileValue(program, setExpression.predicate, {
+        ...frame,
+        scope: bindCode(frame.scope, setExpression.bound.pattern.name, element.type, name),
+      }),
+      BOOL,
+    );
+    return {
+      type: BOOL,
+      emit: () => `((${name}) => ${isInSet.emit()} && ${predicate.emit()})(${element.emit()})`,
+    };
   }
   // TLC tests membership in a union in each of its sets.
   if (
