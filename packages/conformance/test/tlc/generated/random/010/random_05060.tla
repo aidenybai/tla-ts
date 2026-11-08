@@ -18,8 +18,7 @@ Test == PrintT({CASE (~({x \in 1..3 : x > 1} = {})) -> Head(Append(<<1>>, 3)) []
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05060 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     [a |-> 1]
 ---*)

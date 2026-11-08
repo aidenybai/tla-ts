@@ -18,9 +18,7 @@ Test == PrintT([b10642 \in {b10643 \in UNION {({x \in 1..3 : x > 1} \cap {2, 1, 
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {}
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06957 failed.
     2158:0 Attempted to check if the value:
     {}
     is an element of Nat.

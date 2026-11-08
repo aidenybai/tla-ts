@@ -18,8 +18,7 @@ Test == PrintT([b12370 \in {(Head(<<1>>) - Len(0)), CASE ({} = {2, 1, 3}) -> (7 
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08019 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     0
 ---*)

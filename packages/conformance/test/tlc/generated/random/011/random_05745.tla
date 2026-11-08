@@ -18,8 +18,7 @@ Test == PrintT(<<(([[a |-> 1] EXCEPT !.a = @ + 1]).a * Head(<<0, 3>>)), Head(Sor
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05745 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     FALSE
 ---*)

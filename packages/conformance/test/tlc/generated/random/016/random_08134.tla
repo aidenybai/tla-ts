@@ -18,8 +18,7 @@ Test == PrintT([[a |-> (Cardinality([x \in Nat |-> x + 1]) * (1 \div 1)), b |-> 
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [x \in Nat |-> <expression line 14, col 52 to line 14, col 56 of module random_08134>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08134 failed.
     2181:0 Attempted to compute cardinality of the value
     [x \in Nat |-> <expression line 14, col 52 to line 14, col 56 of module random_08134>]
 ---*)

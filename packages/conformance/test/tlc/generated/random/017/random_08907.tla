@@ -18,6 +18,6 @@ Test == PrintT(((Len(SortSeq(<<1>>, LAMBDA p, q : p < q)) * (CHOOSE b13798 \in D
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 99 to line 14, col 123 of module random_08907
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08907 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 99 to line 14, col 123 of module random_08907
 ---*)

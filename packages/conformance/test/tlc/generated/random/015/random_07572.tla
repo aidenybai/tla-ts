@@ -18,8 +18,7 @@ Test == PrintT((Tail(Append((<<3, 1, 2>> \o [a |-> 1]), (-1 \div 3))) \o Tail(((
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07572 failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
     [a |-> 1]
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT([[a |-> ([a |-> 1, b |-> TRUE]).a, b |-> ((0 - 3) \in {1, 3})] EX
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02954 failed.
     2181:0 Attempted to compute cardinality of the value
     Nat
 ---*)

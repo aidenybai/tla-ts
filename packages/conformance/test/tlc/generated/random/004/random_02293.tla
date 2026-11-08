@@ -18,6 +18,6 @@ Test == PrintT((([(1 :> 3) EXCEPT ![(2 - 1)] = Append(<<>>, 3)])[LET b3620 == (0
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02293 failed.
     2179:0 The second argument of \div is 0.
 ---*)

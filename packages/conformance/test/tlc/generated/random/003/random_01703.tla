@@ -18,6 +18,6 @@ Test == PrintT({LET b2716 == (Head(<<>>) + Len(<<1>>)) IN (CHOOSE b2717 \in Appe
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01703 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

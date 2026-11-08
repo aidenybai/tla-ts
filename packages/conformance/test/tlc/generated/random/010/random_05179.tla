@@ -18,8 +18,7 @@ Test == PrintT(((SubSeq((<<1, 2>> \o <<1, 2>>), (\A b8036 \in {1} : TRUE), LET b
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05179 failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     TRUE
 ---*)

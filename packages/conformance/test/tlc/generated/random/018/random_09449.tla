@@ -18,6 +18,6 @@ Test == PrintT((DOMAIN [b14665 \in DOMAIN (1 :> 2) |-> (7 % b14665)] \ UNION {{H
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09449 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

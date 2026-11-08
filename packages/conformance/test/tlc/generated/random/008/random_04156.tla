@@ -18,8 +18,7 @@ Test == PrintT(((Len((2 .. 3)))[(CHOOSE b6543 \in (1..3 \ {2, 1, 3}) : (-1 < b65
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    2..3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04156 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     2..3
 ---*)

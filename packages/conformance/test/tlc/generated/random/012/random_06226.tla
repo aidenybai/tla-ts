@@ -18,8 +18,7 @@ Test == PrintT(((Cardinality({b9579 \in {1} : FALSE}) :> Cardinality((Nat \cup {
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06226 failed.
     2181:0 Attempted to compute cardinality of the value
     Nat
 ---*)

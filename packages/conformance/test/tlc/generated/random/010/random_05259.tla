@@ -18,6 +18,6 @@ Test == PrintT([a |-> ((Len(<<>>) * IF FALSE THEN 1 ELSE 7) \div ([b8142 \in {2,
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05259 failed.
     2179:0 The second argument of \div is 0.
 ---*)

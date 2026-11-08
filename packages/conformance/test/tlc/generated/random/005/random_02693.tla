@@ -18,11 +18,7 @@ Test == PrintT(SubSeq(Append(SortSeq((<<1>> \o <<>>), LAMBDA p, q : p < q), IF (
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compare the set {1} with the value:
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02693 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

@@ -18,8 +18,7 @@ Test == PrintT((((IF TRUE THEN 2 ELSE 1 + IF TRUE THEN 7 ELSE TRUE) + Head(SortS
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    {{}, {1}}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00449 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     {{}, {1}}
 ---*)

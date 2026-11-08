@@ -18,6 +18,6 @@ Test == PrintT((Append(<<[a |-> 7, b |-> TRUE], LET b15408 == 1 IN 7>>, Head(Tai
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09907 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

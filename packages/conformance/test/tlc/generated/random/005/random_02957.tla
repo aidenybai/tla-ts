@@ -20,9 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 41 to line 14, col 44 of module random_02957
-    2158:0 Attempted to check if the value:
-    FALSE
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02957 failed.
     2158:0 Attempted to check if the value:
     FALSE
     is an element of Nat.

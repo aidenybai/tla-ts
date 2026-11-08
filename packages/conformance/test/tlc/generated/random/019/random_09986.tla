@@ -18,8 +18,7 @@ Test == PrintT({Head(SubSeq(Tail(<<1, 2>>), (-2147483647), (FALSE => TRUE))), IF
 all:
   exit: 10
   transcript: |-
-    2169:0 The third argument of SubSeq should be a natural number, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09986 failed.
     2169:0 The third argument of SubSeq should be a natural number, but instead it is:
     TRUE
 ---*)

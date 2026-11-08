@@ -20,8 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 59 to line 14, col 79 of module random_05503
-    2266:0 The first argument of > should be an integer, but instead it is:
-    [x \in Nat |-> <expression line 14, col 74 to line 14, col 78 of module random_05503>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05503 failed.
     2266:0 The first argument of > should be an integer, but instead it is:
     [x \in Nat |-> <expression line 14, col 74 to line 14, col 78 of module random_05503>]
 ---*)

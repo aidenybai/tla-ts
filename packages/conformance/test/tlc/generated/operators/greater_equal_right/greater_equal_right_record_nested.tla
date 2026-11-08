@@ -18,8 +18,7 @@ Test == PrintT(2 >= [a |-> [b |-> <<1>>]])
 all:
   exit: 10
   transcript: |-
-    2266:0 The second argument of >= should be an integer, but instead it is:
-    [a |-> [b |-> <<1>>]]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module greater_equal_right_record_nested failed.
     2266:0 The second argument of >= should be an integer, but instead it is:
     [a |-> [b |-> <<1>>]]
 ---*)

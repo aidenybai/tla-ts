@@ -18,9 +18,7 @@ Test == PrintT(([x \in Nat |-> x])[[x \in Nat |-> x]])
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    [x \in Nat |-> <expression line 14, col 51 to line 14, col 51 of module apply_function_lazy__function_lazy>]
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module apply_function_lazy__function_lazy failed.
     2158:0 Attempted to check if the value:
     [x \in Nat |-> <expression line 14, col 51 to line 14, col 51 of module apply_function_lazy__function_lazy>]
     is an element of Nat.

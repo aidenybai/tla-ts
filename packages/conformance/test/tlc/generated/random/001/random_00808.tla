@@ -18,6 +18,6 @@ Test == PrintT(((IF (\E b1322 \in {2, 1, 3} : TRUE) THEN CASE TRUE -> 2147483647
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00808 failed.
     2179:0 The second argument of \div is 0.
 ---*)

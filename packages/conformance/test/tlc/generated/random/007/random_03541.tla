@@ -18,8 +18,7 @@ Test == PrintT(IF ([a |-> ((1 :> 2))[1], b |-> (TRUE \/ <<3, 1, 2>>)] < ((7 \div
 all:
   exit: 10
   transcript: |-
-    2266:0 The first argument of < should be an integer, but instead it is:
-    [a |-> 2, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03541 failed.
     2266:0 The first argument of < should be an integer, but instead it is:
     [a |-> 2, b |-> TRUE]
 ---*)

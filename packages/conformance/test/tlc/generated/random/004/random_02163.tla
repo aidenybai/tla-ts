@@ -18,6 +18,6 @@ Test == PrintT((((IF FALSE THEN 7 ELSE 3 \div (0 \div 3)) :> ((CHOOSE r \in [a :
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02163 failed.
     2179:0 The second argument of \div is 0.
 ---*)

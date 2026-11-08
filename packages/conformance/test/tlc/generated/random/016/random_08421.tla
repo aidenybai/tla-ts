@@ -18,6 +18,6 @@ Test == PrintT((Len(Tail((<<>> \o <<>>))) .. Cardinality([[[a |-> 1] EXCEPT !.a 
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08421 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

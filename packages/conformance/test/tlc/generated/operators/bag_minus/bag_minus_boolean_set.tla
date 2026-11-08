@@ -18,8 +18,7 @@ Test == PrintT(BOOLEAN (-) SetToBag({1}))
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of (-) should be a bag, but instead it is:
-    {FALSE, TRUE}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module bag_minus_boolean_set failed.
     2169:0 The first argument of (-) should be a bag, but instead it is:
     {FALSE, TRUE}
 ---*)

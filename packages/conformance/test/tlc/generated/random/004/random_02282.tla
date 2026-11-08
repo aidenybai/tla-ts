@@ -18,6 +18,6 @@ Test == PrintT(<<CASE ((1 :> 2) = [a |-> 0, b |-> TRUE]) -> ((3 + 0) + (-1 - -1)
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2147483647+1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02282 failed.
     2178:0 Overflow when computing 2147483647+1
 ---*)

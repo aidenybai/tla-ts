@@ -18,10 +18,7 @@ Test == PrintT(Append(SelectSeq(SubSeq(SubSeq(<<>>, 3, 2147483647), (-2147483647
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<>>
-    , but instead it is
-    3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09350 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<>>
     , but instead it is

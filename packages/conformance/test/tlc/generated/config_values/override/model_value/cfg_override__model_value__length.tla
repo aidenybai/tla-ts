@@ -22,8 +22,7 @@ ASSUME PrintT(Len(c))
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    m
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 21 of module cfg_override__model_value__length failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     m
 ---*)

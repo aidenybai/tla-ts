@@ -18,8 +18,7 @@ Test == PrintT({([[[a |-> 1] EXCEPT !.a = 2] EXCEPT !.a = Len(<<3, 1, 2>>)]).a :
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    <<5, 6>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01904 failed.
     2181:0 Attempted to compute cardinality of the value
     <<5, 6>>
 ---*)

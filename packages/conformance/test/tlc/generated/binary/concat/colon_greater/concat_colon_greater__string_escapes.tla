@@ -18,8 +18,7 @@ Test == PrintT((1 :> 2) \o ("a\"b\\c\n"))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
-    "a\"b\\c\n"
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module concat_colon_greater__string_escapes failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a sequence:
     "a\"b\\c\n"
 ---*)

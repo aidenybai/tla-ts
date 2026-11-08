@@ -18,6 +18,6 @@ Test == PrintT(([b12667 \in ({2147483647, 7} \ (2 * 2147483647)) |-> ([b12668 \i
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2*2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08192 failed.
     2178:0 Overflow when computing 2*2147483647
 ---*)

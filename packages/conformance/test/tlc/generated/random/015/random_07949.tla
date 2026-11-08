@@ -18,8 +18,7 @@ Test == PrintT(<<(-(-LET b12272 == <<5, 6>> IN 2)), (LET b12273 == Len(<<1>>) IN
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07949 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     0
 ---*)

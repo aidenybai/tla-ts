@@ -18,8 +18,7 @@ Test == PrintT(((-IF ([a |-> 1] = [a |-> 1]) THEN IF TRUE THEN 3 ELSE -1 ELSE ({
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07302 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     FALSE
 ---*)

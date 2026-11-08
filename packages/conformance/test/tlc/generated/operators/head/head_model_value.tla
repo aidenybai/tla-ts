@@ -21,8 +21,7 @@ Test == PrintT(Head(mv))
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    mv
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module head_model_value failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     mv
 ---*)

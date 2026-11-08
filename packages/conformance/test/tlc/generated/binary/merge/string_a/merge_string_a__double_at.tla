@@ -18,8 +18,7 @@ Test == PrintT(("a") @@ ((1 :> 2) @@ (2 :> 3)))
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of @@ should be a function, but instead it is:
-    "a"
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module merge_string_a__double_at failed.
     2169:0 The first argument of @@ should be a function, but instead it is:
     "a"
 ---*)

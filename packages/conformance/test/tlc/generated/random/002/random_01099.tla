@@ -20,8 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 20 to line 14, col 27 of module random_01099
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01099 failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     [a |-> 1]
 ---*)

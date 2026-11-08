@@ -18,11 +18,7 @@ Test == PrintT([b6741 \in (((Nat \ 1..3) \cup UNION {SUBSET {1}, {x \in 1..3 : x
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compare integer 2 with non-integer:
-    {}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04282 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

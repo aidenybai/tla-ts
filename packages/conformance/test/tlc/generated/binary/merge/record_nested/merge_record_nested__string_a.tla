@@ -18,8 +18,7 @@ Test == PrintT(([a |-> [b |-> <<1>>]]) @@ ("a"))
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of @@ should be a function, but instead it is:
-    "a"
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module merge_record_nested__string_a failed.
     2169:0 The second argument of @@ should be a function, but instead it is:
     "a"
 ---*)

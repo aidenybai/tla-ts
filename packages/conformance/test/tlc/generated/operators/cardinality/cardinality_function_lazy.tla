@@ -18,8 +18,7 @@ Test == PrintT(Cardinality([x \in Nat |-> x]))
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [x \in Nat |-> <expression line 14, col 43 to line 14, col 43 of module cardinality_function_lazy>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module cardinality_function_lazy failed.
     2181:0 Attempted to compute cardinality of the value
     [x \in Nat |-> <expression line 14, col 43 to line 14, col 43 of module cardinality_function_lazy>]
 ---*)

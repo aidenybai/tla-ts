@@ -18,9 +18,7 @@ Test == PrintT(([a : {1, 2}]) \subseteq (Int))
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    [a |-> 1]
-    is an element of Int.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module subseteq_set_of_records__int failed.
     2158:0 Attempted to check if the value:
     [a |-> 1]
     is an element of Int.

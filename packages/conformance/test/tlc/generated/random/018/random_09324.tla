@@ -18,6 +18,6 @@ Test == PrintT([a |-> Cardinality({b14464 \in (2..1 \cap SUBSET {1}) : (b14464 \
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09324 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

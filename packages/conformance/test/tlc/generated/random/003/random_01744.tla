@@ -18,10 +18,7 @@ Test == PrintT((Head(SubSeq((<<1>> \o <<3, 1, 2>>), (3 * 0), LET b2769 == 7 IN b
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1, 3, 1, 2>>
-    , but instead it is
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01744 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1, 3, 1, 2>>
     , but instead it is

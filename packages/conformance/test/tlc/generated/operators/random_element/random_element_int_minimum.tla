@@ -18,9 +18,7 @@ Test == PrintT(RandomElement((-2147483647 - 1)))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying RandomElement to the following value,
-    which is not a finite set:
-    -2147483648
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_element_int_minimum failed.
     2176:0 Applying RandomElement to the following value,
     which is not a finite set:
     -2147483648

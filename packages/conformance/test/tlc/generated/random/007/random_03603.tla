@@ -18,10 +18,7 @@ Test == PrintT(LET b5684 == Len(SubSeq(SubSeq(<<1>>, -1, -1), LET b5685 == -1 IN
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1>>
-    , but instead it is
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03603 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1>>
     , but instead it is

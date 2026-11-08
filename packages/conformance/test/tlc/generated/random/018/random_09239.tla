@@ -18,6 +18,6 @@ Test == PrintT((Tail(Append(Append(<<1>>, 7), LET b14339 == <<5, 6>> IN b14339))
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09239 failed.
     2179:0 The second argument of \div is 0.
 ---*)

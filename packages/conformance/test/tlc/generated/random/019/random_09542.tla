@@ -18,10 +18,7 @@ Test == PrintT(Head([Tail(SubSeq(<<1, 2>>, 0, 2)) EXCEPT ![1] = CASE (<<1>> = <<
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1, 2>>
-    , but instead it is
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09542 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1, 2>>
     , but instead it is

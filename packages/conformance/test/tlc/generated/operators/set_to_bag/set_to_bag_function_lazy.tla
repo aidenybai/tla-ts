@@ -18,9 +18,7 @@ Test == PrintT(SetToBag([x \in Nat |-> x]))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying BagToSet to the following value,
-    which is not a function with a finite domain:
-    [x \in Nat |-> <expression line 14, col 40 to line 14, col 40 of module set_to_bag_function_lazy>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module set_to_bag_function_lazy failed.
     2176:0 Applying BagToSet to the following value,
     which is not a function with a finite domain:
     [x \in Nat |-> <expression line 14, col 40 to line 14, col 40 of module set_to_bag_function_lazy>]

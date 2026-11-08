@@ -18,8 +18,7 @@ Test == PrintT(Tail(BOOLEAN))
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    {FALSE, TRUE}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module tail_boolean_set failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     {FALSE, TRUE}
 ---*)

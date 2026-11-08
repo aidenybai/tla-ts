@@ -18,10 +18,7 @@ Test == PrintT((Tail(Append(SubSeq(<<>>, 2, 2147483647), CASE FALSE -> 1 [] OTHE
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<>>
-    , but instead it is
-    2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02397 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<>>
     , but instead it is

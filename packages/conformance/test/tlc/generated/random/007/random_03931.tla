@@ -18,8 +18,7 @@ Test == PrintT((Append(SelectSeq(<<3, 3>>, LAMBDA e : e > 0), ((1 % 1) \div Head
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03931 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     [a |-> 1]
 ---*)

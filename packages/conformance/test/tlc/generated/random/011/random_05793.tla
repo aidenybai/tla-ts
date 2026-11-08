@@ -18,6 +18,6 @@ Test == PrintT([[a |-> ([[x \in 1..2 |-> x] EXCEPT ![1] = 1])[(7 + 2147483647)],
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 7+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05793 failed.
     2178:0 Overflow when computing 7+2147483647
 ---*)

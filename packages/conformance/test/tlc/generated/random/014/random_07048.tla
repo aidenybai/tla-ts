@@ -18,8 +18,7 @@ Test == PrintT([b10812 \in {Cardinality(SortSeq([x \in 1..2 |-> x], LAMBDA p, q 
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    <<1, 2>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07048 failed.
     2181:0 Attempted to compute cardinality of the value
     <<1, 2>>
 ---*)

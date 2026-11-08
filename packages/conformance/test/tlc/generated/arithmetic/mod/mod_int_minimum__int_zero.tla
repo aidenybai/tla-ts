@@ -18,8 +18,7 @@ Test == PrintT(((-2147483647 - 1)) % (0))
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module mod_int_minimum__int_zero failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     0
 ---*)

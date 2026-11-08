@@ -18,6 +18,6 @@ Test == PrintT((Head([<<-1, 1>> EXCEPT ![1] = (1 + 7)]) \in {(Len(<<>>) + Head(<
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04435 failed.
     2179:0 The second argument of \div is 0.
 ---*)

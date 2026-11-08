@@ -18,8 +18,7 @@ Test == PrintT(SelectSeq(Tail(Tail(({1} \o <<1, 2>>))), LAMBDA e : e > 0))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    {1}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05741 failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     {1}
 ---*)

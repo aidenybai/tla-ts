@@ -18,8 +18,7 @@ Test == PrintT((Head((CHOOSE f \in [{1, 2} \ {1} -> {2, 1, 3}] : TRUE)) = CASE (
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    (2 :> 1)
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06491 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     (2 :> 1)
 ---*)

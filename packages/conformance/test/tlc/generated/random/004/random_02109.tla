@@ -18,14 +18,7 @@ Test == PrintT(((Cardinality(({1, 2} \cup [a |-> 1])) * Len((<<1, 2>> \o <<1>>))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to enumerate S \cup T when S:
-    {1, 2}
-    and T:
-    [a |-> 1]
-    are not both enumerable
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02109 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

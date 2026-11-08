@@ -18,8 +18,7 @@ Test == PrintT(((([a |-> 7, b |-> TRUE]).a * (SubSeq(<<3, 1, 2>>, [x \in Nat |->
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SubSeq should be a natural number, but instead it is:
-    [x \in Nat |-> <expression line 14, col 82 to line 14, col 86 of module random_01896>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01896 failed.
     2169:0 The second argument of SubSeq should be a natural number, but instead it is:
     [x \in Nat |-> <expression line 14, col 82 to line 14, col 86 of module random_01896>]
 ---*)

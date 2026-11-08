@@ -18,8 +18,7 @@ Test == PrintT(({((1 \div 3) % LET b5462 == 2 IN b5461) : b5461 \in ({-1, 214748
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03445 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     -1
 ---*)

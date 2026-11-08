@@ -18,8 +18,7 @@ Test == PrintT((\A b9908 \in (({1, 7} \cup (2..1 \ SUBSET {1})) \cup ((3 + 7) ..
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06440 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     0
 ---*)

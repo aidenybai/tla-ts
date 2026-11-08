@@ -18,6 +18,6 @@ Test == PrintT(DOMAIN ((CHOOSE b14492 \in (2147483647 .. 2147483647) : ([a |-> 1
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09340 failed.
     2179:0 The second argument of \div is 0.
 ---*)

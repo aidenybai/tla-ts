@@ -18,8 +18,7 @@ Test == PrintT([[a |-> Len((~FALSE)), b |-> (Cardinality(1..3) \in UNION {{1}, {
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07596 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     TRUE
 ---*)

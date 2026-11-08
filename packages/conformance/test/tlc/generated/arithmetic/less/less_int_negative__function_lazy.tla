@@ -18,8 +18,7 @@ Test == PrintT((-3) < ([x \in Nat |-> x]))
 all:
   exit: 10
   transcript: |-
-    2266:0 The second argument of < should be an integer, but instead it is:
-    [x \in Nat |-> <expression line 14, col 39 to line 14, col 39 of module less_int_negative__function_lazy>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module less_int_negative__function_lazy failed.
     2266:0 The second argument of < should be an integer, but instead it is:
     [x \in Nat |-> <expression line 14, col 39 to line 14, col 39 of module less_int_negative__function_lazy>]
 ---*)

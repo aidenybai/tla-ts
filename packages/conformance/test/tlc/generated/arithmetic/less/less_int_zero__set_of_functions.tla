@@ -18,8 +18,7 @@ Test == PrintT((0) < ([{1} -> {2, 3}]))
 all:
   exit: 10
   transcript: |-
-    2266:0 The second argument of < should be an integer, but instead it is:
-    {<<2>>, <<3>>}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module less_int_zero__set_of_functions failed.
     2266:0 The second argument of < should be an integer, but instead it is:
     {<<2>>, <<3>>}
 ---*)

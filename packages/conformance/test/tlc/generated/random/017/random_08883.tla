@@ -18,6 +18,6 @@ Test == PrintT((UNION {{Head(<<>>) : b13761 \in ({1, 2} \cup 1..3)}, ((0 % 21474
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08883 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

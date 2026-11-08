@@ -18,10 +18,7 @@ Test == PrintT([a |-> Len(SubSeq(Tail(<<1>>), CASE TRUE -> 7 [] OTHER -> 2, ([x 
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<>>
-    , but instead it is
-    7
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00724 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<>>
     , but instead it is

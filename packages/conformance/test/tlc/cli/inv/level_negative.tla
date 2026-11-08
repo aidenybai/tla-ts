@@ -20,12 +20,8 @@ Next == x' = (x + 1) % 3
 all:
   exit: 150
   transcript: |-
-    2171:1 Parsing or semantic analysis failed.@!@!@STARTMSG 2171:0 @!@!@
-    Parsing or semantic analysis failed.Unknown location
-
-    Semantic error while parsing breakpoint expression "LET _T == INSTANCE TLC _N == INSTANCE Naturals IN _N!<(_T!TLCGet("level"), -1)"
-    2171:1 Parsing or semantic analysis failed.@!@!@STARTMSG 2171:0 @!@!@
-    Parsing or semantic analysis failed.Unknown location
+    2171:1 Parsing or semantic analysis failed.
+    2171:0 Parsing or semantic analysis failed.Unknown location
 
     Semantic error while parsing breakpoint expression "LET _T == INSTANCE TLC _N == INSTANCE Naturals IN _N!<(_T!TLCGet("level"), -1)"
 ---*)

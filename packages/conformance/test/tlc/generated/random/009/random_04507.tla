@@ -20,8 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 26 to line 14, col 45 of module random_04507
-    2169:0 The second argument of @@ should be a function, but instead it is:
-    2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04507 failed.
     2169:0 The second argument of @@ should be a function, but instead it is:
     2147483647
 ---*)

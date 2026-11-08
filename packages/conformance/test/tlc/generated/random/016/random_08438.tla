@@ -18,8 +18,7 @@ Test == PrintT((({Head(FALSE) : b13059 \in {7 : b13060 \in {1, 2}}} = ([[a |-> 1
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08438 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     FALSE
 ---*)

@@ -12,6 +12,6 @@ ASSUME 1
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. 1
+    2105:1 Evaluating assumption 1 failed.
     2215:0 TLC expected a boolean value, but did not find one. 1
 ---*)

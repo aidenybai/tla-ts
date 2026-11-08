@@ -18,8 +18,7 @@ Test == PrintT(([[[[a |-> 1, b |-> TRUE] EXCEPT !.a = @ + 2] EXCEPT !.a = CASE T
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [a |-> 9]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03529 failed.
     2181:0 Attempted to compute cardinality of the value
     [a |-> 9]
 ---*)

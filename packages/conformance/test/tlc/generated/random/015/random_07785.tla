@@ -18,6 +18,6 @@ Test == PrintT(Append((SubSeq(Tail(<<1>>), Head(<<>>), (CHOOSE b12013 \in {x \in
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07785 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

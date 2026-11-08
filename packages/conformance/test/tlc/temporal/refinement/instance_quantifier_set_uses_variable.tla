@@ -31,8 +31,7 @@ Prop == A!Goal
 all:
   exit: 255
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 25, col 29 to line 25, col 29 of module instance_quantifier_set_uses_variable
+    2213:1 TLC cannot handle the temporal formula line 21, col 9 to line 21, col 32 of module instance_quantifier_set_uses_variable:
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 25, col 29 to line 25, col 29 of module instance_quantifier_set_uses_variable
 ---*)

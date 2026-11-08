@@ -20,8 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 104 to line 14, col 121 of module random_07162
-    2181:0 Attempted to compute cardinality of the value
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07162 failed.
     2181:0 Attempted to compute cardinality of the value
     Nat
 ---*)

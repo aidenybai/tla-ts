@@ -18,8 +18,7 @@ Test == PrintT(("a\"b\\c\n") \o (TRUE))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a string:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module concat_string_escapes__true failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a string:
     TRUE
 ---*)

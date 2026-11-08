@@ -18,8 +18,7 @@ Test == PrintT((STRING) = (Int))
 all:
   exit: 10
   transcript: |-
-    2155:0 Attempted to compare STRING with the value
-    Int
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module equals_string_set__int failed.
     2155:0 Attempted to compare STRING with the value
     Int
 ---*)

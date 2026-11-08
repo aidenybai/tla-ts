@@ -18,10 +18,7 @@ Test == PrintT([b15392 \in UNION {{Len(<<3, 1, 2>>) : b15393 \in {7, 3}}, {Cardi
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1>>
-    , but instead it is
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09899 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1>>
     , but instead it is

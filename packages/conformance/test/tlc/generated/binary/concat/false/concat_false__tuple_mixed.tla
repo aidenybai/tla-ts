@@ -18,8 +18,7 @@ Test == PrintT((FALSE) \o (<<1, "a", {TRUE}>>))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module concat_false__tuple_mixed failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     FALSE
 ---*)

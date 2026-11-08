@@ -18,8 +18,7 @@ Test == PrintT({((CASE TRUE -> 1 [] OTHER -> 7 % (CHOOSE b14927 \in 2..1 : TRUE)
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    [a |-> 1, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09614 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     [a |-> 1, b |-> TRUE]
 ---*)

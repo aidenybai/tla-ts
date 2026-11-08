@@ -18,8 +18,7 @@ Test == PrintT(Tail(<<Head([[a |-> 1] EXCEPT !.a = 1]), (Cardinality(SUBSET {1})
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09311 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     [a |-> 1]
 ---*)

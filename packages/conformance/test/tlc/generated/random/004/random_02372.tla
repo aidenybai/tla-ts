@@ -18,6 +18,6 @@ Test == PrintT((\E b3755 \in ((Head(<<1>>) \div (-0)) .. ((-3) % (-1 + 7))) : [a
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02372 failed.
     2179:0 The second argument of \div is 0.
 ---*)

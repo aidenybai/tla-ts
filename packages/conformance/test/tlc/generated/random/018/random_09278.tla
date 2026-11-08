@@ -18,8 +18,7 @@ Test == PrintT(SubSeq(SubSeq([Append(<<1, 2>>, 0) EXCEPT ![1] = (-1 * 3)], (Card
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09278 failed.
     2181:0 Attempted to compute cardinality of the value
     Nat
 ---*)

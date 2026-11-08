@@ -18,8 +18,7 @@ Test == PrintT(SelectSeq(SubSeq(SubSeq(Append([x \in 1..2 |-> x], 3), Head(21474
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08752 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     2147483647
 ---*)

@@ -18,11 +18,7 @@ Test == PrintT(SortSeq(UNION {(DOMAIN (1 :> 2) \cup DOMAIN [x \in 1..2 |-> x]), 
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compare overridden value Nat with non-overridden value:
-    {7, 2147483647}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04770 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

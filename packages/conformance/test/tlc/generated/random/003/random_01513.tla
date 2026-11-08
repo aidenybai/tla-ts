@@ -18,8 +18,7 @@ Test == PrintT(Append(Tail(SubSeq(Append(FALSE, 3), Cardinality(2..1), (-1 + {2,
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01513 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     FALSE
 ---*)

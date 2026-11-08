@@ -18,10 +18,7 @@ Test == PrintT([b14728 \in {Tail(Tail(<<1, 2>>)), (-SubSeq(<<1>>, -1, 7))} |-> (
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1>>
-    , but instead it is
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09481 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1>>
     , but instead it is

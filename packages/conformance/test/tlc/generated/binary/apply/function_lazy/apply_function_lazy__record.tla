@@ -18,9 +18,7 @@ Test == PrintT(([x \in Nat |-> x])[[a |-> 1, b |-> 2]])
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    [a |-> 1, b |-> 2]
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module apply_function_lazy__record failed.
     2158:0 Attempted to check if the value:
     [a |-> 1, b |-> 2]
     is an element of Nat.

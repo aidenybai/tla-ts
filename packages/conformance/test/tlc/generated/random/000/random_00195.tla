@@ -18,6 +18,6 @@ Test == PrintT([a |-> LET b318 == IF (\E b319 \in {2, 1, 3} : [x \in 1..2 |-> x]
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 39 to line 14, col 80 of module random_00195
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00195 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 39 to line 14, col 80 of module random_00195
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT(Tail(Append((({1} \cup {2, 1, 3}) = {7 : b10291 \in {1}}), ([a |-
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06714 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     FALSE
 ---*)

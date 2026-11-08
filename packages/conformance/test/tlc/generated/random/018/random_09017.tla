@@ -18,8 +18,7 @@ Test == PrintT((((Cardinality(SUBSET {1}) * (7 + 0)) * (LET b14008 == 1 IN 7 - (
 all:
   exit: 10
   transcript: |-
-    2266:0 The first argument of < should be an integer, but instead it is:
-    <<1, 2>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09017 failed.
     2266:0 The first argument of < should be an integer, but instead it is:
     <<1, 2>>
 ---*)

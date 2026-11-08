@@ -18,10 +18,7 @@ Test == PrintT(CASE (Len(SubSeq(<<3, 1, 2>>, -1, 0)) < (LET b6429 == 3 IN b6429 
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<3, 1, 2>>
-    , but instead it is
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04089 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<3, 1, 2>>
     , but instead it is

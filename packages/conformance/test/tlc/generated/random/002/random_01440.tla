@@ -18,6 +18,6 @@ Test == PrintT(Head(SubSeq(<<CASE FALSE -> 7 [] OTHER -> 1, (0 + -1)>>, LET b230
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 3+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01440 failed.
     2178:0 Overflow when computing 3+2147483647
 ---*)

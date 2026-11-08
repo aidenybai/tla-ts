@@ -18,8 +18,7 @@ Test == PrintT((-3) < (Int))
 all:
   exit: 10
   transcript: |-
-    2266:0 The second argument of < should be an integer, but instead it is:
-    Int
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module less_int_negative__int failed.
     2266:0 The second argument of < should be an integer, but instead it is:
     Int
 ---*)

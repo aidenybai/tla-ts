@@ -18,6 +18,6 @@ Test == PrintT((((-LET b8472 == 3 IN 3) * (IF FALSE THEN -1 ELSE 2147483647 - Ca
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing -3*2147483645
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05476 failed.
     2178:0 Overflow when computing -3*2147483645
 ---*)

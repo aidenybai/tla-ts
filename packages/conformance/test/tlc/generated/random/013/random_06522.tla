@@ -18,8 +18,7 @@ Test == PrintT({Head((Append(<<>>, 1) \o SortSeq({2, 1, 3}, LAMBDA p, q : p < q)
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    {1, 2, 3}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06522 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     {1, 2, 3}
 ---*)

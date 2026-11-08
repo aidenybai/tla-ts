@@ -18,8 +18,7 @@ Test == PrintT((Head((Tail(<<1>>) \o SortSeq(<<1, 2>>, LAMBDA p, q : p < q))) ..
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02196 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     0
 ---*)

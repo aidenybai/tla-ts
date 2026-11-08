@@ -18,6 +18,6 @@ Test == PrintT(((({b5965 \in Nat : FALSE} \cap ({1, 2} \cap Nat)) \cup ({b5966 \
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 7*2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03779 failed.
     2178:0 Overflow when computing 7*2147483647
 ---*)

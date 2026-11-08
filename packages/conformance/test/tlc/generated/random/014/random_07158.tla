@@ -18,8 +18,7 @@ Test == PrintT([((Len([a |-> 1]) .. (0 * 2)) \cap ((0 + 2) .. ([x \in Nat |-> x 
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07158 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     [a |-> 1]
 ---*)

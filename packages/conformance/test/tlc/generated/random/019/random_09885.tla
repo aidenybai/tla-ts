@@ -18,8 +18,7 @@ Test == PrintT(((\A b15365 \in DOMAIN (2147483647 @@ <<5, 6>>) : ((\A b15366 \in
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of @@ should be a function, but instead it is:
-    2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09885 failed.
     2169:0 The first argument of @@ should be a function, but instead it is:
     2147483647
 ---*)

@@ -18,6 +18,6 @@ Test == PrintT([b832 \in ((LET b833 == 0 IN 0 .. (2147483647 * 2)) \cup ({7 : b8
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2147483647*2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00502 failed.
     2178:0 Overflow when computing 2147483647*2
 ---*)

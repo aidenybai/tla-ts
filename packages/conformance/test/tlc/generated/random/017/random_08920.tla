@@ -18,6 +18,6 @@ Test == PrintT(([b13825 \in {CASE TRUE -> b13826 [] OTHER -> b13826 : b13826 \in
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08920 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

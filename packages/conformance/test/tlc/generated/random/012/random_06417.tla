@@ -18,8 +18,7 @@ Test == PrintT(((((2147483647 - 3) + (0 % 2)) .. LET b9880 == (-1 + -1) IN (0 - 
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [a |-> 3, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06417 failed.
     2181:0 Attempted to compute cardinality of the value
     [a |-> 3, b |-> TRUE]
 ---*)

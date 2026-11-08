@@ -18,8 +18,7 @@ Test == PrintT(((((7 % -1) + (1 \div [x \in Nat |-> x + 1])) * IF (Nat \subseteq
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06731 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     -1
 ---*)

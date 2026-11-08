@@ -23,5 +23,7 @@ all:
   transcript: |-
     2107:1 Invariant Inv is violated by the initial state:
     /\ x = 0
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2179:0 @!@!@\nThe second argument of \\div is 0.\n@!@!@ENDMSG 2179 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2179:0 \nThe second argument of \\div is 0.\n
 ---*)

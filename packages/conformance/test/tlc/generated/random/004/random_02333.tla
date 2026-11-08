@@ -18,8 +18,7 @@ Test == PrintT([b3693 \in (SortSeq(SortSeq([a |-> 1, b |-> TRUE], LAMBDA p, q : 
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    [a |-> 1, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02333 failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     [a |-> 1, b |-> TRUE]
 ---*)

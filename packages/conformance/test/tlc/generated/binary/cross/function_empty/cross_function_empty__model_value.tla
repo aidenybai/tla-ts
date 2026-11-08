@@ -21,10 +21,7 @@ Test == PrintT(([x \in {} |-> x]) \X (mv))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Shouldn't call isEmpty() on value <<>>
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module cross_function_empty__model_value failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

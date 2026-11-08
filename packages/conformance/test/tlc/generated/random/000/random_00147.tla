@@ -18,10 +18,7 @@ Test == PrintT([a |-> SubSeq(<<([a |-> 1]).a, Cardinality(1..3)>>, Cardinality(U
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<1, 3>>
-    , but instead it is
-    3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00147 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<1, 3>>
     , but instead it is

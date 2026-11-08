@@ -18,6 +18,6 @@ Test == PrintT(UNION {{IF LET b3266 == FALSE IN 3 THEN (b3265 < b3265) ELSE ([x 
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 1+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02055 failed.
     2178:0 Overflow when computing 1+2147483647
 ---*)

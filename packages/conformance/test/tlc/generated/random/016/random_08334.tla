@@ -18,8 +18,7 @@ Test == PrintT([[b12891 \in {CASE TRUE -> b12892 [] OTHER -> 2 : b12892 \in ({} 
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    -2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08334 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     -2147483647
 ---*)

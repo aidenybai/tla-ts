@@ -21,12 +21,7 @@ Test == PrintT((Nat) \ (mv))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to enumerate S \ T when S:
-    Nat
-    is not enumerable.
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module diff_nat__model_value failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:

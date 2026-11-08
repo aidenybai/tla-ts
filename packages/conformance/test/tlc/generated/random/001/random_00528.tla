@@ -18,6 +18,6 @@ Test == PrintT(Cardinality({((b891 % 0) % ([x \in Nat |-> x + 1])[b891]) : b891 
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 1+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00528 failed.
     2178:0 Overflow when computing 1+2147483647
 ---*)

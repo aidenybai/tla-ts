@@ -18,9 +18,7 @@ Test == PrintT(Permutations(""))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying Permutations to the following value,
-    which is not a finite set:
-    ""
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module permutations_string_empty failed.
     2176:0 Applying Permutations to the following value,
     which is not a finite set:
     ""
