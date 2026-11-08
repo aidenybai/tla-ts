@@ -403,7 +403,10 @@ const translateDeclarations = (
 const getChanged = (loop: ts.Node, path: Path, context: Context) => {
   const changed = new Set<ts.Symbol>();
   const visit = (node: ts.Node) => {
-    const written = getWritten(node);
+    const written =
+      ts.isForOfStatement(node) && !ts.isVariableDeclarationList(node.initializer)
+        ? node.initializer
+        : getWritten(node);
     if (written !== undefined) {
       getWrittenSymbols(written, context).forEach((symbol) => changed.add(symbol));
     }
@@ -515,10 +518,14 @@ const translateIterations = (
       return translateStatements([loop.statement], current, context, bodyFrame);
     }
     const declared = iterated.initializer;
-    if (!ts.isVariableDeclarationList(declared) || declared.declarations.length !== 1) {
-      throw new TlaTypeScriptError("Declare the element of a for-of", declared);
-    }
     const element = index(identifier(sequence), [identifier(position)]);
+    if (!ts.isVariableDeclarationList(declared)) {
+      const assigned = assignPattern(declared, undefined, element, current, context);
+      return translateStatements([loop.statement], assigned, context, bodyFrame);
+    }
+    if (declared.declarations.length !== 1) {
+      throw new TlaTypeScriptError("Declare one element of a for-of", declared);
+    }
     const bound = bindPattern(declared.declarations[0].name, element, current.scope, context);
     return letIn(
       bound.definitions,

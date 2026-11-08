@@ -89,6 +89,10 @@ const CASES: Record<string, Case[]> = {
       statements: "const first = queue.shift()!; head = first;",
     },
     {
+      variables: "count = 0, last = 0",
+      statements: "for (last of [4, 5, 6]) count += last;",
+    },
+    {
       variables: "queue = [1, 2, 3], tail = 0",
       statements: "const last = queue.pop()!; tail = last * 10;",
     },
