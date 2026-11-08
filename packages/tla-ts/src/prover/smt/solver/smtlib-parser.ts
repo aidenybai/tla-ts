@@ -589,8 +589,6 @@ export const createSmtlibReader = (
     return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs, at);
   };
 
-  // push_pattern_frame with ignore_bad_patterns: (t1 ... tn) is a multi-pattern, (f a ...) a pattern
-  // of one term, and a pattern that starts with a constant is dropped unparsed.
   const rejectPattern = (message: string, at: SExpr) => {
     if (!options.isIgnoringBadPatterns) throw new SmtParseError(message, at);
     return undefined;

@@ -107,7 +107,7 @@ const mkGroup = (format: Format): ChoiceFormat => ({
 const mkSeq = (elements: Format[]) =>
   mkCompose(...elements.flatMap((element) => [LINE_BREAK, element]));
 
-export const mkSeq1 = (elements: Format[], header: string, open = "(", close = ")") => {
+const mkSeq1 = (elements: Format[], header: string, open = "(", close = ")") => {
   if (elements.length === 0) return mkCompose(mkText(open), mkText(header), mkText(close));
   return mkGroup(
     mkCompose(
@@ -140,7 +140,7 @@ const mkSeq3 = (elements: Format[], header: string, inline: number) => {
   );
 };
 
-export const mkSeq5 = (elements: Format[]) => {
+const mkSeq5 = (elements: Format[]) => {
   if (elements.length === 0) return mkCompose(mkText("("), mkText(")"));
   return mkGroup(
     mkCompose(
@@ -164,7 +164,7 @@ const getSpaceUptoLineBreak = (format: Format): { space: number; isBroken: boole
   return total;
 };
 
-export const renderFormat = (root: Format, options: PrintOptions) => {
+const renderFormat = (root: Format, options: PrintOptions) => {
   const output: string[] = [];
   const state = { position: 0, line: 0 };
   const todo: { format: Format; indent: number }[] = [{ format: root, indent: 0 }];
@@ -211,14 +211,14 @@ const isQuotedSymbol = (name: string) => {
   return !SIMPLE_SYMBOL.test(name);
 };
 
-export const getQuotedName = (symbol: SmtSymbol) =>
+const getQuotedName = (symbol: SmtSymbol) =>
   typeof symbol === "number"
     ? `k!${symbol}`
     : isQuotedSymbol(symbol)
       ? `|${symbol.replace(/[|\\]/g, "\\$&")}|`
       : symbol;
 
-export const formatSort = (manager: AstManager, sort: number) =>
+const formatSort = (manager: AstManager, sort: number) =>
   mkText(getQuotedName(manager.sortNames[sort]));
 
 const getDecimal = (numerator: bigint, denominator: bigint, precision: number) => {
@@ -290,7 +290,7 @@ const getSharedTerms = (manager: AstManager, root: number) => {
   return shared;
 };
 
-export const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
+const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
   const options = environment.options;
   const varNames: string[] = [];
   const varNameSet = new Set<string>();
@@ -302,22 +302,6 @@ export const createPrinter = (manager: AstManager, environment: PrintEnvironment
       if (!environment.isUsed(name) && !varNameSet.has(name)) return name;
     }
   };
-
-  const pushVarName = (name: string) => {
-    varNames.push(name);
-    varNameSet.add(name);
-  };
-
-  const popVarNames = (count: number) => {
-    for (let index = 0; index < count; index++) varNameSet.delete(varNames.pop() ?? "");
-  };
-
-  const formatVarArgs = (sorts: number[]) =>
-    mkSeq5(
-      sorts.map((sort, index) =>
-        mkSeq1([formatSort(manager, sort)], varNames[varNames.length - sorts.length + index]),
-      ),
-    );
 
   const formatConst = (expr: number) =>
     manager.getOp(expr) === OP_NUM
@@ -486,13 +470,14 @@ export const createPrinter = (manager: AstManager, environment: PrintEnvironment
         state.root = data.body;
         for (const symbol of data.names) {
           const quoted = getQuotedName(symbol);
-          pushVarName(
+          const name =
             typeof symbol === "number"
               ? getNextName("x", { index: 1 })
               : environment.isUsed(quoted) || varNameSet.has(quoted)
                 ? getNextName(quoted, { index: 1 })
-                : quoted,
-          );
+                : quoted;
+          varNames.push(name);
+          varNameSet.add(name);
         }
       }
       if (frame.index < data.patterns.length + 1) {
@@ -513,7 +498,17 @@ export const createPrinter = (manager: AstManager, environment: PrintEnvironment
       const body =
         attributes.length === 0 ? letted.format : mkSeq1([letted.format, ...attributes], "!");
       const format = mkSeq3(
-        [formatVarArgs(data.sorts), body],
+        [
+          mkSeq5(
+            data.sorts.map((sort, index) =>
+              mkSeq1(
+                [formatSort(manager, sort)],
+                varNames[varNames.length - data.sorts.length + index],
+              ),
+            ),
+          ),
+          body,
+        ],
         data.isForall ? "forall" : "exists",
         1,
       );
@@ -523,7 +518,8 @@ export const createPrinter = (manager: AstManager, environment: PrintEnvironment
         weight: bodyInfo.weight + data.sorts.length * 2 + letted.numLets * 8,
         depth: bodyInfo.depth + 1,
       };
-      popVarNames(data.sorts.length);
+      for (let index = 0; index < data.sorts.length; index++)
+        varNameSet.delete(varNames.pop() ?? "");
       aliasStack[scopes.length].clear();
       const scope = scopes.pop();
       if (scope !== undefined) {
@@ -548,20 +544,7 @@ export const createPrinter = (manager: AstManager, environment: PrintEnvironment
     return formatLet(formats[formats.length - 1]).format;
   };
 
-  const formatWithVars = (expr: number, numVars: number, prefix: string) => {
-    const counter = { index: 0 };
-    const names = Array.from({ length: numVars }, () => {
-      const name = getQuotedName(getNextName(prefix === "a" ? "_a" : prefix, counter));
-      varNameSet.add(name);
-      return name;
-    });
-    varNames.push(...[...names].reverse());
-    const format = formatExpr(expr);
-    popVarNames(numVars);
-    return { format, names };
-  };
-
-  return { formatExpr, formatWithVars, formatVarArgs, pushVarName, popVarNames };
+  return formatExpr;
 };
 
 export const printExpr = (
@@ -569,8 +552,4 @@ export const printExpr = (
   environment: PrintEnvironment,
   expr: number,
   indent = 0,
-) =>
-  renderFormat(
-    mkIndent(indent, createPrinter(manager, environment).formatExpr(expr)),
-    environment.options,
-  );
+) => renderFormat(mkIndent(indent, createPrinter(manager, environment)(expr)), environment.options);
