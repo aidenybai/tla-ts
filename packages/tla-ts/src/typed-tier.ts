@@ -16,14 +16,13 @@ import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
   compareValues,
   isEnumerable,
+  isSameValue,
   toFiniteSet,
   type FunctionValue,
   type ModelValue,
   type Value,
 } from "./values";
 
-// Integers and atoms are distinct classes until a value of one meets a value of the other, which
-// makes both a class of mixed scalars.
 interface IntType {
   kind: "Int";
   target: IntType | MixType | undefined;
@@ -33,9 +32,13 @@ interface BoolType {
   kind: "Bool";
 }
 
+// TLC fails to compare a typed model value with a string or a model value of another type, so a
+// class of atoms holds at most one type of model value, and then no strings.
 interface StrType {
   kind: "Str";
   target: StrType | MixType | undefined;
+  modelValueTypes: Set<string>;
+  hasString: boolean;
 }
 
 // Integers and untyped model values, which TLC compares only for equality. An atom is 2^32 plus its
@@ -50,8 +53,7 @@ interface SeqType {
   element: Type;
 }
 
-// Records of one or more shapes. A field has one type across shapes. A record of several shapes
-// starts with the position of its shape.
+// A record of several shapes starts with the position of its shape.
 interface RecType {
   kind: "Rec";
   shapes: string[][];
@@ -59,11 +61,13 @@ interface RecType {
   target: RecType | undefined;
 }
 
-// A function over a constant domain, with its keys in the interpreter's order.
+// TLC takes a function over 1..n for a sequence, so such a function type becomes a sequence type
+// when it unifies with one.
 interface FnType {
   kind: "Fn";
   key: Type;
   domain: Value[];
+  target: SeqType | undefined;
   range: Type;
 }
 
@@ -77,7 +81,6 @@ interface VarType {
   target: Type | undefined;
 }
 
-// A function a LET defines, applied by calling it, which no state holds.
 interface LambdaType {
   kind: "Lambda";
   argument: Type;
@@ -139,7 +142,26 @@ const WIDE = { reason: "wide" };
 
 const createInt = (): IntType => ({ kind: "Int", target: undefined });
 const BOOL: BoolType = { kind: "Bool" };
-const createStr = (): StrType => ({ kind: "Str", target: undefined });
+const createStr = (): StrType => ({
+  kind: "Str",
+  target: undefined,
+  modelValueTypes: new Set(),
+  hasString: false,
+});
+
+const checkAtoms = (type: StrType) =>
+  type.modelValueTypes.size > 1 || (type.modelValueTypes.size === 1 && type.hasString)
+    ? unsupported()
+    : undefined;
+
+const addAtom = (type: StrType, plains: Plains, value: Value) => {
+  if (typeof value === "string") type.hasString = true;
+  if (typeof value === "object" && value.kind === "ModelValue" && value.type !== undefined) {
+    type.modelValueTypes.add(value.type);
+  }
+  checkAtoms(type);
+  return getAtom(plains, value);
+};
 const createMix = (): MixType => ({ kind: "Mix", target: undefined });
 const MAXIMUM_COMPARISONS = 8;
 const ATOM_BASE = 2 ** 32;
@@ -163,7 +185,6 @@ const resolveType = (type: Type): Type => {
     type.kind === "Bool" ||
     type.kind === "Seq" ||
     type.kind === "Set" ||
-    type.kind === "Fn" ||
     type.kind === "Lambda" ||
     type.target === undefined
   ) {
@@ -208,13 +229,26 @@ const unify = (left: Type, right: Type): void => {
   if (isLeftScalar && isRightScalar) {
     const mix: MixType =
       leftType.kind === "Mix" ? leftType : rightType.kind === "Mix" ? rightType : createMix();
+    if (leftType.kind === "Str" && rightType.kind === "Str") {
+      rightType.modelValueTypes.forEach((type) => leftType.modelValueTypes.add(type));
+      leftType.hasString ||= rightType.hasString;
+      checkAtoms(leftType);
+    }
     if (leftType.kind === rightType.kind) {
       rightType.target = leftType;
       return;
     }
-    if (leftType !== mix) leftType.target = mix;
-    if (rightType !== mix) rightType.target = mix;
+    [leftType, rightType].forEach((type) => {
+      if (type.kind === "Str" && (type.hasString || type.modelValueTypes.size > 0)) unsupported();
+      if (type !== mix) type.target = mix;
+    });
     return;
+  }
+  if (leftType.kind === "Fn" && rightType.kind === "Seq") return unify(rightType, leftType);
+  if (leftType.kind === "Seq" && rightType.kind === "Fn") {
+    if (!rightType.domain.every((key, index) => key === index + 1)) return unsupported();
+    rightType.target = leftType;
+    return unify(leftType.element, rightType.range);
   }
   if (leftType.kind !== rightType.kind) return unsupported();
   if (leftType.kind === "Seq" && rightType.kind === "Seq") {
@@ -305,10 +339,8 @@ const getValueType = (value: Value, plains: Plains): Type => {
 
 const isSameDomain = (left: Value[], right: Value[]) =>
   left === right ||
-  (left.length === right.length &&
-    left.every((key, index) => key === right[index] || compareValues(key, right[index]) === 0));
+  (left.length === right.length && left.every((key, index) => isSameValue(key, right[index])));
 
-// unify(type, getValueType(value)), building types only where the value doesn't match the type.
 const unifyValue = (type: Type, value: Value, plains: Plains): void => {
   const resolved = resolveType(type);
   const isMatch =
@@ -350,13 +382,12 @@ const createFnType = (domain: Value[], range: Type, plains: Plains): FnType => {
     key,
     domain,
     range,
+    target: undefined,
   };
 };
 
 type Plain = number | boolean | Plain[];
 
-// How values become plains: the plains of strings and model values, and whether sets of integers
-// are masks.
 interface Plains {
   ids: Map<string | ModelValue, number>;
   values: (string | ModelValue)[];
@@ -364,11 +395,9 @@ interface Plains {
 }
 
 const getAtom = (plains: Plains, value: Value) => {
-  // TLC fails to compare a typed model value with any other kind of value.
-  if (typeof value === "object" && (value.kind !== "ModelValue" || value.type !== undefined)) {
+  if (typeof value !== "string" && (typeof value !== "object" || value.kind !== "ModelValue")) {
     return unsupported();
   }
-  if (typeof value !== "string" && typeof value !== "object") return unsupported();
   const known = plains.ids.get(value);
   if (known !== undefined) return known;
   // TLC's fingerprint keeps only the low byte of each character, so the interpreter merges states
@@ -380,11 +409,22 @@ const getAtom = (plains: Plains, value: Value) => {
   return plains.values.length - 1;
 };
 
-// TLC fails to compare a string with an integer, so a class of mixed scalars holds no strings.
-const getMixedAtom = (plains: Plains, value: Value) =>
-  typeof value === "string" ? unsupported() : ATOM_BASE + getAtom(plains, value);
+// Model values by rank, then strings in TLC's order. In each class of atoms this is TLC's order, and
+// it orders atoms that TLC fails to compare too.
+const compareAtoms = (left: string | ModelValue, right: string | ModelValue) => {
+  if (typeof left === "object" && left.kind === "ModelValue") {
+    return typeof right === "object" && right.kind === "ModelValue" ? left.rank - right.rank : -1;
+  }
+  return typeof right === "string" ? compareValues(left, right) : 1;
+};
 
-// Sets of integers that fit a mask are masks. Other sets are arrays in TLC's order.
+// TLC fails to compare an integer with a string or a typed model value, so a class of mixed scalars
+// holds neither.
+const getMixedAtom = (plains: Plains, value: Value) =>
+  typeof value === "object" && value.kind === "ModelValue" && value.type === undefined
+    ? ATOM_BASE + getAtom(plains, value)
+    : unsupported();
+
 const isMask = (type: Type, plains: Plains) => {
   const resolved = resolveType(type);
   if (resolved.kind !== "Set") return unsupported();
@@ -398,7 +438,7 @@ const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
   const resolved = resolveType(type);
   if (resolved.kind === "Int") return typeof value === "number" ? value : unsupported();
   if (resolved.kind === "Bool") return typeof value === "boolean" ? value : unsupported();
-  if (resolved.kind === "Str") return getAtom(plains, value);
+  if (resolved.kind === "Str") return addAtom(resolved, plains, value);
   if (resolved.kind === "Mix")
     return typeof value === "number" ? value : getMixedAtom(plains, value);
   if (resolved.kind === "Set") {
@@ -440,7 +480,6 @@ interface Program {
   constantSets: Map<number, Plain[]>[];
   bitmaps: Uint8Array[];
   comparers: { names: Map<Type, string>; functions: string[] };
-  // For each function lookup, the position of each key less the least key, or -1.
   indexes: Int32Array[];
   lookups: Map<number, { key: Plain; position: number }[]>[];
   variableTypes: Type[];
@@ -469,7 +508,6 @@ const compileConstant = (program: Program, value: Value): Compiled => {
   };
 };
 
-// Builds code once, when every type it depends on is known.
 const once = (build: () => string) => {
   const built: string[] = [];
   return () => {
@@ -486,7 +524,6 @@ const countBits = (mask: number) => {
   return count;
 };
 
-// Compares plains of a type as TLC orders the values they stand for. R ranks the atoms.
 const getCompareCode = (program: Program, type: Type, left: string, right: string): string => {
   const resolved = closeType(type);
   if (resolved.kind === "Int" || resolved.kind === "Bool") return `(${left}) - (${right})`;
@@ -548,10 +585,26 @@ const getComparerCode = (program: Program, type: Type): string => {
   return name;
 };
 
-// The position of a field in a record, or -1 when the record's shape lacks the field.
+// The shapes of a record whose type isn't known yet come from the values it unifies with. A value
+// that isn't a record fails to unify with it.
+const expectRecord = (type: Type) => {
+  if (resolveType(type).kind === "Var") {
+    unify(type, { kind: "Rec", shapes: [], fields: new Map(), target: undefined });
+  }
+  const resolved = resolveType(type);
+  return resolved.kind === "Rec" ? resolved : unsupported();
+};
+
+const getFieldCountCode = (program: Program, type: Type, code: string) => {
+  const record = expectRecord(type);
+  if (record.shapes.length === 1) return `((${code}), ${record.shapes[0].length})`;
+  const counts = Int32Array.from(record.shapes, (shape) => shape.length);
+  return `D[${program.indexes.push(counts) - 1}][(${code})[0]]`;
+};
+
 const getFieldIndexCode = (program: Program, type: Type, field: string, code: string) => {
   const record = resolveType(type);
-  if (record.kind !== "Rec") return unsupported();
+  if (record.kind !== "Rec" || record.shapes.length === 0) return unsupported();
   if (record.shapes.length === 1) return String(record.shapes[0].indexOf(field));
   const positions = Int32Array.from(record.shapes, (shape) =>
     shape.includes(field) ? shape.indexOf(field) + 1 : -1,
@@ -559,7 +612,6 @@ const getFieldIndexCode = (program: Program, type: Type, field: string, code: st
   return `D[${program.indexes.push(positions) - 1}][${code}[0]]`;
 };
 
-// The position of a key in a function's array.
 const getKeys = (program: Program, type: FnType) =>
   type.domain.map((element) => toPlain(element, type.key, program.plains));
 
@@ -569,8 +621,6 @@ const getIndexCode = (program: Program, type: FnType, code: string) => {
     const least = Math.min(...keys);
     if (keys.every((key, index) => key === least + index)) return `(${code}) - ${least}`;
   }
-  // Tuples of integers index a table over the box that holds them, as numbers do. Other keys are
-  // looked up by hash.
   const rows = keys.map((key) => (Array.isArray(key) ? key : [key]));
   const isBoxed = rows.every((row) => row.length === rows[0].length && row.every(Number.isInteger));
   const columns = rows[0].map((_, column) => {
@@ -652,6 +702,23 @@ interface Frame {
 const withBinding = (scope: TierScope, name: string, binding: Binding): TierScope =>
   new Map(scope).set(name, binding);
 
+// TLC evaluates a LET definition where it's used, so one that would fail unused fails nothing. Its
+// value is kept once computed, since no plain is undefined.
+const getLazyCode = (name: string) => `(${name} ??= ${name}f())`;
+
+interface LazyDefinition {
+  name: string;
+  value: Compiled;
+}
+
+const getDeclarations = (definitions: LazyDefinition[]) =>
+  definitions
+    .map((item) => `let ${item.name}; const ${item.name}f = () => ${item.value.emit()};`)
+    .join(" ");
+
+const isBuiltin = (program: Program, frame: Frame, operator: string, name: string) =>
+  operator === name && !frame.scope.has(name) && !program.environment.definitions.has(name);
+
 const bindCode = (scope: TierScope, name: string, type: Type, code: string) =>
   withBinding(scope, name, { kind: "Code", compiled: { type, emit: () => code } });
 
@@ -695,8 +762,9 @@ const bindArguments = (
   frame: Frame,
 ): TierScope =>
   definition.params.reduce<TierScope>((scope, param, index) => {
-    if (param.arity > 0) return unsupported();
     const arg = args[index];
+    if (param.arity > 0)
+      return withBinding(scope, param.name, getOperatorArgument(program, arg, frame));
     // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action.
     if (isBranching(program, arg, frame.scope)) {
       return withBinding(scope, param.name, {
@@ -718,6 +786,30 @@ const bindArguments = (
       compiled: compileValue(program, arg, frame),
     });
   }, new Map());
+
+// TLC applies an operator argument by name, in the scope of the caller.
+const getOperatorArgument = (program: Program, arg: Expression, frame: Frame): OperatorBinding => {
+  if (arg.kind === "Lambda") {
+    return {
+      kind: "Operator",
+      definition: {
+        kind: "Operator",
+        name: "LAMBDA",
+        params: arg.params.map((name) => ({ name, arity: 0 })),
+        body: arg.body,
+        isLocal: true,
+        isRecursive: false,
+        location: arg.location,
+      },
+      scope: frame.scope,
+    };
+  }
+  if (arg.kind !== "Identifier") return unsupported();
+  const binding = frame.scope.get(arg.name);
+  if (binding?.kind === "Operator") return binding;
+  const definition = binding ? undefined : resolveDefinition(program, arg.name);
+  return definition ? { kind: "Operator", definition, scope: new Map() } : unsupported();
+};
 
 const resolveDefinition = (program: Program, name: string) => {
   const definition = getDefinition(name, program.environment);
@@ -825,12 +917,7 @@ const compileBound = (
     );
     return { element, header: (name) => `for (const ${name} of ${getCode()})` };
   }
-  if (
-    setExpression.kind === "Apply" &&
-    setExpression.operator === ".." &&
-    !frame.scope.has("..") &&
-    !program.environment.definitions.has("..")
-  ) {
+  if (setExpression.kind === "Apply" && isBuiltin(program, frame, setExpression.operator, "..")) {
     const [low, high] = setExpression.args.map((arg) =>
       expectInt(compileValue(program, arg, frame)),
     );
@@ -839,6 +926,22 @@ const compileBound = (
       header: (name) => {
         const end = getName(program, "e");
         return `for (let ${name} = ${low.emit()}, ${end} = ${high.emit()}; ${name} <= ${end}; ${name}++)`;
+      },
+    };
+  }
+  if (setExpression.kind === "Apply" && setExpression.operator === "DOMAIN") {
+    const target = compileValue(program, setExpression.args[0], frame);
+    const type = resolveType(target.type);
+    if (type.kind !== "Seq" && type.kind !== "Fn") return unsupported();
+    return {
+      element: type.kind === "Seq" ? createInt() : type.key,
+      header: (name) => {
+        const resolved = resolveType(type);
+        if (resolved.kind === "Fn") {
+          return `for (const ${name} of (${target.emit()}, ${addConstant(program, getKeys(program, resolved))}))`;
+        }
+        const end = getName(program, "e");
+        return `for (let ${name} = 1, ${end} = (${target.emit()}).length; ${name} <= ${end}; ${name}++)`;
       },
     };
   }
@@ -921,6 +1024,37 @@ const compileMembership = (
         frame,
       );
       return { type: BOOL, emit: () => `${element.emit()}.every((${name}) => ${test.emit()})` };
+    }
+    if (isBuiltin && operator === "DOMAIN") {
+      const target = compileValue(program, setExpression.args[0], frame);
+      const type = resolveType(target.type);
+      const name = getName(program, "e");
+      if (type.kind === "Seq") {
+        const index = expectInt(element);
+        return {
+          type: BOOL,
+          emit: () =>
+            `((${name}) => ${name} >= 1 && ${name} <= (${target.emit()}).length)(${index.emit()})`,
+        };
+      }
+      expectRecord(type);
+      const atom = createStr();
+      unify(element.type, atom);
+      return {
+        type: BOOL,
+        emit: () => {
+          const record = resolveType(type);
+          if (record.kind !== "Rec") return unsupported();
+          const names = addConstant(
+            program,
+            record.shapes.map((shape) =>
+              shape.map((field) => toPlain(field, atom, program.plains)),
+            ),
+          );
+          const shape = record.shapes.length > 1 ? `${name}r[0]` : "0";
+          return `((${name}r, ${name}) => ${names}[${shape}].includes(${name}))(${target.emit()}, ${element.emit()})`;
+        },
+      };
     }
     if (isBuiltin && operator === "SUBSET") {
       const base = compileValue(program, setExpression.args[0], frame);
@@ -1186,12 +1320,57 @@ const compileBuiltin = (
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
     return operator === "\\in" ? test : { type: BOOL, emit: () => `!(${test.emit()})` };
   }
+  if (operator === "SelectSeq" && args.length === 2) {
+    const sequence = compileValue(program, args[0], frame);
+    const element: Type = createVar();
+    unify(sequence.type, { kind: "Seq", element });
+    const binding = getOperatorArgument(program, args[1], frame);
+    if (binding.definition.params.length !== 1) return unsupported();
+    const name = getName(program, "e");
+    const scope = bindCode(binding.scope, binding.definition.params[0].name, element, name);
+    const test = inline(program, binding.definition, () =>
+      expectType(compileValue(program, binding.definition.body, { ...frame, scope }), BOOL),
+    );
+    return {
+      type: sequence.type,
+      emit: () => `(${sequence.emit()}).filter((${name}) => ${test.emit()})`,
+    };
+  }
   const values = args.map((arg) => compileValue(program, arg, frame));
+  if (operator === "SubSeq" && values.length === 3) {
+    const [sequence, start, end] = values;
+    unify(sequence.type, { kind: "Seq", element: createVar() });
+    const first = expectInt(start);
+    const last = expectInt(end);
+    return {
+      type: sequence.type,
+      emit: () => `H.subSeq(${sequence.emit()}, ${first.emit()}, ${last.emit()})`,
+    };
+  }
   if (values.length === 2) {
     const [left, right] = values;
     if (operator === "=" || operator === "#" || operator === "/=") {
-      unify(left.type, right.type);
       const isEqual = operator === "=";
+      const leftKind = resolveType(left.type).kind;
+      const rightKind = resolveType(right.type).kind;
+      // TLC finds a tuple unequal to a record of another size and a record unequal to <<>>, and
+      // fails to compare them otherwise.
+      if (leftKind === "Seq" && rightKind === "Rec") {
+        return binary(left, right, BOOL, (leftCode, rightCode) => {
+          const count = getFieldCountCode(program, right.type, rightCode);
+          return `${isEqual ? "" : "!"}((${leftCode}).length !== ${count} ? false : H.deopt())`;
+        });
+      }
+      if (leftKind === "Rec" && rightKind === "Seq") {
+        return binary(
+          left,
+          right,
+          BOOL,
+          (leftCode, rightCode) =>
+            `(${leftCode}, ${isEqual ? "" : "!"}((${rightCode}).length === 0 ? false : H.deopt()))`,
+        );
+      }
+      unify(left.type, right.type);
       const isScalar = () => {
         const type = closeType(left.type);
         return (
@@ -1374,7 +1553,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       };
     }
     case "Let": {
-      const names: { name: string; value: Compiled }[] = [];
+      const names: LazyDefinition[] = [];
       const scope = expression.definitions.reduce<TierScope>((current, definition) => {
         if (definition.kind === "Function") {
           const bound = definition.bounds[0];
@@ -1382,7 +1561,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
           const name = getName(program, "l");
           const argument = getName(program, "a");
           const type: LambdaType = { kind: "Lambda", argument: createVar(), result: createVar() };
-          const inner = bindCode(current, definition.name, type, name);
+          const inner = bindCode(current, definition.name, type, getLazyCode(name));
           const isInDomain = compileMembership(
             program,
             { type: type.argument, emit: () => argument },
@@ -1400,7 +1579,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
             name,
             value: {
               type,
-              emit: () => `((${argument}) => (${isInDomain.emit()}) ? ${body.emit()} : H.deopt())`,
+              emit: () => `(${argument}) => (${isInDomain.emit()}) ? ${body.emit()} : H.deopt()`,
             },
           });
           return inner;
@@ -1415,13 +1594,12 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         const value = compileValue(program, definition.body, { ...frame, scope: current });
         const name = getName(program, "l");
         names.push({ name, value });
-        return bindCode(current, definition.name, value.type, name);
+        return bindCode(current, definition.name, value.type, getLazyCode(name));
       }, frame.scope);
       const body = compileValue(program, expression.body, { ...frame, scope });
       return {
         type: body.type,
-        emit: () =>
-          `(() => { ${names.map((item) => `const ${item.name} = ${item.value.emit()};`).join(" ")} return ${body.emit()}; })()`,
+        emit: () => `(() => { ${getDeclarations(names)} return ${body.emit()}; })()`,
       };
     }
     case "Forall":
@@ -1534,8 +1712,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     }
     case "FieldAccess": {
       const record = compileValue(program, expression.record, frame);
-      const type = resolveType(record.type);
-      if (type.kind !== "Rec") return unsupported();
+      const type = expectRecord(record.type);
       return {
         type: getFieldType(type, expression.field),
         emit: () => {
@@ -1562,7 +1739,15 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       if (expression.bounds.length !== 1 || expression.isRecursive) return unsupported();
       const bound = expression.bounds[0];
       if (bound.pattern.kind !== "Name") return unsupported();
-      if (!isConstantExpression(program, bound.set, frame.scope)) return unsupported();
+      if (!isConstantExpression(program, bound.set, frame.scope)) {
+        return compileSequenceConstruction(
+          program,
+          bound.pattern.name,
+          bound.set,
+          expression.body,
+          frame,
+        );
+      }
       const domain = getElements(evaluateConstant(program, bound.set));
       if (domain.length === 0) return unsupported();
       const name = getName(program, "f");
@@ -1596,6 +1781,49 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     default:
       return unsupported();
   }
+};
+
+const compileSequenceConstruction = (
+  program: Program,
+  name: string,
+  set: Expression,
+  bodyExpression: Expression,
+  frame: Frame,
+): Compiled => {
+  const getLength = (): Compiled => {
+    if (set.kind !== "Apply") return unsupported();
+    if (set.operator === "DOMAIN") {
+      const sequence = compileValue(program, set.args[0], frame);
+      if (resolveType(sequence.type).kind !== "Seq") return unsupported();
+      return { type: createInt(), emit: () => `(${sequence.emit()}).length` };
+    }
+    const [low, high] = set.args;
+    if (
+      !isBuiltin(program, frame, set.operator, "..") ||
+      low.kind !== "Number" ||
+      low.value !== 1
+    ) {
+      return unsupported();
+    }
+    const end = expectInt(compileValue(program, high, frame));
+    return { type: createInt(), emit: () => `Math.max(0, ${end.emit()})` };
+  };
+  const length = getLength();
+  const element: Type = createVar();
+  const index = getName(program, "f");
+  const body = expectType(
+    compileValue(program, bodyExpression, {
+      ...frame,
+      scope: bindCode(frame.scope, name, createInt(), index),
+    }),
+    element,
+  );
+  const items = getName(program, "a");
+  return {
+    type: { kind: "Seq", element },
+    emit: () =>
+      `((${items}) => { for (let ${index} = 1; ${index} <= ${items}.length; ${index}++) ${items}[${index} - 1] = ${body.emit()}; return ${items}; })(new Array(${length.emit()}))`,
+  };
 };
 
 // The number of ways an action without primes holds, as TLC branches on it.
@@ -1737,7 +1965,7 @@ const compileStep = (
       return () => `if (${condition.emit()}) { ${consequent()} } else { ${alternative()} }`;
     }
     case "Let": {
-      const names: { name: string; value: Compiled }[] = [];
+      const names: LazyDefinition[] = [];
       const scope = expression.definitions.reduce<TierScope>((current, definition) => {
         if (definition.kind !== "Operator") return unsupported();
         if (
@@ -1754,11 +1982,10 @@ const compileStep = (
         const value = compileValue(program, definition.body, { ...frame, scope: current });
         const name = getName(program, "l");
         names.push({ name, value });
-        return bindCode(current, definition.name, value.type, name);
+        return bindCode(current, definition.name, value.type, getLazyCode(name));
       }, first.scope);
       const body = continueWith(scope, [expression.body]);
-      return () =>
-        `{ ${names.map((item) => `const ${item.name} = ${item.value.emit()};`).join(" ")} ${body()} }`;
+      return () => `{ ${getDeclarations(names)} ${body()} }`;
     }
     case "Identifier": {
       const binding = first.scope.get(expression.name);
@@ -2011,13 +2238,13 @@ const readScalar = (cursor: Cursor) => {
   }
 };
 
-// The types are closed before the initial states are read.
 const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
   const resolved = resolveType(type);
   if (resolved.kind === "Bool") return readScalar(cursor) === 1;
   if (resolved.kind === "Int" || resolved.kind === "Str" || resolved.kind === "Mix") {
     const isAtom = readScalar(cursor) === 1;
     const scalar = readScalar(cursor);
+    if (resolved.kind === "Str") return addAtom(resolved, plains, plains.values[scalar]);
     if (resolved.kind !== "Mix" || !isAtom) return scalar;
     return getMixedAtom(plains, plains.values[scalar]);
   }
@@ -2097,6 +2324,12 @@ const HELPERS = {
   at: (target: Plain[], position: number) =>
     position >= 0 && position < target.length ? target[position] : deopt(),
   tail: (target: Plain[]) => (target.length === 0 ? deopt() : target.slice(1)),
+  subSeq: (target: Plain[], start: number, end: number) => {
+    if (start > end) return [];
+    return start < 1 || start > target.length || end > target.length
+      ? deopt()
+      : target.slice(start - 1, end);
+  },
   append: (target: Plain[], element: Plain) => {
     const copy = target.slice();
     copy.push(element);
@@ -2326,7 +2559,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const ranks = new Int32Array(values.length);
   values
     .map((_, id) => id)
-    .sort((left, right) => compareValues(values[left], values[right]))
+    .sort((left, right) => compareAtoms(values[left], values[right]))
     .forEach((id, rank) => {
       ranks[id] = rank;
     });
