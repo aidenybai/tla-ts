@@ -34,15 +34,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2178:0 @!@!@
-    Overflow when computing the number of elements in:
-    SUBSET (1..32)
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2178:0 @!@!@
-    Overflow when computing the number of elements in:
+    :
+    2178:0 Overflow when computing the number of elements in:
     SUBSET (1..32)
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
@@ -51,18 +44,16 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2178:0 @!@!@
-    Overflow when computing the number of elements in:
-    SUBSET (1..32)
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2178:0 @!@!@
-    Overflow when computing the number of elements in:
-    SUBSET (1..32)
+    :
     2178:0 Overflow when computing the number of elements in:
     SUBSET (1..32)
+    2147:1 TLC was unable to fingerprint.
+
+    Fingerprint Stack Trace:
+    1) line 23, col 51 to line 23, col 63 of module FingerprintExceptionNext
+    0) line 23, col 44 to line 23, col 64 of module FingerprintExceptionNext
+
+    Reason:
     2178:0 Overflow when computing the number of elements in:
     SUBSET (1..32)
     2199:0 2 states generated, 1 distinct states found, 0 states left on queue.

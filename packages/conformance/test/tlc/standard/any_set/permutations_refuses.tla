@@ -16,18 +16,14 @@ Test == Permutations(Any) = {}
 assume:
   exit: 10
   transcript: |-
-    2176:0 Applying Permutations to the following value,
-    which is not a finite set:
-    ANY
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module permutations_refuses failed.
     2176:0 Applying Permutations to the following value,
     which is not a finite set:
     ANY
 init:
   exit: 75
   transcript: |-
-    2176:0 Applying Permutations to the following value,
-    which is not a finite set:
-    ANY
+    1000:1 
     2176:0 Applying Permutations to the following value,
     which is not a finite set:
     ANY
@@ -55,9 +51,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2176:0 Applying Permutations to the following value,
-    which is not a finite set:
-    ANY
+    1000:1 
     2176:0 Applying Permutations to the following value,
     which is not a finite set:
     ANY
@@ -71,9 +65,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2176:0 Applying Permutations to the following value,
-    which is not a finite set:
-    ANY
+    1000:1 
     2176:0 Applying Permutations to the following value,
     which is not a finite set:
     ANY

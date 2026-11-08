@@ -25,10 +25,8 @@ Inv == ENABLED C(1)
 all:
   exit: 75
   transcript: |-
-    2260:0 In computing ENABLED, TLC encountered a temporal formula (<>).
-    line 18, col 9 to line 18, col 11 of module diamond_through_constant_operator
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2260:0 In computing ENABLED, TLC encountered a temporal formula (<>).
     line 18, col 9 to line 18, col 11 of module diamond_through_constant_operator
     2103:1 The error occurred when TLC was evaluating the nested

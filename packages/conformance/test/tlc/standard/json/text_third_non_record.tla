@@ -18,19 +18,19 @@ Test == Serialize(<<1>>, "out", 3)
 assume:
   exit: 10
   transcript: |-
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module text_third_non_record failed.
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
     3
 init:
   exit: 75
   transcript: |-
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
+    1000:1 
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
     3
     2103:1 The error occurred when TLC was evaluating the nested
@@ -41,10 +41,14 @@ init:
 next:
   exit: 75
   transcript: |-
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
+    1000:1 TLC threw an unexpected exception.
+    This was probably caused by an error in the spec or model.
+    See the User Output or TLC Console for clues to what happened.
+    The exception was a java.lang.RuntimeException
+    :
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
     3
     2121:1 The behavior up to this point is:
@@ -58,12 +62,11 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
     3
     2103:1 The error occurred when TLC was evaluating the nested
@@ -75,12 +78,11 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
-    2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
-    3
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2169:0 The third argument of ndJsonSerialize should be a sequence, but instead it is:
     3
     2103:1 The error occurred when TLC was evaluating the nested

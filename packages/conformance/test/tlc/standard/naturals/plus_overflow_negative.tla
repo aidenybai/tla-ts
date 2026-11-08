@@ -16,12 +16,12 @@ Test == (0 - 2147483647 - 1) + (0 - 1) = 0
 assume:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing -2147483648+-1
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module plus_overflow_negative failed.
     2178:0 Overflow when computing -2147483648+-1
 init:
   exit: 75
   transcript: |-
-    2178:0 Overflow when computing -2147483648+-1
+    1000:1 
     2178:0 Overflow when computing -2147483648+-1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -45,7 +45,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2178:0 Overflow when computing -2147483648+-1
+    1000:1 
     2178:0 Overflow when computing -2147483648+-1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -57,7 +57,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2178:0 Overflow when computing -2147483648+-1
+    1000:1 
     2178:0 Overflow when computing -2147483648+-1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

@@ -16,8 +16,7 @@ Next == x' = x
 all:
   exit: 75
   transcript: |-
-    2261:0 TLC encountered a temporal formula ([]A) when evaluating a predicate or action.
-    line 11, col 18 to line 11, col 26 of module box_in_init_conjunct
+    1000:1 
     2261:0 TLC encountered a temporal formula ([]A) when evaluating a predicate or action.
     line 11, col 18 to line 11, col 26 of module box_in_init_conjunct
     2103:1 The error occurred when TLC was evaluating the nested

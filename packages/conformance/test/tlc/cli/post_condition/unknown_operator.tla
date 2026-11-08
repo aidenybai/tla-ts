@@ -27,14 +27,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 1000:0 @!@!@
-    Could not find operator: Nope in module: cli_post_fixture
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 1000:0 @!@!@
-    Could not find operator: Nope in module: cli_post_fixture
+    :
+    1000:0 Could not find operator: Nope in module: cli_post_fixture
     2199:0 4 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.
 ---*)

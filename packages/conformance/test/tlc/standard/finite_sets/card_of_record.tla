@@ -16,15 +16,13 @@ Test == Cardinality([a |-> 1]) = 1
 assume:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [a |-> 1]
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module card_of_record failed.
     2181:0 Attempted to compute cardinality of the value
     [a |-> 1]
 init:
   exit: 75
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [a |-> 1]
+    1000:1 
     2181:0 Attempted to compute cardinality of the value
     [a |-> 1]
     2103:1 The error occurred when TLC was evaluating the nested
@@ -50,8 +48,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [a |-> 1]
+    1000:1 
     2181:0 Attempted to compute cardinality of the value
     [a |-> 1]
     2103:1 The error occurred when TLC was evaluating the nested
@@ -64,8 +61,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    [a |-> 1]
+    1000:1 
     2181:0 Attempted to compute cardinality of the value
     [a |-> 1]
     2103:1 The error occurred when TLC was evaluating the nested

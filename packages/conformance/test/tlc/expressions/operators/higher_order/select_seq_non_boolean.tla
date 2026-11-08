@@ -13,15 +13,13 @@ Test == SelectSeq(<<1>>, LAMBDA x : x) = <<>>
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
-    <Operator LAMBDA>
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module select_seq_non_boolean failed.
     2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
     <Operator LAMBDA>
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
-    <Operator LAMBDA>
+    1000:1 
     2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
     <Operator LAMBDA>
     2103:1 The error occurred when TLC was evaluating the nested
@@ -47,8 +45,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
-    <Operator LAMBDA>
+    1000:1 
     2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
     <Operator LAMBDA>
     2103:1 The error occurred when TLC was evaluating the nested
@@ -61,8 +58,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
-    <Operator LAMBDA>
+    1000:1 
     2169:0 The second argument of SelectSeq should be a boolean-valued operator, but instead it is:
     <Operator LAMBDA>
     2103:1 The error occurred when TLC was evaluating the nested

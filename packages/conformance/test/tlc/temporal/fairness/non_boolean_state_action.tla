@@ -30,16 +30,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2247:0 @!@!@
-    In computing ENABLED, TLC expected a boolean expression,
-    but instead found 0.
-    line 17, col 34 to line 17, col 34 of module non_boolean_state_action
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2247:0 @!@!@
-    In computing ENABLED, TLC expected a boolean expression,
+    :
+    2247:0 In computing ENABLED, TLC expected a boolean expression,
     but instead found 0.
     line 17, col 34 to line 17, col 34 of module non_boolean_state_action
     2121:1 The behavior up to this point is:

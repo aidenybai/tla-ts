@@ -27,15 +27,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula (a -+-> formula) when evaluating a predicate or action.
-    line 18, col 9 to line 18, col 16 of module guarantees_in_action_constraint
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula (a -+-> formula) when evaluating a predicate or action.
+    :
+    2261:0 TLC encountered a temporal formula (a -+-> formula) when evaluating a predicate or action.
     line 18, col 9 to line 18, col 16 of module guarantees_in_action_constraint
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>

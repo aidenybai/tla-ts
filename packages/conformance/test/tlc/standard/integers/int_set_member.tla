@@ -16,18 +16,14 @@ Test == {} \in Int
 assume:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {}
-    is an element of Int.
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module int_set_member failed.
     2158:0 Attempted to check if the value:
     {}
     is an element of Int.
 init:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {}
-    is an element of Int.
+    1000:1 
     2158:0 Attempted to check if the value:
     {}
     is an element of Int.
@@ -53,9 +49,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {}
-    is an element of Int.
+    1000:1 
     2158:0 Attempted to check if the value:
     {}
     is an element of Int.
@@ -68,9 +62,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {}
-    is an element of Int.
+    1000:1 
     2158:0 Attempted to check if the value:
     {}
     is an element of Int.

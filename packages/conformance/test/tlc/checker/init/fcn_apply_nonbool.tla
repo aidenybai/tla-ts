@@ -17,9 +17,7 @@ Init == <<1, 2>>[1] /\ x = 1
 all:
   exit: 75
   transcript: |-
-    2248:0 In computing initial states, TLC expected a boolean expression,
-    but didn't find one.
-    line 13, col 9 to line 13, col 19 of module fcn_apply_nonbool
+    1000:1 
     2248:0 In computing initial states, TLC expected a boolean expression,
     but didn't find one.
     line 13, col 9 to line 13, col 19 of module fcn_apply_nonbool

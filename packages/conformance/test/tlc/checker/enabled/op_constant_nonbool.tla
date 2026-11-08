@@ -20,11 +20,8 @@ Inv == PrintT(ENABLED C)
 all:
   exit: 75
   transcript: |-
-    2247:0 In computing ENABLED, TLC expected a boolean expression,
-    but instead found 1.
-    line 16, col 23 to line 16, col 23 of module op_constant_nonbool
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2247:0 In computing ENABLED, TLC expected a boolean expression,
     but instead found 1.
     line 16, col 23 to line 16, col 23 of module op_constant_nonbool

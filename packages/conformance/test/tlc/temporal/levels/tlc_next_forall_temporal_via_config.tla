@@ -25,15 +25,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula (\AA) when evaluating a predicate or action.
-    line 15, col 6 to line 15, col 18 of module tlc_next_forall_temporal_via_config
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula (\AA) when evaluating a predicate or action.
+    :
+    2261:0 TLC encountered a temporal formula (\AA) when evaluating a predicate or action.
     line 15, col 6 to line 15, col 18 of module tlc_next_forall_temporal_via_config
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>

@@ -17,9 +17,7 @@ Next == x' = x
 all:
   exit: 75
   transcript: |-
-    2247:0 In computing initial states, TLC expected a boolean expression,
-    but instead found 3.
-    line 12, col 18 to line 12, col 21 of module function_application_in_init
+    1000:1 
     2247:0 In computing initial states, TLC expected a boolean expression,
     but instead found 3.
     line 12, col 18 to line 12, col 21 of module function_application_in_init

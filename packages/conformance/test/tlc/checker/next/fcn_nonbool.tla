@@ -22,16 +22,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2248:0 @!@!@
-    In computing next states, TLC expected a boolean expression,
-    but didn't find one.
-    line 13, col 9 to line 13, col 19 of module fcn_nonbool
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2248:0 @!@!@
-    In computing next states, TLC expected a boolean expression,
+    :
+    2248:0 In computing next states, TLC expected a boolean expression,
     but didn't find one.
     line 13, col 9 to line 13, col 19 of module fcn_nonbool
     2121:1 The behavior up to this point is:

@@ -17,8 +17,7 @@ Init == x \in {y} /\ y = 1
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier y is either undefined or not an operator.
-    line 13, col 16 to line 13, col 16 of module in_rhs_uses_later_variable
+    1000:1 
     2280:0 In evaluation, the identifier y is either undefined or not an operator.
     line 13, col 16 to line 13, col 16 of module in_rhs_uses_later_variable
     2103:1 The error occurred when TLC was evaluating the nested

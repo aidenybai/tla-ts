@@ -17,15 +17,13 @@ Test == SortSeq(<<1, 2>>, LAMBDA x, y : 7) = <<>>
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of SortSeq should be a operator, but instead it is:
-    7
+    2105:1 Evaluating assumption line 14, col 8 to line 14, col 11 of module sort_literal_body failed.
     2169:0 The second argument of SortSeq should be a operator, but instead it is:
     7
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SortSeq should be a operator, but instead it is:
-    7
+    1000:1 
     2169:0 The second argument of SortSeq should be a operator, but instead it is:
     7
     2103:1 The error occurred when TLC was evaluating the nested
@@ -51,8 +49,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SortSeq should be a operator, but instead it is:
-    7
+    1000:1 
     2169:0 The second argument of SortSeq should be a operator, but instead it is:
     7
     2103:1 The error occurred when TLC was evaluating the nested
@@ -65,8 +62,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of SortSeq should be a operator, but instead it is:
-    7
+    1000:1 
     2169:0 The second argument of SortSeq should be a operator, but instead it is:
     7
     2103:1 The error occurred when TLC was evaluating the nested

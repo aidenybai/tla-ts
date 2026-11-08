@@ -16,15 +16,13 @@ Test == BagIn(1, 1 :> "a")
 assume:
   exit: 10
   transcript: |-
-    2169:0 The second argument of BagIn should be a bag, but instead it is:
-    <<"a">>
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module bag_in_non_int_count failed.
     2169:0 The second argument of BagIn should be a bag, but instead it is:
     <<"a">>
 init:
   exit: 75
   transcript: |-
-    2169:0 The second argument of BagIn should be a bag, but instead it is:
-    <<"a">>
+    1000:1 
     2169:0 The second argument of BagIn should be a bag, but instead it is:
     <<"a">>
     2103:1 The error occurred when TLC was evaluating the nested
@@ -48,8 +46,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The second argument of BagIn should be a bag, but instead it is:
-    <<"a">>
+    1000:1 
     2169:0 The second argument of BagIn should be a bag, but instead it is:
     <<"a">>
     2103:1 The error occurred when TLC was evaluating the nested
@@ -61,8 +58,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The second argument of BagIn should be a bag, but instead it is:
-    <<"a">>
+    1000:1 
     2169:0 The second argument of BagIn should be a bag, but instead it is:
     <<"a">>
     2103:1 The error occurred when TLC was evaluating the nested

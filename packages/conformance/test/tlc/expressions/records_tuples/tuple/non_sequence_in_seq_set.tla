@@ -13,18 +13,14 @@ Test == (2 :> 1) \in Seq(Nat)
 assume:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    (2 :> 1)
-    is an element of Seq(Nat).
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module non_sequence_in_seq_set failed.
     2158:0 Attempted to check if the value:
     (2 :> 1)
     is an element of Seq(Nat).
 init:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    (2 :> 1)
-    is an element of Seq(Nat).
+    1000:1 
     2158:0 Attempted to check if the value:
     (2 :> 1)
     is an element of Seq(Nat).
@@ -50,9 +46,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    (2 :> 1)
-    is an element of Seq(Nat).
+    1000:1 
     2158:0 Attempted to check if the value:
     (2 :> 1)
     is an element of Seq(Nat).
@@ -65,9 +59,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    (2 :> 1)
-    is an element of Seq(Nat).
+    1000:1 
     2158:0 Attempted to check if the value:
     (2 :> 1)
     is an element of Seq(Nat).

@@ -28,15 +28,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
-    line 17, col 8 to line 17, col 16 of module action_constraint_temporal_rejected
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
+    :
+    2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
     line 17, col 8 to line 17, col 16 of module action_constraint_temporal_rejected
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>

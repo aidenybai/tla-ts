@@ -29,9 +29,7 @@ all:
   exit: 75
   transcript: |-
     | "Should report error here"  TRUE
-    2158:0 Attempted to check if the value:
-    1
-    is an element of STRING.
+    1000:1 
     2158:0 Attempted to check if the value:
     1
     is an element of STRING.

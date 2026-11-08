@@ -16,10 +16,7 @@ Test == RandomElement([{1} -> {}]) = 0
 assume:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
-    but it produced the following error:
-    Index 0 out of bounds for length 0
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module random_empty_range_function_set failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
     but it produced the following error:
@@ -27,10 +24,7 @@ assume:
 init:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
-    but it produced the following error:
-    Index 0 out of bounds for length 0
+    1000:1 
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
     but it produced the following error:
@@ -48,17 +42,8 @@ next:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
-    but it produced the following error:
-    Index 0 out of bounds for length 0
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
+    :
+    2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
     but it produced the following error:
     Index 0 out of bounds for length 0
@@ -74,12 +59,8 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
-    but it produced the following error:
-    Index 0 out of bounds for length 0
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
     but it produced the following error:
@@ -94,12 +75,8 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
-    but it produced the following error:
-    Index 0 out of bounds for length 0
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value),
     but it produced the following error:

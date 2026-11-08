@@ -16,18 +16,14 @@ Test == <<"a">> \in Seq(Nat)
 assume:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Nat.
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module seq_element_type_error failed.
     2158:0 Attempted to check if the value:
     "a"
     is an element of Nat.
 init:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Nat.
+    1000:1 
     2158:0 Attempted to check if the value:
     "a"
     is an element of Nat.
@@ -53,9 +49,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Nat.
+    1000:1 
     2158:0 Attempted to check if the value:
     "a"
     is an element of Nat.
@@ -68,9 +62,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Nat.
+    1000:1 
     2158:0 Attempted to check if the value:
     "a"
     is an element of Nat.

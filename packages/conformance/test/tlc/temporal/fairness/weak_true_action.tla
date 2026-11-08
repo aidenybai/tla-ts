@@ -31,14 +31,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2148:0 @!@!@
-    The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable x occurring in the state formula v.
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2148:0 @!@!@
-    The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable x occurring in the state formula v.
+    :
+    2148:0 The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable x occurring in the state formula v.
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0

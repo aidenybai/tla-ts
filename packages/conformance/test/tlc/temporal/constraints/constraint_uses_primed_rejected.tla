@@ -23,10 +23,8 @@ all:
   exit: 75
   transcript: |-
     2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 17, col 8 to line 17, col 8 of module constraint_uses_primed_rejected
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 17, col 8 to line 17, col 8 of module constraint_uses_primed_rejected
     2103:1 The error occurred when TLC was evaluating the nested

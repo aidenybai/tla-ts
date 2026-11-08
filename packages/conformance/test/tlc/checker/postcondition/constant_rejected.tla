@@ -25,14 +25,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2233:0 @!@!@
-    The post condition Post cannot be a constant.
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2233:0 @!@!@
-    The post condition Post cannot be a constant.
+    :
+    2233:0 The post condition Post cannot be a constant.
     2199:0 3 states generated, 2 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 2.
 ---*)
