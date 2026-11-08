@@ -584,6 +584,8 @@ interface Search {
         next: Expression;
         invariants: Expression[];
         constraints: Expression[];
+        initialPredicates: Expression[];
+        actionProperties: ActionProperty[];
         symmetry: ImageTable[] | undefined;
       }
     | undefined;
@@ -874,9 +876,9 @@ export const createSearch = (
         spec.scope !== undefined ||
         [...invariants, ...constraints].some((check) => check.scope !== undefined) ||
         actionConstraints.length > 0 ||
-        properties.actionProperties.length > 0 ||
+        properties.actionProperties.some((property) => property.scope !== undefined) ||
         properties.liveness.length > 0 ||
-        properties.initialPredicates.length > 0;
+        properties.initialPredicates.some((predicate) => predicate.scope !== undefined);
       return isInterpreted || spec.init === undefined || spec.next === undefined
         ? undefined
         : {
@@ -884,6 +886,10 @@ export const createSearch = (
             next: spec.next,
             invariants: invariantPredicates.map((invariant) => invariant.predicate),
             constraints: [...new Set(constraints.map((constraint) => constraint.predicate))],
+            initialPredicates: properties.initialPredicates.map(
+              (predicate) => predicate.expression,
+            ),
+            actionProperties: properties.actionProperties,
             symmetry: symmetryGroup?.images,
           };
     },
