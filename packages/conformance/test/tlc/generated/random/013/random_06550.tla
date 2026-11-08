@@ -3,6 +3,7 @@ description: Evaluates a random bool expression, seed 262, number 6550.
 ref: tlc2/tool/impl/Tool.java#evalImpl
 features:
   - random-expression
+  - tlc-bug
 flags:
   - expression
 contexts:

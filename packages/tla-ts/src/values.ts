@@ -363,6 +363,9 @@ export const rankString = (text: string) => {
 
 export const getRankedStringCount = () => stringOrder.size;
 
+export const getRankedString = (rank: number) =>
+  Object.keys(stringOrder.ranks).find((text) => stringOrder.ranks[text] === rank);
+
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
 const compareStrings = (left: string, right: string) => {
@@ -1606,14 +1609,6 @@ const enumerateSet = (
     }
     case "SetOperation": {
       if (
-        value.operator === "\\cup" &&
-        (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right))
-      ) {
-        throw new TlaEvaluationError(
-          `Attempted to enumerate S \\cup T when S:\n${formatValue(value.left)}\nand T:\n${formatValue(value.right)}\nare not both enumerable`,
-        );
-      }
-      if (
         value.operator === "\\cap" &&
         !isTlcEnumerable(value.left) &&
         !isTlcEnumerable(value.right)
@@ -1628,17 +1623,7 @@ const enumerateSet = (
         );
       }
       if (value.operator === "\\cup") {
-        if (isBeyondSetBound(value.left)) {
-          // TLC opens the right set's enumerator before it streams the left set past the bound.
-          getStreamedElements(value.right);
-          throw new TlaSetBoundError(SET_BOUND_MESSAGE);
-        }
-        const left = getStreamedElements(value.left);
-        const right = isBeyondSetBound(value.right) ? undefined : getStreamedElements(value.right);
-        if (!right || left.length + right.length > SET_BOUND) {
-          throw new TlaSetBoundError(SET_BOUND_MESSAGE);
-        }
-        return toFiniteSet(createEnumeratedSet([...left, ...right])).elements;
+        return toFiniteSet(createEnumeratedSet(listUnionLikeTlc(value))).elements;
       }
       const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
@@ -1689,6 +1674,42 @@ export const toFiniteSet = (value: Value): SetValue => {
   const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (lazy) lazy.enumerated = set;
   return set;
+};
+
+const listUnionLikeTlc = (union: SetOperationValue) => {
+  if (!isTlcEnumerable(union.left) || !isTlcEnumerable(union.right)) {
+    throw new TlaEvaluationError(
+      `Attempted to enumerate S \\cup T when S:\n${formatValue(union.left)}\nand T:\n${formatValue(union.right)}\nare not both enumerable`,
+    );
+  }
+  if (isBeyondSetBound(union.left)) {
+    // TLC opens the right set's enumerator before it streams the left set past the bound.
+    getStreamedElements(union.right);
+    throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+  }
+  const left = getStreamedElements(union.left);
+  const right = isBeyondSetBound(union.right) ? undefined : getStreamedElements(union.right);
+  if (!right || left.length + right.length > SET_BOUND) {
+    throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+  }
+  return [...left, ...right];
+};
+
+// EnumerableValue#elements(NORMALIZED) sorts a union outside its methods, so a failed comparison
+// isn't a fingerprint failure.
+export const getNormalizedSetElements = (value: Value) => {
+  if (
+    typeof value !== "object" ||
+    value.kind !== "SetOperation" ||
+    value.operator !== "\\cup" ||
+    value.enumerated
+  ) {
+    return toFiniteSet(value).elements;
+  }
+  const listed = callTracedMethod(value, () => listUnionLikeTlc(value));
+  const elements = toFiniteSet(createEnumeratedSet(listed)).elements;
+  value.enumerated = createSortedSet(elements);
+  return elements;
 };
 
 // TLC streams the sets a lazy set combines until it caches it, so a shared element repeats.

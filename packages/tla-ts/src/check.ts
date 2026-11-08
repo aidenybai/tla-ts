@@ -161,6 +161,7 @@ export type CheckProgress =
       statistics: SearchStatistics;
     }
   | { kind: "liveness-finished" }
+  | { kind: "sequential-fallback"; string: string }
   // A warning TLC prints as it evaluates the spec, with its message code.
   | { kind: "warning"; code: number; text: string }
   // A violation that the search goes on past with -continue.
