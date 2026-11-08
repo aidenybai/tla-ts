@@ -1010,7 +1010,7 @@ export const generateSanySpecification = (
     };
 
     // tla-ts desugars an operator symbol passed as an argument, such as SUBSET or -., into a LAMBDA
-    // without a range.
+    // that names the operator.
     const getOperatorArgumentName = (argument: Expression) =>
       argument.kind === "OperatorReference"
         ? argument.operator
@@ -1025,7 +1025,7 @@ export const generateSanySpecification = (
     ): OpArgNode | OpApplNode => {
       const location = getLocation(argument);
       if (argument.kind === "Lambda") {
-        if (argument.location.range !== undefined)
+        if (argument.location.range !== undefined && argument.operator === undefined)
           return createOpArg(generateLambda(argument), location);
         return createOpArg(resolveName(getOperatorArgumentName(argument), location), location);
       }
@@ -1082,7 +1082,11 @@ export const generateSanySpecification = (
           `Expected an operator argument at ${formatSanyLocation(location)}`,
         );
       }
-      if (argument.kind === "Lambda" && argument.location.range !== undefined) {
+      if (
+        argument.kind === "Lambda" &&
+        argument.location.range !== undefined &&
+        argument.operator === undefined
+      ) {
         const lambda = generateLambda(argument);
         const arity = getSymbolArity(lambda);
         if (arity === expectedArity) return createOpArg(lambda, location);
