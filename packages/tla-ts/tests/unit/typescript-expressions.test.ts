@@ -257,6 +257,14 @@ const CASES: Record<string, (string | [string, string])[]> = {
       box.a = 1;`,
     ],
     [
+      "[count, b]",
+      `let count = 0;
+      const { b = 2 } = {};
+      for (var { a = 1 } = {}; count < 1; ) {
+        count += a;
+      }`,
+    ],
+    [
       "has(point)",
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],

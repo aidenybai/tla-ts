@@ -145,6 +145,7 @@ const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
     (checker.getResolvedSignature(parent)?.getDeclaration()?.getSourceFile().isDeclarationFile ??
       false);
   return (
+    getKind(node, context) === "object" ||
     isBuiltInArgument ||
     contextual === undefined ||
     (contextual.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0 ||
