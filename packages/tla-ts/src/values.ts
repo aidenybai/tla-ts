@@ -741,12 +741,10 @@ interface TlcFunction {
   low: number | undefined;
 }
 
-const getIntervalLow = (domain: Value[]) => {
-  const first = domain.length === 0 ? 1 : domain[0];
-  return typeof first === "number" && domain.every((key, index) => key === first + index)
-    ? first
-    : undefined;
-};
+// The low end of the interval TLC keeps as the domain of a tuple or of a function built over an
+// interval, which compares and checks equality apart from a domain it keeps as an array.
+const getIntervalLow = (value: Value, domain: Value[]) =>
+  domain.length === 0 || getFunctionClass(value) === "tuple" ? 1 : getDomainInterval(domain)?.low;
 
 const toTlcFunction = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
@@ -754,7 +752,7 @@ const toTlcFunction = (value: Value) => {
   return {
     domain: functionValue.domain,
     range: functionValue.range,
-    low: getIntervalLow(functionValue.domain),
+    low: getIntervalLow(value, functionValue.domain),
   };
 };
 
@@ -847,11 +845,8 @@ const compareElementsLikeTlc = (left: Value[], right: Value[]) => {
 
 const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value) => {
   const functionValue = toFiniteFunction(left);
-  const isTuple = left.kind === "Function" && getSequenceElements(functionValue) !== undefined;
-  if (isTuple) {
-    const tuple = isFunctionValue(right)
-      ? getSequenceElements(getFunctionClass(left) === "tuple" ? right : toFiniteFunction(right))
-      : undefined;
+  if (getFunctionClass(left) === "tuple") {
+    const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
     if (!tuple) return compareTlcFunctions({ ...functionValue, low: 1 }, left, right);
     return (
       functionValue.range.length - tuple.length ||
@@ -873,7 +868,7 @@ const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: 
     );
   }
   return compareTlcFunctions(
-    { ...functionValue, low: getIntervalLow(functionValue.domain) },
+    { ...functionValue, low: getIntervalLow(left, functionValue.domain) },
     left,
     right,
   );
@@ -964,11 +959,8 @@ const equalsTlcFunctions = (functionValue: TlcFunction, left: Value, right: Valu
 
 const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value) => {
   const functionValue = toFiniteFunction(left);
-  const isTuple = left.kind === "Function" && getSequenceElements(functionValue) !== undefined;
-  if (isTuple) {
-    const tuple = isFunctionValue(right)
-      ? getSequenceElements(getFunctionClass(left) === "tuple" ? right : toFiniteFunction(right))
-      : undefined;
+  if (getFunctionClass(left) === "tuple") {
+    const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
     if (!tuple) return equalsTlcFunctions({ ...functionValue, low: 1 }, left, right);
     return (
       functionValue.range.length === tuple.length &&
@@ -990,7 +982,7 @@ const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: V
     );
   }
   return equalsTlcFunctions(
-    { ...functionValue, low: getIntervalLow(functionValue.domain) },
+    { ...functionValue, low: getIntervalLow(left, functionValue.domain) },
     left,
     right,
   );
@@ -2065,7 +2057,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
         );
       }
       const functionValue = toFiniteFunction(element);
-      const low = getIntervalLow(functionValue.domain);
+      const low = getIntervalLow(element, functionValue.domain);
       const isDomain =
         low === undefined
           ? isEqualLikeTlc(set.domain, createSortedSet(functionValue.domain))
