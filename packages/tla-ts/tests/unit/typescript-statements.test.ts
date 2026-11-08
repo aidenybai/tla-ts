@@ -156,6 +156,11 @@ const CASES: Record<string, Case[]> = {
       setup: "const addTo = (amount: number) => { count++; total += amount; };",
     },
     {
+      variables: "count = 0",
+      statements: "add(); add(4);",
+      setup: "const add = (amount?: number) => { count += amount ?? 1; };",
+    },
+    {
       variables: "count = 1, copy = 0",
       statements: "count = 4; copy = getDouble();",
       setup: "const getDouble = () => count * 2;",

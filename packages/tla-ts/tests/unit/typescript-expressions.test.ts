@@ -197,6 +197,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
       "getLength({ x: 3, y: 4 })",
       "const getLength = (point: { x: number; y: number }) => { const { x, y } = point; return x * x + y * y; };",
     ],
+    ["[getOr(), getOr(2)]", "const getOr = (value?: number) => value ?? 7;"],
     [
       "count(new Set([1, 2, 3]))",
       "const count = (values: Set<number>) => { const isLarge = (value: number) => value > 1; return [...values].filter(isLarge).length; };",

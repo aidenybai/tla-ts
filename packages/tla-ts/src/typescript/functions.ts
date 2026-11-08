@@ -136,11 +136,16 @@ export const translateHelperCall = (
     return translateExpression(initializer, scope, context);
   }
   if (definition.parameters.length === 0) return definition.name;
-  const values = argumentNodes.map((argument, index) =>
-    definition.parameters[index].includes("(")
+  const values = definition.parameters.map((parameter, index) => {
+    const argument = argumentNodes.at(index);
+    if (argument === undefined) {
+      context.prelude.add("Undefined");
+      return "Undefined";
+    }
+    return parameter.includes("(")
       ? translateOperatorArgument(argument, scope, context)
-      : translateExpression(argument, scope, context),
-  );
+      : translateExpression(argument, scope, context);
+  });
   return `${definition.name}(${values.join(", ")})`;
 };
 

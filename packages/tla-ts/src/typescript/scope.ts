@@ -48,7 +48,6 @@ export const declareParameter = (
   if (
     !ts.isIdentifier(parameter.name) ||
     parameter.initializer !== undefined ||
-    parameter.questionToken !== undefined ||
     parameter.dotDotDotToken !== undefined
   ) {
     throw new TlaTypeScriptError(`Use a plain parameter here: ${parameter.getText()}`, parameter);
@@ -110,7 +109,8 @@ export const bindValues = (
 ) =>
   patterns.reduce<Bound>(
     (current, pattern, index) => {
-      const bound = bindPattern(pattern, values[index], current.scope, context);
+      if (index >= values.length) context.prelude.add("Undefined");
+      const bound = bindPattern(pattern, values[index] ?? "Undefined", current.scope, context);
       return { definitions: [...current.definitions, ...bound.definitions], scope: bound.scope };
     },
     { definitions: [], scope },
