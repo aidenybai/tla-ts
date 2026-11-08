@@ -457,6 +457,16 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ["['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]", "const box = {};"],
     ["[Reflect.has === Reflect.has, Reflect.has === Reflect.get]", "const box = {};"],
     [
+      "[made === again, typeof made, Object.getPrototypeOf(made) === Object.prototype, 'x' in made, 'x' in again]",
+      `interface ObjectConstructor {
+        new (value?: null): object;
+      }
+      const nothing = undefined;
+      const made = new Object();
+      const again = new Object(nothing);
+      Object.defineProperty(made, "x", { value: 1, enumerable: true });`,
+    ],
+    [
       "[method, constructor, created]",
       `const box = {};
       let method = "none";

@@ -2,6 +2,12 @@
 
 class Test262Error extends Error {}
 
+// TypeScript's lib types new Object() as Object, which primitives also have.
+// oxlint-disable-next-line no-unused-vars
+interface ObjectConstructor {
+  new (value?: null): object;
+}
+
 // oxlint-disable-next-line no-unused-vars
 function assert(mustBeTrue: unknown, message?: string) {
   if (mustBeTrue !== true) throw new Test262Error(message ?? "Expected true");

@@ -37,6 +37,7 @@ import {
   getHeap,
   isCreation,
   isDescription,
+  isNewObject,
   translateHoldsMethod,
   translateFunctionValue,
   translateObjectValue,
@@ -938,7 +939,8 @@ const translateNode = (
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
   const isHeapObject =
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
-    getNewClass(node, context) !== undefined;
+    getNewClass(node, context) !== undefined ||
+    isNewObject(node, context);
   if (isHeapObject) {
     const allocated = scope.allocated.get(node);
     if (allocated === undefined) {

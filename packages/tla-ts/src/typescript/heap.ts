@@ -17,11 +17,16 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor } from "./exceptions";
 import { translateExpression } from "./expressions";
-import { isBuiltInObject, translateBuiltInObject, translateFunctionPrototype } from "./intrinsics";
+import {
+  getBuiltIn,
+  isBuiltInObject,
+  translateBuiltInObject,
+  translateFunctionPrototype,
+} from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { createStateScope, type Scope } from "./scope";
 import { apply, boolean, functionFrom, identifier, number, record, string } from "./tla";
-import { getKind, isHeapType, isNumberLike } from "./types";
+import { getKind, isEvery, isHeapType, isNumberLike } from "./types";
 
 const SHORT_CIRCUITS = new Set([
   ts.SyntaxKind.AmpersandAmpersandToken,
@@ -329,6 +334,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (ts.isObjectLiteralExpression(node)) {
     return useJavaScript("Allocate", [heap, translateObject(node, scope, context)], context);
   }
+  if (isNewObject(node, context)) {
+    return useJavaScript("Allocate", [heap, identifier("EmptyObject")], context);
+  }
   if (ts.isCallExpression(node) && isDescription(node, context)) {
     const described = useJavaScript(
       "Describe",
@@ -406,8 +414,33 @@ export const isCreation = (node: ts.Node, context: Context) => {
   );
 };
 
-export const isAllocation = (node: ts.Node, context: Context): node is ts.CallExpression =>
-  ts.isCallExpression(node) && (isDescription(node, context) || isCreation(node, context));
+export const isAllocation = (node: ts.Node, context: Context) =>
+  (ts.isCallExpression(node) && (isDescription(node, context) || isCreation(node, context))) ||
+  isNewObject(node, context);
+
+// new Object() with no value, which makes an empty object as {} does.
+export const isNewObject = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !ts.isNewExpression(node) ||
+    getBuiltIn(node.expression, context) !== "Object"
+  ) {
+    return false;
+  }
+  // The argument is dropped, so it must be one that can't do anything.
+  const argument = node.arguments?.at(0);
+  return (
+    (node.arguments?.length ?? 0) <= 1 &&
+    (argument === undefined ||
+      argument.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isVoidExpression(argument) && ts.isLiteralExpression(argument.expression)) ||
+      (ts.isIdentifier(argument) &&
+        isEvery(
+          context.checker.getTypeAtLocation(argument),
+          ts.TypeFlags.Undefined | ts.TypeFlags.Null,
+        )))
+  );
+};
 
 // The object literals, descriptions, and creations that evaluating a node makes, innermost first.
 // Functions make none. An operand that only sometimes runs makes its object literals anyway, as
@@ -447,6 +480,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
   const created = getNewClass(node, context);
   const isAllocated =
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
+    isNewObject(node, context) ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes &&
       created !== undefined &&
