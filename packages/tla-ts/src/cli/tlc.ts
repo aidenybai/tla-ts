@@ -28,6 +28,7 @@ import type {
   Violation,
 } from "../check";
 import { parseConfig } from "../config";
+import { checkDepthFirst, type DepthFirstOutput } from "../dfid";
 import {
   getErrorExitCode,
   TlaConfigError,
@@ -474,6 +475,53 @@ const printNestedExpressions = (printer: MessagePrinter, callStack: Expression[]
     `The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${formatCallStack(callStack)}`,
   );
 
+const printSuccess = (printer: MessagePrinter, optimistic: number, actual: number | undefined) =>
+  printer.print(
+    MESSAGE_CODE.success,
+    MESSAGE_LEVEL.none,
+    [
+      "Model checking completed. No error has been found.",
+      "  Estimates of the probability that TLC did not check all reachable states",
+      "  because two distinct states had the same fingerprint:",
+      `  calculated (optimistic):  val = ${formatProbability(optimistic)}`,
+      ...(actual === undefined
+        ? []
+        : [`  based on the actual fingerprints:  val = ${formatProbability(actual)}`]),
+    ].join("\n"),
+  );
+
+const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutput) => {
+  switch (output.kind) {
+    case "message":
+      printer.print(
+        output.code,
+        output.isError ? MESSAGE_LEVEL.error : MESSAGE_LEVEL.none,
+        printer.isTool ? output.toolMessage : output.message,
+      );
+      return;
+    case "behavior":
+      output.states.forEach((state, index) =>
+        output.isInvariant
+          ? printer.print(
+              MESSAGE_CODE.statePrint2,
+              MESSAGE_LEVEL.state,
+              `${index + 1}: \n${formatState(state)}`,
+            )
+          : printer.print(
+              MESSAGE_CODE.statePrint1,
+              MESSAGE_LEVEL.state,
+              `${index + 1}:\n${formatState(state)}`,
+            ),
+      );
+      return;
+    case "nested-expressions":
+      printNestedExpressions(printer, output.callStack);
+      return;
+    case "success":
+      printSuccess(printer, output.optimistic, output.actual);
+  }
+};
+
 const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timing) => {
   const print = printer.print;
   if (result.failure) {
@@ -549,23 +597,12 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     if (result.liveCallStack) printNestedExpressions(printer, result.liveCallStack);
   } else {
     printLivenessEnd(printer, timing);
-    const optimistic = getOptimisticProbability(result.distinctStates, result.generatedStates);
-    const actual =
+    printSuccess(
+      printer,
+      getOptimisticProbability(result.distinctStates, result.generatedStates),
       result.fingerprintDistance === undefined
-        ? []
-        : [
-            `  based on the actual fingerprints:  val = ${formatProbability(getActualProbability(result.fingerprintDistance))}`,
-          ];
-    print(
-      MESSAGE_CODE.success,
-      MESSAGE_LEVEL.none,
-      [
-        "Model checking completed. No error has been found.",
-        "  Estimates of the probability that TLC did not check all reachable states",
-        "  because two distinct states had the same fingerprint:",
-        `  calculated (optimistic):  val = ${formatProbability(optimistic)}`,
-        ...actual,
-      ].join("\n"),
+        ? undefined
+        : getActualProbability(result.fingerprintDistance),
     );
   }
   if (result.failure?.isWithoutStatistics) return;
@@ -658,6 +695,14 @@ const printCommandLineError = (printer: MessagePrinter, message: string) => {
 // and its queue of states in memory.
 const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
   const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
+  if (args.mode === "model-check" && args.dfidDepth !== undefined) {
+    printer.print(
+      MESSAGE_CODE.depthFirstModelChecking,
+      MESSAGE_LEVEL.none,
+      `Running depth-first search Model-Checking with fp 0 and seed ${args.seed} with ${workers}).`,
+    );
+    return;
+  }
   if (args.mode === "model-check") {
     printer.print(
       MESSAGE_CODE.modelChecking,
@@ -908,6 +953,15 @@ const checkSpec = async (
         traceCount: args.traceCount,
         aril: args.aril,
         onSimulation: (output) => printSimulation(printer, output),
+      });
+      printFinished();
+      return status;
+    }
+    if (args.dfidDepth !== undefined) {
+      const status = checkDepthFirst({
+        ...options,
+        maxDepth: args.dfidDepth,
+        onOutput: (output) => printDepthFirst(printer, output),
       });
       printFinished();
       return status;

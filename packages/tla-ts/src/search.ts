@@ -13,8 +13,9 @@ import type {
   Postcondition,
   Violation,
 } from "./check";
-import type { ConfigValue, ModelConfig } from "./config";
+import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables, isConstantLevel } from "./dependencies";
+import { createEnvironment } from "./environment";
 import {
   isStackOverflow,
   TlaConfigError,
@@ -47,15 +48,24 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { getSubscriptVariables } from "./spec-description";
+import { getSpecificationValue, getSubscriptVariables } from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
-import { formatNestedMessage, MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
+import {
+  formatInnerMessage,
+  formatNestedMessage,
+  MESSAGE_CODE,
+  MISSING_INIT_174,
+  withHeadline,
+} from "./tlc/messages";
+import { createTlcOrder } from "./tlc/order";
 import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
   formatValue,
   isFunctionValue,
   isUpdatedElementOf,
+  setStringOrder,
+  setValueVersion,
   toFiniteFunction,
   type Value,
 } from "./values";
@@ -743,6 +753,67 @@ export const findAssumptionViolation = (
     }
   }
   return undefined;
+};
+
+export const prepareSearch = (options: CheckOptions, print: (text: string) => void) => {
+  const config =
+    typeof options.config === "string"
+      ? parseConfig(options.config, options.version)
+      : options.config;
+  const order = createTlcOrder(options.source, options.loadModule);
+  setStringOrder(order.getStringOrder(config));
+  setValueVersion(options.version);
+  const specification = createEnvironment(config, {
+    source: options.source,
+    loadModule: options.loadModule,
+    order,
+    loadClass: options.loadClass,
+    print,
+    files: { readFile: options.readFile, writeFile: options.writeFile },
+    seed: options.seed,
+    isTool: options.isTool,
+    isTraceRecorded: options.isTraceRecorded,
+    isSanyReported: options.isSanyReported,
+    isWarningEnabled: options.isWarningEnabled,
+    version: options.version,
+  });
+  reportStartup(specification, config, options.onProgress);
+  const environment = specification.environment;
+  environment.runtime.getSpecification = () =>
+    getSpecificationValue(
+      config,
+      environment,
+      specification.variableLocations,
+      specification.instanceActions,
+    );
+  const search = createSearch(
+    config,
+    environment,
+    () => order.getDeclarationOrder("variable"),
+    options.onProgress,
+  );
+  return { config, specification, environment, search };
+};
+
+export const reportAssumptionViolation = (
+  assumptions: Assumption[],
+  environment: Environment,
+  message: (code: number, text: string, toolText: string) => void,
+) => {
+  const assumption = findAssumptionViolation(assumptions, environment);
+  if (!assumption) return undefined;
+  if (assumption.message === undefined) {
+    const text = `Assumption ${assumption.name} is false.`;
+    message(MESSAGE_CODE.assumptionFalse, text, text);
+    return EXIT_STATUS.assumptionViolation;
+  }
+  const text = `Evaluating assumption ${assumption.name} failed.\n${assumption.message}`;
+  message(
+    MESSAGE_CODE.assumptionEvaluationError,
+    text,
+    formatInnerMessage(MESSAGE_CODE.assumptionEvaluationError, text, true),
+  );
+  return EXIT_STATUS.assumptionViolation;
 };
 
 export const createSearch = (

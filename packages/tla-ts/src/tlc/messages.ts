@@ -12,6 +12,7 @@ import type { TlcVersion } from "./version";
 // TLC's codes for the messages it prints, from tlc2.output.EC.
 export const MESSAGE_CODE = {
   general: 1000,
+  stackOverflow: 1005,
   commandLineError: 1102,
   initialState: 2102,
   nestedExpression: 2103,
@@ -49,6 +50,10 @@ export const MESSAGE_CODE = {
   searchDepth: 2194,
   stats: 2199,
   progress: 2200,
+  depthFirstStats: 2204,
+  depthFirstLevel: 2205,
+  depthFirstProgress: 2206,
+  depthFirstInitGenerated: 2208,
   simulationProgress: 2209,
   simulationStats: 2210,
   temporalBranches: 2212,
@@ -60,6 +65,7 @@ export const MESSAGE_CODE = {
   stateLevelProperty: 2255,
   noInitialStatesInModel: 2256,
   version: 2262,
+  depthFirstModelChecking: 2271,
   noSpecificationButProperty: 2257,
   noFairnessButProperty: 2259,
   counterExample: 2264,

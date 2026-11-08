@@ -106,7 +106,7 @@ interface EnvironmentOptions {
   version?: TlcVersion;
 }
 
-interface Specification {
+export interface Specification {
   environment: Environment;
   assumptions: Assumption[];
   variableLocations: SourceLocation[];
