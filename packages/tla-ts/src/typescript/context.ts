@@ -103,7 +103,7 @@ const isTopLevel = (statement: ts.Node): boolean => {
 // definition.
 export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
   const declaration = symbol?.valueDeclaration;
-  if (declaration === undefined) return undefined;
+  if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return undefined;
   if (ts.isFunctionDeclaration(declaration) && isTopLevel(declaration)) return declaration;
   const isTopLevelConst =
     ts.isVariableDeclaration(declaration) &&
