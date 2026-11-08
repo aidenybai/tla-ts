@@ -1,7 +1,7 @@
 import {
   createJavaOverrideError,
   createModuleArgumentError,
-  defineStateOperator,
+  defineOperator,
   getValue,
 } from "./builtins";
 import type { Builtin, BuiltinArgument } from "./evaluate";
@@ -90,7 +90,7 @@ const parseJavaDouble = (text: string) => {
 
 // TLC's Java class names the operator RandomSubsetSetProbability in its errors.
 export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
-  defineStateOperator("RandomSubsetSet", 3, (args) => {
+  defineOperator("RandomSubsetSet", 3, (args) => {
     const name = "RandomSubsetSetProbability";
     const picks = getCount(getValue(args, 0, name), "first", name);
     const text = getValue(args, 1, name);
@@ -128,7 +128,7 @@ export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
   });
 
 export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[] => [
-  defineStateOperator("RandomSubset", 2, (args) => {
+  defineOperator("RandomSubset", 2, (args) => {
     const count = getValue(args, 0, "RandomSubset");
     if (typeof count !== "number") {
       throw createModuleArgumentError("first", "RandomSubset", "nonnegative integer", count);
@@ -152,8 +152,8 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
     }
     return createSet(getRandomSubset(count, set, runtime.getRandom(), runtime.version));
   }),
-  defineStateOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
-  defineStateOperator("TestRandomSetOfSubsets", 3, (args) =>
+  defineOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
+  defineOperator("TestRandomSetOfSubsets", 3, (args) =>
     createTuple(
       Array.from(
         { length: 5 },
