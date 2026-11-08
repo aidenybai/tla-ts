@@ -19,7 +19,7 @@ Inv == 1 \div x > 0
 all:
   exit: 75
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    1000:1 
     2179:0 The second argument of \div is 0.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

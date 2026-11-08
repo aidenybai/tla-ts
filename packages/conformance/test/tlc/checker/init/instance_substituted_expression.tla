@@ -22,8 +22,7 @@ Init == I!InnerInit
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 16, col 31 to line 16, col 31 of module instance_substituted_expression
+    1000:1 
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 16, col 31 to line 16, col 31 of module instance_substituted_expression
     2103:1 The error occurred when TLC was evaluating the nested

@@ -25,8 +25,7 @@ all:
   exit: 75
   transcript: |-
     2149:3 The invariant Inv is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 18, col 11 to line 18, col 11 of module space_tuple__composition__invariant_holds
+    1000:1 
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 18, col 11 to line 18, col 11 of module space_tuple__composition__invariant_holds
     2103:1 The error occurred when TLC was evaluating the nested

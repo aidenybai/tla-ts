@@ -19,11 +19,8 @@ Inv == ENABLED (x' = x /\ f[1])
 all:
   exit: 75
   transcript: |-
-    2248:0 In computing ENABLED, TLC expected a boolean expression,
-    but didn't find one.
-    line 15, col 27 to line 15, col 30 of module function_application_in_enabled
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2248:0 In computing ENABLED, TLC expected a boolean expression,
     but didn't find one.
     line 15, col 27 to line 15, col 30 of module function_application_in_enabled

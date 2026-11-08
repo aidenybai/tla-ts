@@ -32,10 +32,7 @@ all:
     x = 1
     2217:4 3: <Next line 18, col 9 to line 18, col 24 of module nested_output_directory_created>
     x = 2
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static final tlc2.value.IValue tlc2.module._TLCTrace.ioSerialize(tlc2.value.IValue,tlc2.value.impl.StringValue) throws java.io.IOException,
-    but it produced the following error:
-    made/here/te_out.bin (No such file or directory)
+    2405:1 Evaluating postcondition _TLCTraceSilent at line 28, col 5 to line 28, col 21 of module _TLCTrace failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static final tlc2.value.IValue tlc2.module._TLCTrace.ioSerialize(tlc2.value.IValue,tlc2.value.impl.StringValue) throws java.io.IOException,
     but it produced the following error:

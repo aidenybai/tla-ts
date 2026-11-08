@@ -18,18 +18,14 @@ Test == Warshall({1}) = {}
 assume:
   exit: 10
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module element_int failed.
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     1
 init:
   exit: 75
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    1
+    1000:1 
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     1
@@ -57,9 +53,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    1
+    1000:1 
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     1
@@ -73,9 +67,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    1
+    1000:1 
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     1

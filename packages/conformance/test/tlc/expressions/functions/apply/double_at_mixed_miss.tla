@@ -13,11 +13,7 @@ Test == ((1 :> 2) @@ ("a" :> 3))["a"] = 3
 assume:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check equality of string "a" with non-string:
-    1
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module double_at_mixed_miss failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
@@ -26,11 +22,7 @@ assume:
 init:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check equality of string "a" with non-string:
-    1
+    1000:1 
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
@@ -50,18 +42,8 @@ next:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check equality of string "a" with non-string:
-    1
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
+    :
+    2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
     Attempted to check equality of string "a" with non-string:
@@ -79,13 +61,8 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check equality of string "a" with non-string:
-    1
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
@@ -102,13 +79,8 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to check equality of string "a" with non-string:
-    1
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

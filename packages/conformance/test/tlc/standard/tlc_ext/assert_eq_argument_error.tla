@@ -16,12 +16,12 @@ Test == AssertEq(1 \div 0, 1)
 assume:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module assert_eq_argument_error failed.
     2179:0 The second argument of \div is 0.
 init:
   exit: 75
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    1000:1 
     2179:0 The second argument of \div is 0.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -51,7 +51,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    1000:1 
     2179:0 The second argument of \div is 0.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -66,7 +66,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    1000:1 
     2179:0 The second argument of \div is 0.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

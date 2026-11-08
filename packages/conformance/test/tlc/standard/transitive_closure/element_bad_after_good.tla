@@ -18,18 +18,14 @@ Test == Warshall({<<1, 2>>, <<3>>}) = {}
 assume:
   exit: 10
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    <<3>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module element_bad_after_good failed.
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     <<3>>
 init:
   exit: 75
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    <<3>>
+    1000:1 
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     <<3>>
@@ -57,9 +53,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    <<3>>
+    1000:1 
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     <<3>>
@@ -73,9 +67,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2157:0 Attempted to apply TransitiveClosure to a set containing
-    the following value:
-    <<3>>
+    1000:1 
     2157:0 Attempted to apply TransitiveClosure to a set containing
     the following value:
     <<3>>

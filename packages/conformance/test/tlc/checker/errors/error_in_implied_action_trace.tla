@@ -20,7 +20,7 @@ all:
   exit: 255
   transcript: |-
     2190:0 Finished computing initial states: 1 distinct state generated at <date>.
-    2179:0 The second argument of \div is 0.
+    2113:1 Evaluating action property Prop failed.
     2179:0 The second argument of \div is 0.
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>

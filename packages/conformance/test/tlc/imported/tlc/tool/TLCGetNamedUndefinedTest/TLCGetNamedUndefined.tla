@@ -31,7 +31,9 @@ ASSUME(TRUE)
 all:
   exit: 151
   transcript: |-
-    2145:0 TLCGet(diameter) was undefined.
-    2145:0 TLCGet(diameter) was undefined.
+    2281:1 The configuration file substitutes constant A with non-constant diameter - specifically:
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2145:0 TLCGet(diameter) was undefined.
 ---*)

@@ -16,19 +16,19 @@ Test == TLCEvalDefinition("Nope") = 0
 assume:
   exit: 10
   transcript: |-
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module eval_def_not_found failed.
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefByName(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
     "Nope"
 init:
   exit: 75
   transcript: |-
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
+    1000:1 
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefByName(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
     "Nope"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -40,10 +40,14 @@ init:
 next:
   exit: 75
   transcript: |-
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
+    1000:1 TLC threw an unexpected exception.
+    This was probably caused by an error in the spec or model.
+    See the User Output or TLC Console for clues to what happened.
+    The exception was a java.lang.RuntimeException
+    :
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefByName(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
     "Nope"
     2121:1 The behavior up to this point is:
@@ -58,12 +62,11 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefByName(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
     "Nope"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -76,12 +79,11 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
-    2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
-    "Nope"
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefByName(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+    but it produced the following error:
     2283:0 The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:
     "Nope"
     2103:1 The error occurred when TLC was evaluating the nested

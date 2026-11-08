@@ -26,8 +26,7 @@ all:
   transcript: |-
     2140:3 The subscript of the next-state relation specified by the specification
     does not seem to contain the state variable x
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 19, col 31 to line 19, col 31 of module instance_substituted_expression
+    1000:1 
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 19, col 31 to line 19, col 31 of module instance_substituted_expression
     2103:1 The error occurred when TLC was evaluating the nested

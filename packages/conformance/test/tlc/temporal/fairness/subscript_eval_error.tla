@@ -34,17 +34,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
-    but it produced the following error:
-    Cannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2154:0 @!@!@
-    Attempted to apply the operator overridden by the Java method
+    :
+    2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.Naturals.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),
     but it produced the following error:
     Cannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue

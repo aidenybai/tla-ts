@@ -16,15 +16,13 @@ Test == SortSeq({2, 1}, LAMBDA x, y : TRUE) = <<>>
 assume:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    {1, 2}
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module sort_set failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     {1, 2}
 init:
   exit: 75
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    {1, 2}
+    1000:1 
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     {1, 2}
     2103:1 The error occurred when TLC was evaluating the nested
@@ -50,8 +48,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    {1, 2}
+    1000:1 
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     {1, 2}
     2103:1 The error occurred when TLC was evaluating the nested
@@ -64,8 +61,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    {1, 2}
+    1000:1 
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     {1, 2}
     2103:1 The error occurred when TLC was evaluating the nested

@@ -28,14 +28,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2179:0 @!@!@
-    The second argument of \div is 0.
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2179:0 @!@!@
-    The second argument of \div is 0.
+    :
+    2179:0 The second argument of \div is 0.
     2121:1 The behavior up to this point is:
     2217:4 1: <Init line 17, col 9 to line 17, col 13 of module next_error_first>
     x = 0

@@ -29,15 +29,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier y is either undefined or not an operator.
-    line 19, col 14 to line 19, col 14 of module space_membership__prime_read_before_assign__action_constraint
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2280:0 @!@!@
-    In evaluation, the identifier y is either undefined or not an operator.
+    :
+    2280:0 In evaluation, the identifier y is either undefined or not an operator.
     line 19, col 14 to line 19, col 14 of module space_membership__prime_read_before_assign__action_constraint
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>

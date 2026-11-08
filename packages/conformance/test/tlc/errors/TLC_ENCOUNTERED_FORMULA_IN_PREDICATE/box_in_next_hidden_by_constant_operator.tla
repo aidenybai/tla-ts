@@ -25,15 +25,8 @@ all:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula ([]A) when evaluating a predicate or action.
-    line 14, col 9 to line 14, col 17 of module box_in_next_hidden_by_constant_operator
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula ([]A) when evaluating a predicate or action.
+    :
+    2261:0 TLC encountered a temporal formula ([]A) when evaluating a predicate or action.
     line 14, col 9 to line 14, col 17 of module box_in_next_hidden_by_constant_operator
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>

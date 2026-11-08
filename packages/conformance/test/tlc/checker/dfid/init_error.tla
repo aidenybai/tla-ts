@@ -24,14 +24,8 @@ all:
     This was probably caused by an error in the spec or model.
     The error occurred when TLC was computing initial states.
     The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2179:0 @!@!@
-    The second argument of \div is 0.
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    The error occurred when TLC was computing initial states.
-    The exception was a tlc2.tool.EvalException
-    : @!@!@STARTMSG 2179:0 @!@!@
-    The second argument of \div is 0.
+    :
+    2179:0 The second argument of \div is 0.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
     tlc2.tool.impl.FastTool@<id>

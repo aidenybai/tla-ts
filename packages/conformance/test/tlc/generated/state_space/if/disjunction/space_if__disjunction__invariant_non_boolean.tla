@@ -25,10 +25,9 @@ Inv == 1
 all:
   exit: 75
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. 1
-    | While working on the initial state:
-    | /\ x = 0
-    | /\ y = 1
+    2102:1 While working on the initial state:
+    /\ x = 0
+    /\ y = 1
     2215:0 TLC expected a boolean value, but did not find one. 1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

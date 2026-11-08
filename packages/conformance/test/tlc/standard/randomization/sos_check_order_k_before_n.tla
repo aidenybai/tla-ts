@@ -16,15 +16,13 @@ Test == RandomSetOfSubsets(5, 3, {1, 2}) = {}
 assume:
   exit: 10
   transcript: |-
-    2169:0 The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
-    5
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module sos_check_order_k_before_n failed.
     2169:0 The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
     5
 init:
   exit: 75
   transcript: |-
-    2169:0 The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
-    5
+    1000:1 
     2169:0 The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
     5
     2103:1 The error occurred when TLC was evaluating the nested
@@ -50,8 +48,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2169:0 The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
-    5
+    1000:1 
     2169:0 The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
     5
     2103:1 The error occurred when TLC was evaluating the nested
@@ -64,8 +61,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2169:0 The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
-    5
+    1000:1 
     2169:0 The first argument of RandomSetOfSubsets should be a nonnegative integer that is smaller than the subset's size of 2^2, but instead it is:
     5
     2103:1 The error occurred when TLC was evaluating the nested

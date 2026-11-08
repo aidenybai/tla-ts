@@ -13,12 +13,12 @@ Test == (CHOOSE x \in {1} : 7) = 1
 assume:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module predicate_non_boolean failed.
     2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
 init:
   exit: 75
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
+    1000:1 
     2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -33,14 +33,8 @@ next:
     This was probably caused by an error in the spec or model.
     See the User Output or TLC Console for clues to what happened.
     The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2215:0 @!@!@
-    TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
-    1000:1 TLC threw an unexpected exception.
-    This was probably caused by an error in the spec or model.
-    See the User Output or TLC Console for clues to what happened.
-    The exception was a java.lang.RuntimeException
-    : @!@!@STARTMSG 2215:0 @!@!@
-    TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
+    :
+    2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     conformance_state = TRUE
@@ -53,9 +47,8 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
@@ -67,9 +60,8 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
-    | While working on the initial state:
-    | conformance_state = TRUE
+    2102:1 While working on the initial state:
+    conformance_state = TRUE
     2215:0 TLC expected a boolean value, but did not find one. line 9, col 10 to line 9, col 29 of module predicate_non_boolean
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:

@@ -14,15 +14,13 @@ Test == Len(F) = 2
 assume:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    (1 :> 0 @@ 3 :> 0)
+    2105:1 Evaluating assumption line 11, col 8 to line 11, col 11 of module not_tuple_when_enum_gap failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     (1 :> 0 @@ 3 :> 0)
 init:
   exit: 75
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    (1 :> 0 @@ 3 :> 0)
+    1000:1 
     2283:0 The argument of Len should be a sequence, but instead it is:
     (1 :> 0 @@ 3 :> 0)
     2103:1 The error occurred when TLC was evaluating the nested
@@ -48,8 +46,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    (1 :> 0 @@ 3 :> 0)
+    1000:1 
     2283:0 The argument of Len should be a sequence, but instead it is:
     (1 :> 0 @@ 3 :> 0)
     2103:1 The error occurred when TLC was evaluating the nested
@@ -62,8 +59,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    (1 :> 0 @@ 3 :> 0)
+    1000:1 
     2283:0 The argument of Len should be a sequence, but instead it is:
     (1 :> 0 @@ 3 :> 0)
     2103:1 The error occurred when TLC was evaluating the nested

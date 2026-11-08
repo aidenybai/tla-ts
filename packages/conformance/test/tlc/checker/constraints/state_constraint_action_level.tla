@@ -19,10 +19,8 @@ Con == x' < 2
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 15, col 8 to line 15, col 8 of module state_constraint_action_level
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 15, col 8 to line 15, col 8 of module state_constraint_action_level
     2103:1 The error occurred when TLC was evaluating the nested

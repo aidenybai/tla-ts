@@ -19,11 +19,8 @@ Inv == PrintT(ENABLED (x' = 1 /\ {1}))
 all:
   exit: 75
   transcript: |-
-    2247:0 In computing ENABLED, TLC expected a boolean expression,
-    but instead found {1}.
-    line 15, col 34 to line 15, col 36 of module default_nonbool
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2247:0 In computing ENABLED, TLC expected a boolean expression,
     but instead found {1}.
     line 15, col 34 to line 15, col 36 of module default_nonbool

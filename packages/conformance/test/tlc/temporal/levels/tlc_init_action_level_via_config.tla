@@ -19,8 +19,7 @@ I == x' = 0
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 15, col 6 to line 15, col 6 of module tlc_init_action_level_via_config
+    1000:1 
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 15, col 6 to line 15, col 6 of module tlc_init_action_level_via_config
     2103:1 The error occurred when TLC was evaluating the nested

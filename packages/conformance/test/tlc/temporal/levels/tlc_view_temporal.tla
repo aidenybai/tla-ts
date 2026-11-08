@@ -19,10 +19,8 @@ Vw == <>(x = 1)
 all:
   exit: 75
   transcript: |-
-    2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
-    line 15, col 7 to line 15, col 15 of module tlc_view_temporal
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
     line 15, col 7 to line 15, col 15 of module tlc_view_temporal
     2103:1 The error occurred when TLC was evaluating the nested

@@ -18,18 +18,14 @@ Test == Warshall(<<<<1, 2>>>>) = {}
 assume:
   exit: 10
   transcript: |-
-    2176:0 Applying TransitiveClosure to the following value,
-    which is not an enumerable set:
-    <<<<1, 2>>>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module non_enumerable_tuple failed.
     2176:0 Applying TransitiveClosure to the following value,
     which is not an enumerable set:
     <<<<1, 2>>>>
 init:
   exit: 75
   transcript: |-
-    2176:0 Applying TransitiveClosure to the following value,
-    which is not an enumerable set:
-    <<<<1, 2>>>>
+    1000:1 
     2176:0 Applying TransitiveClosure to the following value,
     which is not an enumerable set:
     <<<<1, 2>>>>
@@ -57,9 +53,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2176:0 Applying TransitiveClosure to the following value,
-    which is not an enumerable set:
-    <<<<1, 2>>>>
+    1000:1 
     2176:0 Applying TransitiveClosure to the following value,
     which is not an enumerable set:
     <<<<1, 2>>>>
@@ -73,9 +67,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2176:0 Applying TransitiveClosure to the following value,
-    which is not an enumerable set:
-    <<<<1, 2>>>>
+    1000:1 
     2176:0 Applying TransitiveClosure to the following value,
     which is not an enumerable set:
     <<<<1, 2>>>>

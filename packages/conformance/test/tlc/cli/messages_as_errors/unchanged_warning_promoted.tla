@@ -23,10 +23,8 @@ Inv == ENABLED A
 all:
   exit: 75
   transcript: |-
-    2143:0 The variable x was changed while it is specified as UNCHANGED at
-    line 17, col 26 to line 17, col 26 of module unchanged_warning_promoted
-    | While working on the initial state:
-    | x = 0
+    2102:1 While working on the initial state:
+    x = 0
     2143:0 The variable x was changed while it is specified as UNCHANGED at
     line 17, col 26 to line 17, col 26 of module unchanged_warning_promoted
     2103:1 The error occurred when TLC was evaluating the nested

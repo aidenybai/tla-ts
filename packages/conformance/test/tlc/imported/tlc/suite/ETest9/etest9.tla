@@ -29,9 +29,7 @@ all:
   exit: 75
   transcript: |-
     | "Should report error here"  TRUE
-    2158:0 Attempted to check if the value:
-    "a"
-    is an element of Nat.
+    1000:1 
     2158:0 Attempted to check if the value:
     "a"
     is an element of Nat.

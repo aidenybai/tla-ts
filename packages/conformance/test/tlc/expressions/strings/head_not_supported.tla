@@ -13,15 +13,13 @@ Test == Head("abc") = "a"
 assume:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    "abc"
+    2105:1 Evaluating assumption line 10, col 8 to line 10, col 11 of module head_not_supported failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     "abc"
 init:
   exit: 75
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    "abc"
+    1000:1 
     2283:0 The argument of Head should be a sequence, but instead it is:
     "abc"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -47,8 +45,7 @@ next:
 invariant:
   exit: 75
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    "abc"
+    1000:1 
     2283:0 The argument of Head should be a sequence, but instead it is:
     "abc"
     2103:1 The error occurred when TLC was evaluating the nested
@@ -61,8 +58,7 @@ invariant:
 property:
   exit: 75
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    "abc"
+    1000:1 
     2283:0 The argument of Head should be a sequence, but instead it is:
     "abc"
     2103:1 The error occurred when TLC was evaluating the nested

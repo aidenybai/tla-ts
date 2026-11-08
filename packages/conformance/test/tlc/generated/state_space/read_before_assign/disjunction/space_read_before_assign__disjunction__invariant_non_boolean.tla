@@ -25,8 +25,7 @@ Inv == 1
 all:
   exit: 75
   transcript: |-
-    2280:0 In evaluation, the identifier y is either undefined or not an operator.
-    line 18, col 13 to line 18, col 13 of module space_read_before_assign__disjunction__invariant_non_boolean
+    1000:1 
     2280:0 In evaluation, the identifier y is either undefined or not an operator.
     line 18, col 13 to line 18, col 13 of module space_read_before_assign__disjunction__invariant_non_boolean
     2103:1 The error occurred when TLC was evaluating the nested
