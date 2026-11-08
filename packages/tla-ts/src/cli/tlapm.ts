@@ -5,7 +5,7 @@ import { availableParallelism } from "node:os";
 import { TlaProofError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import type { LineRange } from "../obligations/generate";
-import { getAtPrefix, getLocusText } from "../obligations/expression";
+import { getAtPrefix, getLocusText, type ObligationWarning } from "../obligations/expression";
 import {
   formatSummary,
   getObligations,
@@ -162,9 +162,17 @@ const printAttempt = (
     ...(attempt.isProved
       ? []
       : [
-          `obl:${attempt.isReused ? "" : `\n${attempt.note ?? ""}`}${attempt.shipped ?? formatNormalized(obligation, attempt.isReused, { ...printing, isTemporal: attempt.method.prover === "ls4" })}`,
+          `obl:${attempt.isReused ? "" : (attempt.note ?? "\n")}${attempt.shipped ?? formatNormalized(obligation, attempt, { ...printing, isTemporal: attempt.method.prover === "ls4" })}`,
         ]),
   ]);
+};
+
+const printWarning = (warning: ObligationWarning, isToolbox: boolean) => {
+  if (warning.channel === "stdout") return console.log(warning.text);
+  const isToolboxMessage = warning.channel === "toolbox" || warning.channel === "toolboxOnly";
+  if (isToolbox && isToolboxMessage)
+    return printToolboxMessage(["type:warning", `msg:${warning.text}`]);
+  if (warning.channel !== "toolboxOnly") console.error(warning.text);
 };
 
 // Method.Fail, for an error obligation or one no method was tried on.
@@ -248,9 +256,7 @@ const proveModule = async (
         if (attempt.errorOutput !== undefined) process.stdout.write(attempt.errorOutput);
         if (attempt.warning !== undefined) process.stderr.write(`${attempt.warning}\n`);
       });
-      if (report.error !== undefined && settings.isToolbox)
-        printToolboxMessage(["type:warning", `msg:${report.error}`]);
-      if (report.error !== undefined && !settings.isToolbox) console.error(report.error);
+      report.warnings.forEach((warning) => printWarning(warning, settings.isToolbox));
       if (!settings.isToolbox) return;
       if (report.obligation.status === "trivial")
         return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
@@ -391,12 +397,7 @@ export const runTlapm = async (args: string[]) => {
             errorSetting.message = `${warning.text}\n\n${errorSetting.message}`;
             return;
           }
-          if (warning.channel === "stdout") return console.log(warning.text);
-          const isToolboxMessage =
-            warning.channel === "toolbox" || warning.channel === "toolboxOnly";
-          if (isToolbox && isToolboxMessage)
-            return printToolboxMessage(["type:warning", `msg:${warning.text}`]);
-          if (warning.channel !== "toolboxOnly") console.error(warning.text);
+          printWarning(warning, isToolbox);
         },
       },
     );

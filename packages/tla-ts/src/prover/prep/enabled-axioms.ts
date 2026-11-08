@@ -9,10 +9,13 @@ import {
   adjoinAll,
   getScopeAt,
   mapScoped,
+  getAtPrefix,
   type Builtin,
   type Expr,
+  type Locus,
   type Scope,
   type Sequent,
+  type Warn,
 } from "../../obligations/expression";
 import { getLevelInfo } from "../../obligations/levels";
 
@@ -138,7 +141,11 @@ const getRule = (scope: Scope | undefined, goal: Expr): Rule | undefined => {
 // implication_to_enabled: the goal follows by the rule its form calls for when a visible fact is
 // the rule's premise and others say that both operands are in BOOLEAN, or the premise is an
 // equivalence. The goal then becomes TRUE; otherwise tlapm records the obligation as not tried.
-export const implicationToEnabled = (sequent: Sequent): Sequent => {
+export const implicationToEnabled = (
+  sequent: Sequent,
+  locus: Locus | undefined,
+  onWarning: Warn,
+): Sequent => {
   const goalScope = adjoinAll(undefined, sequent.context);
   const rule = getRule(goalScope, sequent.active);
   const found = { isPremise: false, isLeftBoolean: false, isRightBoolean: false };
@@ -182,8 +189,9 @@ export const implicationToEnabled = (sequent: Sequent): Sequent => {
       found.isPremise = true;
     }
   });
-  if (!found.isPremise || !found.isLeftBoolean || !found.isRightBoolean) {
+  if (!rule || !found.isPremise || !found.isLeftBoolean || !found.isRightBoolean) {
     throw new TlaProverError("ENABLEDaxioms proof directive did not succeed.\n");
   }
+  onWarning({ text: `${getAtPrefix(locus)}[INFO]\nProved ${rule.name}\n`, channel: "stdout" });
   return { ...sequent, active: TRUE };
 };

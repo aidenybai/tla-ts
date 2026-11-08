@@ -17,7 +17,7 @@ export interface Method {
 }
 
 // The methods that rewrite an obligation in Prep.expand_enabled_cdot instead of proving it.
-const FRONTENDS = new Set([
+export const FRONTENDS = new Set([
   "expandenabled",
   "expandcdot",
   "autouse",
