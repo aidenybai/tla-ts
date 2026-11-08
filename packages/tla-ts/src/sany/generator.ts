@@ -1617,6 +1617,28 @@ export const generateSanySpecification = (
           // SANY leaves the whole application null, without generating its arguments.
           if (isAbsent(functionNode)) return functionNode;
           checkRecursion(functionNode);
+          const operator = functionNode.kind === "OpAppl" ? functionNode.operator : undefined;
+          const body =
+            operator?.kind === "OpDef" && operator.defKind === "UserDefined"
+              ? operator.body
+              : undefined;
+          if (
+            body?.kind === "OpAppl" &&
+            (body.operator.name === "$NonRecursiveFcnSpec" ||
+              body.operator.name === "$RecursiveFcnSpec")
+          ) {
+            const paramCount = (body.bounded ?? []).reduce(
+              (count, params, index) => count + (body.tupleOrs?.[index] ? 1 : params.length),
+              0,
+            );
+            if (expression.args.length >= 2 && paramCount !== expression.args.length) {
+              addError(
+                location,
+                `Function '${operator?.name}' is defined with ${paramCount} parameters, but is applied to ${expression.args.length} arguments.`,
+              );
+              return createNullNode();
+            }
+          }
           const argument =
             expression.args.length === 1
               ? generateExpression(expression.args[0])
