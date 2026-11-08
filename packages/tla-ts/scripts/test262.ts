@@ -217,20 +217,20 @@ const loosen = () => {
     // A parameter or variable whose type inferFromUsage can't infer may hold any value.
     const declared =
       (diagnostic.code === 7006 && ts.isParameter(parent)) ||
-      ((diagnostic.code === 7005 || diagnostic.code === 7034) && ts.isVariableDeclaration(parent))
+      ((diagnostic.code === 7005 || diagnostic.code === 7034) &&
+        ts.isVariableDeclaration(parent)) ||
+      (diagnostic.code === 7008 && ts.isPropertyDeclaration(parent))
         ? parent
         : undefined;
     if (
       declared !== undefined &&
       declared.type === undefined &&
-      ts.isIdentifier(declared.name) &&
+      (ts.isIdentifier(declared.name) || ts.isPrivateIdentifier(declared.name)) &&
       declared.name === node
     ) {
       const isRest = ts.isParameter(declared) && declared.dotDotDotToken !== undefined;
-      const end =
-        ts.isParameter(declared) && declared.questionToken !== undefined
-          ? declared.questionToken.getEnd()
-          : declared.name.getEnd();
+      const token = ts.isVariableDeclaration(declared) ? undefined : declared.questionToken;
+      const end = token === undefined ? declared.name.getEnd() : token.getEnd();
       edits.set(end, isRest ? ": unknown[]" : ": unknown");
     }
     // A function that reads this may be a constructor, whose instance gets any property.
