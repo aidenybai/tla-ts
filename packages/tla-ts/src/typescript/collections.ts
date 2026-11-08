@@ -55,6 +55,12 @@ interface Update {
 const getCallback = (callback: ts.Expression, context: Context) => {
   const callee = getCallee(callback, context);
   if (callee?.body === undefined) throw new TlaTypeScriptError("Pass a function here", callback);
+  const unbound = callee.parameters.find(
+    (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
+  );
+  if (unbound !== undefined) {
+    throw new TlaTypeScriptError("A callback's parameters can't have defaults or rest", unbound);
+  }
   return { parameters: callee.parameters, body: callee.body };
 };
 
@@ -92,28 +98,27 @@ const bindElement = (callback: ts.Expression, scope: Scope, context: Context): E
   return { variable, scope: bindNames(scope, [{ name: variable, symbol }]) };
 };
 
-// Binds a callback's (element, index) parameters for the TLA+ index of a sequence, which counts
-// from 1 where JavaScript counts from 0.
+// Binds a callback's (element, index, array) parameters for the TLA+ index of a sequence, which
+// counts from 1 where JavaScript counts from 0.
 const bindIndexed = (
   callback: ts.Expression,
-  element: Expression | undefined,
+  sequence: Expression | undefined,
   position: Expression,
   scope: Scope,
   context: Context,
 ) => {
   const parameters = getCallback(callback, context).parameters;
-  const withElement =
-    element === undefined || parameters[0] === undefined
-      ? scope
-      : bindPatternInline(parameters[0].name, element, scope, context);
-  return parameters[1] === undefined
-    ? withElement
-    : bindPatternInline(
-        parameters[1].name,
-        apply("-", [position, number(1)]),
-        withElement,
-        context,
-      );
+  const bindings = [
+    sequence === undefined ? undefined : index(sequence, [position]),
+    apply("-", [position, number(1)]),
+    sequence,
+  ];
+  return parameters.reduce((current, parameter, position) => {
+    const value = bindings[position];
+    return value === undefined
+      ? current
+      : bindPatternInline(parameter.name, value, current, context);
+  }, scope);
 };
 
 const getDomain = (value: Expression) => apply("DOMAIN", [value]);
@@ -340,13 +345,7 @@ const translateFirstIndex = (
   const getTest = (position: string) =>
     translateTest(
       callback,
-      bindIndexed(
-        callback,
-        index(sequence, [identifier(position)]),
-        identifier(position),
-        scope,
-        context,
-      ),
+      bindIndexed(callback, sequence, identifier(position), scope, context),
       context,
     );
   const position = context.names.getFresh("index");
@@ -391,13 +390,7 @@ const translateSequenceOperation = (
     ) =>
     () => {
       const position = context.names.getFresh("index");
-      const inner = bindIndexed(
-        argument,
-        index(sequence, [identifier(position)]),
-        identifier(position),
-        scope,
-        context,
-      );
+      const inner = bindIndexed(argument, sequence, identifier(position), scope, context);
       return format(
         [bound(position, getDomain(sequence))],
         translateElement(argument, inner, context),
@@ -531,12 +524,33 @@ const translateSequenceOperation = (
     [
       "filter",
       () => {
-        rejectIndex(argument, "filter() can't take an index", context);
-        const element = bindElement(argument, scope, context);
-        return apply("SelectSeq", [
-          sequence,
-          lambda([element.variable], translateTest(argument, element.scope, context)),
+        if (getCallback(argument, context).parameters.length < 2) {
+          const element = bindElement(argument, scope, context);
+          return apply("SelectSeq", [
+            sequence,
+            lambda([element.variable], translateTest(argument, element.scope, context)),
+          ]);
+        }
+        // SelectSeq tests only elements, so this selects the indices that pass and maps them back.
+        const position = context.names.getFresh("index");
+        const selected = apply("SelectSeq", [
+          functionOf([bound(position, getDomain(sequence))], identifier(position)),
+          lambda(
+            [position],
+            translateTest(
+              argument,
+              bindIndexed(argument, sequence, identifier(position), scope, context),
+              context,
+            ),
+          ),
         ]);
+        return share(selected, "selected", context, (indices) => {
+          const kept = context.names.getFresh("index");
+          return functionOf(
+            [bound(kept, getDomain(indices))],
+            index(sequence, [index(indices, [identifier(kept)])]),
+          );
+        });
       },
     ],
     [

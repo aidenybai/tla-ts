@@ -100,6 +100,8 @@ const CASES: [string, string][] = [
     "class Box { size = 1; grow() { count++; } } new Box().grow();",
   ],
   ["a conversion to a fraction", "count = Number('1.5');"],
+  ["a callback parameter with a default", "count = [undefined].map((value = 1) => value)[0];"],
+  ["a callback rest parameter", "count = [1].map((...values) => values.length)[0];"],
   ["a conversion whose type is unknown", "const value: unknown = count; label = String(value);"],
   ["an unknown call in a callback", "values = values.map(() => Math.random());"],
   ["a test that doesn't return a boolean", "values = values.filter((value) => value);"],
