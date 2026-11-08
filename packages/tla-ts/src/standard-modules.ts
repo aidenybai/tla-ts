@@ -27,6 +27,8 @@ import { createTlcOperators } from "./tlc/tlc-operators";
 import { TLC_JAVA_METHODS } from "./tlc/jar-data";
 import {
   createSet,
+  createSortedSet,
+  compareValues,
   describeKind,
   createTuple,
   getSortedDifference,
@@ -186,9 +188,27 @@ export const CORE_OPERATORS: Builtin[] = [
         // The merge compares the elements, which TLC tests for membership one by one instead.
         return computeLikeTlcOnFailure(
           (finiteLeft, finiteRight) => {
-            const merged = merge(toFiniteSet(finiteLeft), toFiniteSet(finiteRight));
-            if (operator !== "\\cup" && merged !== finiteLeft) {
-              merged.isNormalized = isNormalizedReducible(finiteLeft);
+            const leftSet = toFiniteSet(finiteLeft);
+            const rightSet = toFiniteSet(finiteRight);
+            const merged = merge(leftSet, rightSet);
+            if (operator === "\\cup") {
+              // TLC appends the right set's new elements to the left set's, unsorted.
+              const written = getWrittenElements(leftSet);
+              const added = getSortedDifference(rightSet, leftSet).elements;
+              const isSorted =
+                written === leftSet.elements &&
+                (added.length === 0 || compareValues(written[written.length - 1], added[0]) < 0);
+              if (isSorted && !leftSet.isNormalized) return merged;
+              const union = merged === leftSet ? createSortedSet(merged.elements) : merged;
+              if (!isSorted) union.writtenElements = [...written, ...added];
+              return union;
+            }
+            if (merged === finiteLeft) return merged;
+            merged.isNormalized = isNormalizedReducible(finiteLeft);
+            if (leftSet.writtenElements && !leftSet.isNormalized) {
+              merged.writtenElements = leftSet.writtenElements.filter((element) =>
+                isElementOf(element, merged),
+              );
             }
             return merged;
           },
