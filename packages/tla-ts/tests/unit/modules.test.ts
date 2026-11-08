@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue, TlaConfigError, TlaSyntaxError } from "../../src";
@@ -16,7 +16,10 @@ const checkFixture = (name: string, configName = `${name}.cfg`) =>
   check({
     source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
-    loadModule: (module) => readFileSync(join(DIRECTORY, `${module}.tla`), "utf8"),
+    loadModule: (module) => {
+      const path = join(DIRECTORY, `${module}.tla`);
+      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+    },
   });
 
 const checkSource = (body: string, modules: Record<string, string> = {}) =>
