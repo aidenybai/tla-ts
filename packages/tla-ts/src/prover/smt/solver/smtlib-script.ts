@@ -14,6 +14,7 @@ import {
   OP_IDIV,
   OP_MOD,
   OP_MUL,
+  OP_IMPLIES,
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
@@ -34,7 +35,7 @@ import {
   type SmtList,
   type SmtlibReader,
 } from "./smtlib-parser";
-import { getVerdict, solveAssertions } from "./solver";
+import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import type { Context } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { printModel } from "./model-printer";
@@ -222,12 +223,15 @@ interface CheckResult {
   context: Context | undefined;
   isOptimizing: boolean;
   model: ProtoModel | undefined;
+  core: number[] | undefined;
 }
 
 interface ScriptState {
   manager: AstManager;
   reader: SmtlibReader;
   assertions: number[];
+  // The answer literal of each assertion, or -1 for an assertion without a name.
+  names: number[];
   objectives: number[];
   scopes: Scope[];
   check: CheckResult | undefined;
@@ -260,6 +264,7 @@ export const runSmtlibScript = (
       manager,
       reader: createSmtlibReader(manager, undefined, settings.parserOptions),
       assertions: [],
+      names: [],
       objectives: [],
       scopes: [],
       check: undefined,
@@ -275,7 +280,7 @@ export const runSmtlibScript = (
   const display = (expr: number) => print(format(expr));
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
-  const checkSat = (extra: number[]) => {
+  const checkSat = (extra: number[], isTactic = false) => {
     const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
@@ -288,21 +293,39 @@ export const runSmtlibScript = (
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     try {
-      const solved = solveAssertions(
-        state.manager,
-        [...state.assertions, ...extra],
-        settings.isMbqi,
-      );
+      const manager = state.manager;
+      const names = state.names.filter((name) => name !== -1);
+      const isNamed = names.length > 0 && !isTactic;
+      const solved =
+        isNamed || extra.length > 0
+          ? solveAssuming(
+              manager,
+              state.assertions.map((assertion, index) =>
+                isNamed && state.names[index] !== -1
+                  ? manager.mkApp(OP_IMPLIES, [state.names[index], assertion], SORT_BOOL)
+                  : assertion,
+              ),
+              isNamed ? [...names, ...extra] : extra,
+              settings.isMbqi,
+            )
+          : solveAssertions(manager, state.assertions, settings.isMbqi);
       state.check = {
         status: solved.result,
         context: solved.context,
         isOptimizing,
         model: undefined,
+        core: names.length > 0 && isTactic ? undefined : (solved.context?.unsatCore ?? []),
       };
       print(getVerdict(solved.result));
     } catch (error) {
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
-      state.check = { status: L_UNDEF, context: undefined, isOptimizing, model: undefined };
+      state.check = {
+        status: L_UNDEF,
+        context: undefined,
+        isOptimizing,
+        model: undefined,
+        core: undefined,
+      };
       print("unknown");
     } finally {
       state.manager.limit.pop();
@@ -337,14 +360,27 @@ export const runSmtlibScript = (
   };
   const runCommand: Record<string, (list: SmtList) => void> = {
     assert: (list) => {
-      script.state.assertions.push(script.state.reader.parseFormula(list.items[1] ?? list.end));
+      const state = script.state;
+      const assertion = state.reader.parseAssertion(list.items[1] ?? list.end);
+      state.assertions.push(assertion.formula);
+      if (!settings.isProducingUnsatCores || assertion.name === undefined) state.names.push(-1);
+      else {
+        const manager = state.manager;
+        const answer = manager.mkApp(
+          manager.mkFuncDecl(assertion.name, [], SORT_BOOL, true),
+          [],
+          SORT_BOOL,
+        );
+        manager.incRef(answer);
+        state.names.push(answer);
+      }
       clearCheck();
     },
     "check-sat": (list) => checkSat(parseFormulas(list.items.slice(1))),
     "check-sat-using": (list) => {
       if (!isSymbol(list.items[1], "smt") || list.items.length !== 2)
         throw new SmtUnsupportedError("the command check-sat-using");
-      checkSat([]);
+      checkSat([], true);
     },
     "check-sat-assuming": (list) => {
       const literals = list.items[1];
@@ -387,6 +423,7 @@ export const runSmtlibScript = (
       for (let index = 0; index < count; index++) {
         const scope = state.scopes.pop();
         state.assertions.length = scope?.assertions ?? 0;
+        state.names.length = state.assertions.length;
         state.objectives.length = scope?.objectives ?? 0;
         state.reader.pop();
       }
@@ -399,6 +436,7 @@ export const runSmtlibScript = (
       const state = script.state;
       clearCheck();
       state.assertions = [];
+      state.names = [];
       state.objectives = [];
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0 }));
     },
@@ -432,6 +470,18 @@ export const runSmtlibScript = (
           ")",
         ].join("\n"),
       );
+    },
+    "get-unsat-core": (list) => {
+      if (!settings.isProducingUnsatCores)
+        throw new SmtParseError(
+          "unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)",
+          list.end,
+        );
+      const check = script.state.check;
+      if (check === undefined || check.status !== L_FALSE)
+        throw new SmtParseError("unsat core is not available", list.end);
+      if (check.core === undefined) throw new SmtUnsupportedError("the unsat cores of tactics");
+      print(`(${check.core.map(format).join(" ")})`);
     },
     eval: (list) => {
       const target = list.items[1];

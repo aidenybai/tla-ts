@@ -639,6 +639,7 @@ export const createSmtlibReader = (
   ]);
   const funcs = new Map<string, readonly number[]>();
   const macros = new Map<string, Macro>();
+  const lastNamed = { name: "", expr: -1 };
   const notifiedSorts = new Set<number>();
   const undo: (() => void)[] = [];
   const scopeStarts: number[] = [];
@@ -1435,6 +1436,8 @@ export const createSmtlibReader = (
         sexpr,
       ).text;
       manager.incRef(named);
+      lastNamed.name = name;
+      lastNamed.expr = named;
       manager.mkMacro(name, named);
       declare(macros, name, { domain: [], range: manager.sorts[named], body: named });
     }
@@ -1970,6 +1973,13 @@ export const createSmtlibReader = (
     return assertion;
   };
 
+  // An assertion is named when the last name of its term is its own.
+  const parseAssertion = (sexpr: SExpr) => {
+    lastNamed.expr = -1;
+    const formula = parseFormula(sexpr);
+    return { formula, name: lastNamed.expr === formula ? lastNamed.name : undefined };
+  };
+
   const push = () => scopeStarts.push(undo.length);
 
   const pop = () => {
@@ -2004,6 +2014,7 @@ export const createSmtlibReader = (
     declareCommand,
     parseTerm,
     parseFormula,
+    parseAssertion,
     push,
     pop,
     isUsed,

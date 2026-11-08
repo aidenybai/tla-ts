@@ -216,6 +216,26 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("prints the names of an unsat core, as in z3test's t10.smt2", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun p () Bool)",
+        "(declare-fun q () Bool)",
+        "(declare-fun r () Bool)",
+        "(declare-fun s () Bool)",
+        "(declare-fun t () Bool)",
+        "(assert (! (=> p q) :named PQ))",
+        "(assert (! (=> q r) :named QR))",
+        "(assert (! (=> r s) :named RS))",
+        "(assert (! (=> s t) :named ST))",
+        "(assert (! (not (=> q s)) :named NQS))",
+        "(check-sat)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "(QR RS NQS)"]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);

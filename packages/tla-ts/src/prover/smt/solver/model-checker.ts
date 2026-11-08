@@ -71,8 +71,8 @@ class AuxContext {
       if (this.polyAssumption !== -1) manager.decRef(this.polyAssumption);
       this.polyAssumption = assumption;
     }
-    context.initAssumptions(isAssuming ? [this.polyAssumption] : []);
-    const result = context.search();
+    context.initAssumptions(isAssuming ? [this.polyAssumption] : [], this.asserted);
+    const result = context.mkUnsatCore(context.search());
     return result === L_TRUE ? context.getModel() : result === L_FALSE ? "unsat" : "unknown";
   }
 }

@@ -1,6 +1,15 @@
 // Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt.
 import type { AssertedFormulas } from "./asserted-formulas";
-import { AstManager, FAMILY_BASIC, KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE } from "./ast";
+import {
+  AstManager,
+  FAMILY_BASIC,
+  KIND_APP,
+  KIND_QUANTIFIER,
+  KIND_VAR,
+  OP_IMPLIES,
+  OP_ITE,
+  SORT_BOOL,
+} from "./ast";
 import { getCongruenceJustification, isCongruent } from "./cg-table";
 import { BJustification, type Clause, CLS_LEARNED, CLS_TH_LEMMA, HEADER_SIZE } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
@@ -76,6 +85,15 @@ type ModelState =
   | { kind: "proto"; generated: GeneratedModel }
   | { kind: "final"; generated: GeneratedModel; model: ProtoModel };
 
+const isValidAssumption = (manager: AstManager, expr: number) => {
+  if (manager.sorts[expr] !== SORT_BOOL) return false;
+  if (manager.isUninterpretedConst(expr)) return true;
+  if (manager.isNot(expr) && manager.isUninterpretedConst(manager.getArg(expr, 0))) return true;
+  if (manager.kinds[expr] !== KIND_APP || expr === manager.falseExpr) return false;
+  if (expr === manager.trueExpr) return true;
+  return manager.getFamily(expr) !== FAMILY_BASIC && manager.getNumArgs(expr) === 0;
+};
+
 interface SmtParams {
   isMbqi: boolean;
   relevancyLevel: 0 | 2;
@@ -108,6 +126,8 @@ export class Context extends Internalizer {
   private isPhaseCacheOn = true;
   private phaseCounter = 0;
   private finalCheckIndex = 0;
+  private assumptionVars = new Map<BoolVar, number>();
+  unsatCore: number[] = [];
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
@@ -1301,22 +1321,61 @@ export class Context extends Internalizer {
     }
   }
 
-  initAssumptions(assumptions: number[]) {
+  initAssumptions(assumptions: number[], asserted: AssertedFormulas) {
+    this.assumptionVars.clear();
+    this.unsatCore = [];
     if (assumptions.length > 0) {
       this.propagate();
       if (this.isInconsistent()) return;
       this.delInactiveLemmas();
       this.pushScope();
-      for (const assumption of assumptions) {
+      const manager = this.manager;
+      const proxies = assumptions.map((assumption) => {
+        if (isValidAssumption(manager, assumption)) return assumption;
+        const proxy = manager.mkFreshConst(null, SORT_BOOL);
+        asserted.assertExpr(manager.mkApp(OP_IMPLIES, [proxy, assumption], SORT_BOOL));
+        return proxy;
+      });
+      this.internalizeAssertions(asserted);
+      for (const [index, proxy] of proxies.entries()) {
         if (this.isInconsistent()) break;
-        this.internalizeAssertion(assumption, 0);
+        if (proxy === manager.trueExpr) continue;
+        this.internalizeAssertion(proxy, 0);
+        const literal = this.getLiteral(proxy);
+        if (literal === this.trueLiteral || literal === this.falseLiteral) continue;
+        this.assumptionVars.set(getVar(literal), assumptions[index]);
       }
     }
     this.searchLevel = this.scopeLevel;
   }
 
+  isAssumption(boolVar: BoolVar) {
+    return this.assumptionVars.has(boolVar);
+  }
+
+  isTrackingAssumptions() {
+    return this.assumptionVars.size > 0 && this.searchLevel > this.baseLevel;
+  }
+
+  mkUnsatCore(result: number) {
+    if (result !== L_FALSE || !this.isTrackingAssumptions()) return result;
+    const core = new Set<number>();
+    for (const literal of this.conflictResolution.unsatCore) {
+      const assumption = this.assumptionVars.get(getVar(literal));
+      if (assumption !== undefined) core.add(assumption);
+    }
+    this.assumptionVars.clear();
+    this.popToBaseLevel();
+    this.searchLevel = this.baseLevel;
+    this.unsatCore = [...core].sort((left, right) => left - right);
+    return L_FALSE;
+  }
+
   search() {
-    if (this.isInconsistent()) return L_FALSE;
+    if (this.isInconsistent()) {
+      this.resolveConflict();
+      return L_FALSE;
+    }
     this.resetModel();
     for (const theory of this.theories) theory.initSearchEh();
     this.qmanager.initSearchEh();

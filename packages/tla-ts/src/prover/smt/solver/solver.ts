@@ -33,6 +33,25 @@ export const solveAssertions = (manager: AstManager, assertions: number[], isMbq
   return { result, context };
 };
 
+// combined_solver searches with its incremental smt kernel, without the tactic, once the check has
+// assumptions.
+export const solveAssuming = (
+  manager: AstManager,
+  assertions: number[],
+  assumptions: number[],
+  isMbqi = true,
+) => {
+  const asserted = new AssertedFormulas(manager);
+  const context = new Context(manager, { isMbqi, relevancyLevel: 2 });
+  for (const assertion of assertions) asserted.assertExpr(assertion);
+  context.setupContext();
+  context.internalizeAssertions(asserted);
+  context.initAssumptions(assumptions, asserted);
+  const result = context.mkUnsatCore(context.search());
+  manager.limit.release();
+  return { result, context };
+};
+
 export const getVerdict = (result: number): Verdict =>
   result === L_FALSE ? "unsat" : result === L_TRUE ? "sat" : "unknown";
 
