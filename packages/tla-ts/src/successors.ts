@@ -302,7 +302,7 @@ export const getReadLocals = (
 
 // TLC generates a successor for every disjunct and witness that holds, so an expression only
 // checks like a guard when it has neither.
-const hasBranches = (
+export const hasBranches = (
   expression: Expression,
   environment: Environment,
   visited: Set<Definition>,
