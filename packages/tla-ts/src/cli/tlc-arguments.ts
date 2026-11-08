@@ -226,7 +226,9 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
     if (flag === "-config") {
       const path = take();
       if (path === undefined) return reject("Error: expect a file name for -config option.");
-      parsed.configPath = `${path.replace(/\.cfg$/, "")}.cfg`;
+      // MonolithSpecExtractor.getConfig reads a .tla file's embedded configuration.
+      const name = path.replace(/\.cfg$/, "");
+      parsed.configPath = name.endsWith(".tla") ? name : `${name}.cfg`;
       continue;
     }
     if (flag === "-dump") {

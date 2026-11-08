@@ -629,6 +629,20 @@ const createFileDescriber = (
 const printWelcome = (printer: MessagePrinter) =>
   printer.print(MESSAGE_CODE.version, MESSAGE_LEVEL.none, `TLC2 Version ${version} (rev: tla-ts)`);
 
+// MonolithSpecExtractor.config: the lines after the first "---- CONFIG name ----" line, up to a
+// line that starts with "====". The lexer of the configuration needs a newline to end a comment.
+const getEmbeddedConfig = (contents: string, name: string) => {
+  const marker = new RegExp(`^-----*\\s*CONFIG\\s+${RegExp.escape(name)}\\s*-----*$`);
+  const lines = contents.split(/\r?\n/);
+  const start = lines.findIndex((line) => marker.test(line));
+  if (start === -1) return "\n";
+  const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
+  return `${lines
+    .slice(start + 1, end === -1 ? undefined : end)
+    .join("\n")
+    .trim()}\n`;
+};
+
 // TLC.printErrorMsg: TLC says which version it is, then why it can't read its options.
 const printCommandLineError = (printer: MessagePrinter, message: string) => {
   printWelcome(printer);
@@ -782,7 +796,13 @@ const checkSpec = async (
   // when it can't read it.
   const config = (() => {
     try {
-      return parseConfig(readFileSync(configPath, "utf8"), version);
+      const contents = readFileSync(configPath, "utf8");
+      return parseConfig(
+        configPath.endsWith(".tla")
+          ? getEmbeddedConfig(contents, configPath.replaceAll(".tla", ""))
+          : contents,
+        version,
+      );
     } catch (error) {
       if (!(error instanceof TlaConfigError)) throw error;
       return error;
