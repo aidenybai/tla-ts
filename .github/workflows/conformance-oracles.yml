@@ -65,7 +65,7 @@ jobs:
           node-version: 22
           cache: "pnpm"
       - run: |
-          curl -sSL -o z3.zip https://github.com/Z3Prover/z3/releases/download/z3-5.3.2/z3-5.3.2-x64-glibc-2.39.zip
+          curl -fsSL --retry 5 --retry-all-errors -o z3.zip https://github.com/Z3Prover/z3/releases/download/z3-5.3.2/z3-5.3.2-x64-glibc-2.39.zip
           unzip -q z3.zip -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/z3-5.3.2-x64-glibc-2.39/bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
