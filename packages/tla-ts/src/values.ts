@@ -373,9 +373,11 @@ const isOverriddenComparison = (left: Value, right: Value) =>
     right.kind === "SequenceSet"
   );
 
-const createOverriddenComparisonError = (left: Value, right: Value) =>
+const createComparisonError = (left: Value, right: Value) =>
   new TlaEvaluationError(
-    `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right, true)}`,
+    isOverriddenSet(left)
+      ? `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right, true)}`
+      : `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
   );
 
 // TLC implements Nat, Int, STRING, Seq(S), and Any in Java classes that compare only with each
@@ -391,7 +393,7 @@ const compareOverriddenSets = (
       `Attempted to ${verb} the set ${formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true)} with the value:\n${formatValue(right, true)}`,
     );
   }
-  if (!isOverriddenSet(right)) throw createOverriddenComparisonError(left, right);
+  if (!isOverriddenSet(right)) throw createComparisonError(left, right);
   const leftName = left.kind === "InfiniteSet" ? left.name : undefined;
   const rightName = right.kind === "InfiniteSet" ? right.name : undefined;
   if (leftName !== undefined && leftName === rightName) return 0;
@@ -440,10 +442,7 @@ export const compareValues = (left: Value, right: Value): number => {
     }
     const isLeftSet = isSetValue(left);
     if (isLeftSet !== isSetValue(right)) {
-      if (isOverriddenSet(left)) throw createOverriddenComparisonError(left, right);
-      throw new TlaEvaluationError(
-        `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
-      );
+      throw createComparisonError(left, right);
     }
     if (isLeftSet) return compareSets(toFiniteSet(left), toFiniteSet(right));
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
@@ -454,10 +453,7 @@ export const compareValues = (left: Value, right: Value): number => {
   checkModelValueTypes(left, right, false);
   if (isModelValue(left)) return -1;
   if (isModelValue(right)) return 1;
-  if (isOverriddenSet(left)) throw createOverriddenComparisonError(left, right);
-  throw new TlaEvaluationError(
-    `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
-  );
+  throw createComparisonError(left, right);
 };
 
 const modelValues = new Map<string, ModelValue>();
@@ -2683,7 +2679,7 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
 // Print and PrintT print deep copies of their values that IValue#deepNormalize normalized, so the
 // sets they normalize stay as they were outside the print.
 export const formatNormalizedCopies = (values: Value[]) => {
-  const marked: SetValue[] = [];
+  const markedSets: SetValue[] = [];
   const normalize = (value: Value): void => {
     if (typeof value !== "object") return;
     switch (value.kind) {
@@ -2691,7 +2687,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
         value.elements.forEach(normalize);
         if (normalizedSets.has(value)) return;
         normalizedSets.add(value);
-        marked.push(value);
+        markedSets.push(value);
         return;
       case "MixedSet":
         value.elements.forEach(normalize);
@@ -2728,7 +2724,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
     values.forEach(normalize);
     return values.map((value) => formatValue(value, true, true));
   } finally {
-    marked.forEach((set) => normalizedSets.delete(set));
+    markedSets.forEach((set) => normalizedSets.delete(set));
   }
 };
 
