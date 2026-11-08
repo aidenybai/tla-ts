@@ -1,6 +1,3 @@
-// The tlapm backend: runs tlapm on a module and reads each obligation's result from its Toolbox
-// messages.
-
 import { TlaUnsupportedError } from "../../errors";
 
 // Loaded at runtime so browser bundles leave them out. prove loads this module only in Node and Bun.
@@ -53,8 +50,6 @@ const getResult = (fields: Map<string, string>): TlapmResult | undefined => {
   return undefined;
 };
 
-// Runs tlapm with --toolbox 0 0 on the module name, which modules holds with each module it
-// extends or instances, and returns the last result tlapm reported for each obligation.
 export const proveWithTlapm = async (
   name: string,
   modules: Map<string, string>,

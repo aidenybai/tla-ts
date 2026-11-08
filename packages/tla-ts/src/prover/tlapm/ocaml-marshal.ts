@@ -1,5 +1,5 @@
-// OCaml's Marshal format, ported from runtime/intern.c and runtime/extern.c, for the values in
-// tlapm's fingerprints file. It writes no sharing, which OCaml reads the same.
+// OCaml's Marshal format, ported from runtime/intern.c and runtime/extern.c, without sharing, which
+// OCaml reads the same.
 
 import { TlaProofError } from "../../errors";
 
@@ -38,7 +38,6 @@ export const block = (tag: number, ...fields: OcamlValue[]): OcamlBlock => ({ ta
 export const isBlock = (value: OcamlValue): value is OcamlBlock =>
   typeof value === "object" && "tag" in value;
 
-// Returns the value marshaled at offset, and where the next one starts.
 export const readMarshaled = (bytes: Uint8Array, offset: number) => {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.length < offset + HEADER_SIZE || view.getUint32(offset) !== MAGIC_NUMBER_SMALL)

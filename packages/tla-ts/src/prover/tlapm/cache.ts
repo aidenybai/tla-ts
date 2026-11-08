@@ -24,8 +24,7 @@ const MAGIC_NUMBER = 20210223;
 
 const RECORD_SIZE = 23;
 
-// Each prover's field in V13.str and constructor in V13.meth. A constant constructor's tag is the
-// value itself.
+// A constant constructor's tag is the value itself.
 const PROVERS: Record<string, { field: number; tag: number; isConstant?: boolean }> = {
   zenon: { field: 1, tag: 1 },
   isabelle: { field: 2, tag: 0 },
@@ -85,7 +84,7 @@ const readBucket = (entry: OcamlValue | undefined): [OcamlValue, OcamlValue][] =
     ? [[entry.fields[0], entry.fields[1]], ...readBucket(entry.fields[2])]
     : [];
 
-// Fpfile.load_fingerprints. Each bucket lists the latest fingerprint first.
+// Each bucket lists the latest fingerprint first.
 export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: boolean) => {
   const bytes = readFileSync(path);
   const magic = readMarshaled(bytes, 0);
@@ -132,7 +131,7 @@ const decodeResult = (prover: string, result: OcamlValue | undefined): ProofAtte
   };
 };
 
-// Fpfile.fp_writes, whose date counts months from 0.
+// Fpfile.fp_writes counts the date's months from 0.
 const encodeResult = (attempt: ProofAttempt) => {
   const now = new Date();
   const method = attempt.method;
@@ -187,7 +186,6 @@ const encodeTable = (table: FingerprintTable) => {
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
-// Fpfile.fp_init.
 export const saveHistory = (path: string, sources: string[]) => {
   const now = new Date();
   const history = `${path}.history`;
@@ -206,9 +204,8 @@ export const saveHistory = (path: string, sources: string[]) => {
     .forEach((old) => rmSync(old, { recursive: true, force: true }));
 };
 
-// Fpfile.query: what each prover concluded for each fingerprint. Saving them, as fp_writes,
-// add_to_table and fp_close_and_consolidate do, keeps each record and result loaded unchanged, with
-// its date, versions and other provers' results.
+// Saving keeps each loaded record and result unchanged, with its date, versions and other provers'
+// results.
 export const getKnownResults = (table: FingerprintTable) => {
   const storedResults = new Map<ProofAttempt, OcamlValue>();
   const storedRecords = new Map<Map<string, ProofAttempt>, OcamlValue[]>();
