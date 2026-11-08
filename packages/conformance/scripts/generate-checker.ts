@@ -1,6 +1,5 @@
 import { writeTest } from "./generate-common";
 
-// Each initial predicate leaves x and y assigned, along a different path through getInitStates.
 const INITS = [
   { name: "equal", text: "x = 0 /\\ y = 0" },
   { name: "membership", text: "x \\in 0..1 /\\ y \\in {0}" },
@@ -24,7 +23,6 @@ const INITS = [
   { name: "chosen", text: "x = CHOOSE e \\in 0..1 : TRUE /\\ y = 0" },
 ];
 
-// Each action advances the state along a different path through getNextStates.
 const NEXTS = [
   { name: "increment", text: "x' = x /\\ y' = y" },
   { name: "unchanged_tuple", text: "UNCHANGED <<x, y>>" },

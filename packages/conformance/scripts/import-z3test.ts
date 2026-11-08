@@ -1,8 +1,3 @@
-// Ports z3test's SMT-LIB regressions into test/tlapm/backends/z3/z3test, recorded from the pinned
-// Z3. z3test checks a regression by comparing all that Z3 prints with its .expected.out file, so a
-// test is kept only if Z3 prints exactly that, and does so on two runs.
-// Usage: bun scripts/run.ts import-z3test <z3test checkout>
-
 import {
   existsSync,
   mkdirSync,
@@ -19,13 +14,9 @@ import { BACKEND_VERDICTS } from "./tlapm";
 import { formatYaml, parseTest, SUITE_DIRECTORY, writeRecordings } from "./test-file";
 
 const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(2, availableParallelism()));
-// z3test gives each regression 60 seconds (scripts/test_benchmark.py).
 const LIMITS = { milliseconds: 60_000, memoryBytes: 4 * 1024 ** 3 };
 const IMPORT_DIRECTORY = join(SUITE_DIRECTORY, "tlapm/backends/z3/z3test");
-// The directories z3test's harness reads as SMT-LIB regressions. The others hold API tests in C++,
-// C# and Python, which no SMT backend runs.
 const REGRESSION_DIRECTORIES = ["regressions", "old-regressions"];
-// A script that sets a time limit can print a different answer on a slower machine.
 const TIME_DEPENDENT = /:timeout|\btimeout=|\btry-for\b|:soft_timeout/;
 
 const checkout = process.argv[2];

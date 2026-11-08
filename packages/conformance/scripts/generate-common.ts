@@ -17,11 +17,9 @@ export const MODULES = "Integers, Sequences, FiniteSets, Bags, TLC";
 export interface NamedValue {
   name: string;
   text: string;
-  // The class in tlc2/value/impl that TLC represents the value with.
   valueClass: string;
 }
 
-// One value per representation that TLC keeps apart, plus the edge cases each has.
 export const VALUES: NamedValue[] = [
   { name: "true", text: "TRUE", valueClass: "BoolValue" },
   { name: "false", text: "FALSE", valueClass: "BoolValue" },
@@ -81,8 +79,6 @@ export const SET_VALUES = VALUES.filter((value) =>
 
 const written = new Set<string>();
 
-// Leaves a test alone while its metadata and module are unchanged, so that regenerating keeps its
-// recording.
 export const writeTest = (
   path: string,
   metadata: TestMetadata,
@@ -113,8 +109,6 @@ export const removeStaleTests = () =>
     .filter((path) => !written.has(path))
     .forEach((path) => rmSync(path));
 
-// A value printed through PrintT pins its result, its rendering and its order; an error pins the
-// message and the location.
 export const writeValueTest = (
   path: string,
   moduleName: string,

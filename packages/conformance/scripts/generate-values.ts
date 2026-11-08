@@ -6,7 +6,6 @@ interface BinaryOperator {
   render: (left: string, right: string) => string;
 }
 
-// The operators whose result or error depends on both arguments, so every pair can differ.
 const BINARY_OPERATORS: BinaryOperator[] = [
   {
     name: "cup",
@@ -83,7 +82,6 @@ const generateBinaryOperator = (operator: BinaryOperator) =>
     ),
   );
 
-// The integer operators check the left argument first, so only the sets of integers vary the right.
 const ARITHMETIC_OPERATORS = ["+", "-", "*", "\\div", "%", "^", "<", "<=", "..", "/="];
 const ARITHMETIC_NAMES = [
   "plus",

@@ -13,8 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TLAPM_BACKENDS, TLAPM_BINARY, TLAPM_DIRECTORY } from "./tlapm";
 
-// The suite's tlapm oracle. tlapm publishes binaries only as the rolling 1.6.0-pre release, so each
-// platform's digest pins the build and the revision check names it.
 const RELEASES: Record<string, { name: string; sha256: string }> = {
   "darwin-arm64": {
     name: "tlapm-1.6.0-pre-arm64-darwin.tar.gz",
@@ -26,8 +24,7 @@ const RELEASES: Record<string, { name: string; sha256: string }> = {
   },
 };
 const REVISION = "b91fb6c";
-// The release bundles an x86_64 Z3 4.8.9. The recordings come from Z3 5.3.2, the version tla-ts's
-// SMT solver ports, run with tlapm's flags.
+// The release bundles an x86_64 Z3 4.8.9, but the recordings come from Z3 5.3.2.
 const Z3_VERSION = "Z3 version 5.3.2";
 
 const getVersion = (command: string, args: string[]) =>

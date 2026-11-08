@@ -1,8 +1,3 @@
-// Runs a script under Node, as packages/tla-ts/scripts/run.ts does, so tla-ts's backends run at V8's
-// speed. Bun bundles the script and the backend host into .scripts, beside scripts, so paths built
-// from import.meta.dirname resolve as they do from the source.
-// Usage: bun scripts/run.ts <script name> [arguments]
-
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
