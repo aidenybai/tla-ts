@@ -324,6 +324,11 @@ const runTest = async (path: string): Promise<TestRun> => {
     }
     return getFailedRun(id, result.failure?.message ?? result.status);
   } catch (error) {
+    // tla-ts compiles each statement inside the one before it, so thousands of statements, as in
+    // the tests of Unicode identifiers, run out of stack.
+    if (error instanceof RangeError && error.message.includes("Maximum call stack size exceeded")) {
+      return { id, outcome: "untranslatable", reason: "Too many statements to compile" };
+    }
     if (!(error instanceof TlaTypeScriptError)) {
       return getFailedRun(id, String(error));
     }
