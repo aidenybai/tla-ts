@@ -22,8 +22,11 @@ import {
   type Value,
 } from "./values";
 
+// Integers and atoms are distinct classes until a value of one meets a value of the other, which
+// makes both a class of mixed scalars.
 interface IntType {
   kind: "Int";
+  target: IntType | MixType | undefined;
 }
 
 interface BoolType {
@@ -32,6 +35,14 @@ interface BoolType {
 
 interface StrType {
   kind: "Str";
+  target: StrType | MixType | undefined;
+}
+
+// Integers and untyped model values, which TLC compares only for equality. An atom is 2^32 plus its
+// id, so no integer equals it.
+interface MixType {
+  kind: "Mix";
+  target: MixType | undefined;
 }
 
 interface SeqType {
@@ -52,7 +63,7 @@ interface RecType {
 interface FnType {
   kind: "Fn";
   key: Type;
-  keys: Plain[];
+  domain: Value[];
   range: Type;
 }
 
@@ -82,7 +93,8 @@ type Type =
   | FnType
   | SetType
   | VarType
-  | LambdaType;
+  | LambdaType
+  | MixType;
 
 interface Compiled {
   type: Type;
@@ -125,9 +137,12 @@ const DEOPT = { reason: "deopt" };
 // A set of integers holds an integer a mask can't, so sets of integers must be arrays.
 const WIDE = { reason: "wide" };
 
-const INT: IntType = { kind: "Int" };
+const createInt = (): IntType => ({ kind: "Int", target: undefined });
 const BOOL: BoolType = { kind: "Bool" };
-const STR: StrType = { kind: "Str" };
+const createStr = (): StrType => ({ kind: "Str", target: undefined });
+const createMix = (): MixType => ({ kind: "Mix", target: undefined });
+const MAXIMUM_COMPARISONS = 8;
+const ATOM_BASE = 2 ** 32;
 const MASK_BITS = 31;
 const MAXIMUM_INTEGER = 2147483647;
 const MINIMUM_INTEGER = -2147483648;
@@ -144,7 +159,16 @@ const widen = (): never => {
 const createVar = (): VarType => ({ kind: "Var", target: undefined });
 
 const resolveType = (type: Type): Type => {
-  if ((type.kind !== "Var" && type.kind !== "Rec") || type.target === undefined) return type;
+  if (
+    type.kind === "Bool" ||
+    type.kind === "Seq" ||
+    type.kind === "Set" ||
+    type.kind === "Fn" ||
+    type.kind === "Lambda" ||
+    type.target === undefined
+  ) {
+    return type;
+  }
   const target = resolveType(type.target);
   if (type.kind === "Var") type.target = target;
   if (type.kind === "Rec" && target.kind === "Rec") type.target = target;
@@ -177,6 +201,21 @@ const unify = (left: Type, right: Type): void => {
     rightType.target = leftType;
     return;
   }
+  const isLeftScalar =
+    leftType.kind === "Int" || leftType.kind === "Str" || leftType.kind === "Mix";
+  const isRightScalar =
+    rightType.kind === "Int" || rightType.kind === "Str" || rightType.kind === "Mix";
+  if (isLeftScalar && isRightScalar) {
+    const mix: MixType =
+      leftType.kind === "Mix" ? leftType : rightType.kind === "Mix" ? rightType : createMix();
+    if (leftType.kind === rightType.kind) {
+      rightType.target = leftType;
+      return;
+    }
+    if (leftType !== mix) leftType.target = mix;
+    if (rightType !== mix) rightType.target = mix;
+    return;
+  }
   if (leftType.kind !== rightType.kind) return unsupported();
   if (leftType.kind === "Seq" && rightType.kind === "Seq") {
     return unify(leftType.element, rightType.element);
@@ -185,9 +224,7 @@ const unify = (left: Type, right: Type): void => {
     return unify(leftType.element, rightType.element);
   }
   if (leftType.kind === "Fn" && rightType.kind === "Fn") {
-    if (leftType.keys !== rightType.keys && !isSame(leftType.keys, rightType.keys)) {
-      return unsupported();
-    }
+    if (!isSameDomain(leftType.domain, rightType.domain)) return unsupported();
     unify(leftType.key, rightType.key);
     return unify(leftType.range, rightType.range);
   }
@@ -208,8 +245,9 @@ const unify = (left: Type, right: Type): void => {
 const closeType = (type: Type): Type => {
   const resolved = resolveType(type);
   if (resolved.kind === "Var") {
-    resolved.target = INT;
-    return INT;
+    const integer = createInt();
+    resolved.target = integer;
+    return integer;
   }
   if (resolved.kind === "Seq" || resolved.kind === "Set") closeType(resolved.element);
   if (resolved.kind === "Fn") closeType(resolved.range);
@@ -239,10 +277,10 @@ const getIntervalBounds = (elements: Value[]) => {
 };
 
 const getValueType = (value: Value, plains: Plains): Type => {
-  if (typeof value === "number") return INT;
+  if (typeof value === "number") return createInt();
   if (typeof value === "boolean") return BOOL;
-  if (typeof value === "string" || value.kind === "ModelValue") return STR;
-  if (value.kind === "Interval") return { kind: "Set", element: INT };
+  if (typeof value === "string" || value.kind === "ModelValue") return createStr();
+  if (value.kind === "Interval") return { kind: "Set", element: createInt() };
   if (value.kind !== "Function") {
     const element: Type = createVar();
     getElements(value).forEach((inner) => unify(element, getValueType(inner, plains)));
@@ -265,12 +303,10 @@ const getValueType = (value: Value, plains: Plains): Type => {
   return createFnType(value.domain, range, plains);
 };
 
-const getKeyPlain = (key: Value, plains: Plains) =>
-  typeof key === "number"
-    ? key
-    : typeof key === "string" || (typeof key === "object" && key.kind === "ModelValue")
-      ? plains.ids.get(key)
-      : undefined;
+const isSameDomain = (left: Value[], right: Value[]) =>
+  left === right ||
+  (left.length === right.length &&
+    left.every((key, index) => key === right[index] || compareValues(key, right[index]) === 0));
 
 // unify(type, getValueType(value)), building types only where the value doesn't match the type.
 const unifyValue = (type: Type, value: Value, plains: Plains): void => {
@@ -278,7 +314,8 @@ const unifyValue = (type: Type, value: Value, plains: Plains): void => {
   const isMatch =
     (resolved.kind === "Int" && typeof value === "number") ||
     (resolved.kind === "Bool" && typeof value === "boolean") ||
-    (resolved.kind === "Str" && typeof value === "string" && plains.ids.has(value));
+    (resolved.kind === "Str" && typeof value === "string" && plains.ids.has(value)) ||
+    (resolved.kind === "Mix" && typeof value === "number");
   if (isMatch) return;
   if (resolved.kind === "Set" && typeof value === "object" && value.kind !== "Function") {
     return getElements(value).forEach((inner) => unifyValue(resolved.element, inner, plains));
@@ -296,20 +333,24 @@ const unifyValue = (type: Type, value: Value, plains: Plains): void => {
       unifyValue(getFieldType(resolved, name), getField(value, name), plains),
     );
   }
-  const isSameDomain =
+  const isSameFunction =
     resolved.kind === "Fn" &&
     value.functionClass !== "tuple" &&
     value.functionClass !== "record" &&
-    resolved.keys.length === value.domain.length &&
-    value.domain.every((key, index) => getKeyPlain(key, plains) === resolved.keys[index]);
-  if (!isSameDomain) return unify(resolved, getValueType(value, plains));
+    isSameDomain(resolved.domain, value.domain);
+  if (!isSameFunction) return unify(resolved, getValueType(value, plains));
   value.range.forEach((inner) => unifyValue(resolved.range, inner, plains));
 };
 
 const createFnType = (domain: Value[], range: Type, plains: Plains): FnType => {
   const key: Type = createVar();
   domain.forEach((element) => unify(key, getValueType(element, plains)));
-  return { kind: "Fn", key, keys: domain.map((element) => toPlain(element, key, plains)), range };
+  return {
+    kind: "Fn",
+    key,
+    domain,
+    range,
+  };
 };
 
 type Plain = number | boolean | Plain[];
@@ -339,6 +380,10 @@ const getAtom = (plains: Plains, value: Value) => {
   return plains.values.length - 1;
 };
 
+// TLC fails to compare a string with an integer, so a class of mixed scalars holds no strings.
+const getMixedAtom = (plains: Plains, value: Value) =>
+  typeof value === "string" ? unsupported() : ATOM_BASE + getAtom(plains, value);
+
 // Sets of integers that fit a mask are masks. Other sets are arrays in TLC's order.
 const isMask = (type: Type, plains: Plains) => {
   const resolved = resolveType(type);
@@ -354,6 +399,8 @@ const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
   if (resolved.kind === "Int") return typeof value === "number" ? value : unsupported();
   if (resolved.kind === "Bool") return typeof value === "boolean" ? value : unsupported();
   if (resolved.kind === "Str") return getAtom(plains, value);
+  if (resolved.kind === "Mix")
+    return typeof value === "number" ? value : getMixedAtom(plains, value);
   if (resolved.kind === "Set") {
     if (!isMask(resolved, plains)) {
       return getElements(value).map((inner) => toPlain(inner, resolved.element, plains));
@@ -395,6 +442,7 @@ interface Program {
   comparers: { names: Map<Type, string>; functions: string[] };
   // For each function lookup, the position of each key less the least key, or -1.
   indexes: Int32Array[];
+  lookups: Map<number, { key: Plain; position: number }[]>[];
   variableTypes: Type[];
   names: { count: number };
   inlining: Definition[];
@@ -443,6 +491,7 @@ const getCompareCode = (program: Program, type: Type, left: string, right: strin
   const resolved = closeType(type);
   if (resolved.kind === "Int" || resolved.kind === "Bool") return `(${left}) - (${right})`;
   if (resolved.kind === "Str") return `R[${left}] - R[${right}]`;
+  if (resolved.kind === "Mix") return `H.compareMixed(R, ${left}, ${right})`;
   if (resolved.kind === "Set" && isMask(resolved, program.plains)) {
     return `H.compareMasks(${left}, ${right})`;
   }
@@ -511,23 +560,19 @@ const getFieldIndexCode = (program: Program, type: Type, field: string, code: st
 };
 
 // The position of a key in a function's array.
-// The keys are plains from before the key type was known, which a later shape would change.
-const getKeys = (type: FnType) => {
-  const key = resolveType(type.key);
-  return key.kind === "Rec" && key.shapes.length > 1 ? unsupported() : type.keys;
-};
+const getKeys = (program: Program, type: FnType) =>
+  type.domain.map((element) => toPlain(element, type.key, program.plains));
 
 const getIndexCode = (program: Program, type: FnType, code: string) => {
-  const keys = getKeys(type);
+  const keys = getKeys(program, type);
   if (keys.every((key) => typeof key === "number")) {
     const least = Math.min(...keys);
     if (keys.every((key, index) => key === least + index)) return `(${code}) - ${least}`;
   }
-  // Tuples of integers index a table over the box that holds them, as numbers do.
+  // Tuples of integers index a table over the box that holds them, as numbers do. Other keys are
+  // looked up by hash.
   const rows = keys.map((key) => (Array.isArray(key) ? key : [key]));
-  if (!rows.every((row) => row.length === rows[0].length && row.every(Number.isInteger))) {
-    return unsupported();
-  }
+  const isBoxed = rows.every((row) => row.length === rows[0].length && row.every(Number.isInteger));
   const columns = rows[0].map((_, column) => {
     const values = rows.map((row) => Number(row[column]));
     return { low: Math.min(...values), size: Math.max(...values) - Math.min(...values) + 1 };
@@ -535,7 +580,14 @@ const getIndexCode = (program: Program, type: FnType, code: string) => {
   const strides = columns.map((_, column) =>
     columns.slice(column + 1).reduce((product, next) => product * next.size, 1),
   );
-  if (strides[0] * columns[0].size > MAXIMUM_BITMAP) return unsupported();
+  if (!isBoxed || strides[0] * columns[0].size > MAXIMUM_BITMAP) {
+    const lookup = new Map<number, { key: Plain; position: number }[]>();
+    keys.forEach((key, position) => {
+      const hash = hashPlain(key);
+      lookup.set(hash, [...(lookup.get(hash) ?? []), { key, position }]);
+    });
+    return `H.position(L[${program.lookups.push(lookup) - 1}], ${code})`;
+  }
   const index = new Int32Array(strides[0] * columns[0].size).fill(-1);
   rows.forEach((row, position) => {
     index[
@@ -720,6 +772,16 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
   return unsupported();
 };
 
+// TLC fails to do arithmetic on, or order, a model value, which a class of mixed scalars may hold.
+const expectInt = (compiled: Compiled): Compiled => {
+  unify(compiled.type, createInt());
+  return {
+    type: compiled.type,
+    emit: () =>
+      resolveType(compiled.type).kind === "Mix" ? `H.int(${compiled.emit()})` : compiled.emit(),
+  };
+};
+
 const expectType = (compiled: Compiled, type: Type) => {
   unify(compiled.type, type);
   return compiled;
@@ -747,7 +809,7 @@ const compileBound = (
     const value = evaluateConstant(program, setExpression);
     if (typeof value === "object" && value.kind === "Interval") {
       return {
-        element: INT,
+        element: createInt(),
         header: (name) => `for (let ${name} = ${value.low}; ${name} <= ${value.high}; ${name}++)`,
       };
     }
@@ -770,10 +832,10 @@ const compileBound = (
     !program.environment.definitions.has("..")
   ) {
     const [low, high] = setExpression.args.map((arg) =>
-      expectType(compileValue(program, arg, frame), INT),
+      expectInt(compileValue(program, arg, frame)),
     );
     return {
-      element: INT,
+      element: createInt(),
       header: (name) => {
         const end = getName(program, "e");
         return `for (let ${name} = ${low.emit()}, ${end} = ${high.emit()}; ${name} <= ${end}; ${name}++)`;
@@ -870,13 +932,13 @@ const compileMembership = (
   if (isConstantExpression(program, setExpression, frame.scope)) {
     const value = evaluateConstant(program, setExpression);
     if (typeof value === "object" && value.kind === "InfiniteSet") {
-      unify(element.type, INT);
-      if (value.name === "Nat") return { type: BOOL, emit: () => `(${element.emit()}) >= 0` };
-      if (value.name === "Int") return { type: BOOL, emit: () => "true" };
+      const integer = expectInt(element);
+      if (value.name === "Nat") return { type: BOOL, emit: () => `(${integer.emit()}) >= 0` };
+      if (value.name === "Int") return { type: BOOL, emit: () => `((${integer.emit()}), true)` };
       return unsupported();
     }
     if (typeof value === "object" && value.kind === "Interval") {
-      unify(element.type, INT);
+      unify(element.type, createInt());
       return {
         type: BOOL,
         emit: () => {
@@ -914,14 +976,18 @@ const compileMembership = (
         const code = `B[${program.bitmaps.push(bitmap.bits) - 1}]`;
         return `(${name}) => ${isInRange.join(" && ")} && ${code}[${offset.join(" + ")}] === 1`;
       }
+      const isScalar = type.kind === "Int" || type.kind === "Str" || type.kind === "Mix";
+      if (isScalar && plains.length <= MAXIMUM_COMPARISONS) {
+        return `(${name}) => ${plains.map((plain) => `${name} === ${plain}`).join(" || ")}`;
+      }
       const buckets = new Map<number, Plain[]>();
       plains.forEach((plain) => {
         const hash = hashPlain(plain);
         buckets.set(hash, [...(buckets.get(hash) ?? []), plain]);
       });
       const code = `S[${program.constantSets.push(buckets) - 1}]`;
-      // An integer is its own hash.
-      return type.kind === "Int"
+      // A scalar is its own hash.
+      return isScalar
         ? `(${name}) => ${code}.has(${name})`
         : `(${name}) => H.isIn(${code}, ${name})`;
     });
@@ -1008,7 +1074,7 @@ const compileApplication = (
     };
   }
   if (type.kind === "Seq") {
-    unify(argument.type, INT);
+    unify(argument.type, createInt());
     return {
       type: type.element,
       emit: () => `H.at(${functionCode.emit()}, (${argument.emit()}) - 1)`,
@@ -1039,7 +1105,7 @@ const compileExcept = (
         steps.push(() => getIndexCode(program, resolved, argument.emit()));
         return resolved.range;
       }
-      unify(argument.type, INT);
+      unify(argument.type, createInt());
       if (resolved.kind === "Seq") {
         steps.push(() => `(${argument.emit()}) - 1`);
         return resolved.element;
@@ -1132,6 +1198,7 @@ const compileBuiltin = (
           type.kind === "Int" ||
           type.kind === "Bool" ||
           type.kind === "Str" ||
+          type.kind === "Mix" ||
           (type.kind === "Set" && isMask(type, program.plains))
         );
       };
@@ -1150,22 +1217,18 @@ const compileBuiltin = (
     }
     const arithmetic = ARITHMETIC.get(operator);
     if (arithmetic) {
-      unify(left.type, INT);
-      unify(right.type, INT);
       return binary(
-        left,
-        right,
-        INT,
+        expectInt(left),
+        expectInt(right),
+        createInt(),
         (leftCode, rightCode) => `${arithmetic}(${leftCode}, ${rightCode})`,
       );
     }
     const comparison = COMPARISONS.get(operator);
     if (comparison) {
-      unify(left.type, INT);
-      unify(right.type, INT);
       return binary(
-        left,
-        right,
+        expectInt(left),
+        expectInt(right),
         BOOL,
         (leftCode, rightCode) => `(${leftCode}) ${comparison} (${rightCode})`,
       );
@@ -1206,10 +1269,8 @@ const compileBuiltin = (
       return compileSubset(program, left, right);
     }
     if (operator === "..") {
-      unify(left.type, INT);
-      unify(right.type, INT);
-      const type: SetType = { kind: "Set", element: INT };
-      return binary(left, right, type, (leftCode, rightCode) =>
+      const type: SetType = { kind: "Set", element: createInt() };
+      return binary(expectInt(left), expectInt(right), type, (leftCode, rightCode) =>
         isMask(type, program.plains)
           ? `H.range(${leftCode}, ${rightCode})`
           : `H.interval(${leftCode}, ${rightCode})`,
@@ -1242,13 +1303,13 @@ const compileBuiltin = (
       return { type: BOOL, emit: () => `!(${operand.emit()})` };
     }
     if (operator === "-.") {
-      unify(operand.type, INT);
-      return { type: INT, emit: () => `H.subtract(0, ${operand.emit()})` };
+      const integer = expectInt(operand);
+      return { type: createInt(), emit: () => `H.subtract(0, ${integer.emit()})` };
     }
     const sequence: Type = createVar();
     if (operator === "Len") {
       unify(operand.type, { kind: "Seq", element: sequence });
-      return { type: INT, emit: () => `(${operand.emit()}).length` };
+      return { type: createInt(), emit: () => `(${operand.emit()}).length` };
     }
     if (operator === "Head") {
       unify(operand.type, { kind: "Seq", element: sequence });
@@ -1261,7 +1322,7 @@ const compileBuiltin = (
     if (operator === "Cardinality") {
       getSetElement(operand);
       return {
-        type: INT,
+        type: createInt(),
         emit: () =>
           isMask(operand.type, program.plains)
             ? `H.count(${operand.emit()})`
@@ -1276,7 +1337,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
   switch (expression.kind) {
     case "Number":
       return expression.value <= MAXIMUM_INTEGER
-        ? { type: INT, emit: () => String(expression.value) }
+        ? { type: createInt(), emit: () => String(expression.value) }
         : unsupported();
     case "String":
       return compileConstant(program, expression.value);
@@ -1516,7 +1577,8 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       );
       return {
         type,
-        emit: () => `${addConstant(program, getKeys(type))}.map((${name}) => ${body.emit()})`,
+        emit: () =>
+          `${addConstant(program, getKeys(program, type))}.map((${name}) => ${body.emit()})`,
       };
     }
     case "Except":
@@ -1541,7 +1603,7 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
   if (hasPrime(expression)) return unsupported();
   const getWays = (inner: Expression, scope: TierScope) =>
     compileWays(program, inner, { ...frame, scope });
-  const counted = (emit: () => string): Compiled => ({ type: INT, emit });
+  const counted = (emit: () => string): Compiled => ({ type: createInt(), emit });
   switch (expression.kind) {
     case "Or": {
       const operands = expression.operands.map((operand) => getWays(operand, frame.scope));
@@ -1884,9 +1946,13 @@ const writeScalar = (bytes: Bytes, scalar: number) => {
 // Initial states are kept as bytes, while their types are still open, and read back as plains once
 // the types are known.
 const writeValue = (bytes: Bytes, value: Value, plains: Plains): void => {
-  if (typeof value === "number") return writeScalar(bytes, value);
   if (typeof value === "boolean") return writeScalar(bytes, value ? 1 : 0);
+  if (typeof value === "number") {
+    writeScalar(bytes, 0);
+    return writeScalar(bytes, value);
+  }
   if (typeof value === "string" || value.kind === "ModelValue") {
+    writeScalar(bytes, 1);
     return writeScalar(bytes, getAtom(plains, value));
   }
   const items = value.kind === "Function" ? value.range : getElements(value);
@@ -1920,7 +1986,12 @@ const readScalar = (cursor: Cursor) => {
 const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
   const resolved = resolveType(type);
   if (resolved.kind === "Bool") return readScalar(cursor) === 1;
-  if (resolved.kind === "Int" || resolved.kind === "Str") return readScalar(cursor);
+  if (resolved.kind === "Int" || resolved.kind === "Str" || resolved.kind === "Mix") {
+    const isAtom = readScalar(cursor) === 1;
+    const scalar = readScalar(cursor);
+    if (resolved.kind !== "Mix" || !isAtom) return scalar;
+    return getMixedAtom(plains, plains.values[scalar]);
+  }
   const length = readScalar(cursor);
   if (resolved.kind === "Rec") {
     const names: string[] = [];
@@ -1933,7 +2004,9 @@ const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
   }
   if (resolved.kind === "Set" && isMask(resolved, plains)) {
     let mask = 0;
-    for (let index = 0; index < length; index++) mask |= HELPERS.bit(readScalar(cursor));
+    for (let index = 0; index < length; index++) {
+      mask |= HELPERS.bit(Number(readPlain(cursor, resolved.element, plains)));
+    }
     return mask;
   }
   const element =
@@ -2014,6 +2087,15 @@ const HELPERS = {
   has: (mask: number, element: number) =>
     element >= 0 && element < MASK_BITS && ((mask >>> element) & 1) !== 0,
   count: countBits,
+  int: (value: number) => (value < ATOM_BASE ? value : deopt()),
+  // TLC orders a model value before any other value.
+  compareMixed: (ranks: Int32Array, left: number, right: number) => {
+    const isLeftAtom = left >= ATOM_BASE;
+    const isRightAtom = right >= ATOM_BASE;
+    if (isLeftAtom && isRightAtom) return ranks[left - ATOM_BASE] - ranks[right - ATOM_BASE];
+    if (isLeftAtom || isRightAtom) return isLeftAtom ? -1 : 1;
+    return left - right;
+  },
   compareMasks: (left: number, right: number) => {
     const sizes = countBits(left) - countBits(right);
     const difference = left ^ right;
@@ -2059,6 +2141,8 @@ const HELPERS = {
     mergeSets(compare, left, right, INTERSECTION),
   difference: (compare: Comparer, left: Plain[], right: Plain[]) =>
     mergeSets(compare, left, right, DIFFERENCE),
+  position: (lookup: Map<number, { key: Plain; position: number }[]>, key: Plain) =>
+    lookup.get(hashPlain(key))?.find((entry) => isSame(entry.key, key))?.position ?? -1,
   isIn: (buckets: Map<number, Plain[]>, plain: Plain) =>
     buckets.get(hashPlain(plain))?.some((item) => isSame(item, plain)) === true,
   grow: growBytes,
@@ -2071,19 +2155,20 @@ const MAXIMUM_SCALAR_BYTES = 6;
 const getFixedSize = (type: Type): number => {
   const resolved = resolveType(type);
   if (resolved.kind === "Seq" || resolved.kind === "Set") return 1;
+  if (resolved.kind === "Mix") return 2;
   if (resolved.kind === "Rec") {
     const sizes = resolved.shapes.map((shape) =>
       shape.reduce((sum, name) => sum + getFixedSize(getFieldType(resolved, name)), 0),
     );
     return Math.max(...sizes) + (sizes.length === 1 ? 0 : 1);
   }
-  if (resolved.kind === "Fn") return resolved.keys.length * getFixedSize(resolved.range);
+  if (resolved.kind === "Fn") return resolved.domain.length * getFixedSize(resolved.range);
   return 1;
 };
 
 const getParts = (type: Type): Type[] => {
   if (type.kind === "Rec") return type.shapes[0].map((name) => getFieldType(type, name));
-  if (type.kind === "Fn") return type.keys.map(() => type.range);
+  if (type.kind === "Fn") return type.domain.map(() => type.range);
   return unsupported();
 };
 
@@ -2101,6 +2186,9 @@ const getWriter = (codec: Codec, type: Type, code: string): string => {
   if (resolved.kind === "Bool") return `d[n++] = ${code} ? 1 : 0;`;
   if (resolved.kind === "Int" || resolved.kind === "Str" || isMaskType(codec, resolved)) {
     return `t = ${code}; if (t >= 0 && t < 128) d[n++] = t; else n = H.varint(d, n, t);`;
+  }
+  if (resolved.kind === "Mix") {
+    return `t = ${code}; if (t >= ${ATOM_BASE}) { d[n++] = 1; t -= ${ATOM_BASE}; } else d[n++] = 0; if (t >= 0 && t < 128) d[n++] = t; else n = H.varint(d, n, t);`;
   }
   if (resolved.kind === "Seq" || resolved.kind === "Set") {
     return `${getSequenceWriter(codec, resolved)}(${code});`;
@@ -2140,6 +2228,9 @@ const getReader = (codec: Codec, type: Type): string => {
   if (resolved.kind === "Bool") return "(d[i++] !== 0)";
   if (resolved.kind === "Int" || resolved.kind === "Str" || isMaskType(codec, resolved))
     return "((t = d[i++]) < 128 ? t : rv(t))";
+  if (resolved.kind === "Mix") {
+    return `(d[i++] === 1 ? ${ATOM_BASE} + ((t = d[i++]) < 128 ? t : rv(t)) : ((t = d[i++]) < 128 ? t : rv(t)))`;
+  }
   if (resolved.kind === "Seq" || resolved.kind === "Set") {
     const known = codec.readers.get(resolved);
     if (known) return `${known}()`;
@@ -2225,12 +2316,13 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     },
     decode: (data, start) => { d = data; i = start; return [${readers.join(", ")}]; },
   };`;
-  return new Function("K", "S", "B", "R", "D", "H", source)(
+  return new Function("K", "S", "B", "R", "D", "L", "H", source)(
     program.constants,
     program.constantSets,
     program.bitmaps,
     ranks,
     program.indexes,
+    program.lookups,
     HELPERS,
   );
 };
@@ -2283,6 +2375,7 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     bitmaps: [],
     comparers: { names: new Map(), functions: [] },
     indexes: [],
+    lookups: [],
     variableTypes: environment.variables.map(createVar),
     names: { count: 0 },
     inlining: [],
