@@ -7,6 +7,7 @@ import { type BvRewriterOptions, BvRewriter, DEFAULT_BV_OPTIONS } from "./bv-rew
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
+import { mkFpaAppCore, mkFpaEqCore } from "./fpa-rewriter";
 import {
   AstManager,
   FAMILY_ARITH,
@@ -14,6 +15,7 @@ import {
   FAMILY_BASIC,
   FAMILY_BV,
   FAMILY_DATATYPE,
+  FAMILY_FPA,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -383,7 +385,9 @@ export class Rewriter extends RewriterTpl {
           ? mkDatatypeEqCore(manager, left, right)
           : manager.isArraySort(sort)
             ? this.array.mkEqCore(left, right)
-            : undefined;
+            : manager.getSortFamily(sort) === FAMILY_FPA
+              ? mkFpaEqCore(manager, left, right)
+              : undefined;
     if (theoryResult !== undefined) return theoryResult;
     if (manager.getOp(left) === OP_UBV2INT || manager.getOp(right) === OP_UBV2INT) {
       const bv2intResult = this.bv.mkEqBv2int(left, right);
@@ -408,6 +412,7 @@ export class Rewriter extends RewriterTpl {
     if (funcDecl.family === FAMILY_BV) return this.bv.mkAppCore(decl, args) ?? -1;
     if (funcDecl.family === FAMILY_ARRAY) return this.array.mkAppCore(funcDecl.op, args) ?? -1;
     if (funcDecl.family === FAMILY_DATATYPE) return mkDatatypeAppCore(manager, decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_FPA) return mkFpaAppCore(manager, decl, args) ?? -1;
     const op = funcDecl.op;
     switch (op) {
       case OP_AND:
