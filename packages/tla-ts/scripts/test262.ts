@@ -35,6 +35,18 @@ const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), 
 const SKIPPED_FLAGS = new Set(["noStrict", "raw", "module", "async"]);
 // Includes that the harness already defines, as compareArray.js is now part of assert.js.
 const HARNESS_INCLUDES = new Set(["compareArray.js"]);
+// Includes that tla-ts compiles from a TypeScript port.
+const PORTED_INCLUDES = new Map([
+  [
+    "propertyHelper.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-property-helper.ts"), "utf8"),
+  ],
+]);
+
+const getHarness = (metadata: Metadata) =>
+  [HARNESS, ...metadata.includes.flatMap((include) => PORTED_INCLUDES.get(include) ?? [])].join(
+    "\n",
+  );
 
 const getMetadata = (source: string): Metadata => {
   const frontmatter = /\/\*---([\s\S]*?)---\*\//.exec(source)?.[1] ?? "";
@@ -63,7 +75,9 @@ const getSkipReason = (metadata: Metadata) => {
   if (metadata.isNegative && !metadata.isSyntaxError) return "negative test";
   const flag = metadata.flags.find((candidate) => SKIPPED_FLAGS.has(candidate));
   if (flag !== undefined) return `flag ${flag}`;
-  const includes = metadata.includes.filter((include) => !HARNESS_INCLUDES.has(include));
+  const includes = metadata.includes.filter(
+    (include) => !HARNESS_INCLUDES.has(include) && !PORTED_INCLUDES.has(include),
+  );
   return includes.length > 0 ? `includes ${includes.join(", ")}` : undefined;
 };
 
@@ -278,7 +292,7 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   if (!isNodeSyntaxError(`${strict}${source}`)) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  const program = `${HARNESS}\n${source}`;
+  const program = `${getHarness(metadata)}\n${source}`;
   try {
     compile(program, "test262.ts");
   } catch (error) {
@@ -312,7 +326,7 @@ const runTest = async (path: string): Promise<TestRun> => {
   const skipReason = getSkipReason(metadata);
   if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
   if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
-  const annotated = annotate(`${HARNESS}\n${source}`);
+  const annotated = annotate(`${getHarness(metadata)}\n${source}`);
   const nodeError = getNodeError(annotated);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
