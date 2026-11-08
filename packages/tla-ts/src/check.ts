@@ -604,11 +604,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     };
   };
   // TLC's DoInitFunctor reports its progress again as it replays the initial states, and adds each
-  // one it hasn't seen to the behavior graph. After a FingerprintException, it only counts the
-  // states left, then throws the exception.
+  // one it hasn't seen to the behavior graph. After a FingerprintException or a StackOverflowError,
+  // it only counts the states left, then throws the error.
   const replayInit = () => {
     const replayed = { count: 0 };
-    const deferred: TlaEvaluationError[] = [];
+    const deferred: unknown[] = [];
     const addReplayed = createReplayedStates();
     return getReplayFailure((tracing) => {
       replayInitialStates(
@@ -638,9 +638,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
               throw STOP_REPLAY;
             }
           } catch (error) {
-            if (!(error instanceof TlaEvaluationError) || !tracing.callStack?.fingerprint) {
-              throw error;
-            }
+            const isFingerprintFailure =
+              error instanceof TlaEvaluationError && tracing.callStack?.fingerprint !== undefined;
+            if (!isFingerprintFailure && !isStackOverflow(error)) throw error;
             deferred.push(error);
           }
         },
@@ -1259,26 +1259,41 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
   if (spec.init !== undefined) {
+    // TLC keeps a StackOverflowError of an initial state, counts the states after it, and then
+    // reports it.
+    const overflow: { state: Value[] | undefined } = { state: undefined };
+    const reportInitialFailure = (error: unknown, state: Value[]) => {
+      const replay = captureOutput(replayInit);
+      return createFailureResult(
+        error,
+        { trace: [], traceOutput: replay.lines },
+        { initialState: state, ...replay.result, isInitial: true },
+      );
+    };
     try {
       forEachInitialState(
         spec.init,
         environment,
         (state) => {
           reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+          if (overflow.state) {
+            runtime.generatedStates++;
+            runtime.initialStates++;
+            return false;
+          }
           try {
             outcome.result = visitInitialState(state);
           } catch (error) {
-            const replay = captureOutput(replayInit);
-            outcome.result = createFailureResult(
-              error,
-              { trace: [], traceOutput: replay.lines },
-              { initialState: state, ...replay.result, isInitial: true },
-            );
+            if (isStackOverflow(error)) overflow.state = state;
+            else outcome.result = reportInitialFailure(error, state);
           }
           return outcome.result !== undefined;
         },
         spec.scope,
       );
+      if (overflow.state) {
+        outcome.result = reportInitialFailure(createStackOverflowError(), overflow.state);
+      }
     } catch (error) {
       // TLC prints an illegal initial state with null for each variable it leaves undefined, and
       // stops before it prints the statistics.
@@ -1391,7 +1406,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // TLC reports a stack overflow while it computes next states without replaying it, with the
   // behavior up to the state it expands.
   const reportNextStateOverflow = (index: number) =>
-    createFailureResult(createStackOverflowError(), getStateTrace(index));
+    createFailureResult(createStackOverflowError(), getStateTrace(index), { isNextState: true });
   // After the trace, TLC replays the next-state relation with its call stack, printing again.
   const reportNextStateFailure = (
     error: unknown,

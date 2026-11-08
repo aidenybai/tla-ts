@@ -3,6 +3,7 @@ import {
   STACK_OVERFLOW_MESSAGE,
   TlaEvaluationError,
   TlaModuleError,
+  TlaStackOverflowError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "../errors";
@@ -439,6 +440,15 @@ export const getFailureMessage = (
       code: headed.code,
       message,
       toolMessage: formatErrorMessage(error, true),
+    };
+  }
+  // TLC prints a StackOverflowError in the next states by its own code, and in the initial states
+  // as the text of a message it doesn't code.
+  if (error instanceof TlaStackOverflowError) {
+    return {
+      code: isNextState ? MESSAGE_CODE.stackOverflow : MESSAGE_CODE.general,
+      message,
+      toolMessage: message,
     };
   }
   if (isNextState && isEvalException(error)) {
