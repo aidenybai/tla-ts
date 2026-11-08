@@ -1,6 +1,8 @@
 (*---
 description: "A tuple binder rejects a longer tuple with the argument mismatch error."
 ref: "tlc2/tool/ContextEnumerator.java#nextElement"
+features:
+  - tlc-bug
 flags: [expression]
 outcome: evaluation-failure
 ---*)

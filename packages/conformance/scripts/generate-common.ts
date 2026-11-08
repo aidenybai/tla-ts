@@ -115,6 +115,7 @@ export const writeValueTest = (
   description: string,
   ref: string,
   expression: string,
+  isTlcBug = false,
 ) => {
   const usesModelValue = /\bmv\b/.test(expression);
   writeTest(
@@ -122,7 +123,7 @@ export const writeValueTest = (
     {
       description,
       ref,
-      features: ["value-matrix"],
+      features: isTlcBug ? ["value-matrix", "tlc-bug"] : ["value-matrix"],
       flags: ["expression"],
       contexts: ["assume"],
       outcome: "any",

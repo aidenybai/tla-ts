@@ -3,6 +3,7 @@ description: tuple_pattern applied to set_cup, a SetCupValue.
 ref: tlc2/util/Context.java
 features:
   - value-matrix
+  - tlc-bug
 flags:
   - expression
 contexts:

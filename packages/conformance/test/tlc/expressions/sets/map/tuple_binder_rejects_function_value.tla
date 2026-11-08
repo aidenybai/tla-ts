@@ -1,7 +1,7 @@
 (*---
 description: "A set map tuple binder requires a TupleValue, so an equal function is rejected."
 ref: "tlc2/tool/ContextEnumerator.java#nextElement"
-features: [tlc-bug]
+features: [tlc-bug, tlc-bug]
 flags: [expression]
 outcome: evaluation-failure
 ---*)

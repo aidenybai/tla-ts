@@ -3,6 +3,7 @@ description: tuple_pattern applied to set_of_functions, a SetOfFcnsValue.
 ref: tlc2/util/Context.java
 features:
   - value-matrix
+  - tlc-bug
 flags:
   - expression
 contexts:

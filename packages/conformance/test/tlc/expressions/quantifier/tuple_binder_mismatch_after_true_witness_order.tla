@@ -1,6 +1,8 @@
 (*---
 description: "A tuple binder checks the next element only when enumeration reaches it, in normalized order."
 ref: "tlc2/tool/ContextEnumerator.java#nextElement"
+features:
+  - tlc-bug
 flags: [expression]
 outcome: evaluation-failure
 ---*)
