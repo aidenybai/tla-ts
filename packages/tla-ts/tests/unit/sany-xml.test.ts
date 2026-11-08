@@ -189,6 +189,16 @@ describe("SANY XML export", () => {
     ]);
   });
 
+  it.each([
+    ["F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(Op, n - 1))", false],
+    ["F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))", true],
+    ["F(n, Op(_, _)) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))", true],
+  ])("analyzes a recursive call in %s as SANY does", (definition, isFailed) => {
+    expect(
+      isRejected(`---- MODULE Fold ----\nEXTENDS Naturals\nRECURSIVE F(_, _)\n${definition}\n====`),
+    ).toBe(isFailed);
+  });
+
   it("fails as SANY does on the definition of a DEFINE step", () => {
     const proof = (reference: string) => `---- MODULE Steps ----
 F == 1

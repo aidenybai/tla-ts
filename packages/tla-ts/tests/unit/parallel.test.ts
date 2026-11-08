@@ -88,6 +88,22 @@ describe("check with workers matches TLC", () => {
     expect(printed).toEqual(['"start"']);
   });
 
+  it("reports the string the search creates as it checks again on the calling thread", async () => {
+    const tlaTs = await loadPackage();
+    const created: string[] = [];
+    const result = await tlaTs.check({
+      source:
+        '---- MODULE M ----\nEXTENDS Sequences\nVARIABLE x\nInit == x = "a"\nNext == x\' = IF x = "a" THEN "a" \\o "b" ELSE x\n====',
+      config: "INIT Init\nNEXT Next",
+      workers: 2,
+      onProgress: (progress) => {
+        if (progress.kind === "sequential-fallback") created.push(progress.string);
+      },
+    });
+    expect(result.distinctStates).toBe(2);
+    expect(created).toEqual(["ab"]);
+  });
+
   it("prints values as the version of TLC it matches does", async () => {
     const tlaTs = await loadPackage();
     const printed: string[] = [];
