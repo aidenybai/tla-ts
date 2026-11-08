@@ -77,6 +77,20 @@ const getNodeError = (source: string) => {
 
 const getFirstLine = (text: string) => text.split("\n")[0];
 
+// TLC stops when a value has no TLA+ form, which only a run finds, rather than giving a different
+// answer than Node.
+const UNREPRESENTABLE = [
+  "Overflow when computing",
+  "TLC can't handle a number this big",
+  "TLA+ sequences can't have holes",
+];
+
+const getFailedRun = (id: string, reason: string): TestRun => ({
+  id,
+  outcome: UNREPRESENTABLE.some((text) => reason.includes(text)) ? "untranslatable" : "wrong",
+  reason: reason.replaceAll("\n", " "),
+});
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
   const source = readFileSync(path, "utf8");
@@ -89,16 +103,13 @@ const runTest = async (path: string): Promise<TestRun> => {
   }
   try {
     const result = await check({ ...compile(program, "test262.ts"), onPrint: () => {} });
-    return result.status === "success" || result.status === "deadlock"
-      ? { id, outcome: "pass", reason: "" }
-      : {
-          id,
-          outcome: "wrong",
-          reason: (result.failure?.message ?? result.status).replaceAll("\n", " "),
-        };
+    if (result.status === "success" || result.status === "deadlock") {
+      return { id, outcome: "pass", reason: "" };
+    }
+    return getFailedRun(id, result.failure?.message ?? result.status);
   } catch (error) {
     if (!(error instanceof TlaTypeScriptError)) {
-      return { id, outcome: "wrong", reason: String(error).replaceAll("\n", " ") };
+      return getFailedRun(id, String(error));
     }
     const reason = getFirstLine(error.message);
     return /: error TS\d+: /.test(reason)
