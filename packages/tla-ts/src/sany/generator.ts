@@ -2772,6 +2772,12 @@ export const generateSanySpecification = (
         const headSpan = getRangeSpan(file, step.head);
         const bodySpan = { start: headSpan.start + 1, end: headSpan.end };
         const body = step.body;
+        if (step.name !== undefined && /^<[*+]>/.test(step.token)) {
+          addError(
+            getTokenLocation(file, stepSpan.start),
+            "<*> and <+> cannot be used for a named step.",
+          );
+        }
         if (step.name !== undefined) pushLabelScope();
         const definitionId = step.name === undefined ? undefined : getId();
         if (body.kind !== "Assert") infixStep.previousRight = undefined;

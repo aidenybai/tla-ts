@@ -1903,7 +1903,7 @@ const parse = (
     if (!isCorrectLevel(step)) {
       throw createError(`${isQed ? "QED step" : "step"}'s number has bad level`, step);
     }
-    if (getStepLevel(step) < 0 && getStepName(step) !== undefined) {
+    if (mode !== "sany" && getStepLevel(step) < 0 && getStepName(step) !== undefined) {
       throw createError("<*> and <+> cannot be used for a named step", step);
     }
     cursor.index++;
