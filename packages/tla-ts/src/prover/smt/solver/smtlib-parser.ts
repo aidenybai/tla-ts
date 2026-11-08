@@ -79,6 +79,9 @@ export interface SmtToken {
   text: string;
   line: number;
   column: number;
+  // The indexes in the script of the token and just past it.
+  offset: number;
+  endOffset: number;
 }
 
 export interface SmtList {
@@ -86,6 +89,7 @@ export interface SmtList {
   items: SExpr[];
   line: number;
   column: number;
+  offset: number;
   // Z3 reports an error in making an application at its closing parenthesis.
   end: SmtToken;
 }
@@ -478,6 +482,8 @@ const createScanner = (text: string) => {
         kind,
         text: tokenText,
         ...position,
+        offset: start,
+        endOffset: state.index,
       });
       if (character === "(" || character === ")") {
         advance();
@@ -545,6 +551,7 @@ export const createCommandReader = (text: string) => {
       items: [],
       line: open.line,
       column: open.column,
+      offset: open.offset,
       end: open,
     };
     for (let current = root; ;) {
@@ -557,6 +564,7 @@ export const createCommandReader = (text: string) => {
           items: [],
           line: token.line,
           column: token.column,
+          offset: token.offset,
           end: token,
         };
         current.items.push(list);

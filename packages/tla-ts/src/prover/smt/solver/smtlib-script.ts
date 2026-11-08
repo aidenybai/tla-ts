@@ -255,14 +255,13 @@ export const runSmtlibScript = (
     };
   };
   const script = { state: createState() };
-  const display = (expr: number) =>
-    print(
-      printExpr(
-        script.state.manager,
-        { options: settings.printOptions, isUsed: script.state.reader.isUsed },
-        expr,
-      ),
+  const format = (expr: number) =>
+    printExpr(
+      script.state.manager,
+      { options: settings.printOptions, isUsed: script.state.reader.isUsed },
+      expr,
     );
+  const display = (expr: number) => print(format(expr));
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
   const checkSat = (extra: number[]) => {
@@ -435,6 +434,32 @@ export const runSmtlibScript = (
       display(value);
       manager.decRef(value);
       manager.decRef(term);
+    },
+    "get-value": (list) => {
+      const terms = list.items[1];
+      if (terms?.kind !== "list")
+        throw new SmtParseError("invalid get-value command, '(' expected", terms ?? list.end);
+      const manager = script.state.manager;
+      const exprs = terms.items.map((item) => script.state.reader.parseTerm(item));
+      if (exprs.length === 0)
+        throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
+      if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of get-value");
+      const model = getModel(list);
+      model.compress();
+      // Z3 prints each term as the script spells it, from the end of the term before.
+      const offsets = [
+        terms.offset + 1,
+        ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
+      ];
+      const lines = exprs.map((expr, index) => {
+        manager.incRef(expr);
+        const value = model.eval(expr, true);
+        const line = `(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
+        manager.decRef(value);
+        manager.decRef(expr);
+        return line;
+      });
+      print(`(${lines.join("\n ")})`);
     },
     display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),
     echo: (list) => {

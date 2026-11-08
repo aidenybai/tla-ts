@@ -180,6 +180,18 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "true", "250"]);
   });
 
+  it("prints each term of get-value as the script spells it, with its value", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= x 3))",
+        "(check-sat)",
+        "(get-value (x   ( + x 1 ) y))",
+      ]),
+    ).toEqual(["sat", "((x 3)\n (( + x 1 ) 4)\n (y 0))"]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);
