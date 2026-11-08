@@ -18,6 +18,6 @@ Test == PrintT(SelectSeq((<<(3 \div 0), LET b961 == 1 IN b961>> \o [(2 :> 7) EXC
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00567 failed.
     2179:0 The second argument of \div is 0.
 ---*)

@@ -18,6 +18,6 @@ Test == PrintT((\E b12489 \in {Len(SortSeq(<<1>>, LAMBDA p, q : p < q)) : b12490
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2147483647+3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08080 failed.
     2178:0 Overflow when computing 2147483647+3
 ---*)

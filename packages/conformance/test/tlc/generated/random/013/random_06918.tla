@@ -18,6 +18,6 @@ Test == PrintT(({b10588 \in (UNION {Nat, [a |-> 1, b |-> TRUE]} \cup (3 .. 7)) :
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06918 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

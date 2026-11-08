@@ -18,6 +18,6 @@ Test == PrintT({Head(SelectSeq(Tail(<<1>>), LAMBDA e : e > 0)) : b8509 \in {b851
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 89 to line 14, col 132 of module random_05507
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05507 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 89 to line 14, col 132 of module random_05507
 ---*)

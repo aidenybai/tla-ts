@@ -18,8 +18,7 @@ Test == PrintT(("") \o ([{1} -> {2, 3}]))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a string:
-    {<<2>>, <<3>>}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module concat_string_empty__set_of_functions failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a string:
     {<<2>>, <<3>>}
 ---*)

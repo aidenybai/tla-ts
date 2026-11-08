@@ -18,6 +18,6 @@ Test == PrintT([a |-> CASE ((<<5, 6>>)[2] = (-1 - 1)) -> (((1 :> 2))[1] + LET b7
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05033 failed.
     2179:0 The second argument of \div is 0.
 ---*)

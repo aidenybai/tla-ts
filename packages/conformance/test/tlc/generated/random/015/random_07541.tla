@@ -18,8 +18,7 @@ Test == PrintT((CHOOSE b11625 \in {((7 % 0) :> CASE 1 -> 2147483647 [] OTHER -> 
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07541 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     0
 ---*)

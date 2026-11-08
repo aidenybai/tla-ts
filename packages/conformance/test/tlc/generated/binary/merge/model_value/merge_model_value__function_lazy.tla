@@ -21,10 +21,7 @@ Test == PrintT((mv) @@ ([x \in Nat |-> x]))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compute the number of elements in the overridden value Nat.
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module merge_model_value__function_lazy failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

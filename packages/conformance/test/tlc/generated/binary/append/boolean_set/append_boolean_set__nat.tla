@@ -18,8 +18,7 @@ Test == PrintT(Append(BOOLEAN, Nat))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    {FALSE, TRUE}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module append_boolean_set__nat failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     {FALSE, TRUE}
 ---*)

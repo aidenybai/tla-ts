@@ -18,6 +18,6 @@ Test == PrintT([SubSeq(Tail(Tail(<<>>)), ((2 % 7) \div LET b15046 == 2 IN b15046
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09698 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

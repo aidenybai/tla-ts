@@ -28,7 +28,9 @@ all:
     d = -1
     2217:4 2: <Next line 15, col 9 to line 15, col 18 of module eval_error_on_some_states>
     /\ x = 1
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2179:0 @!@!@\nThe second argument of \\div is 0.\n@!@!@ENDMSG 2179 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2179:0 \nThe second argument of \\div is 0.\n
     2217:4 3: <Next line 15, col 9 to line 15, col 18 of module eval_error_on_some_states>
     d = 1
     2199:0 3 states generated, 3 distinct states found, 0 states left on queue.

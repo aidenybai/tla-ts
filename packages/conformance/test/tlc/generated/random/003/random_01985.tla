@@ -18,6 +18,6 @@ Test == PrintT(Tail(SortSeq(SelectSeq(SelectSeq(<<>>, LAMBDA e : e > 0), LAMBDA 
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01985 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

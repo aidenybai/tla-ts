@@ -18,6 +18,6 @@ Test == PrintT((((IF FALSE THEN 1 ELSE 1 * (2147483647 * 2147483647)) - LET b934
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2147483647*2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06070 failed.
     2178:0 Overflow when computing 2147483647*2147483647
 ---*)

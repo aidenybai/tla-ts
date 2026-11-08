@@ -18,8 +18,7 @@ Test == PrintT(Append(UNION {{1}, {2}}, "a\"b\\c\n"))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    {1, 2}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module append_union__string_escapes failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     {1, 2}
 ---*)

@@ -18,6 +18,6 @@ Test == PrintT([SortSeq(Append(SelectSeq(<<3, 1, 2>>, LAMBDA e : e > 0), (3 * 21
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 3*2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09131 failed.
     2178:0 Overflow when computing 3*2147483647
 ---*)

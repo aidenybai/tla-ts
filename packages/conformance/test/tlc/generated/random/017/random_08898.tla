@@ -18,8 +18,7 @@ Test == PrintT([[[[a |-> 7, b |-> FALSE] EXCEPT !.a = (CHOOSE b13781 \in {1} : T
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SubSeq should be a sequence, but instead it is:
-    7
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08898 failed.
     2169:0 The first argument of SubSeq should be a sequence, but instead it is:
     7
 ---*)

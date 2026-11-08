@@ -18,6 +18,6 @@ Test == PrintT((Append(Tail(Tail(<<1>>)), Len(<<2, 3>>)) \o SelectSeq(Append(App
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07112 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

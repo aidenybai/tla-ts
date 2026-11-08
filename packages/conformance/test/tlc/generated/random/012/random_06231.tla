@@ -18,14 +18,7 @@ Test == PrintT(LET b9590 == Cardinality((({1, 2} \cap {2, 1, 3}) \cup DOMAIN [x 
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to enumerate S \cup T when S:
-    {1, 2}
-    and T:
-    Nat
-    are not both enumerable
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06231 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

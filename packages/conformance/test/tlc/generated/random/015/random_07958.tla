@@ -18,8 +18,7 @@ Test == PrintT(((((7 :> 0) @@ ((1 :> 2) @@ (1 :> 2))) @@ (SubSeq([a |-> 1], 2, 2
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SubSeq should be a sequence, but instead it is:
-    [a |-> 1]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07958 failed.
     2169:0 The first argument of SubSeq should be a sequence, but instead it is:
     [a |-> 1]
 ---*)

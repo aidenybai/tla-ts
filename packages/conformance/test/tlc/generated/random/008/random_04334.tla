@@ -18,8 +18,7 @@ Test == PrintT([a |-> ((Len(<<3, 1, 2>>) - LET b6826 == 1 IN b6826) \div (-(1 % 
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04334 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     -1
 ---*)

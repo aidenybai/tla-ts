@@ -18,8 +18,7 @@ Test == PrintT((((({x \in 1..3 : x > 1} @@ (1 :> 2)))[Cardinality({1, 2})] % ([[
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of @@ should be a function, but instead it is:
-    {2, 3}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05713 failed.
     2169:0 The first argument of @@ should be a function, but instead it is:
     {2, 3}
 ---*)

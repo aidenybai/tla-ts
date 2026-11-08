@@ -18,8 +18,7 @@ Test == PrintT((UNION {{1}, {2}}) @@ ({1, "a"}))
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of @@ should be a function, but instead it is:
-    {1, 2}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module merge_union__set_mixed failed.
     2169:0 The first argument of @@ should be a function, but instead it is:
     {1, 2}
 ---*)

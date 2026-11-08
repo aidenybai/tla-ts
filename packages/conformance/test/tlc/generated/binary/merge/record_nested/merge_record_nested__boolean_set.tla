@@ -18,8 +18,7 @@ Test == PrintT(([a |-> [b |-> <<1>>]]) @@ (BOOLEAN))
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of @@ should be a function, but instead it is:
-    {FALSE, TRUE}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module merge_record_nested__boolean_set failed.
     2169:0 The second argument of @@ should be a function, but instead it is:
     {FALSE, TRUE}
 ---*)

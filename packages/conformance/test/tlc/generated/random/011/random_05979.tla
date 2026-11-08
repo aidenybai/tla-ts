@@ -18,10 +18,7 @@ Test == PrintT(((-LET b9214 == (1 + 1) IN (<<5, 6>>)[b9214]) :> Len(SortSeq(SubS
 all:
   exit: 10
   transcript: |-
-    2183:0 The third argument of SubSeq must be in the domain of its first argument:
-    <<1, 2>>
-    , but instead it is
-    7
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05979 failed.
     2183:0 The third argument of SubSeq must be in the domain of its first argument:
     <<1, 2>>
     , but instead it is

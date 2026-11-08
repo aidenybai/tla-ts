@@ -18,6 +18,6 @@ Test == PrintT([(Head(SortSeq(<<>>, LAMBDA p, q : p < q)) :> CASE ({x \in 1..3 :
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02943 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

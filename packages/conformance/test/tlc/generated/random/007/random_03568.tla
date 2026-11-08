@@ -18,8 +18,7 @@ Test == PrintT(Tail(Tail(SortSeq(Append(TRUE, 3), LAMBDA p, q : p < q))))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03568 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     TRUE
 ---*)

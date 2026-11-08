@@ -18,6 +18,6 @@ Test == PrintT((((-(-1 \div 7)) + Head(SubSeq(<<>>, 7, 1))) \div SortSeq(<<LET b
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07208 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

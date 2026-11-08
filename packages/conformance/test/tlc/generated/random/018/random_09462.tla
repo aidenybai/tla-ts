@@ -18,8 +18,7 @@ Test == PrintT(LET b14703 == (((-1 :> <<1>>))[Len(FALSE)] + (Head(<<1, 2>>) - (2
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09462 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     FALSE
 ---*)

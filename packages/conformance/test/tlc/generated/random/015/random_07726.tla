@@ -18,6 +18,6 @@ Test == PrintT((Head(<<(CHOOSE r \in [a : {2, 1, 3}] : TRUE), Cardinality(SUBSET
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07726 failed.
     2179:0 The second argument of \div is 0.
 ---*)

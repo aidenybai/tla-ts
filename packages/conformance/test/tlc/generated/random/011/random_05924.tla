@@ -18,6 +18,6 @@ Test == PrintT(([a |-> CASE (2..1 \subseteq Nat) -> ([x \in Nat |-> x + 1])[2147
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2147483647+1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05924 failed.
     2178:0 Overflow when computing 2147483647+1
 ---*)

@@ -22,8 +22,7 @@ ASSUME PrintT(Cardinality(c))
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    "a"
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 29 of module cfg_assignment__string__cardinality failed.
     2181:0 Attempted to compute cardinality of the value
     "a"
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT([(((2 % 0) :> Head(<<1, 2>>)) @@ (CHOOSE r \in [a : {}] : TRUE)) 
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    0
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03442 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     0
 ---*)

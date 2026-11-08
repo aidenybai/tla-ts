@@ -18,6 +18,6 @@ Test == PrintT((((Head(<<>>) \div Cardinality(2..1)) \div (CHOOSE b12154 \in (CH
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07871 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

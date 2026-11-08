@@ -64,6 +64,6 @@ ASSUME IsLevel(TemporalLevel, ConstantLevel)
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 34, col 8 to line 34, col 63 of module Semantics
+    2105:1 Evaluating assumption line 34, col 8 to line 34, col 63 of module Semantics failed.
     2215:0 TLC expected a boolean value, but did not find one. line 34, col 8 to line 34, col 63 of module Semantics
 ---*)

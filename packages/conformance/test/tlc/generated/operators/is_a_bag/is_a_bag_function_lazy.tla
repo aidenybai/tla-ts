@@ -18,10 +18,7 @@ Test == PrintT(IsABag([x \in Nat |-> x]))
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
-    but it produced the following error:
-    Attempted to compute the number of elements in the overridden value Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module is_a_bag_function_lazy failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value),
     but it produced the following error:

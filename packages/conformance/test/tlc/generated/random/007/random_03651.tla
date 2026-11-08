@@ -18,6 +18,6 @@ Test == PrintT((UNION {{b5776 \in {2147483647 : b5777 \in 1..3} : ([a |-> 1] = [
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 151 to line 14, col 180 of module random_03651
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03651 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 151 to line 14, col 180 of module random_03651
 ---*)

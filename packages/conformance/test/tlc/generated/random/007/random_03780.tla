@@ -18,10 +18,7 @@ Test == PrintT((SubSeq(<<Cardinality({}), ([a |-> 1, b |-> TRUE]).a>>, Cardinali
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
-    but it produced the following error:
-    Size of interval value exceeds the maximum representable size (32bits): 0..2147483647.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03780 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

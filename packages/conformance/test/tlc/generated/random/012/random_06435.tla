@@ -18,8 +18,7 @@ Test == PrintT((SelectSeq([a |-> (3 + 3), b |-> (FALSE <=> FALSE)], LAMBDA e : e
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SelectSeq should be a sequence, but instead it is:
-    [a |-> 6, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06435 failed.
     2169:0 The first argument of SelectSeq should be a sequence, but instead it is:
     [a |-> 6, b |-> TRUE]
 ---*)

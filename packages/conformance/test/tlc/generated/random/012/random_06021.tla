@@ -20,8 +20,7 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 28 to line 14, col 83 of module random_06021
-    2169:0 The first argument of SelectSeq should be a sequence, but instead it is:
-    (7 :> 2147483647)
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06021 failed.
     2169:0 The first argument of SelectSeq should be a sequence, but instead it is:
     (7 :> 2147483647)
 ---*)

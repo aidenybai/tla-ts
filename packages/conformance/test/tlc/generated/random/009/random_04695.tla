@@ -18,8 +18,7 @@ Test == PrintT(Append(([b7339 \in ({1, 2} \cup <<3, 1, 2>>) |-> (CHOOSE b7340 \i
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of % should be a positive number, but instead it is:
-    -1
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04695 failed.
     2169:0 The second argument of % should be a positive number, but instead it is:
     -1
 ---*)

@@ -18,6 +18,6 @@ Test == PrintT(((((-1 + 7) - Head(<<>>)) :> (IF TRUE THEN -1 ELSE 2147483647 * (
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09066 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

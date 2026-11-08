@@ -18,10 +18,7 @@ Test == PrintT((Head(SubSeq(Tail(<<1, 2>>), CASE FALSE -> 3 [] OTHER -> 2, Head(
 all:
   exit: 10
   transcript: |-
-    2183:0 The second argument of SubSeq must be in the domain of its first argument:
-    <<2>>
-    , but instead it is
-    2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09282 failed.
     2183:0 The second argument of SubSeq must be in the domain of its first argument:
     <<2>>
     , but instead it is

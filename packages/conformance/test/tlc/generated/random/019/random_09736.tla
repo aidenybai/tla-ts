@@ -18,6 +18,6 @@ Test == PrintT(([a |-> (LET b15116 == 7 IN b15116 + (2147483647 + 0)), b |-> (~(
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 7+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09736 failed.
     2178:0 Overflow when computing 7+2147483647
 ---*)

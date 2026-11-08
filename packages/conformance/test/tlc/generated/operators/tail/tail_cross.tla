@@ -18,8 +18,7 @@ Test == PrintT(Tail({1, 2} \X {3}))
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    {<<1, 3>>, <<2, 3>>}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module tail_cross failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     {<<1, 3>>, <<2, 3>>}
 ---*)

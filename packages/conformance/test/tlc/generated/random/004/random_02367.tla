@@ -18,8 +18,7 @@ Test == PrintT([b3747 \in {Len(Append(2, 1)), CASE (SUBSET {1} = {1, 2}) -> (1 %
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    2
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02367 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     2
 ---*)

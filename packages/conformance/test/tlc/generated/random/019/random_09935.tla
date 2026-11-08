@@ -20,6 +20,6 @@ all:
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
     line 14, col 108 to line 14, col 128 of module random_09935
-    2178:0 Overflow when computing 2147483647+3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09935 failed.
     2178:0 Overflow when computing 2147483647+3
 ---*)

@@ -18,8 +18,7 @@ Test == PrintT(Append((UNION {UNION {1..3, {1, 2}}, ({x \in 1..3 : x > 1} \ {x \
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    {}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09693 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     {}
 ---*)

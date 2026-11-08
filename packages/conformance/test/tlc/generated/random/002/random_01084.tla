@@ -18,8 +18,7 @@ Test == PrintT(Cardinality((LET b1728 == (TRUE <=> [x \in 1..2 |-> x]) IN Head([
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    [a |-> 1, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01084 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     [a |-> 1, b |-> TRUE]
 ---*)

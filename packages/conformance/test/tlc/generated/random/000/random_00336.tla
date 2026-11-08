@@ -18,8 +18,7 @@ Test == PrintT((((IF FALSE THEN 1 ELSE -1 < (2147483647 = -1)) => ((TRUE => FALS
 all:
   exit: 10
   transcript: |-
-    2266:0 The second argument of < should be an integer, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00336 failed.
     2266:0 The second argument of < should be an integer, but instead it is:
     FALSE
 ---*)

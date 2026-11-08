@@ -18,6 +18,6 @@ Test == PrintT(<<((Cardinality({2, 1, 3}) \div IF FALSE THEN 0 ELSE 0) - Head([<
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00850 failed.
     2179:0 The second argument of \div is 0.
 ---*)

@@ -21,8 +21,7 @@ Test == PrintT(("") \o (mv))
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form t \o s when s is not a string:
-    mv
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module concat_string_empty__model_value failed.
     2182:0 Evaluating an expression of the form t \o s when s is not a string:
     mv
 ---*)

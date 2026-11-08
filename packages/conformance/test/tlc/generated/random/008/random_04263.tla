@@ -18,8 +18,7 @@ Test == PrintT([(((1 + -1) - (2 * 2)) :> (Head(3) \div Append(<<3, 1, 2>>, 0))) 
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    3
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04263 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     3
 ---*)

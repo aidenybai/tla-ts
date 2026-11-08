@@ -18,6 +18,6 @@ Test == PrintT(Tail(Append(Tail(SubSeq(<<1>>, 7, -1)), (IF TRUE THEN 7 ELSE 2147
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Tail to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03627 failed.
     2184:0 Attempted to apply Tail to the empty sequence.
 ---*)

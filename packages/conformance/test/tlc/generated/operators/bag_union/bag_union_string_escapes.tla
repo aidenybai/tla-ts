@@ -18,9 +18,7 @@ Test == PrintT(BagUnion("a\"b\\c\n"))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying BagUnion to the following value,
-    which is not a finite enumerable set:
-    "a\"b\\c\n"
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module bag_union_string_escapes failed.
     2176:0 Applying BagUnion to the following value,
     which is not a finite enumerable set:
     "a\"b\\c\n"

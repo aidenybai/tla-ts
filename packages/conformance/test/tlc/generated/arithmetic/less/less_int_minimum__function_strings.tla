@@ -18,8 +18,7 @@ Test == PrintT(((-2147483647 - 1)) < ([x \in {"a", "b"} |-> x]))
 all:
   exit: 10
   transcript: |-
-    2266:0 The second argument of < should be an integer, but instead it is:
-    [a |-> "a", b |-> "b"]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module less_int_minimum__function_strings failed.
     2266:0 The second argument of < should be an integer, but instead it is:
     [a |-> "a", b |-> "b"]
 ---*)

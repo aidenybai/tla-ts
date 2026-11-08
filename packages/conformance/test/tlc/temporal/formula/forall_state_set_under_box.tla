@@ -20,8 +20,7 @@ Prop == [](\A n \in {x} : <>(x = n))
 all:
   exit: 255
   transcript: |-
-    2280:0 In evaluation, the identifier x is either undefined or not an operator.
-    line 16, col 22 to line 16, col 22 of module forall_state_set_under_box
+    2213:1 TLC cannot handle the temporal formula line 16, col 12 to line 16, col 35 of module forall_state_set_under_box:
     2280:0 In evaluation, the identifier x is either undefined or not an operator.
     line 16, col 22 to line 16, col 22 of module forall_state_set_under_box
 ---*)

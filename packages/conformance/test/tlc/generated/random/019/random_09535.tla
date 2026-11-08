@@ -18,6 +18,6 @@ Test == PrintT(Append(<<LET b14818 == (2..1 \div 0) IN CASE FALSE -> b14818 [] O
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09535 failed.
     2179:0 The second argument of \div is 0.
 ---*)

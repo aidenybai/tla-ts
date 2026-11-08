@@ -18,8 +18,7 @@ Test == PrintT((Len(<<(-1), Cardinality({1, 2})>>) .. (Cardinality((TRUE => TRUE
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02929 failed.
     2181:0 Attempted to compute cardinality of the value
     TRUE
 ---*)

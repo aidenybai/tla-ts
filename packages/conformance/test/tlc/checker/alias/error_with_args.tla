@@ -26,13 +26,19 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     /\ x = 0
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2228:0 @!@!@\nTLC requires alias not to take any argument, but one was given: A\n@!@!@ENDMSG 2228 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2228:0 \nTLC requires alias not to take any argument, but one was given: A\n
     2217:4 2: <Next line 15, col 9 to line 15, col 18 of module error_with_args>
     /\ x = 1
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2228:0 @!@!@\nTLC requires alias not to take any argument, but one was given: A\n@!@!@ENDMSG 2228 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2228:0 \nTLC requires alias not to take any argument, but one was given: A\n
     2217:4 3: <Next line 15, col 9 to line 15, col 18 of module error_with_args>
     /\ x = 2
-    /\ _ALIASEvalError = "@!@!@STARTMSG 2228:0 @!@!@\nTLC requires alias not to take any argument, but one was given: A\n@!@!@ENDMSG 2228 @!@!@"
+    /\ _ALIASEvalError = "
+    "
+    2228:0 \nTLC requires alias not to take any argument, but one was given: A\n
     2199:0 3 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.
 ---*)

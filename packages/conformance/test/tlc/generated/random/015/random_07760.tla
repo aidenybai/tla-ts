@@ -18,8 +18,7 @@ Test == PrintT(SortSeq(Tail(Append(Tail(<<3, 1, 2>>), LET b11967 == 3 IN <<5, 6>
 all:
   exit: 10
   transcript: |-
-    2266:0 The first argument of < should be an integer, but instead it is:
-    <<5, 6>>
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07760 failed.
     2266:0 The first argument of < should be an integer, but instead it is:
     <<5, 6>>
 ---*)

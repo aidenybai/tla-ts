@@ -18,9 +18,7 @@ Test == PrintT(([{1} -> {2, 3}]) \in (Nat))
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    {<<2>>, <<3>>}
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module in_nat__set_of_functions failed.
     2158:0 Attempted to check if the value:
     {<<2>>, <<3>>}
     is an element of Nat.

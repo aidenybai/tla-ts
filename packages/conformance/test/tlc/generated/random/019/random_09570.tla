@@ -18,6 +18,6 @@ Test == PrintT((<<Len((<<3, 1, 2>> \o <<1, 2>>)), (-(2 * 2147483647))>> \o Appen
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2*2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09570 failed.
     2178:0 Overflow when computing 2*2147483647
 ---*)

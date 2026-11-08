@@ -18,6 +18,6 @@ Test == PrintT([a |-> (CASE ([a |-> 1, b |-> TRUE] = [a |-> 1]) -> (7 - 7) [] OT
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08083 failed.
     2179:0 The second argument of \div is 0.
 ---*)

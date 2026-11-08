@@ -18,8 +18,7 @@ Test == PrintT(((({7, -1} \subseteq (7 .. 3)) \cup (DOMAIN <<5, 6>> \cup {-1, 7}
 all:
   exit: 10
   transcript: |-
-    2181:0 Attempted to compute cardinality of the value
-    Nat
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04380 failed.
     2181:0 Attempted to compute cardinality of the value
     Nat
 ---*)

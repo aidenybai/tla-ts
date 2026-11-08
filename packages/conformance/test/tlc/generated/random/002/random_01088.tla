@@ -18,6 +18,6 @@ Test == PrintT((CHOOSE b1733 \in {((CHOOSE f \in [{} -> {}] : TRUE))[(3 + 214748
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 3+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_01088 failed.
     2178:0 Overflow when computing 3+2147483647
 ---*)

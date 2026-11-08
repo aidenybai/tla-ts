@@ -18,9 +18,7 @@ Test == PrintT(((CHOOSE b15028 \in ({<<1, 2>> : b15029 \in {x \in 1..3 : x > 1}}
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    <<1, 2>>
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09688 failed.
     2158:0 Attempted to check if the value:
     <<1, 2>>
     is an element of Nat.

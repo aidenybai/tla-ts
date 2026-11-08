@@ -18,6 +18,6 @@ Test == PrintT(((-(IF FALSE THEN 2147483647 ELSE 2 \div (0 * 0))) :> LET b1424 =
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00881 failed.
     2179:0 The second argument of \div is 0.
 ---*)

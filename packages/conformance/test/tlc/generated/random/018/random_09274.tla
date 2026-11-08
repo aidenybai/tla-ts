@@ -18,8 +18,7 @@ Test == PrintT((Append({b14399 \in (1 .. 7) : (TRUE \/ SUBSET {1})}, (IF TRUE TH
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    {1, 2, 3, 4, 5, 6, 7}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09274 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     {1, 2, 3, 4, 5, 6, 7}
 ---*)

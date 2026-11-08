@@ -21,9 +21,7 @@ Test == PrintT(BagToSet(mv))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying BagToSet to the following value,
-    which is not a function with a finite domain:
-    mv
+    2105:1 Evaluating assumption line 18, col 8 to line 18, col 11 of module bag_to_set_model_value failed.
     2176:0 Applying BagToSet to the following value,
     which is not a function with a finite domain:
     mv

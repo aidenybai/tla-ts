@@ -18,8 +18,7 @@ Test == PrintT((((([x \in 1..2 |-> x] @@ (1 :> 2)) @@ (\A b12320 \in 2..1 : TRUE
 all:
   exit: 10
   transcript: |-
-    2169:0 The second argument of @@ should be a function, but instead it is:
-    TRUE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_07976 failed.
     2169:0 The second argument of @@ should be a function, but instead it is:
     TRUE
 ---*)

@@ -18,6 +18,6 @@ Test == PrintT((LET b10556 == IF (-1 = 2) THEN Head(<<3, 1, 2>>) ELSE (7 + 7) IN
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2147483647+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06893 failed.
     2178:0 Overflow when computing 2147483647+2147483647
 ---*)

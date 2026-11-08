@@ -18,8 +18,7 @@ Test == PrintT((Cardinality({(-b4414) : b4414 \in UNION {{1}, 2..1}}) :> CASE (A
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_02790 failed.
     2182:0 Evaluating an expression of the form Append(s, v) when s is not a sequence:
     FALSE
 ---*)

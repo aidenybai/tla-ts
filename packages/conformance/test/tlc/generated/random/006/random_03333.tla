@@ -18,8 +18,7 @@ Test == PrintT(((Len((2 = 2147483647)) .. LET b5296 == IF TRUE THEN 7 ELSE 21474
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03333 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     FALSE
 ---*)

@@ -23,10 +23,7 @@ Prop == C
 all:
   exit: 151
   transcript: |-
-    2281:1 The configuration file substitutes constant C with non-constant T - specifically: @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
-    line 18, col 6 to line 18, col 14 of module tlc_config_substitution_temporal_definition
-    2281:1 The configuration file substitutes constant C with non-constant T - specifically: @!@!@STARTMSG 2261:0 @!@!@
-    TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
+    2281:1 The configuration file substitutes constant C with non-constant T - specifically:
+    2261:0 TLC encountered a temporal formula (<>A) when evaluating a predicate or action.
     line 18, col 6 to line 18, col 14 of module tlc_config_substitution_temporal_definition
 ---*)

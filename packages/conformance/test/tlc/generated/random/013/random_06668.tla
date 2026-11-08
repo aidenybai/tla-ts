@@ -18,8 +18,7 @@ Test == PrintT([(CHOOSE r \in [a : 1..2] : TRUE) EXCEPT !.a = @ + Head(([[a |-> 
 all:
   exit: 10
   transcript: |-
-    2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
-    [a |-> 3, b |-> TRUE]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06668 failed.
     2182:0 Evaluating an expression of the form s \o t when s is not a sequence:
     [a |-> 3, b |-> TRUE]
 ---*)

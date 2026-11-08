@@ -18,8 +18,7 @@ Test == PrintT(Len({LET b6681 == Head(<<1>>) IN (-0) : b6680 \in ({b6682 \in {2,
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Len should be a sequence, but instead it is:
-    {0}
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04246 failed.
     2283:0 The argument of Len should be a sequence, but instead it is:
     {0}
 ---*)

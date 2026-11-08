@@ -18,6 +18,6 @@ Test == PrintT(LET b7212 == CASE (SortSeq(<<3, 1, 2>>, LAMBDA p, q : p < q) = [b
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_04605 failed.
     2179:0 The second argument of \div is 0.
 ---*)

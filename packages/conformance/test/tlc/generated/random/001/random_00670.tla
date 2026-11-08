@@ -18,6 +18,6 @@ Test == PrintT(SubSeq((CHOOSE r \in [a : {1, 2} \cap {2}] : TRUE), (Len(SortSeq(
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 2*-2147483646
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00670 failed.
     2178:0 Overflow when computing 2*-2147483646
 ---*)

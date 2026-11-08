@@ -18,9 +18,7 @@ Test == PrintT(({1, 2} \X {3}) \subseteq (Nat))
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    <<1, 3>>
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module subseteq_cross__nat failed.
     2158:0 Attempted to check if the value:
     <<1, 3>>
     is an element of Nat.

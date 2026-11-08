@@ -18,8 +18,7 @@ Test == PrintT((IF (SortSeq(<<>>, LAMBDA p, q : p < q) = (2147483647 :> 1)) THEN
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Head should be a sequence, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08895 failed.
     2283:0 The argument of Head should be a sequence, but instead it is:
     FALSE
 ---*)

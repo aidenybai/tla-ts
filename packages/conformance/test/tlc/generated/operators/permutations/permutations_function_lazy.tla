@@ -18,9 +18,7 @@ Test == PrintT(Permutations([x \in Nat |-> x]))
 all:
   exit: 10
   transcript: |-
-    2176:0 Applying Permutations to the following value,
-    which is not a finite set:
-    [x \in Nat |-> <expression line 14, col 44 to line 14, col 44 of module permutations_function_lazy>]
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module permutations_function_lazy failed.
     2176:0 Applying Permutations to the following value,
     which is not a finite set:
     [x \in Nat |-> <expression line 14, col 44 to line 14, col 44 of module permutations_function_lazy>]

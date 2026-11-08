@@ -18,6 +18,6 @@ Test == PrintT(({Head(<<b13217, 7>>) : b13217 \in ({b13218 \in {1} : TRUE} \cap 
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08530 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)

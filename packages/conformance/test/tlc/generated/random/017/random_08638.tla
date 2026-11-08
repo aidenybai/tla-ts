@@ -18,9 +18,7 @@ Test == PrintT(((DOMAIN [[x \in Nat |-> x + 1] EXCEPT ![[a |-> 1, b |-> TRUE]] =
 all:
   exit: 10
   transcript: |-
-    2158:0 Attempted to check if the value:
-    [a |-> 1, b |-> TRUE]
-    is an element of Nat.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_08638 failed.
     2158:0 Attempted to check if the value:
     [a |-> 1, b |-> TRUE]
     is an element of Nat.

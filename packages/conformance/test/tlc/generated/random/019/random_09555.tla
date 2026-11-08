@@ -18,8 +18,7 @@ Test == PrintT((Len((Tail(FALSE) \o <<-1, 3>>)) \in (((1 - 2) - (2 * 2)) .. <<(7
 all:
   exit: 10
   transcript: |-
-    2283:0 The argument of Tail should be a sequence, but instead it is:
-    FALSE
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09555 failed.
     2283:0 The argument of Tail should be a sequence, but instead it is:
     FALSE
 ---*)

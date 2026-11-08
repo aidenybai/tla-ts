@@ -18,6 +18,6 @@ Test == PrintT(SelectSeq(Tail([[<<5, 6>> EXCEPT ![1] = 3] EXCEPT ![1] = [[a |-> 
 all:
   exit: 10
   transcript: |-
-    2178:0 Overflow when computing 1+2147483647
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05714 failed.
     2178:0 Overflow when computing 1+2147483647
 ---*)

@@ -18,10 +18,7 @@ Test == PrintT(((CHOOSE f \in [2..1 -> {1, 2} \ {1}] : TRUE) @@ ([b5947 \in (CHO
 all:
   exit: 10
   transcript: |-
-    2154:0 Attempted to apply the operator overridden by the Java method
-    public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
-    but it produced the following error:
-    The domains of formal parameters must be enumerable.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03769 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:

@@ -18,6 +18,6 @@ Test == PrintT((CASE (\E b9013 \in {2147483647 : b9014 \in {1, 2}} : {b9015 \in 
 all:
   exit: 10
   transcript: |-
-    2215:0 TLC expected a boolean value, but did not find one. line 14, col 23 to line 14, col 90 of module random_05846
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_05846 failed.
     2215:0 TLC expected a boolean value, but did not find one. line 14, col 23 to line 14, col 90 of module random_05846
 ---*)

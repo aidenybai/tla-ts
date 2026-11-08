@@ -18,6 +18,6 @@ Test == PrintT(((CASE (FALSE /\ TRUE) -> (-1 * 2) [] OTHER -> (3 \div 0) - ((3 :
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_03515 failed.
     2179:0 The second argument of \div is 0.
 ---*)

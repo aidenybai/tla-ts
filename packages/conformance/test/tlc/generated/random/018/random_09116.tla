@@ -18,6 +18,6 @@ Test == PrintT([[[[a |-> 3, b |-> FALSE] EXCEPT !.a = @ + (-1 + 7)] EXCEPT !.a =
 all:
   exit: 10
   transcript: |-
-    2179:0 The second argument of \div is 0.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_09116 failed.
     2179:0 The second argument of \div is 0.
 ---*)

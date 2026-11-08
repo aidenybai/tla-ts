@@ -18,8 +18,7 @@ Test == PrintT(SortSeq("a\"b\\c\n", LAMBDA a, b : a < b))
 all:
   exit: 10
   transcript: |-
-    2169:0 The first argument of SortSeq should be a natural number, but instead it is:
-    "a\"b\\c\n"
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module sortseq_string_escapes failed.
     2169:0 The first argument of SortSeq should be a natural number, but instead it is:
     "a\"b\\c\n"
 ---*)

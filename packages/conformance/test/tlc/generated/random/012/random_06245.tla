@@ -18,6 +18,6 @@ Test == PrintT(<<((-Cardinality(SUBSET {1})) * IF ([a |-> 1] = [a |-> 1, b |-> T
 all:
   exit: 10
   transcript: |-
-    2184:0 Attempted to apply Head to the empty sequence.
+    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_06245 failed.
     2184:0 Attempted to apply Head to the empty sequence.
 ---*)
