@@ -2129,6 +2129,9 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (value.enumerated) return value.enumerated;
     if (!isEnumerable(value.domain)) getCardinality(value.domain);
+    if (!isSetValue(value.domain)) {
+      throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
+    }
     const domain = getFunctionDomain(value.domain);
     value.enumerated = setFunctionClass(
       createSortedFunction(
