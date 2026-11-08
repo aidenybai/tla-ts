@@ -28,6 +28,7 @@ import {
   translateNewError,
 } from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
+import { isBuiltInObject, translateIntrinsic } from "./intrinsics";
 import {
   getTypeNames,
   isComparable,
@@ -311,7 +312,8 @@ const translateCall = (
   context: Context,
   isDefined: boolean,
 ) => {
-  const converted = translateConversion(node, scope, context);
+  const converted =
+    translateConversion(node, scope, context) ?? translateIntrinsic(node, scope, context);
   if (converted !== undefined) return converted;
   const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
@@ -349,7 +351,13 @@ const translateCall = (
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
   }
   if (global === "Object" && method === "is" && node.arguments.length === 2) {
-    if (node.arguments.some((argument) => isObject(context.checker.getTypeAtLocation(argument)))) {
+    if (
+      node.arguments.some(
+        (argument) =>
+          isObject(context.checker.getTypeAtLocation(argument)) &&
+          !isBuiltInObject(argument, context),
+      )
+    ) {
       throw new TlaTypeScriptError("TLA+ compares objects by value, not by identity", node);
     }
     const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
@@ -527,6 +535,8 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (symbol !== undefined && getErrorClass(symbol, context.checker) !== undefined) {
     return getConstructor(symbol, context);
   }
+  const intrinsic = translateIntrinsic(node, scope, context);
+  if (intrinsic !== undefined) return intrinsic;
   throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);
 };
 
@@ -540,6 +550,8 @@ const translatePropertyAccess = (
   }
   const declared = translateDeclared(node, getSymbol(node, context.checker), scope, context);
   if (declared !== undefined) return declared;
+  const intrinsic = translateIntrinsic(node, scope, context);
+  if (intrinsic !== undefined) return intrinsic;
   const receiver = node.expression;
   const name = node.name.text;
   if (

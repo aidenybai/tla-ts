@@ -184,6 +184,19 @@ const CASES: Record<string, (string | [string, string])[]> = {
     "[String(), String(-12), String(true), String(undefined), String(null), String('a'), Number(), Number(true), Number(null), Number(' 42 '), Number(''), parseInt('12px'), parseInt('0x1F'), parseFloat('3e2')]",
     "[+1, +true, +false, +'7', +' -3 ', +'']",
     "[Array.isArray([1]), Array.isArray([[1], [2]]), Array.isArray(1), Array.isArray('a'), Array.isArray(undefined)]",
+    "[Object.getPrototypeOf(Array) === Function.prototype, Object.getPrototypeOf(TypeError) === Error, Object.getPrototypeOf(Error) === Function.prototype]",
+    "[Object.getPrototypeOf(TypeError.prototype) === Error.prototype, Object.getPrototypeOf(Error.prototype) === Object.prototype, Object.getPrototypeOf(Object.prototype) === null]",
+    "[Object.getPrototypeOf([1]) === Array.prototype, Object.getPrototypeOf(new RangeError('r')) === RangeError.prototype, Object.getPrototypeOf(1) === Number.prototype, Object.getPrototypeOf('a') === Object.prototype]",
+    "[Object.getPrototypeOf(() => 1) === Function.prototype, Object.getPrototypeOf({ a: 1 }) === Object.prototype, Object.getPrototypeOf(Object.getPrototypeOf(new Set([1]))) === Object.prototype]",
+    "[Object.prototype.isPrototypeOf(new TypeError('t')), Error.prototype.isPrototypeOf(Array.prototype), Function.prototype.isPrototypeOf(Map), Function.prototype === Object.prototype]",
+    [
+      "[proto === Error.prototype, Object.is(proto, Error.prototype)]",
+      "const proto = Object.getPrototypeOf(TypeError.prototype);",
+    ],
+    [
+      "[isSame(Object.getPrototypeOf(Map), Function.prototype), isSame(Array.prototype, Object.getPrototypeOf([1])), isSame(Array.prototype, Map.prototype), isSame(Object.prototype, null), getType(Array.prototype), getType(Function.prototype)]",
+      "const isSame = (left: unknown, right: unknown) => Object.is(left, right);\nconst getType = (value: unknown) => typeof value;",
+    ],
     [
       "[getType(1), getType('a'), getType('TRUE'), getType(false), getType(undefined), getType(null), getType([1]), getType(new Set([1])), getType(TypeError), getType(new TypeError('t'))]",
       "const getType = (value: unknown) => typeof value;",

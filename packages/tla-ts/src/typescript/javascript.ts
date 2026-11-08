@@ -9,7 +9,7 @@ import { apply, boolean, ifExpression, number, string } from "./tla";
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, TLC
 
-CONSTANTS Undefined, Null
+CONSTANTS Undefined, Null, Intrinsic
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -36,9 +36,14 @@ SequenceWith(sequence, index, value) ==
      THEN [sequence EXCEPT ![relative + 1] = value]
      ELSE Assert(FALSE, "tla-ts can't throw the RangeError of with()")
 
+IsIntrinsic(value) ==
+  LET text == ToString(value)
+  IN Len(text) >= 13 /\\ SubSeq(text, 1, 13) = "(Intrinsic :>"
+
 SameValue(left, right) ==
   /\\ TypeOf(left) = TypeOf(right)
-  /\\ Assert(TypeOf(left) # "object" \\/ left = Null \\/ right = Null,
+  /\\ Assert(TypeOf(left) # "object" \\/ left = Null \\/ right = Null
+              \\/ IsIntrinsic(left) \\/ IsIntrinsic(right),
             "tla-ts can't compare objects by identity")
   /\\ left = right
 ===============================================================================`;

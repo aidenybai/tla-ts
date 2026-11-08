@@ -7,7 +7,7 @@ import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { apply, field, identifier, ifExpression, junction, record, set, string } from "./tla";
 
-const NATIVE_ERRORS = new Set([
+export const NATIVE_ERRORS = new Set([
   "Error",
   "TypeError",
   "RangeError",
@@ -52,10 +52,10 @@ export const getErrorClass = (
   return inherited === undefined ? undefined : [symbol, ...inherited];
 };
 
-export const getConstructor = (symbol: ts.Symbol, context: Context) => {
+export const getConstructor = (symbol: ts.Symbol, context: Context, preferred = symbol.name) => {
   const existing = context.constructors.get(symbol);
   if (existing !== undefined) return identifier(existing);
-  const name = context.names.getFresh(symbol.name);
+  const name = context.names.getFresh(preferred);
   context.constructors.set(symbol, name);
   return identifier(name);
 };

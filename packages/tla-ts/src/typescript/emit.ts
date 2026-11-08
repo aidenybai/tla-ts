@@ -148,7 +148,7 @@ export const emit = (
     ...context.modelValues.values(),
     ...context.constructors.values(),
   ];
-  const modelValues = [...(isJavaScript ? ["Undefined", "Null"] : []), ...constants];
+  const modelValues = [...(isJavaScript ? ["Undefined", "Null", "Intrinsic"] : []), ...constants];
   const variables = model.variables.map((variable) => variable.name);
   const symmetrySets = model.symmetrySets;
   const defineHere = (name: string, body: Expression) => ({

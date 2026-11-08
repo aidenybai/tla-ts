@@ -100,6 +100,15 @@ const CASES: [string, string][] = [
     "class Box { size = 1; grow() { count++; } } new Box().grow();",
   ],
   ["a conversion to a fraction", "count = Number('1.5');"],
+  ["reading a property of a built-in prototype", "count = Array.prototype.length;"],
+  [
+    "reading a property of a prototype in a variable",
+    "const proto = Object.getPrototypeOf(values); count = proto.length;",
+  ],
+  [
+    "the prototype of a value whose type doesn't tell",
+    "const value: unknown = count; label = String(Object.getPrototypeOf(value) === null);",
+  ],
   ["a callback parameter with a default", "count = [undefined].map((value = 1) => value)[0];"],
   ["a callback rest parameter", "count = [1].map((...values) => values.length)[0];"],
   ["a conversion whose type is unknown", "const value: unknown = count; label = String(value);"],
