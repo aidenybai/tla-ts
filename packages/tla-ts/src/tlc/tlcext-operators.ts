@@ -252,7 +252,7 @@ export const createTlcExtOperators = (
         !isFunctionValue(counterExample) ||
         !valuesEqual(getDomain(counterExample), createSet(["action", "state"]))
       ) {
-        throw new TlaEvaluationError(
+        throw new TlaModuleError(
           `The argument of ToTrace should be a CounterExample, but instead it is:\n${formatValue(counterExample)}`,
         );
       }

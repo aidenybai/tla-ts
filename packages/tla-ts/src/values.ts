@@ -1,4 +1,4 @@
-import { TlaEvaluationError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { prettyPrint } from "./pretty-print";
 import type { TlcVersion } from "./tlc/version";
 
@@ -393,7 +393,7 @@ const compareOverriddenSets = (
   if ((leftName === "Nat" && rightName === "Int") || (leftName === "Int" && rightName === "Nat")) {
     return leftName === "Nat" ? -1 : 1;
   }
-  throw new TlaEvaluationError(
+  throw new TlaModuleError(
     `Attempted to compare ${formatValue(left, true)} with the value\n${formatValue(right, true)}`,
   );
 };
@@ -401,7 +401,7 @@ const compareOverriddenSets = (
 export const ANY_SET: InfiniteSetValue = { kind: "InfiniteSet", name: "Any" };
 
 const compareAny = (other: Value): never => {
-  throw new TlaEvaluationError(`Attempted to compare ANY with the value\n${formatValue(other)}`);
+  throw new TlaModuleError(`Attempted to compare ANY with the value\n${formatValue(other)}`);
 };
 
 export const compareValues = (left: Value, right: Value): number => {
@@ -2012,7 +2012,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       const isMemberType =
         set.name === "STRING" ? typeof element === "string" : typeof element === "number";
       if (!isMemberType) {
-        throw new TlaEvaluationError(
+        throw new TlaModuleError(
           `Attempted to check if the value:\n${formatValue(element)}\nis an element of ${set.name}.`,
         );
       }
@@ -2099,7 +2099,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       if (elements === undefined) {
         if (isModelValue(element)) return false;
         // Sequences.member raises TLC_MODULE_CHECK_MEMBER_OF.
-        throw new TlaEvaluationError(
+        throw new TlaModuleError(
           `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
         );
       }
