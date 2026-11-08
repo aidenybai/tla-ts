@@ -87,24 +87,24 @@ export const getLevel = (
   scope: Scope | undefined,
   environment: Environment,
   shadowed = new Set<string>(),
-  visiting = new Set<Expression>(),
+  visiting = new Set<object>(),
 ): number => {
-  const getBodyLevel = (body: Expression, bodyScope: Scope | undefined) => {
+  const getBodyLevel = (binding: object, body: Expression, bodyScope: Scope | undefined) => {
     // A recursive call adds nothing, as SANY's level never decreases while it iterates.
-    if (visiting.has(body)) return CONSTANT_LEVEL;
-    visiting.add(body);
+    if (visiting.has(binding)) return CONSTANT_LEVEL;
+    visiting.add(binding);
     const level = getLevel(body, bodyScope, environment, new Set(), visiting);
-    visiting.delete(body);
+    visiting.delete(binding);
     return level;
   };
   const getBindingLevel = (name: string) => {
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
     if (binding.kind === "Value") return CONSTANT_LEVEL;
-    if (binding.kind === "Thunk") return getBodyLevel(binding.expression, binding.scope);
+    if (binding.kind === "Thunk") return getBodyLevel(binding, binding.expression, binding.scope);
     const operator = binding.operator;
     return operator.kind === "Closure"
-      ? getBodyLevel(operator.body, operator.scope)
+      ? getBodyLevel(operator, operator.body, operator.scope)
       : CONSTANT_LEVEL;
   };
   const getGlobalLevel = (name: string) => {
