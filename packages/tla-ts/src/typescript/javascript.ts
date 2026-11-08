@@ -101,6 +101,14 @@ Update(heap, ref, object) ==
   THEN [heap EXCEPT !.objects[ref[Ref]] = object]
   ELSE [heap EXCEPT !.changed = (BuiltInKey(ref) :> object) @@ @]
 
+\\* Whether new can call a value. A class is the only function that a script's heap holds.
+IsConstructor(heap, value) ==
+  CASE IsHeap(value) -> heap.objects[value[Ref]].isCallable
+    [] IsObject(value) /\\ BuiltInKey(value) \\in DOMAIN BuiltIns ->
+         BuiltIns[BuiltInKey(value)].isConstructor
+    [] TypeOf(value) # "function" -> FALSE
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell whether this function is a constructor")
+
 TypeOfIn(heap, value) ==
   CASE IsHeap(value) -> IF heap.objects[value[Ref]].isCallable THEN "function" ELSE "object"
     [] IsRef(value) /\\ value[Ref] \\in DOMAIN BuiltIns ->

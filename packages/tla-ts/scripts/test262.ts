@@ -41,6 +41,10 @@ const PORTED_INCLUDES = new Map([
     "propertyHelper.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-property-helper.ts"), "utf8"),
   ],
+  [
+    "isConstructor.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-is-constructor.ts"), "utf8"),
+  ],
 ]);
 
 const getHarness = (metadata: Metadata) =>
@@ -213,6 +217,12 @@ const loosen = () => {
           ? declared.questionToken.getEnd()
           : declared.name.getEnd();
       edits.set(end, isRest ? ": unknown[]" : ": unknown");
+    }
+    // A test may call new on a function that isn't a constructor, to check that it throws.
+    const created = ts.findAncestor(node, ts.isNewExpression);
+    if (diagnostic.code === 7009 && created !== undefined) {
+      edits.set(created.expression.getStart(), "(");
+      edits.set(created.expression.getEnd(), " as unknown as new (...args: unknown[]) => unknown)");
     }
     const literal = ts.findAncestor(node, ts.isObjectLiteralExpression);
     if (diagnostic.code === 2322 && literal && isDescriptor(checker.getContextualType(literal))) {

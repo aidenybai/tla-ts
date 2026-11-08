@@ -185,13 +185,13 @@ const getGlobal = (name: string, node: ts.Node, context: Context) => {
   return symbol;
 };
 
-const isConstructor = (name: string) => isGlobal(name) && BUILT_INS[name][1];
+const isGlobalFunction = (name: string) => isGlobal(name) && BUILT_INS[name][1];
 
 // A built-in constructor is a model value, as error constructors are. Function.prototype is one
 // too, as it's a function, and other built-in objects are references by their paths, which no
 // object a program makes has.
 const getBuiltInValue = (name: string, node: ts.Node, context: Context) => {
-  if (isConstructor(name)) return getConstructor(getGlobal(name, node, context), context);
+  if (isGlobalFunction(name)) return getConstructor(getGlobal(name, node, context), context);
   if (name === "Function.prototype") {
     const prototype = context.checker
       .getTypeOfSymbol(getGlobal("Function", node, context))
@@ -293,6 +293,7 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
     getKey(name),
     record("Record", [
       { name: "isCallable", value: boolean(BUILT_INS[name][1]) },
+      { name: "isConstructor", value: boolean(BUILT_INS[name][4]) },
       { name: "isOpaque", value: boolean(true) },
     ]),
   ]);
@@ -349,6 +350,7 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
             prototype === null ? identifier("Null") : getBuiltInValue(prototype, node, context),
         },
         { name: "isCallable", value: boolean(entry[1]) },
+        { name: "isConstructor", value: boolean(entry[4]) },
         { name: "isOpaque", value: boolean(false) },
       ]);
       return [getKey(name), object];
@@ -443,7 +445,10 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
   if (name === undefined || (ts.isIdentifier(node) && !isCompared(node, context))) {
     return undefined;
   }
-  if (!isCompared(node, context)) {
+  // A script's heap holds the built-in objects, so it can read and pass them as values, though
+  // getPrototypeOf's answer here doesn't read the heap.
+  const isOnHeap = !isCall && context.heap !== undefined && scope.bindings.has(context.heap);
+  if (!isOnHeap && !isCompared(node, context)) {
     throw new TlaTypeScriptError(
       `Compare ${node.getText()} only with === or assert.sameValue`,
       node,

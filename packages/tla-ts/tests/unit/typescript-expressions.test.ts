@@ -452,6 +452,28 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ],
     ["['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]", "const box = {};"],
     ["[Reflect.has === Reflect.has, Reflect.has === Reflect.get]", "const box = {};"],
+    [
+      "[method, constructor, created]",
+      `const box = {};
+      let method = "none";
+      try {
+        Reflect.construct(function () {}, [], Object.create as unknown as Function);
+      } catch (error) {
+        method = error instanceof TypeError ? "TypeError" : "other";
+      }
+      let constructor = "none";
+      try {
+        Reflect.construct(function () {}, [], Object);
+      } catch (error) {
+        constructor = error instanceof TypeError ? "TypeError" : "other";
+      }
+      let created = "none";
+      try {
+        new (Array.prototype.map as unknown as new () => unknown)();
+      } catch (error) {
+        created = error instanceof TypeError ? "TypeError" : "other";
+      }`,
+    ],
     ["[read({}), read({ x: 2 })]", "var read = ({ x = 1 }) => x;"],
     [
       "[thrown.constructor === TypeError, thrown.constructor === Error, thrown.name, thrown.toString === Error.prototype.toString]",

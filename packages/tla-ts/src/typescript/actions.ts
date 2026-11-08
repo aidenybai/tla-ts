@@ -28,7 +28,7 @@ import {
   translateToString,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
-import { translateEngineError, translateThrown } from "./exceptions";
+import { getErrorClass, translateEngineError, translateThrown } from "./exceptions";
 import {
   getAllocated,
   getHeap,
@@ -736,6 +736,47 @@ const translateExpressionStatement = (
       throwTypeError(path, expression, context, frame),
     );
   }
+  // A new of a value that isn't a class that the script declares, such as a built-in method,
+  // throws a TypeError if the value isn't a constructor. tla-ts can't call one that is. Its
+  // arguments run first, so they must be values that can't throw.
+  const isInert = (argument: ts.Expression): boolean =>
+    ts.isLiteralExpression(argument) ||
+    ts.isIdentifier(argument) ||
+    ts.isFunctionExpression(argument) ||
+    ts.isArrowFunction(argument) ||
+    [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+      argument.kind,
+    ) ||
+    (ts.isArrayLiteralExpression(argument) && argument.elements.every(isInert)) ||
+    (ts.isObjectLiteralExpression(argument) &&
+      argument.properties.every(
+        (property) =>
+          ts.isPropertyAssignment(property) &&
+          !ts.isComputedPropertyName(property.name) &&
+          isInert(property.initializer),
+      ));
+  if (
+    ts.isNewExpression(expression) &&
+    context.heap !== undefined &&
+    getNewClass(expression, context) === undefined &&
+    getErrorClass(getSymbol(expression.expression, context.checker), context.checker) ===
+      undefined &&
+    !["Set", "Map"].includes(expression.expression.getText()) &&
+    (expression.arguments ?? []).every(isInert)
+  ) {
+    return ifThenElse(
+      useJavaScript(
+        "IsConstructor",
+        [
+          getHeap(path.scope, expression, context),
+          translateExpression(getCast(expression.expression), path.scope, context),
+        ],
+        context,
+      ),
+      leaf(apply("Assert", [boolean(false), string("tla-ts can't call this constructor")])),
+      throwTypeError(path, expression, context, frame),
+    );
+  }
   const assigned = getAssignedPath(expression, path, context);
   if (assigned === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
@@ -811,6 +852,10 @@ const isHeapCall = (
     (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
 };
+
+// The expression that parentheses and casts wrap.
+const getCast = (node: ts.Expression): ts.Expression =>
+  ts.isParenthesizedExpression(node) || ts.isAsExpression(node) ? getCast(node.expression) : node;
 
 // Whether a function has a try statement of its own, which only statements can run.
 const hasTry = (node: ts.Node): boolean =>

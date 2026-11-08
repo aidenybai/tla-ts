@@ -20,7 +20,7 @@ import { translateExpression } from "./expressions";
 import { isBuiltInObject, translateBuiltInObject, translateFunctionPrototype } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { createStateScope, type Scope } from "./scope";
-import { apply, boolean, functionFrom, identifier, number, string } from "./tla";
+import { apply, boolean, functionFrom, identifier, number, record, string } from "./tla";
 import { getKind, isHeapType, isNumberLike } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -465,18 +465,67 @@ const OBJECT_CHANGES = new Map([
   ["preventExtensions", { operator: "PreventExtensions", arity: 1, objects: [0] }],
 ]);
 
+const isConstruct = (node: MethodCall) =>
+  node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
+
 export const isObjectChange = (node: ts.Node): node is MethodCall =>
   isMethodCall(node) &&
-  node.expression.expression.getText() === "Object" &&
-  OBJECT_CHANGES.has(node.expression.name.text);
+  ((node.expression.expression.getText() === "Object" &&
+    OBJECT_CHANGES.has(node.expression.name.text)) ||
+    isConstruct(node));
 
 // The error that JavaScript itself may throw where a node runs.
 export const getEngineError = (node: ts.Node) =>
-  isObjectChange(node) && node.expression.name.text.startsWith("define") ? "TypeError" : undefined;
+  isObjectChange(node) && (node.expression.name.text.startsWith("define") || isConstruct(node))
+    ? "TypeError"
+    : undefined;
+
+// Reflect.construct of a function with an empty body, without arguments, only checks that its
+// target and its newTarget are constructors, as harness/isConstructor.js uses it.
+const translateConstruct = (node: MethodCall, scope: Scope, context: Context) => {
+  const target = node.arguments.at(0);
+  const argumentList = node.arguments.at(1);
+  const newTarget = node.arguments.at(2) ?? target;
+  const isEmptyFunction =
+    target !== undefined &&
+    ts.isFunctionExpression(target) &&
+    target.asteriskToken === undefined &&
+    (ts.getModifiers(target) ?? []).length === 0 &&
+    target.body.statements.length === 0;
+  if (
+    !isEmptyFunction ||
+    argumentList === undefined ||
+    !ts.isArrayLiteralExpression(argumentList) ||
+    argumentList.elements.length > 0 ||
+    newTarget === undefined ||
+    node.arguments.length > 3
+  ) {
+    throw new TlaTypeScriptError(`Unsupported statement: ${node.getText()}`, node);
+  }
+  const heap = getHeap(scope, node, context);
+  return {
+    change: record("Record", [
+      { name: "heap", value: heap },
+      {
+        name: "isDone",
+        value:
+          newTarget === target
+            ? boolean(true)
+            : useJavaScript(
+                "IsConstructor",
+                [heap, translateExpression(newTarget, scope, context)],
+                context,
+              ),
+      },
+    ]),
+    isFallible: true,
+  };
+};
 
 // A call that changes an object's properties. A definition gives a record of the heap after it
 // and whether it succeeded, since one that fails throws a TypeError, and the others give the heap.
 export const translateObjectChange = (node: MethodCall, scope: Scope, context: Context) => {
+  if (isConstruct(node)) return translateConstruct(node, scope, context);
   const method = node.expression.name.text;
   const change = OBJECT_CHANGES.get(method);
   const isObject = (position: number) => {
