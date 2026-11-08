@@ -608,7 +608,8 @@ export const simulate = (options: SimulationOptions): number => {
     };
   };
 
-  runtime.getRandom = () => workerRandom;
+  const enumerableRandom = createJavaRandom(seed);
+  runtime.getRandom = () => enumerableRandom;
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
   const traceLimit = options.traceCount ?? (1n << 63n) - 1n;
