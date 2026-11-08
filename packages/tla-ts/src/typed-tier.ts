@@ -168,6 +168,7 @@ const createMix = (): MixType => ({ kind: "Mix", target: undefined });
 const MAXIMUM_COMPARISONS = 8;
 const ATOM_BASE = 2 ** 32;
 const MAXIMUM_SUBSET_BASE = 20;
+const MAXIMUM_SEQUENCES = 1 << 20;
 const MASK_BITS = 31;
 const MAXIMUM_INTEGER = 2147483647;
 const MINIMUM_INTEGER = -2147483648;
@@ -944,6 +945,26 @@ const compileBound = (
         `for (const ${name} of H.${isMask(base.type, program.plains) ? "subsetMasks" : "subsets"}(${base.emit()}))`,
     };
   }
+  if (
+    setExpression.kind === "FunctionSet" &&
+    setExpression.domain.kind === "Apply" &&
+    isBuiltin(program, frame, setExpression.domain.operator, "..")
+  ) {
+    const [low, high] = setExpression.domain.args.map((arg) =>
+      expectInt(compileValue(program, arg, frame)),
+    );
+    const range = compileValue(program, setExpression.range, frame);
+    const element = getSetElement(range);
+    return {
+      element: { kind: "Seq", element },
+      header: (name) => {
+        const elements = isMask(range.type, program.plains)
+          ? `H.bits(${range.emit()})`
+          : range.emit();
+        return `for (const ${name} of H.sequences(${elements}, ${low.emit()}, ${high.emit()}))`;
+      },
+    };
+  }
   if (setExpression.kind === "Apply" && setExpression.operator === "DOMAIN") {
     const target = compileValue(program, setExpression.args[0], frame);
     const type = resolveType(target.type);
@@ -1387,6 +1408,29 @@ const compileBuiltin = (
     return {
       type: sequence.type,
       emit: () => `(${sequence.emit()}).filter((${name}) => ${test.emit()})`,
+    };
+  }
+  if (operator === "SortSeq" && args.length === 2) {
+    const sequence = compileValue(program, args[0], frame);
+    const element: Type = createVar();
+    unify(sequence.type, { kind: "Seq", element });
+    const binding = getOperatorArgument(program, args[1], frame);
+    const params = binding.definition.params;
+    if (params.length !== 2) return unsupported();
+    const left = getName(program, "e");
+    const right = getName(program, "e");
+    const scope = bindCode(
+      bindCode(binding.scope, params[0].name, element, left),
+      params[1].name,
+      element,
+      right,
+    );
+    const isBefore = inline(program, binding.definition, () =>
+      expectType(compileValue(program, binding.definition.body, { ...frame, scope }), BOOL),
+    );
+    return {
+      type: sequence.type,
+      emit: () => `H.sortSeq(${sequence.emit()}, (${left}, ${right}) => ${isBefore.emit()})`,
     };
   }
   const values = args.map((arg) => compileValue(program, arg, frame));
@@ -2405,17 +2449,53 @@ const getSubsets = <Subset>(count: number, toSubset: (indices: number[]) => Subs
   return subsets;
 };
 
+const getBits = (mask: number) =>
+  Array.from({ length: MASK_BITS }, (_, bit) => bit).filter((bit) => (mask & (1 << bit)) !== 0);
+
+const advanceOdometer = (positions: number[], base: number) => {
+  for (let index = positions.length - 1; index >= 0; index--) {
+    positions[index]++;
+    if (positions[index] < base) return true;
+    positions[index] = 0;
+  }
+  return false;
+};
+
 const HELPERS = {
   EMPTY: Object.freeze([]),
   subsets: (base: Plain[]) =>
     getSubsets(base.length, (indices) => indices.map((index) => base[index])),
+  bits: getBits,
+  // TLC sorts by insertion, moving each element before those it compares before.
+  sortSeq: (sequence: Plain[], isBefore: (left: Plain, right: Plain) => boolean) => {
+    const sorted = sequence.slice();
+    for (let index = 1; index < sorted.length; index++) {
+      const element = sorted[index];
+      let position = index;
+      for (; position > 0 && isBefore(element, sorted[position - 1]); position--) {
+        sorted[position] = sorted[position - 1];
+      }
+      sorted[position] = element;
+    }
+    return sorted;
+  },
   subsetMasks: (mask: number) => {
-    const bits = Array.from({ length: MASK_BITS }, (_, bit) => bit).filter(
-      (bit) => (mask & (1 << bit)) !== 0,
-    );
+    const bits = getBits(mask);
     return getSubsets(bits.length, (indices) =>
       indices.reduce((subset, index) => subset | (1 << bits[index]), 0),
     );
+  },
+  // TLC enumerates [low..high -> S] varying the last argument fastest.
+  sequences: (elements: Plain[], low: number, high: number) => {
+    const length = Math.max(0, high - low + 1);
+    if (length > 0 && low !== 1) deopt();
+    if (elements.length ** length > MAXIMUM_SEQUENCES) deopt();
+    const positions = Array.from({ length }, () => 0);
+    const sequences: Plain[][] = [];
+    if (length > 0 && elements.length === 0) return sequences;
+    do sequences.push(positions.map((position) => elements[position]));
+    while (advanceOdometer(positions, elements.length));
+    return sequences;
   },
   same: isSame,
   deopt,
