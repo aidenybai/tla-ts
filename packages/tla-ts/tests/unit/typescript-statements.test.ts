@@ -270,6 +270,12 @@ const CASES: Record<string, Case[]> = {
   helpers: [
     {
       variables: "count = 0",
+      statements: "start([2]).next(); for (const item of [1, 2]) start([item]).next();",
+      setup:
+        "function* start([amount]: number[]) {\n  try { count += amount; yield; count += 100; } finally { count += 1000; }\n}",
+    },
+    {
+      variables: "count = 0",
       statements: "Counter.add(2); new Counter().twice(3); count += new Counter().double(4);",
       setup:
         "class Counter {\n  static add(amount: number) { count += amount; }\n  #twice(amount: number) { count += amount * 2; }\n  get twice() { return this.#twice; }\n  double(amount: number) { return amount * 2; }\n}",

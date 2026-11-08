@@ -13,6 +13,7 @@ import {
   isMethodCall,
   share,
   isInlined,
+  getGenerator,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -86,6 +87,8 @@ interface Frame {
   breakTo: ((path: Path) => Formula) | undefined;
   continueTo: ((path: Path) => Formula) | undefined;
   throwTo: ((path: Path, thrown: Thrown) => Formula) | undefined;
+  // What a yield does in an inlined generator: the generator suspends there for good.
+  yieldTo: ((path: Path) => Formula) | undefined;
   // Functions being inlined, to reject recursion.
   inlining: Set<ts.Node>;
 }
@@ -351,12 +354,21 @@ const translateCallStatement = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
+  isGenerator = false,
 ): Formula => {
   const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
     argumentNodes.map((argument) => translateExpression(argument, path.scope, context));
   if (isMethodCall(expression)) {
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
+    if (
+      method === "next" &&
+      expression.arguments.length === 0 &&
+      ts.isCallExpression(receiver) &&
+      getGenerator(receiver.expression, context) !== undefined
+    ) {
+      return translateCallStatement(receiver, path, context, frame, continueWith, true);
+    }
     const isConsole = receiver.getText() === "console";
     if (isConsole && method === "log") {
       const values = translateArguments(expression.arguments);
@@ -385,7 +397,9 @@ const translateCallStatement = (
     const symbol = getSymbol(node, context.checker);
     return (symbol && path.scope.functions.get(symbol)) ?? getCallee(node, context);
   };
-  const callee = getCallback(expression.expression);
+  const callee = isGenerator
+    ? getGenerator(expression.expression, context)
+    : getCallback(expression.expression);
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
@@ -427,6 +441,7 @@ const translateCallStatement = (
       breakTo: undefined,
       continueTo: undefined,
       throwTo: frame.throwTo,
+      yieldTo: isGenerator ? afterCall : undefined,
       inlining: new Set([...frame.inlining, callee]),
     }),
   );
@@ -444,6 +459,15 @@ const translateExpressionStatement = (
   }
   if (ts.isCallExpression(expression)) {
     return translateCallStatement(expression, path, context, frame, continueWith);
+  }
+  if (ts.isYieldExpression(expression)) {
+    const yielded = expression.expression;
+    const isSimple =
+      yielded === undefined || ts.isIdentifier(yielded) || ts.isLiteralExpression(yielded);
+    if (frame.yieldTo === undefined || expression.asteriskToken !== undefined || !isSimple) {
+      throw new TlaTypeScriptError("Unsupported yield", expression);
+    }
+    return frame.yieldTo(path);
   }
   const assigned = getAssignedPath(expression, path, context);
   if (assigned === undefined) {
@@ -520,7 +544,11 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
   const visited = new Set<ts.Node>();
   const getFunctionNode = (node: ts.Expression) => {
     const symbol = getSymbol(node, context.checker);
-    return (symbol && path.scope.functions.get(symbol)) ?? getCallee(node, context);
+    return (
+      (symbol && path.scope.functions.get(symbol)) ??
+      getCallee(node, context) ??
+      getGenerator(node, context)
+    );
   };
   const visit = (node: ts.Node) => {
     const written =
@@ -645,6 +673,11 @@ const translateIterations = (
       frame.throwTo &&
       (() => {
         throw new TlaTypeScriptError("Catch inside the loop, or throw after it ends", loop);
+      }),
+    yieldTo:
+      frame.yieldTo &&
+      (() => {
+        throw new TlaTypeScriptError("Yield outside loops", loop);
       }),
   };
   const translateBody = (current: Path) => {
@@ -905,6 +938,7 @@ export const translateAction = (
       breakTo: undefined,
       continueTo: undefined,
       throwTo: undefined,
+      yieldTo: undefined,
       inlining: new Set(),
     },
   );
@@ -945,6 +979,7 @@ export const translateScript = (
       breakTo: undefined,
       continueTo: undefined,
       throwTo: undefined,
+      yieldTo: undefined,
       inlining: new Set(),
     },
   );

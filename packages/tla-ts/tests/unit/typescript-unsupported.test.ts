@@ -33,6 +33,11 @@ const CASES: [string, string][] = [
   ],
   ["throwing an array", "try { throw values; } catch { count = 0; }"],
   ["calling a generator", "const make = function* () { count++; }; make();"],
+  [
+    "yielding inside a loop",
+    "const make = function* () { for (const value of values) yield; }; make().next();",
+  ],
+  ["delegating a yield", "const make = function* () { yield* [1]; }; make().next();"],
   ["calling an async function", "const run = async () => { count++; }; run();"],
   [
     "a var that redeclares a catch parameter",

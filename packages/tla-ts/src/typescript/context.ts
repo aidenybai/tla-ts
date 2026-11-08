@@ -99,17 +99,25 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
   return isTopLevelConst ? declaration : undefined;
 };
 
-const isPlain = (node: FunctionNode) =>
-  node.asteriskToken === undefined &&
-  !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+const isAsync = (node: FunctionNode) =>
+  node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
 
-// The function a node is, or that a variable declaration initializes.
-export const getFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
+const isPlain = (node: FunctionNode) => node.asteriskToken === undefined && !isAsync(node);
+
+const isGenerator = (node: FunctionNode) => node.asteriskToken !== undefined && !isAsync(node);
+
+const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
   if (node === undefined) return undefined;
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
-    return isPlain(node) ? node : undefined;
+    return node;
   }
-  return ts.isVariableDeclaration(node) ? getFunction(node.initializer) : undefined;
+  return ts.isVariableDeclaration(node) ? getAnyFunction(node.initializer) : undefined;
+};
+
+// The function a node is, or that a variable declaration initializes.
+export const getFunction = (node: ts.Node | undefined) => {
+  const found = getAnyFunction(node);
+  return found !== undefined && isPlain(found) ? found : undefined;
 };
 
 // A class whose definition and instances run no code, so only its methods matter.
@@ -135,11 +143,9 @@ export const getClass = (node: ts.Node | undefined, context: Context) => {
 // Whether a variable's initializer is a function or a class, which tla-ts inlines where it's used
 // instead of storing.
 export const isInlined = (node: ts.Node | undefined) =>
-  getFunction(node) !== undefined ||
+  getAnyFunction(node) !== undefined ||
   (node !== undefined && ts.isClassExpression(node) && isInert(node));
 
-// A method whose class the call names exactly: a static method on the class, or a method on a
-// new instance.
 // The method that a getter like `get method() { return this.#method; }` returns.
 const getReturnedMethod = (getter: ts.GetAccessorDeclaration, context: Context) => {
   const statement = getter.body?.statements.length === 1 ? getter.body.statements[0] : undefined;
@@ -155,6 +161,8 @@ const getReturnedMethod = (getter: ts.GetAccessorDeclaration, context: Context) 
   return getSymbol(returned.name, context.checker)?.valueDeclaration;
 };
 
+// A method whose class the call names exactly: a static method on the class, or a method on a
+// new instance.
 const getMethod = (node: ts.Expression, context: Context) => {
   if (!ts.isPropertyAccessExpression(node)) return undefined;
   const named = getSymbol(node.name, context.checker)?.valueDeclaration;
@@ -164,7 +172,6 @@ const getMethod = (node: ts.Expression, context: Context) => {
     declaration === undefined ||
     named === undefined ||
     !ts.isMethodDeclaration(declaration) ||
-    !isPlain(declaration) ||
     declaration.parent !== named.parent
   ) {
     return undefined;
@@ -183,10 +190,20 @@ const getMethod = (node: ts.Expression, context: Context) => {
 
 // The function that a callee or callback names: one written in place, one declared elsewhere, or
 // a method of a known class.
-export const getCallee = (node: ts.Expression, context: Context) =>
-  getFunction(node) ??
-  getFunction(getSymbol(node, context.checker)?.valueDeclaration) ??
+const resolve = (node: ts.Expression, context: Context) =>
+  getAnyFunction(node) ??
+  getAnyFunction(getSymbol(node, context.checker)?.valueDeclaration) ??
   getMethod(node, context);
+
+export const getCallee = (node: ts.Expression, context: Context) => {
+  const found = resolve(node, context);
+  return found !== undefined && isPlain(found) ? found : undefined;
+};
+
+export const getGenerator = (node: ts.Expression, context: Context) => {
+  const found = resolve(node, context);
+  return found !== undefined && isGenerator(found) ? found : undefined;
+};
 
 export const translateString = (value: string, context: Context) => {
   const modelValue = context.modelValues.get(value);
