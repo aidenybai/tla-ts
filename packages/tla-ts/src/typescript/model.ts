@@ -7,6 +7,7 @@ import {
   hasObjectLiteral,
   type HelperDeclaration,
   isHeapClass,
+  isHeapFunction,
   isInlined,
 } from "./context";
 import type { Expression } from "../ast";
@@ -18,7 +19,7 @@ import { getLocation, identifier, set } from "./tla";
 export interface Variable {
   name: string;
   symbol: ts.Symbol;
-  declaration: ts.VariableDeclaration | ts.ClassDeclaration;
+  declaration: ts.VariableDeclaration | ts.ClassDeclaration | ts.FunctionDeclaration;
 }
 
 // An exported function, which becomes an action, an invariant, or a property its tag names.
@@ -199,8 +200,13 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     context.variables.set(symbol, identifier(name, getLocation(declared.identifier)));
     return [{ name, symbol, declaration }];
   });
+  const isHeapDeclaration = (
+    statement: ts.Statement,
+  ): statement is ts.ClassDeclaration | ts.FunctionDeclaration =>
+    (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) ||
+    (ts.isFunctionDeclaration(statement) && isHeapFunction(statement, context));
   const classes = statements.flatMap((statement) => {
-    if (!ts.isClassDeclaration(statement) || !isHeapClass(statement, context)) return [];
+    if (!isHeapDeclaration(statement)) return [];
     const symbol = statement.name && getSymbol(statement.name, context.checker);
     if (statement.name === undefined || symbol === undefined) return [];
     const name = context.names.getFresh(statement.name.text);
@@ -219,11 +225,17 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
   });
   return {
     variables: [...variables, ...classes],
-    script: statements.filter(
-      (statement) =>
-        !isDeclaration(statement) ||
-        (ts.isClassDeclaration(statement) && isHeapClass(statement, context)),
-    ),
+    // A script makes its functions before it runs, so they come first.
+    script: [
+      ...statements.filter(
+        (statement) => ts.isFunctionDeclaration(statement) && isHeapDeclaration(statement),
+      ),
+      ...statements.filter(
+        (statement) =>
+          !isDeclaration(statement) ||
+          (ts.isClassDeclaration(statement) && isHeapDeclaration(statement)),
+      ),
+    ],
     exported: exported.map((definition) => ({
       ...definition,
       name: context.names.getFresh(definition.name),

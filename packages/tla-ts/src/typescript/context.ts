@@ -163,12 +163,16 @@ export const getClass = (node: ts.Node | undefined, context: Context) => {
 
 // Whether a variable's initializer is a function or a class, which tla-ts inlines where it's used
 // instead of storing.
-export const isInlined = (node: ts.Node | undefined, context: Context) =>
-  getAnyFunction(node) !== undefined ||
-  (node !== undefined &&
-    ts.isClassExpression(node) &&
-    isInert(node) &&
-    !isHeapClass(node, context));
+export const isInlined = (node: ts.Node | undefined, context: Context) => {
+  const found = getAnyFunction(node);
+  return (
+    (found !== undefined && !isHeapFunction(found, context)) ||
+    (node !== undefined &&
+      ts.isClassExpression(node) &&
+      isInert(node) &&
+      !isHeapClass(node, context))
+  );
+};
 
 // The method that a getter like `get method() { return this.#method; }` returns.
 const getReturnedMethod = (getter: ts.GetAccessorDeclaration, context: Context) => {
@@ -347,7 +351,8 @@ export const getFunctionValue = (node: ts.Node, context: Context) => {
     (ts.isFunctionExpression(found) ||
       ts.isArrowFunction(found) ||
       (ts.isFunctionDeclaration(found) && found.body !== undefined)) &&
-    isOnce(found.parent)
+    isOnce(found.parent) &&
+    !isHeapFunction(found, context)
     ? found
     : undefined;
 };
@@ -386,14 +391,74 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context) => 
   return isHeap;
 };
 
+// The parameters that a call passes values to, without the this parameter that only types this.
+export const getParameters = (node: ts.SignatureDeclaration) =>
+  node.parameters.filter(
+    (parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this",
+  );
+
+export type HeapFunction = ts.FunctionDeclaration | ts.FunctionExpression;
+
+export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;
+
+const heapFunctions = new WeakMap<ts.Node, boolean>();
+
+const skipCasts = (node: ts.Expression): ts.Expression =>
+  ts.isParenthesizedExpression(node) ||
+  ts.isAsExpression(node) ||
+  ts.isTypeAssertionExpression(node)
+    ? skipCasts(node.expression)
+    : node;
+
+// Whether a function body returns a value, which a new gives in place of the instance when it's
+// an object.
+const isReturning = (node: ts.Node): boolean =>
+  (ts.isReturnStatement(node) && node.expression !== undefined) ||
+  (!ts.isFunctionLike(node) &&
+    (ts.forEachChild(node, (child) => isReturning(child) || undefined) ?? false));
+
+// A function that a script makes once and calls with new, which it makes into objects on the heap
+// as it does a heap class: a constructor object, and the prototype that its instances inherit.
+export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFunction => {
+  if (context.heap === undefined) return false;
+  if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;
+  const known = heapFunctions.get(node);
+  if (known !== undefined) return known;
+  const nameNode = ts.isFunctionDeclaration(node)
+    ? node.name
+    : ts.isVariableDeclaration(node.parent) && node.parent.initializer === node
+      ? node.parent.name
+      : undefined;
+  const symbol =
+    nameNode === undefined || !ts.isIdentifier(nameNode)
+      ? undefined
+      : getSymbol(nameNode, context.checker);
+  const sourceFile = node.getSourceFile();
+  const isNewTarget = (child: ts.Node): boolean =>
+    (ts.isNewExpression(child) &&
+      getSymbol(skipCasts(child.expression), context.checker) === symbol) ||
+    (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false);
+  const isHeap =
+    symbol !== undefined &&
+    node.body !== undefined &&
+    isPlain(node) &&
+    isOnce(node.parent) &&
+    !isReturning(node.body) &&
+    !isAssigned(symbol, sourceFile, context) &&
+    isNewTarget(sourceFile);
+  heapFunctions.set(node, isHeap);
+  return isHeap;
+};
+
 // The heap class that a name names.
-export const getHeapClass = (node: ts.Expression, context: Context) => {
-  const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+export const getHeapClass = (node: ts.Expression, context: Context): HeapClass | undefined => {
+  const declaration = getSymbol(skipCasts(node), context.checker)?.valueDeclaration;
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
       : declaration;
-  return found !== undefined && ts.isClassLike(found) && isHeapClass(found, context)
+  return found !== undefined &&
+    ((ts.isClassLike(found) && isHeapClass(found, context)) || isHeapFunction(found, context))
     ? found
     : undefined;
 };
@@ -402,12 +467,16 @@ export const getHeapClass = (node: ts.Expression, context: Context) => {
 export const getNewClass = (node: ts.Node, context: Context) =>
   ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
 
-// A class's constructor, when its body runs statements.
-export const getRunConstructor = (node: ts.ClassLikeDeclaration) =>
-  node.members.find(
-    (member): member is ts.ConstructorDeclaration =>
-      ts.isConstructorDeclaration(member) && (member.body?.statements.length ?? 0) > 0,
-  );
+// A class's constructor, or a function, when its body runs statements.
+export const getRunConstructor = (node: HeapClass) =>
+  ts.isClassLike(node)
+    ? node.members.find(
+        (member): member is ts.ConstructorDeclaration =>
+          ts.isConstructorDeclaration(member) && (member.body?.statements.length ?? 0) > 0,
+      )
+    : (node.body?.statements.length ?? 0) > 0
+      ? node
+      : undefined;
 
 // Whether a new is all that a statement evaluates, besides the variable it initializes or
 // assigns, so the statement can run the constructor.

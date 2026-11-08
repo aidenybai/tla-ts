@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import {
+  type HeapFunction,
   type Context,
   type FunctionNode,
   getElement,
@@ -37,7 +38,8 @@ export interface Receiver {
     | ts.MethodDeclaration
     | ts.ConstructorDeclaration
     | ts.GetAccessorDeclaration
-    | ts.SetAccessorDeclaration;
+    | ts.SetAccessorDeclaration
+    | HeapFunction;
 }
 
 export interface Bound {

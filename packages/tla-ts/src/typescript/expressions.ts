@@ -23,6 +23,7 @@ import {
   getTopLevelDeclaration,
   getUndefined,
   isHeapClass,
+  isHeapFunction,
   isMethodCall,
   share,
   translateString,
@@ -976,6 +977,7 @@ const translateNode = (
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
   const isHeapObject =
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
+    isHeapFunction(node, context) ||
     getNewClass(node, context) !== undefined ||
     isNewObject(node, context);
   if (isHeapObject) {

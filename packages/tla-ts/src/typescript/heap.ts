@@ -1,16 +1,19 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
+  type HeapClass,
   type CalledMethod,
   type Context,
   type FunctionNode,
   getNewClass,
+  getParameters,
   getObjectMethod,
   getRunConstructor,
   getSymbol,
   getUndefined,
   isPlainAccessor,
   isHeapClass,
+  isHeapFunction,
   isOnce,
   isStatementNew,
   isMethodCall,
@@ -248,17 +251,12 @@ export const translateObject = (
 // The heap after a node from getAllocated adds the object it makes.
 // The constructor object and the prototype that a class makes, prototype first, so the
 // constructor object is the last on the heap.
-const translateClass = (
-  node: ts.ClassLikeDeclaration,
-  heap: Expression,
-  scope: Scope,
-  context: Context,
-) => {
+const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context: Context) => {
   const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
   const define = (object: Expression, key: Expression, value: Expression, flags: boolean[]) =>
     useJavaScript("Define", [object, key, value, ...flags.map(boolean)], context);
   const defineMethods = (object: Expression, isStatic: boolean) =>
-    node.members.reduce((current, member) => {
+    (ts.isClassLike(node) ? node.members : []).reduce<Expression>((current, member) => {
       const isStaticMember = ((ts.canHaveModifiers(member) && ts.getModifiers(member)) || []).some(
         (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
       );
@@ -290,13 +288,14 @@ const translateClass = (
             [true, false, true],
           );
     }, object);
-  const constructor = node.members.find(ts.isConstructorDeclaration);
-  const parameters = constructor?.parameters ?? [];
+  const parameters = ts.isClassLike(node)
+    ? (node.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
+    : getParameters(node);
   // A parameter that only TypeScript marks optional still counts toward the length.
   const length = parameters.findIndex(
     (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
   );
-  const named = ts.isClassExpression(node) ? node.parent : node;
+  const named = ts.isClassExpression(node) || ts.isFunctionExpression(node) ? node.parent : node;
   const name =
     node.name?.text ??
     (ts.isVariableDeclaration(named) && ts.isIdentifier(named.name) ? named.name.text : "");
@@ -319,7 +318,7 @@ const translateClass = (
       ),
       string("prototype"),
       getRef(1),
-      [false, false, false],
+      [!ts.isClassLike(node), false, false],
     ),
     true,
   );
@@ -333,12 +332,12 @@ const translateClass = (
 // An instance of a heap class with its fields, before the constructor runs.
 const translateInstance = (
   node: ts.NewExpression,
-  created: ts.ClassLikeDeclaration,
+  created: HeapClass,
   heap: Expression,
   scope: Scope,
   context: Context,
 ) =>
-  created.members.reduce(
+  (ts.isClassLike(created) ? created.members : []).reduce<Expression>(
     (object, member) =>
       ts.isPropertyDeclaration(member) && ts.isIdentifier(member.name)
         ? useJavaScript(
@@ -369,7 +368,9 @@ const translateInstance = (
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
-  if (ts.isClassLike(node)) return translateClass(node, heap, scope, context);
+  if (ts.isClassLike(node) || isHeapFunction(node, context)) {
+    return translateClass(node, heap, scope, context);
+  }
   const created = getNewClass(node, context);
   if (created !== undefined && ts.isNewExpression(node)) {
     return useJavaScript(
@@ -494,7 +495,9 @@ export const isNewObject = (node: ts.Node, context: Context) => {
 // making an object that nothing reads can't be seen, but not its descriptions and creations,
 // which may stop the run.
 export const getAllocated = (node: ts.Node, context: Context, isSometimes = false): ts.Node[] => {
-  if (context.heap === undefined || ts.isFunctionLike(node)) return [];
+  if (context.heap === undefined) return [];
+  if (isHeapFunction(node, context)) return isSometimes ? [] : [node];
+  if (ts.isFunctionLike(node)) return [];
   if (ts.isClassLike(node)) return isHeapClass(node, context) && !isSometimes ? [node] : [];
   if (ts.isOptionalChain(node)) return [];
   if (ts.isConditionalExpression(node)) {

@@ -475,6 +475,17 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[child.length, Object.getPrototypeOf(child) === proto, point.x, Point.length, Con.name, typeof Point, child instanceof Con, Object.getOwnPropertyDescriptor(Point, 'prototype')!.writable]",
+      `const proto = { length: 2 };
+      const Con = function () {};
+      Con.prototype = proto;
+      const child = new (Con as unknown as new () => { [key: string]: unknown })();
+      const point = new (Point as unknown as new (x: unknown) => { [key: string]: unknown })(3);
+      function Point(this: { [key: string]: unknown }, x: unknown) {
+        this.x = x;
+      }`,
+    ],
+    [
       "[typeof retyped.value, typeof (retyped.value)]",
       `const retyped = { value: 1 };
       Object.defineProperty(retyped, "value", { value: "text" });`,

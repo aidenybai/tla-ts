@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
+  type HeapFunction,
   type Context,
   type FunctionNode,
   getAccessKey,
@@ -11,11 +12,13 @@ import {
   getElement,
   getFunction,
   getNewClass,
+  getParameters,
   getRunConstructor,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
   isHeapClass,
+  isHeapFunction,
   isMethodCall,
   isStatementNew,
   share,
@@ -565,9 +568,10 @@ const inlineBody = (
   if (frame.inlining.has(callee)) {
     throw new TlaTypeScriptError("Functions that change state can't call themselves", node);
   }
+  const parameters = getParameters(callee);
   // A parameter's default makes its objects whether or not the call passes the parameter, as
   // making an object that nothing reads can't be seen.
-  const defaults = callee.parameters
+  const defaults = parameters
     .flatMap((parameter) => getAllocated(parameter, context))
     .filter((allocation) => !path.scope.allocated.has(allocation));
   if (defaults.length > 0) {
@@ -585,23 +589,21 @@ const inlineBody = (
       ),
     );
   }
-  const callbacks = callee.parameters.flatMap(
-    (parameter, position): [ts.Symbol, FunctionNode][] => {
-      const argument = argumentNodes.at(position);
-      const callback = argument && getCallback(argument, path, context);
-      const symbol = getSymbol(parameter.name, context.checker);
-      return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
-    },
-  );
+  const callbacks = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
+    const argument = argumentNodes.at(position);
+    const callback = argument && getCallback(argument, path, context);
+    const symbol = getSymbol(parameter.name, context.checker);
+    return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
+  });
   const isValue = (position: number) => {
-    const parameter = callee.parameters.at(position);
+    const parameter = parameters.at(position);
     return (
       parameter === undefined ||
       !callbacks.some((entry) => entry[0] === getSymbol(parameter.name, context.checker))
     );
   };
   const bound = bindValues(
-    callee.parameters.filter((_, position) => isValue(position)),
+    parameters.filter((_, position) => isValue(position)),
     argumentNodes
       .filter((_, position) => isValue(position))
       .map((argument) => translateExpression(argument, path.scope, context)),
@@ -937,7 +939,7 @@ const getConstructorRun = (node: ts.Expression, context: Context) => {
 // that the statement allocated as this, and gives the instance.
 const translateConstruction = (
   expression: ts.NewExpression,
-  constructor: ts.ConstructorDeclaration,
+  constructor: ts.ConstructorDeclaration | HeapFunction,
   path: Path,
   context: Context,
   frame: Frame,
@@ -1828,7 +1830,10 @@ const translateStatements = (
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
-  if (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) {
+  if (
+    (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) ||
+    (ts.isFunctionDeclaration(statement) && isHeapFunction(statement, context))
+  ) {
     const symbol = statement.name && getSymbol(statement.name, context.checker);
     return allocate(statement, path, context, (inner) => {
       const ref = inner.scope.allocated.get(statement);

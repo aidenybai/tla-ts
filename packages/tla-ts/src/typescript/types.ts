@@ -1,6 +1,13 @@
 import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } from "../ast";
-import { type Context, getUndefined, isHeapClass, translateString, type Unknown } from "./context";
+import {
+  type Context,
+  getUndefined,
+  isHeapClass,
+  isHeapFunction,
+  translateString,
+  type Unknown,
+} from "./context";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -71,8 +78,8 @@ const isPlainObject = (type: ts.Type, context: Context) => {
   const declaration = symbol?.valueDeclaration;
   if (
     declaration !== undefined &&
-    ts.isClassLike(declaration) &&
-    isHeapClass(declaration, context)
+    ((ts.isClassLike(declaration) && isHeapClass(declaration, context)) ||
+      isHeapFunction(declaration, context))
   ) {
     return true;
   }
