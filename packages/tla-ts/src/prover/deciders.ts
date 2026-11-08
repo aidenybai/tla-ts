@@ -1,6 +1,3 @@
-// How each of tla-ts's backends decides the text tlapm would send its prover, by the prover of the
-// method that selects it.
-
 import { SmtParseError, TlaProverError } from "../errors";
 import { decideIsabelle } from "./isabelle/decide";
 import { decidePtl } from "./ptl/decide";
