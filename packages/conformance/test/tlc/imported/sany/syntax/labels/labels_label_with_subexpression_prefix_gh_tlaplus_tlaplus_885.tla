@@ -3,6 +3,7 @@ description: "Label with Subexpression Prefix (GH tlaplus/tlaplus #885). Ported 
 source: tlatools/org.lamport.tlatools/test/tla2sany/corpus/labels.txt
 features:
   - sany-syntax
+  - tlc-bug
 outcome: success
 ---*)
 ---- MODULE labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885 ----
