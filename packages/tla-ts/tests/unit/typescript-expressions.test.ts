@@ -55,6 +55,8 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ['letter === "a"', 'const letter: string = "a";'],
     ['letter !== "b"', 'const letter: string = "a";'],
     "'a\\0b\\u0001c\\td\"e\\\\f'",
+    "['abc'[1], 'abc'[3], 'a\\u2028b'[1]]",
+    "`${true},${false},${null},${undefined}`",
   ],
   arrays: [
     "[]",

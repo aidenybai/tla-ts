@@ -48,6 +48,7 @@ import {
   getPropertyKey,
   isBooleanLike,
   isFieldName,
+  isNumberLike,
   isNumericKey,
   isObject,
   translateUnknown,
@@ -323,7 +324,13 @@ const translateCall = (
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
 const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
-  return getKind(node, context) === "string" ? value : apply("ToString", [value]);
+  const flags = context.checker.getTypeAtLocation(node).flags;
+  if (getKind(node, context) === "string") return value;
+  if (isNumberLike(node, context)) return apply("ToString", [value]);
+  if (isBooleanLike(node, context)) return ifExpression(value, string("true"), string("false"));
+  if (flags & ts.TypeFlags.Null) return string("null");
+  if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
+  throw new TlaTypeScriptError(`Convert this to a string explicitly: ${node.getText()}`, node);
 };
 
 const translateTemplate = (node: ts.TemplateExpression, scope: Scope, context: Context) => {
@@ -475,9 +482,15 @@ const translatePropertyAccess = (
   }
   const size =
     name === "length" || name === "size" ? translateSize(receiver, scope, context) : undefined;
-  return size ?? getField(translateExpression(receiver, scope, context), name);
+  if (size !== undefined) return size;
+  if (getKind(receiver, context) !== "other") {
+    throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
+  }
+  return getField(translateExpression(receiver, scope, context), name);
 };
 
+// A string's element is a string of one UTF-16 unit, as TLC's SubSeq takes it, or undefined past
+// its end.
 const translateElementAccess = (
   node: ts.ElementAccessExpression,
   scope: Scope,
@@ -555,10 +568,14 @@ const translateNode = (
     return translateExpression(node.expression, scope, context, true);
   }
   if (ts.isNumericLiteral(node)) {
-    if (!Number.isInteger(Number(node.text))) {
+    const value = Number(node.text);
+    if (!Number.isInteger(value)) {
       throw new TlaTypeScriptError(`Only integers are supported: ${node.text}`, node);
     }
-    return number(Number(node.text));
+    if (value > 2 ** 31 - 1) {
+      throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${node.text} is too big`, node);
+    }
+    return number(value);
   }
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return translateString(node.text, context);
@@ -578,6 +595,9 @@ const translateNode = (
     return not(translateExpression(node.operand, scope, context));
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
+    if (ts.isNumericLiteral(node.operand) && Number(node.operand.text) === 0) {
+      throw new TlaTypeScriptError("TLA+ integers have no negative zero", node);
+    }
     return apply("-.", [translateExpression(node.operand, scope, context)]);
   }
   if (ts.isBinaryExpression(node)) return translateBinary(node, scope, context);

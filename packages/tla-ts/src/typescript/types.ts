@@ -76,6 +76,9 @@ export const isObject = (type: ts.Type): boolean =>
 export const isBooleanLike = (node: ts.Expression, context: Context) =>
   isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.BooleanLike);
 
+export const isNumberLike = (node: ts.Expression, context: Context) =>
+  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike);
+
 export const isSet = (node: ts.Expression, context: Context) =>
   isSetType(context.checker.getTypeAtLocation(node));
 
