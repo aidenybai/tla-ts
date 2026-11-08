@@ -6,6 +6,7 @@ import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { grow, shrink } from "./array";
 import type { DatatypeDef } from "./datatype-decl-plugin";
+import type { Mpf } from "./mpf";
 import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
@@ -24,6 +25,7 @@ export const FAMILY_FINITE_SET = 4;
 export const FAMILY_BV = 5;
 export const FAMILY_ARRAY = 6;
 export const FAMILY_DATATYPE = 7;
+export const FAMILY_FPA = 8;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -144,6 +146,57 @@ export const OP_DT_RECOGNISER = DATATYPE_OP_BASE + 1;
 export const OP_DT_IS = DATATYPE_OP_BASE + 2;
 export const OP_DT_ACCESSOR = DATATYPE_OP_BASE + 3;
 export const OP_DT_UPDATE_FIELD = DATATYPE_OP_BASE + 4;
+const FPA_OP_BASE = 400;
+export const OP_FPA_RM_NEAREST_TIES_TO_EVEN = FPA_OP_BASE;
+export const OP_FPA_RM_NEAREST_TIES_TO_AWAY = FPA_OP_BASE + 1;
+export const OP_FPA_RM_TOWARD_POSITIVE = FPA_OP_BASE + 2;
+export const OP_FPA_RM_TOWARD_NEGATIVE = FPA_OP_BASE + 3;
+export const OP_FPA_RM_TOWARD_ZERO = FPA_OP_BASE + 4;
+export const OP_FPA_NUM = FPA_OP_BASE + 5;
+export const OP_FPA_PLUS_INF = FPA_OP_BASE + 6;
+export const OP_FPA_MINUS_INF = FPA_OP_BASE + 7;
+export const OP_FPA_NAN = FPA_OP_BASE + 8;
+export const OP_FPA_PLUS_ZERO = FPA_OP_BASE + 9;
+export const OP_FPA_MINUS_ZERO = FPA_OP_BASE + 10;
+export const OP_FPA_ADD = FPA_OP_BASE + 11;
+export const OP_FPA_SUB = FPA_OP_BASE + 12;
+export const OP_FPA_NEG = FPA_OP_BASE + 13;
+export const OP_FPA_MUL = FPA_OP_BASE + 14;
+export const OP_FPA_DIV = FPA_OP_BASE + 15;
+export const OP_FPA_REM = FPA_OP_BASE + 16;
+export const OP_FPA_ABS = FPA_OP_BASE + 17;
+export const OP_FPA_MIN = FPA_OP_BASE + 18;
+export const OP_FPA_MAX = FPA_OP_BASE + 19;
+export const OP_FPA_MIN_I = FPA_OP_BASE + 20;
+export const OP_FPA_MAX_I = FPA_OP_BASE + 21;
+export const OP_FPA_FMA = FPA_OP_BASE + 22;
+export const OP_FPA_SQRT = FPA_OP_BASE + 23;
+export const OP_FPA_ROUND_TO_INTEGRAL = FPA_OP_BASE + 24;
+export const OP_FPA_EQ = FPA_OP_BASE + 25;
+export const OP_FPA_LT = FPA_OP_BASE + 26;
+export const OP_FPA_GT = FPA_OP_BASE + 27;
+export const OP_FPA_LE = FPA_OP_BASE + 28;
+export const OP_FPA_GE = FPA_OP_BASE + 29;
+export const OP_FPA_IS_NAN = FPA_OP_BASE + 30;
+export const OP_FPA_IS_INF = FPA_OP_BASE + 31;
+export const OP_FPA_IS_ZERO = FPA_OP_BASE + 32;
+export const OP_FPA_IS_NORMAL = FPA_OP_BASE + 33;
+export const OP_FPA_IS_SUBNORMAL = FPA_OP_BASE + 34;
+export const OP_FPA_IS_NEGATIVE = FPA_OP_BASE + 35;
+export const OP_FPA_IS_POSITIVE = FPA_OP_BASE + 36;
+export const OP_FPA_FP = FPA_OP_BASE + 37;
+export const OP_FPA_TO_FP = FPA_OP_BASE + 38;
+export const OP_FPA_TO_FP_UNSIGNED = FPA_OP_BASE + 39;
+export const OP_FPA_TO_UBV = FPA_OP_BASE + 40;
+export const OP_FPA_TO_SBV = FPA_OP_BASE + 41;
+export const OP_FPA_TO_REAL = FPA_OP_BASE + 42;
+export const OP_FPA_TO_REAL_I = FPA_OP_BASE + 43;
+export const OP_FPA_TO_SBV_I = FPA_OP_BASE + 44;
+export const OP_FPA_TO_UBV_I = FPA_OP_BASE + 45;
+export const OP_FPA_TO_IEEE_BV = FPA_OP_BASE + 46;
+export const OP_FPA_TO_IEEE_BV_I = FPA_OP_BASE + 47;
+export const OP_FPA_BVWRAP = FPA_OP_BASE + 48;
+export const OP_FPA_BV2RM = FPA_OP_BASE + 49;
 
 // The number of elements of a sort, with -1 for an infinite sort and -2 for a very big one.
 export const SORT_SIZE_INFINITE = -1n;
@@ -229,6 +282,9 @@ const Z3_BV_FAMILY = 7;
 const Z3_ARRAY_FAMILY = 8;
 const Z3_DATATYPE_FAMILY = 9;
 const Z3_RECFUN_FAMILY = 10;
+const Z3_FPA_FAMILY = 14;
+const Z3_FLOATING_POINT_SORT = 0;
+const Z3_ROUNDING_MODE_SORT = 1;
 const Z3_NULL = 0xffffffff;
 // The name, Z3 decl kind and arity of each builtin, whose Z3 declaration has this many arguments
 // whatever the number of arguments of the application (-1 for the arguments' own number).
@@ -363,6 +419,7 @@ export class AstManager {
   sortNames: string[] = ["Bool", "Int", "Real"];
   private sortFamilies: number[] = [FAMILY_BASIC, FAMILY_ARITH, FAMILY_ARITH];
   private sortWidths: number[] = [0, 0, 0];
+  private sortSbits: number[] = [0, 0, 0];
   private sortParameters: number[][] = [[], [], []];
   private sortSizes: bigint[] = [2n, SORT_SIZE_INFINITE, SORT_SIZE_INFINITE];
   private arraySorts = new Map<string, number>();
@@ -382,6 +439,11 @@ export class AstManager {
   private numUserSorts = 0;
   private bvSorts = new Map<number, number>();
   private bvDecls = new Map<string, number>();
+  private fpSorts = new Map<string, number>();
+  private rmSort = -1;
+  private fpaDecls = new Map<string, number>();
+  private fpValues: Mpf[] = [];
+  private fpValueIds = new Map<string, number>();
   private sortHashes = [
     combineHash(getSymbolHash("Bool"), getInfoHash(Z3_BASIC_FAMILY, 0, [])),
     combineHash(getSymbolHash("Int"), getInfoHash(Z3_ARITH_FAMILY, 1, [])),
@@ -777,6 +839,7 @@ export class AstManager {
     this.sortNames.push(getSymbolName(name));
     this.sortFamilies.push(FAMILY_USER);
     this.sortWidths.push(0);
+    this.sortSbits.push(0);
     this.sortParameters.push([]);
     this.sortSizes.push(SORT_SIZE_INFINITE);
     this.mkSmallId();
@@ -790,6 +853,7 @@ export class AstManager {
     this.sortNames.push("bv");
     this.sortFamilies.push(FAMILY_BV);
     this.sortWidths.push(width);
+    this.sortSbits.push(0);
     this.sortParameters.push([]);
     this.sortSizes.push(width < 64 ? 1n << BigInt(width) : SORT_SIZE_VERY_BIG);
     // bv_decl_plugin makes the sorts up to 64 bits when Z3 starts.
@@ -797,6 +861,101 @@ export class AstManager {
     const sort = this.sortNames.length - 1;
     this.bvSorts.set(width, sort);
     return sort;
+  }
+
+  mkFpSort(ebits: number, sbits: number) {
+    const key = `${ebits}:${sbits}`;
+    const existing = this.fpSorts.get(key);
+    if (existing !== undefined) return existing;
+    this.sortHashes.push(
+      combineHash(
+        getSymbolHash("FloatingPoint"),
+        getInfoHash(Z3_FPA_FAMILY, Z3_FLOATING_POINT_SORT, [ebits, sbits]),
+      ),
+    );
+    this.sortNames.push("FloatingPoint");
+    this.sortFamilies.push(FAMILY_FPA);
+    this.sortWidths.push(ebits);
+    this.sortSbits.push(sbits);
+    this.sortParameters.push([]);
+    this.sortSizes.push(SORT_SIZE_VERY_BIG);
+    this.mkSmallId();
+    const sort = this.sortNames.length - 1;
+    this.fpSorts.set(key, sort);
+    return sort;
+  }
+
+  mkRmSort() {
+    if (this.rmSort !== -1) return this.rmSort;
+    this.sortHashes.push(
+      combineHash(
+        getSymbolHash("RoundingMode"),
+        getInfoHash(Z3_FPA_FAMILY, Z3_ROUNDING_MODE_SORT, []),
+      ),
+    );
+    this.sortNames.push("RoundingMode");
+    this.sortFamilies.push(FAMILY_FPA);
+    this.sortWidths.push(0);
+    this.sortSbits.push(0);
+    this.sortParameters.push([]);
+    this.sortSizes.push(SORT_SIZE_INFINITE);
+    this.mkSmallId();
+    this.rmSort = this.sortNames.length - 1;
+    return this.rmSort;
+  }
+
+  isFpSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_FPA && sort !== this.rmSort;
+  }
+
+  isRmSort(sort: number) {
+    return sort === this.rmSort;
+  }
+
+  getEbits(sort: number) {
+    return this.sortWidths[sort];
+  }
+
+  getSbits(sort: number) {
+    return this.sortSbits[sort];
+  }
+
+  mkFpaDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
+    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const existing = this.fpaDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_FPA_FAMILY, op - FPA_OP_BASE, parameters),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_FPA,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.fpaDecls.set(key, decl);
+    return decl;
+  }
+
+  mkFpValueId(value: Mpf) {
+    const key = `${value.ebits}:${value.sbits}:${value.sign}:${value.exponent}:${value.significand}`;
+    const existing = this.fpValueIds.get(key);
+    if (existing !== undefined) return existing;
+    this.fpValues.push({ ...value });
+    this.fpValueIds.set(key, this.fpValues.length - 1);
+    return this.fpValues.length - 1;
+  }
+
+  getFpValue(id: number): Readonly<Mpf> {
+    return this.fpValues[id];
   }
 
   mkArraySort(parameters: number[]) {
@@ -816,6 +975,7 @@ export class AstManager {
     this.sortNames.push("Array");
     this.sortFamilies.push(FAMILY_ARRAY);
     this.sortWidths.push(0);
+    this.sortSbits.push(0);
     this.sortParameters.push(parameters);
     this.sortSizes.push(this.getArraySortSize(parameters));
     this.mkSmallId();
@@ -854,6 +1014,8 @@ export class AstManager {
 
   getSortName(sort: number): string {
     if (this.isBvSort(sort)) return `(_ BitVec ${this.getBvSize(sort)})`;
+    if (this.isFpSort(sort))
+      return `(_ FloatingPoint ${this.getEbits(sort)} ${this.getSbits(sort)})`;
     const parameters = this.sortParameters[sort].map((parameter) => this.getSortName(parameter));
     if (parameters.length === 0) return this.sortNames[sort];
     return `(${this.sortNames[sort]} ${parameters.join(" ")})`;
@@ -909,6 +1071,7 @@ export class AstManager {
     this.sortNames.push(getSymbolName(name));
     this.sortFamilies.push(family);
     this.sortWidths.push(0);
+    this.sortSbits.push(0);
     this.sortParameters.push(parameters);
     this.sortSizes.push(SORT_SIZE_INFINITE);
     const sort = this.sortNames.length - 1;
@@ -1341,7 +1504,8 @@ export class AstManager {
       funcDecl.family === FAMILY_USER ||
       funcDecl.family === FAMILY_BV ||
       funcDecl.family === FAMILY_ARRAY ||
-      funcDecl.family === FAMILY_DATATYPE;
+      funcDecl.family === FAMILY_DATATYPE ||
+      funcDecl.family === FAMILY_FPA;
     const builtinSlot =
       hasOwnHash || funcDecl.op === OP_PATTERN
         ? -1
@@ -1605,10 +1769,19 @@ export class AstManager {
       op === OP_FALSE ||
       op === OP_MODEL_VALUE ||
       op === OP_BV_NUM ||
+      (op >= OP_FPA_RM_NEAREST_TIES_TO_EVEN && op <= OP_FPA_RM_TOWARD_ZERO) ||
       (op === OP_CONST_ARRAY && this.isUniqueValue(this.getArg(expr, 0))) ||
       (op === OP_DT_CONSTRUCTOR &&
-        this.mapArgs(expr, (arg) => this.isUniqueValue(arg)).every((isUnique) => isUnique))
+        this.mapArgs(expr, (arg) => this.isUniqueValue(arg)).every((isUnique) => isUnique)) ||
+      (op === OP_FPA_FP && this.isUniqueFp(expr))
     );
+  }
+
+  private isUniqueFp(expr: number) {
+    if (!this.mapArgs(expr, (arg) => this.isValue(arg)).every((isValue) => isValue)) return false;
+    const exponent = this.getArg(expr, 1);
+    const value = this.getBvNumeralValue(exponent);
+    return value !== 0n && value !== (1n << BigInt(this.getBvSize(this.sorts[exponent]))) - 1n;
   }
 
   isValue(expr: number): boolean {
@@ -1619,8 +1792,9 @@ export class AstManager {
       current = this.getArg(current, 0);
     }
     if (this.getOp(current) === OP_CONST_ARRAY) return this.isValue(this.getArg(current, 0));
-    if (this.getOp(current) === OP_DT_CONSTRUCTOR)
+    if (this.getOp(current) === OP_DT_CONSTRUCTOR || this.getOp(current) === OP_FPA_FP)
       return this.mapArgs(current, (arg) => this.isValue(arg)).every((isValue) => isValue);
+    if (this.getOp(current) >= OP_FPA_NUM && this.getOp(current) <= OP_FPA_MINUS_ZERO) return true;
     return current === expr && this.isUniqueValue(expr);
   }
 

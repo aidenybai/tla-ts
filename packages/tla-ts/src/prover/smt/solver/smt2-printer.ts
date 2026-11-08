@@ -3,7 +3,9 @@
 import {
   type AstManager,
   FAMILY_BV,
+  FAMILY_FPA,
   OP_ARRAY_EXT,
+  OP_FPA_NUM,
   OP_ARRAY_MAP,
   OP_AS_ARRAY,
   OP_CONST_ARRAY,
@@ -23,6 +25,8 @@ import {
   type SmtSymbol,
 } from "./ast";
 import { isAssociativeBvOp } from "./bv-decl-plugin";
+import { getFpNumeral } from "./fpa-decl-plugin";
+import { biasExp, isInf, isNan, isZero, type Mpf } from "./mpf";
 
 interface TextFormat {
   kind: "text";
@@ -235,34 +239,71 @@ export const getQuotedName = (symbol: SmtSymbol) =>
 export const formatSort = (manager: AstManager, sort: number): Format =>
   manager.isBvSort(sort)
     ? mkSeq1([mkText(String(manager.getBvSize(sort)))], "_ BitVec")
-    : manager.getSortParameters(sort).length > 0
+    : manager.isFpSort(sort)
       ? mkSeq1(
-          manager.getSortParameters(sort).map((parameter) => formatSort(manager, parameter)),
-          getQuotedName(manager.sortNames[sort]),
+          [
+            mkText("FloatingPoint"),
+            mkText(String(manager.getEbits(sort))),
+            mkText(String(manager.getSbits(sort))),
+          ],
+          "_",
         )
-      : mkText(getQuotedName(manager.sortNames[sort]));
+      : manager.getSortParameters(sort).length > 0
+        ? mkSeq1(
+            manager.getSortParameters(sort).map((parameter) => formatSort(manager, parameter)),
+            getQuotedName(manager.sortNames[sort]),
+          )
+        : mkText(getQuotedName(manager.sortNames[sort]));
 
 const getSortText = (manager: AstManager, sort: number): string =>
   manager.isBvSort(sort)
     ? `(_ BitVec ${manager.getBvSize(sort)})`
-    : manager.getSortParameters(sort).length > 0
-      ? `(${getQuotedName(manager.sortNames[sort])} ${manager
-          .getSortParameters(sort)
-          .map((parameter) => getSortText(manager, parameter))
-          .join(" ")})`
-      : getQuotedName(manager.sortNames[sort]);
+    : manager.isFpSort(sort)
+      ? `(_ FloatingPoint ${manager.getEbits(sort)} ${manager.getSbits(sort)})`
+      : manager.getSortParameters(sort).length > 0
+        ? `(${getQuotedName(manager.sortNames[sort])} ${manager
+            .getSortParameters(sort)
+            .map((parameter) => getSortText(manager, parameter))
+            .join(" ")})`
+        : getQuotedName(manager.sortNames[sort]);
 
 const formatBvNumeral = (manager: AstManager, options: PrintOptions, expr: number) => {
   const width = manager.getBvSize(manager.sorts[expr]);
   const value = manager.getBvNumeralValue(expr);
   const isNegative = options.isBvNeg && value >= 1n << BigInt(width - 1);
   const magnitude = isNegative ? (1n << BigInt(width)) - value : value;
-  const literal = !options.isBvLiterals
-    ? `(_ bv${magnitude} ${width})`
-    : width % 4 === 0
-      ? `#x${magnitude.toString(16).padStart(width / 4, "0")}`
-      : `#b${magnitude.toString(2).padStart(width, "0")}`;
+  const literal = getBvLiteral(options, magnitude, width);
   return isNegative ? mkSeq1([mkText(literal)], "bvneg") : mkText(literal);
+};
+
+const getBvLiteral = (options: PrintOptions, value: bigint, width: number) =>
+  !options.isBvLiterals
+    ? `(_ bv${value} ${width})`
+    : width % 4 === 0
+      ? `#x${value.toString(16).padStart(width / 4, "0")}`
+      : `#b${value.toString(2).padStart(width, "0")}`;
+
+const formatFpNumeral = (options: PrintOptions, value: Mpf) => {
+  const special = isNan(value)
+    ? "NaN"
+    : isInf(value)
+      ? value.sign
+        ? "-oo"
+        : "+oo"
+      : isZero(value)
+        ? value.sign
+          ? "-zero"
+          : "+zero"
+        : undefined;
+  if (special !== undefined) return mkText(`(_ ${special} ${value.ebits} ${value.sbits})`);
+  const sign = value.sign ? 1n : 0n;
+  return mkText(
+    `(fp ${options.isBvLiterals ? `#b${sign}` : `(_ bv${sign} 1)`} ${getBvLiteral(
+      options,
+      BigInt(biasExp(value.ebits, value.exponent)),
+      value.ebits,
+    )} ${getBvLiteral(options, value.significand, value.sbits - 1)})`,
+  );
 };
 
 const getDeclName = (manager: AstManager, decl: number) => {
@@ -276,7 +317,9 @@ const getDeclName = (manager: AstManager, decl: number) => {
     funcDecl.op === OP_DT_UPDATE_FIELD
   )
     return `(_ ${name} ${getQuotedName(manager.funcDecls[funcDecl.parameters[0]].name)})`;
-  return (funcDecl.family === FAMILY_BV || funcDecl.op === OP_ARRAY_EXT) &&
+  return (funcDecl.family === FAMILY_BV ||
+    (funcDecl.family === FAMILY_FPA && funcDecl.op !== OP_FPA_NUM) ||
+    funcDecl.op === OP_ARRAY_EXT) &&
     funcDecl.parameters.length > 0
     ? `(_ ${name} ${funcDecl.parameters.join(" ")})`
     : name;
@@ -372,12 +415,14 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
         )
       : mkText(getDeclName(manager, decl));
 
-  const formatConst = (expr: number) =>
-    manager.getOp(expr) === OP_NUM
-      ? formatNumeral(manager, options, expr)
-      : manager.isBvNumeral(expr)
-        ? formatBvNumeral(manager, options, expr)
-        : formatDeclName(manager.decls[expr]);
+  const formatConst = (expr: number) => {
+    if (manager.getOp(expr) === OP_NUM) return formatNumeral(manager, options, expr);
+    if (manager.isBvNumeral(expr)) return formatBvNumeral(manager, options, expr);
+    const fpValue = getFpNumeral(manager, expr);
+    return fpValue === undefined
+      ? formatDeclName(manager.decls[expr])
+      : formatFpNumeral(options, fpValue);
+  };
 
   const formatExpr = (root: number) => {
     const shared = getSharedTerms(manager, root);

@@ -65,6 +65,13 @@ import {
   removeDatatype,
   substituteSort,
 } from "./datatype-decl-plugin";
+import {
+  FPA_OP_NAMES,
+  FPA_SORT_NAMES,
+  getFloatSortError,
+  getFpaSignature,
+  mkFpaAppOf,
+} from "./fpa-decl-plugin";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
@@ -655,6 +662,7 @@ export const createSmtlibReader = (
   };
 
   const hasArrays = isArrayLogic(logic);
+  const hasFpa = logic === undefined || logic === "ALL" || logic.includes("FP");
   const hasArrayExtensions = logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic);
 
   const getFirstFunc = (name: string) => funcs.get(name)?.[0];
@@ -800,6 +808,21 @@ export const createSmtlibReader = (
     return instantiateSort(decl, parameters, sexpr);
   };
 
+  const mkFloatSort = (indices: SExpr[], at: SExpr) => {
+    const ebitsIndex = indices[0];
+    const sbitsIndex = indices[1];
+    if (indices.length !== 2 || ebitsIndex.kind !== "numeral" || sbitsIndex.kind !== "numeral")
+      throw new SmtParseError(
+        "expecting two integer parameters to floating point sort (ebits, sbits)",
+        at.kind === "list" ? at.end : at,
+      );
+    const ebits = Number(ebitsIndex.text);
+    const sbits = Number(sbitsIndex.text);
+    const error = getFloatSortError(ebits, sbits);
+    if (error !== undefined) throw new SmtParseError(error, at.kind === "list" ? at.end : at);
+    return manager.mkFpSort(ebits, sbits);
+  };
+
   const parseSort = (
     sexpr: SExpr,
     context: string,
@@ -807,6 +830,8 @@ export const createSmtlibReader = (
   ): number => {
     if (sexpr.kind === "list") {
       if (!isSymbol(sexpr.items[0], "_")) return parseParametricSort(sexpr, context, bindings);
+      if (hasFpa && isSymbol(sexpr.items[1], "FloatingPoint"))
+        return mkFloatSort(sexpr.items.slice(2), sexpr);
       const width = sexpr.items[2];
       if (
         !isSymbol(sexpr.items[1], "BitVec") ||
@@ -826,6 +851,11 @@ export const createSmtlibReader = (
     }
     const bound = bindings.get(sexpr.text);
     if (bound !== undefined) return bound;
+    if (hasFpa && FPA_SORT_NAMES.has(sexpr.text)) {
+      if (sexpr.text === "RoundingMode") return manager.mkRmSort();
+      const bits = FPA_SORT_NAMES.get(sexpr.text);
+      return bits === undefined ? mkFloatSort([], sexpr) : manager.mkFpSort(bits[0], bits[1]);
+    }
     if (THEORY_SORTS.has(sexpr.text)) throw new SmtUnsupportedError(`the sort ${sexpr.text}`);
     throw new SmtParseError(
       `${context === "" ? "" : `${context}: `}unknown sort '${sexpr.text}'`,
@@ -1085,8 +1115,48 @@ export const createSmtlibReader = (
     return manager.mkApp(decl, args, signature.range);
   };
 
+  const isFpaOpName = (name: string) => hasFpa && FPA_OP_NAMES.has(name);
+
+  const mkFpaTerm = (name: string, args: number[], indices: number[], at: SExpr) => {
+    const op = FPA_OP_NAMES.get(name) ?? -1;
+    const getSignature = (innerArgs: number[]) => {
+      const signature = getFpaSignature(
+        manager,
+        op,
+        indices,
+        innerArgs.map((arg) => manager.sorts[arg]),
+      );
+      if (typeof signature === "string") throw new SmtParseError(signature, at);
+      return signature;
+    };
+    const signature = getSignature(args);
+    if (signature.domain.length === args.length) return mkFpaAppOf(manager, signature, args);
+    const pairs: number[] = [];
+    for (let index = 0; index + 1 < args.length; index++) {
+      const pair = [args[index], args[index + 1]];
+      pairs.push(mkFpaAppOf(manager, getSignature(pair), pair));
+    }
+    return mkApp(OP_AND, pairs, at);
+  };
+
   const parseBvNumeral = (list: SmtList) => {
     const name = list.items[1];
+    const indices = list.items.slice(2);
+    if (
+      isSymbol(name) &&
+      isFpaOpName(name.text) &&
+      indices.every((index) => index.kind === "numeral")
+    ) {
+      const signature = getFpaSignature(
+        manager,
+        FPA_OP_NAMES.get(name.text) ?? -1,
+        indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        [],
+      );
+      if (typeof signature === "string")
+        throw new SmtParseError(signature, { line: list.end.line, column: list.end.column + 1 });
+      return mkFpaAppOf(manager, signature, []);
+    }
     const value = isSymbol(name) ? /^bv([0-9]+)$/.exec(name.text) : null;
     if (value === null) throw new SmtUnsupportedError("indexed identifiers");
     const width = list.items[2];
@@ -1319,7 +1389,10 @@ export const createSmtlibReader = (
         (array, arg) => mkArrayTerm(OP_SELECT, [array, arg], [], at),
         parseLeaf(head),
       );
-    if (indices.length > 0) return mkBvApp(name, args, indices, at);
+    if (indices.length > 0)
+      return isFpaOpName(name)
+        ? mkFpaTerm(name, args, indices, at)
+        : mkBvApp(name, args, indices, at);
     const macro = macros.get(name);
     if (macro !== undefined) {
       const coerced = args.map((arg, index) => coerce(arg, macro.domain[index]));
@@ -1336,6 +1409,7 @@ export const createSmtlibReader = (
     if (range !== undefined)
       throw new SmtParseError(getUnknownConstantMessage(name, args, range), at);
     if (isBvOpName(name)) return mkBvApp(name, args, indices, at);
+    if (isFpaOpName(name)) return mkFpaTerm(name, args, indices, at);
     const arrayOp = getArrayOp(name);
     if (arrayOp !== undefined) return mkArrayTerm(arrayOp, args, [], at);
     const builtin = (logic === undefined ? LOGIC_FREE_ALIASES.get(name) : undefined) ?? name;
@@ -1529,7 +1603,7 @@ export const createSmtlibReader = (
         if (
           !isSymbol(head.items[0], "_") ||
           !isSymbol(name) ||
-          !isBvOpName(name.text) ||
+          !(isBvOpName(name.text) || isFpaOpName(name.text)) ||
           !indices.every((index) => index.kind === "numeral")
         )
           throw new SmtUnsupportedError("indexed and qualified identifiers");
