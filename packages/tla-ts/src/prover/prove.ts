@@ -523,16 +523,15 @@ const getErrorReport = (obligation: PrintedObligation, error: unknown) => {
   throw error;
 };
 
-// tlapm's options for its backends.
-interface ProverSettings {
-  // --method.
+// tlapm's options for its backends: --method, --stretch, --noflatten and --smt-logic.
+export interface BackendSettings {
   defaultMethods?: Method[];
-  // --stretch.
   stretch: number;
-  // --noflatten clears it.
   isFlattened: boolean;
-  // --smt-logic.
   smtLogic: string;
+}
+
+interface ProverSettings extends BackendSettings {
   // Receives each temporary file a backend reads, by name, as tlapm writes it.
   onInput?: (file: string, text: string) => void;
   // --solver: decides the temporary file of the smt method in place of tla-ts's Z3.

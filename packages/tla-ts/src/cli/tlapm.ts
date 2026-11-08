@@ -15,12 +15,13 @@ import {
 } from "../obligations";
 import { format, renderDoc } from "../obligations/format";
 import { printSequent, type PrinterOptions } from "../obligations/printer";
-import { parseDefaultMethods, type Method } from "../prover/prep/methods";
+import { parseDefaultMethods } from "../prover/prep/methods";
 import {
   encodeProofTheory,
   formatNormalized,
   proveObligations,
   TLAPM_VERSION,
+  type BackendSettings,
   type ProofAttempt,
 } from "../prover/prove";
 import { TLAPS_MODULE } from "../prover/tlaps-module";
@@ -189,13 +190,6 @@ interface ProvingSettings {
   // --debug tempfiles: Util.rm_temp_file keeps each backend's temporary files.
   isKeepingFiles: boolean;
   solver: string | undefined;
-}
-
-interface BackendSettings {
-  defaultMethods: Method[] | undefined;
-  stretch: number;
-  isFlattened: boolean;
-  smtLogic: string;
 }
 
 const SMT_PROOF_MARKERS = [/^unsat/m, /SPASS beiseite: Proof found/, /SZS status Theorem/];
