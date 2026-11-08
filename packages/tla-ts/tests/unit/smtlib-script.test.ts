@@ -236,6 +236,21 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["unsat", "(QR RS NQS)"]);
   });
 
+  it("evaluates in a model of arrays, as in z3test's mev_array.smt2", () => {
+    expect(
+      run([
+        "(declare-const a (Array Int Int))",
+        "(declare-const b (Array Int Int))",
+        "(assert (let ((base (store ((as const (Array Int Int)) 0) 42 15)))",
+        "  (and (= a base) (= b (store base 5 3)))))",
+        "(check-sat)",
+        "(eval (= (store (store a 6 7) 5 8) (store (store b 6 7) 5 8)))",
+        "(eval (= (store a 6 7) (store (store b 6 7) 5 0)))",
+        "(eval (= a b))",
+      ]),
+    ).toEqual(["sat", "true", "true", "false"]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);

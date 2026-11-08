@@ -10,8 +10,14 @@ export const FC_DONE = 0;
 export const FC_CONTINUE = 1;
 export const FC_GIVEUP = 2;
 
+// A fresh value of the sort, made once, when the first value that depends on it is made.
+export interface ExtraFreshValue {
+  sort: number;
+  value: number | undefined;
+}
+
 export interface DependentValue {
-  dependencies: Enode[];
+  dependencies: (Enode | ExtraFreshValue)[];
   mkValue: (values: number[]) => number;
 }
 

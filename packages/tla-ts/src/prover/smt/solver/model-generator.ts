@@ -1,7 +1,7 @@
 // Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt.
 import { FAMILY_BASIC, FAMILY_USER, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
-import type { Enode } from "./enode";
+import { Enode } from "./enode";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import type { DependentValue } from "./theory";
 
@@ -72,7 +72,12 @@ export const mkModel = (context: Context): GeneratedModel => {
     if (dependent === undefined) return getFreshValue(node);
     dependentValues.delete(node);
     const value = dependent.mkValue(
-      dependent.dependencies.map((dependency) => getDependentValue(dependency.root)),
+      dependent.dependencies.map((dependency) => {
+        if (dependency instanceof Enode) return getDependentValue(dependency.root);
+        dependency.value ??=
+          model.getFreshValue(dependency.sort) ?? model.getSomeValue(dependency.sort);
+        return dependency.value;
+      }),
     );
     model.registerValue(value);
     root2value.set(node, value);

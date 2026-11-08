@@ -1,7 +1,7 @@
 // Ported from Z3 (src/smt/theory_array_base.cpp, theory_array.cpp, theory_array_full.cpp), MIT
 // license, see z3-license.txt.
-import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
-import { mkArrayApp, mkArrayDecl } from "./array-decl-plugin";
+import { SmtInvariantError } from "../../../errors";
+import { mkArrayApp, mkArrayDecl, mkAsArray } from "./array-decl-plugin";
 import {
   FAMILY_ARRAY,
   OP_ARRAY_DEFAULT,
@@ -18,7 +18,15 @@ import {
 import type { Context } from "./context";
 import { type Enode, TheoryJustification } from "./enode";
 import { FALSE_LITERAL, getVar, isNegated, type Literal, negate, TRUE_LITERAL } from "./literal";
-import { FC_CONTINUE, FC_DONE, FC_GIVEUP, Theory } from "./theory";
+import { FuncInterp, type ProtoModel } from "./proto-model";
+import {
+  type DependentValue,
+  type ExtraFreshValue,
+  FC_CONTINUE,
+  FC_DONE,
+  FC_GIVEUP,
+  Theory,
+} from "./theory";
 
 // The theory itself as the data of a fingerprint, which no expression is.
 const THEORY_DATA = -1;
@@ -60,6 +68,13 @@ export class TheoryArray extends Theory {
   private epsilons = new Map<number, number>();
   private diags = new Map<number, number>();
   private asArrayNodes: Enode[] = [];
+  private model: ProtoModel | undefined;
+  private isUnspecifiedDefault = false;
+  private defaults: (Enode | null)[] = [];
+  // The else value of each class of arrays without a default: a value, or a fresh one to make.
+  private elseValues: (number | ExtraFreshValue | undefined)[] = [];
+  private mgParents: number[] = [];
+  private selectSets = new Map<Enode, Map<string, Enode>>();
 
   constructor(context: Context) {
     super(context, FAMILY_ARRAY);
@@ -1091,7 +1106,172 @@ export class TheoryArray extends Theory {
     this.assignedEqs.clear();
   }
 
-  mkValue(): number | undefined {
-    throw new SmtUnsupportedError("array models");
+  // The model is free to choose the defaults when no store, const or default term is relevant.
+  private isUnspecifiedDefaultOk() {
+    for (let thVar = 0; thVar < this.getNumVars(); thVar++) {
+      const node = this.getEnode(thVar);
+      if (!this.context.isRelevant(node.owner)) continue;
+      if (this.isOp(node, OP_STORE) || this.isOp(node, OP_CONST_ARRAY)) return false;
+      if (this.isOp(node, OP_ARRAY_DEFAULT)) return false;
+    }
+    return true;
+  }
+
+  private mgFind(thVar: number) {
+    let root = thVar;
+    while (this.mgParents[root] >= 0) root = this.mgParents[root];
+    let current = thVar;
+    while (this.mgParents[current] >= 0) {
+      const next = this.mgParents[current];
+      this.mgParents[current] = root;
+      current = next;
+    }
+    return root;
+  }
+
+  private mgMerge(inputFirst: number, inputSecond: number) {
+    const first = this.mgFind(inputFirst);
+    const second = this.mgFind(inputSecond);
+    if (first === second) return;
+    const isSwapped = this.mgParents[first] > this.mgParents[second];
+    const root = isSwapped ? second : first;
+    const child = isSwapped ? first : second;
+    this.mgParents[root] += this.mgParents[child];
+    this.mgParents[child] = root;
+    this.defaults[root] ??= this.defaults[child];
+  }
+
+  private setDefault(thVar: number, node: Enode) {
+    const root = this.mgFind(thVar);
+    this.defaults[root] ??= node;
+  }
+
+  private collectDefaults() {
+    const numVars = this.getNumVars();
+    this.defaults = Array.from({ length: numVars }, () => null);
+    this.elseValues = Array.from({ length: numVars }, () => undefined);
+    this.mgParents = Array.from({ length: numVars }, () => -1);
+    if (this.isUnspecifiedDefault) return;
+    for (let thVar = 0; thVar < numVars; thVar++) {
+      const node = this.getEnode(thVar);
+      if (!this.context.isRelevant(node.owner)) continue;
+      this.mgMerge(thVar, this.find(thVar));
+      if (this.isOp(node, OP_STORE)) this.mgMerge(thVar, this.find(this.getVar(node.getArg(0))));
+      else if (this.isOp(node, OP_CONST_ARRAY)) this.setDefault(thVar, node.getArg(0));
+      else if (this.isOp(node, OP_ARRAY_DEFAULT))
+        this.setDefault(this.getVar(node.getArg(0)), node);
+    }
+  }
+
+  private getSelectSet(node: Enode) {
+    const root = node.root;
+    const existing = this.selectSets.get(root);
+    if (existing !== undefined) return existing;
+    const created = new Map<string, Enode>();
+    this.selectSets.set(root, created);
+    return created;
+  }
+
+  private collectSelects() {
+    this.selectSets.clear();
+    const context = this.context;
+    for (let thVar = 0; thVar < this.getNumVars(); thVar++) {
+      const root = this.getEnode(thVar).root;
+      if (this.find(thVar) !== thVar || !context.isRelevant(root.owner)) continue;
+      for (const parent of root.parents)
+        if (
+          parent.cg === parent &&
+          context.isRelevant(parent.owner) &&
+          this.isOp(parent, OP_SELECT) &&
+          parent.getArg(0).root === root
+        ) {
+          const set = this.getSelectSet(root);
+          const key = this.getSelectKey(parent);
+          if (!set.has(key)) set.set(key, parent);
+        }
+    }
+  }
+
+  private propagateSelectToStoreParents(root: Enode, select: Enode, todo: [Enode, Enode][]) {
+    const context = this.context;
+    if (!context.isRelevant(root.owner)) return;
+    for (const parent of root.parents) {
+      if (
+        !context.isRelevant(parent.owner) ||
+        !this.isOp(parent, OP_STORE) ||
+        parent.getArg(0).root !== root
+      )
+        continue;
+      const parentSet = this.getSelectSet(parent);
+      const key = this.getSelectKey(select);
+      if (parentSet.has(key)) continue;
+      let index = 1;
+      while (index < select.numArgs && select.getArg(index).root === parent.getArg(index).root)
+        index++;
+      if (index < select.numArgs) {
+        parentSet.set(key, select);
+        todo.push([parent.root, select]);
+      }
+    }
+  }
+
+  private propagateSelects() {
+    const todo: [Enode, Enode][] = [];
+    // Propagating adds to the sets, so it goes over the selects found before it.
+    for (const [root, set] of Array.from(this.selectSets))
+      for (const select of Array.from(set.values()))
+        this.propagateSelectToStoreParents(root, select, todo);
+    for (let head = 0; head < todo.length; head++)
+      this.propagateSelectToStoreParents(todo[head][0], todo[head][1], todo);
+  }
+
+  initModel(model: ProtoModel) {
+    this.model = model;
+    this.isUnspecifiedDefault = this.isUnspecifiedDefaultOk();
+    this.collectDefaults();
+    this.collectSelects();
+    this.propagateSelects();
+  }
+
+  mkValue(node: Enode): DependentValue {
+    const manager = this.manager;
+    const model = this.model;
+    if (model === undefined) throw new SmtInvariantError("the model was not initialized");
+    const thVar = this.getVar(node);
+    const sort = manager.sorts[node.owner];
+    const parameters = manager.getSortParameters(sort);
+    const domain = parameters.slice(0, -1);
+    const range = manager.getArrayRange(sort);
+    const root = this.mgFind(thVar);
+    const defaultNode = this.isUnspecifiedDefault ? null : this.defaults[root];
+    if (!this.isUnspecifiedDefault && defaultNode === null && this.elseValues[root] === undefined)
+      this.elseValues[root] =
+        manager.getSortSize(range) === SORT_SIZE_INFINITE
+          ? { sort: range, value: undefined }
+          : model.getSomeValue(range);
+    const elseValue = defaultNode ?? this.elseValues[root];
+    const dependencies: (Enode | ExtraFreshValue)[] =
+      elseValue === undefined || typeof elseValue === "number" ? [] : [elseValue];
+    for (const select of this.selectSets.get(node.root)?.values() ?? []) {
+      for (let index = 1; index < select.numArgs; index++) dependencies.push(select.getArg(index));
+      dependencies.push(select);
+    }
+    const isElseDependent = elseValue !== undefined && typeof elseValue !== "number";
+    return {
+      dependencies,
+      mkValue: (values) => {
+        const decl = manager.mkFreshFuncDecl(null, domain, range);
+        const interp = new FuncInterp(manager, domain.length);
+        model.registerFunc(decl, interp);
+        if (isElseDependent) interp.setElse(values[0]);
+        else if (typeof elseValue === "number") interp.setElse(elseValue);
+        for (let start = isElseDependent ? 1 : 0; start < values.length; start += domain.length + 1)
+          interp.insertEntry(
+            values.slice(start, start + domain.length),
+            values[start + domain.length],
+          );
+        return mkAsArray(manager, decl);
+      },
+    };
   }
 }

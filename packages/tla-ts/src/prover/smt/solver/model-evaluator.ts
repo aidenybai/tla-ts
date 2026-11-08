@@ -1,10 +1,15 @@
 // Ported from Z3 (src/model/model_evaluator.cpp), MIT license, see z3-license.txt.
+import { SmtUnsupportedError } from "../../../errors";
+import { mkArrayApp } from "./array-decl-plugin";
 import {
   FAMILY_ARITH,
+  FAMILY_ARRAY,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
   OP_AND,
+  OP_AS_ARRAY,
+  OP_CONST_ARRAY,
   OP_DIV,
   OP_DIV0,
   OP_EQ,
@@ -14,6 +19,8 @@ import {
   OP_LE,
   OP_MOD,
   OP_MOD0,
+  OP_SELECT,
+  OP_STORE,
   SORT_BOOL,
 } from "./ast";
 import type { AstManager } from "./ast";
@@ -71,6 +78,10 @@ export class ModelEvaluator extends RewriterTpl {
     const manager = this.manager;
     const model = this.model;
     const family = manager.funcDecls[decl].family;
+    if (family === FAMILY_ARRAY && manager.funcDecls[decl].op === OP_AS_ARRAY) {
+      const arrayInterp = this.getArrayInterp(manager.funcDecls[decl].parameters[0]);
+      if (arrayInterp !== undefined) return { expr: arrayInterp, depth: 1 };
+    }
     if (family === FAMILY_USER) {
       if (args.length > 0) {
         const result = this.evaluate(decl, args);
@@ -83,6 +94,10 @@ export class ModelEvaluator extends RewriterTpl {
       const some = model.getSomeValue(sort);
       model.registerConst(decl, some);
       return some;
+    }
+    if (manager.funcDecls[decl].op === OP_EQ && manager.isArraySort(manager.sorts[args[0]])) {
+      const reduced = this.mkArrayEq(args[0], args[1]);
+      if (reduced !== undefined) return reduced;
     }
     if (manager.funcDecls[decl].op === OP_AND) {
       const reduced = this.mkArithAndCore(args);
@@ -147,6 +162,146 @@ export class ModelEvaluator extends RewriterTpl {
     }
     if (interp.isPartial()) interp.setElse(model.getSomeValue(sort));
     return { expr: this.substitute(interp.getInterp() as number, args), depth: Infinity };
+  }
+
+  // func_interp::get_array_interp: the stores of the entries over the constant array of the else.
+  private getArrayInterp(decl: number) {
+    const manager = this.manager;
+    const interp = this.model.funcInterps.get(decl);
+    const elseExpr = interp?.elseExpr ?? null;
+    if (interp === undefined || elseExpr === null) return undefined;
+    const isGround =
+      manager.isGround(elseExpr) &&
+      interp.entries.every(
+        (entry) =>
+          manager.isGround(entry.result) && entry.args.every((arg) => manager.isGround(arg)),
+      );
+    if (!isGround) throw new SmtUnsupportedError("lambdas");
+    const sort = manager.mkArraySort([...manager.funcDecls[decl].domain, manager.sorts[elseExpr]]);
+    return interp.entries.reduce(
+      (array, entry) =>
+        entry.result === elseExpr
+          ? array
+          : mkArrayApp(manager, OP_STORE, [array, ...entry.args, entry.result]),
+      mkArrayApp(manager, OP_CONST_ARRAY, [elseExpr], [sort]),
+    );
+  }
+
+  // extract_array_func_interp: the stores, from the outermost, each its indices then its value.
+  // Like Z3, only the indices of the stores of a store chain decide whether they are unique.
+  private extractArrayFuncInterp(inputArray: number) {
+    const manager = this.manager;
+    const stores: number[][] = [];
+    let array = inputArray;
+    let areUnique = true;
+    while (manager.getFamily(array) === FAMILY_ARRAY && manager.getOp(array) === OP_STORE) {
+      const store = manager.getArgs(array).slice(1);
+      areUnique &&= store.slice(0, -1).every((index) => manager.isUniqueValue(index));
+      stores.push(store);
+      array = manager.getArg(array, 0);
+    }
+    if (manager.getFamily(array) === FAMILY_ARRAY && manager.getOp(array) === OP_CONST_ARRAY)
+      return { stores, elseExpr: manager.getArg(array, 0), areUnique };
+    if (manager.getFamily(array) !== FAMILY_ARRAY || manager.getOp(array) !== OP_AS_ARRAY)
+      return undefined;
+    const interp = this.model.funcInterps.get(
+      manager.funcDecls[manager.decls[array]].parameters[0],
+    );
+    const elseExpr = interp?.elseExpr ?? null;
+    if (interp === undefined || elseExpr === null) return undefined;
+    let isGround = manager.isGround(elseExpr);
+    for (const entry of interp.entries) {
+      if (entry.result === elseExpr) continue;
+      const store = [...entry.args, entry.result];
+      isGround &&= store.every((arg) => manager.isGround(arg));
+      stores.push(store);
+    }
+    return isGround ? { stores, elseExpr, areUnique } : undefined;
+  }
+
+  private mkArrayEq(first: number, second: number): number | Rewrite | undefined {
+    const manager = this.manager;
+    if (first === second) return manager.trueExpr;
+    const firstInterp = this.extractArrayFuncInterp(first);
+    const secondInterp = this.extractArrayFuncInterp(second);
+    if (firstInterp === undefined || secondInterp === undefined) return undefined;
+    const firstElse = firstInterp.elseExpr;
+    const secondElse = secondInterp.elseExpr;
+    const areUnique = firstInterp.areUnique && secondInterp.areUnique;
+    const sort = manager.sorts[first];
+    const domain = manager.getSortParameters(sort).slice(0, -1);
+    const domainSize = domain.reduce((size, index) => {
+      const indexSize = manager.getSortSize(index);
+      return size < 0n || indexSize < 0n ? -1n : size * indexSize;
+    }, 1n);
+    const stores = [...firstInterp.stores, ...secondInterp.stores];
+    const isFullyCovered =
+      areUnique &&
+      firstElse !== secondElse &&
+      domainSize >= 0n &&
+      stores.length > 0 &&
+      BigInt(new Set(stores.map((store) => store.slice(0, -1).join(","))).size) >= domainSize;
+    const conjuncts: number[] = [];
+    const isElseInfinite = manager.getSortSize(manager.sorts[firstElse]) < 0n;
+    if (firstElse !== secondElse && !isFullyCovered) {
+      if (manager.areDistinct(firstElse, secondElse) && isElseInfinite) return manager.falseExpr;
+      conjuncts.push(manager.mkEq(firstElse, secondElse));
+    }
+    if (areUnique && firstInterp.stores.length > 0)
+      return this.mkArrayEqCore(
+        firstInterp.stores,
+        firstElse,
+        secondInterp.stores,
+        secondElse,
+        conjuncts,
+      );
+    for (const store of stores) {
+      const indices = store.slice(0, -1);
+      conjuncts.push(
+        manager.mkEq(
+          mkArrayApp(manager, OP_SELECT, [first, ...indices]),
+          mkArrayApp(manager, OP_SELECT, [second, ...indices]),
+        ),
+      );
+    }
+    return { expr: manager.mkAnd(conjuncts), depth: Infinity };
+  }
+
+  private mkArrayEqCore(
+    firstStores: number[][],
+    firstElse: number,
+    secondStores: number[][],
+    secondElse: number,
+    conjuncts: number[],
+  ): number | Rewrite {
+    const manager = this.manager;
+    const arity = firstStores[0].length - 1;
+    const getKey = (store: number[]) => store.slice(0, arity).join(",");
+    const firstTable = new Map<string, number[]>();
+    // A store of a smaller index takes precedence.
+    for (const store of [...firstStores].reverse()) firstTable.set(getKey(store), store);
+    const secondKeys = new Set<string>();
+    // A pair that is neither equal nor distinct is left as an equality.
+    const isDistinct = (left: number, right: number) => {
+      if (left === right) return false;
+      if (manager.areDistinct(left, right)) return true;
+      conjuncts.push(manager.mkEq(left, right));
+      return false;
+    };
+    for (const store of secondStores) {
+      const key = getKey(store);
+      if (secondKeys.has(key)) continue;
+      secondKeys.add(key);
+      const value = store[arity];
+      const match = firstTable.get(key);
+      if (match !== undefined) firstTable.delete(key);
+      const isDifferent =
+        match === undefined ? isDistinct(firstElse, value) : isDistinct(value, match[arity]);
+      if (isDifferent) return manager.falseExpr;
+    }
+    for (const store of firstTable.values())
+      if (isDistinct(store[arity], secondElse)) return manager.falseExpr;
+    return { expr: manager.mkAnd(conjuncts), depth: Infinity };
   }
 
   // var_subst without the standard order, whose result the temporaries hold.
