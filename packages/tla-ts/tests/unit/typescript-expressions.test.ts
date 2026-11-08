@@ -172,6 +172,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
     "[typeof TypeError, typeof (() => 1)]",
     "[Boolean(), Boolean(0), Boolean(2), Boolean(''), Boolean('a'), Boolean(undefined), Boolean(null), Boolean([1]), Boolean(false)]",
     "[String(), String(-12), String(true), String(undefined), String(null), String('a'), Number(), Number(true), Number(null), Number(' 42 '), Number(''), parseInt('12px'), parseInt('0x1F'), parseFloat('3e2')]",
+    "[+1, +true, +false, +'7', +' -3 ', +'']",
     "[Array.isArray([1]), Array.isArray([[1], [2]]), Array.isArray(1), Array.isArray('a'), Array.isArray(undefined)]",
     [
       "[getType(1), getType('a'), getType('TRUE'), getType(false), getType(undefined), getType(null), getType([1]), getType(new Set([1])), getType(TypeError), getType(new TypeError('t'))]",

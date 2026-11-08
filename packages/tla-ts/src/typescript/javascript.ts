@@ -78,7 +78,6 @@ export const isComparable = (left: ts.Expression, right: ts.Expression, context:
 const CONVERSIONS = new Set(["Boolean", "String", "Number", "parseInt", "parseFloat"]);
 
 const PARSERS = new Map<string, (text: string) => number>([
-  ["Number", Number],
   ["parseInt", (text) => Number.parseInt(text)],
   ["parseFloat", Number.parseFloat],
 ]);
@@ -88,6 +87,23 @@ const getInteger = (value: number, node: ts.Node) => {
     throw new TlaTypeScriptError(`Only integers are supported: ${node.getText()}`, node);
   }
   return number(value);
+};
+
+// The number that +argument or Number(argument) converts a value to.
+export const translateToNumber = (
+  argument: ts.Expression,
+  node: ts.Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  if (ts.isStringLiteral(argument)) return getInteger(Number(argument.text), node);
+  const names = getTypeNames(context.checker.getTypeAtLocation(argument));
+  const kind = names?.length === 1 ? names[0] : undefined;
+  if (kind === "null") return number(0);
+  const value = translateExpression(argument, scope, context);
+  if (kind === "number") return value;
+  if (kind === "boolean") return ifExpression(value, number(1), number(0));
+  throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
 };
 
 // A call to Boolean, String, Number, parseInt, or parseFloat, or undefined for any other call.
@@ -112,6 +128,7 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     throw unsupported;
   }
   if (node.arguments.length > 1) throw unsupported;
+  if (name === "Number") return translateToNumber(argument, node, scope, context);
   const parse = PARSERS.get(name);
   if (parse !== undefined && ts.isStringLiteral(argument)) {
     return getInteger(parse(argument.text), node);
@@ -131,11 +148,6 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     if (kind === "number") return apply("ToString", [value]);
     if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
     if (isEmpty) return string(kind);
-  }
-  if (name === "Number") {
-    if (kind === "number") return value;
-    if (kind === "boolean") return ifExpression(value, number(1), number(0));
-    if (kind === "null") return number(0);
   }
   throw unsupported;
 };

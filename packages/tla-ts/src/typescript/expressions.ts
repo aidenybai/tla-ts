@@ -32,6 +32,7 @@ import {
   getTypeNames,
   isComparable,
   translateConversion,
+  translateToNumber,
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
@@ -670,6 +671,9 @@ const translateNode = (
       throw new TlaTypeScriptError("TLA+ integers have no negative zero", node);
     }
     return apply("-.", [translateExpression(node.operand, scope, context)]);
+  }
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.PlusToken) {
+    return translateToNumber(node.operand, node, scope, context);
   }
   if (ts.isBinaryExpression(node)) return translateBinary(node, scope, context);
   if (ts.isConditionalExpression(node)) {
