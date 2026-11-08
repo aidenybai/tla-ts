@@ -1,8 +1,5 @@
-// An independent check of the proofs that the Zenon port finds. It shares no code with the search:
-// formulas compare by their own alpha-equivalence, substitution and unfolding are rebuilt here, and
-// each rule's branches come from the lemma that justifies the rule in tlapm's Zenon.thy rather than
-// from the prover. The check walks the proof bottom up and computes the formulas each subproof
-// needs. A proof is valid when every rule is one of the lemmas and the root needs only hypotheses.
+// An independent check of the Zenon port's proofs that shares no code with the search: each rule's
+// branches come from the lemma that justifies it in tlapm's Zenon.thy.
 
 import { getLimitFailure, type Limits } from "../limits";
 import type { PlainRuleName, Proof, RuleArgs } from "../proof";
@@ -57,8 +54,6 @@ const getRuleSpec = (proof: Proof<Term>, checker: Checker): RuleSpec => {
   }
 };
 
-// True when the proof refutes the hypotheses.
-// Whether the proof is valid, or false once the limits pass.
 export const checkProof = (root: Proof<Term>, context: CheckContext, limits: Limits) => {
   const keys = createKeys();
   const hasRelation = createRelationProperties(context);

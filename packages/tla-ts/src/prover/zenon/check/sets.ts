@@ -1,6 +1,3 @@
-// The checks of the TLA+ extension's rules for set membership, set equality and subsets, after the
-// lemmas in Zenon.thy that justify them.
-
 import type { PlainRuleName } from "../proof";
 import {
   and,

@@ -1,6 +1,4 @@
 // Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-//
-// The rules for connectives and quantifiers, closing a branch, and unfolding definitions.
 
 import { getStringValue } from "./equality-rules";
 import { isApp, type Expr, type Expressions } from "./expr";
@@ -9,7 +7,6 @@ import type { Definition } from "./parse";
 import { makeRelationRule, makeRule, type Rule } from "./proof";
 import { makeNode, type RuleResult, type SearchRule } from "./rules";
 
-// Zenon's is_conj and is_disj: how many more conjuncts or disjuncts a formula needs to reach m.
 const countConjuncts = (formula: Expr, needed: number): number => {
   if (needed <= 0) return 0;
   if (formula.kind === "and")

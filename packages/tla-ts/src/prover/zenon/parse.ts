@@ -1,7 +1,5 @@
 // Ported from Zenon's lexzen.mll and parsezen.mly, as shipped in tlapm. Copyright 2005 INRIA, see
 // LICENSE.
-//
-// Reads Zenon's native input format, the .znn files that tlapm writes.
 
 import { TlaZenonError } from "../../errors";
 import {
@@ -109,7 +107,6 @@ const tokenize = (text: string) => {
   return tokens;
 };
 
-// Zenon's myfold: an n-ary connective nests to the right.
 const foldRight = (combine: (left: Expr, right: Expr) => Expr, first: Expr, rest: Expr[]): Expr =>
   rest.length === 0 ? first : combine(first, foldRight(combine, rest[0], rest.slice(1)));
 

@@ -1,6 +1,4 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// The rules for functions: membership in a function set, isAFcn and function equality.
 
 import { isApp, type Expr } from "../expr";
 import type { Priority } from "../node";

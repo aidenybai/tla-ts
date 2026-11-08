@@ -1,15 +1,10 @@
 // Ported from Zenon's eqrel.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-//
-// Finds the hypotheses that make a relation reflexive, symmetric or transitive. The prover then
-// reasons with those properties directly, and drops the hypotheses that only state them. The
-// translation to Isar proves the properties again from the hypotheses that stated them.
 
 import { TRUE, type Expr, type Expressions } from "./expr";
 
 export type Direction = "left" | "right";
 
-// Where a hypothesis states a property: the conjunct at `directions`, with the relation's
-// arguments bound by the quantifiers at `variables`, counted from the outermost.
+// The quantifiers at variables count from the outermost.
 export interface Origin {
   formula: Expr;
   directions: Direction[];
@@ -21,7 +16,6 @@ interface RelationInfo {
   symmetric: Origin | undefined;
   transitive: Origin | undefined;
   transitiveSymmetric: Origin | undefined;
-  // The type of the relation's arguments.
   type: string;
 }
 
@@ -30,8 +24,6 @@ interface Bound {
   type: string;
 }
 
-// A conjunct of a hypothesis: the variables quantified around it and the literals of its
-// disjunction, when they all relate two of those variables by the same symbol.
 interface Leaves {
   directions: Direction[];
   env: Bound[];
@@ -137,8 +129,6 @@ const partition = (leaves: Expr[]) => ({
     .map(getPair),
 });
 
-// Each check returns the variables that the translation instantiates to prove the property, or
-// undefined when the conjunct doesn't state it.
 const getReflexive = (leaves: Expr[]) => {
   if (leaves.length !== 1 || leaves[0].kind === "not") return undefined;
   const pair = getPair(leaves[0]);
@@ -292,7 +282,6 @@ export const createRelations = (exprs: Expressions) => {
           record.transitive !== undefined)
       );
     },
-    // Where the hypotheses state a relation's properties, for the translation to Isar.
     get,
   };
 };

@@ -1,7 +1,4 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// What the rules of the TLA+ extension share: the symbols it knows, a literal taken apart, and the
-// nodes it makes.
 
 import { TlaZenonError } from "../../../errors";
 import { isApp, isRelation, type Expr, type Expressions, type RelationExpr } from "../expr";
@@ -9,7 +6,7 @@ import type { Index } from "../index-table";
 import type { Node, Priority } from "../node";
 import { makeRule, type Rule } from "../proof";
 
-// A node, or Zenon's Stop: the rules after it don't apply to the formula.
+// Zenon's Stop: the rules after it don't apply to the formula.
 export type Item = Node | "stop";
 
 export const SET_CONSTRUCTORS = [
@@ -88,8 +85,6 @@ export interface TlaContext {
   exprs: Expressions;
 }
 
-// A formula that the propositional rules look at: a literal, its atom and, when the atom relates
-// two terms, the atom as a relation.
 export interface Literal {
   context: TlaContext;
   formula: Expr;

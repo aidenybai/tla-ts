@@ -1,7 +1,4 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// Zenon's to_llproof for the TLA+ extension: each rule becomes an extension rule of the low-level
-// proof, named after the lemma in Zenon.thy that justifies it.
 
 import { TlaZenonError } from "../../../errors";
 import { difference, union, type Expr, type Expressions } from "../expr";
@@ -72,7 +69,6 @@ const binbeta: Shape = (name, args) => {
   return [`zenon_${name}`, rest, [first, second], [[hypothesisA], [hypothesisB]]];
 };
 
-// A conclusion, two terms and then the hypotheses, in one branch or one branch each.
 const withTerms =
   (isSplit: boolean): Shape =>
   (name, args) => {
@@ -86,7 +82,6 @@ const withTerms =
     ];
   };
 
-// A conclusion and then the hypotheses, in one branch or one branch each.
 const withoutTerms =
   (isSplit: boolean): Shape =>
   (name, args) => {
@@ -107,7 +102,7 @@ const getCaseBranches = (args: Expr[]): Expr[][] =>
       : [args]
     : [args.slice(0, 2), ...getCaseBranches(args.slice(2))];
 
-// Zenon's to_llargs, by rule name. The rules missing here take one hypothesis.
+// The rules missing here take one hypothesis.
 const SHAPES: Record<string, Shape> = {
   in_emptyset: (name, args) => [`zenon_${name}`, args.slice(1), args.slice(0, 1), []],
   in_nat_0: close,
@@ -194,7 +189,6 @@ const SHAPES: Record<string, Shape> = {
   record_notisafcn: close,
 };
 
-// Zenon's Ext_tla.to_llproof, for a rule of the extension and its translated subproofs.
 export const getTlaLlProof = (
   translateExpr: (expression: Expr) => Expr,
   exprs: Expressions,
@@ -224,7 +218,6 @@ export const getTlaLlProof = (
     subproofs: nodeSubproofs,
   });
 
-  // The membership in an enumerated set, one element at a time.
   const getMembership = (
     element: Expr,
     set: Expr,
@@ -277,7 +270,6 @@ export const getTlaLlProof = (
     ];
   };
 
-  // The non-membership in an enumerated set, one element at a time.
   const getNonMembership = (
     element: Expr,
     set: Expr,
@@ -367,7 +359,6 @@ export const getTlaLlProof = (
   }
 };
 
-// Zenon's Ext_tla.postprocess: the lemmas with each $notequiv written as a negated equivalence.
 export const postprocessTla = (exprs: Expressions, lemmas: Lemma[]): Lemma[] => {
   const cache = new Map<Expr, Expr>();
   const pp = (expression: Expr): Expr => {

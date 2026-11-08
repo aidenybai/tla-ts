@@ -1,8 +1,5 @@
 // Ported from Zenon's node.ml and heap.ml, as shipped in tlapm. Copyright 2001-2004 INRIA, see
 // LICENSE.
-//
-// Tableau nodes and the queue that orders them. The search keeps the queue of every open branch,
-// so the queue is persistent: inserting or removing returns a new queue and shares the rest.
 
 import type { Expr } from "./expr";
 import type { Rule } from "./proof";
@@ -32,7 +29,6 @@ const reverse = <Item>(list: List<Item>) => {
   return result;
 };
 
-// A node in the instance heap, with the size of the term that instantiates its formula.
 interface Entry {
   node: Node;
   size: number;
@@ -44,7 +40,6 @@ interface Tree {
   right: Tree | undefined;
 }
 
-// Zenon's Heap: a persistent binary heap that alternates insertion paths.
 interface Heap {
   tree: Tree | undefined;
   path: number;
@@ -101,8 +96,7 @@ export interface Queue {
   instSize: List<[number, Heap]>;
   instFront: List<Node>;
   instBack: List<Node>;
-  // The nodes inserted since the root. Removed nodes still count, because the queues of the
-  // branches above keep them.
+  // Removed nodes still count, because the queues of the branches above keep them.
   insertedCount: number;
 }
 

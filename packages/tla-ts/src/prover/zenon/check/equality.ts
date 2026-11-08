@@ -1,6 +1,3 @@
-// The checks of Zenon's rules for equality, strings and the relations that the hypotheses make
-// reflexive, symmetric or transitive.
-
 import type { PlainRuleName, Rule, RelationRuleName } from "../proof";
 import {
   app,
@@ -20,8 +17,7 @@ import {
 
 const relate = (symbol: string, left: Term, right: Term) => app(symbol, [left, right]);
 
-// The two branches that the relation fails to link and the ends differ. The ends come from
-// r(a, b) and ~r(c, d) in the order that Zenon's Trans or Trans_sym takes them.
+// The ends come from r(a, b) and ~r(c, d) in the order that Zenon's Trans or Trans_sym takes them.
 const getTransitivitySpec = (
   checker: Checker,
   args: [Term, Term],
@@ -83,7 +79,6 @@ const getTransitiveEqualitySpec = (
   };
 };
 
-// Of t1 = s1 and t2 = s2 with distinct strings s1 and s2, in the order of the rule's sides.
 const getStringDifferenceSpec = (args: Term[], sides: "ll" | "lr" | "rl" | "rr"): RuleSpec => {
   const term1 = args[0];
   const string1 = args[1];
@@ -99,7 +94,6 @@ const getStringDifferenceSpec = (args: Term[], sides: "ll" | "lr" | "rl" | "rr")
   };
 };
 
-// Of f(a1, ..., an) and ~g(b1, ..., bn) with f and g the same: some argument differs.
 const getArgumentsDifferSpec = (premises: Term[], left: Term, right: Term): RuleSpec => {
   const leftArgs = expectKind(left, "app");
   const rightArgs = expectKind(right, "app");

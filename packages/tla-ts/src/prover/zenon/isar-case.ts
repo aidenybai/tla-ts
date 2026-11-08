@@ -1,19 +1,15 @@
 // Ported from Zenon's isar_case.ml and enum.ml, as shipped in tlapm. Copyright 2009 INRIA, see
 // LICENSE.
-//
-// The lemmas for CASE expressions and record sets with more arms or fields than Zenon.thy covers.
-// Each one is a template that Zenon's Enum expands for the arity: the text between @@@ and ...
-// repeats counting up, the text between ... and @@@ repeats counting down.
+// In a template, the text between @@@ and ... repeats counting up, and the text between ... and @@@
+// repeats counting down.
 
 import { TlaZenonError } from "../../errors";
 
-// A run of digits or of other characters.
 interface Lexeme {
   isNumber: boolean;
   text: string;
 }
 
-// A piece of a pattern: text, or a number that grows by its step at each repetition.
 type Piece = string | { base: number; step: number };
 
 interface Pattern {
@@ -26,7 +22,6 @@ const isDigit = (char: string | undefined) => char !== undefined && char >= "0" 
 const lex = (text: string): Lexeme[] =>
   text.match(/[0-9]+|[^0-9]+/g)?.map((run) => ({ isNumber: isDigit(run[0]), text: run })) ?? [];
 
-// The repeated text and the separator of a pattern without numbers: its two equal halves.
 const splitText = (text: string): Pattern => {
   const half = Math.floor(text.length / 2);
   const odd = text.length % 2;
@@ -50,8 +45,6 @@ const correlate = (first: Lexeme[], second: Lexeme[]): Piece[] | undefined => {
   return pieces.every((piece) => piece !== undefined) ? pieces : undefined;
 };
 
-// Zenon's split_sep: the separator inside the middle text, after the end of the first instance's
-// last lexeme and before the start of the second instance's first.
 const splitSeparator = (
   before: Lexeme,
   middle: string,
@@ -69,7 +62,6 @@ const splitSeparator = (
   ];
 };
 
-// Zenon's split_sep2, for two instances that meet between two numbers.
 const splitSeparatorBetween = (
   before: Lexeme,
   first: Lexeme,
@@ -95,7 +87,6 @@ const splitSeparatorBetween = (
   throw new TlaZenonError("Zenon: a template whose instances don't meet");
 };
 
-// Zenon's Enum.parse: a template's text holds two instances of the pattern and the separator.
 const parsePattern = (text: string): Pattern | undefined => {
   const lexemes = lex(text);
   const length = lexemes.length;
@@ -135,7 +126,6 @@ const parsePattern = (text: string): Pattern | undefined => {
 const getInstance = (pieces: Piece[], value: (piece: { base: number; step: number }) => number) =>
   pieces.map((piece) => (typeof piece === "string" ? piece : String(value(piece)))).join("");
 
-// Zenon's expand_string and expand_string_rev: the pattern repeated count times.
 const expandPattern = (count: number, text: string, isReversed: boolean) => {
   const pattern = parsePattern(text);
   if (pattern === undefined) return undefined;
@@ -153,7 +143,6 @@ const expandPattern = (count: number, text: string, isReversed: boolean) => {
     .join(pattern.separator);
 };
 
-// Zenon's read_suffix: a count adjustment such as [n-1] after the end marker.
 const readAdjustment = (text: string, position: number): [number, number] => {
   const match = /^\[n(?:\]|([+-])([0-9]*)\])/.exec(text.slice(position));
   if (match === null) return [0, position];
@@ -168,7 +157,6 @@ const trimNewlines = (text: string) => {
   throw new TlaZenonError("Zenon: a bad template");
 };
 
-// Zenon's Enum.expand_text.
 const expandTemplate = (count: number, template: string) => {
   const parts: string[] = [];
   let position = 0;
