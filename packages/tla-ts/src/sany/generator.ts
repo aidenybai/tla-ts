@@ -259,6 +259,19 @@ const getStatementInstances = (statement: Expression | AssumeProve): Instance[] 
       )
     : getLetInstances(statement);
 
+const getProofInstances = (proof: Proof | undefined): Instance[] =>
+  proof?.kind !== "Steps"
+    ? []
+    : proof.steps.flatMap((step) => [
+        ...(step.body.kind === "Instance" ? [step.body] : []),
+        ...(step.body.kind === "Define"
+          ? step.body.definitions.flatMap((definition) =>
+              definition.kind === "Instance" ? [definition] : [],
+            )
+          : []),
+        ...getProofInstances(step.proof),
+      ]);
+
 // SpecObj.instanceResolvesToInternalModule: SANY finds a module that the root module instantiates
 // among its inner modules only when its first top-level INSTANCE of the module follows the inner
 // module, and otherwise looks for a file.
@@ -308,7 +321,12 @@ const getDependencies = (module: Module) => {
     const instances = current.units.flatMap((unit) => {
       if (unit.kind === "Instance") return [unit.instance];
       if (unit.kind === "Definition") return getLetInstances(unit.definition.body);
-      if (unit.kind === "Theorem" && isRoot) return getStatementInstances(unit.theorem.statement);
+      if (unit.kind === "Theorem" && isRoot) {
+        return [
+          ...getStatementInstances(unit.theorem.statement),
+          ...getProofInstances(unit.theorem.proof),
+        ];
+      }
       if (unit.kind === "Assumption" && isRoot) return getLetInstances(unit.assumption.expression);
       return [];
     });
@@ -1010,7 +1028,7 @@ export const generateSanySpecification = (
     };
 
     // tla-ts desugars an operator symbol passed as an argument, such as SUBSET or -., into a LAMBDA
-    // without a range.
+    // that names the operator.
     const getOperatorArgumentName = (argument: Expression) =>
       argument.kind === "OperatorReference"
         ? argument.operator
@@ -1025,7 +1043,7 @@ export const generateSanySpecification = (
     ): OpArgNode | OpApplNode => {
       const location = getLocation(argument);
       if (argument.kind === "Lambda") {
-        if (argument.location.range !== undefined)
+        if (argument.location.range !== undefined && argument.operator === undefined)
           return createOpArg(generateLambda(argument), location);
         return createOpArg(resolveName(getOperatorArgumentName(argument), location), location);
       }
@@ -1082,7 +1100,11 @@ export const generateSanySpecification = (
           `Expected an operator argument at ${formatSanyLocation(location)}`,
         );
       }
-      if (argument.kind === "Lambda" && argument.location.range !== undefined) {
+      if (
+        argument.kind === "Lambda" &&
+        argument.location.range !== undefined &&
+        argument.operator === undefined
+      ) {
         const lambda = generateLambda(argument);
         const arity = getSymbolArity(lambda);
         if (arity === expectedArity) return createOpArg(lambda, location);
@@ -1595,6 +1617,28 @@ export const generateSanySpecification = (
           // SANY leaves the whole application null, without generating its arguments.
           if (isAbsent(functionNode)) return functionNode;
           checkRecursion(functionNode);
+          const operator = functionNode.kind === "OpAppl" ? functionNode.operator : undefined;
+          const body =
+            operator?.kind === "OpDef" && operator.defKind === "UserDefined"
+              ? operator.body
+              : undefined;
+          if (
+            body?.kind === "OpAppl" &&
+            (body.operator.name === "$NonRecursiveFcnSpec" ||
+              body.operator.name === "$RecursiveFcnSpec")
+          ) {
+            const paramCount = (body.bounded ?? []).reduce(
+              (count, params, index) => count + (body.tupleOrs?.[index] ? 1 : params.length),
+              0,
+            );
+            if (expression.args.length >= 2 && paramCount !== expression.args.length) {
+              addError(
+                location,
+                `Function '${operator?.name}' is defined with ${paramCount} parameters, but is applied to ${expression.args.length} arguments.`,
+              );
+              return createNullNode();
+            }
+          }
           const argument =
             expression.args.length === 1
               ? generateExpression(expression.args[0])
@@ -1746,8 +1790,10 @@ export const generateSanySpecification = (
           : findNameOrKeyword(cursor.value, param.name);
         const paramSpan = getOperatorSpan(index, param.arity);
         cursor.value = paramSpan.end + 1;
+        // SANY keeps the spelling of a prefix parameter, so ~ _ does not redefine \lnot.
+        const isPrefix = param.arity === 1 && isToken(file, index + 1, "_");
         return createFormalParam(
-          resolveSynonym(param.name),
+          isPrefix ? (file.tokens[index].spelling ?? param.name) : resolveSynonym(param.name),
           param.arity,
           getSpanLocation(file, paramSpan),
           isAdded,
@@ -1856,7 +1902,7 @@ export const generateSanySpecification = (
       const context = createContext();
       const nameIndex = definition.isLocal ? span.start + 1 : span.start;
       const bounds = withContext(context, () => generateBounds(definition.bounds, nameIndex + 1));
-      const existing = resolveSymbol(symbolTable, definition.name);
+      const existing = withContext(context, () => resolveSymbol(symbolTable, definition.name));
       const recursionParam = withContext(context, () =>
         createFormalParam(definition.name, 0, location, existing === undefined),
       );
@@ -1980,6 +2026,7 @@ export const generateSanySpecification = (
         const isExpression =
           declaration.declKind === VARIABLE_DECL_KIND ||
           (declaration.declKind === CONSTANT_DECL_KIND && declaration.arity === 0);
+        if (isExpression) matchArguments(symbol, [], location);
         return [
           {
             op: declaration,
@@ -1992,9 +2039,7 @@ export const generateSanySpecification = (
       // nullOpArg it substitutes after an error.
       const checkArity = (target: OpDeclNode, substitute: ExprOrOpArgNode) => {
         const arity = substitute.kind === "OpArg" ? getSymbolArity(substitute.op) : 0;
-        const isNullOpArg =
-          target.arity > 0 && substitute.kind === "OpAppl" && substitute.isNull === true;
-        if (arity !== target.arity && !isNullOpArg) {
+        if (arity !== target.arity) {
           addError(
             substitute.location,
             `An operator must be substituted for symbol '${target.name}', and it must have arity ${target.arity}.`,
@@ -2770,6 +2815,12 @@ export const generateSanySpecification = (
         const headSpan = getRangeSpan(file, step.head);
         const bodySpan = { start: headSpan.start + 1, end: headSpan.end };
         const body = step.body;
+        if (step.name !== undefined && /^<[*+]>/.test(step.token)) {
+          addError(
+            getTokenLocation(file, stepSpan.start),
+            "<*> and <+> cannot be used for a named step.",
+          );
+        }
         if (step.name !== undefined) pushLabelScope();
         const definitionId = step.name === undefined ? undefined : getId();
         if (body.kind !== "Assert") infixStep.previousRight = undefined;

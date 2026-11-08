@@ -436,6 +436,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         data.params.add(name);
         return { data, declared: { name, arity: resolved.arity } };
       }
+      if (expression.kind === "OperatorReference") return { data: createData() };
     }
     return { data: analyze(expression, scope) };
   };

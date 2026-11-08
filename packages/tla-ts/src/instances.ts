@@ -38,6 +38,9 @@ export const renameLocals = (
   if (mapped.kind === "Apply" && isLocallyResolved(mapped) && !bound.has(mapped.operator)) {
     return { ...mapped, operator: names.get(mapped.operator) ?? mapped.operator };
   }
+  if (mapped.kind === "OperatorReference" && !bound.has(mapped.operator)) {
+    return { ...mapped, operator: names.get(mapped.operator) ?? mapped.operator };
+  }
   return mapped;
 };
 

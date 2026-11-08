@@ -146,6 +146,7 @@ interface ParserState {
   calls: Map<SequenceUnit, LookaheadCall[]>;
   expecting: string;
   messages: StackMessage[];
+  pushedErrors: string[];
   moduleName: string | undefined;
   junctions: Junction[];
   frames: Frame[];
@@ -1513,7 +1514,14 @@ const PRODUCTIONS: Record<string, Production> = {
   ]),
   ExceptComponent: production("Except Component", [
     choice(
-      sequence("<DOT>", action(setFieldName), "Identifier"),
+      sequence(
+        "<DOT>",
+        action(setFieldName),
+        "Identifier",
+        action((state) => {
+          if (state.token.image === "@") state.pushedErrors.push("@ used in !.@");
+        }),
+      ),
       sequence("<LSB>", "Expression", zeroOrMore("<COMMA>", "Expression"), "<RSB>"),
     ),
   ]),
@@ -2144,6 +2152,7 @@ export const getSanyParseError = (source: string) => {
     calls: new Map(),
     expecting: "nothing",
     messages: [],
+    pushedErrors: [],
     moduleName: undefined,
     junctions: [],
     frames: [],
@@ -2157,5 +2166,9 @@ export const getSanyParseError = (source: string) => {
   };
   const isParsed = parse(state, { type: "call", name: "CompilationUnit" });
   if (state.lexicalError !== undefined) return state.lexicalError;
-  return isParsed || state.report === undefined ? undefined : `***Parse Error***\n${state.report}`;
+  const errors = [
+    ...state.pushedErrors,
+    ...(isParsed || state.report === undefined ? [] : [`***Parse Error***\n${state.report}`]),
+  ];
+  return errors.length === 0 ? undefined : errors.join("\n");
 };

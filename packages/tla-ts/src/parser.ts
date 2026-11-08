@@ -154,6 +154,8 @@ const NEGATION_PRECEDENCE = 12;
 
 const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
+const DEFINABLE_POSTFIX_OPERATORS = new Set([...POSTFIX_OPERATORS, "'"]);
+
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
 // The prefix operators SANY reads in a definition's left-hand side, built-in ones included.
@@ -193,8 +195,7 @@ const OPERATOR_ARGUMENTS = new Set([
   "UNCHANGED",
   "[]",
   "<>",
-  "'",
-  ...POSTFIX_OPERATORS,
+  ...DEFINABLE_POSTFIX_OPERATORS,
 ]);
 
 const SELECTOR_SYMBOLS = new Set(["<<", ">>", ":", "@", "("]);
@@ -379,6 +380,12 @@ const isOperatorExpression = (expression: Expression) =>
       ? INFIX_OPERATORS.has(expression.operator)
       : POSTFIX_OPERATORS.has(expression.operator)));
 
+// SANY's \land and \lor are infix operators only, not bullets.
+const isBullet = (token: Token) =>
+  (token.text === "/\\" || token.text === "\\/") &&
+  token.spelling !== "\\land" &&
+  token.spelling !== "\\lor";
+
 const isOperatorName = (text: string) =>
   INFIX_OPERATORS.has(text) || POSTFIX_OPERATORS.has(text) || text === "-.";
 
@@ -407,7 +414,8 @@ const getOperatorApplication = (
 // root module's file, from its ---- MODULE line to the next ==== line.
 export const extractModule = (source: string, name: string) => {
   const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
-  const lines = source.split(/\r?\n/);
+  // MonolithSpecExtractor.module writes each line it reads, with its own line terminator.
+  const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);
   const start = lines.findIndex((line) => header.test(line));
   if (start === -1) return undefined;
   const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
@@ -612,8 +620,7 @@ const parse = (
       token.kind !== "String" &&
       (DEFINABLE_PREFIX_OPERATORS.has(token.text) ||
         INFIX_OPERATORS.has(token.text) ||
-        POSTFIX_OPERATORS.has(token.text) ||
-        token.text === "'");
+        DEFINABLE_POSTFIX_OPERATORS.has(token.text));
     if (!isOperator) return expectIdentifier();
     cursor.index++;
     return token.text;
@@ -689,21 +696,44 @@ const parse = (
       return patterns.map((pattern) => ({ pattern, set }));
     }).flat();
 
-  const parseSubscript = (): Expression => {
+  // TLAplusParser.NoOpExtension, which leaves the arguments of the subscript's last name for a
+  // fairness expression to take as its action.
+  const parseSubscript = (): { subscript: Expression; lastArgs: Expression[] } => {
     const token = peek();
     if (token.kind === "Identifier") {
       const start = cursor.index;
-      const names = [advance().text];
+      const names: string[] = [];
+      const selectorRanges: SourceRange[] = [];
+      const parseElement = () => {
+        selectorRanges.push(getRange(cursor.index, cursor.index));
+        names.push(expectIdentifier());
+        return isAt("(") ? parseArguments() : [];
+      };
+      const elementArgs = [parseElement()];
       while (isAt("!") && peek(1).kind === "Identifier") {
         advance();
-        names.push(expectIdentifier());
+        elementArgs.push(parseElement());
       }
-      return withRange(
-        { kind: "Identifier", name: names.join("!"), location: getLocation(token) },
-        start,
-      );
+      const prefixArgs = elementArgs.slice(0, -1);
+      const location = getLocation(token);
+      location.range = { ...getRange(start), end: selectorRanges[selectorRanges.length - 1].end };
+      const name = names.join("!");
+      const subscript: Expression = prefixArgs.every((args) => args.length === 0)
+        ? { kind: "Identifier", name, location }
+        : {
+            kind: "Apply",
+            operator: name,
+            args: prefixArgs.flat(),
+            argumentCounts: [...prefixArgs.map((args) => args.length), 0],
+            argumentsRange: location.range,
+            selectorRanges,
+            location,
+          };
+      return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
     }
-    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[")) return parsePrimary();
+    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[")) {
+      return { subscript: parsePrimary(), lastArgs: [] };
+    }
     throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
   };
 
@@ -717,7 +747,8 @@ const parse = (
       token.kind === "Identifier" &&
       (next.text === "(" ||
         next.text === "[" ||
-        (next.kind === "Operator" && isAt("==", POSTFIX_OPERATORS.has(next.text) ? 3 : 4)))
+        (next.kind === "Operator" &&
+          isAt("==", DEFINABLE_POSTFIX_OPERATORS.has(next.text) ? 3 : 4)))
     );
   };
 
@@ -759,6 +790,9 @@ const parse = (
           peek(1).line === token.line &&
           peek(1).column === token.endColumn + 1));
     if (isTlapmIncomplete && isStandalone(token)) throw createError("incomplete expression", token);
+    if (isOperatorAlone && !isTlapm && token.text === "\\X" && token.spelling !== "×") {
+      throw createError("\\X may not be used as an infix operator", token);
+    }
     if (isOperatorAlone) {
       cursor.index++;
       return withRange(
@@ -830,7 +864,11 @@ const parse = (
     const bullet = advance();
     cursor.offsideColumns.push(bullet.column);
     const operands = [parseExpression()];
-    while (peekRaw().text === bullet.text && peekRaw().column === bullet.column) {
+    while (
+      isBullet(peekRaw()) &&
+      peekRaw().text === bullet.text &&
+      peekRaw().column === bullet.column
+    ) {
       cursor.index++;
       operands.push(parseExpression());
     }
@@ -887,6 +925,7 @@ const parse = (
             if (accept(".")) {
               if (!isFieldName(peek()))
                 throw createUnexpected(`Expected a field name but found ${describeToken(peek())}`);
+              if (!isTlapm && isAt("@")) throw createUnexpected("@ used in !.@");
               path.push({ kind: "Field", name: advance().text });
               continue;
             }
@@ -907,7 +946,12 @@ const parse = (
         return { kind: "Bracket", args, location };
       }
       expect("]_");
-      return { kind: "BoxAction", action: expression, subscript: parseSubscript(), location };
+      return {
+        kind: "BoxAction",
+        action: expression,
+        subscript: parseSubscript().subscript,
+        location,
+      };
     });
 
   // SANY reads the set after the \in of {x \in S} as a whole expression, whatever operators it has.
@@ -958,7 +1002,12 @@ const parse = (
     if (accept(">>_")) {
       if (elements.length !== 1)
         throw createError("Expected a single action inside <<A>>_v", start);
-      return { kind: "AngleAction", action: elements[0], subscript: parseSubscript(), location };
+      return {
+        kind: "AngleAction",
+        action: elements[0],
+        subscript: parseSubscript().subscript,
+        location,
+      };
     }
     expect(">>");
     return { kind: "Tuple", elements, location };
@@ -1008,9 +1057,9 @@ const parse = (
         next.kind === "Number" ||
         SELECTOR_SYMBOLS.has(next.text) ||
         (next.kind === "Operator" &&
-          (INFIX_OPERATORS.has(next.text) ||
-            POSTFIX_OPERATORS.has(next.text) ||
-            PREFIX_OPERATOR_REFERENCES.has(next.text))))
+          (INFIX_OPERATORS.has(next.text) || DEFINABLE_POSTFIX_OPERATORS.has(next.text))) ||
+        ((next.kind === "Operator" || next.kind === "Keyword") &&
+          DEFINABLE_PREFIX_OPERATORS.has(next.text)))
     );
   };
 
@@ -1199,15 +1248,18 @@ const parse = (
       case "WF_":
       case "SF_": {
         const subscript = parseSubscript();
-        const action = withBracketLayout(() => {
-          expect("(");
-          const expression = parseExpression();
-          expect(")");
-          return expression;
-        });
+        const action =
+          !isAt("(") && subscript.lastArgs.length === 1
+            ? subscript.lastArgs[0]
+            : withBracketLayout(() => {
+                expect("(");
+                const expression = parseExpression();
+                expect(")");
+                return expression;
+              });
         return {
           kind: token.text === "WF_" ? "WeakFairness" : "StrongFairness",
-          subscript,
+          subscript: subscript.subscript,
           action,
           location,
         };
@@ -1222,10 +1274,9 @@ const parse = (
     operators.last = operators.preceding = { low, high };
     const operand = parseExpression(high + 1);
     const next = peek();
-    const nextHigh =
-      next.text === "'" || POSTFIX_OPERATORS.has(next.text)
-        ? POSTFIX_PRECEDENCE.high
-        : INFIX_OPERATORS.get(next.text)?.high;
+    const nextHigh = DEFINABLE_POSTFIX_OPERATORS.has(next.text)
+      ? POSTFIX_PRECEDENCE.high
+      : INFIX_OPERATORS.get(next.text)?.high;
     if (!isTlapm && next.kind === "Operator" && nextHigh !== undefined && nextHigh >= low) {
       throw createError(`Precedence conflict between ${operator.text} and ${next.text}`, next);
     }
@@ -1237,7 +1288,7 @@ const parse = (
     operators.preceding = undefined;
     const token = peek();
     const location = getLocation(token);
-    if (token.kind === "Operator" && (token.text === "/\\" || token.text === "\\/")) {
+    if (token.kind === "Operator" && isBullet(token)) {
       return parseJunctionList();
     }
     if (token.kind === "Operator" || token.kind === "Keyword") {
@@ -1445,7 +1496,7 @@ const parse = (
     const isPrefixDefinition =
       token.kind !== "String" && DEFINABLE_PREFIX_OPERATORS.has(token.text);
     const isPostfixDefinition =
-      token.kind === "Identifier" && POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
+      token.kind === "Identifier" && DEFINABLE_POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
     if (isPrefixDefinition || isPostfixDefinition) {
       const operator = isPrefixDefinition ? token.text : peek(1).text;
       if (isPrefixDefinition) advance();
@@ -1521,7 +1572,10 @@ const parse = (
       const name = advance().text;
       return { name, arity: accept("_") ? 2 : 1, location };
     }
-    if (peek().kind === "Operator" && isAt("_", 1)) {
+    const isPrefixOperator =
+      peek().kind !== "String" &&
+      (DEFINABLE_PREFIX_OPERATORS.has(peek().text) || (isTlapm && peek().kind === "Operator"));
+    if (isPrefixOperator && isAt("_", 1)) {
       const operator = advance().text;
       advance();
       return { name: operator === "-" ? "-." : operator, arity: 1, location };
@@ -1568,7 +1622,8 @@ const parse = (
       );
     }
     if (isAt("(", 1) || isAt("[", 1)) return isAt("==", getClosingOffset(1));
-    if (next.kind === "Operator" && POSTFIX_OPERATORS.has(next.text)) return isAt("==", 2);
+    if (next.kind === "Operator" && DEFINABLE_POSTFIX_OPERATORS.has(next.text))
+      return isAt("==", 2);
     if (next.kind === "Operator" && INFIX_OPERATORS.has(next.text)) {
       return peek(2).kind === "Identifier" && isAt("==", 3);
     }
@@ -1900,7 +1955,7 @@ const parse = (
     if (!isCorrectLevel(step)) {
       throw createError(`${isQed ? "QED step" : "step"}'s number has bad level`, step);
     }
-    if (getStepLevel(step) < 0 && getStepName(step) !== undefined) {
+    if (mode !== "sany" && getStepLevel(step) < 0 && getStepName(step) !== undefined) {
       throw createError("<*> and <+> cannot be used for a named step", step);
     }
     cursor.index++;

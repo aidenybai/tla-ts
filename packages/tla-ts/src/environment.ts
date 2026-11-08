@@ -128,6 +128,9 @@ export interface InstanceAction {
   location: SourceLocation;
 }
 
+// The modules whose Java methods TLC binds through annotations rather than by name alone.
+const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
+
 const toValue = (value: ConfigValue): Value => {
   switch (value.kind) {
     case "Number":
@@ -523,7 +526,8 @@ export const createEnvironment = (
       evaluateReplaced,
     )?.forEach((operator) => {
       const symbol = top.linked.visible.get(operator.name);
-      if (symbol?.kind !== "Definition" || symbol.arity !== operator.arity) return;
+      if (symbol?.kind !== "Definition") return;
+      if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
       const definition = definitions.get(symbol.key);
       if (definition) replaced.set(operator.name, definition);
       builtins.set(symbol.key, operator);

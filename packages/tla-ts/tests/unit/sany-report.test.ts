@@ -222,11 +222,16 @@ Spec == Init /\\ [][Next]_x
     });
     expect(report.text).toContain(
       toText([
-        "*** Errors: 2",
+        "*** Errors: 3",
         "",
         "line 3, col 28 to line 3, col 28 of module M",
         "",
         "Selector `F' should not have argument(s).",
+        "",
+        "",
+        "In module --TLA+ BUILTINS--",
+        "",
+        "An operator must be substituted for symbol 'Op', and it must have arity 1.",
         "",
         "",
         "line 4, col 28 to line 4, col 31 of module M",
