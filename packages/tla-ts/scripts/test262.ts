@@ -150,11 +150,15 @@ const applyEdits = (edits: Map<number, string>) =>
       ),
   );
 
+const getDescriptorName = (type: ts.Type | undefined) =>
+  type === undefined
+    ? undefined
+    : (type.isIntersection() ? type.types : [type])
+        .map((member) => member.getSymbol()?.name)
+        .find((name) => name === "PropertyDescriptor" || name === "PropertyDescriptorMap");
+
 const isDescriptor = (type: ts.Type | undefined) =>
-  type !== undefined &&
-  (type.isIntersection() ? type.types : [type]).some(
-    (member) => member.getSymbol()?.name === "PropertyDescriptor",
-  );
+  getDescriptorName(type) === "PropertyDescriptor";
 
 // Types for the objects that test262 builds up and describes, which TypeScript can't infer:
 // a descriptor that is possibly undefined, an object given properties after it's made, a
@@ -166,7 +170,7 @@ const isKeyType = (type: ts.Type) =>
 const loosen = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(PROGRAM_PATH);
-  if (program === undefined || sourceFile === undefined) return;
+  if (program === undefined || sourceFile === undefined) return false;
   const checker = program.getTypeChecker();
   const getNode = (position: number) => {
     const visit = (node: ts.Node): ts.Node =>
@@ -261,6 +265,26 @@ const loosen = () => {
     if (diagnostic.code === 2322 && literal && isDescriptor(checker.getContextualType(literal))) {
       edits.set(literal.getEnd(), " as unknown as PropertyDescriptor");
     }
+    // A test describes properties with an object whose type TypeScript doesn't know.
+    // A call whose overloads all fail gives its arguments no contextual type.
+    const parameter =
+      ts.isCallExpression(parent) && ts.isIdentifier(node)
+        ? checker.getResolvedSignature(parent)?.getParameters()[parent.arguments.indexOf(node)]
+        : undefined;
+    const described =
+      (diagnostic.code === 2322 || diagnostic.code === 2345) &&
+      ts.isIdentifier(node) &&
+      (ts.isCallExpression(parent) || ts.isPropertyAssignment(parent))
+        ? getDescriptorName(
+            parameter === undefined
+              ? checker.getContextualType(node)
+              : checker.getTypeOfSymbolAtLocation(parameter, node),
+          )
+        : undefined;
+    if (described !== undefined) {
+      edits.set(node.getStart(), "(");
+      edits.set(node.getEnd(), ` as unknown as ${described})`);
+    }
   });
   const visit = (node: ts.Node) => {
     const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
@@ -277,6 +301,7 @@ const loosen = () => {
   };
   visit(sourceFile);
   if (edits.size > 0) applyEdits(edits);
+  return edits.size > 0;
 };
 
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
@@ -311,7 +336,8 @@ const annotate = (text: string) => {
     if (annotated === file.text) break;
     setText(annotated);
   }
-  loosen();
+  // A type that one loosening gives can show where another is needed.
+  while (loosen());
   return file.text;
 };
 
