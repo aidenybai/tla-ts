@@ -8,7 +8,7 @@ import { getKind } from "./types";
 import { apply, boolean, ifExpression, number, string } from "./tla";
 
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
-EXTENDS Integers, Sequences, TLC
+EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, BuiltIns, ConstantFunctions
 
@@ -350,6 +350,23 @@ ArrayLike(heap, ref) ==
         \\/ \\E position \\in 0..(length - 1) : ~Has(heap, ref, ToString(position))
      THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
      ELSE [position \\in 1..length |-> Get(heap, ref, ToString(position - 1))]
+
+RECURSIVE IndexKeys(_, _)
+IndexKeys(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN {key \\in DOMAIN object.values : IsIndex(key)}
+       \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
+
+\\* The elements that an array-like object or its prototypes hold below its length, in order, with
+\\* their indices. The array methods that skip holes visit these.
+PresentElements(heap, ref) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+      present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} : position < length}
+      indices == [position \\in 1..Cardinality(present) |->
+                   CHOOSE element \\in present :
+                     Cardinality({other \\in present : other < element}) = position - 1]
+  IN [indices |-> indices,
+      values |-> [position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))]]
 
 \\* The accessor that a write to a key calls, which the object or a prototype holds, or Undefined
 \\* where the write makes or changes a data property.

@@ -20,6 +20,7 @@ import {
   boolean,
   bound,
   choose,
+  field,
   filter,
   functionOf,
   identifier,
@@ -142,7 +143,7 @@ const bindIndexed = (
   position: Expression,
   scope: Scope,
   context: Context,
-  extra: { accumulator?: Expression; owner?: Expression } = {},
+  extra: { accumulator?: Expression; owner?: Expression; indices?: Expression } = {},
 ) => {
   const parameters = getCallback(callback, context).parameters;
   const offset = extra.accumulator === undefined ? 0 : 1;
@@ -153,7 +154,9 @@ const bindIndexed = (
   const bindings = [
     ...(extra.accumulator === undefined ? [] : [getChecked(extra.accumulator, 0)]),
     sequence === undefined ? undefined : getChecked(index(sequence, [position]), offset),
-    apply("-", [position, number(1)]),
+    extra.indices === undefined
+      ? apply("-", [position, number(1)])
+      : index(extra.indices, [position]),
     extra.owner ?? sequence,
   ];
   return parameters.reduce((current, parameter, position) => {
@@ -438,6 +441,8 @@ interface ArrayCall {
   arguments: readonly ts.Expression[];
   elementType: ts.Type | undefined;
   owner: Expression | undefined;
+  // The indices of an array-like object's elements, where it may have holes.
+  indices?: Expression;
 }
 
 const translateSequenceOperation = (
@@ -470,6 +475,7 @@ const translateSequenceOperation = (
       const position = context.names.getFresh("index");
       const inner = bindIndexed(argument, sequence, identifier(position), scope, context, {
         owner: call.owner,
+        indices: call.indices,
       });
       return format(
         [bound(position, getDomain(sequence))],
@@ -526,23 +532,21 @@ const translateSequenceOperation = (
     withSearch(isLast, (isFound) => {
       const position = context.names.getFresh("index");
       const passed = context.names.getFresh("passed");
+      const found = choose(
+        position,
+        getDomain(sequence),
+        junction("And", [
+          isFound(identifier(position)),
+          quantify(
+            "Forall",
+            [getPassed(passed, position, sequence, isLast)],
+            not(isFound(identifier(passed))),
+          ),
+        ]),
+      );
       return ifExpression(
         quantify("Exists", [bound(position, getDomain(sequence))], isFound(identifier(position))),
-        apply("-", [
-          choose(
-            position,
-            getDomain(sequence),
-            junction("And", [
-              isFound(identifier(position)),
-              quantify(
-                "Forall",
-                [getPassed(passed, position, sequence, isLast)],
-                not(isFound(identifier(passed))),
-              ),
-            ]),
-          ),
-          number(1),
-        ]),
+        call.indices === undefined ? apply("-", [found, number(1)]) : index(call.indices, [found]),
         number(-1),
       );
     });
@@ -554,6 +558,7 @@ const translateSequenceOperation = (
     const inner = bindIndexed(argument, sequence, identifier(position), scope, context, {
       accumulator: identifier(accumulator),
       owner: call.owner,
+      indices: call.indices,
     });
     const initial = call.arguments[1];
     return useJavaScript(
@@ -669,6 +674,7 @@ const translateSequenceOperation = (
               argument,
               bindIndexed(argument, sequence, identifier(position), scope, context, {
                 owner: call.owner,
+                indices: call.indices,
               }),
               context,
             ),
@@ -920,6 +926,18 @@ const ARRAY_LIKE_METHODS = new Set([
   "reduceRight",
 ]);
 
+// The array methods that visit only the elements an array-like object has, skipping its holes.
+export const HOLE_SKIPPING_METHODS = new Set([
+  "every",
+  "some",
+  "filter",
+  "forEach",
+  "indexOf",
+  "lastIndexOf",
+  "reduce",
+  "reduceRight",
+]);
+
 // Array.prototype.method.call(object, ...arguments) on an array-like object, which runs on the
 // object's elements, or undefined for any other call.
 export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
@@ -938,26 +956,30 @@ export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, co
   ) {
     return undefined;
   }
-  return share(translateExpression(object, scope, context), "object", context, (owner) =>
-    share(
-      useJavaScript("ArrayLike", [getHeap(scope, node, context), owner], context),
-      "sequence",
+  const method = target.name.text;
+  const heap = getHeap(scope, node, context);
+  const operate = (owner: Expression, sequence: Expression, indices?: Expression) =>
+    translateSequenceOperation(
+      { node, method, arguments: node.arguments.slice(1), elementType: undefined, owner, indices },
+      sequence,
+      scope,
       context,
-      (sequence) =>
-        translateSequenceOperation(
-          {
-            node,
-            method: target.name.text,
-            arguments: node.arguments.slice(1),
-            elementType: undefined,
-            owner,
-          },
-          sequence,
-          scope,
+      false,
+    );
+  // A search from an index counts from the length, which the present elements don't have.
+  const isSkippingHoles =
+    HOLE_SKIPPING_METHODS.has(method) && (!method.endsWith("ndexOf") || node.arguments.length < 3);
+  return share(translateExpression(object, scope, context), "object", context, (owner) =>
+    isSkippingHoles
+      ? share(
+          useJavaScript("PresentElements", [heap, owner], context),
+          "present",
           context,
-          false,
+          (present) => operate(owner, field(present, "values"), field(present, "indices")),
+        )
+      : share(useJavaScript("ArrayLike", [heap, owner], context), "sequence", context, (sequence) =>
+          operate(owner, sequence),
         ),
-    ),
   );
 };
 

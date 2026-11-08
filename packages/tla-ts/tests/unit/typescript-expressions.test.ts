@@ -486,6 +486,13 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[Array.prototype.every.call(holed, (value: unknown, index: number) => index !== 5 || value === 10), Array.prototype.filter.call(holed, (value: unknown, index: number) => index > 0).length, Array.prototype.indexOf.call(holed, 10), Array.prototype.lastIndexOf.call(holed, 6), Array.prototype.reduce.call(holed, (sum: unknown, value: unknown, index: number) => (sum as number) + index, 0)]",
+      `const holed: { [key: string]: unknown } = Object.create({ 1: 6 });
+      holed[0] = 11;
+      holed[5] = 10;
+      holed.length = 20;`,
+    ],
+    [
       "[typeof retyped.value, typeof (retyped.value)]",
       `const retyped = { value: 1 };
       Object.defineProperty(retyped, "value", { value: "text" });`,

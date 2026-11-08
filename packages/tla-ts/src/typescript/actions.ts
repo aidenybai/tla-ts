@@ -1,6 +1,12 @@
 import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
-import { checkElement, getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
+import {
+  checkElement,
+  getUpdatedValue,
+  HOLE_SKIPPING_METHODS,
+  MUTATING_METHODS,
+  removeLast,
+} from "./collections";
 import {
   type HeapFunction,
   type Context,
@@ -743,6 +749,8 @@ const translateLoopCall = (
   const owner = identifier(ownerName);
   const sequenceName = context.names.getFresh("sequence");
   const sequence = identifier(sequenceName);
+  const presentName = context.names.getFresh("present");
+  const isSkippingHoles = loop.isArrayLike && HOLE_SKIPPING_METHODS.has(method);
   const position = context.names.getFresh("position");
   const accumulator = context.names.getFresh("accumulator");
   const parameters = changed.map((symbol) => {
@@ -823,7 +831,9 @@ const translateLoopCall = (
     [
       ...(isReduce ? [getChecked(kept, 0)] : []),
       getChecked(element, isReduce ? 1 : 0),
-      apply("-", [identifier(position), number(1)]),
+      isSkippingHoles
+        ? index(field(identifier(presentName), "indices"), [identifier(position)])
+        : apply("-", [identifier(position), number(1)]),
       loop.isArrayLike ? owner : sequence,
     ],
     inner.scope,
@@ -924,12 +934,27 @@ const translateLoopCall = (
   return letIn(
     [
       define(ownerName, [], translateExpression(receiver, path.scope, context)),
+      ...(isSkippingHoles
+        ? [
+            define(
+              presentName,
+              [],
+              useJavaScript(
+                "PresentElements",
+                [getHeap(path.scope, receiver, context), owner],
+                context,
+              ),
+            ),
+          ]
+        : []),
       define(
         sequenceName,
         [],
-        loop.isArrayLike
-          ? useJavaScript("ArrayLike", [getHeap(path.scope, receiver, context), owner], context)
-          : owner,
+        isSkippingHoles
+          ? field(identifier(presentName), "values")
+          : loop.isArrayLike
+            ? useJavaScript("ArrayLike", [getHeap(path.scope, receiver, context), owner], context)
+            : owner,
       ),
     ],
     seeded,

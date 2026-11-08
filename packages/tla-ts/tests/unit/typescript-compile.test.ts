@@ -335,6 +335,20 @@ describe("top-level statements", () => {
     expect(getTrace(result)?.[0]).toMatchObject({ calls: "2", isAll: "FALSE" });
   });
 
+  it("skip the holes of an array-like object in callbacks that change state", async () => {
+    const result = await checkModel(`
+      let seen = "";
+      const object: { [key: string]: unknown } = Object.create({ 1: 6 });
+      object[0] = 11;
+      object[5] = 10;
+      object.length = 20;
+      Array.prototype.forEach.call(object, (value: unknown, index: number) => {
+        seen = seen + index + ":" + value + ",";
+      });
+    `);
+    expect(getTrace(result)?.[0]).toMatchObject({ seen: '"0:11,1:6,5:10,"' });
+  });
+
   it("make the objects of a parameter's default", async () => {
     const result = await checkModel(`
       let total = 0;
