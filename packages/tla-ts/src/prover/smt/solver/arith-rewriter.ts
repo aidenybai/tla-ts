@@ -1,7 +1,11 @@
 // Ported from Z3 (src/ast/rewriter/arith_rewriter.cpp), MIT license, see z3-license.txt.
 import {
+  FAMILY_ARITH,
+  KIND_APP,
   OP_ADD,
+  OP_DIV,
   OP_GE,
+  OP_POWER,
   OP_IDIV,
   OP_ITE,
   OP_LE,
@@ -41,6 +45,8 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isExpandPower: false,
   maxDegree: 64,
 };
+
+const TWO = Rational.of(2n);
 
 const getCeilDiv = (dividend: bigint, divisor: bigint) => -getEuclideanDiv(-dividend, divisor);
 
@@ -454,6 +460,108 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
+  private ensureReal(expr: number) {
+    const manager = this.manager;
+    return manager.isInt(expr) ? manager.mkApp(OP_TO_REAL, [expr], SORT_REAL) : expr;
+  }
+
+  private mkPowerApp(base: number, exponent: number) {
+    return this.manager.mkApp(OP_POWER, [base, exponent], SORT_REAL);
+  }
+
+  mkPower(base: number, exponent: number): number | Rewrite | undefined {
+    const manager = this.manager;
+    const maxDegree = this.options.maxDegree;
+    const x = manager.isNumeral(base) ? this.getValue(base) : undefined;
+    const y = manager.isNumeral(exponent) ? this.getValue(exponent) : undefined;
+    const isSmall = (value: Rational) =>
+      value.isInt() && value.num >= 0n && value.num <= BigInt(maxDegree);
+    if (x?.equals(Rational.one)) return manager.mkRealNumeral(x);
+    if (y?.equals(Rational.one)) return this.reduce(this.ensureReal(base), 1);
+    if (x !== undefined && y !== undefined) {
+      if (x.isZero() && y.isZero()) return undefined;
+      if (y.isZero()) return manager.mkRealNumeral(Rational.one);
+      if (x.isZero()) return manager.mkRealNumeral(x);
+      if (isSmall(y)) return manager.mkRealNumeral(x.pow(Number(y.num)));
+      if (isSmall(y.neg())) return manager.mkRealNumeral(Rational.one.div(x).pow(Number(-y.num)));
+      if (y.equals(Rational.minusOne)) return manager.mkRealNumeral(Rational.one.div(x));
+    }
+    if (manager.getOp(base) === OP_POWER && y !== undefined && y.isInt() && !y.isZero()) {
+      const innerExponent = manager.getArg(base, 1);
+      const inner = manager.isNumeral(innerExponent) ? this.getValue(innerExponent) : undefined;
+      if (inner !== undefined && inner.isInt() && inner.isPositive())
+        return this.reduce(
+          this.mkPowerApp(
+            this.ensureReal(manager.getArg(base, 0)),
+            manager.mkRealNumeral(y.mul(inner)),
+          ),
+          2,
+        );
+    }
+    const mkZeroIte = (otherwise: number) =>
+      manager.mkApp(
+        OP_ITE,
+        [
+          manager.mkEq(base, manager.mkNumeralOfSort(Rational.zero, manager.sorts[base])),
+          manager.mkRealNumeral(Rational.zero),
+          otherwise,
+        ],
+        SORT_REAL,
+      );
+    if (y?.equals(Rational.minusOne)) {
+      const one = manager.mkRealNumeral(Rational.one);
+      const quotient = manager.mkApp(OP_DIV, [one, this.ensureReal(base)], SORT_REAL);
+      return this.reduce(mkZeroIte(quotient), 2);
+    }
+    if (y?.isNegative()) {
+      const one = manager.mkRealNumeral(Rational.one);
+      const quotient = manager.mkApp(OP_DIV, [one, this.ensureReal(base)], SORT_REAL);
+      return this.reduce(mkZeroIte(this.mkPowerApp(quotient, manager.mkRealNumeral(y.neg()))), 3);
+    }
+    if (y !== undefined && !y.isInt() && y.num !== 1n) {
+      const root = this.mkPowerApp(
+        this.ensureReal(base),
+        manager.mkRealNumeral(Rational.of(1n, y.den)),
+      );
+      return this.reduce(this.mkPowerApp(root, manager.mkRealNumeral(Rational.of(y.num))), 3);
+    }
+    const isArithBase =
+      manager.kinds[base] === KIND_APP &&
+      manager.funcDecls[manager.decls[base]].family === FAMILY_ARITH;
+    if (
+      (this.options.isExpandPower || (this.options.isSom && isArithBase)) &&
+      y !== undefined &&
+      isSmall(y) &&
+      y.num > 1n
+    ) {
+      const factors = Array.from({ length: Number(y.num) }, () => base);
+      return this.reduce(this.ensureReal(manager.mkApp(OP_MUL, factors, manager.sorts[base])), 2);
+    }
+    if (y === undefined || y.isZero()) return undefined;
+    const isIrrationalBase = manager.isAlgebraicNumeral(base);
+    if (x === undefined && !isIrrationalBase) return undefined;
+    const isNegativeExponent = y.isNegative();
+    const numerator = isNegativeExponent ? -y.num : y.num;
+    if (numerator > BigInt(maxDegree) || y.den > BigInt(maxDegree)) return undefined;
+    const am = manager.am;
+    const finish = (value: Anum) => {
+      if (isNegativeExponent) am.inv(value);
+      return manager.mkAlgebraicNumeral(value);
+    };
+    if (x !== undefined) {
+      const power = x.pow(Number(numerator));
+      if (power.isNegative() && y.den % 2n === 0n) return undefined;
+      const exact = power.root(Number(y.den));
+      if (exact !== undefined)
+        return manager.mkRealNumeral(isNegativeExponent ? Rational.one.div(exact) : exact);
+      if (!this.options.isAnumSimp) return undefined;
+      return finish(am.root(new Anum(power), Number(y.den)));
+    }
+    const value = manager.getAlgebraicValue(base);
+    if (!this.options.isAnumSimp || am.degree(value) > maxDegree) return undefined;
+    return finish(am.root(am.power(value, Number(numerator)), Number(y.den)));
+  }
+
   mkDiv(left: number, right: number) {
     const manager = this.manager;
     if (
@@ -821,6 +929,18 @@ export class ArithRewriter extends PolyRewriter {
   ): number | Rewrite | undefined {
     const manager = this.manager;
     this.currSort = manager.sorts[originalLeft];
+    if (
+      (this.isZero(originalLeft) && this.isReducePowerTarget(originalRight, kind === KIND_EQ)) ||
+      (this.isZero(originalRight) && this.isReducePowerTarget(originalLeft, kind === KIND_EQ))
+    )
+      return this.reduce(
+        this.mkAtom(
+          this.reducePower(originalLeft, kind === KIND_EQ),
+          this.reducePower(originalRight, kind === KIND_EQ),
+          kind,
+        ),
+        1,
+      );
     const setSide = (index: number, expr: number) => {
       manager.incRef(expr);
       if (index < sides.length) manager.decRef(sides[index]);
@@ -936,6 +1056,40 @@ export class ArithRewriter extends PolyRewriter {
     if (isChanged && left === originalLeft && right === originalRight) return undefined;
     if (isChanged) return this.mkAtom(left, right, kind);
     return this.factorLeGeEq(left, right, kind);
+  }
+
+  private getReducedPowerBase(expr: number, isEq: boolean) {
+    const manager = this.manager;
+    if (manager.getOp(expr) !== OP_POWER) return undefined;
+    const exponent = manager.getArg(expr, 1);
+    if (!manager.isNumeral(exponent)) return undefined;
+    const k = this.getValue(exponent);
+    return k.isInt() && k.compare(Rational.of(isEq ? 1n : 2n)) > 0 ? k : undefined;
+  }
+
+  private getFactors(expr: number) {
+    return this.isMul(expr) ? this.manager.getArgs(expr) : [expr];
+  }
+
+  private isReducePowerTarget(expr: number, isEq: boolean) {
+    return this.getFactors(expr).some(
+      (factor) => this.getReducedPowerBase(factor, isEq) !== undefined,
+    );
+  }
+
+  // x^k = 0 has the roots of x, and x^k <= 0 those of x or of x^2 by the parity of k.
+  private reducePower(expr: number, isEq: boolean) {
+    const manager = this.manager;
+    if (this.isZero(expr)) return expr;
+    const factors = this.getFactors(expr).map((factor) => {
+      const k = this.getReducedPowerBase(factor, isEq);
+      if (k === undefined) return factor;
+      const base = manager.getArg(factor, 0);
+      return isEq || getEuclideanMod(k.num, 2n) === 1n
+        ? this.ensureReal(base)
+        : this.mkPowerApp(this.ensureReal(base), manager.mkRealNumeral(TWO));
+    });
+    return factors.length === 1 ? factors[0] : manager.mkApp(OP_MUL, factors, SORT_REAL);
   }
 
   private factorLeGeEq(left: number, right: number, kind: number) {

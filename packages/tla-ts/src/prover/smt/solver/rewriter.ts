@@ -34,6 +34,7 @@ import {
   OP_IDIV,
   OP_IMPLIES,
   OP_IS_INT,
+  OP_POWER,
   OP_ITE,
   OP_LE,
   OP_LT,
@@ -469,6 +470,8 @@ export class Rewriter extends RewriterTpl {
         return this.arith.mkToInt(args[0]) ?? -1;
       case OP_IS_INT:
         return this.arith.mkIsInt(args[0]);
+      case OP_POWER:
+        return this.arith.mkPower(args[0], args[1]) ?? -1;
       default:
         return -1;
     }
