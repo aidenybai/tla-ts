@@ -63,8 +63,10 @@ const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
 // The plain objects that built-in functions take or give.
 const LIBRARY_OBJECTS = new Set(["PropertyDescriptor", "PropertyDescriptorMap"]);
 
+// An object type, or the object type, which any object may have.
 const isPlainObject = (type: ts.Type, checker: ts.TypeChecker) => {
   const symbol = type.getSymbol();
+  if ((type.flags & ts.TypeFlags.NonPrimitive) !== 0) return true;
   return (
     (type.flags & ts.TypeFlags.Object) !== 0 &&
     !checker.isArrayType(type) &&
@@ -82,6 +84,11 @@ const isPlainObject = (type: ts.Type, checker: ts.TypeChecker) => {
       ))
   );
 };
+
+// Whether a value of a type may be an object in the heap.
+export const hasHeapType = (type: ts.Type, context: Context) =>
+  context.heap !== undefined &&
+  (type.isUnion() ? type.types : [type]).some((member) => isPlainObject(member, context.checker));
 
 export const isHeapType = (type: ts.Type, node: ts.Node | undefined, context: Context) => {
   if (context.heap === undefined) return false;

@@ -36,7 +36,8 @@ import {
   locate,
   string,
 } from "./tla";
-import { translateUnknown } from "./types";
+import { isBuiltInObject } from "./intrinsics";
+import { hasHeapType, translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
 const isStateModified = (scope: Scope, context: Context) =>
@@ -50,6 +51,13 @@ export const readsState = (
   if (ts.isIdentifier(node)) {
     const symbol = getSymbol(node, context.checker);
     if (symbol !== undefined && context.variables.has(symbol)) return true;
+    // A value that may be an object, or a built-in object, reads the heap.
+    if (
+      hasHeapType(context.checker.getTypeAtLocation(node), context) ||
+      (context.heap !== undefined && isBuiltInObject(node, context))
+    ) {
+      return true;
+    }
     const declaration = getTopLevelDeclaration(symbol);
     if (declaration !== undefined && !visited.has(declaration)) {
       visited.add(declaration);

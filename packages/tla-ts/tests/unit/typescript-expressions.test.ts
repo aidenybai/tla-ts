@@ -244,6 +244,14 @@ const CASES: Record<string, (string | [string, string])[]> = {
       "const point = { a: 1, 1: 2 };",
     ],
     [
+      "[before, has(box)]",
+      `const box: { a?: number } = {};
+      const has = (value: object) => Object.prototype.hasOwnProperty.call(value, "a");
+      let before = "absent";
+      if (has(box)) before = "present";
+      box.a = 1;`,
+    ],
+    [
       "has(point)",
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],
