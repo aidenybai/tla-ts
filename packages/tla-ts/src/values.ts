@@ -1581,15 +1581,12 @@ const enumerateSet = (
           `Attempted to enumerate S \\ T when S:\n${formatValue(value.left)}\nis not enumerable.`,
         );
       }
-      // SetCupValue#toSetEnum lists the elements of S and then those of T, which TLC sorts as it
-      // normalizes the set.
       if (value.operator === "\\cup") {
         return computeLikeTlcOnFailure(
-          (left, right) => getSortedUnion(toFiniteSet(left), toFiniteSet(right)).elements,
-          (left, right) =>
-            sortLikeTlc([...toFiniteSet(left).elements, ...toFiniteSet(right).elements]),
-          value.left,
-          value.right,
+          (union) => getSortedUnion(toFiniteSet(union.left), toFiniteSet(union.right)).elements,
+          (union) => sortLikeTlc(listUnionLikeTlc(union)),
+          value,
+          value,
         );
       }
       const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
@@ -1634,22 +1631,20 @@ export const toFiniteSet = (value: Value): SetValue => {
   return set;
 };
 
-// EnumerableValue#elements(NORMALIZED) sorts the elements SetCupValue#toSetEnum lists outside the
-// methods of the union, so a failure to compare two of them isn't one in fingerprinting the union.
+// SetCupValue#toSetEnum lists the elements of S and then those of T, which TLC sorts as it
+// normalizes the set.
+const listUnionLikeTlc = (union: SetOperationValue) => [
+  ...toFiniteSet(union.left).elements,
+  ...toFiniteSet(union.right).elements,
+];
+
+// EnumerableValue#elements(NORMALIZED) sorts the elements a union lists outside the union's methods,
+// so a failure to compare two of them isn't one in fingerprinting the union.
 export const getNormalizedSetElements = (value: Value) =>
   typeof value === "object" && value.kind === "SetOperation" && value.operator === "\\cup"
     ? computeLikeTlcOnFailure(
-        (union: SetOperationValue) => toFiniteSet(union).elements,
-        (union: SetOperationValue) => {
-          const sets = setTrace.sets;
-          sets?.push(union);
-          const listed = [
-            ...toFiniteSet(union.left).elements,
-            ...toFiniteSet(union.right).elements,
-          ];
-          sets?.pop();
-          return sortLikeTlc(listed);
-        },
+        (union) => toFiniteSet(union).elements,
+        (union) => sortLikeTlc(callTracedMethod(union, () => listUnionLikeTlc(union))),
         value,
         value,
       )

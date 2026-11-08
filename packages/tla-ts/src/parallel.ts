@@ -98,8 +98,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   // The search on the calling thread prints and reports what this one did while it started, so it
   // skips that.
-  const fallBack = (string?: string) => {
-    if (string !== undefined) options.onProgress?.({ kind: "sequential-fallback", string });
+  const fallBack = (createdString?: string) => {
+    if (createdString !== undefined) {
+      options.onProgress?.({ kind: "sequential-fallback", string: createdString });
+    }
     const skipped = { count: printed.count };
     return checkSequentially({
       ...options,
@@ -328,9 +330,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     const messages = await collectLevels(await reported);
     if (isAborted(messages)) {
       terminate();
-      return fallBack(
-        messages.flatMap((message) => (message.type === "abort" ? [message.string] : []))[0],
+      const aborted = messages.find(
+        (message) => message.type === "abort" && message.string !== undefined,
       );
+      return fallBack(aborted?.type === "abort" ? aborted.string : undefined);
     }
     const levels = messages.flatMap((message) => (message.type === "level" ? [message] : []));
     const added = levels.reduce((sum, message) => sum + message.added, 0);

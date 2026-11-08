@@ -98,16 +98,6 @@ const getExtendedModules = (module: ModuleNode, found = new Set<ModuleNode>()) =
 // a symbol, unless the value of a field of a record with the same domain, the record itself among
 // them, is built from declarations.
 export const lintSanyModule = (module: ModuleNode): SanyMessage[] => {
-  const domains = new Map<string, OpApplNode[]>();
-  [
-    ...[...getExtendedModules(module)].flatMap((extended) => extended.records),
-    ...module.records,
-  ].forEach((record) => {
-    const domain = getDomain(record);
-    const records = domains.get(domain);
-    if (records) records.push(record);
-    else domains.set(domain, [record]);
-  });
   const linted = module.records.map((record) => ({
     domain: getDomain(record),
     warnings: getFieldPairs(record).flatMap((pair): SanyMessage[] => {
@@ -123,12 +113,22 @@ export const lintSanyModule = (module: ModuleNode): SanyMessage[] => {
       ];
     }),
   }));
-  const exempt = new Set(
-    [
-      ...new Set(linted.filter((item) => item.warnings.length > 0).map((item) => item.domain)),
-    ].filter((domain) =>
-      (domains.get(domain) ?? []).flatMap(getFieldPairs).some(isBuiltFromDeclarations),
-    ),
+  const warnedDomains = new Set(
+    linted.flatMap((item) => (item.warnings.length > 0 ? [item.domain] : [])),
   );
-  return linted.flatMap((item) => (exempt.has(item.domain) ? [] : item.warnings));
+  const exemptDomains = new Set<string>();
+  [
+    ...[...getExtendedModules(module)].flatMap((extended) => extended.records),
+    ...module.records,
+  ].forEach((record) => {
+    const domain = getDomain(record);
+    if (
+      warnedDomains.has(domain) &&
+      !exemptDomains.has(domain) &&
+      getFieldPairs(record).some(isBuiltFromDeclarations)
+    ) {
+      exemptDomains.add(domain);
+    }
+  });
+  return linted.flatMap((item) => (exemptDomains.has(item.domain) ? [] : item.warnings));
 };
