@@ -169,6 +169,7 @@ const createMix = (): MixType => ({ kind: "Mix", target: undefined });
 const MAXIMUM_COMPARISONS = 8;
 const ATOM_BASE = 2 ** 32;
 const MAXIMUM_SUBSET_BASE = 20;
+const MAXIMUM_INSERTION_SORT = 16;
 const MAXIMUM_SEQUENCES = 1 << 20;
 const MASK_BITS = 31;
 const MAXIMUM_INTEGER = 2147483647;
@@ -2491,6 +2492,19 @@ const HELPERS = {
     return 0;
   },
   // TLC sorts by insertion, moving each element before those it compares before.
+  // Images of sets are mostly short, where the fixed cost of Array.prototype.sort dominates.
+  sortImage: (set: Plain[], compare: Comparer) => {
+    if (set.length > MAXIMUM_INSERTION_SORT) return set.sort(compare);
+    for (let index = 1; index < set.length; index++) {
+      const element = set[index];
+      let position = index;
+      for (; position > 0 && compare(element, set[position - 1]) < 0; position--) {
+        set[position] = set[position - 1];
+      }
+      set[position] = element;
+    }
+    return set;
+  },
   sortSeq: (sequence: Plain[], isBefore: (left: Plain, right: Plain) => boolean) => {
     const sorted = sequence.slice();
     for (let index = 1; index < sorted.length; index++) {
@@ -2738,6 +2752,56 @@ const getReader = (codec: Codec, type: Type): string => {
     .join(", ")}]`;
 };
 
+// For each image, the position each key of a function's domain moves to, unless no key moves.
+const getMovedPositions = (images: ImageTable[], domain: Plain[]) => {
+  const positions = images.map((table) =>
+    Int32Array.from(domain, (key) => {
+      const image = permuteValue(key, table);
+      const position = domain.findIndex((other) => isSameValue(other, image));
+      return position === -1 ? unsupported() : position;
+    }),
+  );
+  return positions.some((table) => table.some((position, index) => position !== index))
+    ? positions
+    : undefined;
+};
+
+// Writes the image of a value, without building it where the image only reorders a function.
+const getImageWriter = (
+  program: Program,
+  codec: Codec,
+  images: ImageTable[],
+  type: Type,
+  code: string,
+): string | undefined => {
+  const resolved = resolveType(type);
+  const positions = resolved.kind === "Fn" && getMovedPositions(images, resolved.domain);
+  if (resolved.kind !== "Fn" || !positions) {
+    const permuted = getPermuteCode(program, images, type, code);
+    return permuted && getWriter(codec, type, permuted);
+  }
+  const base = program.indexes.length;
+  program.indexes.push(
+    ...positions.map((table) => {
+      const sources = new Int32Array(table.length);
+      table.forEach((position, index) => {
+        sources[position] = index;
+      });
+      return sources;
+    }),
+  );
+  const fn = getName(program, "f");
+  const sources = getName(program, "s");
+  const elements = resolved.domain.map((_, position) => {
+    const element = `${fn}[${sources}[${position}]]`;
+    return (
+      getImageWriter(program, codec, images, resolved.range, element) ??
+      getWriter(codec, resolved.range, element)
+    );
+  });
+  return `{ const ${fn} = ${code}; const ${sources} = D[${base} + G]; ${elements.join(" ")} }`;
+};
+
 // TLC fingerprints a state under symmetry as the smallest of its images, so every state of an orbit
 // shares one. The tier keys a state by the smallest encoding of its images, which they share too.
 const getPermuteCode = (
@@ -2767,7 +2831,7 @@ const getPermuteCode = (
       return getElementCode(
         resolved.element,
         (name, inner) =>
-          `(${code}).map((${name}) => ${inner}).sort(${getComparerCode(program, resolved.element)})`,
+          `H.sortImage((${code}).map((${name}) => ${inner}), ${getComparerCode(program, resolved.element)})`,
       );
     case "Rec": {
       const offset = resolved.shapes.length === 1 ? 0 : 1;
@@ -2797,18 +2861,8 @@ const getPermuteCode = (
       return `((${record}) => ${cases.join("")}${record})(${code})`;
     }
     case "Fn": {
-      const domain = resolved.domain;
-      const positions = images.map((table) =>
-        Int32Array.from(domain, (key) => {
-          const image = permuteValue(key, table);
-          const position = domain.findIndex((other) => isSameValue(other, image));
-          return position === -1 ? unsupported() : position;
-        }),
-      );
-      const isMoved = positions.some((table) =>
-        table.some((position, index) => position !== index),
-      );
-      if (!isMoved) {
+      const positions = getMovedPositions(images, resolved.domain);
+      if (!positions) {
         return getElementCode(
           resolved.range,
           (name, inner) => `(${code}).map((${name}) => ${inner})`,
@@ -2831,16 +2885,7 @@ interface CompiledSpec {
   constraints: ((state: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
   decode: (data: Uint8Array, start: number) => Plain[];
-  writeKey: (state: Plain[], arena: Arena) => void;
-  // Writes the image of a state, unless it is larger than the smallest one so far, and tells
-  // whether it is smaller.
-  writeImage: (
-    state: Plain[],
-    arena: Arena,
-    atoms: Int32Array,
-    image: number,
-    smallest: Uint8Array,
-  ) => boolean;
+  writeKey: (state: Plain[], arena: Arena, atoms: Int32Array[]) => void;
 }
 
 const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
@@ -2868,13 +2913,13 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const writers = program.variableTypes.map((type, index) => getWriter(codec, type, `v${index}`));
   const readers = program.variableTypes.map((type) => getReader(codec, type));
   const images = check.symmetry ?? [];
-  const permuted = program.variableTypes.map((type, index) =>
-    getPermuteCode(program, images, type, `v${index}`),
+  const imageWrites = program.variableTypes.map((type, index) =>
+    getImageWriter(program, codec, images, type, `v${index}`),
   );
   // Any order of the variables keys an orbit, and one that compares cheap variables a permutation
   // moves first leaves most images after a few bytes.
   const getKeyCost = (index: number) =>
-    permuted[index] === undefined
+    imageWrites[index] === undefined
       ? Infinity
       : (hasVariableSize(program.variableTypes[index]) ? MAXIMUM_INTEGER : 0) +
         getFixedSize(program.variableTypes[index]);
@@ -2883,11 +2928,8 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     .sort((left, right) => getKeyCost(left) - getKeyCost(right));
   const keyWriters = keyOrder.map((index) => writers[index]);
   const imageWriters = keyOrder.map((index) => {
-    const code = permuted[index];
-    const type = program.variableTypes[index];
-    const writer =
-      code === undefined ? writers[index] : `const u = ${code}; ${getWriter(codec, type, "u")}`;
-    return `{ const b = n - W.start; ${writer} if (c === 0) { c = H.compareBytes(d, W.start + b, n, M, b); if (c > 0) return false; } }`;
+    const writer = imageWrites[index] ?? writers[index];
+    return `{ const b = n - W.start - m; ${writer} if (c === 0) { c = H.compareBytes(d, W.start + m + b, n, d, W.start + b); if (c > 0) continue images; } }`;
   });
   const nextCode = next();
   const invariantCodes = invariants.map(predicate);
@@ -2919,7 +2961,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       arena.size = n;
     },
     decode: (data, start) => { d = data; i = start; return [${readers.join(", ")}]; },
-    writeKey: (state, arena) => {
+    writeKey: (state, arena, A) => {
       ${unpack}
       W = arena;
       arena.start = arena.size;
@@ -2927,19 +2969,16 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       d = arena.data;
       n = arena.size;
       ${keyWriters.join(" ")}
-      arena.size = n;
-    },
-    writeImage: (state, arena, P, G, M) => {
-      ${unpack}
-      W = arena;
-      arena.start = arena.size;
-      if (arena.size + ${RESERVED_BYTES} > arena.data.length) H.addPage(arena);
-      d = arena.data;
-      n = arena.size;
-      let c = 0;
-      ${imageWriters.join(" ")}
-      arena.size = n;
-      return c < 0;
+      let m = n - W.start;
+      images: for (let G = 0; G < A.length; G++) {
+        const P = A[G];
+        n = W.start + m;
+        if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; }
+        let c = 0;
+        ${imageWriters.join(" ")}
+        if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; }
+      }
+      arena.size = W.start + m;
     },
   };`;
   return new Function("K", "S", "B", "R", "D", "L", "H", source)(
@@ -3033,28 +3072,8 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
   // Under symmetry the table holds the key of each state apart from the state TLC explores.
   const keys = images.length === 0 ? arena : createArena();
   const keyStarts = images.length === 0 ? starts : { data: new Int32Array(1 << 16), size: 0 };
-  const smallest = { data: new Uint8Array(1 << 12), size: 0 };
-  const keepSmallest = () => {
-    const length = keys.size - keys.start;
-    if (length > smallest.data.length) smallest.data = new Uint8Array(length * 2);
-    smallest.data.set(keys.data.subarray(keys.start, keys.size));
-    smallest.size = length;
-  };
-  const encodeKey = (state: Plain[]) => {
-    if (images.length === 0) {
-      compiled.encode(state, keys);
-      return;
-    }
-    compiled.writeKey(state, keys);
-    keepSmallest();
-    for (let image = 0; image < images.length; image++) {
-      keys.size = keys.start;
-      if (compiled.writeImage(state, keys, atoms[image], image, smallest.data)) keepSmallest();
-    }
-    if (keys.start + smallest.size > keys.data.length) deopt();
-    keys.data.set(smallest.data.subarray(0, smallest.size), keys.start);
-    keys.size = keys.start + smallest.size;
-  };
+  const encodeKey = (state: Plain[]) =>
+    images.length === 0 ? compiled.encode(state, keys) : compiled.writeKey(state, keys, atoms);
   const table: StateTable = { slots: new Int32Array(1 << 18), mask: (1 << 17) - 1 };
   const statistics = { generated: 0, distinct: 0, depth: 0 };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
