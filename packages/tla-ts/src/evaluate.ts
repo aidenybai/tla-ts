@@ -1063,55 +1063,57 @@ export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
   reevaluated?: ReevaluatedDefinitions,
-): Scope | undefined =>
-  definitions.reduce<Scope | undefined>((scope, definition) => {
-    const node: Scope = {
-      name: definition.name,
-      binding: { kind: "Value", value: false },
-      parent: scope,
-    };
-    if (definition.kind === "Function") {
-      node.binding = {
-        kind: "Thunk",
-        expression: {
-          kind: "FunctionConstruction",
-          bounds: definition.bounds,
-          body: definition.body,
-          location: definition.location,
-          isRecursive: true,
-        },
-        scope: node,
-        state: context.state,
-        next: context.next,
-        cache: undefined,
-        isStreamed: false,
-      };
-      return node;
-    }
-    if (definition.params.length > 0 || reevaluated?.impure.has(definition)) {
-      node.binding = {
-        kind: "Operator",
-        operator: {
-          kind: "Closure",
-          name: definition.name,
-          params: definition.params,
-          body: definition.body,
-          scope: node,
-        },
-      };
-      return node;
-    }
-    node.binding = {
-      kind: "Thunk",
-      expression: definition.body,
-      scope: node,
-      state: context.state,
-      next: context.next,
-      cache: undefined,
-      isStreamed: reevaluated?.streamed.has(definition) ?? false,
-    };
+): Scope | undefined => {
+  const nodes = definitions.map((definition): Scope => ({
+    name: definition.name,
+    binding: { kind: "Value", value: false },
+    parent: undefined,
+  }));
+  const scope = nodes.reduce<Scope | undefined>((parent, node) => {
+    node.parent = parent;
     return node;
   }, context.scope);
+  definitions.forEach((definition, index) => {
+    nodes[index].binding =
+      definition.kind === "Function"
+        ? {
+            kind: "Thunk",
+            expression: {
+              kind: "FunctionConstruction",
+              bounds: definition.bounds,
+              body: definition.body,
+              location: definition.location,
+              isRecursive: true,
+            },
+            scope,
+            state: context.state,
+            next: context.next,
+            cache: undefined,
+            isStreamed: false,
+          }
+        : definition.params.length > 0 || reevaluated?.impure.has(definition)
+          ? {
+              kind: "Operator",
+              operator: {
+                kind: "Closure",
+                name: definition.name,
+                params: definition.params,
+                body: definition.body,
+                scope,
+              },
+            }
+          : {
+              kind: "Thunk",
+              expression: definition.body,
+              scope,
+              state: context.state,
+              next: context.next,
+              cache: undefined,
+              isStreamed: reevaluated?.streamed.has(definition) ?? false,
+            };
+  });
+  return scope;
+};
 
 const evaluateLocalIdentifier = (name: string, expression: Expression, context: Context): Value => {
   const binding = lookupScope(context.scope, name);
