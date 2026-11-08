@@ -26,7 +26,7 @@ import { and, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./
 import { translateEngineError, translateThrown } from "./exceptions";
 import {
   getAllocated,
-  getHeap,
+  isAllocation,
   isObjectChange,
   translateAllocated,
   translateObjectChange,
@@ -411,7 +411,10 @@ const translateCallStatement = (
     });
     const definitions = [define(name, [], translated.change)];
     if (!translated.isFallible) {
-      return letIn(definitions, continueWith(withHeap(identifier(name))));
+      return letIn(
+        definitions,
+        forceHeap(identifier(name), continueWith(withHeap(identifier(name)))),
+      );
     }
     const after = withHeap(field(identifier(name), "heap"));
     const uncaught = apply("Assert", [boolean(false), string("TypeError")]);
@@ -586,7 +589,7 @@ const rejectCatchRedeclaration = (declaration: ts.VariableDeclaration) => {
 // Binds each declared local to a LET definition. A let can change later, and a const can't.
 // Whether a function, or one it calls, makes or reads objects, which only statements can do.
 const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
-  if (ts.isObjectLiteralExpression(node)) return true;
+  if (ts.isObjectLiteralExpression(node) || isAllocation(node, context)) return true;
   const isRead =
     (ts.isIdentifier(node) && getKind(node, context) === "object") ||
     ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
@@ -629,31 +632,44 @@ const allocate = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const symbol = context.heap;
-  const literals = node === undefined ? [] : getAllocated(node, context);
-  if (symbol === undefined || literals.length === 0) return continueWith(path);
-  const allocated = literals.reduce<Bound>(
-    (current, literal) => {
-      const heap = getHeap(current.scope, literal, context);
+  const allocations = node === undefined ? [] : getAllocated(node, context);
+  if (symbol === undefined || allocations.length === 0) return continueWith(path);
+  const allocated = allocations.reduce<Bound>(
+    (current, allocation) => {
       const name = context.names.getFresh("heap");
-      const object = translateAllocated(literal, current.scope, context);
       const ref = useJavaScript(
         ":>",
         [identifier("Ref"), apply("Len", [identifier(name)])],
         context,
       );
       return {
-        definitions: [...current.definitions, define(name, [], apply("Append", [heap, object]))],
+        definitions: [
+          ...current.definitions,
+          define(name, [], translateAllocated(allocation, current.scope, context)),
+        ],
         scope: {
           ...current.scope,
           bindings: new Map([...current.scope.bindings, [symbol, identifier(name)]]),
-          allocated: new Map([...current.scope.allocated, [literal, ref]]),
+          allocated: new Map([...current.scope.allocated, [allocation, ref]]),
         },
       };
     },
     { definitions: [], scope: path.scope },
   );
-  return letIn(allocated.definitions, continueWith({ ...path, scope: allocated.scope }));
+  const heap = allocated.scope.bindings.get(symbol);
+  return letIn(
+    allocated.definitions,
+    heap === undefined
+      ? continueWith({ ...path, scope: allocated.scope })
+      : forceHeap(heap, continueWith({ ...path, scope: allocated.scope })),
+  );
 };
+
+// Evaluates a heap where a statement changes it, as TLA+ evaluates definitions only where they're
+// used, so that a change tla-ts can't make stops the run there rather than once the heap is read.
+// The rest is an IF's branch, not a conjunct, as a loop's body gives values rather than a formula.
+const forceHeap = (heap: Expression, rest: Formula) =>
+  ifThenElse(apply("=", [heap, heap]), rest, leaf(boolean(false)));
 
 // Names the heap after a statement changes it, so that later statements share it.
 const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => Formula) => {
@@ -665,13 +681,16 @@ const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => F
   const name = context.names.getFresh("heap");
   return letIn(
     [define(name, [], heap)],
-    continueWith({
-      ...path,
-      scope: {
-        ...path.scope,
-        bindings: new Map([...path.scope.bindings, [symbol, identifier(name)]]),
-      },
-    }),
+    forceHeap(
+      identifier(name),
+      continueWith({
+        ...path,
+        scope: {
+          ...path.scope,
+          bindings: new Map([...path.scope.bindings, [symbol, identifier(name)]]),
+        },
+      }),
+    ),
   );
 };
 
@@ -774,6 +793,7 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     const isHeapChanged =
       ts.isObjectLiteralExpression(node) ||
       isObjectChange(node) ||
+      isAllocation(node, context) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
     if (context.heap !== undefined && isHeapChanged) changed.add(context.heap);

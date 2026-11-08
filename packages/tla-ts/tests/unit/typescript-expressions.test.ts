@@ -295,6 +295,13 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const orphan = { __proto__: null };`,
     ],
     [
+      "[child.a, child.b, Object.getPrototypeOf(child) === base, Object.getPrototypeOf(bare) === null, bare.x, Object.hasOwn(child, 'a'), 'toString' in bare]",
+      `const base = { a: 1 };
+      const child: { [key: string]: unknown } = Object.create(base);
+      const bare: { [key: string]: unknown } = Object.create(null, { x: { value: 2 } });
+      child.b = 2;`,
+    ],
+    [
       "[copy.a, 'b' in copy, base.b]",
       `const base = { a: 1, b: 0 };
       Object.defineProperty(base, "b", { enumerable: false });

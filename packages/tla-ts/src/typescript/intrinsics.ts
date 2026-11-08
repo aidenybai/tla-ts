@@ -9,10 +9,9 @@ import type { Scope } from "./scope";
 import { boolean, identifier, string } from "./tla";
 import { getKind } from "./types";
 
-// Built-in constructors whose prototype objects tla-ts compiles to constants, which compare by
-// identity.
+// Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
+// constants, which compare by identity.
 const CONSTRUCTORS = new Set([
-  ...NATIVE_ERRORS,
   "Object",
   "Function",
   "Array",
@@ -41,7 +40,7 @@ const isLibrary = (symbol: ts.Symbol) =>
 const getBuiltIn = (node: ts.Expression, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   return ts.isIdentifier(node) &&
-    CONSTRUCTORS.has(node.text) &&
+    (CONSTRUCTORS.has(node.text) || NATIVE_ERRORS.has(node.text)) &&
     symbol !== undefined &&
     isLibrary(symbol)
     ? node.text
@@ -125,6 +124,12 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
 
 export const isBuiltInObject = (node: ts.Expression, context: Context) =>
   getName(node, context) !== undefined;
+
+// A built-in object that a built-in function takes, such as the prototype Object.create takes.
+export const translateBuiltInObject = (node: ts.Expression, context: Context) => {
+  const name = getName(node, context);
+  return name === undefined ? undefined : translateBuiltIn(name, node, context);
+};
 
 const isPrototypeCall = (node: ts.Node, context: Context): node is ts.CallExpression =>
   ts.isCallExpression(node) &&

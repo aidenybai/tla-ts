@@ -1,7 +1,8 @@
 import ts from "@typescript/typescript6";
-import { type Context, isMethodCall, type MethodCall } from "./context";
+import { type Context, getUndefined, isMethodCall, type MethodCall } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
+import { isBuiltInObject, translateBuiltInObject } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { apply, identifier, string } from "./tla";
@@ -93,18 +94,37 @@ export const translateObject = (
   }, identifier("EmptyObject"));
 };
 
-// The object that a node from getAllocated makes, before the heap holds it.
+// The heap after a node from getAllocated adds the object it makes.
 export const translateAllocated = (node: ts.Expression, scope: Scope, context: Context) => {
-  if (ts.isObjectLiteralExpression(node)) return translateObject(node, scope, context);
-  if (!ts.isCallExpression(node) || !isDescription(node, context)) {
+  const heap = getHeap(scope, node, context);
+  if (ts.isObjectLiteralExpression(node)) {
+    return apply("Append", [heap, translateObject(node, scope, context)]);
+  }
+  if (ts.isCallExpression(node) && isDescription(node, context)) {
+    const described = useJavaScript(
+      "Describe",
+      [
+        heap,
+        translateExpression(node.arguments[0], scope, context),
+        translatePropertyKey(node.arguments[1], scope, context),
+      ],
+      context,
+    );
+    return apply("Append", [heap, described]);
+  }
+  if (!ts.isCallExpression(node) || !isCreation(node, context)) {
     throw new TlaTypeScriptError("Unsupported object", node);
   }
+  const prototype = node.arguments[0];
+  const properties = node.arguments.at(1);
   return useJavaScript(
-    "Describe",
+    "Create",
     [
-      getHeap(scope, node, context),
-      translateExpression(node.arguments[0], scope, context),
-      translatePropertyKey(node.arguments[1], scope, context),
+      heap,
+      translateBuiltInObject(prototype, context) ?? translateExpression(prototype, scope, context),
+      properties === undefined
+        ? getUndefined(context)
+        : translateExpression(properties, scope, context),
     ],
     context,
   );
@@ -136,7 +156,31 @@ export const isDescription = (node: ts.Node, context: Context) =>
   node.arguments.length >= 2 &&
   getKind(node.arguments[0], context) === "object";
 
-// The object literals and descriptions that evaluating a node always makes, innermost first.
+// Object.create, with a prototype that tla-ts can tell is an object or null.
+export const isCreation = (node: ts.Node, context: Context) => {
+  if (
+    !isMethodCall(node) ||
+    node.expression.expression.getText() !== "Object" ||
+    node.expression.name.text !== "create" ||
+    node.arguments.length === 0
+  ) {
+    return false;
+  }
+  const prototype = node.arguments[0];
+  const properties = node.arguments.at(1);
+  return (
+    (prototype.kind === ts.SyntaxKind.NullKeyword ||
+      getKind(prototype, context) === "object" ||
+      isBuiltInObject(prototype, context)) &&
+    (properties === undefined || getKind(properties, context) === "object")
+  );
+};
+
+export const isAllocation = (node: ts.Node, context: Context): node is ts.CallExpression =>
+  ts.isCallExpression(node) && (isDescription(node, context) || isCreation(node, context));
+
+// The object literals, descriptions, and creations that evaluating a node always makes, innermost
+// first.
 // Functions and operands that only sometimes run make none.
 export const getAllocated = (node: ts.Node, context: Context): ts.Expression[] => {
   if (context.heap === undefined || ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
@@ -159,7 +203,7 @@ export const getAllocated = (node: ts.Node, context: Context): ts.Expression[] =
   });
   const isAllocated =
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
-    (ts.isCallExpression(node) && isDescription(node, context));
+    isAllocation(node, context);
   return isAllocated ? [...nested, node] : nested;
 };
 

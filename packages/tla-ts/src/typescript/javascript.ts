@@ -242,6 +242,15 @@ DefineProperties(heap, ref, properties) ==
               applied == ApplyAll(heap[ref[Ref]], keys, descriptors)
           IN [heap |-> [heap EXCEPT ![ref[Ref]] = applied.object], isDone |-> applied.isDone]
 
+Create(heap, prototype, properties) ==
+  LET created == Append(heap, [EmptyObject EXCEPT !.prototype = prototype])
+      change == DefineProperties(created, Ref :> Len(created), properties)
+  IN CASE ~(prototype = Null \\/ IsRef(prototype)) ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
+       [] properties = Undefined -> created
+       [] change.isDone -> change.heap
+       [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
+
 LOCAL Restrict(heap, ref, isFrozen) ==
   LET object == heap[ref[Ref]]
       attributes ==

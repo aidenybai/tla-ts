@@ -28,7 +28,7 @@ import {
   translateNewError,
 } from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
-import { getHeap, isDescription, translatePropertyKey } from "./heap";
+import { getHeap, isCreation, isDescription, translatePropertyKey } from "./heap";
 import { isBuiltInObject, translateIntrinsic } from "./intrinsics";
 import {
   getTypeNames,
@@ -66,6 +66,7 @@ import {
   getPropertyKey,
   isBooleanLike,
   isFieldName,
+  isHeapType,
   isNumberLike,
   isNumericKey,
   isObject,
@@ -392,6 +393,20 @@ const translateCall = (
     if (kind === "sequence" || kind === "set" || kind === "map") {
       return boolean(method === "isExtensible");
     }
+  }
+  if (isCreation(node, context)) {
+    const contextual = context.checker.getContextualType(node);
+    const isTyped =
+      contextual !== undefined &&
+      ((contextual.flags & ts.TypeFlags.Unknown) !== 0 || isHeapType(contextual, node, context));
+    if (!isTyped) {
+      throw new TlaTypeScriptError("Give the object Object.create makes an object type", node);
+    }
+    const created = scope.allocated.get(node);
+    if (created === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return created;
   }
   if (isDescription(node, context)) {
     const described = scope.allocated.get(node);
