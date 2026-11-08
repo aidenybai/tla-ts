@@ -194,8 +194,6 @@ export const readNewMethod = (lines: string[], start: Position) => {
   return groups;
 };
 
-// Proof.Parser's suppress: a (*{_}*) or (*{suppress}*) just before the keyword of a BY, OBVIOUS,
-// USE, HAVE, TAKE, or WITNESS, whose obligations Proof.Gen.collect then leaves out.
 export const isSuppressedAt = (lines: string[], keyword: Position) => {
   const close = { ...keyword };
   while (lines[close.line].slice(0, close.column).trimEnd() === "") {

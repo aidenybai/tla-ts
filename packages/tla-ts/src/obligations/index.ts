@@ -4,10 +4,10 @@ import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "../errors";
 import { createAnonymizer } from "./anonymize";
 import {
   getAtPrefix,
-  getErrorNote,
   getErrorSetting,
   getLocusPosition,
   getLocusPrefix,
+  warnError,
   type Locus,
   type Warn,
   type Sequent,
@@ -137,14 +137,18 @@ const loadMule = (
       const text = `File ${JSON.stringify(input.file)}, line ${failure.line}, character ${failure.column}\n${failure.reason}`;
       onWarning({ text, channel: "stderr" });
       onWarning({ text: `${text}\n`, channel: "toolboxOnly" });
-      const locus = {
-        file: input.file,
-        startLine: failure.line,
-        startColumn: failure.column,
-        endLine: failure.line,
-        endColumn: failure.column + 1,
-      };
-      onWarning(getErrorSetting(locus, failure.reason));
+      onWarning(
+        getErrorSetting(
+          {
+            file: input.file,
+            startLine: failure.line,
+            startColumn: failure.column,
+            endLine: failure.line,
+            endColumn: failure.column + 1,
+          },
+          failure.reason,
+        ),
+      );
     });
     const message = `Could not parse ${JSON.stringify(input.file)} successfully.`;
     onWarning({ text: `${errorPrefix}Error: ${message}`, channel: "stderr" });
@@ -282,8 +286,7 @@ export const getObligations = (
   const missing = [...requested.keys()].filter((name) => !found.has(name)).sort(compareNames);
   missing.forEach((name) => {
     const message = `Unknown module ${JSON.stringify(name)}`;
-    onWarning(getErrorNote(requested.get(name), message));
-    onWarning(getErrorSetting(requested.get(name), message));
+    warnError(onWarning, requested.get(name), message);
   });
   if (missing.length > 0)
     throw new TlaProofError(`Unknown module ${JSON.stringify(missing[0])}`, {

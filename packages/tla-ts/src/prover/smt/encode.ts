@@ -234,8 +234,7 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
     { env: undefined, entries: [] },
   );
 
-// What Smtlib.pp_print_obligation prints before the logic.
-export interface SmtHeader {
+interface SmtHeader {
   version: string;
   id: number;
   location: string;
@@ -243,8 +242,8 @@ export interface SmtHeader {
 }
 
 // Smtlib.pp_print_obligation: the logic, the sort, the builtin symbols by name, their axioms,
-// then the hypotheses in order, the goal last, each hypothesis followed by an empty line. It
-// throws a TlaUnsupportedError for what the encoding can't express, where tlapm's encoder fails.
+// then the hypotheses in order, the goal last. It throws a TlaUnsupportedError for what the
+// encoding can't express, where tlapm's encoder fails.
 export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: SmtHeader) => {
   const simplified = sortRecordFields(
     simplifyRecordEqualities({ kind: "Sequent", sequent: prepared }),
@@ -276,24 +275,23 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: S
       return "omitted" in entry ? [] : entry.getLines(keys);
     });
   const hypotheses = [...declarations, ...axioms, ...getLines(context.entries)];
-  const goalLines = getLines(goal);
+  const lines = [...hypotheses, ...getLines(goal)];
   // Smtlib.collect_sorts declares Idv only when a symbol or a bound variable has that sort.
   // Type.Synthesize gives that sort to each definition left in the context, though none is printed.
   const isIdvUsed =
-    [...hypotheses, ...goalLines].some((line) => /\bIdv\b/.test(line)) ||
+    lines.some((line) => /\bIdv\b/.test(line)) ||
     sequent.context.some(
       (hyp) =>
         hyp.kind === "Defn" &&
         (hyp.definition.kind === "Operator" || hyp.definition.kind === "Recursive") &&
         !isExpanded(hyp),
     );
-  // pp_print_assert prints the name of an axiom, or of the goal, before it.
   const printCommand = (line: string) => {
-    if (line.startsWith(";")) return `${line}\n`;
+    if (line.startsWith(";")) return line;
     const command = layOutCommand(printer.resolve(line));
     const name = /:named \|([^|]*)\|\)\)$/.exec(line)?.[1];
-    if (name === undefined) return `${command}\n`;
-    return `;; ${name === "Goal" ? name : `Axiom: ${name}`}\n${command}\n`;
+    if (name === undefined) return command;
+    return `;; ${name === "Goal" ? name : `Axiom: ${name}`}\n${command}`;
   };
   return [
     `;; TLA+ Proof Manager ${header.version}\n`,
@@ -304,8 +302,7 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: S
     isIdvUsed ? "(declare-sort Idv 0)\n" : "",
     "\n;; Hypotheses\n\n",
     hypotheses.length === 0 ? "\n" : "",
-    ...hypotheses.map((line) => `${printCommand(line)}\n`),
-    ...goalLines.map((line) => `${printCommand(line)}\n`),
+    ...lines.map((line) => `${printCommand(line)}\n\n`),
     "(check-sat)\n(exit)\n",
   ].join("");
 };

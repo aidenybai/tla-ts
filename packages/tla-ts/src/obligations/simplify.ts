@@ -18,6 +18,7 @@ import {
   type Builtin,
   type Expr,
   type Hyp,
+  type Locus,
   type Sequent,
   type Time,
 } from "./expression";
@@ -44,6 +45,9 @@ const getProps = (from: Step) => ({
 });
 
 const getLevel = (step: StepNumber | undefined) => step?.level ?? 0;
+
+const getVisibleFact = (context: Hyp[], expression: Expr, location: Locus | undefined) =>
+  getFact(expression, "Visible", getTime(adjoinAll(undefined, context), expression), location);
 
 const isBinary = (
   expression: Expr,
@@ -93,8 +97,7 @@ const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
     : shifted;
 };
 
-// A WITNESS proves each membership and subset it relies on, then the goal from them. A suppressed
-// one skips them.
+// A WITNESS proves each membership and subset it relies on, then the goal from them.
 const getWitnessProof = (step: Step, sideFacts: Expr[]): Proof => {
   if (sideFacts.length === 0 || step.isSuppressed) return { kind: "Obvious", ...getProps(step) };
   const steps = sideFacts.map((item, index): Step => {
@@ -394,14 +397,7 @@ export const createSimplifier = (counter: Counter) => {
         const connective = exposeConnective(context, goal);
         const isImplication = isBinary(connective, "Implies");
         const sequent: Sequent = {
-          context: [
-            getFact(
-              step.expression,
-              "Visible",
-              getTime(adjoinAll(undefined, context), step.expression),
-              step.location,
-            ),
-          ],
+          context: [getVisibleFact(context, step.expression, step.location)],
           active: isImplication ? shiftExpr(1, connective.args[1]) : connective,
         };
         const proof: Proof = isImplication
@@ -448,14 +444,7 @@ export const createSimplifier = (counter: Counter) => {
         const assertion: Step = {
           kind: "Assert",
           sequent: {
-            context: [
-              getFact(
-                step.expression,
-                "Visible",
-                getTime(adjoinAll(undefined, context), step.expression),
-                step.location,
-              ),
-            ],
+            context: [getVisibleFact(context, step.expression, step.location)],
             active: shiftExpr(1, goal),
           },
           proof: step.proof,
@@ -483,17 +472,10 @@ export const createSimplifier = (counter: Counter) => {
         );
         const shifted = shiftExpr(2, existential);
         if (shifted.kind !== "Quant") throw new TlaProofError("Proof.Simplify.simplify_step/PICK");
+        const boundHyps = getBoundHyps(shifted.bounds);
         const hyps = [
-          ...getBoundHyps(shifted.bounds),
-          getFact(
-            shifted.body,
-            "Visible",
-            getTime(
-              adjoinAll(undefined, [...assertContext, ...getBoundHyps(shifted.bounds)]),
-              shifted.body,
-            ),
-            shifted.body.location,
-          ),
+          ...boundHyps,
+          getVisibleFact([...assertContext, ...boundHyps], shifted.body, shifted.body.location),
         ];
         const [nextContext, nextGoal, sufficed, nextTime] = simplifyStep(
           assertContext,

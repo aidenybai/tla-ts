@@ -10,8 +10,6 @@ export interface Locus {
   endColumn: number;
 }
 
-// The channel error is Errors.set, which records the locus and message that tlapm's toolbox reports
-// when tlapm ends abnormally.
 interface ObligationWarning {
   text: string;
   channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout" | "error";
@@ -47,6 +45,11 @@ export const getErrorSetting = (locus: Locus | undefined, message: string): Obli
   channel: "error",
   locus,
 });
+
+export const warnError = (onWarning: Warn, locus: Locus | undefined, message: string) => {
+  onWarning(getErrorNote(locus, message));
+  onWarning(getErrorSetting(locus, message));
+};
 
 export const getLocusPrefix = (locus: Locus | undefined) =>
   locus ? `${getLocusText(locus)} :\n` : "";

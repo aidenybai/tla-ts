@@ -8,7 +8,6 @@ import { createSolver } from "./sat";
 
 export type BinaryKind = "And" | "Or" | "Implies" | "Equiv" | "Until" | "Unless";
 
-// Until is the strong until, which needs its right side to hold eventually, and Unless the weak one.
 export type PtlFormula =
   | { kind: "Atom"; name: string }
   | { kind: "Constant"; value: boolean }

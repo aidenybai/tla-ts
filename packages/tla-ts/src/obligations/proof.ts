@@ -32,8 +32,7 @@ export interface Obligation {
   method?: OldMethod;
 }
 
-// useLocation is where a USE step comes from, so find_meth can tell apart the facts of each BY, and
-// isSuppressed is Props.supp, set by a (*{_}*) pragma.
+// useLocation is where a USE step comes from, so find_meth can tell apart the facts of each BY.
 interface ProofProps {
   location?: Locus;
   step?: StepNumber;

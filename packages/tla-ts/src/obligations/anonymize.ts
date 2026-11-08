@@ -22,6 +22,7 @@ import {
   mapBoundDomains,
   mapScoped,
   mapSelectorArgs,
+  warnError,
   type Bound,
   type Defn,
   type ExceptPoint,
@@ -143,8 +144,7 @@ export const createAnonymizer = (
     const found = findNamed(context.scope, name);
     if (!found) {
       const message = `Operator "${name}" not found`;
-      onWarning(getErrorNote(from.location, message));
-      onWarning(getErrorSetting(from.location, message));
+      warnError(onWarning, from.location, message);
       throw new TlaProofError(message, { failure: "Expr.Anon: 4" });
     }
     const index = found.depth + 1;
@@ -280,8 +280,7 @@ export const createAnonymizer = (
         const found = findNamed(context.scope, name);
         if (!found) {
           const message = `Identifier "${name}" in label parameters not found`;
-          onWarning(getErrorNote(form.location, message));
-          onWarning(getErrorSetting(form.location, message));
+          warnError(onWarning, form.location, message);
           throw new TlaProofError(message, { failure: "Expr.Anon" });
         }
         return { name, index: found.depth + 1 };

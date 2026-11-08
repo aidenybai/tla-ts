@@ -266,8 +266,6 @@ export const compNoFlatten = (thm: Thm, count: number, index: number, rule: Thm)
   return results[0];
 };
 
-// Drule.multi_resolves: Isar's multi-resolution, which resolves each fact in turn with the next
-// premise of each rule.
 export const multiResolves = (
   limits: Limits,
   facts: readonly Thm[],

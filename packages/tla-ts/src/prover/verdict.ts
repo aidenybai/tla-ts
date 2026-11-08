@@ -2,8 +2,6 @@
 // proves it.
 export type Verdict = "unsat" | "sat" | "unknown";
 
-// What tlapm reads of a backend's output beyond its verdict: Zenon's proof, or the SMT solver's
-// answer. The backend's error output passes through to tlapm's.
 export interface Decision {
   verdict: Verdict;
   output?: string;

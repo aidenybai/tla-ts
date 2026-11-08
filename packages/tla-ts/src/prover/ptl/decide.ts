@@ -1,11 +1,11 @@
-// Decides the text tlapm sends LS4, as tlapm's ptl_to_trp and LS4 do: unsat when the negated
-// obligation has no model, which proves the obligation.
+// Decides the text tlapm sends LS4, as LS4 does: unsat when the negated obligation has no model,
+// which proves the obligation.
 
 import { TlaSyntaxError } from "../../errors";
 import type { DecideOptions, Verdict } from "../verdict";
 import { getSatisfiability, type BinaryKind, type PtlFormula } from "./tableau";
 
-// ptl_to_trp's binary operators (translate/foyacc.mly), from the loosest. Each is left associative.
+// ptl_to_trp's binary operators, from the loosest.
 const BINARY_LEVELS = [
   new Map<string, BinaryKind>([["until", "Until"]]),
   new Map<string, BinaryKind>([["unless", "Unless"]]),
@@ -21,8 +21,6 @@ const BINARY_LEVELS = [
   new Map<string, BinaryKind>([["&", "And"]]),
 ];
 
-// The prefix operators, which bind tighter than every binary one. ptl_to_trp parses the past
-// operators, then its DSNF translation rejects them.
 const PREFIX_OPERATORS = new Map<string, "Not" | "Always" | "Eventually" | "Next" | "Past">([
   ["~", "Not"],
   ["not", "Not"],
@@ -40,15 +38,10 @@ const KEYWORDS = new Set([
   "False",
 ]);
 
-// translate/folex.mll's reserved words, and the prefixes of the names ptl_to_trp makes.
 const RESERVED = /^(skolem|hidden|constant|NV_V\w*|NVV\w*)$/;
 
-// LS4 reads an identifier into a buffer of 32 characters (core/Trp2Spec.cc#lexNextToken).
 const MAX_LS4_IDENTIFIER = 31;
 
-// Parses ptl_to_trp's input. Throws TlaSyntaxError where ptl_to_trp or LS4 reach no verdict: a parse
-// error, a past operator, and a predicate with arguments, which LS4, a propositional prover, rejects.
-// A quantifier binds only such arguments, so it leaves a propositional body as it is.
 const parseLs4 = (text: string): PtlFormula => {
   const tokens = text.replace(/;.*/g, "").match(/<=>|<->|=>|->|[A-Za-z]\w*|\S/g) ?? [];
   const state = { position: 0 };
@@ -111,23 +104,14 @@ const parseLs4 = (text: string): PtlFormula => {
     if (name.length > MAX_LS4_IDENTIFIER) reject(`the identifier ${name} is too long`);
     return { kind: "Atom", name };
   };
-  const parseBinary = (level: number): PtlFormula => {
-    if (level === BINARY_LEVELS.length) return parsePrefix();
-    const operands = [parseBinary(level + 1)];
-    const kinds: BinaryKind[] = [];
-    for (
-      let kind = BINARY_LEVELS[level].get(peek());
-      kind;
-      kind = BINARY_LEVELS[level].get(peek())
-    ) {
-      take();
-      kinds.push(kind);
-      operands.push(parseBinary(level + 1));
-    }
-    return operands
-      .slice(1)
-      .reduce((left, right, index) => ({ kind: kinds[index], left, right }), operands[0]);
+  const parseOperators = (level: number, left: PtlFormula): PtlFormula => {
+    const kind = BINARY_LEVELS[level].get(peek());
+    if (kind === undefined) return left;
+    take();
+    return parseOperators(level, { kind, left, right: parseBinary(level + 1) });
   };
+  const parseBinary = (level: number): PtlFormula =>
+    level === BINARY_LEVELS.length ? parsePrefix() : parseOperators(level, parseBinary(level + 1));
   const formula = parseBinary(0);
   if (state.position < tokens.length) reject(`expected the end, found ${peek()}`);
   return formula;

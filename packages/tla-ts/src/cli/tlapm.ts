@@ -15,12 +15,13 @@ import {
 } from "../obligations";
 import { format, renderDoc } from "../obligations/format";
 import { printSequent, type PrinterOptions } from "../obligations/printer";
-import { parseDefaultMethods, type Method } from "../prover/prep/methods";
+import { parseDefaultMethods } from "../prover/prep/methods";
 import {
   encodeProofTheory,
   formatNormalized,
   proveObligations,
   TLAPM_VERSION,
+  type BackendSettings,
   type ProofAttempt,
 } from "../prover/prove";
 import { TLAPS_MODULE } from "../prover/tlaps-module";
@@ -105,13 +106,11 @@ const UNPROVED_ENDING = [
   "",
 ].join("\n");
 
-// Errors.loc and Errors.msg, which each Errors.set replaces and prepends to.
 interface ErrorSetting {
   location?: string;
   message: string;
 }
 
-// Tlapm_lib.init: when tlapm ends abnormally, the toolbox reports what Errors.set recorded, or a bug.
 const generateObligations = (
   generate: (errorSetting: ErrorSetting) => ModuleObligations[],
   isToolbox: boolean,
@@ -122,18 +121,19 @@ const generateObligations = (
   } catch (error) {
     if (!(error instanceof TlaProofError)) throw error;
     console.error(` tlapm ending abnormally with ${error.exception}\n`);
-    if (!isToolbox) return undefined;
-    if (errorSetting.message === "")
-      printToolboxMessage([
-        "type:error",
-        "url:http://tla.msr-inria.inria.fr/bugs",
-        `msg:Oops, this seems to be a bug in TLAPM.\nPlease give feedback to developers.\n\n\n ${error.exception}\n`,
-      ]);
-    else
-      printToolboxMessage([
-        "type:warning",
-        `msg:${errorSetting.location === undefined ? "" : `${errorSetting.location}\n\n`}${errorSetting.message}`,
-      ]);
+    if (isToolbox)
+      printToolboxMessage(
+        errorSetting.message === ""
+          ? [
+              "type:error",
+              "url:http://tla.msr-inria.inria.fr/bugs",
+              `msg:Oops, this seems to be a bug in TLAPM.\nPlease give feedback to developers.\n\n\n ${error.exception}\n`,
+            ]
+          : [
+              "type:warning",
+              `msg:${errorSetting.location === undefined ? "" : `${errorSetting.location}\n\n`}${errorSetting.message}`,
+            ],
+      );
     return undefined;
   }
 };
@@ -185,22 +185,12 @@ interface ProvingSettings {
   fingerprints: FingerprintTable;
   backends: BackendSettings;
   printing: PrinterOptions;
-  // --debug tempfiles: Util.rm_temp_file keeps each backend's temporary files.
   isKeepingFiles: boolean;
   solver: string | undefined;
 }
 
-interface BackendSettings {
-  defaultMethods: Method[] | undefined;
-  stretch: number;
-  isFlattened: boolean;
-  smtLogic: string;
-}
-
 const SMT_PROOF_MARKERS = [/^unsat/m, /SPASS beiseite: Proof found/, /SZS status Theorem/];
 
-// Prep.gen_smt_solve with --solver: the command reads the obligation from $file and prints its
-// answer, whatever its exit status, and tlapm stops it at the time limit.
 const solveWith = (
   command: string,
   path: string,
@@ -297,14 +287,11 @@ const proveModule = async (
   return unproved.length > 0;
 };
 
-// The --debug flags that tla-ts follows. Every other flag changes what tlapm prints or how it
-// encodes obligations.
 const DEBUG_FLAGS = new Set(["tempfiles", "hidden", "alldefs"]);
 
 export const runTlapm = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
   const isProcessing = !parsed.has("-N") && !parsed.has("--summary");
-  // Tlapm_args.set_debug_flags: each --debug sets the flags it lists, or clears those with a -.
   const debugFlags = parsed.options
     .flatMap((option) => (option.name === "--debug" ? option.values[0].split(",") : []))
     .reduce(
