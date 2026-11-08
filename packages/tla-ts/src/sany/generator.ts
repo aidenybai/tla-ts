@@ -2026,6 +2026,7 @@ export const generateSanySpecification = (
         const isExpression =
           declaration.declKind === VARIABLE_DECL_KIND ||
           (declaration.declKind === CONSTANT_DECL_KIND && declaration.arity === 0);
+        if (isExpression) matchArguments(symbol, [], location);
         return [
           {
             op: declaration,
