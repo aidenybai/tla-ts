@@ -469,6 +469,17 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ["['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]", "const box = {};"],
     ["[Reflect.has === Reflect.has, Reflect.has === Reflect.get]", "const box = {};"],
     [
+      "[box.double, described.enumerable, described.configurable, typeof described.set, 'double' in box]",
+      `const box = {
+        count: 2,
+        get double() {
+          return this.count * 2;
+        },
+        set double(value: number) {},
+      };
+      const described = Object.getOwnPropertyDescriptor(box, "double")!;`,
+    ],
+    [
       "[counter.next, Counter.zero, typeof described.get, typeof described.set, described.enumerable, Object.getOwnPropertyNames(Counter.prototype), replaced.value]",
       `var Counter = class {
         count = 1;

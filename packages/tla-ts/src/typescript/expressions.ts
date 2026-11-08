@@ -12,7 +12,7 @@ import type { Expression } from "../ast";
 import {
   type Context,
   getCalledMethod,
-  getClassGetter,
+  getObjectGetter,
   getCallee,
   getElement,
   getFunction,
@@ -769,7 +769,7 @@ const translatePropertyAccess = (
   if (intrinsic !== undefined) return intrinsic;
   const receiver = node.expression;
   const name = node.name.text;
-  const getter = getClassGetter(node, context);
+  const getter = getObjectGetter(node, context);
   if (getter !== undefined) {
     const heap = getHeap(scope, node, context);
     const value = translateObjectValue(receiver, scope, context);

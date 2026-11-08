@@ -501,11 +501,12 @@ LOCAL Apply(object, key, descriptor) ==
                                            [] isKept /\\ ~has("value") -> object.attributes[key].kind
                                            [] OTHER -> "data"]) @@ @]
 
-\\* A class's getter or setter, which keeps the other half of an accessor that the class defined.
-DefineAccessor(object, key, field, function) ==
+\\* A getter or setter of a class or an object literal, which keeps the other half of an accessor
+\\* that it defined.
+DefineAccessor(object, key, field, function, isEnumerable) ==
   Apply(object, key, [fields |-> {field, "enumerable", "configurable"}, isAccessor |-> TRUE,
                       isData |-> FALSE, isValid |-> TRUE, value |-> Undefined, get |-> function,
-                      set |-> function, writable |-> FALSE, enumerable |-> FALSE,
+                      set |-> function, writable |-> FALSE, enumerable |-> isEnumerable,
                       configurable |-> TRUE])
 
 RECURSIVE ApplyAll(_, _, _)

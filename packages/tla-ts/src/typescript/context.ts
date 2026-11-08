@@ -213,7 +213,7 @@ const getMethod = (node: ts.Expression, context: Context) => {
 };
 
 // Whether a node runs at most once, outside every function and loop.
-const isOnce = (node: ts.Node): boolean =>
+export const isOnce = (node: ts.Node): boolean =>
   ts.isSourceFile(node) ||
   (!ts.isFunctionLike(node) && !ts.isIterationStatement(node, false) && isOnce(node.parent));
 
@@ -225,24 +225,27 @@ const isPlainMethod = (node: ts.Node): node is ts.MethodDeclaration =>
   !ts.isPrivateIdentifier(node.name) &&
   !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
 
-export const isClassAccessor = (
+export const isPlainAccessor = (
   node: ts.Node,
 ): node is ts.GetAccessorDeclaration | ts.SetAccessorDeclaration =>
   (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
   node.body !== undefined &&
   (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name));
 
-// The getter of a heap class that a property read names, which the read checks the object still
-// holds.
-export const getClassGetter = (node: ts.PropertyAccessExpression, context: Context) => {
+// The getter of a heap class, or of an object literal that a script makes once, that a property
+// read names, which the read checks the object still holds.
+export const getObjectGetter = (node: ts.PropertyAccessExpression, context: Context) => {
   if (context.heap === undefined) return undefined;
   const getter = getSymbol(node.name, context.checker)?.declarations?.find(
     ts.isGetAccessorDeclaration,
   );
+  const parent = getter?.parent;
   return getter !== undefined &&
-    isClassAccessor(getter) &&
-    ts.isClassLike(getter.parent) &&
-    isHeapClass(getter.parent, context)
+    isPlainAccessor(getter) &&
+    parent !== undefined &&
+    (ts.isObjectLiteralExpression(parent)
+      ? isOnce(parent)
+      : ts.isClassLike(parent) && isHeapClass(parent, context))
     ? getter
     : undefined;
 };
@@ -345,7 +348,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context) => 
         ts.isSemicolonClassElement(member) ||
         (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
         isPlainMethod(member) ||
-        isClassAccessor(member) ||
+        isPlainAccessor(member) ||
         (ts.isPropertyDeclaration(member) && !isStatic(member) && ts.isIdentifier(member.name)),
     ) &&
     !isAssigned(symbol, node.getSourceFile(), context);

@@ -9,8 +9,9 @@ import {
   getRunConstructor,
   getSymbol,
   getUndefined,
-  isClassAccessor,
+  isPlainAccessor,
   isHeapClass,
+  isOnce,
   isStatementNew,
   isMethodCall,
   type MethodCall,
@@ -208,6 +209,19 @@ export const translateObject = (
         context,
       );
     }
+    if (isPlainAccessor(property) && isOnce(node)) {
+      return useJavaScript(
+        "DefineAccessor",
+        [
+          object,
+          translateMemberKey(property.name, scope, context),
+          string(ts.isGetAccessorDeclaration(property) ? "get" : "set"),
+          getAccessorValue(property, context),
+          boolean(true),
+        ],
+        context,
+      );
+    }
     const method = getObjectMethod(property, context);
     if (method !== undefined) {
       return useJavaScript(
@@ -248,7 +262,7 @@ const translateClass = (
       const isStaticMember = ((ts.canHaveModifiers(member) && ts.getModifiers(member)) || []).some(
         (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
       );
-      if (isClassAccessor(member)) {
+      if (isPlainAccessor(member)) {
         return isStaticMember === isStatic
           ? useJavaScript(
               "DefineAccessor",
@@ -257,6 +271,7 @@ const translateClass = (
                 translateMemberKey(member.name, scope, context),
                 string(ts.isGetAccessorDeclaration(member) ? "get" : "set"),
                 getAccessorValue(member, context),
+                boolean(false),
               ],
               context,
             )
