@@ -274,7 +274,12 @@ const unify = (left: Type, right: Type): void => {
     return unify(leftType.element, rightType.element);
   }
   if (leftType.kind === "Fn" && rightType.kind === "Fn") {
-    if (!isSameDomain(leftType.domain, rightType.domain)) return unsupported();
+    // TLC's functions on 1..n are sequences, so functions on two such domains share a sequence type.
+    if (!isSameDomain(leftType.domain, rightType.domain)) {
+      const sequence: Type = { kind: "Seq", element: createVar() };
+      unify(sequence, leftType);
+      return unify(sequence, rightType);
+    }
     unify(leftType.key, rightType.key);
     return unify(leftType.range, rightType.range);
   }
