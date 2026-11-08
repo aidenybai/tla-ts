@@ -646,6 +646,19 @@ const compileIdentifier = (
       );
       return;
     }
+    // A LET definition that TLC evaluates again at each reference is a closure with no parameters,
+    // whose body Tool.getInitStates and Tool.getNextStates walk like any other operator's.
+    if (binding?.kind === "Operator" && binding.operator.kind === "Closure") {
+      getRunner(binding.operator.body, environment, isInit)(
+        run,
+        binding.operator.scope,
+        partial,
+        isFixed ? action : expression.name,
+        isFixed,
+        onComplete,
+      );
+      return;
+    }
     if (binding || !definition) {
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
