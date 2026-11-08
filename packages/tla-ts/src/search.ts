@@ -47,6 +47,7 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
+import { getSubscriptVariables } from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { formatNestedMessage, MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
 import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
@@ -263,7 +264,12 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
   return true;
 };
 
-const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
+const getSpecification = (
+  config: ModelConfig,
+  environment: Environment,
+  getVariableOrder: () => string[],
+  onProgress: CheckOptions["onProgress"],
+): Specification => {
   if (config.specification === undefined) {
     const getOperator = (name: string | undefined, description: string) => {
       if (name === undefined) return undefined;
@@ -304,6 +310,29 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
       );
     }
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
+      // TLC warns when it can't tell that the subscript holds every variable, since it then
+      // checks fewer stuttering steps than the specification allows.
+      const variables = getSubscriptVariables(
+        conjunct.expression.subscript,
+        item.scope,
+        environment,
+      );
+      if (variables === undefined) {
+        onProgress?.({
+          kind: "warning",
+          code: MESSAGE_CODE.subscriptUndetermined,
+          text: "TLC could not determine if the subscript of the next-state relation contains\nall state variables. Proceed with fingers crossed.",
+        });
+      }
+      getVariableOrder()
+        .filter((name) => variables !== undefined && !variables.includes(name))
+        .forEach((name) =>
+          onProgress?.({
+            kind: "warning",
+            code: MESSAGE_CODE.subscriptMissingVariable,
+            text: `The subscript of the next-state relation specified by the specification\ndoes not seem to contain the state variable ${name}`,
+          }),
+        );
       nextActions.push({ expression: conjunct.expression.action, scope: item.scope });
       return;
     }
@@ -720,7 +749,7 @@ export const createSearch = (
   onProgress?: CheckOptions["onProgress"],
 ): Search | undefined => {
   const configInvariants = getInvariants(config.invariants, environment);
-  const spec = getSpecification(config, environment);
+  const spec = getSpecification(config, environment, getVariableOrder, onProgress);
   const properties = getProperties(config, environment, onProgress);
   const invariants = getStateChecks([...configInvariants, ...properties.invariants], environment);
   // The invariants TLC evaluates, each of which may have several conjuncts among the checks.

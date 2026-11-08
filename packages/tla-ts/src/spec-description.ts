@@ -130,13 +130,18 @@ const isEvaluable = (expression: Expression, environment: Environment) => {
   }
 };
 
-const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
+// SpecProcessor.processConstantDefns replaces each constant definition with its value.
+const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.params.length === 0 &&
-  definition.body.kind !== "Number" &&
-  definition.body.kind !== "String" &&
   isConstantLevel(definition, environment) &&
   isEvaluable(definition.body, environment);
+
+const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
+  definition?.kind === "Operator" &&
+  definition.body.kind !== "Number" &&
+  definition.body.kind !== "String" &&
+  isStartupValue(definition, environment);
 
 const isConstantDefinition = (closure: Closure, environment: Environment) => {
   const definition = getDefinition(closure.name, environment);
@@ -470,6 +475,61 @@ const getSpecDescription = (
     if (definition) describeProperty(name, definition.body, undefined, environment, description);
   });
   return description;
+};
+
+// TLC's SubscriptCollector: the variables in the nested tuples of a subscript, through the
+// definitions, arguments and substitutions it names. It ignores other operators and gives up at a
+// literal, when it returns undefined.
+export const getSubscriptVariables = (
+  subscript: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+) => {
+  const variables: string[] = [];
+  const collect = (expression: Expression, innerScope: Scope | undefined): boolean => {
+    if (
+      expression.kind === "Number" ||
+      expression.kind === "Decimal" ||
+      expression.kind === "String"
+    ) {
+      return false;
+    }
+    if (expression.kind === "Tuple") {
+      return expression.elements.every((element) => collect(element, innerScope));
+    }
+    if (expression.kind === "Label") return collect(expression.body, innerScope);
+    if (expression.kind === "Let") {
+      return collect(
+        expression.body,
+        bindDefinitions(expression.definitions, getConstantContext(environment, innerScope)),
+      );
+    }
+    const thunk = getThunk(expression, innerScope);
+    if (thunk) return collect(thunk.expression, thunk.scope);
+    if (
+      expression.kind === "Identifier" &&
+      !isLocallyResolved(expression) &&
+      environment.variableIndex.has(expression.name)
+    ) {
+      variables.push(expression.name);
+      return true;
+    }
+    const called = resolveClosure(expression, innerScope, environment);
+    if (!called || called.params.length !== getArguments(expression).length) return true;
+    const definition = getDefinition(called.name, environment);
+    if (definition?.body === called.body && isStartupValue(definition, environment)) return true;
+    return collect(
+      called.body,
+      expression.kind === "Apply"
+        ? bindOperatorArguments(
+            called,
+            expression.args,
+            getConstantContext(environment, innerScope),
+          )
+        : called.scope,
+    );
+  };
+  return collect(subscript, scope) ? variables : undefined;
 };
 
 // TLC's initial predicates, which it conjoins to compute the initial states.

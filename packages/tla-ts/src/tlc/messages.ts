@@ -33,6 +33,8 @@ export const MESSAGE_CODE = {
   errorState: 2120,
   behaviorUpToThisPoint: 2121,
   backToState: 2122,
+  subscriptUndetermined: 2139,
+  subscriptMissingVariable: 2140,
   constantLevelInvariant: 2149,
   javaOverrideLoaded: 2168,
   starting: 2185,
