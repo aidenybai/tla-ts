@@ -13,8 +13,9 @@ import type {
   Postcondition,
   Violation,
 } from "./check";
-import type { ConfigValue, ModelConfig } from "./config";
+import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables, isConstantLevel } from "./dependencies";
+import { createEnvironment } from "./environment";
 import {
   isStackOverflow,
   TlaConfigError,
@@ -47,15 +48,24 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { getSubscriptVariables } from "./spec-description";
+import { getSpecificationValue, getSubscriptVariables } from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
-import { formatNestedMessage, MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
+import {
+  formatInnerMessage,
+  formatNestedMessage,
+  MESSAGE_CODE,
+  MISSING_INIT_174,
+  withHeadline,
+} from "./tlc/messages";
+import { createTlcOrder } from "./tlc/order";
 import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
   formatValue,
   isFunctionValue,
   isUpdatedElementOf,
+  setStringOrder,
+  setValueVersion,
   toFiniteFunction,
   type Value,
 } from "./values";
@@ -313,8 +323,6 @@ const getSpecification = (
       );
     }
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
-      // TLC warns when it can't tell that the subscript holds every variable, since it then
-      // checks fewer stuttering steps than the specification allows.
       const variables = getSubscriptVariables(
         conjunct.expression.subscript,
         item.scope,
@@ -594,10 +602,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
 
 interface Search {
   properties: Properties;
-  // A state as TLC prints it, its variables in TLC's order.
   toRecord: (state: Value[]) => Record<string, Value>;
-  // The state TLC prints for an ALIAS, which names the fields of the record the alias is, or reports
-  // why TLC fails to evaluate it.
   evaluateAlias: (
     alias: string,
     state: Value[],
@@ -654,7 +659,6 @@ const toAliasRecord = (value: Value, fieldOrder: string[]) => {
   );
 };
 
-// TLC names the action that leaves a successor incomplete when the next-state relation has several.
 export const getIncompleteSuccessorMessage = (
   missing: string[],
   action: string | undefined,
@@ -663,7 +667,6 @@ export const getIncompleteSuccessorMessage = (
 ) => {
   const subject =
     actionCount === 1 ? "the next-state action" : `action ${action} of the next-state relation`;
-  // TLC 1.7.4 says a variable is not assigned rather than not defined.
   const verb = version === "1.7.4" ? "assigned" : "defined";
   return `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
 };
@@ -743,6 +746,67 @@ export const findAssumptionViolation = (
     }
   }
   return undefined;
+};
+
+export const prepareSearch = (options: CheckOptions) => {
+  const config =
+    typeof options.config === "string"
+      ? parseConfig(options.config, options.version)
+      : options.config;
+  const order = createTlcOrder(options.source, options.loadModule);
+  setStringOrder(order.getStringOrder(config));
+  setValueVersion(options.version);
+  const specification = createEnvironment(config, {
+    source: options.source,
+    loadModule: options.loadModule,
+    order,
+    loadClass: options.loadClass,
+    print: options.onPrint ?? console.log,
+    files: { readFile: options.readFile, writeFile: options.writeFile },
+    seed: options.seed,
+    isTool: options.isTool,
+    isTraceRecorded: options.isTraceRecorded,
+    isSanyReported: options.isSanyReported,
+    isWarningEnabled: options.isWarningEnabled,
+    version: options.version,
+  });
+  reportStartup(specification, config, options.onProgress);
+  const environment = specification.environment;
+  environment.runtime.getSpecification = () =>
+    getSpecificationValue(
+      config,
+      environment,
+      specification.variableLocations,
+      specification.instanceActions,
+    );
+  const search = createSearch(
+    config,
+    environment,
+    () => order.getDeclarationOrder("variable"),
+    options.onProgress,
+  );
+  return { config, specification, environment, search };
+};
+
+export const reportAssumptionViolation = (
+  assumptions: Assumption[],
+  environment: Environment,
+  message: (code: number, text: string, toolText: string) => void,
+) => {
+  const assumption = findAssumptionViolation(assumptions, environment);
+  if (!assumption) return undefined;
+  if (assumption.message === undefined) {
+    const text = `Assumption ${assumption.name} is false.`;
+    message(MESSAGE_CODE.assumptionFalse, text, text);
+    return EXIT_STATUS.assumptionViolation;
+  }
+  const text = `Evaluating assumption ${assumption.name} failed.\n${assumption.message}`;
+  message(
+    MESSAGE_CODE.assumptionEvaluationError,
+    text,
+    formatInnerMessage(MESSAGE_CODE.assumptionEvaluationError, text, true),
+  );
+  return EXIT_STATUS.assumptionViolation;
 };
 
 export const createSearch = (

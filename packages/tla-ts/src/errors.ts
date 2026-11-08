@@ -190,6 +190,13 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
+export class TlaUnsupportedOperationError extends TlaEvaluationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+  }
+}
+
 // TLC reports an initial state that the initial predicate leaves incomplete as an illegal state.
 export class TlaIllegalStateError extends TlaEvaluationError {
   state: (Value | undefined)[];

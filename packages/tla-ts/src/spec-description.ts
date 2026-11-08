@@ -130,7 +130,6 @@ const isEvaluable = (expression: Expression, environment: Environment) => {
   }
 };
 
-// SpecProcessor.processConstantDefns replaces each constant definition with its value.
 const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.params.length === 0 &&
@@ -477,9 +476,6 @@ const getSpecDescription = (
   return description;
 };
 
-// TLC's SubscriptCollector: the variables in the nested tuples of a subscript, through the
-// definitions, arguments and substitutions it names. It ignores other operators and gives up at a
-// literal, when it returns undefined.
 export const getSubscriptVariables = (
   subscript: Expression,
   scope: Scope | undefined,
@@ -551,8 +547,6 @@ const formatParameters = (action: SpecAction) =>
     ? ""
     : `(${action.parameters.map((parameter) => formatValue(parameter[1])).join(",")})`;
 
-// TLC's Action.getLocation, which TLC 1.7.4 names the action in without its parameters. TLCStateInfo
-// names an initial state's unnamed action the initial predicate.
 export const getActionLabel = (action: SpecAction, version?: TlcVersion, isInitial = false) =>
   `${action.name === UNNAMED_ACTION ? (isInitial ? "Initial predicate" : "Action") : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
 

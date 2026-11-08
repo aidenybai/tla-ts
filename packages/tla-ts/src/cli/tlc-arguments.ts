@@ -1,6 +1,5 @@
 import { availableParallelism } from "node:os";
 
-// What TLC's command line asks for, as TLC.handleParameters reads it.
 export interface TlcArguments {
   specs: string[];
   configPath: string | undefined;
@@ -12,22 +11,16 @@ export interface TlcArguments {
   fingerprintIndex: number;
   metadir: string | undefined;
   mode: "model-check" | "simulate" | "generate";
-  // -dfid's initial depth, which makes TLC search depth-first.
   dfidDepth: number | undefined;
-  // -depth: the length of a simulated behavior, where -1 means unbounded.
   traceDepth: number;
-  // -simulate num=: how many behaviors to simulate.
   traceCount: bigint | undefined;
   isTool: boolean;
   isContinued: boolean;
   isDeadlockChecked: boolean;
   isWarningEnabled: boolean;
-  // Whether TLC writes a trace exploration spec, and with it a binary trace, as -generateSpecTE,
-  // -noGenerateSpecTE and -noGenerateSpecTEBin decide.
   isTraceSpecForced: boolean;
   isTraceSpecDisabled: boolean;
   isTraceBinaryDisabled: boolean;
-  // -help, for which TLC prints its usage and exits.
   isUsage: boolean;
 }
 
@@ -40,18 +33,15 @@ export interface TlcArgumentsError {
   isUncaught?: boolean;
 }
 
-// FP64.Polys holds 131 irreducible polynomials.
 const FINGERPRINT_POLYNOMIALS = 131;
 const MAXIMUM_INT = 2147483647n;
 
-// Integer.parseInt and Long.parseLong.
 const parseJavaInteger = (text: string, bits: 32 | 64) => {
   if (!/^[+-]?\d+$/.test(text)) return undefined;
   const value = BigInt(text);
   return BigInt.asIntN(bits, value) === value ? value : undefined;
 };
 
-// Double.parseDouble, without hexadecimal literals.
 const parseJavaDouble = (text: string) =>
   /^[+-]?(NaN|Infinity|(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?[fFdD]?)$/.test(text.trim())
     ? Number.parseFloat(text.trim().replace(/[fFdD]$/, ""))
@@ -81,7 +71,6 @@ const createDefaults = (): TlcArguments => ({
   isUsage: false,
 });
 
-// The flags that take no value, with what each sets.
 const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
   "-modelcheck": () => {},
   "-difftrace": () => {},
@@ -104,7 +93,6 @@ const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
   },
 };
 
-// TLC.handleParameters: TLC reads its arguments in order and stops at the first it rejects.
 export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsError => {
   const parsed = createDefaults();
   const cursor = { index: 0 };
@@ -116,7 +104,6 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
   });
   const peek = () => args[cursor.index];
   const take = () => args[cursor.index++];
-  // A flag that takes an integer: TLC names what it wants when the value is missing or isn't one.
   const readInteger = (bits: 32 | 64, missing: string, malformed: string) => {
     const text = peek();
     if (text === undefined) return reject(missing);
@@ -226,7 +213,6 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
     if (flag === "-config") {
       const path = take();
       if (path === undefined) return reject("Error: expect a file name for -config option.");
-      // MonolithSpecExtractor.getConfig reads a .tla file's embedded configuration.
       const name = path.replace(/\.cfg$/, "");
       parsed.configPath = name.endsWith(".tla") ? name : `${name}.cfg`;
       continue;

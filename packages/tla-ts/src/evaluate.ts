@@ -387,7 +387,7 @@ export const bindValue = (scope: Scope | undefined, name: string, value: Value):
   parent: scope,
 });
 
-const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
+export const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {

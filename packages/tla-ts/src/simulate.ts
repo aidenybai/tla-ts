@@ -1,6 +1,4 @@
 import type { CheckOptions, Postcondition, TraceStep, Violation } from "./check";
-import { parseConfig } from "./config";
-import { createEnvironment } from "./environment";
 import {
   isStackOverflow,
   TlaEvaluationError,
@@ -8,22 +6,18 @@ import {
   TlaModuleError,
   TlaStackOverflowError,
   TlaUnsupportedError,
+  TlaUnsupportedOperationError,
+  getUnexpectedException,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
-import {
-  createSearch,
-  findAssumptionViolation,
-  getIncompleteSuccessorMessage,
-  reportStartup,
-} from "./search";
+import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
 import {
   getActionLabel,
   getInitActions,
   getNextActions,
-  getSpecificationValue,
   toActionValue,
   type SpecAction,
 } from "./spec-description";
@@ -39,34 +33,21 @@ import {
   MESSAGE_CODE,
   withUnexpectedException,
 } from "./tlc/messages";
-import { createTlcOrder } from "./tlc/order";
 import { createJavaRandom, nextPrime } from "./tlc/random";
 import { createCounterExample } from "./tlc/tlcext-operators";
-import {
-  createModelValue,
-  createRecord,
-  formatState,
-  isSameValue,
-  setStringOrder,
-  setValueVersion,
-  type Value,
-} from "./values";
+import { createModelValue, createRecord, formatState, isSameValue, type Value } from "./values";
 
 export interface SimulationOptions extends CheckOptions {
-  // TLC's -depth: the most states of a behavior, or -1 for no bound.
   traceDepth: number;
-  // The num of TLC's -simulate: how many behaviors to generate, or undefined for no bound.
   traceCount: bigint | undefined;
-  // TLC's -aril, how many random numbers TLC draws from the seed before it starts.
   aril: bigint;
-  // What TLC prints as it simulates, in its order.
+  isGenerating: boolean;
   onSimulation: (output: SimulationOutput) => void;
 }
 
 export interface SimulationStatistics {
   generatedStates: number;
   traces: number;
-  // Welford's running mean and sum of squared deviations of the lengths of the behaviors.
   levelMean: number;
   levelM2: number;
   seed: bigint;
@@ -75,12 +56,10 @@ export interface SimulationStatistics {
 
 export type SimulationOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
-  // A behavior, or with no bound on its length, only its last state.
   | { kind: "behavior"; trace: TraceStep[]; isLastStateOnly: boolean }
   | { kind: "progress"; statistics: SimulationStatistics }
   | { kind: "summary"; statistics: SimulationStatistics };
 
-// A state of a behavior, linked to the state before it as TLCStateMutExt is.
 interface TraceNode {
   state: Value[];
   action: SpecAction;
@@ -88,21 +67,16 @@ interface TraceNode {
   level: number;
 }
 
-// A SimulationWorkerError, which TLC prints with the behavior that led to it.
 interface WorkerError {
   code: number;
   message: string;
   toolMessage: string;
   node: TraceNode;
-  // An exception, rather than a violation, stops the worker. Of the exceptions, only TLC's
-  // EvalException is printed with the summary.
   isException: boolean;
   isSummarized: boolean;
-  // A counterexample to a temporal property, which LiveCheck1 prints in place of the message.
   violation?: Violation;
 }
 
-// Simulator.isNonContinuableError: errors that stop the simulation even with -continue.
 const FATAL_CODES = new Set<number>([
   MESSAGE_CODE.invariantEvaluationFailed,
   MESSAGE_CODE.actionPropertyEvaluationFailed,
@@ -114,50 +88,15 @@ const INFINITE_DEPTH = 2147483647;
 const isSameState = (left: Value[], right: Value[]) =>
   left.every((value, index) => isSameValue(value, right[index]));
 
-// TLC's Simulator with one SimulationWorker: each behavior starts at a random initial state and
-// goes to a random successor of the last state, up to -depth states. TLC's worker runs ahead of the
-// Simulator that prints its errors, so tla-ts prints them once the worker stops, with the
-// statistics they reach by then. Returns TLC's exit status.
 export const simulate = (options: SimulationOptions): number => {
-  const config =
-    typeof options.config === "string"
-      ? parseConfig(options.config, options.version)
-      : options.config;
   const isTool = options.isTool ?? false;
   const output = options.onSimulation;
-  const order = createTlcOrder(options.source, options.loadModule);
-  setStringOrder(order.getStringOrder(config));
-  setValueVersion(options.version);
-  const specification = createEnvironment(config, {
-    source: options.source,
-    loadModule: options.loadModule,
-    order,
-    loadClass: options.loadClass,
-    print: options.onPrint ?? console.log,
-    files: { readFile: options.readFile, writeFile: options.writeFile },
-    seed: options.seed,
-    isTool,
-    isTraceRecorded: options.isTraceRecorded,
-    isSanyReported: options.isSanyReported,
-    isWarningEnabled: options.isWarningEnabled,
-    version: options.version,
-  });
-  reportStartup(specification, config, options.onProgress);
-  const environment = specification.environment;
+  const prepared = prepareSearch(options);
+  const config = prepared.config;
+  const specification = prepared.specification;
+  const environment = prepared.environment;
   const runtime = environment.runtime;
-  runtime.getSpecification = () =>
-    getSpecificationValue(
-      config,
-      environment,
-      specification.variableLocations,
-      specification.instanceActions,
-    );
-  const search = createSearch(
-    config,
-    environment,
-    () => order.getDeclarationOrder("variable"),
-    options.onProgress,
-  );
+  const search = prepared.search;
   const seed = options.seed ?? 0n;
   const traceDepth = options.traceDepth === -1 ? INFINITE_DEPTH : options.traceDepth;
   // TLC.process seeds its RandomGenerator and draws -aril doubles, and each worker's generator is
@@ -194,7 +133,7 @@ export const simulate = (options: SimulationOptions): number => {
         return node && toActionValue(node.action);
       case "config":
         return createRecord([
-          ["mode", "simulate"],
+          ["mode", options.isGenerating ? "generate" : "simulate"],
           ["depth", traceDepth === INFINITE_DEPTH ? -1 : traceDepth],
           ["traces", Number(BigInt.asIntN(32, options.traceCount ?? (1n << 63n) - 1n))],
           ["deadlock", config.checkDeadlock],
@@ -248,31 +187,20 @@ export const simulate = (options: SimulationOptions): number => {
         }),
       ),
     );
-  // The Simulator builds the LiveCheck1 of its worker, which reports how many branches it checks,
-  // and has nothing to check for a property whose negation has no solution.
   const branches = createTemporalChecker([], [])?.branches;
   if (branches) options.onProgress?.({ kind: "liveness-prepared", branches });
-  const assumption = findAssumptionViolation(specification.assumptions, environment);
-  if (assumption) {
-    if (assumption.message === undefined) {
-      message(MESSAGE_CODE.assumptionFalse, `Assumption ${assumption.name} is false.`);
-    } else {
-      const text = `Evaluating assumption ${assumption.name} failed.\n${assumption.message}`;
-      message(
-        MESSAGE_CODE.assumptionEvaluationError,
-        text,
-        formatInnerMessage(MESSAGE_CODE.assumptionEvaluationError, text, true),
-      );
-    }
-    return EXIT_STATUS.assumptionViolation;
-  }
+  const assumptionStatus = reportAssumptionViolation(
+    specification.assumptions,
+    environment,
+    message,
+  );
+  if (assumptionStatus !== undefined) return assumptionStatus;
   const initAction = initActions[initActions.length - 1];
   const toNode = (state: Value[], action: SpecAction, predecessor: TraceNode | undefined) => {
     const node = { state, action, predecessor, level: (predecessor?.level ?? 0) + 1 };
     nodes.set(state, node);
     return node;
   };
-  // SimulationWorker.getTrace drops the steps that stutter and renumbers the states that remain.
   const getTrace = (last: TraceNode) => {
     const trace: TraceNode[] = [];
     for (let node: TraceNode | undefined = last; node; node = node.predecessor) {
@@ -311,30 +239,30 @@ export const simulate = (options: SimulationOptions): number => {
       undefined,
     );
 
-  // Simulator.simulate computes all initial states before it checks any of them.
   const initialStates: TraceNode[] = [];
   const isComplete = (state: (Value | undefined)[]): state is Value[] =>
     state.every((value) => value !== undefined);
   const generated: (Value | undefined)[][] = [];
   const reportInitialException = (error: unknown, state: Value[] | undefined) => {
     const failure = toEvaluationError(error);
-    if (state) {
-      const text = getFailureMessage(failure, false);
-      const initial = `While working on the initial state:\n${formatState(toRecord(state))}`;
-      message(
-        MESSAGE_CODE.initialState,
-        `${text.message}\n${initial}`,
-        `${text.toolMessage}\n${initial}`,
-      );
-    } else {
+    if (!state) {
       message(
         MESSAGE_CODE.general,
         `${getUnexpectedPrefix(failure)}${failure.message}`,
         `${getUnexpectedPrefix(failure)}${formatNestedMessage(failure.message, true)}`,
       );
+      printSummary();
+      return EXIT_STATUS.error;
     }
+    const text = getFailureMessage(failure, false);
+    const initial = `While working on the initial state:\n${formatState(toRecord(state))}`;
+    message(
+      MESSAGE_CODE.initialState,
+      `${text.message}\n${initial}`,
+      `${text.toolMessage}\n${initial}`,
+    );
     printSummary();
-    return state ? getMessageExitStatus(MESSAGE_CODE.initialState) : EXIT_STATUS.error;
+    return getMessageExitStatus(MESSAGE_CODE.initialState);
   };
   const init = search.spec.init;
   const addGenerated = (state: (Value | undefined)[]) => {
@@ -407,8 +335,6 @@ export const simulate = (options: SimulationOptions): number => {
     false,
   );
 
-  // LiveCheck1.checkTrace checks the temporal properties on the graph of the states of a behavior,
-  // each of which may stutter.
   const findTemporalViolation = (last: TraceNode): Violation | undefined => {
     if (temporalProperties.length === 0) return undefined;
     const trace = getTrace(last);
@@ -465,7 +391,6 @@ export const simulate = (options: SimulationOptions): number => {
       loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
     };
   };
-  // SimulationWorker.addElement checks each successor before it keeps the ones in the model.
   const toWorkerError = (code: number, text: string, node: TraceNode): WorkerError => ({
     code,
     message: text,
@@ -522,6 +447,7 @@ export const simulate = (options: SimulationOptions): number => {
           return false;
         },
         action.scope,
+        options.isGenerating ? workerRandom : undefined,
       );
     } catch (error) {
       if (!(error instanceof TlaIncompleteSuccessorError)) throw error;
@@ -540,7 +466,6 @@ export const simulate = (options: SimulationOptions): number => {
     }
     return { successors, error: failure.error };
   };
-  // SimulationWorker.simulateRandomTrace, which ends a behavior at its first error.
   const current = { node: initialStates[0] };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
     current.node = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
@@ -574,16 +499,12 @@ export const simulate = (options: SimulationOptions): number => {
         violation,
       };
     }
-    // SimulationWorkerStatistics.collectPostTrace: Welford's algorithm on the length of the
-    // behavior, in integers.
     const length = Math.min(traceDepth, current.node.level);
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
     statistics.levelM2 += delta * (length - statistics.levelMean);
     return undefined;
   };
-  // An exception stops the worker. TLC prints an EvalException as an exception it did not expect,
-  // with the summary, and any other with its code.
   const toException = (error: unknown, node: TraceNode): WorkerError => {
     const failure = toEvaluationError(error);
     const coded = isEvalException(failure) ? undefined : getCodedMessage(failure.message);
@@ -604,11 +525,12 @@ export const simulate = (options: SimulationOptions): number => {
       toolMessage: `${prefix}${formatNestedMessage(failure.message, true)}`,
       node,
       isException: true,
-      isSummarized: isEvalException(failure),
+      isSummarized: prefix !== UNEXPECTED_EXCEPTION,
     };
   };
 
-  runtime.getRandom = () => workerRandom;
+  const enumerableRandom = createJavaRandom(seed);
+  runtime.getRandom = () => enumerableRandom;
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
   const traceLimit = options.traceCount ?? (1n << 63n) - 1n;
@@ -686,6 +608,9 @@ const toEvaluationError = (error: unknown) => {
   return error;
 };
 
-// MP.ECGeneralMsg names the class of the exception, a TLCRuntimeException as a RuntimeException.
-const getUnexpectedPrefix = (error: TlaEvaluationError) =>
-  isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;
+const getUnexpectedPrefix = (error: TlaEvaluationError) => {
+  if (error instanceof TlaUnsupportedOperationError) {
+    return getUnexpectedException("java.lang.UnsupportedOperationException");
+  }
+  return isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;
+};
