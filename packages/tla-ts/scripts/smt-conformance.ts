@@ -10,10 +10,9 @@ type Outcome = "proved" | "missed" | "extra" | "unsound" | "unproved";
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".smt-results.json");
 
-// tlapm gives Z3 5 s of wall-clock time per obligation. On a loaded machine wall-clock time
-// overstates the time on an idle core, so the solver runs with ten times that wall-clock limit, and
-// an answer counts as within the limit by its CPU time, which decides parity, or by its wall-clock
-// time.
+// tlapm gives Z3 5 s of wall-clock time per obligation. A loaded machine stretches that, so the
+// solver runs with ten times the limit, and an answer is in time by its CPU time, which decides
+// parity, or by its wall-clock time.
 const TIME_LIMIT_MS = 5000;
 const WALL_LIMIT_MS = 10 * TIME_LIMIT_MS;
 

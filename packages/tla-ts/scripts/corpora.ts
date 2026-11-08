@@ -90,7 +90,6 @@ const STANDARD_MODULES = new Set([
   "Toolbox",
 ]);
 
-// The modules that the corpora extend from TLAPS and the Community Modules, by name.
 export const getLibraryModules = () =>
   new Map(
     ["tlapm/library", "community/modules"]

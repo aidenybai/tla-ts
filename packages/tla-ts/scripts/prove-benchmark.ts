@@ -1,9 +1,5 @@
-// Times the built prove on each recorded module against the time tlapm's provers reported using on
-// it, as conformance:record-proofs recorded it. tlapm's time leaves out its own Prep and counts only
-// the provers. Modules run one at a time unless --jobs says otherwise, and prove runs on one thread
-// unless --workers says otherwise. The CPU time counts every thread of the module's process, and
-// stays fair on a busy machine where the wall time doesn't. Each module's times go to
-// .prove-benchmark.json.
+// tlapm's time leaves out its own Prep and counts only the provers. The CPU time counts every
+// thread of the module's process, and stays fair on a busy machine where the wall time doesn't.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +30,6 @@ const getMedian = (values: number[]) => {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 };
 
-// The time prove takes on a module, or undefined when tla-ts can't load it.
 const timeModule = async (record: ModuleProofRecord): Promise<ModuleTime | undefined> => {
   const path = join(CORPORA_DIRECTORY, record.id);
   const startedAt = performance.now();

@@ -1,7 +1,5 @@
-// Compares tla-ts's SMT-LIB encoding of each obligation with the file tlapm sent to its SMT
-// solver, as conformance:record-proofs recorded it. An encoding that differs only in the names of
-// bound variables and fresh symbols counts as "names", when the recorded input is available. A
-// difference where tlapm is wrong counts as a deviation.
+// An encoding that differs only in the names of bound variables and fresh symbols counts as
+// "names". A difference where tlapm is wrong counts as a deviation.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -126,7 +124,6 @@ interface Result {
   actual?: string;
 }
 
-// The encoding, or why tla-ts can't encode the obligation.
 const getEncoding = (encode: () => string) => {
   try {
     return { kind: "smt", text: encode() } as const;
@@ -136,7 +133,6 @@ const getEncoding = (encode: () => string) => {
   }
 };
 
-// The first command that differs once names are canonical.
 const findDifference = (expected: string, actual: string) => {
   const left = canonicalize(parse(expected));
   const right = canonicalize(parse(actual));

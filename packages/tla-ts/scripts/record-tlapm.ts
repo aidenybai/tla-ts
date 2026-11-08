@@ -54,8 +54,7 @@ const runTlapm = (path: string) =>
     });
   });
 
-// The toolbox protocol frames each message in @!!BEGIN and @!!END, one @!!key:value per line. A
-// value runs until the next field, so an obligation spans several lines.
+// A value runs until the next field, so an obligation spans several lines.
 const parseMessages = (output: string) =>
   output
     .split("@!!BEGIN\n")
@@ -73,8 +72,7 @@ const parseMessages = (output: string) =>
       return fields;
     });
 
-// tlapm reports what failed in toolbox warnings and names the failure in its last line. Paths
-// differ between machines, so they are made relative.
+// Paths differ between machines, so they are made relative.
 const getError = (output: string, messages: Map<string, string>[]) =>
   [
     ...messages

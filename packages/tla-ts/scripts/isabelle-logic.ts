@@ -1,7 +1,4 @@
 // Regenerates src/prover/isabelle/tla/logic-data.ts from the Isabelle/TLA+ heap that tlapm ships.
-// It runs scripts/isabelle/export.ML in that heap, checks that every exported net key matches
-// the keys tla-ts computes, and writes the theorems and nets in a compact form.
-//
 // Usage: bun scripts/run.ts isabelle-logic <tlapm>/lib/tlapm/backends/Isabelle-install
 
 import { spawnSync } from "node:child_process";
