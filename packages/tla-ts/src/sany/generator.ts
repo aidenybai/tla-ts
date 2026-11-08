@@ -1790,8 +1790,7 @@ export const generateSanySpecification = (
                 `Definition of ${existing.name} has different arity than its RECURSIVE declaration.`,
               );
             }
-            // OpDefNode.setParams keeps the arity of the RECURSIVE declaration, and gives a
-            // recursive call in the body the parameters of the definition.
+            // SANY sets the parameters before it analyzes the body.
             existing.params = params;
           }
         } else if (existing !== undefined) {

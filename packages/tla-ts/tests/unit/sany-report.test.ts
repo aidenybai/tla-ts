@@ -370,8 +370,6 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
-  // Linter.lintRecords: a field of any record with the same fields, in any order, that a
-  // declaration builds keeps the record from warning.
   it("warns about a field only when no record with the same domain uses a declaration", () => {
     const report = getReport({
       Fields:

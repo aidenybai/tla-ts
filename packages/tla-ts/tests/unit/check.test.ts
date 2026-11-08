@@ -1444,8 +1444,6 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // EnumerableValue#elements(NORMALIZED) sorts the elements a union lists outside the union's
-  // methods, so the failure to compare them isn't one to fingerprint the union.
   it.each(["\\E t \\in U : x' = t", "x' = CHOOSE t \\in U : TRUE"])(
     "reports a union of tuples and strings that %s fails to sort like TLC",
     async (next) => {

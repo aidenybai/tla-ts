@@ -67,7 +67,6 @@ interface LevelMessage {
 
 export type WorkerMessage =
   | { type: "ready" }
-  // string is the first string the search created, whose rank the workers could disagree on.
   | { type: "abort"; string?: string }
   | { type: "paused" }
   | LevelMessage;

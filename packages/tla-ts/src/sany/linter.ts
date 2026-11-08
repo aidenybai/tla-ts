@@ -74,8 +74,7 @@ const getFieldName = (pair: OpApplNode) => {
   return name?.kind === "String" ? name : undefined;
 };
 
-// The domain of a record, which Records.sameDomain compares. A module SANY accepts gives no record
-// two fields of the same name.
+// Records.sameDomain, given that SANY rejects a record with two fields of the same name.
 const getDomain = (record: OpApplNode) =>
   JSON.stringify([
     record.operands.length,
@@ -94,9 +93,7 @@ const getExtendedModules = (module: ModuleNode, found = new Set<ModuleNode>()) =
   return found;
 };
 
-// Linter.lintRecords: the warnings for the records of a module. Linter checks each field named like
-// a symbol, unless the value of a field of a record with the same domain, the record itself among
-// them, is built from declarations.
+// Linter.lintRecords: the warnings for the records of a module.
 export const lintSanyModule = (module: ModuleNode): SanyMessage[] => {
   const linted = module.records.map((record) => ({
     domain: getDomain(record),

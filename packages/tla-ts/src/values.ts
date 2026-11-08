@@ -1631,15 +1631,14 @@ export const toFiniteSet = (value: Value): SetValue => {
   return set;
 };
 
-// SetCupValue#toSetEnum lists the elements of S and then those of T, which TLC sorts as it
-// normalizes the set.
+// SetCupValue#toSetEnum.
 const listUnionLikeTlc = (union: SetOperationValue) => [
   ...toFiniteSet(union.left).elements,
   ...toFiniteSet(union.right).elements,
 ];
 
-// EnumerableValue#elements(NORMALIZED) sorts the elements a union lists outside the union's methods,
-// so a failure to compare two of them isn't one in fingerprinting the union.
+// EnumerableValue#elements(NORMALIZED) sorts a union outside its methods, so a failed comparison
+// isn't a fingerprint failure.
 export const getNormalizedSetElements = (value: Value) =>
   typeof value === "object" && value.kind === "SetOperation" && value.operator === "\\cup"
     ? computeLikeTlcOnFailure(

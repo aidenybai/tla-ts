@@ -351,7 +351,6 @@ const printCheckProgress = (
     case "liveness-finished":
       printLivenessEnd(printer, timing);
       return;
-    // TLC prints nothing of this, so tla-ts writes it to stderr.
     case "sequential-fallback":
       process.stderr.write(
         `Warning: the search created the string ${JSON.stringify(progress.string)}, so tla-ts checks the model again with one worker. Workers agree on the order of strings only when the strings exist before the search.\n`,

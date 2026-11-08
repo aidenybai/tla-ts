@@ -189,8 +189,6 @@ describe("SANY XML export", () => {
     ]);
   });
 
-  // Apalache's ApaFoldSet: SANY compares only the arity of the last parameter with the RECURSIVE
-  // declaration, and gives the recursive call the parameters of the definition.
   it.each([
     ["F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(Op, n - 1))", false],
     ["F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))", true],
