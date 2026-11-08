@@ -1,4 +1,4 @@
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
   createModuleArgumentError,
   createOverflowError,
@@ -26,7 +26,13 @@ import { createPossibleOperators, createTlcExtOperators } from "./tlc/tlcext-ope
 import { createTlcOperators } from "./tlc/tlc-operators";
 import { TLC_JAVA_METHODS } from "./tlc/jar-data";
 import {
+  addBoundedElement,
+  createUnsortedCopy,
+  forEachElement,
+  isBeyondSetBound,
   createSet,
+  createSortedSet,
+  compareValues,
   describeKind,
   createTuple,
   getSortedDifference,
@@ -61,6 +67,8 @@ import {
   type SetValue,
   type Value,
   rankString,
+  SET_BOUND,
+  SET_BOUND_MESSAGE,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
 import { getSanyStandardModules } from "./sany/modules";
@@ -99,18 +107,26 @@ const combineReducible = (
   set: ReducibleSet,
   other: Value,
 ): Value => {
-  const elements = set.kind === "Interval" ? toFiniteSet(set).elements : getWrittenElements(set);
+  if (set.kind === "Interval") getCardinality(set);
+  const elements = set.kind === "Interval" ? set : getWrittenElements(set);
   if (operator !== "\\cup") {
     const isKept = operator === "\\cap";
-    const kept = elements.filter((element) => isElementOf(element, other) === isKept);
+    const kept: Value[] = [];
+    forEachElement(elements, (element) => {
+      if (isElementOf(element, other) === isKept) addBoundedElement(kept, element);
+    });
     return isNormalizedReducible(set) ? createNormalizedSet(kept) : createEnumeratedSet(kept);
   }
-  if (elements.length === 0) return other;
+  if (isEmptySet(set)) return other;
   if (!isReducibleSet(other)) {
     return markStreamedSet({ kind: "SetOperation", operator, left: set, right: other });
   }
-  const added = toFiniteSet(other).elements.filter((element) => !isElementOf(element, set));
-  return createEnumeratedSet([...elements, ...added]);
+  const union: Value[] = [];
+  forEachElement(elements, (element) => addBoundedElement(union, element));
+  forEachElement(other.kind === "Interval" ? other : toFiniteSet(other).elements, (element) => {
+    if (!isElementOf(element, set)) addBoundedElement(union, element);
+  });
+  return createEnumeratedSet(union);
 };
 
 export const CORE_OPERATORS: Builtin[] = [
@@ -174,7 +190,9 @@ export const CORE_OPERATORS: Builtin[] = [
         isReducibleSet(right) &&
         !isMixedSet(left) &&
         !isMixedSet(right) &&
-        !isFilteredByInterval
+        !isFilteredByInterval &&
+        !isBeyondSetBound(left) &&
+        !isBeyondSetBound(right)
       ) {
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =
@@ -186,9 +204,30 @@ export const CORE_OPERATORS: Builtin[] = [
         // The merge compares the elements, which TLC tests for membership one by one instead.
         return computeLikeTlcOnFailure(
           (finiteLeft, finiteRight) => {
-            const merged = merge(toFiniteSet(finiteLeft), toFiniteSet(finiteRight));
-            if (operator !== "\\cup" && merged !== finiteLeft) {
-              merged.isNormalized = isNormalizedReducible(finiteLeft);
+            const leftSet = toFiniteSet(finiteLeft);
+            const rightSet = toFiniteSet(finiteRight);
+            const merged = merge(leftSet, rightSet);
+            if (operator === "\\cup") {
+              // TLC appends the right set's new elements to the left set's, unsorted.
+              const written = getWrittenElements(leftSet);
+              const added = getSortedDifference(rightSet, leftSet).elements;
+              const isSorted =
+                written === leftSet.elements &&
+                (added.length === 0 || compareValues(written[written.length - 1], added[0]) < 0);
+              if (written.length + added.length > SET_BOUND) {
+                throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+              }
+              if (isSorted && !leftSet.isNormalized) return merged;
+              const union = merged === leftSet ? createSortedSet(merged.elements) : merged;
+              if (!isSorted) union.writtenElements = [...written, ...added];
+              return union;
+            }
+            if (merged === finiteLeft) return merged;
+            merged.isNormalized = isNormalizedReducible(finiteLeft);
+            if (leftSet.writtenElements && !leftSet.isNormalized) {
+              merged.writtenElements = leftSet.writtenElements.filter((element) =>
+                isElementOf(element, merged),
+              );
             }
             return merged;
           },
@@ -207,20 +246,29 @@ export const CORE_OPERATORS: Builtin[] = [
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getValue(args, 0, "SUBSET") })),
   defineOperator("UNION", 1, (args) => {
     const outer = getValue(args, 0, "UNION");
-    const sets = isEnumeratedSet(outer) ? outer.elements.filter(isEnumeratedSet) : [];
-    if (!isEnumeratedSet(outer) || sets.length !== outer.elements.length) {
+    const written = isEnumeratedSet(outer) ? getWrittenElements(outer) : [];
+    const sets = written.filter(isEnumeratedSet);
+    if (!isEnumeratedSet(outer) || sets.length !== written.length) {
       return markStreamedSet({ kind: "Union", base: outer });
     }
-    if (isMixedSet(outer) || sets.some(isMixedSet)) {
+    // TLC adds each set's elements in written order, and only those not yet in the union.
+    const added = sets.flatMap(getWrittenElements);
+    const getUnionLikeTlc = () => {
       const union: MixedSetValue = { kind: "MixedSet", elements: [] };
-      sets.forEach((set) =>
-        set.elements.forEach((member) => {
-          if (!isElementOf(member, union)) union.elements.push(member);
-        }),
-      );
+      added.forEach((member) => {
+        if (!isElementOf(member, union)) addBoundedElement(union.elements, member);
+      });
       return createEnumeratedSet(union.elements);
-    }
-    return sets.length === 0 ? EMPTY_SET : getBalancedUnion(sets.map(toFiniteSet), 0, sets.length);
+    };
+    if (isMixedSet(outer) || sets.some(isMixedSet)) return getUnionLikeTlc();
+    if (sets.length === 0) return EMPTY_SET;
+    return computeLikeTlcOnFailure(
+      (finiteSets: SetValue[]) =>
+        createUnsortedCopy(getBalancedUnion(finiteSets, 0, finiteSets.length), added),
+      getUnionLikeTlc,
+      sets.map(toFiniteSet),
+      undefined,
+    );
   }),
   defineOperator("DOMAIN", 1, (args) => {
     const value = getValue(args, 0, "DOMAIN");
@@ -268,11 +316,12 @@ const createArithmeticOperators = (module: string) => {
       }
       return ((left % right) + right) % right;
     }),
-    defineOperator("..", 2, (args) => ({
-      kind: "Interval",
-      low: getJavaInteger(getValue(args, 0, ".."), dotDotSignature),
-      high: getJavaInteger(getValue(args, 1, ".."), dotDotSignature),
-    })),
+    defineOperator("..", 2, (args) => {
+      const low = getValue(args, 0, "..");
+      // TLC's MethodHandle casts the last argument first.
+      const high = getJavaInteger(getValue(args, 1, ".."), dotDotSignature);
+      return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high };
+    }),
   ];
 };
 

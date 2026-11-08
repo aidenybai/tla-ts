@@ -291,8 +291,9 @@ export const defineArithmetic = (
 ) => {
   const signature = getJavaSignature(module, method, "IntValue", 2);
   return defineBinary(name, (left, right) => {
-    const leftNumber = getJavaInteger(left, signature);
+    // TLC's MethodHandle casts the last argument first.
     const rightNumber = getJavaInteger(right, signature);
+    const leftNumber = getJavaInteger(left, signature);
     const result = compute(leftNumber, rightNumber);
     if (isOutOfRange(result)) throw createOverflowError(`${leftNumber}${name}${rightNumber}`);
     return result;

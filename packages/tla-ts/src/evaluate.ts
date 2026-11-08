@@ -13,7 +13,12 @@ import {
   type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
+import {
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaSetBoundError,
+  TlaUnassignedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import { MESSAGE_CODE } from "./tlc/messages";
@@ -32,7 +37,9 @@ import {
   describeMissingArgument,
   compareValues,
   createFunction,
+  addBoundedElement,
   createNonIntegerKeyError,
+  forEachElement,
   createRecord,
   createEnumeratedSet,
   createSortedFunction,
@@ -47,6 +54,7 @@ import {
   getIntervalElements,
   getLazySubsets,
   getStreamedElements,
+  normalizeShallowly,
   getFunctionClass,
   getSequenceElements,
   isElementOf,
@@ -1177,6 +1185,10 @@ const traceEvaluator =
       }
       return value;
     } catch (error) {
+      if (error instanceof TlaSetBoundError && !callStack.isFrozen) {
+        callStack.expressions.length = 0;
+        callStack.isFrozen = true;
+      }
       const failed = error instanceof Error ? callStack.failures.get(error) : undefined;
       if (error instanceof Error) callStack.failures.set(error, expression);
       const receiver = getReceiver(expression, callStack.values);
@@ -1566,7 +1578,9 @@ const compileFunctionConstruction = (
         keys,
         keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
       );
-      return isReducibleSet(domain) ? functionValue : markLambdaFunction(functionValue);
+      if (isReducibleSet(domain)) return functionValue;
+      functionValue.lambdaDomain = domain;
+      return markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
     const sets = bounds.map((item) =>
@@ -1747,17 +1761,18 @@ const compileSetComprehension = (
       const base = set(context);
       // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
       if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
-      return createNormalizedSet(
-        toFiniteSet(base).elements.filter((element) => {
-          const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
-          if (typeof value !== "boolean") {
-            throw new TlaEvaluationError(
-              `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateNode}`,
-            );
-          }
-          return value;
-        }),
-      );
+      const kept: Value[] = [];
+      const visit = (element: Value) => {
+        const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
+        if (typeof value !== "boolean") {
+          throw new TlaEvaluationError(
+            `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateNode}`,
+          );
+        }
+        if (value) addBoundedElement(kept, element);
+      };
+      forEachElement(base.kind === "Interval" ? base : toFiniteSet(base).elements, visit);
+      return createNormalizedSet(kept);
     };
   }
   if (expression.kind === "SetMap") {
@@ -1765,7 +1780,7 @@ const compileSetComprehension = (
     return (context) => {
       const elements: Value[] = [];
       forEachBinding(expression.bounds, context, (scope) => {
-        elements.push(mapped(withScope(context, scope)));
+        addBoundedElement(elements, mapped(withScope(context, scope)));
         return false;
       });
       return createEnumeratedSet(elements);
@@ -1788,6 +1803,7 @@ const compileSetComprehension = (
         `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
       );
     }
+    normalizeShallowly(base);
     const chosen = { value: undefined as Value | undefined };
     const elements = getNormalizedElements(base, set, context.environment.runtime.version);
     const pattern = expression.pattern;
