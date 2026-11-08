@@ -2447,6 +2447,7 @@ const growBytes = (bytes: Bytes) => {
 // two pages, and its start is the page's index times PAGE_SIZE plus its offset in the page.
 interface Arena {
   pages: Uint8Array[];
+  words: Int32Array[];
   data: Uint8Array;
   size: number;
   start: number;
@@ -2458,7 +2459,7 @@ const MAXIMUM_PAGES = 2 ** (31 - PAGE_BITS);
 
 const createArena = (): Arena => {
   const page = new Uint8Array(PAGE_SIZE);
-  return { pages: [page], data: page, size: 0, start: 0 };
+  return { pages: [page], words: [new Int32Array(page.buffer)], data: page, size: 0, start: 0 };
 };
 
 const addPage = (arena: Arena) => {
@@ -2467,6 +2468,7 @@ const addPage = (arena: Arena) => {
   const page = new Uint8Array(PAGE_SIZE);
   page.set(arena.data.subarray(arena.start, arena.size));
   arena.pages.push(page);
+  arena.words.push(new Int32Array(page.buffer));
   arena.data = page;
   arena.start = 0;
   arena.size = length;
@@ -3248,6 +3250,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       d = arena.data;
       n = arena.size;
       ${writers.join(" ")}
+      while ((n & 3) !== 0) d[n++] = 0;
       arena.size = n;
     },
     decode: (data, start) => { d = data; i = start; return [${readers.join(", ")}]; },
@@ -3273,7 +3276,9 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
         ${imageWriters.join(" ")}
         if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; }
       }
-      arena.size = W.start + m;
+      n = W.start + m;
+      while ((n & 3) !== 0) d[n++] = 0;
+      arena.size = n;
     },
   };`;
   const atoms = images.map((table) =>
@@ -3310,13 +3315,17 @@ interface StateTable {
   mask: number;
 }
 
-const hashBytes = (data: Uint8Array, start: number, end: number) => {
+// Murmur3's mixing, over the words of a state's encoding.
+const hashWords = (words: Int32Array, start: number, end: number) => {
   let hash = 0x811c9dc5;
   for (let index = start; index < end; index++) {
-    hash = Math.imul(hash ^ data[index], 0x01000193);
+    const word = Math.imul(words[index], 0xcc9e2d51);
+    hash ^= Math.imul((word << 15) | (word >>> 17), 0x1b873593);
+    hash = (Math.imul((hash << 13) | (hash >>> 19), 5) + 0xe6546b64) | 0;
   }
-  hash ^= hash >>> 15;
-  return Math.imul(hash, 0x2c1b3c6d) ^ (hash >>> 12);
+  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+  hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
+  return hash ^ (hash >>> 16);
 };
 
 export const runTypedSearch = (
@@ -3403,11 +3412,13 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     table.slots = slots;
     table.mask = mask;
   };
+  // Each encoding is padded with zeros to a whole number of words, which hash and compare at once.
   const addEncoded = () => {
-    const data = keys.data;
+    const words = keys.words[keys.words.length - 1];
     const start = keys.start;
-    const length = keys.size - start;
-    const hash = hashBytes(data, start, keys.size);
+    const first = start >> 2;
+    const length = (keys.size - start) >> 2;
+    const hash = hashWords(words, first, first + length);
     const slots = table.slots;
     for (let slot = hash & table.mask; ; slot = (slot + 1) & table.mask) {
       const entry = slots[slot * 2 + 1];
@@ -3422,11 +3433,11 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
       // No encoding is a prefix of another, so two states of different lengths differ before the
       // shorter one ends.
       const other = keyStarts.data[entry - 1];
-      const page = keys.pages[other >>> PAGE_BITS];
-      const otherStart = other & (PAGE_SIZE - 1);
+      const page = keys.words[other >>> PAGE_BITS];
+      const otherFirst = (other & (PAGE_SIZE - 1)) >> 2;
       let isSameState = true;
       for (let offset = 0; offset < length; offset++) {
-        if (page[otherStart + offset] !== data[start + offset]) {
+        if (page[otherFirst + offset] !== words[first + offset]) {
           isSameState = false;
           break;
         }
