@@ -25,6 +25,19 @@ namespace assert {
     }
   }
 
+  export function compareArray(
+    actual: readonly unknown[],
+    expected: readonly unknown[],
+    message?: string,
+  ) {
+    if (
+      actual.length !== expected.length ||
+      actual.some((value, index) => !Object.is(value, expected[index]))
+    ) {
+      throw new Test262Error(message ?? "Expected the arrays to have the same contents");
+    }
+  }
+
   export function throws(
     expectedErrorConstructor: Function,
     func: () => unknown,

@@ -33,6 +33,8 @@ const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), 
 
 // Compiled TypeScript is a strict mode module.
 const SKIPPED_FLAGS = new Set(["noStrict", "raw", "module", "async"]);
+// Includes that the harness already defines, as compareArray.js is now part of assert.js.
+const HARNESS_INCLUDES = new Set(["compareArray.js"]);
 
 const getMetadata = (source: string): Metadata => {
   const frontmatter = /\/\*---([\s\S]*?)---\*\//.exec(source)?.[1] ?? "";
@@ -61,7 +63,8 @@ const getSkipReason = (metadata: Metadata) => {
   if (metadata.isNegative && !metadata.isSyntaxError) return "negative test";
   const flag = metadata.flags.find((candidate) => SKIPPED_FLAGS.has(candidate));
   if (flag !== undefined) return `flag ${flag}`;
-  return metadata.includes.length > 0 ? `includes ${metadata.includes.join(", ")}` : undefined;
+  const includes = metadata.includes.filter((include) => !HARNESS_INCLUDES.has(include));
+  return includes.length > 0 ? `includes ${includes.join(", ")}` : undefined;
 };
 
 const getNodeError = (source: string) => {
