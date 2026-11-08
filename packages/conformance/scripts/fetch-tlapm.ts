@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync, mkdtempSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { TLAPM_BACKENDS, TLAPM_BINARY, TLAPM_DIRECTORY } from "./tlapm";
 
 const REVISION = "b91fb6c46c39895841cc29eafedc3661ef09628b";
@@ -36,6 +36,7 @@ if (getVersion(TLAPM_BINARY, ["--version"]) !== REVISION.slice(0, 7)) {
   // HACK: tlapm's own release workflow retries the build, which fails at random (tlapm#88).
   runStep("for attempt in 1 2 3 4 5; do make clean && make && exit 0; done; exit 1", checkout);
   rmSync(TLAPM_DIRECTORY, { recursive: true, force: true });
+  mkdirSync(dirname(TLAPM_DIRECTORY), { recursive: true });
   runStep(
     `dune install --relocatable --prefix _build/tlapm && mv _build/tlapm ${TLAPM_DIRECTORY}`,
     checkout,
