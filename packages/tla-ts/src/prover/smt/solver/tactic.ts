@@ -111,7 +111,7 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["algebraic_number_evaluator", PARAM_BOOL, true, true],
   ["mul_to_power", PARAM_BOOL, false],
   ["expand_power", PARAM_BOOL, false, true],
-  ["expand_tan", PARAM_BOOL, false],
+  ["expand_tan", PARAM_BOOL, false, true],
   ["max_degree", PARAM_UINT, 64, true],
   ["sort_sums", PARAM_BOOL, false, true],
   ["gcd_rounding", PARAM_BOOL, false, true],
@@ -174,6 +174,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
     isGcdRounding: getBool(params, "gcd_rounding", false),
     isAnumSimp: getBool(params, "algebraic_number_evaluator", true),
     isExpandPower: getBool(params, "expand_power", false),
+    isExpandTan: getBool(params, "expand_tan", false),
     maxDegree: getUint(params, "max_degree", 64),
   },
   bv: {

@@ -45,6 +45,7 @@ export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
   isGcdRounding: true,
   isAnumSimp: true,
   isExpandPower: false,
+  isExpandTan: false,
   maxDegree: 64,
 };
 
@@ -55,6 +56,7 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isGcdRounding: false,
   isAnumSimp: true,
   isExpandPower: false,
+  isExpandTan: false,
   maxDegree: 64,
 };
 
@@ -744,6 +746,15 @@ export class ArithRewriter extends PolyRewriter {
     const manager = this.manager;
     if (manager.getOp(arg) === OP_ATAN) return manager.getArg(arg, 0);
     if (manager.isNumeral(arg) && this.getValue(arg).isZero()) return arg;
+    const expanded = this.mkTanCore(arg);
+    if (expanded !== undefined || !this.options.isExpandTan) return expanded;
+    return this.reduce(
+      this.mkRealApp(OP_DIV, [this.mkRealApp(OP_SIN, [arg]), this.mkRealApp(OP_COS, [arg])]),
+      2,
+    );
+  }
+
+  private mkTanCore(arg: number) {
     const multiple = this.getPiMultiple(arg);
     if (multiple !== undefined) {
       const sine = this.mkSinValue(multiple);

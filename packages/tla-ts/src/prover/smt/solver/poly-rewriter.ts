@@ -52,6 +52,7 @@ export interface ArithRewriterOptions {
   readonly isGcdRounding: boolean;
   readonly isAnumSimp: boolean;
   readonly isExpandPower: boolean;
+  readonly isExpandTan: boolean;
   readonly maxDegree: number;
 }
 

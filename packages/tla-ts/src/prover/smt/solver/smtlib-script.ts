@@ -110,6 +110,7 @@ const SIMPLIFY_PARAMETERS = new Set([
   "split_concat_eq",
   "algebraic_number_evaluator",
   "expand_power",
+  "expand_tan",
 ]);
 
 const SIMPLIFY_UINT_PARAMETERS = new Set(["max_degree"]);
