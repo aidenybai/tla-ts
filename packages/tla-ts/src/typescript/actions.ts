@@ -17,6 +17,7 @@ import {
   getUndefined,
   isHeapClass,
   isMethodCall,
+  type MethodCall,
   isStatementNew,
   share,
   isInlined,
@@ -422,6 +423,10 @@ const translateCallStatement = (
   continueWith: (path: Path, value?: Expression) => Formula,
   isGenerator = false,
 ): Formula => {
+  const loopCallback = getLoopCallback(expression, path, context);
+  if (loopCallback !== undefined && isMethodCall(expression)) {
+    return translateLoopCall(expression, loopCallback, path, context, frame, continueWith);
+  }
   const first = expression.arguments.at(0);
   if (
     first !== undefined &&
@@ -636,6 +641,230 @@ const inlineBody = (
   });
 };
 
+const LOOP_METHODS = new Set([
+  "forEach",
+  "every",
+  "some",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "filter",
+  "map",
+  "reduce",
+  "reduceRight",
+]);
+
+// The callback of an array method that changes what a statement can see, such as a count of its
+// calls, which the method runs as a loop of statements.
+const getLoopCallback = (node: ts.Expression, path: Path, context: Context) => {
+  if (!isMethodCall(node) || !LOOP_METHODS.has(node.expression.name.text)) return undefined;
+  if (getKind(node.expression.expression, context) !== "sequence") return undefined;
+  const argument = node.arguments.at(0);
+  const callback = argument && getCallback(argument, path, context);
+  return callback?.body !== undefined &&
+    (ts.isArrowFunction(callback) ||
+      ts.isFunctionExpression(callback) ||
+      ts.isFunctionDeclaration(callback)) &&
+    getChanged(callback, path, context).length > 0
+    ? callback
+    : undefined;
+};
+
+// Runs an array method's callback on each element in turn, as statements. An array is a value
+// that the callback can't change, so the method visits each of the elements it had.
+const translateLoopCall = (
+  expression: MethodCall,
+  callback: FunctionNode,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const receiver = expression.expression.expression;
+  const method = expression.expression.name.text;
+  const changed = getChanged(callback, path, context);
+  const isReceiverChanged = (node: ts.Node): boolean =>
+    (ts.isIdentifier(node) &&
+      changed.some((symbol) => symbol === getSymbol(node, context.checker))) ||
+    (ts.forEachChild(node, (child) => isReceiverChanged(child) || undefined) ?? false);
+  if (isReceiverChanged(receiver)) {
+    throw new TlaTypeScriptError("Don't change an array while its method calls back", receiver);
+  }
+  if (changed.some((symbol) => path.scope.functions.has(symbol))) {
+    throw new TlaTypeScriptError("Don't reassign a function inside a callback", callback);
+  }
+  const isReversed = method === "reduceRight" || method.startsWith("findLast");
+  const isReduce = method.startsWith("reduce");
+  const initial = isReduce ? expression.arguments.at(1) : undefined;
+  const name = context.names.getFresh("Loop");
+  const sequenceName = context.names.getFresh("sequence");
+  const sequence = identifier(sequenceName);
+  const position = context.names.getFresh("position");
+  const accumulator = context.names.getFresh("accumulator");
+  const parameters = changed.map((symbol) => {
+    const binding = path.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const getValues = (current: Path) =>
+    changed.flatMap((symbol) => current.scope.bindings.get(symbol) ?? []);
+  const withValues = (current: Path, values: Expression[]): Path => ({
+    ...current,
+    scope: {
+      ...current.scope,
+      bindings: new Map([
+        ...current.scope.bindings,
+        ...changed.map((symbol, offset): [ts.Symbol, Expression] => [symbol, values[offset]]),
+      ]),
+    },
+  });
+  const step = apply(isReversed ? "-" : "+", [identifier(position), number(1)]);
+  const repeat = (current: Path, next: Expression) =>
+    leaf(call(name, [step, next, ...getValues(current)]));
+  const done = (current: Path, result: Expression) => leaf(tuple([result, ...getValues(current)]));
+  const element = index(sequence, [identifier(position)]);
+  const kept = identifier(accumulator);
+  const afterCallback = (current: Path, value?: Expression) => {
+    const result = value ?? getUndefined(context);
+    const isTruthy = useJavaScript("ToBoolean", [result], context);
+    if (method === "forEach") return repeat(current, kept);
+    if (method === "every")
+      return ifThenElse(isTruthy, repeat(current, kept), done(current, boolean(false)));
+    if (method === "some")
+      return ifThenElse(isTruthy, done(current, boolean(true)), repeat(current, kept));
+    if (method === "find" || method === "findLast") {
+      return ifThenElse(isTruthy, done(current, element), repeat(current, kept));
+    }
+    if (method === "findIndex" || method === "findLastIndex") {
+      return ifThenElse(
+        isTruthy,
+        done(current, apply("-", [identifier(position), number(1)])),
+        repeat(current, kept),
+      );
+    }
+    if (method === "filter") {
+      return ifThenElse(
+        isTruthy,
+        repeat(current, apply("Append", [kept, element])),
+        repeat(current, kept),
+      );
+    }
+    return repeat(current, method === "map" ? apply("Append", [kept, result]) : result);
+  };
+  const finished =
+    new Map([
+      ["every", boolean(true)],
+      ["some", boolean(false)],
+      ["findIndex", number(-1)],
+      ["findLastIndex", number(-1)],
+    ]).get(method) ??
+    (["filter", "map"].includes(method) || isReduce ? kept : getUndefined(context));
+  const inner = {
+    ...withValues(
+      path,
+      parameters.map((parameter) => identifier(parameter)),
+    ),
+    isLooping: true,
+  };
+  const bound = bindValues(
+    callback.parameters,
+    [...(isReduce ? [kept] : []), element, apply("-", [identifier(position), number(1)]), sequence],
+    inner.scope,
+    context,
+  );
+  const body = callback.body;
+  if (body === undefined) throw new TlaTypeScriptError("Give this a body", callback);
+  const statements = ts.isBlock(body)
+    ? body.statements
+    : [
+        getWritten(body) === undefined
+          ? ts.factory.createReturnStatement(body)
+          : ts.factory.createExpressionStatement(body),
+      ];
+  const callbackFrame: Frame = {
+    next: afterCallback,
+    exit: afterCallback,
+    breakTo: undefined,
+    continueTo: undefined,
+    throwTo:
+      frame.throwTo &&
+      (() => {
+        throw new TlaTypeScriptError(
+          "Catch inside the callback, or throw after the call",
+          callback,
+        );
+      }),
+    yieldTo: undefined,
+    inlining: new Set([...frame.inlining, callback]),
+  };
+  const isInRange = isReversed
+    ? apply(">=", [identifier(position), number(1)])
+    : apply("<=", [identifier(position), apply("Len", [sequence])]);
+  const operator: OperatorDefinition = {
+    ...define(
+      name,
+      [position, accumulator, ...parameters].map((parameter) => ({ name: parameter, arity: 0 })),
+      render(
+        ifThenElse(
+          isInRange,
+          letIn(
+            bound.definitions,
+            translateStatements(
+              statements,
+              {
+                ...inner,
+                scope: {
+                  ...bound.scope,
+                  receiver: ts.isArrowFunction(callback) ? inner.scope.receiver : undefined,
+                },
+              },
+              context,
+              callbackFrame,
+            ),
+          ),
+          done(inner, finished),
+        ),
+      ),
+    ),
+    isRecursive: true,
+  };
+  const length = apply("Len", [sequence]);
+  const start = isReversed ? length : number(1);
+  const result = context.names.getFresh("loop");
+  const runLoop = (from: Expression, seed: Expression) =>
+    letIn(
+      [operator, define(result, [], call(name, [from, seed, ...getValues(path)]))],
+      continueWith(
+        {
+          ...withValues(
+            path,
+            changed.map((_, offset) => index(identifier(result), [number(offset + 2)])),
+          ),
+          isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+        },
+        index(identifier(result), [number(1)]),
+      ),
+    );
+  // A reduce without an initial value starts from the first element it visits, and throws a
+  // TypeError for an empty array.
+  const seeded = !isReduce
+    ? runLoop(start, ["filter", "map"].includes(method) ? tuple([]) : getUndefined(context))
+    : initial !== undefined
+      ? runLoop(start, translateExpression(initial, path.scope, context))
+      : ifThenElse(
+          apply("=", [length, number(0)]),
+          throwTypeError(path, expression, context, frame),
+          runLoop(
+            isReversed ? apply("-", [length, number(1)]) : number(2),
+            index(sequence, [start]),
+          ),
+        );
+  return letIn(
+    [define(sequenceName, [], translateExpression(receiver, path.scope, context))],
+    seeded,
+  );
+};
+
 // The constructor that a new of a heap class runs, where a statement runs it.
 const getConstructorRun = (node: ts.Expression, context: Context) => {
   const created = getNewClass(node, context);
@@ -766,7 +995,8 @@ const translateExpressionStatement = (
   if (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    isHeapCall(expression.right, path, context)
+    ts.isCallExpression(expression.right) &&
+    isStatementResult(expression.right, path, context)
   ) {
     const right = expression.right;
     return translateCallStatement(right, path, context, frame, (after, value) =>
@@ -915,6 +1145,10 @@ const isHeapCall = (
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
 };
 
+// A call whose value only statements can compute, which an assignment or a declaration takes.
+const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
+  isHeapCall(node, path, context) || getLoopCallback(node, path, context) !== undefined;
+
 // The expression that parentheses and casts wrap.
 const getCast = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) || ts.isAsExpression(node) ? getCast(node.expression) : node;
@@ -930,6 +1164,7 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
     (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   return (
     isHeapCall(node, path, context) ||
+    getLoopCallback(node, path, context) !== undefined ||
     (callee?.body !== undefined && ts.forEachChild(callee.body, hasTry) === true)
   );
 };
@@ -1059,7 +1294,11 @@ const translateDeclarations = (
           ),
       );
     }
-    if (initializer !== undefined && isHeapCall(initializer, allocated, context)) {
+    if (
+      initializer !== undefined &&
+      ts.isCallExpression(initializer) &&
+      isStatementResult(initializer, allocated, context)
+    ) {
       return translateCallStatement(initializer, allocated, context, frame, (after, value) =>
         bindDeclaration(
           declarations,

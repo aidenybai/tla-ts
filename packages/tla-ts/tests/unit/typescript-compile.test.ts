@@ -285,6 +285,44 @@ describe("top-level statements", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("run array callbacks that change state as loops", async () => {
+    const result = await checkModel(`
+      let calls = 0;
+      const list = [1, 2, 3];
+      let kept = list.filter((value) => {
+        calls++;
+        return value > 1;
+      });
+      let isAll = list.every((value) => {
+        calls++;
+        return value < 2;
+      });
+      let total = list.reduce((sum, value) => {
+        calls++;
+        return sum + value;
+      });
+      let thrown = "none";
+      try {
+        const empty: number[] = [];
+        empty.reduce((sum, value) => {
+          calls++;
+          return sum + value;
+        });
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      const boxes = list.map((value) => ({ value }));
+      if (boxes[0] === boxes[1] || boxes[2].value !== 3) throw new Error("boxes");
+    `);
+    expect(getTrace(result)?.[0]).toMatchObject({
+      calls: "7",
+      kept: "<<2, 3>>",
+      isAll: "FALSE",
+      total: "6",
+      thrown: '"TypeError"',
+    });
+  });
+
   it("make the objects of a parameter's default", async () => {
     const result = await checkModel(`
       let total = 0;
@@ -860,8 +898,8 @@ describe("errors", () => {
       "would share an object that changes in place",
     ],
     [
-      "an object made in a callback",
-      "let boxes = [1].map((value) => ({ value }));",
+      "an object made in a callback inside an expression",
+      "let size = [1].map((value) => ({ value })).length;",
       "Make objects only where a statement always runs",
     ],
     [
