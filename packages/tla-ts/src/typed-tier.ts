@@ -10,6 +10,7 @@ import {
 } from "./ast";
 import { isConstantLevel } from "./dependencies";
 import { isStackOverflow, TlaError } from "./errors";
+import { permuteValue, type ImageTable } from "./symmetry";
 import { evaluate, findGlobalName, getDefinition, type Environment } from "./evaluate";
 import { getContext } from "./search";
 import { forEachInitialState, hasBranches } from "./successors";
@@ -127,6 +128,7 @@ export interface TypedCheck {
   init: Expression;
   next: Expression;
   isDeadlockChecked: boolean;
+  symmetry: ImageTable[] | undefined;
 }
 
 export interface TypedResult {
@@ -2466,6 +2468,13 @@ const HELPERS = {
   subsets: (base: Plain[]) =>
     getSubsets(base.length, (indices) => indices.map((index) => base[index])),
   bits: getBits,
+  compareBytes: (data: Uint8Array, start: number, end: number, other: Uint8Array, from: number) => {
+    for (let index = start; index < end; index++) {
+      const difference = data[index] - other[from + index - start];
+      if (difference !== 0) return difference;
+    }
+    return 0;
+  },
   // TLC sorts by insertion, moving each element before those it compares before.
   sortSeq: (sequence: Plain[], isBefore: (left: Plain, right: Plain) => boolean) => {
     const sorted = sequence.slice();
@@ -2594,6 +2603,13 @@ const INTEGER_ESCAPE = 254;
 const ATOM_ESCAPE = 255;
 const MAXIMUM_SCALAR_BYTES = 6;
 
+const hasVariableSize = (type: Type): boolean => {
+  const resolved = resolveType(type);
+  if (resolved.kind === "Seq" || resolved.kind === "Set") return true;
+  if (resolved.kind === "Rec") return [...resolved.fields.values()].some(hasVariableSize);
+  return resolved.kind === "Fn" && hasVariableSize(resolved.range);
+};
+
 const getFixedSize = (type: Type): number => {
   const resolved = resolveType(type);
   if (resolved.kind === "Seq" || resolved.kind === "Set") return 1;
@@ -2702,12 +2718,109 @@ const getReader = (codec: Codec, type: Type): string => {
     .join(", ")}]`;
 };
 
+// TLC fingerprints a state under symmetry as the smallest of its images, so every state of an orbit
+// shares one. The tier keys a state by the smallest encoding of its images, which they share too.
+const getPermuteCode = (
+  program: Program,
+  images: ImageTable[],
+  type: Type,
+  code: string,
+): string | undefined => {
+  const resolved = resolveType(type);
+  const getElementCode = (element: Type, wrap: (name: string, inner: string) => string) => {
+    const name = getName(program, "p");
+    const inner = getPermuteCode(program, images, element, name);
+    return inner && wrap(name, inner);
+  };
+  switch (resolved.kind) {
+    case "Str":
+      return `P[${code}]`;
+    case "Mix":
+      return `((p) => (p >= ${ATOM_BASE} ? ${ATOM_BASE} + P[p - ${ATOM_BASE}] : p))(${code})`;
+    case "Seq":
+      return getElementCode(
+        resolved.element,
+        (name, inner) => `(${code}).map((${name}) => ${inner})`,
+      );
+    case "Set":
+      if (isMask(resolved, program.plains)) return undefined;
+      return getElementCode(
+        resolved.element,
+        (name, inner) =>
+          `(${code}).map((${name}) => ${inner}).sort(${getComparerCode(program, resolved.element)})`,
+      );
+    case "Rec": {
+      const offset = resolved.shapes.length === 1 ? 0 : 1;
+      const record = getName(program, "r");
+      const shapes = resolved.shapes.map((shape) =>
+        shape.map(
+          (name, index) =>
+            getPermuteCode(
+              program,
+              images,
+              getFieldType(resolved, name),
+              `${record}[${index + offset}]`,
+            ) ?? `${record}[${index + offset}]`,
+        ),
+      );
+      if (
+        shapes.every((fields) =>
+          fields.every((field, index) => field === `${record}[${index + offset}]`),
+        )
+      ) {
+        return undefined;
+      }
+      if (offset === 0) return `((${record}) => [${shapes[0].join(", ")}])(${code})`;
+      const cases = shapes.map(
+        (fields, tag) => `${record}[0] === ${tag} ? [${tag}, ${fields.join(", ")}] : `,
+      );
+      return `((${record}) => ${cases.join("")}${record})(${code})`;
+    }
+    case "Fn": {
+      const domain = resolved.domain;
+      const positions = images.map((table) =>
+        Int32Array.from(domain, (key) => {
+          const image = permuteValue(key, table);
+          const position = domain.findIndex((other) => isSameValue(other, image));
+          return position === -1 ? unsupported() : position;
+        }),
+      );
+      const isMoved = positions.some((table) =>
+        table.some((position, index) => position !== index),
+      );
+      if (!isMoved) {
+        return getElementCode(
+          resolved.range,
+          (name, inner) => `(${code}).map((${name}) => ${inner})`,
+        );
+      }
+      const base = program.indexes.length;
+      program.indexes.push(...positions);
+      const name = getName(program, "p");
+      const permuted = getPermuteCode(program, images, resolved.range, name) ?? name;
+      return `((f) => { const t = D[${base} + G]; const o = new Array(f.length); for (let j = 0; j < f.length; j++) { const ${name} = f[j]; o[t[j]] = ${permuted}; } return o; })(${code})`;
+    }
+    default:
+      return undefined;
+  }
+};
+
 interface CompiledSpec {
   next: (state: Plain[], emit: (successor: Plain[]) => void) => void;
   invariants: ((state: Plain[]) => boolean)[];
   constraints: ((state: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
   decode: (data: Uint8Array, start: number) => Plain[];
+  writeKey: (state: Plain[], arena: Arena) => void;
+  // Writes the image of a state, unless it is larger than the smallest one so far, and tells
+  // whether it is smaller.
+  writeImage: (
+    state: Plain[],
+    arena: Arena,
+    atoms: Int32Array,
+    image: number,
+    smallest: Uint8Array,
+  ) => boolean;
 }
 
 const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
@@ -2734,6 +2847,28 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   };
   const writers = program.variableTypes.map((type, index) => getWriter(codec, type, `v${index}`));
   const readers = program.variableTypes.map((type) => getReader(codec, type));
+  const images = check.symmetry ?? [];
+  const permuted = program.variableTypes.map((type, index) =>
+    getPermuteCode(program, images, type, `v${index}`),
+  );
+  // Any order of the variables keys an orbit, and one that compares cheap variables a permutation
+  // moves first leaves most images after a few bytes.
+  const getKeyCost = (index: number) =>
+    permuted[index] === undefined
+      ? Infinity
+      : (hasVariableSize(program.variableTypes[index]) ? MAXIMUM_INTEGER : 0) +
+        getFixedSize(program.variableTypes[index]);
+  const keyOrder = program.variableTypes
+    .map((_, index) => index)
+    .sort((left, right) => getKeyCost(left) - getKeyCost(right));
+  const keyWriters = keyOrder.map((index) => writers[index]);
+  const imageWriters = keyOrder.map((index) => {
+    const code = permuted[index];
+    const type = program.variableTypes[index];
+    const writer =
+      code === undefined ? writers[index] : `const u = ${code}; ${getWriter(codec, type, "u")}`;
+    return `{ const b = n - W.start; ${writer} if (c === 0) { c = H.compareBytes(d, W.start + b, n, M, b); if (c > 0) return false; } }`;
+  });
   const nextCode = next();
   const invariantCodes = invariants.map(predicate);
   const constraintCodes = constraints.map(predicate);
@@ -2764,6 +2899,28 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       arena.size = n;
     },
     decode: (data, start) => { d = data; i = start; return [${readers.join(", ")}]; },
+    writeKey: (state, arena) => {
+      ${unpack}
+      W = arena;
+      arena.start = arena.size;
+      if (arena.size + ${RESERVED_BYTES} > arena.data.length) H.addPage(arena);
+      d = arena.data;
+      n = arena.size;
+      ${keyWriters.join(" ")}
+      arena.size = n;
+    },
+    writeImage: (state, arena, P, G, M) => {
+      ${unpack}
+      W = arena;
+      arena.start = arena.size;
+      if (arena.size + ${RESERVED_BYTES} > arena.data.length) H.addPage(arena);
+      d = arena.data;
+      n = arena.size;
+      let c = 0;
+      ${imageWriters.join(" ")}
+      arena.size = n;
+      return c < 0;
+    },
   };`;
   return new Function("K", "S", "B", "R", "D", "L", "H", source)(
     program.constants,
@@ -2842,9 +2999,42 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     });
     return false;
   });
+  const images = check.symmetry ?? [];
+  images.forEach((table) => table.forEach((image) => image && getAtom(program.plains, image)));
   const compiled = compileSpec(program, check);
+  const atoms = images.map((table) =>
+    Int32Array.from(program.plains.values, (value, id) => {
+      const image = typeof value === "object" ? table[value.rank] : undefined;
+      return image === undefined ? id : (program.plains.ids.get(image) ?? unsupported());
+    }),
+  );
   const arena = createArena();
   const starts = { data: new Int32Array(1 << 16), size: 0 };
+  // Under symmetry the table holds the key of each state apart from the state TLC explores.
+  const keys = images.length === 0 ? arena : createArena();
+  const keyStarts = images.length === 0 ? starts : { data: new Int32Array(1 << 16), size: 0 };
+  const smallest = { data: new Uint8Array(1 << 12), size: 0 };
+  const keepSmallest = () => {
+    const length = keys.size - keys.start;
+    if (length > smallest.data.length) smallest.data = new Uint8Array(length * 2);
+    smallest.data.set(keys.data.subarray(keys.start, keys.size));
+    smallest.size = length;
+  };
+  const encodeKey = (state: Plain[]) => {
+    if (images.length === 0) {
+      compiled.encode(state, keys);
+      return;
+    }
+    compiled.writeKey(state, keys);
+    keepSmallest();
+    for (let image = 0; image < images.length; image++) {
+      keys.size = keys.start;
+      if (compiled.writeImage(state, keys, atoms[image], image, smallest.data)) keepSmallest();
+    }
+    if (keys.start + smallest.size > keys.data.length) deopt();
+    keys.data.set(smallest.data.subarray(0, smallest.size), keys.start);
+    keys.size = keys.start + smallest.size;
+  };
   const table: StateTable = { slots: new Int32Array(1 << 18), mask: (1 << 17) - 1 };
   const statistics = { generated: 0, distinct: 0, depth: 0 };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
@@ -2868,25 +3058,25 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     table.mask = mask;
   };
   const addEncoded = () => {
-    const data = arena.data;
-    const start = arena.start;
-    const length = arena.size - start;
-    const hash = hashBytes(data, start, arena.size);
+    const data = keys.data;
+    const start = keys.start;
+    const length = keys.size - start;
+    const hash = hashBytes(data, start, keys.size);
     const slots = table.slots;
     for (let slot = hash & table.mask; ; slot = (slot + 1) & table.mask) {
       const entry = slots[slot * 2 + 1];
       if (entry === 0) {
         slots[slot * 2] = hash;
         slots[slot * 2 + 1] = ++statistics.distinct;
-        pushWord(starts, (arena.pages.length - 1) * PAGE_SIZE + start);
+        pushWord(keyStarts, (keys.pages.length - 1) * PAGE_SIZE + start);
         if (statistics.distinct * 8 > slots.length * 3) grow();
         return true;
       }
       if (slots[slot * 2] !== hash) continue;
       // No encoding is a prefix of another, so two states of different lengths differ before the
       // shorter one ends.
-      const other = starts.data[entry - 1];
-      const page = arena.pages[other >>> PAGE_BITS];
+      const other = keyStarts.data[entry - 1];
+      const page = keys.pages[other >>> PAGE_BITS];
       const otherStart = other & (PAGE_SIZE - 1);
       let isSameState = true;
       for (let offset = 0; offset < length; offset++) {
@@ -2896,7 +3086,7 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
         }
       }
       if (isSameState) {
-        arena.size = start;
+        keys.size = start;
         return false;
       }
     }
@@ -2907,10 +3097,15 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
       checkInvariants(state);
       return false;
     }
-    compiled.encode(state, arena);
+    encodeKey(state);
     const isNew = addEncoded();
-    if (isNew) checkInvariants(state);
-    return isNew;
+    if (!isNew) return false;
+    if (keys !== arena) {
+      compiled.encode(state, arena);
+      pushWord(starts, (arena.pages.length - 1) * PAGE_SIZE + arena.start);
+    }
+    checkInvariants(state);
+    return true;
   };
   const cursor: Cursor = { data: initialBytes.data, position: 0 };
   for (let index = 0; index < initialStarts.size; index++) {

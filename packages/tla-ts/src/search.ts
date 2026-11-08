@@ -52,7 +52,7 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { getRepresentative, getSymmetryGroup } from "./symmetry";
+import { getRepresentative, getSymmetryGroup, type ImageTable } from "./symmetry";
 import { MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import { formatValue, isUpdatedElementOf, type Value } from "./values";
@@ -579,7 +579,13 @@ interface Search {
   isConstrained: boolean;
   // Undefined when a check needs the interpreter.
   getTypedChecks: () =>
-    | { init: Expression; next: Expression; invariants: Expression[]; constraints: Expression[] }
+    | {
+        init: Expression;
+        next: Expression;
+        invariants: Expression[];
+        constraints: Expression[];
+        symmetry: ImageTable[] | undefined;
+      }
     | undefined;
   // With -continue, TLC goes on to the successors of a state that violates an invariant, whose
   // successors it checks in full.
@@ -878,6 +884,7 @@ export const createSearch = (
             next: spec.next,
             invariants: invariantPredicates.map((invariant) => invariant.predicate),
             constraints: [...new Set(constraints.map((constraint) => constraint.predicate))],
+            symmetry: symmetryGroup?.images,
           };
     },
     getTlcOrder,
