@@ -1,8 +1,9 @@
 // Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt.
-import { FAMILY_BASIC, FAMILY_USER, type FuncDecl, SORT_BOOL } from "./ast";
+import { FAMILY_BASIC, FAMILY_USER, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { FuncInterp, ProtoModel } from "./proto-model";
+import type { DependentValue } from "./theory";
 
 export interface GeneratedModel {
   model: ProtoModel;
@@ -12,10 +13,11 @@ export interface GeneratedModel {
 // include_func_interp: the model interprets uninterpreted functions, the decls that their theory
 // asks for, such as theory_lra's divisions by zero, and the decls of a family without a theory, such
 // as model values, which stand for themselves.
-const isIncludedFuncInterp = (context: Context, decl: FuncDecl) => {
-  if (decl.family === FAMILY_USER) return true;
-  if (decl.family === FAMILY_BASIC) return false;
-  return context.getTheory(decl.family)?.includeFuncInterp(decl) ?? true;
+const isIncludedFuncInterp = (context: Context, decl: number) => {
+  const family = context.manager.funcDecls[decl].family;
+  if (family === FAMILY_USER) return true;
+  if (family === FAMILY_BASIC) return false;
+  return context.getTheory(family)?.includeFuncInterp(decl) ?? true;
 };
 
 export const mkModel = (context: Context): GeneratedModel => {
@@ -38,6 +40,7 @@ export const mkModel = (context: Context): GeneratedModel => {
   // without a theory variable, such as a coefficient.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
+  const dependentValues = new Map<Enode, DependentValue>();
   for (const node of context.enodes) {
     if (node.root !== node) continue;
     const expr = node.owner;
@@ -50,14 +53,33 @@ export const mkModel = (context: Context): GeneratedModel => {
     else if (theory !== undefined && theory.buildModels()) {
       const value = node.getThVar(theory.id) < 0 ? undefined : theory.mkValue(node);
       if (value === undefined) freshRoots.push(node);
-      else root2value.set(node, value);
+      else if (typeof value === "number") root2value.set(node, value);
+      else dependentValues.set(node, value);
     } else root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
   }
   for (const value of root2value.values()) model.registerValue(value);
-  for (const node of freshRoots) {
+  // A value that depends on others comes after them, and before the fresh values of its sort.
+  const getFreshValue = (node: Enode) => {
     const sort = manager.sorts[node.owner];
-    root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
-  }
+    const value = model.getFreshValue(sort) ?? model.getSomeValue(sort);
+    root2value.set(node, value);
+    return value;
+  };
+  const getDependentValue = (node: Enode): number => {
+    const existing = root2value.get(node);
+    if (existing !== undefined) return existing;
+    const dependent = dependentValues.get(node);
+    if (dependent === undefined) return getFreshValue(node);
+    dependentValues.delete(node);
+    const value = dependent.mkValue(
+      dependent.dependencies.map((dependency) => getDependentValue(dependency.root)),
+    );
+    model.registerValue(value);
+    root2value.set(node, value);
+    return value;
+  };
+  for (const node of dependentValues.keys()) getDependentValue(node);
+  for (const node of freshRoots) if (!root2value.has(node)) getFreshValue(node);
   const getValue = (node: Enode) =>
     root2value.get(node.root) ?? model.getSomeValue(manager.sorts[node.owner]);
   for (const node of context.enodes)
@@ -65,8 +87,7 @@ export const mkModel = (context: Context): GeneratedModel => {
       model.registerConst(manager.decls[node.owner], getValue(node));
   for (const node of context.enodes) {
     const expr = node.owner;
-    if (!context.isRelevant(expr) || !isIncludedFuncInterp(context, manager.funcDecls[node.decl]))
-      continue;
+    if (!context.isRelevant(expr) || !isIncludedFuncInterp(context, node.decl)) continue;
     if (node.numArgs === 0) {
       model.registerConst(node.decl, getValue(node));
       continue;

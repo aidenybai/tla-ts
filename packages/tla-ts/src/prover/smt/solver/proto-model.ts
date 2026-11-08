@@ -1,5 +1,7 @@
 // Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp,
-// src/model/value_factory.cpp, src/model/model_core.cpp), MIT license, see z3-license.txt.
+// src/model/value_factory.cpp, src/model/model_core.cpp, src/model/datatype_factory.cpp), MIT
+// license, see z3-license.txt.
+import { SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
   KIND_APP,
@@ -10,6 +12,11 @@ import {
   SORT_BOOL,
   isArithSort,
 } from "./ast";
+import {
+  getDatatypeConstructors,
+  getNonRecConstructor,
+  isRecursiveDatatype,
+} from "./datatype-decl-plugin";
 import { RandomGen } from "./random-gen";
 import { Rational } from "./rational";
 import { ObjHashtable, ObjMap } from "./hashtable";
@@ -221,6 +228,7 @@ export class ProtoModel {
   private userSortValues: RefVector;
   private arithValues: RefVector;
   private bvValues: RefVector;
+  private datatypeValues: RefVector;
   private nextValue = new Map<number, number>();
   private finiteSorts = new Set<number>();
   private boolRandom: RandomGen;
@@ -236,6 +244,7 @@ export class ProtoModel {
     this.userSortValues = new RefVector(manager);
     this.arithValues = new RefVector(manager);
     this.bvValues = new RefVector(manager);
+    this.datatypeValues = new RefVector(manager);
     this.auxDecls = new ObjHashtable((decl) => manager.getDeclHash(decl));
     this.evaluator = new ModelEvaluator(manager, this);
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
@@ -308,7 +317,9 @@ export class ProtoModel {
       ? this.arithValues
       : this.manager.isBvSort(sort)
         ? this.bvValues
-        : this.userSortValues
+        : this.manager.isDatatypeSort(sort)
+          ? this.datatypeValues
+          : this.userSortValues
     ).push(value);
     set.add(value);
   }
@@ -329,6 +340,20 @@ export class ProtoModel {
     if (sort === SORT_BOOL)
       return this.boolRandom.next() % 2 === 0 ? manager.falseExpr : manager.trueExpr;
     const set = this.values.get(sort);
+    if (manager.isDatatypeSort(sort)) {
+      if (set !== undefined && set.size > 0) {
+        const first = set[Symbol.iterator]().next();
+        if (first.done !== true) return first.value;
+      }
+      const constructor = getNonRecConstructor(manager, sort);
+      const value = manager.mkApp(
+        constructor,
+        manager.funcDecls[constructor].domain.map((argSort) => this.getSomeValue(argSort)),
+        sort,
+      );
+      this.addValue(sort, value);
+      return value;
+    }
     if (this.finiteSorts.has(sort) && set !== undefined) {
       const random = new RandomGen(manager.getNumAsts());
       let count = 1;
@@ -344,8 +369,31 @@ export class ProtoModel {
     return this.mkValue(0, sort);
   }
 
+  private getFreshDatatypeValue(sort: number): number | null {
+    const manager = this.manager;
+    if (isRecursiveDatatype(manager, sort))
+      throw new SmtUnsupportedError("fresh values of recursive datatypes");
+    const set = this.getValueSet(sort);
+    for (const constructor of getDatatypeConstructors(manager, sort)) {
+      let isFreshArgFound = false;
+      const args = manager.funcDecls[constructor].domain.map((argSort) => {
+        const fresh = isFreshArgFound ? null : this.getFreshValue(argSort);
+        if (fresh === null) return this.getSomeValue(argSort);
+        isFreshArgFound = true;
+        return fresh;
+      });
+      const value = manager.mkApp(constructor, args, sort);
+      if (!set.has(value)) {
+        this.addValue(sort, value);
+        return value;
+      }
+    }
+    return set.size === 0 ? this.getSomeValue(sort) : null;
+  }
+
   getFreshValue(sort: number): number | null {
     if (sort === SORT_BOOL || this.finiteSorts.has(sort)) return null;
+    if (this.manager.isDatatypeSort(sort)) return this.getFreshDatatypeValue(sort);
     const set = this.getValueSet(sort);
     const start = this.nextValue.get(sort) ?? 0;
     const manager = this.manager;
@@ -506,6 +554,7 @@ export class ProtoModel {
     this.userSortValues.reset();
     this.arithValues.reset();
     this.bvValues.reset();
+    this.datatypeValues.reset();
     for (const entry of this.constInterps) {
       this.manager.decDeclRef(entry[0]);
       this.manager.decRef(entry[1]);

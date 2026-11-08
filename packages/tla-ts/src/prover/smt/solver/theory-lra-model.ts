@@ -1,5 +1,5 @@
 // Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
-import { type FuncDecl, OP_DIV, OP_DIV0, OP_IDIV, OP_IDIV0, OP_MOD, OP_MOD0 } from "./ast";
+import { OP_DIV, OP_DIV0, OP_IDIV, OP_IDIV0, OP_MOD, OP_MOD0 } from "./ast";
 import { SmtUnsupportedError } from "../../../errors";
 import { Enode } from "./enode";
 import type { ProtoModel } from "./proto-model";
@@ -200,8 +200,9 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return root.parents.some((parent) => this.isUnderspecified(parent.owner));
   }
 
-  override includeFuncInterp(decl: FuncDecl) {
-    return decl.op === OP_DIV0 || decl.op === OP_IDIV0 || decl.op === OP_MOD0;
+  override includeFuncInterp(decl: number) {
+    const op = this.manager.funcDecls[decl].op;
+    return op === OP_DIV0 || op === OP_IDIV0 || op === OP_MOD0;
   }
 
   private isUnderspecified(expr: number) {

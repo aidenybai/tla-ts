@@ -1,6 +1,6 @@
 // Ported from Z3 (src/smt/smt_theory.h, src/smt/smt_theory.cpp), MIT license, see z3-license.txt.
 import { shrink } from "./array";
-import type { AstManager, FuncDecl } from "./ast";
+import type { AstManager } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import type { BoolVar } from "./literal";
@@ -9,6 +9,11 @@ import type { ProtoModel } from "./proto-model";
 export const FC_DONE = 0;
 export const FC_CONTINUE = 1;
 export const FC_GIVEUP = 2;
+
+export interface DependentValue {
+  dependencies: Enode[];
+  mkValue: (values: number[]) => number;
+}
 
 export abstract class Theory {
   protected varEnodes: Enode[] = [];
@@ -114,11 +119,11 @@ export abstract class Theory {
   initModel(_model: ProtoModel) {}
 
   // undefined stands for a fresh value of the sort.
-  mkValue(_node: Enode): number | undefined {
+  mkValue(_node: Enode): number | DependentValue | undefined {
     return undefined;
   }
 
-  includeFuncInterp(_decl: FuncDecl) {
+  includeFuncInterp(_decl: number) {
     return false;
   }
 }

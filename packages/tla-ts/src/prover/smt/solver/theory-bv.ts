@@ -3,7 +3,6 @@
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   FAMILY_BV,
-  type FuncDecl,
   OP_BADD,
   OP_BAND,
   OP_BASHR,
@@ -929,8 +928,8 @@ export class TheoryBv extends Theory {
     super.popScopeEh(numScopes);
   }
 
-  includeFuncInterp(decl: FuncDecl) {
-    return DIV0_OPS.has(decl.op);
+  includeFuncInterp(decl: number) {
+    return DIV0_OPS.has(this.manager.funcDecls[decl].op);
   }
 
   private mergeEh(firstRoot: number, secondRoot: number, first: number, second: number) {
