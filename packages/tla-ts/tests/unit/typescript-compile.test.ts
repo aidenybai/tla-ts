@@ -382,6 +382,16 @@ describe("top-level statements", () => {
     ).rejects.toThrow("two");
   });
 
+  it("stop the check when an array-like object passes a callback a value of another type", async () => {
+    const result = await checkModel(`
+      const object: { [key: string]: unknown } = { 0: 11, 1: "abc", length: 2 };
+      let isAll = Array.prototype.every.call(object, (value: number) => value === 11);
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't pass a value to a callback parameter of another type",
+    );
+  });
+
   it("stop the check when they throw", async () => {
     const result = await checkModel(`
       let count = 1;

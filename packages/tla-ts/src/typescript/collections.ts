@@ -13,7 +13,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { translateBody } from "./functions";
 import { getHeap } from "./heap";
-import { isComparableType, useJavaScript } from "./javascript";
+import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Scope } from "./scope";
 import {
   apply,
@@ -104,6 +104,35 @@ const bindElement = (callback: ts.Expression, scope: Scope, context: Context): E
   return { variable, scope: bindNames(scope, [{ name: variable, symbol }]) };
 };
 
+// An array-like object may hold values of any type, which TypeScript can't check against the
+// parameter a callback takes them as.
+export const checkElement = (
+  value: Expression,
+  parameter: ts.ParameterDeclaration | undefined,
+  heap: Expression,
+  context: Context,
+) => {
+  const names =
+    parameter === undefined
+      ? undefined
+      : getTypeNames(context.checker.getTypeAtLocation(parameter.name), context.checker);
+  return names === undefined
+    ? value
+    : share(value, "element", context, (shared) =>
+        ifExpression(
+          apply("\\in", [
+            useJavaScript("TypeOfIn", [heap, shared], context),
+            set(names.map((name) => string(name === "null" ? "object" : name))),
+          ]),
+          shared,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't pass a value to a callback parameter of another type"),
+          ]),
+        ),
+      );
+};
+
 // Binds a callback's (element, index, array) parameters for the TLA+ index of a sequence, which
 // counts from 1 where JavaScript counts from 0. A reducer takes an accumulator before them, and an
 // array-like object's callbacks take the object as their array.
@@ -116,9 +145,14 @@ const bindIndexed = (
   extra: { accumulator?: Expression; owner?: Expression } = {},
 ) => {
   const parameters = getCallback(callback, context).parameters;
+  const offset = extra.accumulator === undefined ? 0 : 1;
+  const getChecked = (value: Expression, at: number) =>
+    extra.owner === undefined
+      ? value
+      : checkElement(value, parameters[at], getHeap(scope, callback, context), context);
   const bindings = [
-    ...(extra.accumulator === undefined ? [] : [extra.accumulator]),
-    sequence === undefined ? undefined : index(sequence, [position]),
+    ...(extra.accumulator === undefined ? [] : [getChecked(extra.accumulator, 0)]),
+    sequence === undefined ? undefined : getChecked(index(sequence, [position]), offset),
     apply("-", [position, number(1)]),
     extra.owner ?? sequence,
   ];

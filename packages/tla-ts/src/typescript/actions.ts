@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
-import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
+import { checkElement, getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
   type HeapFunction,
   type Context,
@@ -809,11 +809,20 @@ const translateLoopCall = (
     ),
     isLooping: true,
   };
+  const getChecked = (value: Expression, at: number) =>
+    loop.isArrayLike
+      ? checkElement(
+          value,
+          callback.parameters[at],
+          getHeap(inner.scope, receiver, context),
+          context,
+        )
+      : value;
   const bound = bindValues(
     callback.parameters,
     [
-      ...(isReduce ? [kept] : []),
-      element,
+      ...(isReduce ? [getChecked(kept, 0)] : []),
+      getChecked(element, isReduce ? 1 : 0),
       apply("-", [identifier(position), number(1)]),
       loop.isArrayLike ? owner : sequence,
     ],
