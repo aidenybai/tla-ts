@@ -129,6 +129,11 @@ const getRandomSubsetSet = (args: BuiltinArgument[], runtime: CheckerRuntime) =>
   return tossSubsets(toFiniteSet(set).elements, picks, probability, runtime.getRandom());
 };
 
+// The shipped Randomization module doesn't declare RandomSubsetSet, which TLC's Java class overrides
+// only in a user's module of that name.
+export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
+  defineStateOperator("RandomSubsetSet", 3, (args) => getRandomSubsetSet(args, runtime));
+
 export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[] => [
   defineStateOperator("RandomSubset", 2, (args) => {
     const count = getValue(args, 0, "RandomSubset");
@@ -158,7 +163,6 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
     return createSet(getRandomSubset(count, set, runtime.getRandom(), runtime.version));
   }),
   defineStateOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
-  defineStateOperator("RandomSubsetSet", 3, (args) => getRandomSubsetSet(args, runtime)),
   defineStateOperator("TestRandomSetOfSubsets", 3, (args) =>
     createTuple(
       Array.from(

@@ -21,7 +21,7 @@ import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import { createBagsOperators } from "./bags";
 import { createJsonOperators, type FileSystem } from "./json";
-import { createRandomizationOperators } from "./randomization";
+import { createRandomizationOperators, createRandomSubsetSet } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc/tlcext-operators";
 import { createTlcOperators } from "./tlc/tlc-operators";
 import { TLC_JAVA_METHODS } from "./tlc/jar-data";
@@ -520,12 +520,14 @@ export const getJavaOverrides = (
   runtime: CheckerRuntime,
   files: FileSystem,
   builtins: ReadonlyMap<string, Builtin>,
-) =>
-  name === "TransitiveClosure"
-    ? TRANSITIVE_CLOSURE_OPERATORS
-    : getSanyStandardModules(runtime.version).has(name)
-      ? getStandardModule(name, print, runtime, files, builtins)?.operators
-      : undefined;
+) => {
+  if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
+  if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
+  const operators = getStandardModule(name, print, runtime, files, builtins)?.operators;
+  return name === "Randomization" && operators
+    ? [...operators, createRandomSubsetSet(runtime)]
+    : operators;
+};
 
 // The modules that each standard module loads through EXTENDS and LOCAL INSTANCE in TLC.
 export const STANDARD_DEPENDENCIES = new Map([
