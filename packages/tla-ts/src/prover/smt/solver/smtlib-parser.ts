@@ -31,6 +31,23 @@ import {
   OP_MUL,
   OP_NOT,
   OP_OR,
+  OP_POWER,
+  OP_POWER0,
+  OP_SIN,
+  OP_COS,
+  OP_TAN,
+  OP_ASIN,
+  OP_ACOS,
+  OP_ATAN,
+  OP_SINH,
+  OP_COSH,
+  OP_TANH,
+  OP_ASINH,
+  OP_ACOSH,
+  OP_ATANH,
+  OP_EXP,
+  OP_ATAN2,
+  OP_LOG,
   OP_SELECT,
   OP_STORE,
   OP_SUB,
@@ -205,27 +222,30 @@ const LOGIC_FREE_ALIASES = new Map([
   ["equiv", "="],
 ]);
 
-// Z3 knows these only when the script sets no logic.
+// Z3 declares these only without a logic, in ALL or in QF_NTA.
+const TRANSCENDENTAL_OPS = new Map([
+  ["^", OP_POWER],
+  ["^0", OP_POWER0],
+  ["sin", OP_SIN],
+  ["cos", OP_COS],
+  ["tan", OP_TAN],
+  ["asin", OP_ASIN],
+  ["acos", OP_ACOS],
+  ["atan", OP_ATAN],
+  ["sinh", OP_SINH],
+  ["cosh", OP_COSH],
+  ["tanh", OP_TANH],
+  ["asinh", OP_ASINH],
+  ["acosh", OP_ACOSH],
+  ["atanh", OP_ATANH],
+  ["exp", OP_EXP],
+  ["atan2", OP_ATAN2],
+  ["arctan2", OP_ATAN2],
+  ["log", OP_LOG],
+  ["ln", OP_LOG],
+]);
 const TRANSCENDENTALS = new Set([
-  "^",
-  "^0",
-  "sin",
-  "cos",
-  "tan",
-  "asin",
-  "acos",
-  "atan",
-  "sinh",
-  "cosh",
-  "tanh",
-  "asinh",
-  "acosh",
-  "atanh",
-  "exp",
-  "atan2",
-  "arctan2",
-  "log",
-  "ln",
+  ...TRANSCENDENTAL_OPS.keys(),
   "pi",
   "euler",
   "/0",
@@ -235,6 +255,9 @@ const TRANSCENDENTALS = new Set([
   "complex.real",
   "complex.imag",
 ]);
+
+const hasTranscendentals = (logic: string | undefined) =>
+  logic === undefined || logic === "ALL" || logic === "QF_NTA";
 
 const THEORY_SORTS = new Set([
   "BitVec",
@@ -330,7 +353,36 @@ const THEORY_OPERATORS = new Set([
 // left.
 const NESTED_OPS = new Set([OP_XOR, OP_IMPLIES, OP_SUB, OP_DIV, OP_IDIV]);
 
-const COERCING_OPS = new Set([OP_ADD, OP_SUB, OP_UMINUS, OP_MUL, OP_LE, OP_GE, OP_LT, OP_GT]);
+const COERCING_OPS = new Set([
+  OP_ADD,
+  OP_SUB,
+  OP_UMINUS,
+  OP_MUL,
+  OP_POWER,
+  OP_POWER0,
+  OP_LE,
+  OP_GE,
+  OP_LT,
+  OP_GT,
+]);
+
+const REAL_FUNCTION_OPS = new Set([
+  OP_SIN,
+  OP_COS,
+  OP_TAN,
+  OP_ASIN,
+  OP_ACOS,
+  OP_ATAN,
+  OP_SINH,
+  OP_COSH,
+  OP_TANH,
+  OP_ASINH,
+  OP_ACOSH,
+  OP_ATANH,
+  OP_EXP,
+  OP_ATAN2,
+  OP_LOG,
+]);
 
 const ARITIES = new Map<number, [number, number]>([
   [OP_AND, [0, Infinity]],
@@ -338,16 +390,30 @@ const ARITIES = new Map<number, [number, number]>([
   [OP_ITE, [3, 3]],
   [OP_EQ, [2, Infinity]],
   [OP_DISTINCT, [2, Infinity]],
-  ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT].map(
-    (op): [number, [number, number]] => [op, [1, 1]],
-  ),
-  ...[OP_IMPLIES, OP_XOR, OP_IDIV, OP_MOD, OP_DIV, OP_LE, OP_GE, OP_LT, OP_GT].map(
-    (op): [number, [number, number]] => [op, [2, 2]],
-  ),
+  ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT, ...REAL_FUNCTION_OPS]
+    .filter((op) => op !== OP_ATAN2)
+    .map((op): [number, [number, number]] => [op, [1, 1]]),
+  ...[
+    OP_IMPLIES,
+    OP_XOR,
+    OP_IDIV,
+    OP_MOD,
+    OP_DIV,
+    OP_LE,
+    OP_GE,
+    OP_LT,
+    OP_GT,
+    OP_POWER,
+    OP_POWER0,
+    OP_ATAN2,
+  ].map((op): [number, [number, number]] => [op, [2, 2]]),
 ]);
 
 const RANGES = new Map<number, number>([
   [OP_TO_REAL, SORT_REAL],
+  [OP_POWER, SORT_REAL],
+  [OP_POWER0, SORT_REAL],
+  ...[...REAL_FUNCTION_OPS].map((op): [number, number] => [op, SORT_REAL]),
   [OP_DIV, SORT_REAL],
   [OP_TO_INT, SORT_INT],
   [OP_IDIV, SORT_INT],
@@ -890,7 +956,7 @@ export const createSmtlibReader = (
     if (COERCING_OPS.has(op)) return getJoin(args) === SORT_REAL ? SORT_REAL : SORT_INT;
     if (op === OP_ABS || op === OP_TO_REAL || op === OP_TO_INT) return manager.sorts[args[0]];
     if (op === OP_IDIV || op === OP_MOD) return SORT_INT;
-    if (op === OP_DIV || op === OP_IS_INT) return SORT_REAL;
+    if (op === OP_DIV || op === OP_IS_INT || REAL_FUNCTION_OPS.has(op)) return SORT_REAL;
     return SORT_BOOL;
   };
 
@@ -1420,10 +1486,15 @@ export const createSmtlibReader = (
     const arrayOp = getArrayOp(name);
     if (arrayOp !== undefined) return mkArrayTerm(arrayOp, args, [], at);
     const builtin = (logic === undefined ? LOGIC_FREE_ALIASES.get(name) : undefined) ?? name;
-    if (builtin === "rem" || (TRANSCENDENTALS.has(builtin) && logic === undefined))
+    const isTranscendental = TRANSCENDENTALS.has(builtin) && hasTranscendentals(logic);
+    if (isTranscendental && args.length === 0 && builtin === "pi") return manager.piExpr;
+    if (isTranscendental && args.length === 0 && builtin === "euler") return manager.eulerExpr;
+    const transcendentalOp = isTranscendental ? TRANSCENDENTAL_OPS.get(builtin) : undefined;
+    if (builtin === "rem" || (isTranscendental && transcendentalOp === undefined))
       throw new SmtUnsupportedError(`the operator ${name}`);
     const chainable = CHAINABLE_OPS.get(builtin);
-    const arithOp = chainable ?? (builtin === "~" ? OP_UMINUS : BUILTIN_OPS.get(builtin));
+    const arithOp =
+      chainable ?? (builtin === "~" ? OP_UMINUS : (BUILTIN_OPS.get(builtin) ?? transcendentalOp));
     if (
       args.length === 0 &&
       arithOp !== undefined &&
@@ -1438,7 +1509,7 @@ export const createSmtlibReader = (
     if (chainable !== undefined) return mkChain(chainable, args, at);
     if (builtin === "~") return mkApp(OP_UMINUS, args, at);
     if (builtin === "-" && args.length === 1) return mkApp(OP_UMINUS, args, at);
-    const op = BUILTIN_OPS.get(builtin);
+    const op = BUILTIN_OPS.get(builtin) ?? transcendentalOp;
     if (op === undefined) {
       if (THEORY_OPERATOR.test(name) || THEORY_OPERATORS.has(name))
         throw new SmtUnsupportedError(`the operator ${name}`);

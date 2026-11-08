@@ -59,8 +59,27 @@ export const OP_IS_INT = 26;
 export const OP_DIV0 = 27;
 export const OP_IDIV0 = 28;
 export const OP_MOD0 = 29;
-export const OP_UNINTERPRETED = 30;
-const OP_MODEL_VALUE = 31;
+export const OP_POWER = 30;
+export const OP_POWER0 = 31;
+export const OP_SIN = 32;
+export const OP_COS = 33;
+export const OP_TAN = 34;
+export const OP_ASIN = 35;
+export const OP_ACOS = 36;
+export const OP_ATAN = 37;
+export const OP_SINH = 38;
+export const OP_COSH = 39;
+export const OP_TANH = 40;
+export const OP_ASINH = 41;
+export const OP_ACOSH = 42;
+export const OP_ATANH = 43;
+export const OP_EXP = 44;
+export const OP_ATAN2 = 45;
+export const OP_LOG = 46;
+export const OP_PI = 47;
+export const OP_E = 48;
+export const OP_UNINTERPRETED = 60;
+const OP_MODEL_VALUE = 61;
 
 const BV_OP_BASE = 100;
 export const OP_BV_NUM = BV_OP_BASE;
@@ -270,6 +289,25 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["/0", FAMILY_ARITH, OP_DIV0, SORT_REAL],
   ["div0", FAMILY_ARITH, OP_IDIV0, SORT_INT],
   ["mod0", FAMILY_ARITH, OP_MOD0, SORT_INT],
+  ["^", FAMILY_ARITH, OP_POWER, SORT_REAL],
+  ["^0", FAMILY_ARITH, OP_POWER0, SORT_REAL],
+  ["sin", FAMILY_ARITH, OP_SIN, SORT_REAL],
+  ["cos", FAMILY_ARITH, OP_COS, SORT_REAL],
+  ["tan", FAMILY_ARITH, OP_TAN, SORT_REAL],
+  ["asin", FAMILY_ARITH, OP_ASIN, SORT_REAL],
+  ["acos", FAMILY_ARITH, OP_ACOS, SORT_REAL],
+  ["atan", FAMILY_ARITH, OP_ATAN, SORT_REAL],
+  ["sinh", FAMILY_ARITH, OP_SINH, SORT_REAL],
+  ["cosh", FAMILY_ARITH, OP_COSH, SORT_REAL],
+  ["tanh", FAMILY_ARITH, OP_TANH, SORT_REAL],
+  ["asinh", FAMILY_ARITH, OP_ASINH, SORT_REAL],
+  ["acosh", FAMILY_ARITH, OP_ACOSH, SORT_REAL],
+  ["atanh", FAMILY_ARITH, OP_ATANH, SORT_REAL],
+  ["exp", FAMILY_ARITH, OP_EXP, SORT_REAL],
+  ["atan2", FAMILY_ARITH, OP_ATAN2, SORT_REAL],
+  ["log", FAMILY_ARITH, OP_LOG, SORT_REAL],
+  ["pi", FAMILY_ARITH, OP_PI, SORT_REAL],
+  ["euler", FAMILY_ARITH, OP_E, SORT_REAL],
 ];
 
 // Z3's family ids and decl kinds, which its AST hashes include.
@@ -318,6 +356,25 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_DIV0, ["/0", 12, 2]],
   [OP_IDIV0, ["div0", 13, 2]],
   [OP_MOD0, ["mod0", 17, 2]],
+  [OP_POWER, ["^", 22, 2]],
+  [OP_POWER0, ["^0", 23, 2]],
+  [OP_SIN, ["sin", 24, 1]],
+  [OP_COS, ["cos", 25, 1]],
+  [OP_TAN, ["tan", 26, 1]],
+  [OP_ASIN, ["asin", 27, 1]],
+  [OP_ACOS, ["acos", 28, 1]],
+  [OP_ATAN, ["atan", 29, 1]],
+  [OP_SINH, ["sinh", 30, 1]],
+  [OP_COSH, ["cosh", 31, 1]],
+  [OP_TANH, ["tanh", 32, 1]],
+  [OP_ASINH, ["asinh", 33, 1]],
+  [OP_ACOSH, ["acosh", 34, 1]],
+  [OP_ATANH, ["atanh", 35, 1]],
+  [OP_EXP, ["exp", 36, 1]],
+  [OP_ATAN2, ["atan2", 37, 2]],
+  [OP_LOG, ["log", 38, 1]],
+  [OP_PI, ["pi", 43, 0]],
+  [OP_E, ["euler", 44, 0]],
 ]);
 
 // The small ids of the Int declarations Z3 makes when it starts, from arith_decl_plugin::set_manager,
@@ -348,6 +405,24 @@ const Z3_SMALL_IDS = new Map([
   [OP_TO_REAL, 43],
   [OP_TO_INT, 45],
   [OP_IS_INT, 47],
+  [OP_POWER, 48],
+  [OP_SIN, 52],
+  [OP_COS, 53],
+  [OP_TAN, 54],
+  [OP_ASIN, 55],
+  [OP_ACOS, 56],
+  [OP_ATAN, 57],
+  [OP_SINH, 58],
+  [OP_COSH, 59],
+  [OP_TANH, 60],
+  [OP_ASINH, 61],
+  [OP_ACOSH, 62],
+  [OP_ATANH, 63],
+  [OP_EXP, 64],
+  [OP_ATAN2, 65],
+  [OP_LOG, 66],
+  [OP_PI, 67],
+  [OP_E, 68],
 ]);
 
 // The small id of the first sort or declaration a problem declares, after Z3's own.
@@ -495,6 +570,8 @@ export class AstManager {
   private isFiniteSetPluginInitialized = false;
   readonly trueExpr: number;
   readonly falseExpr: number;
+  readonly piExpr: number;
+  readonly eulerExpr: number;
   isHiDiv0 = true;
 
   constructor(readonly limit: ResourceLimit) {
@@ -513,6 +590,10 @@ export class AstManager {
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
     this.incRef(this.trueExpr);
     this.incRef(this.falseExpr);
+    this.piExpr = this.mkApp(OP_PI, [], SORT_REAL);
+    this.eulerExpr = this.mkApp(OP_E, [], SORT_REAL);
+    this.incRef(this.piExpr);
+    this.incRef(this.eulerExpr);
     this.nextId = FIRST_FREE_ID;
   }
 
@@ -521,7 +602,7 @@ export class AstManager {
   }
 
   getNumAsts() {
-    return this.numLive + FIRST_FREE_ID - 2 + this.numDecls;
+    return this.numLive + FIRST_FREE_ID - 4 + this.numDecls;
   }
 
   private getSignatureDecl(key: number | string) {
@@ -584,6 +665,8 @@ export class AstManager {
     if (decl === OP_EQ) return 8 * this.sorts[this.getArg(expr, 0)] + SIGNATURE_EQ;
     if (decl === OP_ITE) return 8 * this.sorts[expr] + SIGNATURE_ITE;
     if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
+    if (decl === OP_POWER0)
+      return 8 * (decl + 64 * this.sorts[this.getArg(expr, 0)]) + SIGNATURE_DIV0;
     if (decl === OP_DISTINCT || decl === OP_PATTERN)
       return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
