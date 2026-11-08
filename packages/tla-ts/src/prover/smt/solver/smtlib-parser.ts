@@ -41,6 +41,12 @@ import {
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
 
+export interface ParserOptions {
+  isIgnoringBadPatterns: boolean;
+}
+
+const DEFAULT_PARSER_OPTIONS: ParserOptions = { isIgnoringBadPatterns: true };
+
 // Z3 counts the columns of the first line from 1 and of the others from 0.
 export interface SmtToken {
   kind: "(" | ")" | "symbol" | "keyword" | "string" | "numeral" | "decimal" | "bitvector";
@@ -477,7 +483,11 @@ const expectSymbol = (sexpr: SExpr | undefined, message: string, at: SExpr): Smt
   return sexpr;
 };
 
-export const createSmtlibReader = (manager: AstManager, logic?: string) => {
+export const createSmtlibReader = (
+  manager: AstManager,
+  logic?: string,
+  options: ParserOptions = DEFAULT_PARSER_OPTIONS,
+) => {
   const sorts = new Map<string, number>([
     ["Bool", SORT_BOOL],
     ["Int", SORT_INT],
@@ -581,13 +591,19 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
 
   // push_pattern_frame with ignore_bad_patterns: (t1 ... tn) is a multi-pattern, (f a ...) a pattern
   // of one term, and a pattern that starts with a constant is dropped unparsed.
-  const parsePattern = (sexpr: SExpr | undefined) => {
-    if (sexpr?.kind !== "list" || sexpr.items.length === 0) return undefined;
+  const rejectPattern = (message: string, at: SExpr) => {
+    if (!options.isIgnoringBadPatterns) throw new SmtParseError(message, at);
+    return undefined;
+  };
+
+  const parsePattern = (sexpr: SExpr, at: SExpr) => {
+    if (sexpr.kind !== "list") return rejectPattern("invalid pattern, '(' expected", sexpr);
+    if (sexpr.items.length === 0) return rejectPattern("invalid empty pattern", at);
     const head = sexpr.items[0];
     if (head.kind === "list") return manager.mkPattern(sexpr.items.map(parseTerm));
     const decl = head.text === "true" || head.text === "false" ? -1 : funcs.get(head.text);
     if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0))
-      return undefined;
+      return rejectPattern("invalid constant pattern", head);
     return manager.mkPattern([parseTerm(sexpr)]);
   };
 
@@ -667,7 +683,7 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     const patterns: number[] = [];
     for (const attribute of attributes) {
       if (attribute.keyword.kind !== "keyword" || attribute.keyword.text !== ":pattern") continue;
-      const pattern = parsePattern(attribute.value);
+      const pattern = parsePattern(attribute.value ?? list.end, list.end);
       if (pattern === undefined) continue;
       manager.incRef(pattern);
       patterns.push(pattern);
@@ -690,7 +706,10 @@ export const createSmtlibReader = (manager: AstManager, logic?: string) => {
     // and the valid ones after.
     let numKept = 0;
     for (const pattern of patterns) {
-      if (!isValidPattern(pattern, varSorts.length)) continue;
+      if (!isValidPattern(pattern, varSorts.length)) {
+        rejectPattern("invalid pattern", list.end);
+        continue;
+      }
       manager.incRef(pattern);
       manager.decRef(patterns[numKept]);
       patterns[numKept] = pattern;

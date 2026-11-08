@@ -115,24 +115,25 @@ export const runSmtlibScript = (
   print: (line: string) => void,
 ) => {
   const commands = createCommandReader(text);
+  const settings = {
+    isPrintingSuccess: false,
+    isMbqi: true,
+    printOptions: { ...DEFAULT_PRINT_OPTIONS },
+    parserOptions: { isIgnoringBadPatterns: true },
+  };
   const createState = (): ScriptState => {
     const manager = new AstManager(
       new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
     );
     return {
       manager,
-      reader: createSmtlibReader(manager),
+      reader: createSmtlibReader(manager, undefined, settings.parserOptions),
       assertions: [],
       objectives: [],
       scopes: [],
     };
   };
   const script = { state: createState() };
-  const settings = {
-    isPrintingSuccess: false,
-    isMbqi: true,
-    printOptions: { ...DEFAULT_PRINT_OPTIONS },
-  };
   const display = (expr: number) =>
     print(
       printExpr(
@@ -271,6 +272,7 @@ export const runSmtlibScript = (
       manager.decRef(simplified);
       manager.decRef(term);
     },
+    display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),
     echo: (list) => {
       const message = list.items[1];
       if (message?.kind !== "string")
@@ -285,6 +287,8 @@ export const runSmtlibScript = (
       const isTrue = isSymbol(value, "true");
       if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
+      if (optionName === ":parser.ignore_bad_patterns")
+        settings.parserOptions.isIgnoringBadPatterns = isTrue;
       const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);
       if (numericOption !== undefined && value?.kind === "numeral")
         settings.printOptions[numericOption] = Number(value.text);
@@ -301,7 +305,11 @@ export const runSmtlibScript = (
       const logic = list.items[1];
       if (!isSymbol(logic))
         throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
-      script.state.reader = createSmtlibReader(script.state.manager, logic.text);
+      script.state.reader = createSmtlibReader(
+        script.state.manager,
+        logic.text,
+        settings.parserOptions,
+      );
     },
     "set-info": () => {},
   };
