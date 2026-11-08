@@ -387,13 +387,12 @@ export const bindValue = (scope: Scope | undefined, name: string, value: Value):
   parent: scope,
 });
 
+// ContextEnumerator#nextElement, whose message TLC prints without filling in its parameter.
 export const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
-    throw new TlaEvaluationError(
-      `Cannot bind <<${pattern.names.join(", ")}>> to ${formatValue(value)}, which is not a tuple of that length`,
-    );
+    throw new TlaEvaluationError("Argument mismatch in operator application.%1");
   }
   return pattern.names.reduce<Scope | undefined>(
     (current, name, index) => bindValue(current, name, elements[index]),
@@ -1819,10 +1818,19 @@ const compileSetComprehension = (
     }
     const chosen = { value: undefined as Value | undefined };
     const elements = getNormalizedElements(base, set, context.environment.runtime.version);
+    const pattern = expression.pattern;
     someElement(elements, (element) => {
-      const scope = bindPattern(context.scope, expression.pattern, element);
+      if (
+        pattern.kind === "Tuple" &&
+        getSequenceElements(element)?.length !== pattern.names.length
+      ) {
+        throw new TlaEvaluationError(
+          `Attempted to compute the value of an expression of form\nCHOOSE <<x1, ... , xN>> \\in S: P, but S was not a set\nof N-tuples.\n${describeRange(expression)}`,
+        );
+      }
+      const scope = bindPattern(context.scope, pattern, element);
       if (!expectBooleanBody(body(withScope(context, scope)), expression)) return false;
-      chosen.value = getBoundValue(expression.pattern, scope);
+      chosen.value = getBoundValue(pattern, scope);
       return true;
     });
     if (chosen.value === undefined) {
