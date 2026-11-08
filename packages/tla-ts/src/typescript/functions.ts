@@ -200,11 +200,12 @@ const translatePure = (
   if (ts.isVariableStatement(statement)) {
     const bound = statement.declarationList.declarations.reduce<Bound>(
       (current, declaration) => {
-        if (declaration.initializer === undefined) {
-          throw new TlaTypeScriptError("Declare locals with a value", declaration);
-        }
-        if (getFunction(declaration.initializer) !== undefined) return current;
-        const value = translateExpression(declaration.initializer, current.scope, context);
+        const initializer = declaration.initializer;
+        if (getFunction(initializer) !== undefined) return current;
+        const value =
+          initializer === undefined
+            ? getUndefined(context)
+            : translateExpression(initializer, current.scope, context);
         const added = bindPattern(declaration.name, value, current.scope, context);
         return { definitions: [...current.definitions, ...added.definitions], scope: added.scope };
       },

@@ -213,6 +213,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
       "const run = () => { const add = (value: number, step = 1) => value + step; return [add(1), add(1, undefined), add(1, 5)]; };",
     ],
     ["run()", "const run = () => { const nothing = () => {}; return nothing(); };"],
+    ["run()", "const run = () => { let value: number | undefined; return value; };"],
     ["call()", "let call = () => 4;"],
     [
       "count(new Set([1, 2, 3]))",

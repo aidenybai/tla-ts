@@ -17,6 +17,7 @@ const CASES: Record<string, Case[]> = {
     { variables: "count = 0", statements: "++count; --count; ++count;" },
     { variables: "label = 'a'", statements: "label += 'b'; label = label + label;" },
     { variables: "isOn = false", statements: "isOn = !isOn;" },
+    { variables: "count = 0", statements: "let next: number | undefined; next = 3; count = next;" },
     { variables: "isEqual = false, count = 2", statements: "isEqual = count === 2;" },
     { variables: "first = 1, second = 2", statements: "[first, second] = [second, first];" },
     {

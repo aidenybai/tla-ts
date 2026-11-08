@@ -354,14 +354,16 @@ const translateDeclarations = (
   if (declarations.length === 0) return continueWith(path);
   const declaration = declarations[0];
   const rest = declarations.slice(1);
-  if (declaration.initializer === undefined) {
-    throw new TlaTypeScriptError("Declare locals with a value", declaration);
-  }
-  if (getFunction(declaration.initializer) !== undefined) {
+  const initializer = declaration.initializer;
+  if (getFunction(initializer) !== undefined) {
     return translateDeclarations(rest, path, context, continueWith);
   }
-  const removed = getRemovedValue(declaration.initializer, path, context);
-  const value = removed?.value ?? translateExpression(declaration.initializer, path.scope, context);
+  const removed = initializer && getRemovedValue(initializer, path, context);
+  const value =
+    removed?.value ??
+    (initializer === undefined
+      ? getUndefined(context)
+      : translateExpression(initializer, path.scope, context));
   const afterCall = removed?.path ?? path;
   const bound = bindPattern(declaration.name, value, afterCall.scope, context);
   const symbol = ts.isIdentifier(declaration.name)
