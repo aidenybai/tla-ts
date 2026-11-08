@@ -8,6 +8,8 @@ import {
   TlaModuleError,
   TlaStackOverflowError,
   TlaUnsupportedError,
+  TlaUnsupportedOperationError,
+  getUnexpectedException,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
@@ -59,6 +61,7 @@ export interface SimulationOptions extends CheckOptions {
   traceCount: bigint | undefined;
   // TLC's -aril, how many random numbers TLC draws from the seed before it starts.
   aril: bigint;
+  isGenerating: boolean;
   // What TLC prints as it simulates, in its order.
   onSimulation: (output: SimulationOutput) => void;
 }
@@ -194,7 +197,7 @@ export const simulate = (options: SimulationOptions): number => {
         return node && toActionValue(node.action);
       case "config":
         return createRecord([
-          ["mode", "simulate"],
+          ["mode", options.isGenerating ? "generate" : "simulate"],
           ["depth", traceDepth === INFINITE_DEPTH ? -1 : traceDepth],
           ["traces", Number(BigInt.asIntN(32, options.traceCount ?? (1n << 63n) - 1n))],
           ["deadlock", config.checkDeadlock],
@@ -522,6 +525,7 @@ export const simulate = (options: SimulationOptions): number => {
           return false;
         },
         action.scope,
+        options.isGenerating ? workerRandom : undefined,
       );
     } catch (error) {
       if (!(error instanceof TlaIncompleteSuccessorError)) throw error;
@@ -604,7 +608,7 @@ export const simulate = (options: SimulationOptions): number => {
       toolMessage: `${prefix}${formatNestedMessage(failure.message, true)}`,
       node,
       isException: true,
-      isSummarized: isEvalException(failure),
+      isSummarized: prefix !== UNEXPECTED_EXCEPTION,
     };
   };
 
@@ -688,5 +692,9 @@ const toEvaluationError = (error: unknown) => {
 };
 
 // MP.ECGeneralMsg names the class of the exception, a TLCRuntimeException as a RuntimeException.
-const getUnexpectedPrefix = (error: TlaEvaluationError) =>
-  isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;
+const getUnexpectedPrefix = (error: TlaEvaluationError) => {
+  if (error instanceof TlaUnsupportedOperationError) {
+    return getUnexpectedException("java.lang.UnsupportedOperationException");
+  }
+  return isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;
+};

@@ -946,12 +946,13 @@ const checkSpec = async (
         writeFileSync(path, content);
       },
     };
-    if (args.mode === "simulate") {
+    if (args.mode !== "model-check") {
       const status = simulate({
         ...options,
         traceDepth: args.traceDepth,
         traceCount: args.traceCount,
         aril: args.aril,
+        isGenerating: args.mode === "generate",
         onSimulation: (output) => printSimulation(printer, output),
       });
       printFinished();

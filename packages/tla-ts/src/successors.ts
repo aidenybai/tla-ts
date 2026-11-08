@@ -7,7 +7,12 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
+import {
+  TlaEvaluationError,
+  TlaIllegalStateError,
+  TlaIncompleteSuccessorError,
+  TlaUnsupportedOperationError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -16,6 +21,7 @@ import {
   bindLazyArguments,
   bindDefinitions,
   bindOperatorArguments,
+  bindPattern,
   bindValue,
   compileArgumentScope,
   evaluate,
@@ -37,6 +43,7 @@ import {
   type State,
 } from "./evaluate";
 import { mapChildren } from "./instances";
+import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import { isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc/replay";
 import {
   formatValue,
@@ -59,6 +66,8 @@ interface Run {
   isEnabled: boolean;
   current: Value[] | undefined;
   isStopped: boolean;
+  generator: JavaRandom | undefined;
+  successors: number;
 }
 
 type Continuation = (partial: State, action: string | undefined) => void;
@@ -155,7 +164,12 @@ const getRunner = (expression: Expression, environment: Environment, isInit: boo
   const runners = isInit ? initRunners : nextRunners;
   const cached = runners.get(expression);
   if (cached) return cached;
-  const runner = compileAction(expression, environment, isInit);
+  const deterministic = compileAction(expression, environment, isInit);
+  const random = isInit ? undefined : compileRandomAction(expression, environment);
+  const runner: Runner = random
+    ? (run, scope, partial, action, isFixed, onComplete) =>
+        (run.generator ? random : deterministic)(run, scope, partial, action, isFixed, onComplete)
+    : deterministic;
   runners.set(expression, runner);
   return runner;
 };
@@ -472,6 +486,17 @@ const compileMembership = (
       throw createRunError(run, `${message}\n${describeRange(expression)}`);
     }
     const elements = getStreamedElements(value);
+    if (run.generator) {
+      for (const element of getRandomSubset(
+        elements.length,
+        value,
+        run.environment.runtime.getRandom(),
+        run.environment.runtime.version,
+      )) {
+        onComplete(assign(partial, index, element), action);
+        if (run.successors > 0 || run.isStopped) return;
+      }
+    }
     for (let position = 0; position < elements.length && !run.isStopped; position++) {
       onComplete(assign(partial, index, elements[position]), action);
     }
@@ -812,6 +837,66 @@ const compileDisjunction = (
   };
 };
 
+const compileRandomChoice =
+  (choices: Runner[]): Runner =>
+  (run, scope, partial, action, isFixed, onComplete) => {
+    const generator = run.generator;
+    if (!generator) throw new Error("A random choice needs the run's generator");
+    const start = Math.floor(generator.nextDouble() * choices.length);
+    const prime = nextPrime(generator);
+    for (let attempt = 0; attempt < choices.length; attempt++) {
+      choices[(start + attempt * prime) % choices.length](
+        run,
+        scope,
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
+      if (run.successors > 0 || run.isStopped) return;
+    }
+  };
+
+const compileRandomExists = (
+  expression: QuantifierExpression,
+  environment: Environment,
+): Runner => {
+  const body = getRunner(expression.body, environment, false);
+  return (run, scope, partial, action, isFixed, onComplete) => {
+    const context = getContext(run, scope, partial);
+    const version = environment.runtime.version;
+    const orders = expression.bounds.map((bound) => {
+      const set = evaluate(bound.set, context);
+      return getRandomSubset(
+        getContextElements(set, bound.set, version).length,
+        set,
+        environment.runtime.getRandom(),
+        version,
+      );
+    });
+    const visit = (position: number, boundScope: Scope | undefined): boolean => {
+      if (position < 0) {
+        body(run, boundScope, partial, action, isFixed, onComplete);
+        return run.successors > 0 || run.isStopped;
+      }
+      const pattern = expression.bounds[position].pattern;
+      return orders[position].some((element) =>
+        visit(position - 1, bindPattern(boundScope, pattern, element)),
+      );
+    };
+    visit(orders.length - 1, scope);
+  };
+};
+
+const compileRandomAction = (expression: Expression, environment: Environment) => {
+  if (expression.kind === "Exists") return compileRandomExists(expression, environment);
+  if (expression.kind !== "Or") return undefined;
+  const runners = expression.operands.map((operand) => getRunner(operand, environment, false));
+  return expression.isBulleted
+    ? compileRandomChoice(runners)
+    : runners.reduce((left, right) => compileRandomChoice([left, right]));
+};
+
 const compileAction = (
   expression: Expression,
   environment: Environment,
@@ -950,6 +1035,11 @@ const compileAction = (
       }));
       const other = expression.other ? getChildRunner(expression.other) : undefined;
       return (run, scope, partial, action, isFixed, onComplete) => {
+        if (run.generator) {
+          throw new TlaUnsupportedOperationError(
+            "Probabilistic evaluation of next-state relation not implemented for CASE yet.",
+          );
+        }
         const context = getContext(run, scope, partial);
         const arm = arms.find((candidate) => {
           const value = evaluate(candidate.condition, context);
@@ -1010,11 +1100,11 @@ const compileAction = (
         });
     }
     case "BoxAction":
-      return getChildRunner({
-        kind: "Or",
-        operands: [expression.action, getUnchangedWrapper(expression.subscript)],
-        location: expression.location,
-      });
+      return compileDisjunction(
+        [expression.action, getUnchangedWrapper(expression.subscript)],
+        environment,
+        isInit,
+      );
     case "Label":
       return getChildRunner(expression.body);
     case "Identifier":
@@ -1090,6 +1180,8 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     isEnabled: true,
     current: state,
     isStopped: false,
+    generator: undefined,
+    successors: 0,
   };
   // TLC stops computing ENABLED at the first successor, so it skips the rest of the action.
   getRunner(expression, environment, false)(
@@ -1120,6 +1212,8 @@ export const forEachInitialState = (
     isEnabled: false,
     current: undefined,
     isStopped: false,
+    generator: undefined,
+    successors: 0,
   };
   getRunner(expression, environment, true)(
     run,
@@ -1167,6 +1261,7 @@ export const forEachSuccessor = (
   environment: Environment,
   onSuccessor: (successor: Successor) => boolean,
   scope?: Scope,
+  generator?: JavaRandom,
 ) => {
   const run: Run = {
     environment,
@@ -1174,8 +1269,9 @@ export const forEachSuccessor = (
     isEnabled: false,
     current: state,
     isStopped: false,
+    generator,
+    successors: 0,
   };
-  const counter = { successors: 0 };
   getRunner(expression, environment, false)(
     run,
     scope,
@@ -1193,11 +1289,11 @@ export const forEachSuccessor = (
           missing,
         );
       }
-      counter.successors++;
+      run.successors++;
       run.isStopped = onSuccessor({ state: partial, action });
     },
   );
-  return counter.successors;
+  return run.successors;
 };
 
 export const getSuccessors = (
