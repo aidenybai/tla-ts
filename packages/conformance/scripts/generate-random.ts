@@ -167,6 +167,11 @@ const createGenerator = (getNext: () => number) => {
   return { getExpression, pick };
 };
 
+// TLC runs out of memory, or past the JVM's array limit, on these.
+const TLC_BUG_INDEXES = new Set([
+  102, 1576, 2309, 2420, 3226, 3504, 3717, 4041, 5211, 5311, 6258, 6550, 7052, 8304,
+]);
+
 export const generateRandomExpressions = () => {
   const generator = createGenerator(createRandom(SEED));
   Array.from({ length: TEST_COUNT }).forEach((_, index) => {
@@ -177,7 +182,9 @@ export const generateRandomExpressions = () => {
       {
         description: `Evaluates a random ${type} expression, seed ${SEED}, number ${index}.`,
         ref: "tlc2/tool/impl/Tool.java#evalImpl",
-        features: ["random-expression"],
+        features: TLC_BUG_INDEXES.has(index)
+          ? ["random-expression", "tlc-bug"]
+          : ["random-expression"],
         flags: ["expression"],
         contexts: ["assume"],
         outcome: "any",
