@@ -2332,8 +2332,17 @@ export const getDomainInterval = (domain: Value[]) =>
 export const getDomain = (functionValue: Value): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction")
     return functionValue.domain;
-  const domain = toFiniteFunction(functionValue).domain;
-  return getDomainInterval(domain) ?? createSortedSet(domain);
+  const finite = toFiniteFunction(functionValue);
+  const interval = getDomainInterval(finite.domain);
+  if (interval) return interval;
+  const set = createSortedSet(finite.domain);
+  // TLC keeps a record's domain in written order and sorts any other function's.
+  if (finite.functionClass === "record") {
+    if (finite.writtenKeys) set.writtenElements = finite.writtenKeys;
+    return set;
+  }
+  set.isNormalized = true;
+  return set;
 };
 
 export const updateFunction = (
