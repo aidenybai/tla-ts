@@ -1456,14 +1456,15 @@ const compileApply = (
     const domain = getDomainOperator(expression);
     return (context) => domain(operand(context));
   }
-  // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
+  // TLC caches the value of a constant TLCEval argument only where no context binds a name.
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
-    const operand = getEvaluator(args[0], environment);
-    if (contextualApplications.has(expression) || isNonconstant(args[0], environment)) {
-      return operand;
-    }
+    const isCached =
+      !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
     return (context) =>
-      context.scope === undefined ? global.evaluate([operand(context)]) : operand(context);
+      global.evaluate(
+        getLazyArguments(args, context),
+        isCached && context.scope === undefined ? undefined : context,
+      );
   }
   if (global?.kind === "Builtin" && global.name === "\\subseteq" && args.length === 2) {
     const left = getEvaluator(args[0], environment);
