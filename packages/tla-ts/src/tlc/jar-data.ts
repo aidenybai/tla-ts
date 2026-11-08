@@ -1072,4 +1072,57 @@ export const TLC_JAVA_METHODS = new Map([
       ],
     ]),
   ],
+  [
+    "TLCExt",
+    new Map([
+      [
+        "AssertError",
+        "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "PickSuccessor",
+        "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "ToTrace",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.lassoOrdinal(tlc2.value.impl.Value)",
+      ],
+      [
+        "CounterExample",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.error(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException",
+      ],
+      [
+        "Trace",
+        "public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException",
+      ],
+      [
+        "TLCDefer",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefer(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "TLCNoOp",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcNoOp(tlc2.value.impl.Value)",
+      ],
+      [
+        "TLCModelValue",
+        "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.tlcModelValue(tlc2.value.impl.Value)",
+      ],
+      [
+        "TLCCache",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcEval2(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "TLCFP",
+        "public static synchronized tlc2.value.impl.IntValue tlc2.module.TLCExt.tlcFingerprint(tlc2.value.impl.Value)",
+      ],
+      [
+        "TLCEvalDefinition",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefByName(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "TLCGetOrDefault",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcGetOrDefault(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+    ]),
+  ],
 ]);

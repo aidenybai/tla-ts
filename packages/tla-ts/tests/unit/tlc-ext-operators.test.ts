@@ -71,7 +71,7 @@ describe("TLCExt operators match TLC", () => {
     );
     expect(result.status).toBe("assumption-violation");
     expect(result.violation?.message).toContain(
-      "In computing AssertError, a non-string expression (line 5, col 20) was used as the err of an AssertError(err, exp).",
+      "In computing AssertError, a non-string expression (line 5, col 20 to line 5, col 26 of module M) was used as the err of an AssertError(err, exp).",
     );
   });
 

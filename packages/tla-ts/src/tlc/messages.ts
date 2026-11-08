@@ -142,6 +142,11 @@ export const MISSING_INIT_174 =
 // TLC's -tool output wraps such a message in its own markers even inside another message.
 const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean][] = [
   [1005, STACK_OVERFLOW_MESSAGE, false],
+  [
+    1000,
+    "In evaluating TLCExt!Trace, the state is not completely specified yet (variable%1% %2% undefined).",
+    false,
+  ],
   [2117, "Failed to recover the next state from its fingerprint.", true],
   [2123, "Failed to recover the initial state from its fingerprint.", true],
   [2132, "The first argument of Assert evaluated to FALSE; the second argument was:\n%1%", true],

@@ -584,7 +584,10 @@ export const getStandardModule = (
     case "Bags":
       return { extends: [], operators: withJavaMethods("Bags", createBagsOperators(builtins)) };
     case "TLCExt":
-      return { extends: [], operators: createTlcExtOperators(print, runtime) };
+      return {
+        extends: [],
+        operators: withJavaMethods("TLCExt", createTlcExtOperators(print, runtime)),
+      };
     default:
       return undefined;
   }

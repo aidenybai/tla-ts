@@ -1,19 +1,24 @@
 import {
-  createJavaOverrideError,
   defineHigherOrderOperator,
   defineLazyOperator,
   defineOperator,
   defineStateOperator,
+  getKindString,
   getOperator,
   getThunk,
   getValue,
 } from "../builtins";
-import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "../errors";
+import {
+  TlaEvaluationError,
+  TlaModuleError,
+  TlaNullPointerError,
+  TlaUnsupportedError,
+} from "../errors";
 import { getTlcFingerprint } from "./fingerprint";
 import { formatNestedMessage } from "./messages";
 import {
+  describeRange,
   evaluate,
-  expectBoolean,
   getDefinition,
   type Builtin,
   type Environment,
@@ -33,6 +38,7 @@ import {
   createTuple,
   formatValue,
   getDomain,
+  getFingerprintError,
   getSequenceElements,
   getValueKey,
   isFunctionValue,
@@ -40,15 +46,6 @@ import {
   valuesEqual,
   type Value,
 } from "../values";
-
-const OVERRIDE_PARAMETERS =
-  "tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel";
-
-const ASSERT_ERROR_METHOD = `public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(${OVERRIDE_PARAMETERS})`;
-
-const TRACE_METHOD = `public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(${OVERRIDE_PARAMETERS}) throws java.io.IOException`;
-
-const PICK_SUCCESSOR_METHOD = `public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(${OVERRIDE_PARAMETERS})`;
 
 // TLC's record for an action it doesn't store, such as every action in breadth-first search.
 export const createActionRecord = (action: string | undefined) =>
@@ -131,6 +128,14 @@ export const setTlcValue = (
   );
 };
 
+// SemanticNode#toString: a numeral's image, or else the node's location.
+const describeNode = (expression: Expression) =>
+  expression.kind === "Number"
+    ? (expression.text ?? String(expression.value))
+    : expression.kind === "Decimal"
+      ? expression.text
+      : describeRange(expression);
+
 const isCompleteState = (state: (Value | undefined)[]): state is Value[] =>
   state.every((value) => value !== undefined);
 
@@ -186,9 +191,8 @@ export const createTlcExtOperators = (
     defineLazyOperator("AssertError", 2, (args) => {
       const message = getOperator(args, 0, "AssertError").expression;
       if (message && message.kind !== "String") {
-        throw createJavaOverrideError(
-          ASSERT_ERROR_METHOD,
-          `In computing AssertError, a non-string expression (line ${message.location.line}, col ${message.location.column}) was used as the err of an AssertError(err, exp).`,
+        throw new TlaEvaluationError(
+          `In computing AssertError, a non-string expression (${describeNode(message)}) was used as the err of an AssertError(err, exp).`,
         );
       }
       const expected = getThunk(args, 0, "AssertError")();
@@ -227,8 +231,7 @@ export const createTlcExtOperators = (
         const unassigned = (context?.environment.variables ?? []).filter(
           (_, index) => state?.[index] === undefined,
         );
-        throw createJavaOverrideError(
-          TRACE_METHOD,
+        throw new TlaEvaluationError(
           `In evaluating TLCExt!Trace, the state is not completely specified yet (variable${unassigned.length > 1 ? "s" : ""} ${unassigned.join(", ")} undefined).`,
         );
       }
@@ -278,15 +281,19 @@ export const createTlcExtOperators = (
     defineLazyOperator("PickSuccessor", 1, (args, context) => {
       const next = context?.next;
       if (!next || !isCompleteState(next)) {
-        throw createJavaOverrideError(
-          PICK_SUCCESSOR_METHOD,
+        throw new TlaNullPointerError(
           'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null',
         );
       }
       if (runtime.isSeen(next)) return true;
-      if (expectBoolean(getThunk(args, 0, "PickSuccessor")(), "the condition of PickSuccessor")) {
-        return true;
+      const guard = getOperator(args, 0, "PickSuccessor");
+      const isPicked = guard.call([]);
+      if (typeof isPicked !== "boolean") {
+        throw new TlaEvaluationError(
+          `In evaluating TLCExt!PickSuccessor, a non-boolean expression (${getKindString(isPicked)}) was used as the condition of an IF.\n${guard.expression ? describeNode(guard.expression) : ""}`,
+        );
       }
+      if (isPicked) return true;
       throw new TlaUnsupportedError(
         "PickSuccessor needs interactive input to extend the behavior with a new state",
       );
@@ -306,21 +313,34 @@ export const createTlcExtOperators = (
       cache.set(closure, value);
       return value;
     }),
-    defineOperator("TLCFP", 1, (args) =>
-      Number(BigInt.asIntN(32, getTlcFingerprint([getValue(args, 0, "TLCFP")]))),
-    ),
-    defineStateOperator("TLCEvalDefinition", 1, (args, context) => {
-      const name = getValue(args, 0, "TLCEvalDefinition");
-      const definition =
-        typeof name === "string" && context ? getDefinition(name, context.environment) : undefined;
-      if (!definition || typeof name !== "string" || !context) {
+    defineOperator("TLCFP", 1, (args) => {
+      const value = getValue(args, 0, "TLCFP");
+      const error = getFingerprintError(value);
+      if (error) throw error;
+      return Number(BigInt.asIntN(32, getTlcFingerprint([value])));
+    }),
+    defineLazyOperator("TLCEvalDefinition", 1, (args, context) => {
+      const name = getThunk(args, 0, "TLCEvalDefinition")();
+      if (typeof name !== "string") {
+        throw new TlaModuleError(
+          `The argument of TLCEvalDefinition should be a string, but instead it is:\n${formatValue(name)}`,
+        );
+      }
+      const definition = context ? getDefinition(name, context.environment) : undefined;
+      if (!definition || !context) {
         throw new TlaModuleError(
           `The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:\n${formatValue(name)}`,
         );
       }
       if (definition.kind === "Operator" && definition.params.length > 0) {
+        const parameters = definition.params.map((param) =>
+          param.arity === 0
+            ? param.name
+            : `${param.name}(${Array.from({ length: param.arity }, () => "_").join(",")})`,
+        );
+        // TLC's message template puts another "a" before the expected kind.
         throw new TlaModuleError(
-          `The argument of TLCEvalDefinition should be a zero-arity definition, but instead it is:\n${name}`,
+          `The argument of TLCEvalDefinition should be a a zero-arity definition, but instead it is:\n${name}(${parameters.join(", ")})`,
         );
       }
       return evaluate({ kind: "Identifier", name, location: definition.location }, context);
