@@ -45,7 +45,7 @@ import {
   SORT_REAL,
   isArithSort,
 } from "./ast";
-import { getArraySignature, getMapSignature } from "./array-decl-plugin";
+import { getArraySignature, getMapSignature, mkAsArray } from "./array-decl-plugin";
 import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
 import {
   type ConstructorDef,
@@ -1131,7 +1131,9 @@ export const createSmtlibReader = (
   ) => {
     if (args.length === 0 && range === undefined) {
       if (decls.length > 1) throwAmbiguousConstant(name, at);
-      return mkApp(decls[0], args, at);
+      return manager.funcDecls[decls[0]].domain.length > 0
+        ? mkAsArray(manager, decls[0])
+        : mkApp(decls[0], args, at);
     }
     const argSorts = args.map((arg) => manager.sorts[arg]);
     const candidates = decls.filter(
@@ -1328,6 +1330,18 @@ export const createSmtlibReader = (
     if (builtin === "rem" || (TRANSCENDENTALS.has(builtin) && logic === undefined))
       throw new SmtUnsupportedError(`the operator ${name}`);
     const chainable = CHAINABLE_OPS.get(builtin);
+    const arithOp = chainable ?? (builtin === "~" ? OP_UMINUS : BUILTIN_OPS.get(builtin));
+    if (
+      args.length === 0 &&
+      arithOp !== undefined &&
+      manager.funcDecls[arithOp].family === FAMILY_ARITH
+    )
+      throw new SmtParseError("no arguments supplied to arithmetical operator", head);
+    if (chainable === OP_EQ && args.length < 2)
+      throw new SmtParseError(
+        getUnknownConstantMessage(name, args, undefined),
+        args.length === 0 ? head : at,
+      );
     if (chainable !== undefined) return mkChain(chainable, args, at);
     if (builtin === "~") return mkApp(OP_UMINUS, args, at);
     if (builtin === "-" && args.length === 1) return mkApp(OP_UMINUS, args, at);
