@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import { rejectEarlyErrors } from "./early-errors";
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
@@ -45,6 +46,10 @@ export const createProgram = (source: string, path: string) => {
       readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
     },
   });
+  const syntaxErrors = program.getSyntacticDiagnostics(sourceFile);
+  if (syntaxErrors.length > 0)
+    throw new TlaTypeScriptError(ts.formatDiagnostics(syntaxErrors, host));
+  rejectEarlyErrors(sourceFile);
   const diagnostics = ts.getPreEmitDiagnostics(program);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
   return { sourceFile, checker: program.getTypeChecker() };

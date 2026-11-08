@@ -738,6 +738,35 @@ describe("errors", () => {
     );
   });
 
+  it.each([
+    ["a malformed regular expression", "const pattern = /[$$]/v;"],
+    [
+      "a var that redeclares a function in its block",
+      "{\n  function step() {}\n  var step = 1;\n}",
+    ],
+    [
+      "a function that redeclares a catch parameter",
+      "try {} catch (error) {\n  function error() {}\n}",
+    ],
+    ["two functions with one name in a block", "{\n  function step() {}\n  function step() {}\n}"],
+    ["a class as the body of an if", "if (true) class Step {}"],
+    ["a function as the body of a loop", "while (false) function step() {}"],
+    [
+      "a private name in a pattern",
+      "class Box {\n  #size = 1;\n  read() {\n    const { #size: size } = this;\n  }\n}",
+    ],
+    ["an escape in new.target", "function make() {\n  return new.t\\u0061rget;\n}"],
+    ["assigning arguments", "function make() {\n  [arguments] = [[]];\n}"],
+  ])("rejects %s as a SyntaxError", (_, source) => {
+    expect(() => compile(source)).toThrow(/^spec\.ts:\d+:\d+ SyntaxError: /);
+  });
+
+  it("accepts a var beside a function in a function body", () => {
+    expect(() =>
+      compile("function make() {\n  function step() {}\n  var step = 1;\n}"),
+    ).not.toThrow(/SyntaxError/);
+  });
+
   it("rejects a class whose member names run code", () => {
     expect(() => compile(`let count = 0;\nclass Counter {\n  [count++]() {}\n}`)).toThrow(
       "spec.ts:2:1 Unsupported statement",
