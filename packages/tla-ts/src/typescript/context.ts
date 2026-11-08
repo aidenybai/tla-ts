@@ -266,6 +266,31 @@ const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean
   );
 };
 
+// The function that a script evaluates once, which is a value with one identity, either as the
+// expression or through a name that its declaration gives it and nothing assigns.
+export const getFunctionValue = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined) return undefined;
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const isNamed =
+    symbol !== undefined &&
+    declaration !== undefined &&
+    !isAssigned(symbol, node.getSourceFile(), context);
+  const found =
+    isNamed && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : isNamed && ts.isFunctionDeclaration(declaration)
+        ? declaration
+        : node;
+  return found !== undefined &&
+    (ts.isFunctionExpression(found) ||
+      ts.isArrowFunction(found) ||
+      (ts.isFunctionDeclaration(found) && found.body !== undefined)) &&
+    isOnce(found.parent)
+    ? found
+    : undefined;
+};
+
 const heapClasses = new WeakMap<ts.ClassLikeDeclaration, boolean>();
 
 // A class that a script evaluates once into objects on the heap: a constructor object with the

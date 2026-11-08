@@ -62,6 +62,21 @@ const translateMemberKey = (name: ts.PropertyName, scope: Scope, context: Contex
 };
 
 // A model value that names a method of an object literal.
+export const translateFunctionValue = (
+  node: ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration,
+  context: Context,
+) => {
+  const symbol = context.checker.getTypeAtLocation(node).getSymbol();
+  if (symbol === undefined) throw new TlaTypeScriptError("Unsupported function", node);
+  const declared = node.parent;
+  const name = ts.isFunctionDeclaration(node)
+    ? (node.name?.text ?? "anonymous")
+    : ts.isVariableDeclaration(declared) && ts.isIdentifier(declared.name)
+      ? declared.name.text
+      : "anonymous";
+  return getConstructor(symbol, context, `${name}Function`);
+};
+
 export const getMethodValue = (method: ts.MethodDeclaration, context: Context) => {
   const symbol = getSymbol(method.name, context.checker);
   if (symbol === undefined) throw new TlaTypeScriptError("Name this method", method);

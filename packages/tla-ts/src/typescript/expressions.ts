@@ -15,6 +15,7 @@ import {
   getCallee,
   getElement,
   getFunction,
+  getFunctionValue,
   getNewClass,
   getSymbol,
   getTopLevelDeclaration,
@@ -37,6 +38,7 @@ import {
   isCreation,
   isDescription,
   translateHoldsMethod,
+  translateFunctionValue,
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
@@ -701,8 +703,13 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (node.text === "undefined") return getUndefined(context);
   rejectBeforeDeclaration(node, scope, context);
   const symbol = getSymbol(node, context.checker);
-  if (symbol !== undefined && scope.functions.has(symbol)) {
-    throw new TlaTypeScriptError(`${node.text} holds a function, so only call it`, node);
+  const held = symbol === undefined ? undefined : scope.functions.get(symbol);
+  if (held !== undefined) {
+    const value = getFunctionValue(held, context);
+    if (value === undefined) {
+      throw new TlaTypeScriptError(`${node.text} holds a function, so only call it`, node);
+    }
+    return translateFunctionValue(value, context);
   }
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
   if (binding !== undefined) return binding;
@@ -718,6 +725,8 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       node,
     );
   }
+  const functionValue = getFunctionValue(node, context);
+  if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
   const declared = translateDeclared(node, symbol, scope, context);
   if (declared !== undefined) return declared;
   if (symbol !== undefined && context.variables.has(symbol)) {
@@ -922,6 +931,8 @@ const translateNode = (
   }
   if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
+  const functionValue = getFunctionValue(node, context);
+  if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
   const isHeapObject =
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     getNewClass(node, context) !== undefined;

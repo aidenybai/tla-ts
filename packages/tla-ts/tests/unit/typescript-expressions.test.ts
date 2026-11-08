@@ -370,6 +370,16 @@ const CASES: Record<string, (string | [string, string])[]> = {
       counter.bump();`,
     ],
     [
+      "[box.first === first, box.second === second, box.first === box.second, typeof box.first]",
+      `const first = function () {
+        return 1;
+      };
+      function second() {
+        return 2;
+      }
+      const box = { first: first, second: second };`,
+    ],
+    [
       "has(point)",
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],
