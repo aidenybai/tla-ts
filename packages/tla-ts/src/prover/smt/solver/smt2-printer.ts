@@ -2,6 +2,7 @@
 // src/ast/shared_occs.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
+  FAMILY_BV,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -15,6 +16,7 @@ import {
   SORT_INT,
   type SmtSymbol,
 } from "./ast";
+import { isAssociativeBvOp } from "./bv-decl-plugin";
 
 interface TextFormat {
   kind: "text";
@@ -56,6 +58,8 @@ export interface PrintOptions {
   isBounded: boolean;
   isDecimal: boolean;
   decimalPrecision: number;
+  isBvLiterals: boolean;
+  isBvNeg: boolean;
 }
 
 export const DEFAULT_PRINT_OPTIONS: PrintOptions = {
@@ -70,6 +74,8 @@ export const DEFAULT_PRINT_OPTIONS: PrintOptions = {
   isBounded: false,
   isDecimal: false,
   decimalPrecision: 10,
+  isBvLiterals: true,
+  isBvNeg: false,
 };
 
 export interface PrintEnvironment {
@@ -219,7 +225,33 @@ const getQuotedName = (symbol: SmtSymbol) =>
       : symbol;
 
 const formatSort = (manager: AstManager, sort: number) =>
-  mkText(getQuotedName(manager.sortNames[sort]));
+  manager.isBvSort(sort)
+    ? mkSeq1([mkText(String(manager.getBvSize(sort)))], "_ BitVec")
+    : mkText(getQuotedName(manager.sortNames[sort]));
+
+// pp_bv_literal: a hexadecimal literal when the width is a multiple of four and a binary one
+// otherwise, of the value as a negative number with bv_neg.
+const formatBvNumeral = (manager: AstManager, options: PrintOptions, expr: number) => {
+  const width = manager.getBvSize(manager.sorts[expr]);
+  const value = manager.getBvNumeralValue(expr);
+  const isNegative = options.isBvNeg && value >= 1n << BigInt(width - 1);
+  const magnitude = isNegative ? (1n << BigInt(width)) - value : value;
+  const literal = !options.isBvLiterals
+    ? `(_ bv${magnitude} ${width})`
+    : width % 4 === 0
+      ? `#x${magnitude.toString(16).padStart(width / 4, "0")}`
+      : `#b${magnitude.toString(2).padStart(width, "0")}`;
+  return isNegative ? mkSeq1([mkText(literal)], "bvneg") : mkText(literal);
+};
+
+// pp_fdecl: an indexed declaration, such as an extract, prints with its indices.
+const getDeclName = (manager: AstManager, decl: number) => {
+  const funcDecl = manager.funcDecls[decl];
+  const name = getQuotedName(funcDecl.name);
+  return funcDecl.family === FAMILY_BV && funcDecl.parameters.length > 0
+    ? `(_ ${name} ${funcDecl.parameters.join(" ")})`
+    : name;
+};
 
 const getDecimal = (numerator: bigint, denominator: bigint, precision: number) => {
   const digits: string[] = [];
@@ -306,7 +338,9 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
   const formatConst = (expr: number) =>
     manager.getOp(expr) === OP_NUM
       ? formatNumeral(manager, options, expr)
-      : mkText(getQuotedName(manager.funcDecls[manager.decls[expr]].name));
+      : manager.isBvNumeral(expr)
+        ? formatBvNumeral(manager, options, expr)
+        : mkText(getDeclName(manager, manager.decls[expr]));
 
   const formatExpr = (root: number) => {
     const shared = getSharedTerms(manager, root);
@@ -407,7 +441,9 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
     };
 
     const isFlatAssoc = (frame: PrintFrame) => {
-      if (!options.isFlatAssoc || !ASSOCIATIVE_OPS.has(manager.getOp(frame.expr))) return false;
+      const op = manager.getOp(frame.expr);
+      if (!options.isFlatAssoc || (!ASSOCIATIVE_OPS.has(op) && !isAssociativeBvOp(op)))
+        return false;
       if (frames.length < 2 || shared.has(frame.expr)) return false;
       const parent = frames[frames.length - 2].expr;
       return (
@@ -431,8 +467,8 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
         return;
       }
       const args = formats.slice(frame.start);
-      const name = mkText(getQuotedName(manager.funcDecls[manager.decls[frame.expr]].name));
-      const nameLength = name.text.length;
+      const name = mkText(getDeclName(manager, manager.decls[frame.expr]));
+      const nameLength = name.text.startsWith("(") ? Infinity : name.text.length;
       const format =
         manager.getOp(frame.expr) === OP_PATTERN
           ? mkSeq5(args)

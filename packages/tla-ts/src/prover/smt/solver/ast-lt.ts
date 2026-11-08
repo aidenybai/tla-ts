@@ -2,11 +2,13 @@
 // total order on expressions that does not depend on their ids. The rewriter sorts a disjunction
 // only when its arguments are out of this order.
 import {
+  FAMILY_BV,
   FAMILY_MODEL_VALUE,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
+  OP_BV_NUM,
   OP_ITE,
   OP_NUM,
   OP_PATTERN,
@@ -64,12 +66,34 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   }
   if (decl.family === FAMILY_MODEL_VALUE)
     return { name: decl.name, parameters: [PARAM_INT, manager.values[expr]], domain: [], range };
+  if (decl.op === OP_BV_NUM)
+    return {
+      name: decl.name,
+      parameters: [
+        PARAM_RATIONAL,
+        Rational.of(manager.getBvNumeralValue(expr)),
+        PARAM_INT,
+        manager.getBvSize(range),
+      ],
+      domain: [],
+      range,
+    };
+  if (decl.family === FAMILY_BV)
+    return {
+      name: decl.name,
+      parameters: decl.parameters.flatMap((parameter) => [PARAM_INT, parameter]),
+      domain: decl.domain,
+      range,
+    };
   const builtin = manager.getBuiltinSignature(decl.op, manager.getArgs(expr));
   return { name: builtin.name, parameters: [], domain: builtin.domain, range };
 };
 
 const compareSorts = (manager: AstManager, first: number, second: number) =>
-  first === second ? 0 : compareNames(manager.sortNames[first], manager.sortNames[second]);
+  first === second
+    ? 0
+    : compareNames(manager.sortNames[first], manager.sortNames[second]) ||
+      compareValues(manager.getBvSize(first), manager.getBvSize(second));
 
 // Whether two applications of the same declaration have the same key: a user declaration's is its
 // own, and a builtin's other than a numeral, model value or pattern follows from the sort of the
@@ -77,8 +101,14 @@ const compareSorts = (manager: AstManager, first: number, second: number) =>
 const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
   const decl = manager.funcDecls[manager.decls[first]];
   if (decl.family === FAMILY_USER) return true;
-  if (decl.op === OP_NUM || decl.op === OP_PATTERN || decl.family === FAMILY_MODEL_VALUE)
+  if (
+    decl.op === OP_NUM ||
+    decl.op === OP_BV_NUM ||
+    decl.op === OP_PATTERN ||
+    decl.family === FAMILY_MODEL_VALUE
+  )
     return false;
+  if (decl.family === FAMILY_BV) return true;
   const index = decl.op === OP_ITE ? 1 : 0;
   return (
     manager.sorts[first] === manager.sorts[second] &&

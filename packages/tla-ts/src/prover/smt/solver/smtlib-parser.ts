@@ -38,6 +38,7 @@ import {
   SORT_REAL,
   isArithSort,
 } from "./ast";
+import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
 
@@ -93,6 +94,8 @@ interface SmtProblem {
 
 interface ApplicationFrame {
   head: SmtToken;
+  // The indices of an indexed identifier, such as the bounds of an extract.
+  indices: number[];
   list: SmtList;
   start: number;
   next: number;
@@ -301,10 +304,31 @@ const CHAINABLE_OPS = new Map<string, number>([
   [">", OP_GT],
 ]);
 
+// The bit-vector operators that Z3 adds to the logics it names.
+const BV_EXTENSION_NAMES = new Set([
+  "bvumul_noovfl",
+  "bvsmul_noovfl",
+  "bvsmul_noudfl",
+  "bvsdiv0",
+  "bvudiv0",
+  "bvsrem0",
+  "bvurem0",
+  "bvsmod0",
+  "ext_rotate_left",
+  "ext_rotate_right",
+  "int2bv",
+  "bv2int",
+  "bv2nat",
+  "mkbv",
+]);
+
+const BV_EXTENSION_LOGICS = new Set(["ALL", "QF_FD", "HORN"]);
+
 const BUILTIN_NAMES = new Set([
   "true",
   "false",
   "~",
+  ...BV_OP_NAMES.keys(),
   ...CHAINABLE_OPS.keys(),
   ...BUILTIN_OPS.keys(),
   ...LOGIC_FREE_ALIASES.keys(),
@@ -507,8 +531,17 @@ export const createSmtlibReader = (
 
   const parseSort = (sexpr: SExpr, context: string) => {
     if (sexpr.kind === "list") {
-      if (isSymbol(sexpr.items[0], "_")) throw new SmtUnsupportedError("indexed sorts");
-      throw new SmtUnsupportedError("parametric sorts");
+      if (!isSymbol(sexpr.items[0], "_")) throw new SmtUnsupportedError("parametric sorts");
+      const width = sexpr.items[2];
+      if (
+        !isSymbol(sexpr.items[1], "BitVec") ||
+        sexpr.items.length !== 3 ||
+        width.kind !== "numeral"
+      )
+        throw new SmtUnsupportedError("indexed sorts");
+      if (BigInt(width.text) === 0n)
+        throw new SmtParseError("bit-vector size must be greater than zero", width);
+      return manager.mkBvSort(Number(width.text));
     }
     const sort = sorts.get(sexpr.text);
     if (sort === undefined) {
@@ -753,8 +786,39 @@ export const createSmtlibReader = (
           );
     });
 
-  const parseApp = (head: SmtToken, args: number[], at: SExpr) => {
+  const isBvOpName = (name: string) =>
+    BV_OP_NAMES.has(name) &&
+    (!BV_EXTENSION_NAMES.has(name) || logic === undefined || BV_EXTENSION_LOGICS.has(logic));
+
+  const mkBvApp = (name: string, args: number[], indices: number[], at: SExpr) => {
+    const op = BV_OP_NAMES.get(name) ?? -1;
+    const signature = getBvSignature(
+      manager,
+      op,
+      args.map((arg) => manager.sorts[arg]),
+      indices,
+    );
+    if (typeof signature === "string") throw new SmtParseError(signature, at);
+    const decl = manager.mkBvDecl(op, signature.name, indices, signature.domain, signature.range);
+    return manager.mkApp(decl, args, signature.range);
+  };
+
+  // parse_qualified_name for (_ bvN w).
+  const parseBvNumeral = (list: SmtList) => {
+    const name = list.items[1];
+    const value = isSymbol(name) ? /^bv([0-9]+)$/.exec(name.text) : null;
+    if (value === null) throw new SmtUnsupportedError("indexed identifiers");
+    const width = list.items[2];
+    if (list.items.length !== 3 || width.kind !== "numeral")
+      throw new SmtParseError("invalid bit-vector constant, index expected", list.end);
+    if (BigInt(width.text) === 0n)
+      throw new SmtParseError("bit-vector size must be greater than zero", list.end);
+    return manager.mkBvNumeral(BigInt(value[1]), Number(width.text));
+  };
+
+  const parseApp = (head: SmtToken, args: number[], at: SExpr, indices: number[] = []) => {
     const name = head.text;
+    if (indices.length > 0) return mkBvApp(name, args, indices, at);
     const macro = macros.get(name);
     if (macro !== undefined) {
       const coerced = args.map((arg, index) => coerce(arg, macro.domain[index]));
@@ -767,6 +831,7 @@ export const createSmtlibReader = (
     }
     const decl = funcs.get(name);
     if (decl !== undefined) return mkApp(decl, args, at);
+    if (isBvOpName(name)) return mkBvApp(name, args, indices, at);
     const builtin = (logic === undefined ? LOGIC_FREE_ALIASES.get(name) : undefined) ?? name;
     if (builtin === "rem" || (TRANSCENDENTALS.has(builtin) && logic === undefined))
       throw new SmtUnsupportedError(`the operator ${name}`);
@@ -801,7 +866,8 @@ export const createSmtlibReader = (
       : args.slice(1).reduce((left, right) => mkApp(op, [left, right], at, domainSort), args[0]);
   };
 
-  const getSortName = (sort: number) => manager.sortNames[sort];
+  const getSortName = (sort: number) =>
+    manager.isBvSort(sort) ? `(_ BitVec ${manager.getBvSize(sort)})` : manager.sortNames[sort];
 
   const parseLeaf = (sexpr: SExpr): number => {
     if (sexpr.kind === "numeral") return manager.mkNumeral(BigInt(sexpr.text));
@@ -811,7 +877,14 @@ export const createSmtlibReader = (
         Rational.of(BigInt(parts[0] + parts[1]), 10n ** BigInt(parts[1].length)),
       );
     }
-    if (sexpr.kind === "bitvector") throw new SmtUnsupportedError("bit-vector literals");
+    if (sexpr.kind === "bitvector") {
+      const isBinary = sexpr.text[1] === "b";
+      const digits = sexpr.text.slice(2);
+      return manager.mkBvNumeral(
+        BigInt(`0${isBinary ? "b" : "x"}${digits}`),
+        digits.length * (isBinary ? 1 : 4),
+      );
+    }
     if (sexpr.kind === "string") throw new SmtUnsupportedError("string literals");
     if (sexpr.kind === "symbol") {
       if (sexpr.text === "true") return manager.trueExpr;
@@ -863,11 +936,32 @@ export const createSmtlibReader = (
       const head = current.items[0];
       if (head === undefined)
         throw new SmtParseError("invalid expression, unexpected ')'", current.end);
-      if (head.kind === "list") throw new SmtUnsupportedError("indexed and qualified identifiers");
+      if (head.kind === "list") {
+        const name = head.items[1];
+        const indices = head.items.slice(2);
+        if (
+          !isSymbol(head.items[0], "_") ||
+          !isSymbol(name) ||
+          !isBvOpName(name.text) ||
+          !indices.every((index) => index.kind === "numeral")
+        )
+          throw new SmtUnsupportedError("indexed and qualified identifiers");
+        frames.push({
+          head: name,
+          indices: indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+          list: current,
+          start: results.length,
+          next: 1,
+        });
+        return;
+      }
       if (head.kind !== "symbol")
         throw new SmtParseError("invalid function application, symbol expected", head);
+      if (head.text === "_") {
+        results.push(parseBvNumeral(current));
+        return;
+      }
       if (
-        head.text === "_" ||
         head.text === "as" ||
         head.text === "lambda" ||
         head.text === "match" ||
@@ -875,7 +969,7 @@ export const createSmtlibReader = (
       )
         throw new SmtUnsupportedError(`the expression ${head.text}`);
       if (["forall", "exists", "let", "!"].includes(head.text)) results.push(parseLeaf(current));
-      else frames.push({ head, list: current, start: results.length, next: 1 });
+      else frames.push({ head, indices: [], list: current, start: results.length, next: 1 });
     };
     enter(sexpr);
     while (frames.length > 0) {
@@ -887,7 +981,9 @@ export const createSmtlibReader = (
       frames.pop();
       if (frame.list.items.length === 1)
         throw new SmtParseError("invalid function application, arguments missing", frame.list.end);
-      results.push(parseApp(frame.head, results.splice(frame.start), frame.list.end));
+      results.push(
+        parseApp(frame.head, results.splice(frame.start), frame.list.end, frame.indices),
+      );
     }
     return results[0];
   };

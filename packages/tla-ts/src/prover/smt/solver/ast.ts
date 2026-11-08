@@ -22,6 +22,7 @@ export const FAMILY_USER = 2;
 // Model values: the elements that a model gives to an uninterpreted sort.
 export const FAMILY_MODEL_VALUE = 3;
 export const FAMILY_FINITE_SET = 4;
+export const FAMILY_BV = 5;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -58,6 +59,88 @@ export const OP_MOD0 = 29;
 export const OP_UNINTERPRETED = 30;
 const OP_MODEL_VALUE = 31;
 
+// bv_op_kind, past the ops of the other families: a bit-vector op's Z3 kind is its op less
+// BV_OP_BASE.
+const BV_OP_BASE = 100;
+export const OP_BV_NUM = BV_OP_BASE;
+export const OP_BNEG = BV_OP_BASE + 3;
+export const OP_BADD = BV_OP_BASE + 4;
+export const OP_BSUB = BV_OP_BASE + 5;
+export const OP_BMUL = BV_OP_BASE + 6;
+export const OP_BSDIV = BV_OP_BASE + 7;
+export const OP_BUDIV = BV_OP_BASE + 8;
+export const OP_BSREM = BV_OP_BASE + 9;
+export const OP_BUREM = BV_OP_BASE + 10;
+export const OP_BSMOD = BV_OP_BASE + 11;
+export const OP_BSDIV0 = BV_OP_BASE + 12;
+export const OP_BUDIV0 = BV_OP_BASE + 13;
+export const OP_BSREM0 = BV_OP_BASE + 14;
+export const OP_BUREM0 = BV_OP_BASE + 15;
+export const OP_BSMOD0 = BV_OP_BASE + 16;
+export const OP_BSDIV_I = BV_OP_BASE + 17;
+export const OP_BUDIV_I = BV_OP_BASE + 18;
+export const OP_BSREM_I = BV_OP_BASE + 19;
+export const OP_BUREM_I = BV_OP_BASE + 20;
+export const OP_BSMOD_I = BV_OP_BASE + 21;
+export const OP_ULEQ = BV_OP_BASE + 22;
+export const OP_SLEQ = BV_OP_BASE + 23;
+export const OP_UGEQ = BV_OP_BASE + 24;
+export const OP_SGEQ = BV_OP_BASE + 25;
+export const OP_ULT = BV_OP_BASE + 26;
+export const OP_SLT = BV_OP_BASE + 27;
+export const OP_UGT = BV_OP_BASE + 28;
+export const OP_SGT = BV_OP_BASE + 29;
+export const OP_BAND = BV_OP_BASE + 30;
+export const OP_BOR = BV_OP_BASE + 31;
+export const OP_BNOT = BV_OP_BASE + 32;
+export const OP_BXOR = BV_OP_BASE + 33;
+export const OP_BNAND = BV_OP_BASE + 34;
+export const OP_BNOR = BV_OP_BASE + 35;
+export const OP_BXNOR = BV_OP_BASE + 36;
+export const OP_CONCAT = BV_OP_BASE + 37;
+export const OP_SIGN_EXT = BV_OP_BASE + 38;
+export const OP_ZERO_EXT = BV_OP_BASE + 39;
+export const OP_EXTRACT = BV_OP_BASE + 40;
+export const OP_REPEAT = BV_OP_BASE + 41;
+export const OP_BREDOR = BV_OP_BASE + 42;
+export const OP_BREDAND = BV_OP_BASE + 43;
+export const OP_BCOMP = BV_OP_BASE + 44;
+export const OP_BSHL = BV_OP_BASE + 45;
+export const OP_BLSHR = BV_OP_BASE + 46;
+export const OP_BASHR = BV_OP_BASE + 47;
+export const OP_ROTATE_LEFT = BV_OP_BASE + 48;
+export const OP_ROTATE_RIGHT = BV_OP_BASE + 49;
+export const OP_EXT_ROTATE_LEFT = BV_OP_BASE + 50;
+export const OP_EXT_ROTATE_RIGHT = BV_OP_BASE + 51;
+export const OP_BUMUL_NO_OVFL = BV_OP_BASE + 52;
+export const OP_BSMUL_NO_OVFL = BV_OP_BASE + 53;
+export const OP_BSMUL_NO_UDFL = BV_OP_BASE + 54;
+export const OP_BUMUL_OVFL = BV_OP_BASE + 55;
+export const OP_BSMUL_OVFL = BV_OP_BASE + 56;
+export const OP_BSDIV_OVFL = BV_OP_BASE + 57;
+export const OP_BNEG_OVFL = BV_OP_BASE + 58;
+export const OP_BUADD_OVFL = BV_OP_BASE + 59;
+export const OP_BSADD_OVFL = BV_OP_BASE + 60;
+export const OP_BUSUB_OVFL = BV_OP_BASE + 61;
+export const OP_BSSUB_OVFL = BV_OP_BASE + 62;
+export const OP_BIT2BOOL = BV_OP_BASE + 63;
+export const OP_MKBV = BV_OP_BASE + 64;
+export const OP_INT2BV = BV_OP_BASE + 65;
+export const OP_UBV2INT = BV_OP_BASE + 66;
+export const OP_SBV2INT = BV_OP_BASE + 67;
+export const OP_CARRY = BV_OP_BASE + 68;
+export const OP_XOR3 = BV_OP_BASE + 69;
+
+const UNCACHED_BV_OPS: ReadonlySet<number> = new Set([
+  OP_CONCAT,
+  OP_SIGN_EXT,
+  OP_ZERO_EXT,
+  OP_EXTRACT,
+  OP_REPEAT,
+  OP_ROTATE_LEFT,
+  OP_ROTATE_RIGHT,
+]);
+
 // A Z3 symbol: a string, or a number for a numerical symbol, which Z3 prints as k!n.
 export type SmtSymbol = string | number;
 
@@ -72,6 +155,8 @@ export interface FuncDecl {
   isSkolem: boolean;
   // Z3's small id of the declaration, which its matcher hashes.
   smallId: number;
+  // The integer parameters of a bit-vector declaration, such as the bounds of an extract.
+  parameters: number[];
 }
 
 interface QuantifierData {
@@ -125,6 +210,7 @@ const Z3_PATTERN_FAMILY = 2;
 const Z3_MODEL_VALUE_FAMILY = 3;
 const Z3_USER_SORT_FAMILY = 4;
 const Z3_ARITH_FAMILY = 5;
+const Z3_BV_FAMILY = 7;
 const Z3_RECFUN_FAMILY = 10;
 const Z3_NULL = 0xffffffff;
 // The name, Z3 decl kind and arity of each builtin, whose Z3 declaration has this many arguments
@@ -269,6 +355,13 @@ export class AstManager {
   sortNames: string[] = ["Bool", "Int", "Real"];
   // The family of each sort, whose theory gets its terms' equalities and sort constraints.
   private sortFamilies: number[] = [FAMILY_BASIC, FAMILY_ARITH, FAMILY_ARITH];
+  // The width of each bit-vector sort, and 0 for the other sorts.
+  private sortWidths: number[] = [0, 0, 0];
+  private numUserSorts = 0;
+  // bv_decl_plugin's sorts by width and declarations by signature, which it keeps once it makes
+  // them.
+  private bvSorts = new Map<number, number>();
+  private bvDecls = new Map<string, number>();
   private sortHashes = [
     combineHash(getSymbolHash("Bool"), getInfoHash(Z3_BASIC_FAMILY, 0, [])),
     combineHash(getSymbolHash("Int"), getInfoHash(Z3_ARITH_FAMILY, 1, [])),
@@ -341,6 +434,7 @@ export class AstManager {
         range: builtin[3],
         isSkolem: false,
         smallId: Z3_SMALL_IDS.get(builtin[2]) ?? -1,
+        parameters: [],
       });
     this.trueExpr = this.mkApp(OP_TRUE, [], SORT_BOOL);
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
@@ -401,6 +495,7 @@ export class AstManager {
       range: this.sorts[expr],
       isSkolem: false,
       smallId: this.mkSmallId(),
+      parameters: [],
     });
     this.declRefCounts[decl] = 1;
     this.mkSmallId();
@@ -413,13 +508,15 @@ export class AstManager {
   // numeral expression has alone. A distinct or pattern is keyed by its domain.
   private getSignature(expr: number) {
     const decl = this.decls[expr];
-    if (decl === OP_NUM) return 8 * this.values[expr] + SIGNATURE_NUMERAL;
+    if (decl === OP_NUM || this.funcDecls[decl].op === OP_BV_NUM)
+      return 8 * this.values[expr] + SIGNATURE_NUMERAL;
     if (decl === OP_EQ) return 8 * this.sorts[this.getArg(expr, 0)] + SIGNATURE_EQ;
     if (decl === OP_ITE) return 8 * this.sorts[expr] + SIGNATURE_ITE;
     if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
     if (decl === OP_DISTINCT || decl === OP_PATTERN)
       return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
+    if (UNCACHED_BV_OPS.has(this.funcDecls[decl].op)) return `bv${decl}`;
     return null;
   }
 
@@ -673,15 +770,109 @@ export class AstManager {
 
   mkSort(name: string) {
     this.sortHashes.push(
-      combineHash(
-        getSymbolHash(name),
-        getInfoHash(Z3_USER_SORT_FAMILY, this.sortNames.length - 3, []),
-      ),
+      combineHash(getSymbolHash(name), getInfoHash(Z3_USER_SORT_FAMILY, this.numUserSorts++, [])),
     );
     this.sortNames.push(name);
     this.sortFamilies.push(FAMILY_USER);
+    this.sortWidths.push(0);
     this.mkSmallId();
     return this.sortNames.length - 1;
+  }
+
+  // bv_decl_plugin::get_bv_sort.
+  mkBvSort(width: number) {
+    const existing = this.bvSorts.get(width);
+    if (existing !== undefined) return existing;
+    this.sortHashes.push(combineHash(getSymbolHash("bv"), getInfoHash(Z3_BV_FAMILY, 0, [width])));
+    this.sortNames.push("bv");
+    this.sortFamilies.push(FAMILY_BV);
+    this.sortWidths.push(width);
+    // bv_decl_plugin makes the sorts up to 64 bits when Z3 starts.
+    if (width > 64) this.mkSmallId();
+    const sort = this.sortNames.length - 1;
+    this.bvSorts.set(width, sort);
+    return sort;
+  }
+
+  getBvSize(sort: number) {
+    return this.sortWidths[sort];
+  }
+
+  isBvSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_BV;
+  }
+
+  // A bit-vector declaration other than a numeral's. The plugin keeps those it makes, except the
+  // declarations of concat, extract, the extensions, repeat and the rotations, which their
+  // applications hold, as a signature.
+  mkBvDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
+    const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
+    const existing = this.bvDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_BV_FAMILY, op - BV_OP_BASE, parameters),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_BV,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: UNCACHED_BV_OPS.has(op) ? -1 : this.mkSmallId(),
+      parameters,
+    });
+    this.bvDecls.set(key, decl);
+    return decl;
+  }
+
+  // mk_numeral of a bit-vector: the value modulo 2^width. Like an arithmetic numeral, its
+  // declaration has the parameters (value, width) and is made with its first application.
+  mkBvNumeral(value: bigint, width: number) {
+    const modulus = 1n << BigInt(width);
+    const normalized = ((value % modulus) + modulus) % modulus;
+    const sort = this.mkBvSort(width);
+    const key = `b${width}:${normalized}`;
+    const existing = this.table.get(key);
+    if (existing !== undefined) return this.revive(existing);
+    let decl = this.bvDecls.get(`n${width}`);
+    if (decl === undefined) {
+      decl = this.funcDecls.length;
+      this.funcDecls.push({
+        name: "bv",
+        family: FAMILY_BV,
+        op: OP_BV_NUM,
+        domain: [],
+        range: sort,
+        isSkolem: false,
+        smallId: -1,
+        parameters: [width],
+      });
+      this.bvDecls.set(`n${width}`, decl);
+    }
+    this.numeralValues.push(Rational.of(normalized));
+    const numeralDecl = decl;
+    return this.intern(key, KIND_APP, numeralDecl, [], sort, this.numeralValues.length - 1, () =>
+      this.getFuncDeclHash(
+        "bv",
+        [],
+        sort,
+        getInfoHash(Z3_BV_FAMILY, 0, [(getIntegerHash(normalized) + 3) >>> 0, width]),
+      ),
+    );
+  }
+
+  isBvNumeral(expr: number) {
+    return this.getOp(expr) === OP_BV_NUM;
+  }
+
+  // The value of a bit-vector numeral, from 0 to 2^width - 1.
+  getBvNumeralValue(expr: number) {
+    return this.numeralValues[this.values[expr]].num;
   }
 
   getSortFamily(sort: number) {
@@ -817,6 +1008,7 @@ export class AstManager {
       range,
       isSkolem,
       smallId: this.mkSmallId(),
+      parameters: [],
     });
     this.declRefCounts[this.funcDecls.length - 1] = 1;
     return this.funcDecls.length - 1;
@@ -916,7 +1108,7 @@ export class AstManager {
   mkApp(decl: number, args: number[], sort: number, start = 0) {
     const funcDecl = this.funcDecls[decl];
     // Numerals and model values carry their value, so only mkNumeral and mkModelValue create them.
-    if (decl === OP_NUM || funcDecl.family === FAMILY_MODEL_VALUE)
+    if (decl === OP_NUM || funcDecl.family === FAMILY_MODEL_VALUE || funcDecl.op === OP_BV_NUM)
       throw new SmtInvariantError(`${funcDecl.name} needs a value`);
     let hash = decl;
     for (let index = start; index < args.length; index++)
@@ -940,16 +1132,16 @@ export class AstManager {
     }
     const nodeArgs = start > 0 ? this.argBuffer : args;
     // The slot comes first, since finding it may replace builtinHashes with one twice the size.
+    const hasOwnHash = funcDecl.family === FAMILY_USER || funcDecl.family === FAMILY_BV;
     const builtinSlot =
-      funcDecl.family === FAMILY_USER || funcDecl.op === OP_PATTERN
+      hasOwnHash || funcDecl.op === OP_PATTERN
         ? -1
         : this.getBuiltinSlot(funcDecl.op, nodeArgs, sort);
-    const declHash =
-      funcDecl.family === FAMILY_USER
-        ? this.declHashes[decl]
-        : builtinSlot === -1
-          ? this.getPatternHash(nodeArgs, sort)
-          : this.builtinHashes[builtinSlot];
+    const declHash = hasOwnHash
+      ? this.declHashes[decl]
+      : builtinSlot === -1
+        ? this.getPatternHash(nodeArgs, sort)
+        : this.builtinHashes[builtinSlot];
     const id = this.create(
       KIND_APP,
       decl,
@@ -1047,6 +1239,7 @@ export class AstManager {
       range: sort,
       isSkolem: false,
       smallId: -1,
+      parameters: [],
     });
     const decl = this.funcDecls.length - 1;
     this.declHashes[decl] = this.getFuncDeclHash(
@@ -1198,7 +1391,13 @@ export class AstManager {
   // Unique values are interpreted constants that are distinct from each other, as in Z3.
   isUniqueValue(expr: number) {
     const op = this.getOp(expr);
-    return op === OP_NUM || op === OP_TRUE || op === OP_FALSE || op === OP_MODEL_VALUE;
+    return (
+      op === OP_NUM ||
+      op === OP_TRUE ||
+      op === OP_FALSE ||
+      op === OP_MODEL_VALUE ||
+      op === OP_BV_NUM
+    );
   }
 
   // are_distinct: the plugin of the first term's family, or of the second's for a user term, tells
@@ -1228,7 +1427,7 @@ export class AstManager {
   }
 
   isUninterpretedSort(sort: number) {
-    return sort > SORT_REAL;
+    return this.sortFamilies[sort] === FAMILY_USER;
   }
 
   // An uninterpreted constant, such as a declared constant or a Skolem constant.
@@ -1310,6 +1509,8 @@ export class AstManager {
       const data = this.getQuantifier(expr);
       return `(${data.isForall ? "forall" : "exists"} (${data.sorts.length}) ${this.toString(data.body)})`;
     }
+    if (this.getOp(expr) === OP_BV_NUM)
+      return `(_ bv${this.getBvNumeralValue(expr)} ${this.getBvSize(this.sorts[expr])})`;
     if (this.getOp(expr) === OP_NUM) {
       const value = this.getRationalValue(expr);
       if (this.sorts[expr] === SORT_INT) return String(value.num);

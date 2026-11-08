@@ -60,6 +60,8 @@ const BOOLEAN_PRINT_OPTIONS = new Map<string, PrintOptionOf<boolean>>([
   [":pp.single_line", "isSingleLine"],
   [":pp.bounded", "isBounded"],
   [":pp.decimal", "isDecimal"],
+  [":pp.bv_literals", "isBvLiterals"],
+  [":pp.bv_neg", "isBvNeg"],
 ]);
 
 const SIMPLIFY_PARAMETERS = new Set([
