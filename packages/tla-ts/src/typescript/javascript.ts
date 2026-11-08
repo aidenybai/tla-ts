@@ -78,7 +78,10 @@ OwnKeys(object) ==
 LOCAL EnumerableKeys(object) ==
   SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
 
-Own(heap, ref) == heap[ref[Ref]].values
+Own(heap, ref) ==
+  IF ref \\in {Undefined, Null}
+  THEN Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of " \\o ToString(ref))
+  ELSE heap[ref[Ref]].values
 
 Enumerable(heap, ref) ==
   LET object == heap[ref[Ref]]
