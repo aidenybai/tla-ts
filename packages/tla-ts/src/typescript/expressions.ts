@@ -88,12 +88,12 @@ const concatenate = (parts: Expression[]) =>
 // The key of an element access, which counts from 1 in a sequence where JavaScript counts from 0.
 export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, context: Context) => {
   const key = node.argumentExpression;
-  if (getKind(node.expression, context) !== "sequence") {
-    return translateExpression(key, scope, context);
-  }
-  return ts.isNumericLiteral(key)
-    ? number(Number(key.text) + 1)
-    : apply("+", [translateExpression(key, scope, context), number(1)]);
+  const kind = getKind(node.expression, context);
+  if (kind !== "sequence" && kind !== "string") return translateExpression(key, scope, context);
+  const position = translateExpression(key, scope, context);
+  return position.kind === "Number"
+    ? number(position.value + 1)
+    : apply("+", [position, number(1)]);
 };
 
 const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, context: Context) => {
@@ -482,10 +482,22 @@ const translateElementAccess = (
   node: ts.ElementAccessExpression,
   scope: Scope,
   context: Context,
+  isDefined: boolean,
 ) => {
-  return index(translateExpression(node.expression, scope, context), [
-    translateKey(node, scope, context),
-  ]);
+  const value = translateExpression(node.expression, scope, context);
+  const key = translateKey(node, scope, context);
+  if (getKind(node.expression, context) !== "string") return index(value, [key]);
+  return share(value, "string", context, (text) =>
+    share(key, "position", context, (position) => {
+      const character = apply("SubSeq", [text, position, position]);
+      if (isDefined) return character;
+      return ifExpression(
+        apply("\\in", [position, apply("..", [number(1), apply("Len", [text])])]),
+        character,
+        getUndefined(context),
+      );
+    }),
+  );
 };
 
 export const translateCondition = (node: ts.Expression, scope: Scope, context: Context) => {
@@ -579,7 +591,9 @@ const translateNode = (
   if (ts.isArrayLiteralExpression(node)) return translateArrayLiteral(node, scope, context);
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);
   if (ts.isPropertyAccessExpression(node)) return translatePropertyAccess(node, scope, context);
-  if (ts.isElementAccessExpression(node)) return translateElementAccess(node, scope, context);
+  if (ts.isElementAccessExpression(node)) {
+    return translateElementAccess(node, scope, context, isDefined);
+  }
   if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
   if (ts.isNewExpression(node)) return translateNew(node, scope, context);
   throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
