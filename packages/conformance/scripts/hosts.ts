@@ -196,7 +196,9 @@ const runTlc = async (
   writeFileSync(join(directory, configFile), context.config);
   const result = await spawnRun({
     command: [
-      ...command,
+      ...command.map((argument) =>
+        argument === "-Xss2m" && test.metadata.stack ? `-Xss${test.metadata.stack}` : argument,
+      ),
       ...(isExitOnly ? [] : ["-tool"]),
       ...DETERMINISTIC_ARGUMENTS,
       "-metadir",
