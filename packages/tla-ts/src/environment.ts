@@ -59,11 +59,11 @@ import {
   type Symbols,
 } from "./resolve";
 import { createRuntime } from "./runtime";
-import { getSanyStandardModules } from "./sany/modules";
 import { USER_STANDARD_MODULES } from "./tlc/jar-data";
 import { getSanyParseError } from "./sany/parse-error";
 import {
   CORE_OPERATORS,
+  getJavaOverrides,
   getStandardModule,
   getTraceSpecArithmetic,
   STANDARD_DEPENDENCIES,
@@ -480,10 +480,7 @@ export const createEnvironment = (
     const top = linkTopLevel(loadModule(name, importer));
     // TLC replaces each definition of a module that has a standard module's name with the Java
     // method of that name, so a user's Bags.tla keeps the definitions that Bags has no method for.
-    const standardModule = getSanyStandardModules(runtime.version).has(name)
-      ? getStandardModule(name, options.print, runtime, options.files, builtins)
-      : undefined;
-    standardModule?.operators.forEach((operator) => {
+    getJavaOverrides(name, options.print, runtime, options.files, builtins)?.forEach((operator) => {
       const symbol = top.linked.visible.get(operator.name);
       if (symbol?.kind !== "Definition" || symbol.arity !== operator.arity) return;
       builtins.set(symbol.key, operator);

@@ -40,12 +40,14 @@ import {
   isEnumerable,
   isFiniteSet,
   isFunctionValue,
+  isOverriddenSet,
   computeLikeTlcOnFailure,
   isReducibleSet,
   markStreamedSet,
   isSetValue,
   toFiniteSet,
   getSortedUnion,
+  getValueKey,
   isEqualLikeTlc,
   createEnumeratedSet,
   EMPTY_SET,
@@ -58,6 +60,7 @@ import {
   rankString,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
+import { getSanyStandardModules } from "./sany/modules";
 
 interface StandardModule {
   extends: string[];
@@ -422,6 +425,77 @@ const createFiniteSetsOperators = (version: TlcVersion) =>
       return getCardinality(set, version);
     }),
   ]);
+
+// TLC's tlc2.module.TransitiveClosure overrides Warshall in a user's module of that name, such as the
+// one of the CommunityModules. It sizes the relation, which normalizes it, numbers each node in the
+// order it first appears, and returns the closure unnormalized.
+const TRANSITIVE_CLOSURE_OPERATORS = [
+  overrideWithJava(
+    defineOperator("Warshall", 1, (args) => {
+      const relation = getValue(args, 0, "Warshall");
+      if (!isSetValue(relation) || isOverriddenSet(relation)) {
+        throw new TlaModuleError(
+          `Applying TransitiveClosure to the following value,\nwhich is not an enumerable set:\n${formatValue(relation)}`,
+        );
+      }
+      getCardinality(relation);
+      const nodes: Value[] = [];
+      const nodeIndices = new Map<string, number>();
+      const getNodeIndex = (node: Value) => {
+        const key = getValueKey(node);
+        const index = nodeIndices.get(key) ?? nodes.length;
+        if (index === nodes.length) {
+          nodeIndices.set(key, index);
+          nodes.push(node);
+        }
+        return index;
+      };
+      const edges = toFiniteSet(relation).elements.map((edge) => {
+        const ends = getSequenceElements(edge);
+        if (ends?.length !== 2) {
+          throw new TlaModuleError(
+            `Attempted to apply TransitiveClosure to a set containing\nthe following value:\n${formatValue(edge)}`,
+          );
+        }
+        return [getNodeIndex(ends[0]), getNodeIndex(ends[1])];
+      });
+      const matrix = nodes.map(() => nodes.map(() => false));
+      edges.forEach((edge) => {
+        matrix[edge[0]][edge[1]] = true;
+      });
+      for (let middle = 0; middle < nodes.length; middle++) {
+        for (let from = 0; from < nodes.length; from++) {
+          if (!matrix[from][middle]) continue;
+          for (let to = 0; to < nodes.length; to++) {
+            if (matrix[middle][to]) matrix[from][to] = true;
+          }
+        }
+      }
+      return createEnumeratedSet(
+        nodes.flatMap((from, fromIndex) =>
+          nodes.flatMap((to, toIndex) =>
+            matrix[fromIndex][toIndex] ? [createTuple([from, to])] : [],
+          ),
+        ),
+      );
+    }),
+    "public static tlc2.value.impl.Value tlc2.module.TransitiveClosure.Warshall(tlc2.value.impl.Value)",
+  ),
+];
+
+// The operators that TLC's Java class of a module overrides in a user's module of the same name.
+export const getJavaOverrides = (
+  name: string,
+  print: (text: string) => void,
+  runtime: CheckerRuntime,
+  files: FileSystem,
+  builtins: ReadonlyMap<string, Builtin>,
+) =>
+  name === "TransitiveClosure"
+    ? TRANSITIVE_CLOSURE_OPERATORS
+    : getSanyStandardModules(runtime.version).has(name)
+      ? getStandardModule(name, print, runtime, files, builtins)?.operators
+      : undefined;
 
 // The modules that each standard module loads through EXTENDS and LOCAL INSTANCE in TLC.
 export const STANDARD_DEPENDENCIES = new Map([
