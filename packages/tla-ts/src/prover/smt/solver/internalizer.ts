@@ -370,8 +370,8 @@ export abstract class Internalizer {
       if (arg === manager.trueExpr) return L_FALSE;
       return L_UNDEF;
     }
-    if (this.isBInternalized(expr)) return this.getAssignmentOfExpr(expr);
     if (expr === manager.falseExpr) return L_FALSE;
+    if (this.isBInternalized(expr)) return this.getAssignmentOfExpr(expr);
     if (expr === manager.trueExpr) return L_TRUE;
     return L_UNDEF;
   }
