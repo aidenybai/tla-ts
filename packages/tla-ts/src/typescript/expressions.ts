@@ -359,7 +359,7 @@ const translateCall = (
   if (called !== undefined) {
     return ifExpression(
       translateHoldsMethod(called, scope, context),
-      translateLocalCall(node, scope, context, called.method),
+      translateLocalCall(node, scope, context, called),
       apply("Assert", [boolean(false), string("tla-ts can't tell which method this call runs")]),
     );
   }
@@ -847,6 +847,13 @@ const translateNode = (
   if (ts.isNonNullExpression(node)) {
     return translateExpression(node.expression, scope, context, true);
   }
+  const isReceived =
+    node.kind === ts.SyntaxKind.ThisKeyword &&
+    ts.findAncestor(
+      node.parent,
+      (ancestor) => ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor),
+    ) === scope.receiver?.method;
+  if (isReceived && scope.receiver !== undefined) return scope.receiver.value;
   if (ts.isNumericLiteral(node)) {
     const value = Number(node.text);
     if (!Number.isInteger(value)) {

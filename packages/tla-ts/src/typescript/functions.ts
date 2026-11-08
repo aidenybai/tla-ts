@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
+  type CalledMethod,
   type Context,
   type Definition,
   type FunctionNode,
@@ -15,6 +16,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
+import { translateObjectValue } from "./heap";
 import {
   type Bound,
   bindNames,
@@ -129,11 +131,19 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
 };
 
 // Substitutes the arguments into a function's body, which then reads the state as it is now.
+// The object that this names in the method a call inlines, which is the one the call reads the
+// method from. Other calls keep the caller's, which this reads only in that method.
+export const getReceiver = (scope: Scope, context: Context, called?: CalledMethod) =>
+  called === undefined
+    ? scope.receiver
+    : { value: translateObjectValue(called.receiver, scope, context), method: called.method };
+
 const inlineCall = (
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
   scope: Scope,
   context: Context,
+  called?: CalledMethod,
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
   const bound = bindValues(
@@ -142,7 +152,11 @@ const inlineCall = (
     scope,
     context,
   );
-  const value = translateBody(callee.body, bound.scope, context);
+  const value = translateBody(
+    callee.body,
+    { ...bound.scope, receiver: getReceiver(scope, context, called) },
+    context,
+  );
   return render(letIn(bound.definitions, leaf(value)));
 };
 
@@ -198,11 +212,13 @@ export const translateLocalCall = (
   node: ts.CallExpression,
   scope: Scope,
   context: Context,
-  method?: FunctionNode,
+  called?: CalledMethod,
 ) => {
   const symbol = getSymbol(node.expression, context.checker);
   const callee =
-    method ?? (symbol && scope.functions.get(symbol)) ?? getCallee(node.expression, context);
+    called?.method ??
+    (symbol && scope.functions.get(symbol)) ??
+    getCallee(node.expression, context);
   if (callee === undefined) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
@@ -214,7 +230,7 @@ export const translateLocalCall = (
   }
   rejectCaught(node, callee, scope, context);
   context.inProgress.add(callee);
-  const value = inlineCall(callee, node.arguments, scope, context);
+  const value = inlineCall(callee, node.arguments, scope, context, called);
   context.inProgress.delete(callee);
   return value;
 };

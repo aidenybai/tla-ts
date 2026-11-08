@@ -38,7 +38,7 @@ import {
 } from "./heap";
 import { isBuiltInObject } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { translateIf, translateSwitch, translateThrow } from "./functions";
+import { getReceiver, translateIf, translateSwitch, translateThrow } from "./functions";
 import {
   bindPattern,
   type Bound,
@@ -520,7 +520,11 @@ const translateCallStatement = (
           ? ts.factory.createReturnStatement(calleeBody)
           : ts.factory.createExpressionStatement(calleeBody),
       ];
-  const scope = { ...bound.scope, functions: new Map([...bound.scope.functions, ...callbacks]) };
+  const scope = {
+    ...bound.scope,
+    functions: new Map([...bound.scope.functions, ...callbacks]),
+    receiver: getReceiver(path.scope, context, called),
+  };
   const call = translateJoined(expression, path, context, continueWith, (next) => {
     const afterCall = (inner: Path, value?: Expression) =>
       next({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } }, value);

@@ -24,6 +24,13 @@ export interface Scope {
   isCatching: boolean;
   uninitialized: ReadonlySet<ts.Symbol>;
   allocated: ReadonlyMap<ts.Node, Expression>;
+  // The object that this names in the method that a call through it inlines.
+  receiver?: Receiver;
+}
+
+export interface Receiver {
+  value: Expression;
+  method: ts.MethodDeclaration;
 }
 
 export interface Bound {

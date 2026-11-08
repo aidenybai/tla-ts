@@ -798,6 +798,11 @@ describe("errors", () => {
       "Make objects only where a statement always runs",
     ],
     [
+      "this in a function inside a method",
+      "const box = {\n  read() {\n    const inner = function (this: unknown) {\n      return this;\n    };\n    return inner();\n  },\n};\nlet value = box.read();",
+      "Unsupported expression: this",
+    ],
+    [
       "a call to a method that a variable holds",
       "const counter = { get() { return 1; } };\nconst get = counter.get;\nlet value = get();",
       "Unsupported call: get",

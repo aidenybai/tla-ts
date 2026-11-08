@@ -331,6 +331,22 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const total = counter.double(3);`,
     ],
     [
+      "[box.read(), box.v, doubled]",
+      `let doubled = 0;
+      const box = {
+        v: 3,
+        read() {
+          return this.v;
+        },
+        bump(step: number) {
+          this.v = this.v + step;
+          const double = () => this.v * 2;
+          doubled = double();
+        },
+      };
+      box.bump(2);`,
+    ],
+    [
       "has(point)",
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],
