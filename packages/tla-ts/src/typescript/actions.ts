@@ -843,16 +843,21 @@ const translateLoopCall = (
   const result = context.names.getFresh("loop");
   const runLoop = (from: Expression, seed: Expression) =>
     letIn(
-      [operator, define(result, [], call(name, [from, seed, ...getValues(path)]))],
-      continueWith(
-        {
-          ...withValues(
-            path,
-            changed.map((_, offset) => index(identifier(result), [number(offset + 2)])),
-          ),
-          isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
-        },
-        index(identifier(result), [number(1)]),
+      [operator],
+      bindOnce(
+        path,
+        result,
+        call(name, [from, seed, ...getValues(path)]),
+        continueWith(
+          {
+            ...withValues(
+              path,
+              changed.map((_, offset) => index(identifier(result), [number(offset + 2)])),
+            ),
+            isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+          },
+          index(identifier(result), [number(1)]),
+        ),
       ),
     );
   // A reduce without an initial value starts from the first element it visits, and throws a
@@ -1679,16 +1684,17 @@ const translateIterations = (
             ),
           ]),
       operator,
-      define(
-        result,
-        [],
-        call(name, [...(iterated === undefined ? [] : [number(1)]), ...getValues(path)]),
-      ),
     ],
-    continueWith({
-      ...after,
-      isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
-    }),
+    // The loop runs even when nothing reads what it changes, as it may throw.
+    bindOnce(
+      path,
+      result,
+      call(name, [...(iterated === undefined ? [] : [number(1)]), ...getValues(path)]),
+      continueWith({
+        ...after,
+        isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+      }),
+    ),
   );
 };
 

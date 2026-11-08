@@ -359,6 +359,17 @@ describe("top-level statements", () => {
     expect(getTrace(result)).toEqual([{ count: "3" }]);
   });
 
+  it("stop the check when a loop throws, though nothing reads what it changes", async () => {
+    await expect(
+      checkModel(`
+        const list = [1, 2];
+        for (const value of list) {
+          if (value === 2) throw new Error("two");
+        }
+      `),
+    ).rejects.toThrow("two");
+  });
+
   it("stop the check when they throw", async () => {
     const result = await checkModel(`
       let count = 1;
