@@ -1,6 +1,4 @@
-// A port of tlapm's Expr.LevelComparison, the LevelComparison frontend: it proves an obligation
-// whose goal is a visible fact, or the goal of a visible ASSUME/PROVE fact, with identifiers
-// renamed to identifiers of no higher level, each renamed one declared by the fact.
+// A port of tlapm's Expr.LevelComparison, the LevelComparison frontend.
 
 import { TlapmBugError, TlaProverError } from "../../errors";
 import {
@@ -46,7 +44,7 @@ const isPairwise = <Item>(
   left.every((item, index) => index < right.length && isSameItem(item, right[index])) &&
   left.length === right.length;
 
-// Util.Coll.Sm built from a list, where the first entry of a name wins, in key order.
+// As Util.Coll.Sm built from a list: the first entry of a name wins, in key order.
 const getSortedFields = (fields: { name: string; value: Expr }[]) =>
   [...new Map(fields.toReversed().map((field) => [field.name, field.value]))].toSorted(
     (first, second) => (first[0] < second[0] ? -1 : 1),
@@ -81,8 +79,6 @@ const bindFlexible = (scope: Scope | undefined, names: string[]) =>
     names.map((name) => ({ kind: "Flex", name })),
   );
 
-// level_comparison#compare: the expressions match up to a renaming that maps each name one way,
-// and the fact's context declares each name it changes.
 const compare = (
   factScope: Scope | undefined,
   goalScope: Scope | undefined,
@@ -507,8 +503,7 @@ const compare = (
   return isMatch && isDeclared.every(Boolean);
 };
 
-// check_level_change: the first visible fact that matches proves the goal, which becomes TRUE.
-// When none does, tlapm records the obligation as not tried.
+// When no visible fact matches, tlapm records the obligation as not tried.
 export const checkLevelChange = (sequent: Sequent): Sequent => {
   const goalScope = adjoinAll(undefined, sequent.context);
   const isProved = sequent.context.some((hyp, index) => {
