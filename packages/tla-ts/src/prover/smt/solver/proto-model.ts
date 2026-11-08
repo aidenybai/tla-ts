@@ -1,7 +1,7 @@
 // Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp,
 // src/model/value_factory.cpp, src/model/model_core.cpp, src/model/datatype_factory.cpp), MIT
 // license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../errors";
+import { TermEnumeration } from "./term-enumeration";
 import {
   AstManager,
   KIND_APP,
@@ -229,6 +229,8 @@ export class ProtoModel {
   private arithValues: RefVector;
   private bvValues: RefVector;
   private datatypeValues: RefVector;
+  private enumeratedTerms: RefVector;
+  private freshEnumerations = new Map<number, TermEnumeration>();
   private nextValue = new Map<number, number>();
   private finiteSorts = new Set<number>();
   private boolRandom: RandomGen;
@@ -245,6 +247,7 @@ export class ProtoModel {
     this.arithValues = new RefVector(manager);
     this.bvValues = new RefVector(manager);
     this.datatypeValues = new RefVector(manager);
+    this.enumeratedTerms = new RefVector(manager);
     this.auxDecls = new ObjHashtable((decl) => manager.getDeclHash(decl));
     this.evaluator = new ModelEvaluator(manager, this);
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
@@ -369,10 +372,50 @@ export class ProtoModel {
     return this.mkValue(0, sort);
   }
 
+  private getFreshRecursiveValue(sort: number) {
+    const set = this.getValueSet(sort);
+    const enumeration = this.freshEnumerations.get(sort) ?? this.mkTermEnumeration(sort);
+    this.freshEnumerations.set(sort, enumeration);
+    for (let term = enumeration.current; term !== null; term = enumeration.current) {
+      enumeration.advance();
+      if (!set.has(term)) {
+        this.addValue(sort, term);
+        return term;
+      }
+    }
+    return null;
+  }
+
+  private mkTermEnumeration(sort: number) {
+    const manager = this.manager;
+    const constructors: number[] = [];
+    const visited = new Set([sort]);
+    const todo = [sort];
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
+      const nested = manager.isDatatypeSort(current)
+        ? getDatatypeConstructors(manager, current).flatMap((constructor) => {
+            constructors.push(constructor);
+            return manager.funcDecls[constructor].domain;
+          })
+        : [];
+      for (const next of [...nested, ...manager.getSortParameters(current)]) {
+        if (visited.has(next)) continue;
+        visited.add(next);
+        todo.push(next);
+      }
+    }
+    return new TermEnumeration(
+      manager,
+      [...new Set(constructors)],
+      sort,
+      (argSort) => this.getSomeValue(argSort),
+      (term) => this.enumeratedTerms.push(term),
+    );
+  }
+
   private getFreshDatatypeValue(sort: number): number | null {
     const manager = this.manager;
-    if (isRecursiveDatatype(manager, sort))
-      throw new SmtUnsupportedError("fresh values of recursive datatypes");
+    if (isRecursiveDatatype(manager, sort)) return this.getFreshRecursiveValue(sort);
     const set = this.getValueSet(sort);
     for (const constructor of getDatatypeConstructors(manager, sort)) {
       let isFreshArgFound = false;
@@ -555,6 +598,7 @@ export class ProtoModel {
     this.arithValues.reset();
     this.bvValues.reset();
     this.datatypeValues.reset();
+    this.enumeratedTerms.reset();
     for (const entry of this.constInterps) {
       this.manager.decDeclRef(entry[0]);
       this.manager.decRef(entry[1]);
