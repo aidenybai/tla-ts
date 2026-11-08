@@ -2667,7 +2667,8 @@ const expandLazySet = (value: LazySetValue) => {
 };
 
 const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
-  if (isStrict) return expandLazySet(value);
+  // UnionValue alone of TLC's lazy sets doesn't swallow the failure to enumerate itself.
+  if (isStrict || value.kind === "Union") return expandLazySet(value);
   // TLC sizes the base of SUBSET before it enumerates it, and only a failure to size it is quiet.
   if (
     value.kind === "Subset" &&
