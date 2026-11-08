@@ -25,11 +25,15 @@ import {
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
+  bindOperatorArguments,
   createBigNumberError,
   createRealNumberError,
   evaluate,
   getDefinition,
   type Builtin,
+  type BuiltinArgument,
+  type Closure,
+  type Context,
   type Environment,
 } from "./evaluate";
 import {
@@ -478,11 +482,50 @@ export const createEnvironment = (
       return cached;
     }
     const top = linkTopLevel(loadModule(name, importer));
+    const replaced = new Map<string, Definition>();
+    const evaluateReplaced = (
+      operator: string,
+      args: BuiltinArgument[],
+      context: Context | undefined,
+    ) => {
+      const definition = replaced.get(operator);
+      const expressions = args.flatMap((arg) =>
+        typeof arg === "object" && arg.kind === "Operator" && arg.expression
+          ? [arg.expression]
+          : [],
+      );
+      if (definition?.kind !== "Operator" || !context || expressions.length !== args.length) {
+        throw new TlaEvaluationError(`No definition of ${operator} to fall back to`);
+      }
+      const closure: Closure = {
+        kind: "Closure",
+        name: definition.name,
+        params: definition.params,
+        body: definition.body,
+        scope: undefined,
+      };
+      return evaluate(definition.body, {
+        environment: context.environment,
+        scope: bindOperatorArguments(closure, expressions, context),
+        state: context.state,
+        next: context.next,
+        isKeepLazy: context.isKeepLazy,
+      });
+    };
     // TLC replaces each definition of a module that has a standard module's name with the Java
     // method of that name, so a user's Bags.tla keeps the definitions that Bags has no method for.
-    getJavaOverrides(name, options.print, runtime, options.files, builtins)?.forEach((operator) => {
+    getJavaOverrides(
+      name,
+      options.print,
+      runtime,
+      options.files,
+      builtins,
+      evaluateReplaced,
+    )?.forEach((operator) => {
       const symbol = top.linked.visible.get(operator.name);
       if (symbol?.kind !== "Definition" || symbol.arity !== operator.arity) return;
+      const definition = definitions.get(symbol.key);
+      if (definition) replaced.set(operator.name, definition);
       builtins.set(symbol.key, operator);
       definitions.delete(symbol.key);
     });

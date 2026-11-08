@@ -1,15 +1,18 @@
 import {
   createModuleArgumentError,
+  defineLazyOperator,
   defineStateOperator,
   getJavaClassName,
+  getThunk,
   getValue,
   isOutOfRange,
   overrideWithJava,
 } from "./builtins";
-import { TlaEvaluationError } from "./errors";
-import type { Builtin } from "./evaluate";
+import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import type { Builtin, BuiltinArgument, Context } from "./evaluate";
 import { readJson, type JsonElement } from "./json-reader";
 import {
+  applyFunction,
   createRecord,
   createTuple,
   formatValue,
@@ -28,6 +31,24 @@ export interface FileSystem {
   writeFile: ((path: string, content: string) => void) | undefined;
 }
 
+const OPEN_OPTIONS = new Set([
+  "READ",
+  "WRITE",
+  "APPEND",
+  "TRUNCATE_EXISTING",
+  "CREATE",
+  "CREATE_NEW",
+  "DELETE_ON_CLOSE",
+  "SPARSE",
+  "SYNC",
+  "DSYNC",
+]);
+
+const UTF_8_NAMES = new Set(["utf-8", "utf8", "unicode-1-1-utf-8"]);
+
+// The charsets every JVM supports besides UTF-8, which tla-ts doesn't encode.
+const STANDARD_CHARSETS = new Set(["us-ascii", "iso-8859-1", "utf-16", "utf-16be", "utf-16le"]);
+
 // Value#toRcd: a function whose domain holds only strings.
 const toRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
@@ -36,6 +57,14 @@ const toRecord = (value: Value) => {
     typeof key === "string" ? [[key, functionValue.range[index]]] : [],
   );
   return fields.length === functionValue.domain.length ? createRecord(fields) : undefined;
+};
+
+const createClassCastError = (value: Value, javaClass: string) => {
+  const valueClass = `tlc2.value.impl.${getJavaClassName(value)}`;
+  const targetClass = `tlc2.value.impl.${javaClass}`;
+  return new TlaEvaluationError(
+    `class ${valueClass} cannot be cast to class ${targetClass} (${valueClass} and ${targetClass} are in unnamed module of loader 'app')`,
+  );
 };
 
 const createUnsupportedError = (value: Value) =>
@@ -128,6 +157,62 @@ const getPath = (value: Value) => {
   return value;
 };
 
+const getStringOption = (options: Value, field: string) => {
+  const value = applyFunction(options, field);
+  if (typeof value !== "string") throw createClassCastError(value, "StringValue");
+  return value;
+};
+
+const checkCharset = (charset: string) => {
+  if (UTF_8_NAMES.has(charset.toLowerCase())) return;
+  if (STANDARD_CHARSETS.has(charset.toLowerCase())) {
+    throw new TlaUnsupportedError(`IOUtils!Serialize does not support the charset ${charset}`);
+  }
+  throw new TlaEvaluationError(
+    /^[a-zA-Z\d][\w.:+-]*$/.test(charset)
+      ? `java.nio.charset.UnsupportedCharsetException: ${charset}`
+      : `java.nio.charset.IllegalCharsetNameException: ${charset}`,
+  );
+};
+
+// Files.newBufferedWriter with the given StandardOpenOption names, which writes the text over the
+// start of a file that it neither truncates nor appends to.
+const writeWithOptions = (files: FileSystem, path: string, names: string[], text: string) => {
+  const unknown = names.find((name) => !OPEN_OPTIONS.has(name));
+  if (unknown !== undefined) {
+    throw new TlaEvaluationError(
+      `java.lang.IllegalArgumentException: No enum constant java.nio.file.StandardOpenOption.${unknown}`,
+    );
+  }
+  if (names.includes("READ")) {
+    throw new TlaEvaluationError("java.lang.IllegalArgumentException: READ not allowed");
+  }
+  const options = new Set(names.length === 0 ? ["CREATE", "TRUNCATE_EXISTING"] : names);
+  if (options.has("APPEND") && options.has("TRUNCATE_EXISTING")) {
+    throw new TlaEvaluationError(
+      "java.lang.IllegalArgumentException: APPEND + TRUNCATE_EXISTING not allowed",
+    );
+  }
+  if (options.has("DELETE_ON_CLOSE")) {
+    throw new TlaUnsupportedError("IOUtils!Serialize does not support DELETE_ON_CLOSE");
+  }
+  const existing = files.readFile?.(path);
+  if (existing === undefined && !options.has("CREATE") && !options.has("CREATE_NEW")) {
+    throw new TlaEvaluationError(`java.nio.file.NoSuchFileException: ${path}`);
+  }
+  if (existing !== undefined && options.has("CREATE_NEW")) {
+    throw new TlaEvaluationError(`java.nio.file.FileAlreadyExistsException: ${path}`);
+  }
+  if (existing === undefined || options.has("TRUNCATE_EXISTING")) {
+    files.writeFile?.(path, text);
+    return;
+  }
+  files.writeFile?.(
+    path,
+    options.has("APPEND") ? existing + text : text + existing.slice(text.length),
+  );
+};
+
 const readText = (files: FileSystem, path: string) => {
   const text = files.readFile?.(path);
   if (text === undefined) throw new TlaEvaluationError(`${path} (No such file or directory)`);
@@ -194,5 +279,48 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
       ),
     ),
     "public static tlc2.value.IValue tlc2.module.Json.ndDeserialize(tlc2.value.impl.StringValue) throws java.io.IOException",
+  ),
+];
+
+// TLC's Json overrides IOUtils!Serialize, as the CommunityModules define it, for the NDJSON format
+// and falls back to its definition for any other.
+export const createIoUtilsOperators = (
+  files: FileSystem,
+  evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
+): Builtin[] => [
+  overrideWithJava(
+    defineLazyOperator("Serialize", 3, (args, context) => {
+      const third = getThunk(args, 2, "Serialize")();
+      const options = toRecord(third);
+      if (!options) throw createModuleArgumentError("third", "ndJsonSerialize", "sequence", third);
+      if (getStringOption(options, "format") !== "NDJSON") {
+        return evaluateReplaced("Serialize", args, context);
+      }
+      const payload = getThunk(args, 0, "Serialize")();
+      const elements = getSequenceElements(payload);
+      if (!elements) throw createModuleArgumentError("first", "Serialize", "sequence", payload);
+      const path = getThunk(args, 1, "Serialize")();
+      if (typeof path !== "string") {
+        throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", path);
+      }
+      const openOptions = applyFunction(options, "openOptions");
+      if (getJavaClassName(openOptions) !== "TupleValue") {
+        throw createClassCastError(openOptions, "TupleValue");
+      }
+      const charset = getStringOption(options, "charset");
+      const names = toFiniteFunction(openOptions).range.map((option) => {
+        if (typeof option !== "string") throw createClassCastError(option, "StringValue");
+        return option;
+      });
+      checkCharset(charset);
+      writeWithOptions(
+        files,
+        path,
+        names,
+        elements.map((element) => `${toJson(element)}\n`).join(""),
+      );
+      return true;
+    }),
+    "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
   ),
 ];
