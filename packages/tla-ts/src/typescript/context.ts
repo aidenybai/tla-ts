@@ -26,6 +26,7 @@ export interface Context {
   prelude: Set<"Null" | "Undefined" | "Rem" | "Quot" | "JavaScript">;
   // The calls that the exported function being compiled makes and tla-ts can't compile.
   unknowns: Unknowns | undefined;
+  heap: ts.Symbol | undefined;
 }
 
 export interface Unknown {
@@ -63,7 +64,11 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   constructors: new Map(),
   prelude: new Set(),
   unknowns: undefined,
+  heap: undefined,
 });
+
+export const hasObjectLiteral = (node: ts.Node): boolean =>
+  ts.isObjectLiteralExpression(node) || (ts.forEachChild(node, hasObjectLiteral) ?? false);
 
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
   const symbol =

@@ -87,7 +87,7 @@ const RESERVED = new Set([
   "Next",
   "Spec",
   "vars",
-  "Intrinsic",
+  "Ref",
   "Null",
   "Undefined",
   "Perms",

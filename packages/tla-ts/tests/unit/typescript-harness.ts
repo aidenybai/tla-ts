@@ -33,12 +33,30 @@ const getCanonical = (value: unknown): string => {
   return formatFunction(entries.map((entry) => [getCanonical(entry[0]), getCanonical(entry[1])]));
 };
 
-const getCanonicalTla = (value: Value): string => {
+const getEntry = (value: Value, isKey: (key: Value) => boolean) => {
+  if (typeof value !== "object" || value.kind !== "Function") return undefined;
+  const position = value.domain.findIndex(isKey);
+  return position === -1 ? undefined : value.range[position];
+};
+
+// A script's objects are references (Ref :> n) into its heap, which print as the object.
+const getCanonicalTla = (value: Value, heap?: Value): string => {
+  const getInner = (inner: Value) => getCanonicalTla(inner, heap);
   if (typeof value !== "object") return JSON.stringify(value);
   if (value.kind === "ModelValue") return value.name;
   if (value.kind === "Set" || value.kind === "MixedSet") {
-    return formatSet(value.elements.map(getCanonicalTla));
+    return formatSet(value.elements.map(getInner));
   }
+  const reference = getEntry(
+    value,
+    (key) => typeof key === "object" && key.kind === "ModelValue" && key.name === "Ref",
+  );
+  const object =
+    reference === undefined || heap === undefined
+      ? undefined
+      : getEntry(heap, (key) => key === reference);
+  const values = object === undefined ? undefined : getEntry(object, (key) => key === "values");
+  if (values !== undefined) return getInner(values);
   if (value.kind === "Interval") {
     return formatSet(
       Array.from({ length: Math.max(0, value.high - value.low + 1) }, (_, index) =>
@@ -48,7 +66,7 @@ const getCanonicalTla = (value: Value): string => {
   }
   if (value.kind === "Function") {
     return formatFunction(
-      value.domain.map((key, index) => [getCanonicalTla(key), getCanonicalTla(value.range[index])]),
+      value.domain.map((key, index) => [getInner(key), getInner(value.range[index])]),
     );
   }
   throw new Error(`Unexpected value kind: ${value.kind}`);
@@ -106,7 +124,7 @@ export const evaluateExpression = async (expression: string, setup = "") => {
     expected: getCanonical(
       runJavaScript(`${setup}\nexport const getResult = () => (${expression});`),
     ),
-    actual: getCanonicalTla(state.result),
+    actual: getCanonicalTla(state.result, state.heap),
   };
 };
 

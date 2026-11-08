@@ -206,6 +206,35 @@ const CASES: Record<string, (string | [string, string])[]> = {
       "const isSame = (left: unknown, right: unknown) => left === right;\nconst text: string | number = 'a' as string | number;",
     ],
   ],
+  objects: [
+    [
+      "[first === second, first === first, [first].includes(first), [{ a: 1 }].includes({ a: 1 })]",
+      "const first = {};\nconst second = {};",
+    ],
+    [
+      "[point.x, point.y]",
+      "const point = { x: 1, y: 2 };\nconst alias = point;\nalias.x = 5;\npoint.y += alias.x;",
+    ],
+    [
+      "holder.inner.n",
+      "const holder = { inner: { n: 1 } };\nconst inner = holder.inner;\ninner.n = 7;",
+    ],
+    [
+      "total",
+      "let total = 0;\nfor (let index = 0; index < 3; index++) {\n  const box = { index };\n  box.index *= 2;\n  total += box.index;\n}",
+    ],
+    ["{ ...base, b: 3, ['c']: 4 }", "const base = { a: 1, b: 2 };"],
+    ["[x, y]", "const point: { x: number; y?: number } = { x: 1 };\nconst { x, y = 9 } = point;"],
+    [
+      "['a' in point, 'z' in point, Object.getPrototypeOf(point) === Object.prototype]",
+      "const point = { a: 1 };",
+    ],
+    ["new Set(Object.keys(point))", "const point = { a: 1, 2: 'b' };"],
+    [
+      "[point.x, point === other]",
+      "const make = () => ({ x: 4 });\nconst point = make();\nconst other = make();",
+    ],
+  ],
   helpers: [
     ["double(4)", "const double = (value: number) => value * 2;"],
     [

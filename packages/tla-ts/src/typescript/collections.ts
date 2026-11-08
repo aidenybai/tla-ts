@@ -12,6 +12,7 @@ import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { translateBody } from "./functions";
+import { getHeap } from "./heap";
 import { useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Scope } from "./scope";
 import {
@@ -179,7 +180,11 @@ const translateUnordered = (
   const receiver = node.expression.expression;
   const method = node.expression.name.text;
   if (ts.isIdentifier(receiver) && receiver.text === "Object") {
-    const record = translate(node.arguments[0]);
+    const argument = node.arguments[0];
+    const record =
+      getKind(argument, context) === "object"
+        ? useJavaScript("Own", [getHeap(scope, node, context), translate(argument)], context)
+        : translate(argument);
     if (method === "keys") return { set: getDomain(record), isMapped: false };
     if (method === "values") return getValues(record, context);
     if (method === "entries") return getEntries(record, context);

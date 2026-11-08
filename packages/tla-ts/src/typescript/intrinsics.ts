@@ -106,6 +106,7 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (type.flags & ts.TypeFlags.BooleanLike) return "Boolean.prototype";
   if (type.flags & ts.TypeFlags.BigIntLike) return "BigInt.prototype";
   const kind = getKind(node, context);
+  if (kind === "object") return "Object.prototype";
   if (kind === "sequence") return "Array.prototype";
   if (kind === "set") return "Set.prototype";
   if (kind === "map") return "Map.prototype";
@@ -217,7 +218,7 @@ const translateBuiltIn = (name: string, node: ts.Node, context: Context) => {
     if (prototype === undefined) throw new TlaTypeScriptError("Unknown built-in", node);
     return getConstructor(prototype, context, "FunctionPrototype");
   }
-  return useJavaScript(":>", [identifier("Intrinsic"), string(name)], context);
+  return useJavaScript(":>", [identifier("Ref"), string(name)], context);
 };
 
 // Evaluates the value whose prototype a call asks for, which mustn't call anything that could

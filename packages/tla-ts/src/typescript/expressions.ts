@@ -28,6 +28,7 @@ import {
   translateNewError,
 } from "./exceptions";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
+import { getHeap, translatePropertyKey } from "./heap";
 import { isBuiltInObject, translateIntrinsic } from "./intrinsics";
 import {
   getTypeNames,
@@ -171,6 +172,13 @@ const translateObjectLiteral = (
   scope: Scope,
   context: Context,
 ) => {
+  if (getKind(node, context) === "object") {
+    const ref = scope.allocated.get(node);
+    if (ref === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return ref;
+  }
   const checker = context.checker;
   const getKey = (property: ts.ObjectLiteralElementLike) =>
     property.name === undefined ? undefined : getPropertyKey(property.name);
@@ -358,7 +366,8 @@ const translateCall = (
       node.arguments.some(
         (argument) =>
           isObject(context.checker.getTypeAtLocation(argument)) &&
-          !isBuiltInObject(argument, context),
+          !isBuiltInObject(argument, context) &&
+          getKind(argument, context) !== "object",
       )
     ) {
       throw new TlaTypeScriptError("TLA+ compares objects by value, not by identity", node);
@@ -458,7 +467,17 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     return kind === ts.SyntaxKind.EqualsEqualsEqualsToken ? isSame : not(isSame);
   }
   if (kind === ts.SyntaxKind.InKeyword) {
-    return apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
+    return getKind(node.right, context) === "object"
+      ? useJavaScript(
+          "Has",
+          [
+            getHeap(scope, node, context),
+            translate(node.right),
+            translatePropertyKey(node.left, scope, context),
+          ],
+          context,
+        )
+      : apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
   }
   if (kind === ts.SyntaxKind.SlashToken) {
     throw new TlaTypeScriptError("Write division as Math.floor(a / b) or Math.trunc(a / b)", node);
@@ -557,6 +576,13 @@ const translatePropertyAccess = (
   if (intrinsic !== undefined) return intrinsic;
   const receiver = node.expression;
   const name = node.name.text;
+  if (getKind(receiver, context) === "object") {
+    return useJavaScript(
+      "Get",
+      [getHeap(scope, node, context), translateExpression(receiver, scope, context), string(name)],
+      context,
+    );
+  }
   if (
     scope.previous !== undefined &&
     ts.isIdentifier(receiver) &&
@@ -582,9 +608,20 @@ const translateElementAccess = (
   context: Context,
   isDefined: boolean,
 ) => {
+  const kind = getKind(node.expression, context);
+  if (kind === "object") {
+    return useJavaScript(
+      "Get",
+      [
+        getHeap(scope, node, context),
+        translateExpression(node.expression, scope, context),
+        translatePropertyKey(node.argumentExpression, scope, context),
+      ],
+      context,
+    );
+  }
   const value = translateExpression(node.expression, scope, context);
   const key = translateKey(node, scope, context);
-  const kind = getKind(node.expression, context);
   if (kind === "sequence" && !isDefined) return getElement(value, key, context);
   if (kind !== "string") return index(value, [key]);
   return share(value, "string", context, (text) =>

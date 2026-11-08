@@ -11,7 +11,9 @@ import { TlaTypeScriptError } from "../errors";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
 import { apply, define, identifier, ifExpression, number, string } from "./tla";
-import { getField, getPathStep, getPropertyKey, isSequenceType } from "./types";
+import { getHeap } from "./heap";
+import { useJavaScript } from "./javascript";
+import { getField, getPathStep, getPropertyKey, isHeapType, isSequenceType } from "./types";
 
 export interface Scope {
   // The TLA+ expression for each variable, parameter, and local in scope.
@@ -21,6 +23,7 @@ export interface Scope {
   functions: Map<ts.Symbol, FunctionNode>;
   isCatching: boolean;
   uninitialized: ReadonlySet<ts.Symbol>;
+  allocated: ReadonlyMap<ts.Node, Expression>;
 }
 
 export interface Bound {
@@ -45,6 +48,7 @@ export const createStateScope = (context: Context): Scope => ({
   functions: new Map(),
   isCatching: false,
   uninitialized: new Set(),
+  allocated: new Map(),
 });
 
 export const bindNames = (scope: Scope, named: Named[]): Scope => ({
@@ -194,6 +198,15 @@ export const bindPatternInline = (
         ? undefined
         : getPropertyKey(name);
     if (key === undefined) throw new TlaTypeScriptError("Unsupported key", element);
+    const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
+    if (isHeapType(type, pattern, context)) {
+      const part = useJavaScript(
+        "Get",
+        [getHeap(current, element, context), value, string(key)],
+        context,
+      );
+      return bindPatternInline(element.name, withDefault(part), current, context);
+    }
     if (isSequenceType(context.checker.getTypeAtLocation(pattern), context.checker)) {
       if (key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key)) {
         throw new TlaTypeScriptError(`Unsupported array property: ${key}`, element);

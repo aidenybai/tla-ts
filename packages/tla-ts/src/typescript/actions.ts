@@ -24,9 +24,12 @@ import {
 } from "./expressions";
 import { and, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import { translateThrown } from "./exceptions";
+import { getAllocated, getHeap, translateObject, translatePropertyKey } from "./heap";
+import { useJavaScript } from "./javascript";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import {
   bindPattern,
+  type Bound,
   bindValues,
   createStateScope,
   getDefaulted,
@@ -52,7 +55,7 @@ import {
   tuple,
   unchanged,
 } from "./tla";
-import { getField, getKind, getPathStep, isNumberLike } from "./types";
+import { getField, getKind, getPathStep, isHeapType, isNumberLike } from "./types";
 
 interface Path {
   scope: Scope;
@@ -82,8 +85,8 @@ interface Thrown {
 interface Frame {
   // What follows the statements once they complete.
   next: (path: Path) => Formula;
-  // What a return statement does: end the action, or leave an inlined helper.
-  exit: (path: Path) => Formula;
+  // What a return statement does: end the action, or leave an inlined helper with its value.
+  exit: (path: Path, value?: Expression) => Formula;
   breakTo: ((path: Path) => Formula) | undefined;
   continueTo: ((path: Path) => Formula) | undefined;
   throwTo: ((path: Path, thrown: Thrown) => Formula) | undefined;
@@ -110,6 +113,28 @@ const getPart = (target: Target, step: ExceptPathStep): Target => ({
     target.update((value) => except(value, [{ path: [step], value: getValue(exceptAt()) }])),
 });
 
+const getHeapTarget = (
+  node: ts.Expression,
+  receiver: ts.Expression,
+  key: Expression,
+  path: Path,
+  context: Context,
+): Target => {
+  const symbol = context.heap;
+  const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
+  if (symbol === undefined || heap === undefined || !path.mutable.has(symbol)) {
+    throw new TlaTypeScriptError("Change objects only in statements", node);
+  }
+  const ref = translateExpression(receiver, path.scope, context);
+  const current = useJavaScript("Get", [heap, ref, key], context);
+  return {
+    symbol,
+    current,
+    update: (getValue) =>
+      useJavaScript("SetProperty", [heap, ref, key, getValue(current)], context),
+  };
+};
+
 // The current value of an assignment target, and how to replace it.
 const getTarget = (node: ts.Expression, path: Path, context: Context): Target => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
@@ -128,12 +153,19 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     return { symbol, current, update: (getValue) => getValue(current) };
   }
   if (ts.isPropertyAccessExpression(node)) {
+    if (getKind(node.expression, context) === "object") {
+      return getHeapTarget(node, node.expression, string(node.name.text), path, context);
+    }
     if (getKind(node.expression, context) !== "other") {
       throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
     }
     return getPart(getTarget(node.expression, path, context), getPathStep(node.name.text));
   }
   if (ts.isElementAccessExpression(node)) {
+    if (getKind(node.expression, context) === "object") {
+      const key = translatePropertyKey(node.argumentExpression, path.scope, context);
+      return getHeapTarget(node, node.expression, key, path, context);
+    }
     const target = getTarget(node.expression, path, context);
     const key = translateKey(node, path.scope, context);
     if (getKind(node.expression, context) !== "sequence") {
@@ -353,7 +385,7 @@ const translateCallStatement = (
   path: Path,
   context: Context,
   frame: Frame,
-  continueWith: (path: Path) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
   isGenerator = false,
 ): Formula => {
   const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
@@ -427,11 +459,16 @@ const translateCallStatement = (
     path.scope,
     context,
   );
-  const body = ts.isBlock(callee.body)
-    ? callee.body.statements
-    : [ts.factory.createExpressionStatement(callee.body)];
-  const afterCall = (inner: Path) =>
-    continueWith({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } });
+  const calleeBody = callee.body;
+  const body = ts.isBlock(calleeBody)
+    ? calleeBody.statements
+    : [
+        getWritten(calleeBody) === undefined
+          ? ts.factory.createReturnStatement(calleeBody)
+          : ts.factory.createExpressionStatement(calleeBody),
+      ];
+  const afterCall = (inner: Path, value?: Expression) =>
+    continueWith({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } }, value);
   const scope = { ...bound.scope, functions: new Map([...bound.scope.functions, ...callbacks]) };
   return letIn(
     bound.definitions,
@@ -469,6 +506,18 @@ const translateExpressionStatement = (
     }
     return frame.yieldTo(path);
   }
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    isHeapCall(expression.right, path, context)
+  ) {
+    const right = expression.right;
+    return translateCallStatement(right, path, context, frame, (after, value) =>
+      continueWith(
+        assignPattern(expression.left, right, value ?? getUndefined(context), after, context),
+      ),
+    );
+  }
   const assigned = getAssignedPath(expression, path, context);
   if (assigned === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
@@ -496,33 +545,156 @@ const rejectCatchRedeclaration = (declaration: ts.VariableDeclaration) => {
 };
 
 // Binds each declared local to a LET definition. A let can change later, and a const can't.
+// Whether a function, or one it calls, makes or reads objects, which only statements can do.
+const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
+  if (ts.isObjectLiteralExpression(node)) return true;
+  const isRead =
+    ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      getKind(node.expression, context) === "object") ||
+    (ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+      getKind(node.right, context) === "object") ||
+    (ts.isObjectBindingPattern(node) &&
+      isHeapType(context.checker.getTypeAtLocation(node), node, context));
+  if (isRead) return true;
+  if (ts.isCallExpression(node)) {
+    const callee = getCallee(node.expression, context);
+    if (callee !== undefined && !visited.has(callee)) {
+      visited.add(callee);
+      if (usesHeap(callee, context, visited)) return true;
+    }
+  }
+  return ts.forEachChild(node, (child) => usesHeap(child, context, visited) || undefined) ?? false;
+};
+
+// A call to a function that uses objects, which inlines as statements that give its result.
+const isHeapCall = (
+  node: ts.Expression,
+  path: Path,
+  context: Context,
+): node is ts.CallExpression => {
+  if (context.heap === undefined || !ts.isCallExpression(node) || isMethodCall(node)) return false;
+  const symbol = getSymbol(node.expression, context.checker);
+  const callee =
+    (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
+  return callee?.body !== undefined && usesHeap(callee, context, new Set());
+};
+
+// Makes the objects that a node's object literals create, before the statement that evaluates
+// them runs, since an expression can't change the heap.
+const allocate = (
+  node: ts.Node | undefined,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const symbol = context.heap;
+  const literals = node === undefined ? [] : getAllocated(node, context);
+  if (symbol === undefined || literals.length === 0) return continueWith(path);
+  const allocated = literals.reduce<Bound>(
+    (current, literal) => {
+      const heap = getHeap(current.scope, literal, context);
+      const name = context.names.getFresh("heap");
+      const object = translateObject(literal, current.scope, context);
+      const ref = useJavaScript(
+        ":>",
+        [identifier("Ref"), apply("Len", [identifier(name)])],
+        context,
+      );
+      return {
+        definitions: [...current.definitions, define(name, [], apply("Append", [heap, object]))],
+        scope: {
+          ...current.scope,
+          bindings: new Map([...current.scope.bindings, [symbol, identifier(name)]]),
+          allocated: new Map([...current.scope.allocated, [literal, ref]]),
+        },
+      };
+    },
+    { definitions: [], scope: path.scope },
+  );
+  return letIn(allocated.definitions, continueWith({ ...path, scope: allocated.scope }));
+};
+
+// Names the heap after a statement changes it, so that later statements share it.
+const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => Formula) => {
+  const symbol = context.heap;
+  const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
+  if (symbol === undefined || heap === undefined || heap.kind === "Identifier") {
+    return continueWith(path);
+  }
+  const name = context.names.getFresh("heap");
+  return letIn(
+    [define(name, [], heap)],
+    continueWith({
+      ...path,
+      scope: {
+        ...path.scope,
+        bindings: new Map([...path.scope.bindings, [symbol, identifier(name)]]),
+      },
+    }),
+  );
+};
+
 const translateDeclarations = (
   declarations: readonly ts.VariableDeclaration[],
   path: Path,
   context: Context,
+  frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
   if (declarations.length === 0) return continueWith(path);
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
-  const rest = declarations.slice(1);
   const initializer = declaration.initializer;
   if (isInlined(initializer)) {
     return translateDeclarations(
-      rest,
+      declarations.slice(1),
       { ...path, scope: initialize(path.scope, declaration, context) },
       context,
+      frame,
       continueWith,
     );
   }
-  const removed = initializer && getRemovedValue(initializer, path, context);
-  const value =
-    removed?.value ??
-    (initializer === undefined
-      ? getUndefined(context)
-      : translateExpression(initializer, path.scope, context));
-  const afterCall = removed?.path ?? path;
-  const bound = bindPattern(declaration.name, value, afterCall.scope, context);
+  return allocate(initializer, path, context, (allocated) => {
+    if (initializer !== undefined && isHeapCall(initializer, allocated, context)) {
+      return translateCallStatement(initializer, allocated, context, frame, (after, value) =>
+        bindDeclaration(
+          declarations,
+          value ?? getUndefined(context),
+          after,
+          context,
+          frame,
+          continueWith,
+        ),
+      );
+    }
+    const removed = initializer && getRemovedValue(initializer, allocated, context);
+    const value =
+      removed?.value ??
+      (initializer === undefined
+        ? getUndefined(context)
+        : translateExpression(initializer, allocated.scope, context));
+    return bindDeclaration(
+      declarations,
+      value,
+      removed?.path ?? allocated,
+      context,
+      frame,
+      continueWith,
+    );
+  });
+};
+
+const bindDeclaration = (
+  declarations: readonly ts.VariableDeclaration[],
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const declaration = declarations[0];
+  const bound = bindPattern(declaration.name, value, path.scope, context);
   const symbol = ts.isIdentifier(declaration.name)
     ? getSymbol(declaration.name, context.checker)
     : undefined;
@@ -531,9 +703,10 @@ const translateDeclarations = (
   return letIn(
     bound.definitions,
     translateDeclarations(
-      rest,
-      { ...afterCall, scope: initialize(bound.scope, declaration, context), mutable },
+      declarations.slice(1),
+      { ...path, scope: initialize(bound.scope, declaration, context), mutable },
       context,
+      frame,
       continueWith,
     ),
   );
@@ -558,6 +731,11 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     if (written !== undefined) {
       getWrittenSymbols(written, context).forEach((symbol) => changed.add(symbol));
     }
+    const isHeapChanged =
+      ts.isObjectLiteralExpression(node) ||
+      (written !== undefined &&
+        (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
+    if (context.heap !== undefined && isHeapChanged) changed.add(context.heap);
     if (ts.isCallExpression(node)) {
       [node.expression, ...node.arguments].forEach((callee) => {
         const called = getFunctionNode(callee);
@@ -585,7 +763,7 @@ const translateLoop = (
     return translateIterations(loop, path, context, frame, continueWith);
   const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
   return ts.isVariableDeclarationList(initializer)
-    ? translateDeclarations(initializer.declarations, path, context, runLoop)
+    ? translateDeclarations(initializer.declarations, path, context, frame, runLoop)
     : translateExpressionStatement(initializer, path, context, frame, runLoop);
 };
 
@@ -775,7 +953,7 @@ const translateTry = (
   const outer: Frame = {
     ...frame,
     next: (inner) => leave(inner, continueWith),
-    exit: (inner) => leave(inner, frame.exit),
+    exit: (inner, value) => leave(inner, (left) => frame.exit(left, value)),
     breakTo: resumeWith(frame.breakTo),
     continueTo: resumeWith(frame.continueTo),
     throwTo: rethrow,
@@ -829,6 +1007,7 @@ const translateStatements = (
       statement.declarationList.declarations,
       path,
       context,
+      frame,
       continueWith,
     );
   }
@@ -847,12 +1026,13 @@ const translateStatements = (
     if (frame.inlining.size === 0) {
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
-    if (ts.isCallExpression(returned)) {
-      return translateCallStatement(returned, path, context, frame, frame.exit);
-    }
-    if (hasCall(returned)) throw new TlaTypeScriptError("Unsupported return", statement);
-    translateExpression(returned, path.scope, context);
-    return frame.exit(path);
+    return allocate(returned, path, context, (inner) => {
+      if (ts.isCallExpression(returned)) {
+        return translateCallStatement(returned, inner, context, frame, frame.exit);
+      }
+      if (hasCall(returned)) throw new TlaTypeScriptError("Unsupported return", statement);
+      return frame.exit(inner, translateExpression(returned, inner.scope, context));
+    });
   }
   if (ts.isBreakStatement(statement)) {
     if (frame.breakTo === undefined || statement.label !== undefined) {
@@ -891,7 +1071,11 @@ const translateStatements = (
     );
   }
   if (ts.isExpressionStatement(statement)) {
-    return translateExpressionStatement(statement.expression, path, context, frame, continueWith);
+    return allocate(statement.expression, path, context, (inner) =>
+      translateExpressionStatement(statement.expression, inner, context, frame, (after) =>
+        shareHeap(after, context, continueWith),
+      ),
+    );
   }
   if (ts.isIterationStatement(statement, false)) {
     return translateLoop(statement, path, context, frame, continueWith);
@@ -963,10 +1147,18 @@ export const translateScript = (
         )
       : [],
   );
+  const scope = createStateScope(context);
   return translateStatements(
     statements,
     {
-      scope: { ...createStateScope(context), uninitialized: new Set(declared) },
+      scope: {
+        ...scope,
+        bindings:
+          context.heap === undefined
+            ? scope.bindings
+            : new Map([...scope.bindings, [context.heap, tuple([])]]),
+        uninitialized: new Set(declared),
+      },
       mutable: new Set(context.variables.keys()),
       isAssigned: false,
       isLast,

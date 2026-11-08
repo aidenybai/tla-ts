@@ -3,7 +3,7 @@ import { getWritten } from "./actions";
 import { MUTATING_METHODS } from "./collections";
 import { type Context, getCallee, getSymbol, isMethodCall } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { getKind } from "./types";
+import { getKind, isHeapType } from "./types";
 
 const COPYING_METHODS = new Set([
   "slice",
@@ -66,18 +66,23 @@ const isUpdate = (node: ts.Node, context: Context) =>
   MUTATING_METHODS.has(node.expression.name.text) &&
   getKind(node.expression.expression, context) !== "other";
 
-const holdsObject = (type: ts.Type): boolean =>
+// A script's heap objects are references, which share as JavaScript objects do, so only the other
+// objects that a value holds can be copied by mistake.
+const holdsObject = (type: ts.Type, context: Context): boolean =>
   type.isUnion() || type.isIntersection()
-    ? type.types.some(holdsObject)
+    ? type.types.some((member) => holdsObject(member, context))
     : (type.flags & ts.TypeFlags.Object) !== 0 &&
       type.getCallSignatures().length === 0 &&
-      type.getConstructSignatures().length === 0;
+      type.getConstructSignatures().length === 0 &&
+      !isHeapType(type, undefined, context);
 
-const holdsObjectAt = (type: ts.Type, depth: number, checker: ts.TypeChecker): boolean => {
-  if (depth === 0) return holdsObject(type);
+const holdsObjectAt = (type: ts.Type, depth: number, context: Context): boolean => {
+  const checker = context.checker;
+  if (depth === 0) return holdsObject(type, context);
   if (type.isUnion() || type.isIntersection()) {
-    return type.types.some((member) => holdsObjectAt(member, depth, checker));
+    return type.types.some((member) => holdsObjectAt(member, depth, context));
   }
+  if (isHeapType(type, undefined, context)) return false;
   const typeArguments =
     (type.flags & ts.TypeFlags.Object) !== 0 &&
     ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0
@@ -86,7 +91,7 @@ const holdsObjectAt = (type: ts.Type, depth: number, checker: ts.TypeChecker): b
   return [
     ...typeArguments,
     ...type.getProperties().map((property) => checker.getTypeOfSymbol(property)),
-  ].some((member) => holdsObjectAt(member, depth - 1, checker));
+  ].some((member) => holdsObjectAt(member, depth - 1, context));
 };
 
 const strip = (node: ts.Expression): ts.Expression =>
@@ -94,7 +99,8 @@ const strip = (node: ts.Expression): ts.Expression =>
     ? strip(node.expression)
     : node;
 
-// The variable a target is part of, and how many steps below its top the target is.
+// The variable a target is part of, and how many steps below its top the target is. A property of
+// a heap object is part of the heap, which counts as one variable.
 const getPath = (target: ts.Expression, context: Context, depth = 0): Written | undefined => {
   const node = strip(target);
   if (ts.isIdentifier(node)) {
@@ -102,7 +108,9 @@ const getPath = (target: ts.Expression, context: Context, depth = 0): Written | 
     return symbol === undefined ? undefined : { symbol, depth };
   }
   if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-    return getPath(node.expression, context, depth + 1);
+    return context.heap !== undefined && getKind(node.expression, context) === "object"
+      ? { symbol: context.heap, depth }
+      : getPath(node.expression, context, depth + 1);
   }
   return isMethodCall(node) && node.expression.name.text === "get"
     ? getPath(node.expression.expression, context, depth + 1)
@@ -177,7 +185,7 @@ const getEscapes = (
   visited: Set<ts.Node>,
 ): Escape[] => {
   const type = context.checker.getTypeAtLocation(node);
-  if (!holdsObjectAt(type, depths.landing, context.checker)) return [];
+  if (!holdsObjectAt(type, depths.landing, context)) return [];
   const parent = node.parent;
   const getFrom = (from: ts.Node, fromDepths: Depths) =>
     getEscapes(from as ts.Expression, fromDepths, context, visited);
@@ -326,7 +334,15 @@ export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
   const visit = (node: ts.Node) => {
     if (ts.isTypeNode(node)) return;
     const isName = ts.getNameOfDeclaration(node.parent as ts.Declaration) === node;
-    const symbol = ts.isIdentifier(node) && !isName ? getSymbol(node, context.checker) : undefined;
+    const isHeapRead =
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      getKind(node.expression, context) === "object";
+    const symbol =
+      ts.isIdentifier(node) && !isName
+        ? getSymbol(node, context.checker)
+        : isHeapRead
+          ? context.heap
+          : undefined;
     if (symbol !== undefined || (ts.isCallExpression(node) && !isMethodCall(node))) {
       const escapes = getEscapes(
         node as ts.Expression,

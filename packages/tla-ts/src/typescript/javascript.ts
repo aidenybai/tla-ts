@@ -9,7 +9,7 @@ import { apply, boolean, ifExpression, number, string } from "./tla";
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, TLC
 
-CONSTANTS Undefined, Null, Intrinsic
+CONSTANTS Undefined, Null, Ref
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -36,14 +36,46 @@ SequenceWith(sequence, index, value) ==
      THEN [sequence EXCEPT ![relative + 1] = value]
      ELSE Assert(FALSE, "tla-ts can't throw the RangeError of with()")
 
-IsIntrinsic(value) ==
+IsRef(value) ==
   LET text == ToString(value)
-  IN Len(text) >= 13 /\\ SubSeq(text, 1, 13) = "(Intrinsic :>"
+  IN Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Ref :>"
+
+LOCAL Inherited == {
+  "constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString",
+  "toString", "valueOf", "__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__",
+  "__lookupSetter__"}
+
+EmptyObject == [keys |-> <<>>, values |-> <<>>]
+
+Put(object, key, value) ==
+  IF key = "__proto__"
+  THEN Assert(FALSE, "tla-ts can't set an object's prototype")
+  ELSE [keys |-> IF key \\in DOMAIN object.values THEN object.keys ELSE Append(object.keys, key),
+        values |-> (key :> value) @@ object.values]
+
+Own(heap, ref) == heap[ref[Ref]].values
+
+RECURSIVE PutAll(_, _, _)
+PutAll(object, values, keys) ==
+  IF keys = <<>>
+  THEN object
+  ELSE PutAll(Put(object, Head(keys), values[Head(keys)]), values, Tail(keys))
+
+Spread(object, heap, ref) == PutAll(object, Own(heap, ref), heap[ref[Ref]].keys)
+
+Has(heap, ref, key) ==
+  IF key \\in DOMAIN Own(heap, ref) THEN TRUE
+  ELSE IF key \\in Inherited THEN Assert(FALSE, "tla-ts can't read what objects inherit")
+  ELSE FALSE
+
+Get(heap, ref, key) == IF Has(heap, ref, key) THEN Own(heap, ref)[key] ELSE Undefined
+
+SetProperty(heap, ref, key, value) == [heap EXCEPT ![ref[Ref]] = Put(@, key, value)]
 
 SameValue(left, right) ==
   /\\ TypeOf(left) = TypeOf(right)
   /\\ Assert(TypeOf(left) # "object" \\/ left = Null \\/ right = Null
-              \\/ IsIntrinsic(left) \\/ IsIntrinsic(right),
+              \\/ IsRef(left) \\/ IsRef(right),
             "tla-ts can't compare objects by identity")
   /\\ left = right
 ===============================================================================`;

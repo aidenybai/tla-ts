@@ -22,7 +22,7 @@ import {
   tuple,
 } from "./tla";
 
-export type Kind = "sequence" | "set" | "map" | "string" | "other";
+export type Kind = "sequence" | "set" | "map" | "string" | "object" | "other";
 
 // TLC needs a finite set of values for every type, so number, string, and arrays take these small
 // bounds.
@@ -60,6 +60,35 @@ const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
     ? type.types.every((member) => isEvery(member, flags))
     : (type.flags & flags) !== 0;
 
+const isPlainObject = (type: ts.Type, checker: ts.TypeChecker) => {
+  const symbol = type.getSymbol();
+  return (
+    (type.flags & ts.TypeFlags.Object) !== 0 &&
+    !checker.isArrayType(type) &&
+    !checker.isTupleType(type) &&
+    !isSetType(type) &&
+    !isMapType(type) &&
+    type.getCallSignatures().length === 0 &&
+    type.getConstructSignatures().length === 0 &&
+    symbol !== undefined &&
+    (symbol.flags & ts.SymbolFlags.Class) === 0 &&
+    (symbol.declarations ?? []).length > 0 &&
+    (symbol.declarations ?? []).every(
+      (declaration) => !declaration.getSourceFile().isDeclarationFile,
+    )
+  );
+};
+
+export const isHeapType = (type: ts.Type, node: ts.Node | undefined, context: Context) => {
+  if (context.heap === undefined) return false;
+  const members = type.isUnion() ? type.types : [type];
+  const objects = members.filter((member) => isPlainObject(member, context.checker));
+  if (objects.length > 0 && objects.length < members.length) {
+    throw new TlaTypeScriptError("Give this either objects or other values", node);
+  }
+  return objects.length > 0;
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   const checker = context.checker;
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
@@ -67,7 +96,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isSetType(type)) return "set";
   if (isMapType(type)) return "map";
   if (isEvery(type, ts.TypeFlags.StringLike)) return "string";
-  return "other";
+  return isHeapType(type, node, context) ? "object" : "other";
 };
 
 export const isObject = (type: ts.Type): boolean =>

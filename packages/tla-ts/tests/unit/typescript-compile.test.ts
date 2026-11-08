@@ -776,6 +776,26 @@ describe("errors", () => {
     ).not.toThrow(/SyntaxError/);
   });
 
+  it.each([
+    [
+      "an array that a heap object shares and that then changes",
+      "const box = { list: [1] };\nlet list = box.list;\nlist.push(2);\nlet size = box.list.length;",
+      "would share an object that changes in place",
+    ],
+    [
+      "an object made in a callback",
+      "let boxes = [1].map((value) => ({ value }));",
+      "Make objects only where a statement always runs",
+    ],
+    [
+      "an object made in only one branch",
+      "let flag = true;\nlet box = flag ? { a: 1 } : undefined;",
+      "Make objects only where a statement always runs",
+    ],
+  ])("rejects %s in a script", (_, source, message) => {
+    expect(() => compile(source)).toThrow(message);
+  });
+
   it("rejects a class whose member names run code", () => {
     expect(() => compile(`let count = 0;\nclass Counter {\n  [count++]() {}\n}`)).toThrow(
       "spec.ts:2:1 Unsupported statement",

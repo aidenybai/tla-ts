@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import { translateScript, writesState } from "./actions";
 import { rejectSharing } from "./aliasing";
-import { type Context, createContext } from "./context";
+import { type Context, createContext, hasObjectLiteral } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
@@ -11,8 +11,17 @@ import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from
 import { createStateScope } from "./scope";
 import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
-import { apply, getLocation, getModuleName, locate } from "./tla";
+import { apply, getLocation, getModuleName, identifier, locate } from "./tla";
 import { getDomain } from "./types";
+
+const isScript = (sourceFile: ts.SourceFile) =>
+  sourceFile.statements.every(
+    (statement) =>
+      !ts.canHaveModifiers(statement) ||
+      !(ts.getModifiers(statement) ?? []).some(
+        (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+      ),
+  );
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
@@ -61,11 +70,22 @@ const translateExported = (
 export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"));
   const context = createContext(program.checker);
-  const model = readModel(program.sourceFile, context);
+  const sourceFile = program.sourceFile;
+  // A script, with no exported functions, gives the objects it makes identity with a heap. The
+  // heap binds to the symbol of lib's PropertyKey type, which no value can have.
+  const heap = program.checker
+    .getSymbolsInScope(sourceFile, ts.SymbolFlags.TypeAlias)
+    .find((symbol) => symbol.name === "PropertyKey");
+  if (heap !== undefined && isScript(sourceFile) && hasObjectLiteral(sourceFile)) {
+    context.heap = heap;
+    context.variables.set(heap, identifier(context.names.getFresh("heap")));
+  }
+  const model = readModel(sourceFile, context);
   rejectSharing(program.sourceFile, context);
   const sections = createSections();
   sections.init.push(
-    ...(model.script.every(
+    ...(context.heap === undefined &&
+    model.script.every(
       (statement) =>
         ts.isVariableStatement(statement) &&
         statement.declarationList.declarations.every((declaration) =>

@@ -4,6 +4,7 @@ import {
   type FunctionNode,
   getFunction,
   getSymbol,
+  hasObjectLiteral,
   type HelperDeclaration,
   isInlined,
 } from "./context";
@@ -76,11 +77,20 @@ const isExported = (node: HelperDeclaration) =>
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0 &&
   ts.isSourceFile(ts.isVariableDeclaration(node) ? node.parent.parent.parent : node.parent);
 
-const isLet = (declared: Declared) =>
-  ts.isVariableDeclaration(declared.declaration) &&
-  ((declared.declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
-    !ts.isIdentifier(declared.declaration.name)) &&
-  !isInlined(declared.declaration.initializer);
+// A let is a state variable, and so is a const in a script with a heap that makes an object, as
+// only statements can make objects.
+const isLet = (declared: Declared, context: Context) => {
+  const declaration = declared.declaration;
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    ((declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+      !ts.isIdentifier(declaration.name) ||
+      (context.heap !== undefined &&
+        declaration.initializer !== undefined &&
+        hasObjectLiteral(declaration.initializer))) &&
+    !isInlined(declaration.initializer)
+  );
+};
 
 // The string literals of a @symmetric type become model values, which TLC can permute.
 const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context) => {
@@ -176,7 +186,7 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
   const declarations = statements.flatMap(getDeclarations);
   const variables = declarations.flatMap((declared) => {
     const declaration = declared.declaration;
-    if (!isLet(declared) || !ts.isVariableDeclaration(declaration)) return [];
+    if (!isLet(declared, context) || !ts.isVariableDeclaration(declaration)) return [];
     const symbol = getSymbol(declared.identifier, context.checker);
     if (isExported(declaration) || symbol === undefined) {
       throw new TlaTypeScriptError("State variables can't be exported", declaration);
@@ -186,7 +196,7 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     context.variables.set(symbol, identifier(name, getLocation(declared.identifier)));
     return [{ name, symbol, declaration }];
   });
-  const helpers = declarations.filter((declared) => !isLet(declared));
+  const helpers = declarations.filter((declared) => !isLet(declared, context));
   const exported = helpers.flatMap((declared) => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);
