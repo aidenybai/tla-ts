@@ -235,7 +235,7 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
   );
 
 // What Smtlib.pp_print_obligation prints before the logic.
-export interface SmtHeader {
+interface SmtHeader {
   version: string;
   id: number;
   location: string;
