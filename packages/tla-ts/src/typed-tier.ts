@@ -567,6 +567,7 @@ const getCompareCode = (program: Program, type: Type, left: string, right: strin
 
 const getComparerCode = (program: Program, type: Type): string => {
   const resolved = closeType(type);
+  if (resolved.kind === "Set" && isMask(resolved, program.plains)) return "H.compareMasks";
   const known = program.comparers.names.get(resolved);
   if (known) return known;
   const name = `c${program.comparers.names.size}`;
