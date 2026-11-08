@@ -43,7 +43,7 @@ pnpm conformance --host "./my-checker --flag" tlc
 
 A command host runs every test the filters select. It gets TLC's flags for a TLC test and tlapm's flags for a tlapm test. For a backend test, it gets the backend's name and the input file, and must print the verdict, as described below.
 
-`pnpm fetch-tlapm` needs Z3 5.3.2 on `PATH` as `z3`. tlapm's release bundles an x86_64 Z3 4.8.9, so the script links tlapm to the system Z3.
+`pnpm fetch-tlapm` builds tlapm at the suite's revision from source, for the same reason. It needs git, opam with OCaml 5.5.2, and Z3 5.3.2 on `PATH` as `z3`. tlapm's build bundles an x86_64 Z3 4.8.9, so the script links tlapm to the system Z3.
 
 `--shard 2/8` runs every eighth test, starting with the third. CI uses it to split the suite into parallel jobs.
 
