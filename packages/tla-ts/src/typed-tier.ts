@@ -3407,7 +3407,6 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
   const starts = { data: new Int32Array(1 << 16), size: 0 };
   // Under symmetry the table holds the key of each state apart from the state TLC explores.
   const keys = images.length === 0 ? arena : createArena();
-  const keyStarts = images.length === 0 ? starts : { data: new Int32Array(1 << 16), size: 0 };
   const encodeKey = (state: Plain[]) =>
     images.length === 0 ? compiled.encode(state, keys) : compiled.writeKey(state, keys);
   const table: StateTable = { slots: new Int32Array(1 << 18), mask: (1 << 17) - 1 };
@@ -3433,6 +3432,7 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     table.mask = mask;
   };
   // Each encoding is padded with zeros to a whole number of words, which hash and compare at once.
+  // A slot holds the hash of a key and one more than the index of its first word.
   const addEncoded = () => {
     const words = keys.words[keys.words.length - 1];
     const start = keys.start;
@@ -3444,17 +3444,15 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
       const entry = slots[slot * 2 + 1];
       if (entry === 0) {
         slots[slot * 2] = hash;
-        slots[slot * 2 + 1] = ++statistics.distinct;
-        pushWord(keyStarts, (keys.pages.length - 1) * PAGE_SIZE + start);
-        if (statistics.distinct * 8 > slots.length * 3) grow();
+        slots[slot * 2 + 1] = (((keys.pages.length - 1) * PAGE_SIZE) >> 2) + first + 1;
+        if (++statistics.distinct * 8 > slots.length * 3) grow();
         return true;
       }
       if (slots[slot * 2] !== hash) continue;
       // No encoding is a prefix of another, so two states of different lengths differ before the
       // shorter one ends.
-      const other = keyStarts.data[entry - 1];
-      const page = keys.words[other >>> PAGE_BITS];
-      const otherFirst = (other & (PAGE_SIZE - 1)) >> 2;
+      const page = keys.words[(entry - 1) >>> (PAGE_BITS - 2)];
+      const otherFirst = (entry - 1) & ((PAGE_SIZE >> 2) - 1);
       let isSameState = true;
       for (let offset = 0; offset < length; offset++) {
         if (page[otherFirst + offset] !== words[first + offset]) {
@@ -3477,10 +3475,8 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
     encodeKey(state);
     const isNew = addEncoded();
     if (!isNew) return false;
-    if (keys !== arena) {
-      compiled.encode(state, arena);
-      pushWord(starts, (arena.pages.length - 1) * PAGE_SIZE + arena.start);
-    }
+    if (keys !== arena) compiled.encode(state, arena);
+    pushWord(starts, (arena.pages.length - 1) * PAGE_SIZE + arena.start);
     checkInvariants(state);
     return true;
   };
