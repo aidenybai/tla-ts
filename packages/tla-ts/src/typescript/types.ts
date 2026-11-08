@@ -73,8 +73,10 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
 export const isObject = (type: ts.Type): boolean =>
   type.isUnion() ? type.types.some(isObject) : (type.flags & ts.TypeFlags.Object) !== 0;
 
+export const isBooleanType = (type: ts.Type) => isEvery(type, ts.TypeFlags.BooleanLike);
+
 export const isBooleanLike = (node: ts.Expression, context: Context) =>
-  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.BooleanLike);
+  isBooleanType(context.checker.getTypeAtLocation(node));
 
 export const isNumberLike = (node: ts.Expression, context: Context) =>
   isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike);

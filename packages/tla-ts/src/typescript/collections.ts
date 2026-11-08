@@ -32,7 +32,7 @@ import {
   set,
   tuple,
 } from "./tla";
-import { getKind, type Kind, translateUnknown } from "./types";
+import { getKind, isBooleanType, type Kind, translateUnknown } from "./types";
 
 interface Unordered {
   set: Expression;
@@ -60,6 +60,17 @@ const getCallback = (callback: ts.Expression, context: Context) => {
 
 const translateCallback = (callback: ts.Expression, scope: Scope, context: Context) =>
   translateBody(getCallback(callback, context).body, scope, context);
+
+// A callback that filter(), every(), some(), and find() test elements with. JavaScript tests what it
+// returns for truthiness, which only a boolean has in TLA+.
+const translateTest = (callback: ts.Expression, scope: Scope, context: Context) => {
+  const callee = getCallee(callback, context);
+  const signature = callee && context.checker.getSignatureFromDeclaration(callee);
+  if (signature === undefined || !isBooleanType(signature.getReturnType())) {
+    throw new TlaTypeScriptError("Return a boolean from this test", callback);
+  }
+  return translateCallback(callback, scope, context);
+};
 
 const rejectIndex = (callback: ts.Expression, message: string, context: Context) => {
   if (getCallback(callback, context).parameters[1] !== undefined) {
@@ -189,10 +200,20 @@ const translateUnordered = (
   const callback = node.arguments[0];
   rejectIndex(callback, "Elements of a set have no index", context);
   const element = bindElement(callback, scope, context);
-  const body = translateCallback(callback, element.scope, context);
   return method === "filter"
-    ? { set: filter(bound(element.variable, source.set), body), isMapped: source.isMapped }
-    : { set: map(body, [bound(element.variable, source.set)]), isMapped: true };
+    ? {
+        set: filter(
+          bound(element.variable, source.set),
+          translateTest(callback, element.scope, context),
+        ),
+        isMapped: source.isMapped,
+      }
+    : {
+        set: map(translateCallback(callback, element.scope, context), [
+          bound(element.variable, source.set),
+        ]),
+        isMapped: true,
+      };
 };
 
 // The elements of a set, an array, or an iterator over a collection, as a TLA+ set.
@@ -319,7 +340,7 @@ const translateFirstIndex = (
   context: Context,
 ) => {
   const getTest = (position: string) =>
-    translateCallback(
+    translateTest(
       callback,
       bindIndexed(
         callback,
@@ -366,7 +387,11 @@ const translateSequenceOperation = (
     return ifExpression(exists, value, getUndefined(context));
   };
   const translateEach =
-    (format: (bounds: ReturnType<typeof bound>[], body: Expression) => Expression) => () => {
+    (
+      format: (bounds: ReturnType<typeof bound>[], body: Expression) => Expression,
+      translateElement = translateCallback,
+    ) =>
+    () => {
       const position = context.names.getFresh("index");
       const inner = bindIndexed(
         argument,
@@ -377,7 +402,7 @@ const translateSequenceOperation = (
       );
       return format(
         [bound(position, getDomain(sequence))],
-        translateCallback(argument, inner, context),
+        translateElement(argument, inner, context),
       );
     };
   // Whether the element at a position is the one that includes() or indexOf() looks for, from the
@@ -508,8 +533,8 @@ const translateSequenceOperation = (
       },
     ],
     ["map", translateEach((bounds, body) => functionOf(bounds, body))],
-    ["every", translateEach((bounds, body) => quantify("Forall", bounds, body))],
-    ["some", translateEach((bounds, body) => quantify("Exists", bounds, body))],
+    ["every", translateEach((bounds, body) => quantify("Forall", bounds, body), translateTest)],
+    ["some", translateEach((bounds, body) => quantify("Exists", bounds, body), translateTest)],
     [
       "filter",
       () => {
@@ -517,7 +542,7 @@ const translateSequenceOperation = (
         const element = bindElement(argument, scope, context);
         return apply("SelectSeq", [
           sequence,
-          lambda([element.variable], translateCallback(argument, element.scope, context)),
+          lambda([element.variable], translateTest(argument, element.scope, context)),
         ]);
       },
     ],
@@ -559,7 +584,7 @@ const translateUnorderedMethod = (
   }
   rejectIndex(argument, "Elements of a set have no index", context);
   const element = bindElement(argument, scope, context);
-  const body = translateCallback(argument, element.scope, context);
+  const body = translateTest(argument, element.scope, context);
   const bounds = [bound(element.variable, source.set)];
   if (method === "every") return quantify("Forall", bounds, body);
   if (method === "some") return quantify("Exists", bounds, body);

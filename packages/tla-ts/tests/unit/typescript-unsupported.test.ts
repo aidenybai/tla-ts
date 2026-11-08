@@ -36,6 +36,7 @@ const CASES: [string, string][] = [
   ["assigning a constant", "LIMIT = 3;"],
   ["calling an action from an action", "step();"],
   ["an unknown call in a callback", "values = values.map(() => Math.random());"],
+  ["a test that doesn't return a boolean", "values = values.filter((value) => value);"],
 ];
 
 it.each(CASES)("rejects %s", (_, statements) => {
