@@ -79,15 +79,13 @@ const KEYWORDS = new Set([
   "_RL_REWARD",
 ]);
 
-// TLC 1.7.4 reads a TYPE and a TYPE_CONSTRAINT, which it doesn't check, and none of the keywords
-// that came after it.
+// TLC 1.7.4 reads TYPE and TYPE_CONSTRAINT without checking them, and none of the later keywords.
 const TYPE_KEYWORDS = ["TYPE", "TYPE_CONSTRAINT"];
 const KEYWORDS_174 = new Set([...SHARED_KEYWORDS, ...TYPE_KEYWORDS]);
 
 const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")", "!"];
 
-// TLC reads a configuration file with the TLA+ lexer. A lexical error ends the tokens; TLC reports
-// it only when it reads that far.
+// A lexical error ends the tokens, and TLC reports it only when it reads that far.
 const tokenizeConfig = (source: string) => {
   const tokens: ConfigToken[] = [];
   const cursor = { index: 0, line: 1, lineStart: 0 };
@@ -98,8 +96,7 @@ const tokenizeConfig = (source: string) => {
       line: cursor.line,
     });
   };
-  // TLC appends a newline to the file. JavaCC reports a token that the end of the input cuts off,
-  // that newline included, at the start of the line after it.
+  // TLC appends a newline, and JavaCC reports a token it cuts off at the start of the next line.
   const addEndOfInputError = (after: string) => {
     tokens.push({
       kind: "Error",
@@ -183,7 +180,6 @@ const tokenizeConfig = (source: string) => {
   return tokens;
 };
 
-// TLC's messages for a configuration file it can't read, from ModelConfig.parse.
 const createSyntaxError = (line: number, problem: string) =>
   new TlaConfigError(`TLC found an error in the configuration file at line ${line}\n${problem}`);
 
@@ -221,7 +217,7 @@ const LIST_KEYWORDS = new Map<
   ["_POSSIBLE", "possible"],
 ]);
 
-// A port of TLC's ModelConfig.parse, which takes any token where it expects a name or a value.
+// Like TLC, take any token where a name or a value is expected.
 export const parseConfig = (source: string, version: TlcVersion = "master"): ModelConfig => {
   const keywords = version === "1.7.4" ? KEYWORDS_174 : KEYWORDS;
   const tokens = tokenizeConfig(source);
@@ -293,7 +289,6 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
     throw createSyntaxError(token.line, "It was expecting a value, but did not find it.");
   };
 
-  // A module name in brackets after = or <-, which applies the assignment in that module.
   const parseModuleScope = (operator: string) => {
     const name = advance();
     if (name.kind === "End") {

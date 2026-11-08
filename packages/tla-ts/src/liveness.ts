@@ -47,8 +47,7 @@ export interface ScopedExpression {
   scope: Scope | undefined;
 }
 
-// A part of a temporal formula, with the name TLC gives the part when the formula is a property:
-// a conjunct's location, or the name of the definition the part is the body of.
+// The name TLC gives a part of a property: a conjunct's location or the enclosing definition.
 interface ExpandedExpression extends ScopedExpression {
   name: string | undefined;
   path: string[];
@@ -180,8 +179,7 @@ export const expandTemporal = (
   // Whether TLC expands the formula as a property, which unrolls each \A over a constant set.
   isProperty: boolean,
   expanding = new Set<Definition>(),
-  // Whether the expansion entered the body of an instance's definition. Like TLC, it then no
-  // longer expands an operator applied to arguments.
+  // Whether the expansion entered an instance's definition, after which TLC expands no call.
   isSubstituted = false,
   name?: string,
   path: string[] = [],
@@ -244,8 +242,7 @@ export const expandTemporal = (
     }
   }
   const context = getConstantContext(environment, scope);
-  // TLC 1.7.4 never expands an operator applied to arguments. A property expands every one it
-  // applies, but a specification only the temporal ones.
+  // TLC 1.7.4 expands no call, a property every one, and a specification only temporal ones.
   if (
     expression.kind === "Apply" &&
     environment.runtime.version !== "1.7.4" &&
@@ -391,8 +388,8 @@ export const toLiveExpression = (
     );
   };
 
-  // TLC takes an application of an operator whose expansion fails for a formula it can't handle,
-  // except that TLC after 1.7.4 fails as the expansion of a recursive operator does.
+  // TLC can't handle a call whose expansion fails, except that after 1.7.4 it fails as a
+  // recursive operator's expansion does.
   const expandCall = (
     expression: Expression,
     expandBody: () => LiveExpression,
@@ -421,8 +418,7 @@ export const toLiveExpression = (
     }
     const operands: LiveExpression[] = [];
     const isForall = expression.kind === "Forall";
-    // TLC takes a quantified formula whose body fails for one it can't handle, and under \A it adds
-    // the message of a failure that isn't an EvalException.
+    // TLC can't handle a quantifier whose body fails, and under \A adds another failure's message.
     try {
       forEachBinding(expression.bounds, getConstantContext(environment, scope), (boundScope) => {
         operands.push(convert(expression.body, boundScope));
@@ -448,8 +444,7 @@ export const toLiveExpression = (
     return level > ACTION_LEVEL ? parts : toAtom(expression, scope, level);
   };
 
-  // The formulas below temporal level whose parts TLC's Liveness.astToLive translates, as one
-  // that is constant, such as a quantifier over the empty set, can make the formula constant.
+  // A constant translated part, such as a quantifier over {}, can make the whole formula constant.
   const isTranslatedWhole = (expression: Expression) =>
     expression.kind === "Label" ||
     expression.kind === "Let" ||

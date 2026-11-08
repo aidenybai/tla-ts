@@ -62,7 +62,6 @@ export interface Successor {
 interface Run {
   environment: Environment;
   isInit: boolean;
-  // Whether the run computes ENABLED rather than the successors of the state.
   isEnabled: boolean;
   current: Value[] | undefined;
   isStopped: boolean;
@@ -102,7 +101,6 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-// What TLC says it was computing when it fails.
 const getComputation = (run: Run) =>
   run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
 
@@ -112,8 +110,7 @@ const createRunError = (run: Run, message: string) => {
   return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
 };
 
-// TLC's message for a conjunct that isn't a boolean, which differs for a literal it walks to rather
-// than evaluates.
+// TLC words this differently for a literal it walks to rather than evaluates.
 const getNonBooleanMessage = (
   run: Run,
   value: Value,
@@ -290,8 +287,7 @@ const isGuard = (expression: Expression, environment: Environment, isInit: boole
 
 const NO_NAMES: ReadonlySet<string> = new Set();
 
-// The local names an expression reads from enclosing scopes, or undefined when it applies a local
-// operator, whose body may assign variables.
+// Undefined when the expression applies a local operator, whose body may assign variables.
 export const getReadLocals = (
   expression: Expression,
   bound: ReadonlySet<string>,
@@ -313,8 +309,7 @@ export const getReadLocals = (
   return result.isReadOnly ? names : undefined;
 };
 
-// TLC generates a successor for every disjunct and witness that holds, so an expression only
-// checks like a guard when it has neither.
+// TLC generates a successor per disjunct and witness, so only an expression without any is a guard.
 const hasBranches = (
   expression: Expression,
   environment: Environment,
@@ -357,8 +352,7 @@ const toConjunct = (
   return { kind: "Branch", expression, runner: getRunner(expression, environment, isInit) };
 };
 
-// The leading guards of `\E x \in S, y \in T : P /\ Q` that read no inner bound hold for every inner
-// binding alike, so they can run once for each element of the outermost bound.
+// Leading guards that read no inner bound hold for every inner binding, so they run once.
 const getHoistedGuards = (expression: QuantifierExpression, environment: Environment) => {
   if (expression.bounds.length < 2 || expression.body.kind !== "And") return undefined;
   const names = expression.bounds.flatMap((bound) =>
@@ -546,8 +540,8 @@ const compileDynamicAssignment = (
   };
 };
 
-// Tool.getInitStates and Tool.getNextStates walk the body of a function they apply that is still
-// lazy, which they evaluate as TLC computes the initial states eagerly, and otherwise apply it.
+// TLC walks the body of an applied function that is still lazy, which it evaluates as it
+// computes the initial states eagerly, and otherwise applies it.
 const compileFunctionAction = (
   expression: Expression & { kind: "FunctionApplication" },
   environment: Environment,
@@ -686,11 +680,9 @@ const compileIdentifier = (
   };
 };
 
-// A PlusCal action starts with a guard such as pc[self] = "L1", and a process is a disjunction of
-// its actions. The labels an expression requires of one variable at one bound name let a
-// disjunction skip the operands whose guard is false without evaluating them. A hand-written
-// action often puts other guards first, such as running = self /\ pc[self] = "L1". TLC evaluates
-// those before the label's guard, so a skipped operand still runs them, for their errors.
+// A disjunction of PlusCal actions skips the operands whose label guard, such as
+// pc[self] = "L1", is false. TLC evaluates guards before the label's guard, so a skipped
+// operand still runs them, for their errors.
 interface LabelGuard {
   variable: number;
   argument: string;
@@ -715,16 +707,13 @@ const toLabelGuard = (expression: Expression, environment: Environment) => {
 const getConjuncts = (expression: Expression): Expression[] =>
   expression.kind === "And" ? expression.operands.flatMap(getConjuncts) : [expression];
 
-// What may come before the label's guard: a comparison or a name that a conjunction checks as a
-// guard. An operand with another conjunct first, such as an assignment or a name defined as an
-// action that may branch, runs in full.
+// An operand with another conjunct first, such as an assignment, runs in full.
 const isLeadingGuard = (expression: Expression, environment: Environment) =>
   (expression.kind === "Identifier" ||
     (expression.kind === "Apply" &&
       (expression.operator === "=" || expression.operator === "#"))) &&
   isGuard(expression, environment, false);
 
-// Checks the guards before a label's guard as a conjunction does, for TLC's errors.
 const compileLeadingGuards = (guards: Expression[]) => {
   const evaluators: (Evaluator | undefined)[] = [];
   return (run: Run, scope: Scope | undefined, partial: State) => {
@@ -1155,7 +1144,6 @@ const compileAction = (
   }
 };
 
-// A partial state that assigns no variable, which a run fills in as it assigns them.
 const getEmptyState = (environment: Environment): State =>
   environment.variables.map((): Value | undefined => undefined);
 
@@ -1228,8 +1216,7 @@ export const forEachInitialState = (
           run.isStopped = onIncomplete([...partial]);
           return;
         }
-        // TLC reports an initial state that isn't completely specified as an illegal state, not as
-        // an evaluation failure.
+        // TLC reports an initial state that isn't completely specified as an illegal state.
         throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
       }
       run.isStopped = onState(partial);

@@ -234,7 +234,6 @@ const SYMBOL_OPERATORS = [
   "?",
 ];
 
-// The Unicode forms of the operators SANY's grammar, javacc/tla+.jj, reads, as their ASCII forms.
 const UNICODE_OPERATORS = new Map([
   ["∃", "\\E"],
   ["∀", "\\A"],
@@ -320,7 +319,7 @@ const NUMBER_BASES = new Map([
   ["h", 16],
 ]);
 
-// A numeral token keeps its text as typed, such as \hFF, so errors can quote it as TLC does.
+// A numeral token keeps its text, such as \hFF, so errors can quote it as TLC does.
 export const getNumeralValue = (text: string) =>
   text.startsWith("\\")
     ? parseInt(text.slice(2), NUMBER_BASES.get(text[1].toLowerCase()))
@@ -352,7 +351,6 @@ const IDENTIFIER = DIGIT | LETTER | UNDERSCORE;
 
 const LOWERCASE = "abcdefghijklmnopqrstuvwxyz";
 
-// The classes each ASCII character belongs to, as a bit each.
 const CHARACTER_CLASSES = new Uint8Array(128);
 new Map([
   ["0123456789", DIGIT | HEX_DIGIT],
@@ -382,8 +380,7 @@ interface OperatorMatch {
   length: number;
 }
 
-// The symbol operators that start with each character, in the order of SYMBOL_OPERATORS, which
-// lists a longer operator before the operators it starts with.
+// In the order of SYMBOL_OPERATORS, which lists a longer operator before its prefixes.
 const SYMBOL_OPERATORS_BY_START = new Map<number, string[]>();
 SYMBOL_OPERATORS.forEach((symbol) => {
   const start = symbol.charCodeAt(0);
@@ -430,8 +427,7 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
   return code === CODE_BACKSLASH ? { text: "\\", length: 1 } : undefined;
 };
 
-// TLC's configuration parser reads its tokens with SANY's lexer, so it reads a Unicode operator, or
-// ℕ, ℤ, or ℝ, as one token, which it compares as written with the words it expects.
+// TLC's config parser reads ℕ, ℤ, ℝ, or a Unicode operator as one token, compared as written.
 const UNICODE_NAMES = new Set(["ℕ", "ℤ", "ℝ"]);
 export const matchUnicodeToken = (source: string, index: number): OperatorMatch | undefined => {
   const token = [source.slice(index, index + 2), source[index]].find(
@@ -450,8 +446,7 @@ export const skipWhile = (
   return end.value;
 };
 
-// The length of a step number such as <1>a., <+>, or <2>*., which SANY reads as one token wherever
-// it appears. tlapm's lexer reads no name after <*> or <+>.
+// SANY reads a step number as one token anywhere, and tlapm reads no name after <*> or <+>.
 const matchStep = (source: string, index: number, isTlapm: boolean) => {
   const isImplicit = source[index + 1] === "+" || source[index + 1] === "*";
   const levelEnd = isImplicit ? index + 2 : skipClass(source, index + 1, DIGIT);
@@ -482,7 +477,6 @@ const BASED_NUMBER_DIGITS = new Map([
   ["h", HEX_DIGIT],
 ]);
 
-// The length of a based numeral such as \b01 or \hFF at index, or 0.
 export const matchBasedNumber = (source: string, index: number) => {
   if (source.charCodeAt(index) !== CODE_BACKSLASH) return 0;
   const digits = BASED_NUMBER_DIGITS.get(source.charAt(index + 1).toLowerCase());

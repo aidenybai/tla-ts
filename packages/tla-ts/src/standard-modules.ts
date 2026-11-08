@@ -76,8 +76,7 @@ const isSubsetOf = (left: Value[], right: Value) =>
 const BOOLEAN_SET = createSet([false, true]);
 markNormalized(BOOLEAN_SET);
 
-// Merging the sets pairwise in a balanced tree compares each element about log2 of their count
-// times.
+// A balanced merge compares each element about log2 of the set count times.
 const getBalancedUnion = (sets: SetValue[], start: number, end: number): SetValue => {
   if (end - start === 1) return sets[start];
   const middle = (start + end) >> 1;
@@ -90,13 +89,11 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
-// IntervalValue and a normalized SetEnumValue keep the intersection and difference they compute
-// normalized.
+// These keep the intersection and difference they compute normalized.
 const isNormalizedReducible = (set: ReducibleSet) =>
   set.kind === "Interval" || (set.kind === "Set" && set.isNormalized);
 
-// TLC combines a set enumeration or an interval with another set element by element, testing each
-// element for membership in the other set.
+// TLC combines a set enumeration or an interval with a set by testing each element's membership.
 const combineReducible = (
   operator: SetOperationValue["operator"],
   set: ReducibleSet,
@@ -161,8 +158,7 @@ export const CORE_OPERATORS: Builtin[] = [
     }
     return isSubsetOf(toFiniteSet(left).elements, right);
   }),
-  // TLC defers the set operations of values that aren't sets to the enumeration or the membership
-  // tests of the result.
+  // TLC defers set operations on non-sets to enumerating or testing membership in the result.
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
       const left = getValue(args, 0, operator);
@@ -237,8 +233,7 @@ export const CORE_OPERATORS: Builtin[] = [
 
 const NEG_SIGNATURE = getJavaSignature("Integers", "Neg", "IntValue", 1);
 
-// TLC overrides the arithmetic of Naturals with the Java methods of tlc2.module.Naturals, or with
-// those of tlc2.module.Integers when the spec loads Integers, and names the method in an error.
+// TLC computes this arithmetic in tlc2.module.Naturals, or Integers if loaded, named in errors.
 const createArithmeticOperators = (module: string) => {
   const dotDotSignature = getJavaSignature(module, "DotDot", "IntervalValue", 2);
   return [
@@ -256,8 +251,7 @@ const createArithmeticOperators = (module: string) => {
     }),
     defineArithmetic(module, "\\div", "Divide", (left, right) => {
       if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
-      // tlc2.module.Naturals#Divide floors only a quotient Java truncates below 0, and lets
-      // -2147483648 \div -1 overflow.
+      // TLC floors only a quotient Java truncates below 0, and lets -2147483648 \div -1 overflow.
       if (module === "Naturals") {
         const truncated = Math.trunc(left / right) | 0;
         return truncated < 0 && Math.imul(truncated, right) !== left ? truncated - 1 : truncated;
@@ -286,16 +280,14 @@ const NATURALS_ARITHMETIC = createArithmeticOperators("Naturals");
 
 const INTEGERS_ARITHMETIC = createArithmeticOperators("Integers");
 
-// The operators of Naturals that TLC overrides with the methods of tlc2.module.Integers when it
-// loads Integers for its trace exploration spec, by the operator each replaces.
+// TLC loads Integers for a trace exploration spec, whose methods then replace these.
 export const getTraceSpecArithmetic = (builtin: Builtin) => {
   const index = NATURALS_ARITHMETIC.indexOf(builtin);
   return index === -1 ? undefined : INTEGERS_ARITHMETIC[index];
 };
 
-// tlc2.module.Naturals#GEQ names itself > in its errors, and tlc2.module.Integers#GT returns a
-// BoolValue. Only a spec that extends Integers gets the comparisons of tlc2.module.Integers, not
-// one that loads Integers for its trace exploration spec.
+// Naturals#GEQ names itself > in its errors, and Integers#GT returns a BoolValue. Only a
+// spec that extends Integers gets Integers' comparisons.
 const createComparisonOperators = (module: string) => {
   const getSignature = (method: string, result = "tlc2.value.IBoolValue") =>
     `public static ${result} tlc2.module.${module}.${method}(tlc2.value.impl.Value,tlc2.value.impl.Value)`;
@@ -555,7 +547,6 @@ export const getJavaOverrides = (
     : operators;
 };
 
-// The modules that each standard module loads through EXTENDS and LOCAL INSTANCE in TLC.
 export const STANDARD_DEPENDENCIES = new Map([
   ["Integers", ["Naturals"]],
   ["Sequences", ["Naturals"]],
