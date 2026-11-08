@@ -1,5 +1,4 @@
-// Module.Elab's check_enabled_axioms_usage and check_enabled_axioms_map: when a theorem's proof
-// cites ENABLEDaxioms, each leaf records whether the assumptions it relies on are of level at most 1.
+// Module.Elab's check_enabled_axioms_usage and check_enabled_axioms_map.
 
 import { TlapmBugError } from "../errors";
 import {

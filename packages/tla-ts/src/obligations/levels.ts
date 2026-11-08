@@ -1,5 +1,4 @@
-// Expr.Levels: the level of an expression (0 constant, 1 state, 2 action, 3 temporal, 4 undefined),
-// the weights of an operator's arguments, and the declared names the level depends on.
+// Expr.Levels, where a level is 0 constant, 1 state, 2 action, 3 temporal or 4 undefined.
 
 import { TlaProofError, TlapmBugError } from "../errors";
 import {
@@ -214,8 +213,8 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
     }
     case "Apply": {
       const operator = expression.operator;
-      // The action frontend commutes a prime onto an operator, and tlapm keeps the level that
-      // the application had.
+      // The action frontend commutes a prime onto an operator, and tlapm keeps the level the
+      // application had.
       if (isBuiltinApply(operator, "Prime") && operator.args.length === 1) {
         return recurse({ ...expression, operator: operator.args[0] });
       }

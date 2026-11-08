@@ -1,5 +1,4 @@
-// A port of tlapm's obligation generation (Proof.Gen and Module.Gen): leaf proofs become obligations
-// whose context is everything the proof may use at that point.
+// A port of tlapm's obligation generation (Proof.Gen and Module.Gen).
 
 import { TlapmBugError, TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
@@ -41,7 +40,6 @@ const isAnonymous = (step: StepNumber | undefined) => step?.kind === "Named" && 
 export const getTrue = (from: { location?: Locus }) =>
   at({ kind: "Internal", builtin: "TRUE" }, from);
 
-// Each visible fact of the sequent, shifted past the hypotheses after it.
 const getAssumedFacts = (offset: number, sequent: Sequent) =>
   sequent.context.flatMap((hyp, index) =>
     hyp.kind === "Fact" && hyp.visibility === "Visible"
@@ -410,7 +408,6 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
     return obligations;
   };
 
-  // Module.Gen.generate.
   const generateModule = (
     context: Hyp[],
     module: Mule,

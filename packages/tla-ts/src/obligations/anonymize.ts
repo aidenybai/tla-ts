@@ -1,5 +1,4 @@
-// A port of tlapm's anonymization (Expr.Anon, Elab.desugar and Proof.Anon): names become de Bruijn
-// indices into the context, builtin definitions are inlined, and anonymous steps get names.
+// A port of tlapm's anonymization (Expr.Anon, Elab.desugar and Proof.Anon).
 
 import { TlapmBugError, TlaProofError } from "../errors";
 import { consSubstitution, normalizeApply, shift, shiftExpr, substituteExpr } from "./substitution";
@@ -69,7 +68,6 @@ const ANON_SELECTOR_FAILURES = {
 
 const BAD_EXPRESSION: Expr = { kind: "Opaque", name: "$badexp" };
 
-// Util.set_locus: the node keeps its properties and takes the location of from.
 const withLocus = (expression: Expr, from: Expr) =>
   from.location ? { ...expression, location: from.location } : expression;
 
@@ -304,7 +302,6 @@ export const createAnonymizer = (
     return [adjoinBounds(context, mapped), mapped];
   };
 
-  // Visit.map, apart from the definitions an ASSUME or a LET binds.
   const visit = (context: AnonContext, expression: Expr): Expr => {
     if (expression.kind === "Sequent") {
       return { ...expression, sequent: sequent(context, expression.sequent)[1] };
@@ -335,7 +332,6 @@ export const createAnonymizer = (
     };
   };
 
-  // Module.Elab.anon#defns: an INSTANCE stands for the definitions it instantiates.
   const defns = (context: AnonContext, definitions: Defn[]): [AnonContext, Defn[]] => {
     let current = context;
     const queue = [...definitions];

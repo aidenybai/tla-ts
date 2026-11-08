@@ -1,6 +1,5 @@
 // Pco.resolve: tlapm's parser lets an operator take in every later infix operator that is not
 // entirely below it, so SUBSET S \ T is SUBSET (S \ T) to tlapm though SANY reads (SUBSET S) \ T.
-// This regroups an infix application the way tlapm does.
 
 import type { Expression, SourceLocation } from "../ast";
 import { lookupOperator, type Operator } from "./operators";
@@ -33,7 +32,6 @@ const withEnd = (expression: Expression, end: SourceLocation | undefined): Expre
     : expression;
 };
 
-// The operator an expression leaves open on tlapm's parse stack, with the operand after it.
 const getOpenOperator = (expression: Expression) => {
   if (expression.kind === "Apply") {
     const operator = lookupOperator(expression.operator);

@@ -1,6 +1,4 @@
-// A port of tlapm's Expr.Action. Lambdifying gives each ENABLED and \cdot a LAMBDA over the
-// variables it binds, after expanding the definitions soundness needs expanded. The ExpandENABLED
-// and ExpandCdot frontends then replace each LAMBDA with an existential quantifier.
+// A port of tlapm's Expr.Action.
 
 import { TlaProofError, TlapmBugError, TlaProverError } from "../errors";
 import type { Anonymizer } from "./anonymize";
@@ -26,8 +24,6 @@ import {
 import { getLevelInfo, LEVEL_NUMBERS } from "./levels";
 import { expandFairness, rewriteUnchanged } from "./temporal";
 
-// Which of ENABLED and \cdot a pass handles, and whether it may expand the definitions that
-// soundness needs expanded, as the AutoUSE directive allows.
 interface ActionOptions {
   isEnabled: boolean;
   isCdot: boolean;
@@ -51,7 +47,6 @@ const NESTED_CDOT =
 // Unlike auto_expansion_of_defs, tlapm puts a space before "For example" here.
 const NESTED_CDOT_SPACED = `${NESTED_CDOT} For example, writing \`BY ExpandCdot\`.`;
 
-// Visit.map_visible_hyp with no state.
 const mapVisibleChildren = (expression: Expr, map: (child: Expr) => Expr) =>
   mapScoped(
     undefined,
@@ -209,7 +204,6 @@ const expandDefinitions = (
   );
 };
 
-// expand_propositional_action_operators: UNCHANGED v, [A]_v and <<A>>_v in terms of primes.
 const expandPropositional = (expression: Expr): Expr => {
   if (expression.kind === "Apply" && expression.args.length === 1) {
     return rewriteUnchanged(expression.args[0]);
@@ -263,9 +257,7 @@ const getHashtblKeys = (names: string[]) => {
   return buckets.flat();
 };
 
-// lambdify_action_operators. A variable met directly binds into current, and one met under a prime
-// into primed. ENABLED A binds the primes of A, and A \cdot B binds those of A and the unprimed
-// variables of B, each as an opaque name such as x#enabled#prime1.
+// Each variable binds as an opaque name such as x#enabled#prime1.
 const bindVariables = (
   options: ActionOptions,
   onWarning: Warn,
@@ -354,8 +346,6 @@ const bindVariables = (
   );
 };
 
-// shift_indices_after_lambdify, a Subst.map_visible_hyp that makes room in each new LAMBDA body
-// for its parameters and drops the placeholder parameter.
 const shiftIndices = (substitution: Substitution, expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
@@ -387,7 +377,6 @@ const shiftIndices = (substitution: Substitution, expression: Expr): Expr => {
   return mapScoped(substitution, expression, shiftIndices, (current) => bumpBy(1, current));
 };
 
-// normalize_lambda_param_names.
 const renameParams = (isKeepingNames: boolean, expression: Expr): Expr => {
   if (expression.kind === "Apply" && isActionOperator(expression.operator)) {
     const [lambda] = expression.args;
@@ -413,7 +402,6 @@ const renameParams = (isKeepingNames: boolean, expression: Expr): Expr => {
   return mapVisibleChildren(expression, (child) => renameParams(isKeepingNames, child));
 };
 
-// check_arity.
 const checkArity = (expression: Expr): Expr => {
   if (
     isBuiltinApply(expression, "Cdot") &&
@@ -425,7 +413,6 @@ const checkArity = (expression: Expr): Expr => {
   return mapVisibleChildren(expression, checkArity);
 };
 
-// lambdify_action_operators#expand.
 const lambdifyOperators = (
   anonymizer: Anonymizer,
   onWarning: Warn,
@@ -457,8 +444,6 @@ export const lambdify = (
   return checkArity(lambdifyOperators(anonymizer, onWarning, scope, expanded, options, false));
 };
 
-// replace_action_operators_with_quantifiers: each lambdified ENABLED or \cdot that the frontend
-// expands becomes \E over the parameters of its LAMBDA.
 const replaceWithQuantifiers = (
   options: ActionOptions,
   onWarning: Warn,
@@ -527,7 +512,6 @@ const replaceWithQuantifiers = (
   );
 };
 
-// commute_exists_disjunction: \E x : A \/ B as (\E x : A) \/ (\E x : B), everywhere.
 const commuteExistsDisjunction = (expression: Expr): Expr => {
   if (expression.kind === "Quant" && expression.quantifier === "Exists") {
     const body = expression.body;
@@ -548,7 +532,6 @@ const commuteExistsDisjunction = (expression: Expr): Expr => {
   return mapVisibleChildren(expression, commuteExistsDisjunction);
 };
 
-// expand_action_operators, the ExpandENABLED and ExpandCdot frontends.
 export const expandActionOperators = (
   anonymizer: Anonymizer,
   onWarning: Warn,

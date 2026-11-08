@@ -1,5 +1,3 @@
-// Generates the proof obligations tlapm prints for a module, in tlapm's order and layout.
-
 import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "../errors";
 import { createAnonymizer } from "./anonymize";
 import {
