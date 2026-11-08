@@ -762,7 +762,6 @@ const printSimulation = (printer: MessagePrinter, output: SimulationOutput) => {
   }
 };
 
-// With -tool, TLC reports the progress of a simulation as it reports that of model checking.
 const printSimulationProgress = (printer: MessagePrinter, statistics: SimulationStatistics) =>
   printer.print(
     MESSAGE_CODE.simulationProgress,
@@ -778,7 +777,6 @@ const isTraceRecorded = (args: TlcArguments, version: TlcVersion) =>
   (args.isTraceSpecForced || (!args.isTraceSpecDisabled && !args.isTool && !args.isContinued)) &&
   !args.isTraceBinaryDisabled;
 
-// FileUtil.makeMetaDir: a new directory in the -metadir, or in states, named by the time.
 const createMetadir = (args: TlcArguments) => {
   const now = new Date();
   const pad = (value: number, length = 2) => String(value).padStart(length, "0");

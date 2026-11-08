@@ -323,8 +323,6 @@ const getSpecification = (
       );
     }
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
-      // TLC warns when it can't tell that the subscript holds every variable, since it then
-      // checks fewer stuttering steps than the specification allows.
       const variables = getSubscriptVariables(
         conjunct.expression.subscript,
         item.scope,
@@ -604,10 +602,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
 
 interface Search {
   properties: Properties;
-  // A state as TLC prints it, its variables in TLC's order.
   toRecord: (state: Value[]) => Record<string, Value>;
-  // The state TLC prints for an ALIAS, which names the fields of the record the alias is, or reports
-  // why TLC fails to evaluate it.
   evaluateAlias: (
     alias: string,
     state: Value[],
@@ -664,7 +659,6 @@ const toAliasRecord = (value: Value, fieldOrder: string[]) => {
   );
 };
 
-// TLC names the action that leaves a successor incomplete when the next-state relation has several.
 export const getIncompleteSuccessorMessage = (
   missing: string[],
   action: string | undefined,
@@ -673,7 +667,6 @@ export const getIncompleteSuccessorMessage = (
 ) => {
   const subject =
     actionCount === 1 ? "the next-state action" : `action ${action} of the next-state relation`;
-  // TLC 1.7.4 says a variable is not assigned rather than not defined.
   const verb = version === "1.7.4" ? "assigned" : "defined";
   return `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
 };

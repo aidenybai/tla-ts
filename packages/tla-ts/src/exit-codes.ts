@@ -16,9 +16,6 @@ export const EXIT_STATUS = {
   error: 255,
 } as const;
 
-// The codes of TLC's messages that EC.ExitStatus.errorConstantToExitStatus maps to a status other
-// than 255: the errors in the configuration and the spec it maps to a configuration error, and the
-// violations and failures.
 const MESSAGE_EXIT_STATUSES = new Map<number, number>([
   ...[
     ...Array.from({ length: 24 }, (_, index) => 2222 + index),
