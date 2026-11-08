@@ -92,6 +92,14 @@ export const tuple = (elements: Expression[]): Expression => ({
   location: UNLOCATED,
 });
 
+// The function that maps each entry's key to its value, which is <<>> without entries.
+export const functionFrom = (entries: [Expression, Expression][]) =>
+  entries.length === 0
+    ? tuple([])
+    : entries
+        .map((entry) => apply(":>", [entry[0], entry[1]]))
+        .reduce((left, right) => apply("@@", [left, right]));
+
 export const set = (elements: Expression[]): Expression => ({
   kind: "SetEnumeration",
   elements,

@@ -3,6 +3,7 @@ import type { Expression } from "../ast";
 import {
   type CalledMethod,
   type Context,
+  type FunctionNode,
   getNewClass,
   getObjectMethod,
   getRunConstructor,
@@ -18,8 +19,8 @@ import { getConstructor } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { isBuiltInObject, translateBuiltInObject, translateFunctionPrototype } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import type { Scope } from "./scope";
-import { apply, boolean, identifier, number, string } from "./tla";
+import { createStateScope, type Scope } from "./scope";
+import { apply, boolean, functionFrom, identifier, number, string } from "./tla";
 import { getKind, isHeapType, isNumberLike } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -61,7 +62,46 @@ const translateMemberKey = (name: ts.PropertyName, scope: Scope, context: Contex
   throw new TlaTypeScriptError("Unsupported key", name);
 };
 
-// A model value that names a method of an object literal.
+// The literal that a function returns, when its body returns only that, so that the JavaScript
+// module can call it as a getter or a setter.
+const getConstantResult = (node: FunctionNode, context: Context) => {
+  const translateLiteral = (returned: ts.Expression) =>
+    ts.isStringLiteral(returned) ||
+    ts.isNoSubstitutionTemplateLiteral(returned) ||
+    returned.kind === ts.SyntaxKind.TrueKeyword ||
+    returned.kind === ts.SyntaxKind.FalseKeyword ||
+    returned.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(returned) && returned.text === "undefined") ||
+    (ts.isNumericLiteral(returned) && /^\d{1,9}$/.test(returned.text))
+      ? translateExpression(returned, createStateScope(context), context)
+      : undefined;
+  const body = node.body;
+  if (body === undefined) return undefined;
+  if (!ts.isBlock(body)) return translateLiteral(body);
+  const statement = body.statements.at(0);
+  if (statement === undefined) return getUndefined(context);
+  if (body.statements.length > 1 || !ts.isReturnStatement(statement)) return undefined;
+  return statement.expression === undefined
+    ? getUndefined(context)
+    : translateLiteral(statement.expression);
+};
+
+// A model value that names a function, which records what the function returns if that's a
+// literal.
+const getModelValue = (
+  node: FunctionNode,
+  symbol: ts.Symbol,
+  preferred: string,
+  context: Context,
+) => {
+  const value = getConstructor(symbol, context, preferred);
+  const result = value.kind === "Identifier" ? getConstantResult(node, context) : undefined;
+  if (value.kind === "Identifier" && result !== undefined) {
+    context.constantFunctions.set(value.name, result);
+  }
+  return value;
+};
+
 export const translateFunctionValue = (
   node: ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration,
   context: Context,
@@ -74,14 +114,25 @@ export const translateFunctionValue = (
     : ts.isVariableDeclaration(declared) && ts.isIdentifier(declared.name)
       ? declared.name.text
       : "anonymous";
-  return getConstructor(symbol, context, `${name}Function`);
+  return getModelValue(node, symbol, `${name}Function`, context);
 };
 
+// A model value that names a method of an object literal.
 export const getMethodValue = (method: ts.MethodDeclaration, context: Context) => {
   const symbol = getSymbol(method.name, context.checker);
   if (symbol === undefined) throw new TlaTypeScriptError("Name this method", method);
-  return getConstructor(symbol, context, `${method.name.getText()}Method`);
+  return getModelValue(method, symbol, `${method.name.getText()}Method`, context);
 };
+
+// The table of the constant functions that a script holds, which the JavaScript module calls as
+// getters and setters.
+export const translateConstantFunctions = (context: Context) =>
+  functionFrom(
+    [...context.constantFunctions].map((entry): [Expression, Expression] => [
+      identifier(entry[0]),
+      entry[1],
+    ]),
+  );
 
 // Whether the object a call's receiver names still holds the method the call inlines, since a
 // script may replace it.

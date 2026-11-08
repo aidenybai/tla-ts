@@ -90,6 +90,8 @@ const RESERVED = new Set([
   "Ref",
   "BuiltIns",
   "UsedBuiltIns",
+  "ConstantFunctions",
+  "UsedConstantFunctions",
   "Null",
   "Undefined",
   "Perms",

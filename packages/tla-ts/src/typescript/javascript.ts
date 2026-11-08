@@ -9,7 +9,7 @@ import { apply, boolean, ifExpression, number, string } from "./tla";
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, TLC
 
-CONSTANTS Undefined, Null, Ref, BuiltIns
+CONSTANTS Undefined, Null, Ref, BuiltIns, ConstantFunctions
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -156,6 +156,8 @@ LOCAL Value(object, key) ==
   LET attributes == object.attributes[key]
   IN CASE attributes.kind = "data" -> object.values[key]
        [] attributes.kind = "accessor" /\\ object.values[key].get = Undefined -> Undefined
+       [] attributes.kind = "accessor" /\\ object.values[key].get \\in DOMAIN ConstantFunctions ->
+            ConstantFunctions[object.values[key].get]
        [] attributes.kind = "accessor" -> Assert(FALSE, "tla-ts can't call getters")
        [] OTHER -> Assert(FALSE, "tla-ts can't represent this value")
 
@@ -340,18 +342,29 @@ ArrayLike(heap, ref) ==
      THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
      ELSE [position \\in 1..length |-> Get(heap, ref, ToString(position - 1))]
 
+\\* The accessor that a write to a key calls, which the object or a prototype holds, or Undefined
+\\* where the write makes or changes a data property.
+RECURSIVE AccessorOf(_, _, _)
+AccessorOf(heap, ref, key) ==
+  LET object == Lookup(heap, ref)
+  IN CASE key \\in DOMAIN object.values ->
+            IF object.attributes[key].kind = "accessor" THEN object.values[key] ELSE Undefined
+       [] object.prototype = Null -> Undefined
+       [] OTHER -> AccessorOf(heap, object.prototype, key)
+
 RECURSIVE IsWritable(_, _, _)
 IsWritable(heap, ref, key) ==
   LET object == Lookup(heap, ref)
-  IN CASE key \\notin DOMAIN object.values ->
-            object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
-       [] object.attributes[key].kind # "accessor" -> object.attributes[key].writable
-       [] object.values[key].set = Undefined -> FALSE
-       [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
+  IN IF key \\in DOMAIN object.values
+     THEN object.attributes[key].writable
+     ELSE object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
 
 CanPut(heap, ref, key) ==
-  /\\ IsWritable(heap, ref, key)
-  /\\ key \\in DOMAIN Own(heap, ref) \\/ Lookup(heap, ref).extensible
+  LET accessor == AccessorOf(heap, ref, key)
+  IN IF accessor = Undefined
+     THEN /\\ IsWritable(heap, ref, key)
+          /\\ key \\in DOMAIN Own(heap, ref) \\/ Lookup(heap, ref).extensible
+     ELSE accessor.set # Undefined
 
 RECURSIVE IsPrototypeOf(_, _, _)
 IsPrototypeOf(heap, owner, ref) ==
@@ -361,9 +374,12 @@ IsPrototypeOf(heap, owner, ref) ==
         \\/ IsPrototypeOf(heap, owner, prototype)
 
 SetProperty(heap, ref, key, value) ==
-  IF CanPut(heap, ref, key)
-  THEN Update(heap, ref, Put(Lookup(heap, ref), key, value))
-  ELSE Assert(FALSE, "tla-ts can't throw the TypeError of a failed write")
+  LET accessor == AccessorOf(heap, ref, key)
+  IN CASE ~CanPut(heap, ref, key) ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of a failed write")
+       [] accessor = Undefined -> Update(heap, ref, Put(Lookup(heap, ref), key, value))
+       [] accessor.set \\in DOMAIN ConstantFunctions -> heap
+       [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
 
 CanDelete(heap, ref, key) ==
   LET object == Lookup(heap, ref)

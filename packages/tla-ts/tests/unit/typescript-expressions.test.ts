@@ -417,6 +417,40 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[box.a, child.a, Object.hasOwn(child, 'a'), Object.getOwnPropertyDescriptor(described, 'b')!.writable, caught]",
+      `const box: { a?: number } = {};
+      Object.defineProperty(box, "a", {
+        get: function () {
+          return 10;
+        },
+        set: function (value: number) {},
+      });
+      const child: { a?: number } = Object.create(box);
+      Object.preventExtensions(child);
+      child.a = 5;
+      box.a = 3;
+      const attributes = {};
+      Object.defineProperty(attributes, "writable", {
+        get: function () {
+          return true;
+        },
+      });
+      const described = {};
+      Object.defineProperty(described, "b", attributes);
+      const fixed: { c?: number } = {};
+      Object.defineProperty(fixed, "c", {
+        get: function () {
+          return 1;
+        },
+      });
+      let caught = "none";
+      try {
+        fixed.c = 2;
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }`,
+    ],
+    [
       "[thrown.constructor === TypeError, thrown.constructor === Error, thrown.name, thrown.toString === Error.prototype.toString]",
       `const box = {};
       let caught: unknown;

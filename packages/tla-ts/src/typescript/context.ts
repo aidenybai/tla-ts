@@ -30,6 +30,9 @@ export interface Context {
   heap: ts.Symbol | undefined;
   // The built-in objects, by path, that a script names.
   builtIns: Set<string>;
+  // The literal that each function a script holds as a value returns, by its model value's name,
+  // for the functions that return only a literal.
+  constantFunctions: Map<string, Expression>;
 }
 
 export interface Unknown {
@@ -70,6 +73,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   unknowns: undefined,
   heap: undefined,
   builtIns: new Set(),
+  constantFunctions: new Map(),
 });
 
 export const hasObjectLiteral = (node: ts.Node): boolean =>

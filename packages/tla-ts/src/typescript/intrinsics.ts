@@ -8,7 +8,7 @@ import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import type { Expression } from "../ast";
 import { BUILT_INS } from "./built-ins";
-import { apply, boolean, identifier, number, record, string, tuple } from "./tla";
+import { boolean, functionFrom, identifier, number, record, string, tuple } from "./tla";
 import { getKind } from "./types";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
@@ -264,13 +264,6 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
     : undefined;
 };
 
-const getFunction = (entries: [Expression, Expression][]) =>
-  entries.length === 0
-    ? tuple([])
-    : entries
-        .map((entry) => apply(":>", [entry[0], entry[1]]))
-        .reduce((left, right) => apply("@@", [left, right]));
-
 // The built-in objects that a script's heap holds: those the script names, and their prototypes.
 export const translateBuiltIns = (node: ts.Node, context: Context) => {
   const included = new Set<string>();
@@ -303,7 +296,7 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
       { name: "isOpaque", value: boolean(true) },
     ]),
   ]);
-  return getFunction([
+  return functionFrom([
     ...stubs,
     ...[...included].map((name): [Expression, Expression] => {
       const entry = BUILT_INS[name];
@@ -343,11 +336,11 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
         { name: "keys", value: tuple(translated.map((property) => property.key)) },
         {
           name: "values",
-          value: getFunction(translated.map((property) => [property.key, property.value])),
+          value: functionFrom(translated.map((property) => [property.key, property.value])),
         },
         {
           name: "attributes",
-          value: getFunction(translated.map((property) => [property.key, property.attributes])),
+          value: functionFrom(translated.map((property) => [property.key, property.attributes])),
         },
         { name: "extensible", value: boolean(entry[2]) },
         {

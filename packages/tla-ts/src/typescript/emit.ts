@@ -259,7 +259,9 @@ export const emit = (
       ? [
           "CONSTANTS",
           ...modelValues.map((constant) => `  ${constant} = ${constant}`),
-          ...(isJavaScript ? ["  BuiltIns <- UsedBuiltIns"] : []),
+          ...(isJavaScript
+            ? ["  BuiltIns <- UsedBuiltIns", "  ConstantFunctions <- UsedConstantFunctions"]
+            : []),
         ]
       : []),
     ...formatConfigSection("INVARIANTS", sections.invariants),
