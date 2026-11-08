@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { translateScript, writesState } from "./actions";
+import { rejectSharing } from "./aliasing";
 import { type Context, createContext } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
@@ -61,6 +62,7 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"));
   const context = createContext(program.checker);
   const model = readModel(program.sourceFile, context);
+  rejectSharing(program.sourceFile, context);
   const sections = createSections();
   sections.init.push(
     ...(model.script.every(

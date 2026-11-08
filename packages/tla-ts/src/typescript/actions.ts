@@ -961,7 +961,7 @@ const getRoot = (node: ts.Expression): ts.Expression => {
     : node;
 };
 
-const getWritten = (node: ts.Node) => {
+export const getWritten = (node: ts.Node) => {
   if (
     ts.isBinaryExpression(node) &&
     node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&

@@ -77,6 +77,18 @@ const CASES: [string, string][] = [
   ["returning a value from an action", "count++; return count;"],
   ["assigning a constant", "LIMIT = 3;"],
   ["calling an action from an action", "step();"],
+  [
+    "sharing an object that then changes",
+    "let other = record; other.a = 2; count = record.a ?? 0;",
+  ],
+  [
+    "sharing an element that then changes",
+    "let rows = [[1]]; const row = rows[0]; rows[0].push(2); count = row.length;",
+  ],
+  [
+    "storing an object that then changes",
+    "let rows = [values]; rows[0].push(4); count = values.length;",
+  ],
   ["an unknown call in a callback", "values = values.map(() => Math.random());"],
   ["a test that doesn't return a boolean", "values = values.filter((value) => value);"],
 ];

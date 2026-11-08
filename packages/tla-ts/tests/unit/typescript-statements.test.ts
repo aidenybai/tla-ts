@@ -122,6 +122,18 @@ const CASES: Record<string, Case[]> = {
       statements: "received = [...received, queue[0]]; queue = queue.slice(1);",
     },
   ],
+  aliasing: [
+    {
+      variables: "count = 0",
+      statements:
+        "let rows = [[1], [2]]; const first = rows[0]; rows.push([3]); rows = rows.slice(1); count = first.length + rows.length;",
+    },
+    {
+      variables: "count = 0",
+      statements:
+        "let rows = [{ size: 1 }]; for (const row of rows) count += row.size; rows[0].size = 4; count += rows[0].size;",
+    },
+  ],
   sets: [
     { variables: "seen = new Set([1])", statements: "seen.add(2); seen.add(1);" },
     { variables: "seen = new Set([1, 2])", statements: "seen.delete(1); seen.delete(5);" },
