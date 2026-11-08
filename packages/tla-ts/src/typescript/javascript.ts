@@ -431,8 +431,16 @@ ApplyAll(object, keys, descriptors) ==
   THEN ApplyAll(Apply(object, Head(keys), Head(descriptors)), Tail(keys), Tail(descriptors))
   ELSE [object |-> object, isDone |-> FALSE]
 
+\\* Whether a value is an object, where a function throws a TypeError if it isn't. An object that
+\\* isn't in the heap, such as an array, stops the run.
+LOCAL IsObjectArgument(value) ==
+  CASE IsObject(value) -> TRUE
+    [] value # Null /\\ TypeOf(value) = "object" ->
+         Assert(FALSE, "tla-ts can't use " \\o ToString(value) \\o " as an object here")
+    [] OTHER -> FALSE
+
 DefineProperty(heap, ref, key, descriptor) ==
-  IF IsObject(ref) /\\ IsRef(descriptor)
+  IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
   THEN LET applied == ApplyAll(Lookup(heap, ref), <<key>>, <<ToDescriptor(heap, descriptor)>>)
        IN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
   ELSE [heap |-> heap, isDone |-> FALSE]
@@ -441,7 +449,9 @@ DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
       keys == EnumerableKeys(source)
       values == [position \\in DOMAIN keys |-> Value(source, keys[position])]
-  IN IF ~IsObject(ref) \\/ ~IsRef(properties) \\/ \\E position \\in DOMAIN keys : ~IsRef(values[position])
+  IN IF \\/ ~IsObjectArgument(ref)
+        \\/ ~IsObjectArgument(properties)
+        \\/ \\E position \\in DOMAIN keys : ~IsObjectArgument(values[position])
      THEN [heap |-> heap, isDone |-> FALSE]
      ELSE LET descriptors == [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])]
               applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
@@ -450,7 +460,7 @@ DefineProperties(heap, ref, properties) ==
 Create(heap, prototype, properties) ==
   LET created == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype])
       change == DefineProperties(created, Allocated(created), properties)
-  IN CASE ~(prototype = Null \\/ IsRef(prototype)) ->
+  IN CASE ~(prototype = Null \\/ IsObjectArgument(prototype)) ->
             Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
        [] properties = Undefined -> created
        [] change.isDone -> change.heap

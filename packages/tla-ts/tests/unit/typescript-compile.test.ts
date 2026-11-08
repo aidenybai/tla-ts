@@ -719,6 +719,15 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't throw the RangeError of with()");
   });
 
+  it("fails the check where defineProperty takes an array, which isn't in the heap", async () => {
+    const result = await check(
+      compile(
+        `const values: object = [];\nObject.defineProperty(values, "0", { value: 1 });\nlet result = 1;`,
+      ),
+    );
+    expect(result.failure?.message).toContain("tla-ts can't use <<>> as an object here");
+  });
+
   it("rejects division without rounding", () => {
     expect(() =>
       compile(`let count = 8;\nexport const halve = () => { count = count / 2; };`),
