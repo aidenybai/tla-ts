@@ -282,21 +282,43 @@ export const getTraceSpecArithmetic = (builtin: Builtin) => {
   return index === -1 ? undefined : INTEGERS_ARITHMETIC[index];
 };
 
+// tlc2.module.Naturals#GEQ names itself > in its errors, and tlc2.module.Integers#GT returns a
+// BoolValue. Only a spec that extends Integers gets the comparisons of tlc2.module.Integers, not
+// one that loads Integers for its trace exploration spec.
+const createComparisonOperators = (module: string) => {
+  const getSignature = (method: string, result = "tlc2.value.IBoolValue") =>
+    `public static ${result} tlc2.module.${module}.${method}(tlc2.value.impl.Value,tlc2.value.impl.Value)`;
+  const isIntegers = module === "Integers";
+  return [
+    overrideWithJava(
+      defineComparison("<", (left, right) => left < right),
+      getSignature("LT"),
+    ),
+    overrideWithJava(
+      defineComparison(">", (left, right) => left > right),
+      isIntegers ? getSignature("GT", "tlc2.value.impl.BoolValue") : getSignature("GT"),
+    ),
+    overrideWithJava(
+      defineComparison("<=", (left, right) => left <= right),
+      getSignature("LE"),
+    ),
+    overrideWithJava(
+      defineComparison(">=", (left, right) => left >= right, isIntegers ? ">=" : ">"),
+      getSignature("GEQ"),
+    ),
+  ];
+};
+
 const NATURALS_OPERATORS = [
   defineConstant("Nat", { kind: "InfiniteSet", name: "Nat" }),
   ...NATURALS_ARITHMETIC,
-  defineComparison("<", (left, right) => left < right),
-  defineComparison(">", (left, right) => left > right),
-  defineComparison("<=", (left, right) => left <= right),
-  // tlc2.module.Naturals#GEQ names itself > in its errors. Only a spec that extends Integers gets
-  // the GEQ of tlc2.module.Integers, not one that loads Integers for its trace exploration spec.
-  defineComparison(">=", (left, right) => left >= right, ">"),
+  ...createComparisonOperators("Naturals"),
 ];
 
 const INTEGERS_OPERATORS = [
   defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
   ...INTEGERS_ARITHMETIC,
-  defineComparison(">=", (left, right) => left >= right),
+  ...createComparisonOperators("Integers"),
   defineOperator("-.", 1, (args) => {
     const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
     if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
