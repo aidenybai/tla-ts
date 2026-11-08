@@ -273,6 +273,49 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const copy = flag ? box : { a: 2 };`,
     ],
     [
+      "[count, box.a, label, kind, steps]",
+      `let count = 0;
+      const box = { a: 1 };
+      const size: number = 2;
+      if (size > 1) {
+        count = count + 1;
+        box.a = 5;
+      } else {
+        count = count + 2;
+      }
+      if (size > 3) {
+        var label = "big";
+      } else {
+        var label = "small";
+      }
+      let kind = "none";
+      try {
+        if (size > 1) throw new Error("size");
+        kind = "fine";
+      } catch {
+        kind = "caught";
+        box.a = box.a + 1;
+      }
+      switch (size) {
+        case 1:
+          count = 10;
+          break;
+        case 2:
+          count = count + 20;
+          break;
+        default:
+          count = 30;
+      }
+      const measure = (value: number) => {
+        if (value > 1) return value * 2;
+        box.a = 0;
+        return value;
+      };
+      const first = measure(size);
+      const second = measure(1);
+      const steps = [first, second];`,
+    ],
+    [
       "has(point)",
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],

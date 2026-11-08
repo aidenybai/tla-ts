@@ -517,21 +517,23 @@ const translateCallStatement = (
           ? ts.factory.createReturnStatement(calleeBody)
           : ts.factory.createExpressionStatement(calleeBody),
       ];
-  const afterCall = (inner: Path, value?: Expression) =>
-    continueWith({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } }, value);
   const scope = { ...bound.scope, functions: new Map([...bound.scope.functions, ...callbacks]) };
-  return letIn(
-    bound.definitions,
-    translateStatements(body, { ...path, scope }, context, {
-      next: afterCall,
-      exit: afterCall,
-      breakTo: undefined,
-      continueTo: undefined,
-      throwTo: frame.throwTo,
-      yieldTo: isGenerator ? afterCall : undefined,
-      inlining: new Set([...frame.inlining, callee]),
-    }),
-  );
+  return translateJoined(expression, path, context, continueWith, (next) => {
+    const afterCall = (inner: Path, value?: Expression) =>
+      next({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } }, value);
+    return letIn(
+      bound.definitions,
+      translateStatements(body, { ...path, scope }, context, {
+        next: afterCall,
+        exit: afterCall,
+        breakTo: undefined,
+        continueTo: undefined,
+        throwTo: frame.throwTo,
+        yieldTo: isGenerator ? afterCall : undefined,
+        inlining: new Set([...frame.inlining, callee]),
+      }),
+    );
+  });
 };
 
 const translateExpressionStatement = (
@@ -864,6 +866,87 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
   return [...path.mutable].filter((symbol) => changed.has(symbol));
 };
 
+// Translates a statement whose paths may each continue with what follows it. A script translates
+// what follows once, as an operator of what the statement changes and the value it gives, instead
+// of once for each path. A path that changes what the operator can't take, such as a var it
+// declares, falls back to translating what follows on each path.
+const translateJoined = (
+  node: ts.Node,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path, value?: Expression) => Formula,
+  translateWith: (next: (inner: Path, value?: Expression) => Formula) => Formula,
+): Formula => {
+  if (context.heap === undefined) return translateWith(continueWith);
+  const changed = getChanged(node, path, context);
+  const name = context.names.getFresh("Join");
+  const parameters = changed.map((symbol) => {
+    const binding = path.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const result = context.names.getFresh("result");
+  const isVarInside = (symbol: ts.Symbol) => {
+    const declaration = symbol.valueDeclaration;
+    return (
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined
+    );
+  };
+  const isKept = <T>(entries: Map<ts.Symbol, T>, before: Map<ts.Symbol, T>) =>
+    [...entries].every((entry) =>
+      before.has(entry[0])
+        ? before.get(entry[0]) === entry[1] || changed.includes(entry[0])
+        : !isVarInside(entry[0]),
+    );
+  const exits: { path: Path; value?: Expression }[] = [];
+  const joined = translateWith((inner, value) => {
+    exits.push({ path: inner, value });
+    return leaf(
+      call(name, [
+        ...changed.flatMap((symbol) => inner.scope.bindings.get(symbol) ?? []),
+        value ?? getUndefined(context),
+      ]),
+    );
+  });
+  const isJoinable = exits.every(
+    (exit) =>
+      changed.every((symbol) => exit.path.scope.bindings.has(symbol)) &&
+      isKept(exit.path.scope.bindings, path.scope.bindings) &&
+      isKept(exit.path.scope.functions, path.scope.functions),
+  );
+  if (!isJoinable) return translateWith(continueWith);
+  if (exits.length === 0) return joined;
+  const isValued = exits.some((exit) => exit.value !== undefined);
+  const rest = continueWith(
+    {
+      ...path,
+      scope: {
+        ...path.scope,
+        bindings: new Map([
+          ...path.scope.bindings,
+          ...changed.map((symbol, position): [ts.Symbol, Expression] => [
+            symbol,
+            identifier(parameters[position]),
+          ]),
+        ]),
+      },
+    },
+    isValued ? identifier(result) : undefined,
+  );
+  return letIn(
+    [
+      define(
+        name,
+        [...parameters, result].map((parameter) => ({ name: parameter, arity: 0 })),
+        render(rest),
+      ),
+    ],
+    joined,
+  );
+};
+
 const translateLoop = (
   loop: ts.IterationStatement,
   path: Path,
@@ -1158,12 +1241,14 @@ const translateStatements = (
     );
   }
   if (ts.isIfStatement(statement)) {
-    return translateIf(
-      statement,
-      path.scope,
-      context,
-      (branch) => translateStatements([branch], path, context, { ...frame, next: continueWith }),
-      () => continueWith(path),
+    return translateJoined(statement, path, context, continueWith, (next) =>
+      translateIf(
+        statement,
+        path.scope,
+        context,
+        (branch) => translateStatements([branch], path, context, { ...frame, next }),
+        () => next(path),
+      ),
     );
   }
   if (ts.isReturnStatement(statement)) {
@@ -1200,20 +1285,20 @@ const translateStatements = (
       uncaught,
     });
   }
-  if (ts.isTryStatement(statement))
-    return translateTry(statement, path, context, frame, continueWith);
+  if (ts.isTryStatement(statement)) {
+    return translateJoined(statement, path, context, continueWith, (next) =>
+      translateTry(statement, path, context, frame, next),
+    );
+  }
   if (ts.isSwitchStatement(statement)) {
-    return translateSwitch(
-      statement,
-      path.scope,
-      context,
-      (clause) =>
-        translateStatements(clause, path, context, {
-          ...frame,
-          next: continueWith,
-          breakTo: continueWith,
-        }),
-      () => continueWith(path),
+    return translateJoined(statement, path, context, continueWith, (next) =>
+      translateSwitch(
+        statement,
+        path.scope,
+        context,
+        (clause) => translateStatements(clause, path, context, { ...frame, next, breakTo: next }),
+        () => next(path),
+      ),
     );
   }
   if (ts.isExpressionStatement(statement)) {
