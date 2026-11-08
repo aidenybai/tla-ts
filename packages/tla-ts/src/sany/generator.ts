@@ -259,6 +259,19 @@ const getStatementInstances = (statement: Expression | AssumeProve): Instance[] 
       )
     : getLetInstances(statement);
 
+const getProofInstances = (proof: Proof | undefined): Instance[] =>
+  proof?.kind !== "Steps"
+    ? []
+    : proof.steps.flatMap((step) => [
+        ...(step.body.kind === "Instance" ? [step.body] : []),
+        ...(step.body.kind === "Define"
+          ? step.body.definitions.flatMap((definition) =>
+              definition.kind === "Instance" ? [definition] : [],
+            )
+          : []),
+        ...getProofInstances(step.proof),
+      ]);
+
 // SpecObj.instanceResolvesToInternalModule: SANY finds a module that the root module instantiates
 // among its inner modules only when its first top-level INSTANCE of the module follows the inner
 // module, and otherwise looks for a file.
@@ -308,7 +321,12 @@ const getDependencies = (module: Module) => {
     const instances = current.units.flatMap((unit) => {
       if (unit.kind === "Instance") return [unit.instance];
       if (unit.kind === "Definition") return getLetInstances(unit.definition.body);
-      if (unit.kind === "Theorem" && isRoot) return getStatementInstances(unit.theorem.statement);
+      if (unit.kind === "Theorem" && isRoot) {
+        return [
+          ...getStatementInstances(unit.theorem.statement),
+          ...getProofInstances(unit.theorem.proof),
+        ];
+      }
       if (unit.kind === "Assumption" && isRoot) return getLetInstances(unit.assumption.expression);
       return [];
     });
