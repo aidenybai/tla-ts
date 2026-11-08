@@ -162,8 +162,11 @@ export const createTlcOperators = (
   runtime: CheckerRuntime,
 ): Builtin[] => [
   defineOperator("Print", 2, (args) => {
-    const texts = formatNormalizedCopies([getValue(args, 0, "Print"), getValue(args, 1, "Print")]);
-    print(texts.map(prettyPrint).join("  "));
+    print(
+      formatNormalizedCopies([getValue(args, 0, "Print"), getValue(args, 1, "Print")])
+        .map(prettyPrint)
+        .join("  "),
+    );
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
