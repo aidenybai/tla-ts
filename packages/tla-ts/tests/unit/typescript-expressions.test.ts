@@ -267,14 +267,17 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
-      "[Object.isFrozen(frozen), Object.isSealed(sealed), Object.isFrozen(sealed), Object.isExtensible(empty), Object.isFrozen(empty), Object.isFrozen(1), Object.isExtensible(open)]",
+      "[Object.isFrozen(frozen), Object.isSealed(sealed), Object.isFrozen(sealed), Object.isExtensible(empty), Object.isFrozen(empty), Object.isFrozen(1), Object.isExtensible(open), Object.isExtensible(Array.prototype), Object.isSealed([1]), Object.isFrozen(make)]",
       `const frozen = { a: 1 };
       const sealed = { a: 1 };
       const empty = {};
       const open = {};
       Object.freeze(frozen);
       Object.seal(sealed);
-      Object.preventExtensions(empty);`,
+      Object.preventExtensions(empty);
+      function make() {
+        return 1;
+      }`,
     ],
     [
       "[copy.a, 'b' in copy, base.b]",
