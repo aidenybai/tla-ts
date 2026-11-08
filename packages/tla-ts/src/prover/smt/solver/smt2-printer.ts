@@ -564,5 +564,13 @@ export const createPrinter = (manager: AstManager, environment: PrintEnvironment
   return { formatExpr, formatWithVars, formatVarArgs, pushVarName, popVarNames };
 };
 
-export const printExpr = (manager: AstManager, environment: PrintEnvironment, expr: number) =>
-  renderFormat(createPrinter(manager, environment).formatExpr(expr), environment.options);
+export const printExpr = (
+  manager: AstManager,
+  environment: PrintEnvironment,
+  expr: number,
+  indent = 0,
+) =>
+  renderFormat(
+    mkIndent(indent, createPrinter(manager, environment).formatExpr(expr)),
+    environment.options,
+  );

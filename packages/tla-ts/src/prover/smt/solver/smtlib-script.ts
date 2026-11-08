@@ -8,7 +8,11 @@ import {
 } from "../../../errors";
 import type { DecideOptions } from "../../verdict";
 import { AstManager, OP_DIV, OP_IDIV, OP_MOD, OP_MUL, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
-import { Rewriter } from "./rewriter";
+import { ctxSimplify } from "./ctx-simplify";
+import { Goal } from "./goal";
+import { propagateValues } from "./propagate-values";
+import { simplifyGoal } from "./quant-tactics";
+import { Rewriter, type RewriterOptions } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
 import { DEFAULT_PRINT_OPTIONS, type PrintOptions, printExpr } from "./smt2-printer";
 import {
@@ -16,6 +20,7 @@ import {
   createSmtlibReader,
   DECLARATIONS,
   isSymbol,
+  type SExpr,
   type SmtList,
   type SmtlibReader,
 } from "./smtlib-parser";
@@ -66,6 +71,59 @@ const SIMPLIFY_PARAMETERS = new Set([
   ":arith_lhs",
   ":gcd_rounding",
 ]);
+
+const getRewriterOptions = (items: SExpr[]): RewriterOptions => {
+  const parameters = new Map<string, boolean>();
+  for (let index = 0; index < items.length; index += 2) {
+    const keyword = items[index];
+    const name = keyword.kind === "keyword" ? keyword.text.toLowerCase().replaceAll("-", "_") : "";
+    if (!SIMPLIFY_PARAMETERS.has(name) || !isSymbol(items[index + 1]))
+      throw new SmtUnsupportedError(`the parameter ${name} of the simplifier`);
+    parameters.set(name, isSymbol(items[index + 1], "true"));
+  }
+  const getParameter = (name: string) => parameters.get(name) ?? false;
+  return {
+    isEliminatingAnd: getParameter(":elim_and"),
+    isRewritingPatterns: false,
+    isPullingCheapIte: getParameter(":pull_cheap_ite"),
+    isKeepingDistinct: !getParameter(":blast_distinct"),
+    arith: {
+      isSom: getParameter(":som"),
+      isSortSums: getParameter(":sort_sums"),
+      isArithIneqLhs: getParameter(":arith_lhs"),
+      isGcdRounding: getParameter(":gcd_rounding"),
+    },
+  };
+};
+
+const NAMED_TACTICS = new Map<string, (manager: AstManager, goal: Goal) => void>([
+  ["simplify", (manager, goal) => simplifyGoal(manager, goal, getRewriterOptions([]))],
+  ["propagate-values", propagateValues],
+  ["ctx-simplify", ctxSimplify],
+  ["skip", () => {}],
+]);
+
+const runTactic = (manager: AstManager, tactic: SExpr, goal: Goal): void => {
+  if (isSymbol(tactic)) {
+    const named = NAMED_TACTICS.get(tactic.text);
+    if (named === undefined) throw new SmtUnsupportedError(`the tactic ${tactic.text}`);
+    named(manager, goal);
+    return;
+  }
+  const head = tactic.kind === "list" ? tactic.items[0] : undefined;
+  if (tactic.kind === "list" && (isSymbol(head, "then") || isSymbol(head, "and-then"))) {
+    for (const inner of tactic.items.slice(1)) {
+      if (goal.isInconsistent || goal.forms.size === 0) return;
+      runTactic(manager, inner, goal);
+    }
+    return;
+  }
+  if (tactic.kind === "list" && isSymbol(head, "!") && isSymbol(tactic.items[1], "simplify")) {
+    simplifyGoal(manager, goal, getRewriterOptions(tactic.items.slice(2)));
+    return;
+  }
+  throw new SmtUnsupportedError("the tactic expression");
+};
 
 const getScopeCount = (list: SmtList, command: string) => {
   const argument = list.items[1];
@@ -242,35 +300,31 @@ export const runSmtlibScript = (
       if (list.items.length < 2)
         throw new SmtParseError("invalid simplify command, argument expected", list.end);
       const term = script.state.reader.parseTerm(list.items[1]);
-      const parameters = new Map<string, boolean>();
-      for (let index = 2; index < list.items.length; index += 2) {
-        const keyword = list.items[index];
-        const name =
-          keyword.kind === "keyword" ? keyword.text.toLowerCase().replaceAll("-", "_") : "";
-        if (!SIMPLIFY_PARAMETERS.has(name) || !isSymbol(list.items[index + 1]))
-          throw new SmtUnsupportedError(`the parameter ${name} of simplify`);
-        parameters.set(name, isSymbol(list.items[index + 1], "true"));
-      }
-      const getParameter = (name: string) => parameters.get(name) ?? false;
       manager.incRef(term);
-      const rewriter = new Rewriter(manager, {
-        isEliminatingAnd: getParameter(":elim_and"),
-        isRewritingPatterns: false,
-        isPullingCheapIte: getParameter(":pull_cheap_ite"),
-        isKeepingDistinct: !getParameter(":blast_distinct"),
-        arith: {
-          isSom: getParameter(":som"),
-          isSortSums: getParameter(":sort_sums"),
-          isArithIneqLhs: getParameter(":arith_lhs"),
-          isGcdRounding: getParameter(":gcd_rounding"),
-        },
-      });
+      const rewriter = new Rewriter(manager, getRewriterOptions(list.items.slice(2)));
       const simplified = rewriter.rewrite(term);
       rewriter.cleanup();
       display(simplified);
       rewriter.release();
       manager.decRef(simplified);
       manager.decRef(term);
+    },
+    apply: (list) => {
+      const state = script.state;
+      if (list.items.length !== 2) throw new SmtUnsupportedError("the parameters of apply");
+      const goal = new Goal(state.manager);
+      for (const assertion of state.assertions) goal.assert(assertion);
+      runTactic(state.manager, list.items[1], goal);
+      const environment = { options: settings.printOptions, isUsed: state.reader.isUsed };
+      print(
+        [
+          "(goals",
+          "(goal",
+          ...goal.forms.items.map((form) => `  ${printExpr(state.manager, environment, form, 2)}`),
+          `  :precision precise :depth ${goal.depth})`,
+          ")",
+        ].join("\n"),
+      );
     },
     display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),
     echo: (list) => {

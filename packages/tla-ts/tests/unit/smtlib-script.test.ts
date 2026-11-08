@@ -123,6 +123,29 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("prints the goal that apply's tactic leaves, as in z3test's t64.smt2", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (>= x 0))",
+        "(assert (and (>= x 1) (not (or (not (and (>= x 2) (>= x 5))) (>= x 3)))))",
+        "(apply simplify)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (>= x 0)",
+        "  (>= x 1)",
+        "  (>= x 2)",
+        "  (>= x 5)",
+        "  (not (>= x 3))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);
