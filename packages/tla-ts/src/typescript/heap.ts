@@ -292,11 +292,9 @@ const translateClass = (
     }, object);
   const constructor = node.members.find(ts.isConstructorDeclaration);
   const parameters = constructor?.parameters ?? [];
+  // A parameter that only TypeScript marks optional still counts toward the length.
   const length = parameters.findIndex(
-    (parameter) =>
-      parameter.initializer !== undefined ||
-      parameter.dotDotDotToken !== undefined ||
-      parameter.questionToken !== undefined,
+    (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
   );
   const named = ts.isClassExpression(node) ? node.parent : node;
   const name =

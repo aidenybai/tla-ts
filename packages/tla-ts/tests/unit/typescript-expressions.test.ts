@@ -469,6 +469,12 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ["['MAX_VALUE' in Number, 'missing' in Number, 'name' in TypeError]", "const box = {};"],
     ["[Reflect.has === Reflect.has, Reflect.has === Reflect.get]", "const box = {};"],
     [
+      "Optional.length",
+      `class Optional {
+        constructor(first?: number, second = 1) {}
+      }`,
+    ],
+    [
       "[typeof retyped.value, typeof (retyped.value)]",
       `const retyped = { value: 1 };
       Object.defineProperty(retyped, "value", { value: "text" });`,
