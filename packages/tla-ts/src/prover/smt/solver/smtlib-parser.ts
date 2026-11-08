@@ -10,6 +10,8 @@ import {
   OP_ABS,
   OP_ADD,
   OP_AND,
+  OP_ARRAY_DEFAULT,
+  OP_CONST_ARRAY,
   OP_DISTINCT,
   OP_DIV,
   OP_EQ,
@@ -25,6 +27,8 @@ import {
   OP_MUL,
   OP_NOT,
   OP_OR,
+  OP_SELECT,
+  OP_STORE,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
@@ -38,6 +42,7 @@ import {
   SORT_REAL,
   isArithSort,
 } from "./ast";
+import { getArraySignature } from "./array-decl-plugin";
 import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
@@ -96,6 +101,8 @@ interface SmtProblem {
 interface ApplicationFrame {
   head: SmtToken;
   indices: number[];
+  // A qualified identifier, such as (as const S), makes its application itself.
+  build?: (args: number[]) => number;
   list: SmtList;
   start: number;
   next: number;
@@ -323,6 +330,27 @@ const BV_EXTENSION_NAMES = new Set([
 
 const BV_EXTENSION_LOGICS = new Set(["ALL", "QF_FD", "HORN"]);
 
+const ARRAY_SORT_NAMES = new Set(["Array", "=>", "->"]);
+
+// array_decl_plugin::get_op_names: select and store in every logic with arrays, the others only
+// without a logic or in HORN and ALL.
+const ARRAY_OPS = new Map([
+  ["select", OP_SELECT],
+  ["store", OP_STORE],
+]);
+const ARRAY_EXTENSION_OPS = new Map([["default", OP_ARRAY_DEFAULT]]);
+const ARRAY_EXTENSION_LOGICS = new Set(["HORN", "ALL"]);
+
+// smt_logics::logic_has_array.
+const isArrayLogic = (logic: string | undefined) =>
+  logic === undefined ||
+  logic.startsWith("QF_A") ||
+  logic.startsWith("A") ||
+  logic === "ALL" ||
+  logic === "HO_ALL" ||
+  logic === "SMTFD" ||
+  logic === "HORN";
+
 const BUILTIN_NAMES = new Set([
   "true",
   "false",
@@ -528,9 +556,31 @@ export const createSmtlibReader = (
     names.set(name, value);
   };
 
-  const parseSort = (sexpr: SExpr, context: string) => {
+  const hasArrays = isArrayLogic(logic);
+  const hasArrayExtensions = logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic);
+
+  const parseParametricSort = (sexpr: SmtList, context: string): number => {
+    const head = sexpr.items[0];
+    if (!isSymbol(head)) throw new SmtUnsupportedError("parametric sorts");
+    const isArray = ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && hasArrayExtensions);
+    if (isArray && hasArrays) {
+      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context));
+      if (head.text === "Set" ? parameters.length !== 1 : parameters.length < 2)
+        throw new SmtParseError(
+          "invalid array sort definition, invalid number of parameters",
+          sexpr.end,
+        );
+      return manager.mkArraySort(head.text === "Set" ? [parameters[0], SORT_BOOL] : parameters);
+    }
+    if (THEORY_SORTS.has(head.text) && !isArray)
+      throw new SmtUnsupportedError(`the sort ${head.text}`);
+    if (!sorts.has(head.text)) throw new SmtParseError(`unknown sort '${head.text}'`, head);
+    throw new SmtUnsupportedError("parametric sorts");
+  };
+
+  const parseSort = (sexpr: SExpr, context: string): number => {
     if (sexpr.kind === "list") {
-      if (!isSymbol(sexpr.items[0], "_")) throw new SmtUnsupportedError("parametric sorts");
+      if (!isSymbol(sexpr.items[0], "_")) return parseParametricSort(sexpr, context);
       const width = sexpr.items[2];
       if (
         !isSymbol(sexpr.items[1], "BitVec") ||
@@ -814,6 +864,30 @@ export const createSmtlibReader = (
     return manager.mkBvNumeral(BigInt(value[1]), Number(width.text));
   };
 
+  const mkArrayTerm = (op: number, inputArgs: number[], parameters: number[], at: SExpr) => {
+    const signature = getArraySignature(
+      manager,
+      op,
+      inputArgs.map((arg) => manager.sorts[arg]),
+      parameters,
+    );
+    if (typeof signature === "string") throw new SmtParseError(signature, at);
+    const args = inputArgs.map((arg, index) => coerce(arg, signature.domain[index]));
+    const decl = manager.mkArrayDecl(
+      op,
+      signature.name,
+      parameters,
+      signature.domain,
+      signature.range,
+    );
+    return manager.mkApp(decl, args, signature.range);
+  };
+
+  const getArrayOp = (name: string) =>
+    hasArrays
+      ? (ARRAY_OPS.get(name) ?? (hasArrayExtensions ? ARRAY_EXTENSION_OPS.get(name) : undefined))
+      : undefined;
+
   const parseApp = (head: SmtToken, args: number[], at: SExpr, indices: number[] = []) => {
     const name = head.text;
     if (indices.length > 0) return mkBvApp(name, args, indices, at);
@@ -830,6 +904,8 @@ export const createSmtlibReader = (
     const decl = funcs.get(name);
     if (decl !== undefined) return mkApp(decl, args, at);
     if (isBvOpName(name)) return mkBvApp(name, args, indices, at);
+    const arrayOp = getArrayOp(name);
+    if (arrayOp !== undefined) return mkArrayTerm(arrayOp, args, [], at);
     const builtin = (logic === undefined ? LOGIC_FREE_ALIASES.get(name) : undefined) ?? name;
     if (builtin === "rem" || (TRANSCENDENTALS.has(builtin) && logic === undefined))
       throw new SmtUnsupportedError(`the operator ${name}`);
@@ -842,7 +918,7 @@ export const createSmtlibReader = (
       if (THEORY_OPERATOR.test(name) || THEORY_OPERATORS.has(name))
         throw new SmtUnsupportedError(`the operator ${name}`);
       if (args.length === 0) throw new SmtParseError(`unknown constant ${name}`, head);
-      const argSorts = args.map((arg) => getSortName(manager.sorts[arg])).join(" ");
+      const argSorts = args.map((arg) => manager.getSortName(manager.sorts[arg])).join(" ");
       throw new SmtParseError(`unknown constant ${name} (${argSorts}) `, at);
     }
     // xor is associative, so ast_manager::mk_app takes fewer than two arguments, which
@@ -863,9 +939,6 @@ export const createSmtlibReader = (
           )
       : args.slice(1).reduce((left, right) => mkApp(op, [left, right], at, domainSort), args[0]);
   };
-
-  const getSortName = (sort: number) =>
-    manager.isBvSort(sort) ? `(_ BitVec ${manager.getBvSize(sort)})` : manager.sortNames[sort];
 
   const parseLeaf = (sexpr: SExpr): number => {
     if (sexpr.kind === "numeral") return manager.mkNumeral(BigInt(sexpr.text));
@@ -938,6 +1011,23 @@ export const createSmtlibReader = (
         const name = head.items[1];
         const indices = head.items.slice(2);
         if (
+          hasArrays &&
+          isSymbol(head.items[0], "as") &&
+          isSymbol(name, "const") &&
+          head.items.length === 3
+        ) {
+          const sort = parseSort(head.items[2], "");
+          frames.push({
+            head: name,
+            indices: [],
+            build: (args) => mkArrayTerm(OP_CONST_ARRAY, args, [sort], current.end),
+            list: current,
+            start: results.length,
+            next: 1,
+          });
+          return;
+        }
+        if (
           !isSymbol(head.items[0], "_") ||
           !isSymbol(name) ||
           !isBvOpName(name.text) ||
@@ -979,8 +1069,9 @@ export const createSmtlibReader = (
       frames.pop();
       if (frame.list.items.length === 1)
         throw new SmtParseError("invalid function application, arguments missing", frame.list.end);
+      const args = results.splice(frame.start);
       results.push(
-        parseApp(frame.head, results.splice(frame.start), frame.list.end, frame.indices),
+        frame.build?.(args) ?? parseApp(frame.head, args, frame.list.end, frame.indices),
       );
     }
     return results[0];
@@ -1019,7 +1110,7 @@ export const createSmtlibReader = (
       const coerced = coerce(body, range);
       if (manager.sorts[coerced] !== range)
         throw new SmtParseError(
-          `invalid function definition, sort mismatch. Expcected ${getSortName(range)} but function body has sort ${getSortName(manager.sorts[body])}`,
+          `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[body])}`,
           list.end,
         );
       manager.incRef(coerced);

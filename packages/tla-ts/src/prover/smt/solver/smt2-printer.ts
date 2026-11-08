@@ -3,6 +3,10 @@
 import {
   type AstManager,
   FAMILY_BV,
+  OP_ARRAY_EXT,
+  OP_ARRAY_MAP,
+  OP_AS_ARRAY,
+  OP_CONST_ARRAY,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -224,10 +228,25 @@ const getQuotedName = (symbol: SmtSymbol) =>
       ? `|${symbol.replace(/[|\\]/g, "\\$&")}|`
       : symbol;
 
-const formatSort = (manager: AstManager, sort: number) =>
+const formatSort = (manager: AstManager, sort: number): Format =>
   manager.isBvSort(sort)
     ? mkSeq1([mkText(String(manager.getBvSize(sort)))], "_ BitVec")
-    : mkText(getQuotedName(manager.sortNames[sort]));
+    : manager.isArraySort(sort)
+      ? mkSeq1(
+          manager.getSortParameters(sort).map((parameter) => formatSort(manager, parameter)),
+          "Array",
+        )
+      : mkText(getQuotedName(manager.sortNames[sort]));
+
+const getSortText = (manager: AstManager, sort: number): string =>
+  manager.isBvSort(sort)
+    ? `(_ BitVec ${manager.getBvSize(sort)})`
+    : manager.isArraySort(sort)
+      ? `(Array ${manager
+          .getSortParameters(sort)
+          .map((parameter) => getSortText(manager, parameter))
+          .join(" ")})`
+      : getQuotedName(manager.sortNames[sort]);
 
 const formatBvNumeral = (manager: AstManager, options: PrintOptions, expr: number) => {
   const width = manager.getBvSize(manager.sorts[expr]);
@@ -245,7 +264,11 @@ const formatBvNumeral = (manager: AstManager, options: PrintOptions, expr: numbe
 const getDeclName = (manager: AstManager, decl: number) => {
   const funcDecl = manager.funcDecls[decl];
   const name = getQuotedName(funcDecl.name);
-  return funcDecl.family === FAMILY_BV && funcDecl.parameters.length > 0
+  if (funcDecl.op === OP_CONST_ARRAY) return `(as ${name} ${getSortText(manager, funcDecl.range)})`;
+  if (funcDecl.op === OP_ARRAY_MAP || funcDecl.op === OP_AS_ARRAY)
+    return `(_ ${name} ${getQuotedName(manager.funcDecls[funcDecl.parameters[0]].name)})`;
+  return (funcDecl.family === FAMILY_BV || funcDecl.op === OP_ARRAY_EXT) &&
+    funcDecl.parameters.length > 0
     ? `(_ ${name} ${funcDecl.parameters.join(" ")})`
     : name;
 };
