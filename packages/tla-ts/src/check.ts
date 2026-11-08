@@ -76,6 +76,7 @@ import {
   withUnexpectedException,
   type FailureMessage,
 } from "./tlc/messages";
+import { createTautologyError } from "./liveness";
 import { createTlcOrder } from "./tlc/order";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -719,6 +720,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }),
     ),
   );
+  // ModelChecker rejects a temporal property whose negation has no solution.
+  if (liveness?.branches === 0) throw createTautologyError();
   // TLC 1.7.4 creates its model checker, which TLCGet reads, once it has built the liveness checker.
   runtime.isStarted = true;
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;

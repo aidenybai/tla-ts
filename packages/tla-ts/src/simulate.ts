@@ -1,4 +1,4 @@
-import type { CheckOptions, Postcondition, TraceStep } from "./check";
+import type { CheckOptions, Postcondition, TraceStep, Violation } from "./check";
 import { parseConfig } from "./config";
 import { createEnvironment } from "./environment";
 import {
@@ -11,7 +11,8 @@ import {
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
-import { EXIT_STATUS, getMessageExitStatus } from "./exit-codes";
+import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
+import { createLivenessChecker } from "./liveness-checker";
 import {
   createSearch,
   findAssumptionViolation,
@@ -36,6 +37,7 @@ import {
   isEvalException,
   isHeadedError,
   MESSAGE_CODE,
+  withUnexpectedException,
 } from "./tlc/messages";
 import { createTlcOrder } from "./tlc/order";
 import { createJavaRandom, nextPrime } from "./tlc/random";
@@ -96,6 +98,8 @@ interface WorkerError {
   // EvalException is printed with the summary.
   isException: boolean;
   isSummarized: boolean;
+  // A counterexample to a temporal property, which LiveCheck1 prints in place of the message.
+  violation?: Violation;
 }
 
 // Simulator.isNonContinuableError: errors that stop the simulation even with -continue.
@@ -232,6 +236,22 @@ export const simulate = (options: SimulationOptions): number => {
   if (!search) {
     throw new TlaUnsupportedError("tla-ts can't simulate a specification without variables");
   }
+  const temporalProperties = search.properties.liveness;
+  const createTemporalChecker = (successors: number[][], states: Value[][]) =>
+    withLivenessExitCode(() =>
+      withUnexpectedException(() =>
+        createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
+          getFingerprint: (successor) =>
+            Number(BigInt.asIntN(32, runtime.getFingerprint(successor.state))),
+          getSuccessors: (index) =>
+            successors[index].map((successor) => ({ index: successor, state: states[successor] })),
+        }),
+      ),
+    );
+  // The Simulator builds the LiveCheck1 of its worker, which reports how many branches it checks,
+  // and has nothing to check for a property whose negation has no solution.
+  const branches = createTemporalChecker([], [])?.branches;
+  if (branches) options.onProgress?.({ kind: "liveness-prepared", branches });
   const assumption = findAssumptionViolation(specification.assumptions, environment);
   if (assumption) {
     if (assumption.message === undefined) {
@@ -273,7 +293,7 @@ export const simulate = (options: SimulationOptions): number => {
   const toTraceSteps = (trace: TraceNode[]): TraceStep[] =>
     trace.map((node, index) => ({
       action: node.action.name,
-      label: getActionLabel(node.action, options.version),
+      label: getActionLabel(node.action, options.version, node.level === 1),
       state:
         config.alias === undefined || !node.state.every((value) => value !== undefined)
           ? toRecord(node.state)
@@ -387,6 +407,64 @@ export const simulate = (options: SimulationOptions): number => {
     false,
   );
 
+  // LiveCheck1.checkTrace checks the temporal properties on the graph of the states of a behavior,
+  // each of which may stutter.
+  const findTemporalViolation = (last: TraceNode): Violation | undefined => {
+    if (temporalProperties.length === 0) return undefined;
+    const trace = getTrace(last);
+    const fingerprints = trace.map((node) => runtime.getFingerprint(node.state));
+    const indices = new Map<bigint, number>();
+    const states: Value[][] = [];
+    const successors: number[][] = [];
+    fingerprints.forEach((fingerprint, position) => {
+      if (!indices.has(fingerprint)) {
+        indices.set(fingerprint, states.length);
+        states.push(trace[position].state);
+        successors.push([]);
+      }
+      if (position === 0) return;
+      const source = indices.get(fingerprints[position - 1]) ?? 0;
+      const target = indices.get(fingerprint) ?? 0;
+      if (source !== target && !successors[source].includes(target)) {
+        successors[source].push(target);
+      }
+    });
+    const checker = createTemporalChecker(successors, states);
+    if (!checker) return undefined;
+    checker.addInitialState(0, states[0]);
+    states.forEach((state, index) =>
+      checker.addState(
+        index,
+        state,
+        successors[index].map((successor) => ({ index: successor, state: states[successor] })),
+      ),
+    );
+    const lasso = checker.findViolation();
+    if (!lasso) return undefined;
+    // StateTraceResolver recovers the states of the counterexample by their position in the
+    // behavior, so TLC prints as many states of the behavior as the counterexample has.
+    const getLength = (path: number[]) =>
+      path.filter((index, position) => position === 0 || index !== path[position - 1]).length;
+    const path = [...lasso.prefix, ...lasso.cycle];
+    const length = getLength(path);
+    const cyclePosition = getLength(path.slice(0, lasso.prefix.length + 1));
+    const printed = trace.slice(0, length);
+    const isStuttering =
+      fingerprints[length - 1] === runtime.getFingerprint(states[path[lasso.prefix.length]]);
+    const loopStart = isStuttering ? length - 1 : cyclePosition - 1;
+    const properties = checker.getViolatedProperties(
+      printed.map((node) => node.state),
+      cyclePosition - 1,
+    );
+    const back = trace[length];
+    return {
+      name: properties[0],
+      properties,
+      trace: toTraceSteps(printed),
+      loopStart,
+      loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
+    };
+  };
   // SimulationWorker.addElement checks each successor before it keeps the ones in the model.
   const toWorkerError = (code: number, text: string, node: TraceNode): WorkerError => ({
     code,
@@ -488,6 +566,14 @@ export const simulate = (options: SimulationOptions): number => {
         found.successors[Math.floor(workerRandom.nextDouble() * found.successors.length)];
     }
     if (runtime.isStopped) return "stopped";
+    const violation = findTemporalViolation(current.node);
+    if (violation) {
+      return {
+        ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", current.node),
+        isException: true,
+        violation,
+      };
+    }
     // SimulationWorkerStatistics.collectPostTrace: Welford's algorithm on the length of the
     // behavior, in integers.
     const length = Math.min(traceDepth, current.node.level);
@@ -540,10 +626,11 @@ export const simulate = (options: SimulationOptions): number => {
     worker.traceCount++;
     if (outcome) errors.push(outcome);
     if (outcome?.isException) break;
-    const isStopping = outcome !== undefined && (!isContinued || FATAL_CODES.has(outcome.code));
     if (BigInt(worker.traceCount) >= traceLimit) break;
-    // The worker starts its next behavior before the Simulator stops it.
-    if (isStopping) {
+    // The worker runs on through its behaviors while the Simulator prints an error that stops it.
+    // Without a bound on them, it starts the next before the Simulator stops it.
+    const isStopping = outcome !== undefined && (!isContinued || FATAL_CODES.has(outcome.code));
+    if (isStopping && options.traceCount === undefined) {
       statistics.traces++;
       break;
     }
@@ -553,6 +640,15 @@ export const simulate = (options: SimulationOptions): number => {
   );
   const reported = printed === -1 ? errors : errors.slice(0, printed + 1);
   reported.forEach((error) => {
+    if (error.violation) {
+      options.onProgress?.({
+        kind: "violation",
+        status: "liveness-violation",
+        violation: error.violation,
+      });
+      printSummary();
+      return;
+    }
     message(error.code, error.message, error.toolMessage);
     const nodes = getTrace(error.node);
     output({

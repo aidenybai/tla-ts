@@ -491,9 +491,10 @@ const formatParameters = (action: SpecAction) =>
     ? ""
     : `(${action.parameters.map((parameter) => formatValue(parameter[1])).join(",")})`;
 
-// TLC's Action.getLocation, which TLC 1.7.4 names the action in without its parameters.
-export const getActionLabel = (action: SpecAction, version?: TlcVersion) =>
-  `${action.name === UNNAMED_ACTION ? "Action" : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
+// TLC's Action.getLocation, which TLC 1.7.4 names the action in without its parameters. TLCStateInfo
+// names an initial state's unnamed action the initial predicate.
+export const getActionLabel = (action: SpecAction, version?: TlcVersion, isInitial = false) =>
+  `${action.name === UNNAMED_ACTION ? (isInitial ? "Initial predicate" : "Action") : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
 
 // TLC's Action.getInvocationSignature, which names the action and the values of its parameters.
 export const getActionSignature = (action: SpecAction) =>
