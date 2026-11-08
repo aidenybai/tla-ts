@@ -60,6 +60,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
   ],
   arrays: [
     "[]",
+    ["[0 in list, 1 in list, -1 in list]", "const list = [42];"],
     "[1, 2, 3]",
     "[[1, 2], [3]]",
     "[...[1, 2], 3, ...[4]]",

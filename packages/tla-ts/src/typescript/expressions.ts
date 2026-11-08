@@ -616,17 +616,31 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     return kind === ts.SyntaxKind.EqualsEqualsEqualsToken ? isSame : not(isSame);
   }
   if (kind === ts.SyntaxKind.InKeyword) {
-    return getKind(node.right, context) === "object"
-      ? useJavaScript(
-          "Has",
-          [
-            getHeap(scope, node, context),
-            translate(node.right),
-            translatePropertyKey(node.left, scope, context),
-          ],
-          context,
-        )
-      : apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
+    const container = getKind(node.right, context);
+    if (container === "object") {
+      return useJavaScript(
+        "Has",
+        [
+          getHeap(scope, node, context),
+          translate(node.right),
+          translatePropertyKey(node.left, scope, context),
+        ],
+        context,
+      );
+    }
+    // An array has its indices from 0, and properties such as length that tla-ts can't list, and
+    // a Map or a Set has properties, not its keys.
+    if (container === "sequence" && isNumberLike(node.left, context)) {
+      const length = apply("Len", [translate(node.right)]);
+      return apply("\\in", [
+        translate(node.left),
+        apply("..", [number(0), apply("-", [length, number(1)])]),
+      ]);
+    }
+    if (container !== "other") {
+      throw new TlaTypeScriptError("Unsupported operator: in", node.operatorToken);
+    }
+    return apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
   }
   if (kind === ts.SyntaxKind.SlashToken) {
     throw new TlaTypeScriptError("Write division as Math.floor(a / b) or Math.trunc(a / b)", node);
