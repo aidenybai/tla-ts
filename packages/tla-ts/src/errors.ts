@@ -30,6 +30,8 @@ export interface SyntaxFailure {
   line: number;
   column: number;
   isEnd: boolean;
+  // tlapm's proof parser fails over a range, up to stop, with its own exception.
+  proof?: { stop: { line: number; column: number }; exception: string };
 }
 
 // An error SANY reports at a location, such as "In module M" or a range in a module.
