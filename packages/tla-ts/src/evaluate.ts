@@ -303,9 +303,10 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
     const functionClass = getFunctionClass(value);
     if (functionClass === "tuple") throw createNonIntegerKeyError(field);
     // Only TLC's RecordValue names the field it lacks. Any other function, such as a FcnRcdValue
-    // whose keys are strings, reports an argument outside its domain.
+    // whose keys are strings, reports an argument outside its domain, and TLC enumerates a
+    // FcnLambdaValue into one first.
     return applyFunction(
-      value,
+      value.kind === "LazyFunction" ? toFiniteFunction(value) : value,
       field,
       functionClass === "record" ? describeMissing : describeNotInDomain,
     );

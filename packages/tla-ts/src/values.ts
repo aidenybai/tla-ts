@@ -614,6 +614,8 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
   if (isModelValue(left) || isModelValue(right)) {
+    // FcnLambdaValue#equals enumerates the function, which can fail, before it compares.
+    if (left.kind === "LazyFunction") toFiniteFunction(left);
     checkModelValueTypes(left, right, true);
     return isModelValue(left) && isModelValue(right) && left.name === right.name;
   }
