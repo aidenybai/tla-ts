@@ -7,6 +7,8 @@ import {
   OP_ARRAY_MAP,
   OP_AS_ARRAY,
   OP_CONST_ARRAY,
+  OP_DT_IS,
+  OP_DT_UPDATE_FIELD,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -231,18 +233,18 @@ const getQuotedName = (symbol: SmtSymbol) =>
 const formatSort = (manager: AstManager, sort: number): Format =>
   manager.isBvSort(sort)
     ? mkSeq1([mkText(String(manager.getBvSize(sort)))], "_ BitVec")
-    : manager.isArraySort(sort)
+    : manager.getSortParameters(sort).length > 0
       ? mkSeq1(
           manager.getSortParameters(sort).map((parameter) => formatSort(manager, parameter)),
-          "Array",
+          getQuotedName(manager.sortNames[sort]),
         )
       : mkText(getQuotedName(manager.sortNames[sort]));
 
 const getSortText = (manager: AstManager, sort: number): string =>
   manager.isBvSort(sort)
     ? `(_ BitVec ${manager.getBvSize(sort)})`
-    : manager.isArraySort(sort)
-      ? `(Array ${manager
+    : manager.getSortParameters(sort).length > 0
+      ? `(${getQuotedName(manager.sortNames[sort])} ${manager
           .getSortParameters(sort)
           .map((parameter) => getSortText(manager, parameter))
           .join(" ")})`
@@ -265,7 +267,12 @@ const getDeclName = (manager: AstManager, decl: number) => {
   const funcDecl = manager.funcDecls[decl];
   const name = getQuotedName(funcDecl.name);
   if (funcDecl.op === OP_CONST_ARRAY) return `(as ${name} ${getSortText(manager, funcDecl.range)})`;
-  if (funcDecl.op === OP_ARRAY_MAP || funcDecl.op === OP_AS_ARRAY)
+  if (
+    funcDecl.op === OP_ARRAY_MAP ||
+    funcDecl.op === OP_AS_ARRAY ||
+    funcDecl.op === OP_DT_IS ||
+    funcDecl.op === OP_DT_UPDATE_FIELD
+  )
     return `(_ ${name} ${getQuotedName(manager.funcDecls[funcDecl.parameters[0]].name)})`;
   return (funcDecl.family === FAMILY_BV || funcDecl.op === OP_ARRAY_EXT) &&
     funcDecl.parameters.length > 0

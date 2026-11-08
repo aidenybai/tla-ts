@@ -2,12 +2,16 @@
 import {
   FAMILY_ARRAY,
   FAMILY_BV,
+  FAMILY_DATATYPE,
   FAMILY_MODEL_VALUE,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_BV_NUM,
+  OP_DT_ACCESSOR,
+  OP_DT_CONSTRUCTOR,
+  OP_DT_RECOGNISER,
   OP_ITE,
   OP_NUM,
   OP_PATTERN,
@@ -15,28 +19,36 @@ import {
   type AstManager,
   type SmtSymbol,
 } from "./ast";
+import { getAccessorConstructor } from "./datatype-decl-plugin";
 import { Rational } from "./rational";
 
 interface DeclKey {
   name: SmtSymbol;
-  parameters: (number | Rational)[];
+  parameters: (number | Rational | SmtSymbol)[];
   domain: number[];
   range: number;
 }
 
-// Z3's PARAM_INT, PARAM_AST and PARAM_RATIONAL kinds order the parameters of builtin declarations.
+// Z3's parameter kinds order the parameters of builtin declarations.
 const PARAM_INT = 0;
+const PARAM_AST = 1;
+const PARAM_SYMBOL = 2;
 const PARAM_RATIONAL = 3;
 
 const compareValues = (first: number, second: number) =>
   first === second ? 0 : first < second ? -1 : 1;
 
-const compareParameters = (first: number | Rational, second: number | Rational) =>
+const compareParameters = (
+  first: number | Rational | SmtSymbol,
+  second: number | Rational | SmtSymbol,
+) =>
   first instanceof Rational && second instanceof Rational
     ? first.compare(second)
     : typeof first === "number" && typeof second === "number"
       ? compareValues(first, second)
-      : 0;
+      : typeof first === "string" && typeof second === "string"
+        ? compareNames(first, second)
+        : 0;
 
 // lt on symbols: numerical symbols come first, by number, and other names compare by their bytes.
 const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
@@ -45,6 +57,23 @@ const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
     return typeof second === "number" ? compareValues(first, second) : -1;
   if (typeof second === "number") return 1;
   return first < second ? -1 : 1;
+};
+
+const getDatatypeParameters = (manager: AstManager, decl: number) => {
+  const funcDecl = manager.funcDecls[decl];
+  const name = funcDecl.name;
+  if (funcDecl.op === OP_DT_CONSTRUCTOR) return [PARAM_SYMBOL, name];
+  if (funcDecl.op === OP_DT_ACCESSOR)
+    return [
+      PARAM_SYMBOL,
+      name,
+      PARAM_SYMBOL,
+      manager.funcDecls[getAccessorConstructor(manager, decl)].name,
+    ];
+  const target = manager.funcDecls[funcDecl.parameters[0]].name;
+  return funcDecl.op === OP_DT_RECOGNISER
+    ? [PARAM_AST, target, PARAM_SYMBOL, name]
+    : [PARAM_AST, target];
 };
 
 const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
@@ -78,6 +107,13 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
     };
   if (decl.family === FAMILY_ARRAY)
     return { name: decl.name, parameters: [], domain: decl.domain, range };
+  if (decl.family === FAMILY_DATATYPE)
+    return {
+      name: decl.name,
+      parameters: getDatatypeParameters(manager, manager.decls[expr]),
+      domain: decl.domain,
+      range,
+    };
   if (decl.family === FAMILY_BV)
     return {
       name: decl.name,
@@ -119,7 +155,8 @@ const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
     decl.family === FAMILY_MODEL_VALUE
   )
     return false;
-  if (decl.family === FAMILY_BV || decl.family === FAMILY_ARRAY) return true;
+  if (decl.family === FAMILY_BV || decl.family === FAMILY_ARRAY || decl.family === FAMILY_DATATYPE)
+    return true;
   const index = decl.op === OP_ITE ? 1 : 0;
   return (
     manager.sorts[first] === manager.sorts[second] &&

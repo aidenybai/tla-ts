@@ -5,6 +5,7 @@ import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHa
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { grow, shrink } from "./array";
+import type { DatatypeDef } from "./datatype-decl-plugin";
 import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
@@ -22,6 +23,7 @@ export const FAMILY_MODEL_VALUE = 3;
 export const FAMILY_FINITE_SET = 4;
 export const FAMILY_BV = 5;
 export const FAMILY_ARRAY = 6;
+export const FAMILY_DATATYPE = 7;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -136,6 +138,12 @@ export const OP_ARRAY_EXT = ARRAY_OP_BASE + 3;
 export const OP_ARRAY_DEFAULT = ARRAY_OP_BASE + 4;
 export const OP_ARRAY_MAP = ARRAY_OP_BASE + 5;
 export const OP_AS_ARRAY = ARRAY_OP_BASE + 11;
+const DATATYPE_OP_BASE = 300;
+export const OP_DT_CONSTRUCTOR = DATATYPE_OP_BASE;
+export const OP_DT_RECOGNISER = DATATYPE_OP_BASE + 1;
+export const OP_DT_IS = DATATYPE_OP_BASE + 2;
+export const OP_DT_ACCESSOR = DATATYPE_OP_BASE + 3;
+export const OP_DT_UPDATE_FIELD = DATATYPE_OP_BASE + 4;
 
 // The number of elements of a sort, with -1 for an infinite sort and -2 for a very big one.
 export const SORT_SIZE_INFINITE = -1n;
@@ -218,6 +226,7 @@ const Z3_USER_SORT_FAMILY = 4;
 const Z3_ARITH_FAMILY = 5;
 const Z3_BV_FAMILY = 7;
 const Z3_ARRAY_FAMILY = 8;
+const Z3_DATATYPE_FAMILY = 9;
 const Z3_RECFUN_FAMILY = 10;
 const Z3_NULL = 0xffffffff;
 // The name, Z3 decl kind and arity of each builtin, whose Z3 declaration has this many arguments
@@ -357,6 +366,18 @@ export class AstManager {
   private sortSizes: bigint[] = [2n, SORT_SIZE_INFINITE, SORT_SIZE_INFINITE];
   private arraySorts = new Map<string, number>();
   private arrayDecls = new Map<string, number>();
+  readonly datatypeDefs = new Map<string, DatatypeDef>();
+  hasNestedRecDatatype = false;
+  datatypeConstructors: number[][] = [];
+  constructorAccessors: number[][] = [];
+  constructorRecognizers: number[] = [];
+  nonRecConstructors: number[] = [];
+  nonRecDepths: number[] = [];
+  private parametricSorts = new Map<string, number>();
+  private datatypeDecls = new Map<string, number>();
+  private userSortKinds = new Map<SmtSymbol, number>();
+  private sortSmallIds: number[] = [];
+  private typeParameters: number[] = [];
   private numUserSorts = 0;
   private bvSorts = new Map<number, number>();
   private bvDecls = new Map<string, number>();
@@ -745,11 +766,14 @@ export class AstManager {
     return expr;
   }
 
-  mkSort(name: string) {
+  mkSort(name: SmtSymbol) {
     this.sortHashes.push(
-      combineHash(getSymbolHash(name), getInfoHash(Z3_USER_SORT_FAMILY, this.numUserSorts++, [])),
+      combineHash(
+        getSymbolHash(name),
+        getInfoHash(Z3_USER_SORT_FAMILY, this.getUserSortKind(name), []),
+      ),
     );
-    this.sortNames.push(name);
+    this.sortNames.push(getSymbolName(name));
     this.sortFamilies.push(FAMILY_USER);
     this.sortWidths.push(0);
     this.sortParameters.push([]);
@@ -829,9 +853,9 @@ export class AstManager {
 
   getSortName(sort: number): string {
     if (this.isBvSort(sort)) return `(_ BitVec ${this.getBvSize(sort)})`;
-    if (!this.isArraySort(sort)) return this.sortNames[sort];
     const parameters = this.sortParameters[sort].map((parameter) => this.getSortName(parameter));
-    return `(Array ${parameters.join(" ")})`;
+    if (parameters.length === 0) return this.sortNames[sort];
+    return `(${this.sortNames[sort]} ${parameters.join(" ")})`;
   }
 
   getSortSize(sort: number) {
@@ -868,6 +892,115 @@ export class AstManager {
       parameters,
     });
     this.arrayDecls.set(key, decl);
+    return decl;
+  }
+
+  private mkParametricSort(
+    family: number,
+    name: SmtSymbol,
+    parameters: number[],
+    infoHash: number,
+  ) {
+    const key = `${family}:${typeof name}:${name}:${parameters.join(",")}`;
+    const existing = this.parametricSorts.get(key);
+    if (existing !== undefined) return existing;
+    this.sortHashes.push(combineHash(getSymbolHash(name), infoHash));
+    this.sortNames.push(getSymbolName(name));
+    this.sortFamilies.push(family);
+    this.sortWidths.push(0);
+    this.sortParameters.push(parameters);
+    this.sortSizes.push(SORT_SIZE_INFINITE);
+    const sort = this.sortNames.length - 1;
+    this.sortSmallIds[sort] = this.mkSmallId();
+    this.parametricSorts.set(key, sort);
+    return sort;
+  }
+
+  private getUserSortKind(name: SmtSymbol) {
+    const existing = this.userSortKinds.get(name);
+    if (existing !== undefined) return existing;
+    this.userSortKinds.set(name, this.numUserSorts);
+    return this.numUserSorts++;
+  }
+
+  mkUninterpretedSort(name: SmtSymbol, parameters: number[]) {
+    return this.mkParametricSort(
+      FAMILY_USER,
+      name,
+      parameters,
+      getInfoHash(
+        Z3_USER_SORT_FAMILY,
+        this.getUserSortKind(name),
+        parameters.map((parameter) => this.sortHashes[parameter]),
+      ),
+    );
+  }
+
+  mkDatatypeSort(name: string, parameters: number[]) {
+    return this.mkParametricSort(
+      FAMILY_DATATYPE,
+      name,
+      parameters,
+      getInfoHash(Z3_DATATYPE_FAMILY, 0, [
+        getSymbolHash(name),
+        ...parameters.map((parameter) => this.sortHashes[parameter]),
+      ]),
+    );
+  }
+
+  setSortSize(sort: number, size: bigint) {
+    this.sortSizes[sort] = size;
+  }
+
+  // The sort named by the number index, which stands for a parameter of a datatype declaration.
+  mkTypeParameter(index: number) {
+    const sort = this.mkUninterpretedSort(index, []);
+    this.typeParameters[index] = sort;
+    return sort;
+  }
+
+  getTypeParameterIndex(sort: number) {
+    return this.typeParameters.indexOf(sort);
+  }
+
+  getSortSmallId(sort: number) {
+    return this.sortSmallIds[sort];
+  }
+
+  isDatatypeSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_DATATYPE;
+  }
+
+  // The parameters are those of the port, and parameterHashes hash Z3's.
+  mkDatatypeDecl(
+    op: number,
+    name: string,
+    parameters: number[],
+    parameterHashes: number[],
+    domain: number[],
+    range: number,
+  ) {
+    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const existing = this.datatypeDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_DATATYPE_FAMILY, op - DATATYPE_OP_BASE, parameterHashes),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_DATATYPE,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.datatypeDecls.set(key, decl);
     return decl;
   }
 
@@ -1197,7 +1330,8 @@ export class AstManager {
     const hasOwnHash =
       funcDecl.family === FAMILY_USER ||
       funcDecl.family === FAMILY_BV ||
-      funcDecl.family === FAMILY_ARRAY;
+      funcDecl.family === FAMILY_ARRAY ||
+      funcDecl.family === FAMILY_DATATYPE;
     const builtinSlot =
       hasOwnHash || funcDecl.op === OP_PATTERN
         ? -1
@@ -1454,7 +1588,9 @@ export class AstManager {
       op === OP_FALSE ||
       op === OP_MODEL_VALUE ||
       op === OP_BV_NUM ||
-      (op === OP_CONST_ARRAY && this.isUniqueValue(this.getArg(expr, 0)))
+      (op === OP_CONST_ARRAY && this.isUniqueValue(this.getArg(expr, 0))) ||
+      (op === OP_DT_CONSTRUCTOR &&
+        this.mapArgs(expr, (arg) => this.isUniqueValue(arg)).every((isUnique) => isUnique))
     );
   }
 
@@ -1466,6 +1602,8 @@ export class AstManager {
       current = this.getArg(current, 0);
     }
     if (this.getOp(current) === OP_CONST_ARRAY) return this.isValue(this.getArg(current, 0));
+    if (this.getOp(current) === OP_DT_CONSTRUCTOR)
+      return this.mapArgs(current, (arg) => this.isValue(arg)).every((isValue) => isValue);
     return current === expr && this.isUniqueValue(expr);
   }
 
@@ -1476,6 +1614,14 @@ export class AstManager {
     if (this.kinds[first] !== KIND_APP || this.kinds[second] !== KIND_APP) return false;
     if (first !== second && this.isUniqueValue(first) && this.isUniqueValue(second)) return true;
     const family = this.funcDecls[this.decls[first]].family;
+    if (family === FAMILY_DATATYPE) {
+      if (this.getOp(first) !== OP_DT_CONSTRUCTOR || this.getOp(second) !== OP_DT_CONSTRUCTOR)
+        return false;
+      if (this.decls[first] !== this.decls[second]) return true;
+      for (let index = this.getNumArgs(first) - 1; index >= 0; index--)
+        if (this.areDistinct(this.getArg(first, index), this.getArg(second, index))) return true;
+      return false;
+    }
     if (
       (family === FAMILY_USER ? this.funcDecls[this.decls[second]].family : family) !== FAMILY_ARITH
     )

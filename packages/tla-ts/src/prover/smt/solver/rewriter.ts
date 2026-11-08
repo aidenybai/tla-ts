@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
 // license, see z3-license.txt.
 import { ArrayRewriter } from "./array-rewriter";
+import { mkDatatypeAppCore, mkDatatypeEqCore } from "./datatype-rewriter";
 import { ArithRewriter, KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { type BvRewriterOptions, BvRewriter, DEFAULT_BV_OPTIONS } from "./bv-rewriter";
 import type { ArithRewriterOptions } from "./poly-rewriter";
@@ -12,6 +13,7 @@ import {
   FAMILY_ARRAY,
   FAMILY_BASIC,
   FAMILY_BV,
+  FAMILY_DATATYPE,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -377,9 +379,11 @@ export class Rewriter extends RewriterTpl {
       ? this.arith.mkEq(left, right)
       : manager.isBvSort(sort)
         ? this.bv.mkEqCore(left, right)
-        : manager.isArraySort(sort)
-          ? this.array.mkEqCore(left, right)
-          : undefined;
+        : manager.isDatatypeSort(sort)
+          ? mkDatatypeEqCore(manager, left, right)
+          : manager.isArraySort(sort)
+            ? this.array.mkEqCore(left, right)
+            : undefined;
     if (theoryResult !== undefined) return theoryResult;
     if (manager.getOp(left) === OP_UBV2INT || manager.getOp(right) === OP_UBV2INT) {
       const bv2intResult = this.bv.mkEqBv2int(left, right);
@@ -403,6 +407,7 @@ export class Rewriter extends RewriterTpl {
     const funcDecl = manager.funcDecls[decl];
     if (funcDecl.family === FAMILY_BV) return this.bv.mkAppCore(decl, args) ?? -1;
     if (funcDecl.family === FAMILY_ARRAY) return this.array.mkAppCore(funcDecl.op, args) ?? -1;
+    if (funcDecl.family === FAMILY_DATATYPE) return mkDatatypeAppCore(manager, decl, args) ?? -1;
     const op = funcDecl.op;
     switch (op) {
       case OP_AND:
