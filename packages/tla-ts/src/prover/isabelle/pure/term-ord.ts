@@ -87,7 +87,6 @@ const argsOrd = (left: Term, right: Term): number => {
   return 0;
 };
 
-// Term_Ord.term_ord: a linear well-founded AC-compatible order for ordered rewriting.
 export const termOrd = (left: Term, right: Term): number => {
   if (left === right) return 0;
   if (left.kind === "Abs" && right.kind === "Abs") {

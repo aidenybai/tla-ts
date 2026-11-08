@@ -1,8 +1,5 @@
 // Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// The object logic's data for blast, and the state of one search: the names of its Skolem
-// constants and the trail of variable assignments that backtracking undoes.
 
 import { bumpInit, bumpString } from "../../pure/name";
 import type { GoalTactic } from "../../pure/tactical";
@@ -13,7 +10,6 @@ import type { Claset } from "../classical";
 import type { RuleTemplate } from "./rules";
 import { blastAconv, varOccur, wkNorm, type BlastTerm, type ConstType, type VarRef } from "./term";
 
-// BLAST_DATA, with the two rules of other structures that blast uses.
 export interface BlastData {
   readonly trueprop: string;
   readonly equalityName: string;
@@ -33,20 +29,16 @@ export interface BlastContext {
   readonly limits: Limits;
   readonly claset: Claset;
   readonly data: BlastData;
-  // The constants' declared types, for Sign.const_typargs.
   readonly consts: ReadonlyMap<string, ConstType>;
-  // The elimination and introduction rules converted to tableau rules so far.
   readonly elimTemplates: WeakMap<Thm, RuleTemplate>;
   readonly introTemplates: WeakMap<Thm, RuleTemplate>;
 }
 
-// A formula pending on a branch, with its may-duplicate flag.
 export interface Formula {
   readonly term: BlastTerm;
   readonly md: boolean;
 }
 
-// The safe and unsafe formulae of one level of a branch.
 export interface Level {
   readonly safe: readonly Formula[];
   readonly unsafe: readonly Formula[];
@@ -54,16 +46,12 @@ export interface Level {
 
 export interface Branch {
   readonly pairs: readonly Level[];
-  // Literals: irreducible formulae.
   readonly lits: readonly BlastTerm[];
-  // The variables occurring in the branch.
   readonly vars: readonly VarRef[];
-  // The resource limit.
   readonly lim: number;
 }
 
-// A choice point: the trail length and branch count when it was made, and the token its handler
-// catches. The token is undefined for PROVE, the end of the search.
+// The token is undefined for PROVE, the end of the search.
 export interface Choice {
   readonly ntrl: number;
   readonly nbrs: number;
@@ -72,14 +60,12 @@ export interface Choice {
 
 export interface BlastState {
   readonly context: BlastContext;
-  // The used names with their latest renaming, a Name.context updated in place.
   readonly names: Map<string, string | undefined>;
-  // The assigned variables, latest last, so that the trail's length is ntrail.
+  // Latest last, so that the trail's length is ntrail.
   readonly trail: VarRef[];
 }
 
-// Raising the exception of a choice point: unwinds to the handler that owns the token. Not an
-// Error, since backtracking is frequent and needs no stack trace.
+// Not an Error, since backtracking is frequent and needs no stack trace.
 class Backtrack {
   readonly token: object | undefined;
   constructor(token: object | undefined) {
@@ -87,7 +73,7 @@ class Backtrack {
   }
 }
 
-// The choice points, latest first. The last is PROVE's.
+// Latest first. The last is PROVE's.
 export type Choices = List<Choice> | undefined;
 
 export const isBacktrackTo = (error: unknown, token: object | undefined) =>
@@ -97,7 +83,7 @@ export const backtrack = (choices: Choices): never => {
   throw new Backtrack(choices?.head.token);
 };
 
-// Name.variant on the state's names, for names without trailing underscores.
+// For names without trailing underscores.
 export const gensym = (state: BlastState, name: string) => {
   const names = state.names;
   if (!names.has(name)) {
@@ -112,7 +98,6 @@ export const gensym = (state: BlastState, name: string) => {
   return current;
 };
 
-// Restores the trail to a previous length, for backtracking.
 export const clearTo = (state: BlastState, count: number) => {
   while (state.trail.length > count) {
     const ref = state.trail.pop();
@@ -120,8 +105,7 @@ export const clearTo = (state: BlastState, count: number) => {
   }
 };
 
-// First-order unification with bound variables. The variables of vars are local to a rule: their
-// assignments are not trailed.
+// The variables of vars are local to a rule: their assignments are not trailed.
 const updateVar = (
   state: BlastState,
   vars: readonly VarRef[],

@@ -1,9 +1,8 @@
-// Isabelle interrupts a proof that runs out of time, wherever it is; this port checks for that at
-// the points where Isabelle's tactics and unifier spend their time.
+// Isabelle interrupts a proof that runs out of time wherever it is, so this port checks at the
+// points where Isabelle's tactics and unifier spend their time.
 
 import { TlaIsabelleError } from "../../../errors";
 
-// When a proof gives up: past the deadline, a time from Date.now(), or once the signal aborts.
 export interface Limits {
   readonly deadline: number;
   readonly signal?: AbortSignal;

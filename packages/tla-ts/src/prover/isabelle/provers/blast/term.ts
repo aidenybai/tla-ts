@@ -1,9 +1,5 @@
 // Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Blast's prototerms: untyped terms whose variables are mutable references, so that unification
-// updates them in place and backtracking resets them from the trail. Constants carry their type
-// arguments as terms, so that overloading is tracked faithfully.
 
 import { typargs, type TypargPosition } from "../../pure/consts";
 import {
@@ -17,14 +13,12 @@ import {
   type Typ,
 } from "../../pure/term";
 
-// A variable's assignment: term option Unsynchronized.ref, compared by identity.
 export interface VarRef {
   value: BlastTerm | undefined;
 }
 
-// The fields of every kind of prototerm. A prototerm has all of them, with the ones its kind
-// doesn't use undefined, and the constructors below list them in this order. So all prototerms
-// share one object layout, and V8 compiles the many switches on kind to monomorphic loads.
+// Every prototerm has all these fields, in this order, so all prototerms share one object layout
+// and V8 compiles the switches on kind to monomorphic loads.
 interface Fields {
   readonly name: string;
   readonly typargs: readonly BlastTerm[];
@@ -140,7 +134,6 @@ export const mkBlastApp = (fun: BlastTerm, arg: BlastTerm): BlastTerm => ({
 export const listBlastComb = (head: BlastTerm, args: readonly BlastTerm[]) =>
   args.reduce((result, arg) => mkBlastApp(result, arg), head);
 
-// Const (c, _) $ t: the argument of a constant applied to one term, if the term is one.
 export const destConstApp = (term: BlastTerm, name: string): BlastTerm | undefined =>
   term.kind === "App" && term.fun.kind === "Const" && term.fun.name === name ? term.arg : undefined;
 
@@ -148,7 +141,6 @@ export const mkGoal = (term: BlastTerm) => mkBlastApp(mkBlastConst(GOAL_NAME), t
 
 export const isGoal = (term: BlastTerm) => destConstApp(term, GOAL_NAME) !== undefined;
 
-// Tests whether two terms are alpha-convertible, chasing instantiations.
 export const blastAconv = (left: BlastTerm, right: BlastTerm): boolean => {
   if (left === right) return true;
   if (left.kind === "Const" && right.kind === "Const")
@@ -183,7 +175,6 @@ const memVar = (ref: VarRef, refs: readonly VarRef[]) => refs.includes(ref);
 const insVar = (ref: VarRef, refs: readonly VarRef[]) =>
   memVar(ref, refs) ? refs : [ref, ...refs];
 
-// Accumulates the unassigned variables of a term, suppressing duplicates.
 export const addTermVars = (term: BlastTerm, refs: readonly VarRef[]): readonly VarRef[] => {
   switch (term.kind) {
     case "Skolem":
@@ -213,7 +204,6 @@ const addVarsVars = (vars: readonly VarRef[], refs: readonly VarRef[]) =>
     refs,
   );
 
-// Chases the assignments of the variables, returning the unassigned ones.
 export const varsInVars = (refs: readonly VarRef[]) => addVarsVars(refs, []);
 
 const incrBv = (increment: number, level: number, term: BlastTerm): BlastTerm => {
@@ -232,7 +222,7 @@ const incrBv = (increment: number, level: number, term: BlastTerm): BlastTerm =>
 export const incrBlastBoundvars = (increment: number, term: BlastTerm) =>
   increment === 0 ? term : incrBv(increment, 0, term);
 
-// member (op =) (loose_bnos term) 0, which does not chase variables.
+// Does not chase variables.
 export const hasLooseBound0 = (term: BlastTerm, level = 0): boolean => {
   switch (term.kind) {
     case "Bound":
@@ -262,8 +252,8 @@ const substBoundAt = (arg: BlastTerm, level: number, term: BlastTerm): BlastTerm
 
 export const blastSubstBound = (arg: BlastTerm, body: BlastTerm) => substBoundAt(arg, 0, body);
 
-// Normalizes, but not the bodies of abstractions. Returns the very same term where nothing
-// changes, so normalizing a normal formula allocates nothing.
+// Leaves the bodies of abstractions, and returns the very same term where nothing changes, so
+// normalizing a normal formula allocates nothing.
 export const norm = (term: BlastTerm): BlastTerm => {
   switch (term.kind) {
     case "Skolem": {
@@ -319,7 +309,6 @@ const wkNormAux = (term: BlastTerm): BlastTerm => {
   }
 };
 
-// Weak, one-level normalization for unification; eta-contracts where it can.
 export const wkNorm = (term: BlastTerm): BlastTerm => {
   const head = blastHeadOf(term);
   return head.kind === "Const" || head.kind === "Skolem" || head.kind === "Free"
@@ -327,7 +316,7 @@ export const wkNorm = (term: BlastTerm): BlastTerm => {
     : wkNormAux(term);
 };
 
-// Does variable ref occur in term? Dangling bound variables count as occurrences too.
+// Dangling bound variables count as occurrences too.
 const occurs = (ref: VarRef, level: number, term: BlastTerm): boolean => {
   switch (term.kind) {
     case "Var":
@@ -351,14 +340,12 @@ const occurs = (ref: VarRef, level: number, term: BlastTerm): boolean => {
 
 export const varOccur = (ref: VarRef, term: BlastTerm) => occurs(ref, 0, term);
 
-// An entry of the association lists from schematic variables to prototerms that fromTerm keeps.
 export interface VarEntry {
   readonly name: string;
   readonly index: number;
   readonly term: BlastTerm;
 }
 
-// AList.lookup, adding a fresh variable for a new one.
 const lookupVar = (entries: VarEntry[], name: string, index: number): BlastTerm => {
   const known = entries.find((entry) => entry.index === index && entry.name === name);
   if (known !== undefined) return known.term;
@@ -384,7 +371,7 @@ export const fromConst = (
   type: Typ,
 ) => {
   const declared = consts.get(name);
-  // Sign.const_typargs. Constants the map lacks are the ones a theory declares, which have none.
+  // Constants the map lacks are the ones a theory declares, which have no type arguments.
   return declared === undefined || declared.typargs.length === 0
     ? mkBlastConst(name)
     : mkBlastConst(
@@ -425,12 +412,11 @@ const fromTermAux = (
   }
 };
 
-// Converts a real term to a prototerm, eta-contracting it.
 export const fromTerm = (consts: ReadonlyMap<string, ConstType>, term: Term): BlastTerm =>
   fromTermAux(consts, [], [], term);
 
-// A prototerm with its variables and Skolem terms numbered, so that instantiating it with fresh
-// ones gives a copy that shares the parts without them, which blast never updates.
+// Instantiating a template with fresh variables and Skolem terms gives a copy that shares the parts
+// without them, which blast never updates.
 export type Template =
   | { readonly kind: "ground"; readonly term: BlastTerm }
   | { readonly kind: "var"; readonly index: number }
@@ -441,7 +427,6 @@ export type Template =
 
 const isGround = (template: Template) => template.kind === "ground";
 
-// Numbers the variables in refs, adding new ones, and the Skolem terms by their place in skolems.
 export const toTemplate = (
   refs: VarRef[],
   skolems: readonly BlastTerm[],
@@ -507,7 +492,6 @@ export const instantiateTemplate = (
 
 const dummyVar = mkVar("etc", 0, dummyT);
 
-// Converts a prototerm to a real term with dummy types for net lookup, stopping at depth.
 export const toTerm = (depth: number, term: BlastTerm): Term => {
   if (depth === 0) return dummyVar;
   switch (term.kind) {
@@ -527,7 +511,6 @@ export const toTerm = (depth: number, term: BlastTerm): Term => {
 
 const stripTrueprop = (trueprop: string, term: BlastTerm) => destConstApp(term, trueprop) ?? term;
 
-// A1 ==> ... ==> An ==> B goes to [A1, ..., An], where B is not an implication.
 export const stripBlastImpPrems = (trueprop: string, term: BlastTerm): BlastTerm[] =>
   term.kind === "App" &&
   term.fun.kind === "App" &&
@@ -536,7 +519,6 @@ export const stripBlastImpPrems = (trueprop: string, term: BlastTerm): BlastTerm
     ? [stripTrueprop(trueprop, term.fun.arg), ...stripBlastImpPrems(trueprop, term.arg)]
     : [];
 
-// A1 ==> ... ==> An ==> B goes to B, where B is not an implication.
 export const stripBlastImpConcl = (trueprop: string, term: BlastTerm): BlastTerm =>
   term.kind === "App" &&
   term.fun.kind === "App" &&

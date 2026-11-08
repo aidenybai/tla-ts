@@ -1,6 +1,5 @@
-// Ported from Isabelle2025's Pure/unify.ML, Huet's higher-order unification with the search
-// bound of 60. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen,
-// and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/unify.ML. Copyright (c) 1986-2025 University of Cambridge,
+// Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { checkInterrupt, type Limits } from "./interrupt";
 import { TlaIsabelleError } from "../../../errors";
@@ -176,7 +175,6 @@ const unifyTypes = (left: Typ, right: Typ, envir: Envir) => {
   return result;
 };
 
-// get_eta_var: the variable a term eta-contracts to over the binders, or undefined for ASSIGN.
 const getEtaVar = (binders: readonly Binder[], level: number, term: Term): Var | undefined => {
   if (binders.length === 0) return term.kind === "Var" ? term : undefined;
   if (term.kind === "App" && term.arg.kind === "Bound" && term.arg.index === level)
@@ -184,7 +182,6 @@ const getEtaVar = (binders: readonly Binder[], level: number, term: Term): Var |
   return undefined;
 };
 
-// assignment: undefined where Isabelle raises ASSIGN.
 const assignment = (
   binders: readonly Binder[],
   left: Term,
@@ -473,7 +470,6 @@ const match = (
   );
 };
 
-// ff_assign: undefined where Isabelle raises ASSIGN.
 const ffAssign = (
   envir: Envir,
   binders: readonly Binder[],
@@ -704,7 +700,6 @@ const hounifiers = (
   );
 };
 
-// Unify.unifiers: pattern unification first, Huet's procedure outside the pattern fragment.
 export const unifiers = (
   limits: Limits | undefined,
   envir: Envir,
@@ -739,8 +734,7 @@ const smashFlexflex1 = (pair: Tpair, envir: Envir): Envir => {
     : vupdate(left, typeAbs(withVar, left.type, fresh), updated);
 };
 
-// Unify.smash_unifiers: unifiers with no remaining flex-flex pairs. A pair whose side is not
-// flexible stops the sequence, as CANTUNIFY escapes Seq.map in Isabelle.
+// A pair whose side is not flexible stops the sequence, as CANTUNIFY escapes Seq.map in Isabelle.
 export const smashUnifiers = (
   limits: Limits | undefined,
   pairs: readonly Tpair[],

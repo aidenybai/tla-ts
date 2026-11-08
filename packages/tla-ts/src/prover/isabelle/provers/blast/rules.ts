@@ -1,8 +1,5 @@
 // Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Conversion of the classical rules to tableau operations, each with the Isabelle tactic that
-// replays it during proof reconstruction.
 
 import { TlaIsabelleError } from "../../../../errors";
 import { revcutRl, zeroVarIndexes } from "../../pure/drule";
@@ -42,19 +39,14 @@ import {
   type VarRef,
 } from "./term";
 
-// A tableau rule: the formula it applies to, the formulae of each new branch, and the tactic
-// for the flags upd (the inference updated the branch), dup (duplicate the formula) and rot
-// (rotate the new hypotheses).
 export interface TableauRule {
   readonly major: BlastTerm;
   readonly prems: readonly (readonly BlastTerm[])[];
   readonly tactic: (isUpdated: boolean, isDup: boolean, isRotated: boolean) => GoalTactic;
 }
 
-// Blast converts each rule it looks up afresh, with fresh variables and Skolem terms. This
-// converts each rule once, numbering them: concl is the conclusion's variable, which conversion
-// sets to *False*, and skolems counts the Skolem terms, which take fresh names in this order. An
-// ill-formed rule has no major premise, but still takes the names its conversion took.
+// Blast converts each rule it looks up afresh; this converts each rule once. Its Skolem terms take
+// fresh names in order, and an ill-formed rule still takes the names its conversion took.
 export interface RuleTemplate {
   readonly count: number;
   readonly concl: number | undefined;
@@ -63,8 +55,7 @@ export interface RuleTemplate {
   readonly prems: readonly (readonly Template[])[];
 }
 
-// The conclusion becomes the goal or the negated assumption *False*: delete it. A premise without
-// it is ill-formed and could make reconstruction fail.
+// A premise without the conclusion is ill-formed and could make reconstruction fail.
 const deleteConcl = (state: BlastState, prems: readonly BlastTerm[]): BlastTerm[] | undefined => {
   const position = prems.findIndex((prem) => {
     if (prem.kind !== "App" || prem.fun.kind !== "Const") return false;
@@ -79,8 +70,7 @@ const deleteConcl = (state: BlastState, prems: readonly BlastTerm[]): BlastTerm[
   return position === -1 ? undefined : [...prems.slice(0, position), ...prems.slice(position + 1)];
 };
 
-// Skolemizes a premise with placeholder Skolem terms, adding them to skolems in the order that
-// blast names them.
+// Adds the placeholder Skolem terms in the order that blast names them.
 const skoPrem = (skolems: BlastTerm[], prem: BlastTerm): BlastTerm => {
   const body = destConstApp(prem, "Pure.all");
   if (body?.kind !== "Abs") return prem;
@@ -97,8 +87,6 @@ const illFormed = (skolems: number): RuleTemplate => ({
   prems: [],
 });
 
-// fromRule's convertRule, which expects an elimination rule to have a formula variable as its
-// conclusion.
 const makeElimTemplate = (state: BlastState, rule: Thm): RuleTemplate => {
   const trueprop = state.context.data.trueprop;
   const term = fromTerm(state.context.consts, rule.prop);
@@ -128,7 +116,6 @@ const makeElimTemplate = (state: BlastState, rule: Thm): RuleTemplate => {
   };
 };
 
-// fromIntrRule's conversion.
 const makeIntroTemplate = (state: BlastState, rule: Thm): RuleTemplate => {
   const trueprop = state.context.data.trueprop;
   const term = fromTerm(state.context.consts, rule.prop);
@@ -161,7 +148,7 @@ const revDupElim = (rule: Thm) => {
 const countNewHyps = (prem: readonly BlastTerm[]) =>
   prem.filter((term) => destConstApp(term, GOAL_NAME) === undefined).length;
 
-// Rotates the assumptions in all new subgoals for the LIFO discipline.
+// For the LIFO discipline.
 const rotSubgoalsTac =
   (isRotated: boolean, prems: readonly (readonly BlastTerm[])[]): GoalTactic =>
   (index) =>
@@ -174,7 +161,6 @@ const rotSubgoalsTac =
       ),
     );
 
-// Resolution or matching: if the inference updated the branch, the proof state may be updated.
 // Matching keeps the tactics more deterministic in the presence of variables.
 const emtac = (state: BlastState, isUpdated: boolean, rule: Thm): GoalTactic =>
   isUpdated ? eresolveTac(state.context.limits, [rule]) : ematchTac(state.context.limits, [rule]);
@@ -204,9 +190,8 @@ const intrRuleTactic =
       rotSubgoalsTac(isRotated, prems)(index),
     );
 
-// A tableau rule from a rule's template. Blast tries the rules in order until one's major premise
-// unifies, and often only checks that a rule exists, so this instantiates the template with fresh
-// variables only when the major premise is used, and the premises only when they are.
+// Blast tries the rules in order until one's major premise unifies, so this instantiates the
+// template only when the major premise is used, and the premises only when they are.
 class InstantiatedRule implements TableauRule {
   private readonly state: BlastState;
   private readonly rule: Thm;
@@ -234,7 +219,6 @@ class InstantiatedRule implements TableauRule {
     this.skolems = skolems;
   }
 
-  // Fresh variables for the template's, with the conclusion's set to *False*.
   private getVars() {
     if (this.vars !== undefined) return this.vars;
     const vars: BlastTerm[] = [];
@@ -274,8 +258,7 @@ class InstantiatedRule implements TableauRule {
   }
 }
 
-// fromRule or fromIntrRule: undefined for an ill-formed rule. Its Skolem terms take their names
-// now, as blast converts all the rules it looks up at once.
+// Its Skolem terms take their names now, as blast converts all the rules it looks up at once.
 const instantiateRule = (
   state: BlastState,
   vars: readonly VarRef[],
@@ -325,6 +308,5 @@ export const netMkRules = (
   return rules;
 };
 
-// Converts *Goal* to a negated assumption in first position.
 export const negOfGoalTac = (state: BlastState): GoalTactic =>
   thenGoal(resolveTac(state.context.limits, [state.context.data.ccontr]), rotateTac(-1));

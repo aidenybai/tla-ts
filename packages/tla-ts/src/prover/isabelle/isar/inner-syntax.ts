@@ -1,16 +1,12 @@
-// Parses Isabelle's inner syntax, the terms inside quotes, as far as tlapm's theory printer
-// (isabelle.ml) uses it. The notation and its priorities come from Isabelle2025's Pure and from
-// the Isabelle/TLA+ theories that declare it: PredicateLogic, SetTheory, Functions, Tuples,
-// Strings and CaseExpressions. The translations those theories declare apply while parsing, so a
-// term comes out as constants, names, applications and abstractions only.
+// Parses Isabelle's inner syntax as far as tlapm's theory printer uses it. The translations of the
+// Isabelle/TLA+ theories apply while parsing, so a term comes out as constants, names, applications
+// and abstractions only.
 
 import { TlaIsabelleError } from "../../../errors";
 import { funT, mkType, propT, type Typ } from "../pure/term";
 
 const TLA_TYPE = mkType("PredicateLogic.c");
 
-// A parsed term before names resolve and types are inferred. A name is a bound or free variable
-// or a constant; a constant comes from notation.
 export type Ast =
   | { readonly kind: "name"; readonly name: string }
   | { readonly kind: "const"; readonly name: string }
@@ -188,8 +184,6 @@ const PREFIXES = new Map<
   ["DOMAIN", { constant: "Functions.DOMAIN", argument: 100, priority: 90 }],
 ]);
 
-// A parse result: the term, its priority, and whether it is a proposition rather than an object
-// of the logic, which Isabelle tells apart by syntactic category.
 interface Parsed {
   readonly ast: Ast;
   readonly priority: number;
@@ -241,7 +235,6 @@ class Parser {
     return this.peek().kind === "end";
   }
 
-  // A type: c, prop, a function type, or [c, c] => c.
   type(): Typ {
     const domains = this.isDelimiter("[") ? this.typeList() : undefined;
     const atom = domains === undefined ? this.typeAtom() : undefined;
@@ -281,7 +274,6 @@ class Parser {
     throw new TlaIsabelleError("ERROR", `Undefined type name: ${name}`);
   }
 
-  // Binder variables, each optionally constrained: x, x :: c.
   private binders(isConstrainable: boolean): { name: string; type: Typ | undefined }[] {
     const binders: { name: string; type: Typ | undefined }[] = [];
     while (this.peek().kind === "id") {
@@ -309,7 +301,6 @@ class Parser {
     return items;
   }
 
-  // An object-logic term of at least the given priority.
   logic(minimum: number): Ast {
     const parsed = this.expression(minimum);
     if (parsed.isProp)
@@ -317,8 +308,8 @@ class Parser {
     return parsed.ast;
   }
 
-  // A proposition: an object-logic term becomes one through Trueprop, as PredicateLogic's
-  // "(_)" 5 mixfix declares.
+  // An object-logic term becomes a proposition through Trueprop, as PredicateLogic's "(_)" 5 mixfix
+  // declares.
   prop(minimum: number): Ast {
     const parsed = this.expression(minimum);
     return parsed.isProp ? parsed.ast : apply(constant("PredicateLogic.Trueprop"), parsed.ast);
@@ -474,7 +465,6 @@ class Parser {
     return term(apply(constant(prefix.constant), this.logic(prefix.argument)), prefix.priority);
   }
 
-  // \<forall>x, y : P and \<forall>x, y \<in> S : P, with \<exists> alike.
   private quantifier(isForall: boolean): Ast {
     const names = [this.identifier()];
     while (this.isDelimiter(",")) {
@@ -502,8 +492,6 @@ class Parser {
     );
   }
 
-  // The bracketed forms: [x \<in> S \<mapsto> e], [S \<rightarrow> T], [f EXCEPT ![x] = e, ...]
-  // and [d : r, ...].
   private bracket(): Parsed {
     if (this.peek().kind === "id" && this.isDelimiter("\\<in>", 1)) {
       const name = this.identifier();

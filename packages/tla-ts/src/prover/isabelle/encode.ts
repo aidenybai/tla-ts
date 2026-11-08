@@ -1,5 +1,4 @@
 // Ported from tlapm's src/backend/isabelle.ml (BSD licensed, see LICENSE-tlapm).
-// An obligation as the Isabelle/TLA+ theory tlapm writes for Isabelle to prove with a tactic.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
@@ -79,7 +78,6 @@ const NONFIX: Partial<Record<Builtin, [string, number]>> = {
   ToString: ["ToString", 1],
 };
 
-// thy_header's tdoms_table: the operators the theory declares, with their arities.
 const DECLARED: [string, number][] = [
   ["Real", 0],
   ["/", 2],
@@ -105,7 +103,6 @@ const getSuccessors = (integer: string) => {
   return `${"succ[".repeat(count)}0${"]".repeat(count)}`;
 };
 
-// thy_header.
 const getTheoryHeader = (name: string, isVerbose: boolean) => [
   "(* automatically generated -- do not edit manually *)",
   `theory ${name} imports Constant Zenon begin`,
@@ -113,20 +110,18 @@ const getTheoryHeader = (name: string, isVerbose: boolean) => [
   HEADER,
 ];
 
-// pp_print_expr on an obligation after Backend.Prep has shipped it.
 const printLemma = (sequent: Sequent) => {
   const context = createContext();
   const adjoin = (name: string) => pushName(context, pickle(name));
   const bump = () => pushName(context, "");
 
-  // A binder's name binds in what prints inside it.
   const withBound = (name: string, print: (bound: string) => string) => {
     const printed = print(adjoin(name));
     popNames(context, 1);
     return printed;
   };
 
-  // pp_print_expr: every expression, apart from the obligation's sequent, prints in parentheses.
+  // Every expression, apart from the obligation's sequent, prints in parentheses.
   const printExpr = (expression: Expr) => `(${formatExpr(expression)})`;
   const delimited = (args: Expr[]) => args.map(printExpr).join(", ");
   const nonfix = (name: string, args: Expr[]) => `(${name} (${delimited(args)}))`;
@@ -186,7 +181,6 @@ const printLemma = (sequent: Sequent) => {
     );
   };
 
-  // pp_print_sequent_inner: a sequent inside an expression, as a meta-level implication.
   const printNestedSequent = (sequent: Sequent): string => {
     if (sequent.context.length === 0) return printExpr(sequent.active);
     const hyp = sequent.context[0];
@@ -348,8 +342,7 @@ const printLemma = (sequent: Sequent) => {
     }
   };
 
-  // pp_print_sequent_outer: the obligation's sequent as the lines of a lemma's fixes, assumes and
-  // shows. A pragma's definition ends it with an empty line in place of the goal.
+  // A pragma's definition ends the lemma with an empty line in place of the goal.
   const lines: string[] = [];
   const printSequent = (sequent: Sequent) => {
     for (const hyp of sequent.context) {
@@ -418,7 +411,6 @@ interface ObligationSource {
   fingerprint: string;
 }
 
-// thy_temp: the theory tlapm writes for Isabelle to prove obligation id.
 export const encodeIsabelle = (
   id: number,
   sequent: Sequent,
@@ -456,7 +448,6 @@ interface IsabelleProof {
   proof: string;
 }
 
-// Isabelle.thy_init, thy_write and thy_close.
 export const encodeIsabelleTheory = (name: string, proofs: IsabelleProof[]) =>
   [
     `${getTheoryHeader(name, true).join("\n")}\n`,

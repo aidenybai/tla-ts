@@ -1,5 +1,4 @@
-// Reads the outer syntax of the theories tlapm writes (Isabelle.thy_temp in isabelle.ml): the
-// header, the constants it declares, and one lemma with its proof.
+// Reads the theories tlapm writes (Isabelle.thy_temp in isabelle.ml):
 //
 //   theory NAME imports Constant Zenon begin
 //   consts "name" :: type ...
@@ -24,7 +23,6 @@ export interface TheoryText {
   readonly elements: readonly StatementElement[];
   readonly shows: string;
   readonly isUsingAssms: boolean;
-  // The method of by, then the terminal method if there is one, as outer tokens.
   readonly method: readonly OuterToken[];
 }
 

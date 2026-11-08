@@ -1,6 +1,5 @@
-// Ported from Isabelle2025's Pure/raw_simplifier.ML, the bottom-up rewriting of terms, and the
-// goal conversions of Pure/conv.ML. Copyright (c) 1986-2025 University of Cambridge, Technische
-// Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/raw_simplifier.ML and Pure/conv.ML. Copyright (c) 1986-2025
+// University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { gconvRule, impCongRule } from "./conv";
@@ -80,7 +79,6 @@ import { allGoals, eqThm } from "./tactical";
 
 export type Prover = (context: SimpContext, thm: Thm) => Thm | undefined;
 
-// simple_prover: proves the premises of a rewrite rule with the premises of the simpset.
 export const simpleProver: Prover = (context, thm) =>
   seqHead(allGoals(resolveTac(context.limits, context.simpset.prems))(thm));
 
@@ -95,7 +93,6 @@ const betaEtaConversion = (term: Term) => {
   return transitive(beta, etaConversion(rhsOf(beta)));
 };
 
-// Thm.match and Thm.instantiate: instantiates rule so that pattern becomes object.
 const instantiateMatch = (env: MatchEnv, rule: Thm): Thm => {
   const typed = instantiateTypes(env.tyenv, rule);
   const insts: Instantiation[] = tableEntries(env.tenv).map(([key, binding]) => ({
@@ -110,7 +107,7 @@ const renameBoundvars = (pattern: Term, object: Term, thm: Thm) => {
   return renamed === undefined ? thm : renamedProp(renamed, thm);
 };
 
-// check_conv: joins thm and next, allowing for beta and eta differences in the middle term.
+// Allows for beta and eta differences in the middle term.
 const checkConv = (thm: Thm, next: Thm): Thm | undefined => {
   try {
     return transitive(thm, next);
@@ -187,7 +184,6 @@ const sortRrules = (rrules: readonly Rrule[]) => {
   return [...simple, ...conditional];
 };
 
-// rewritec's rew: rewrites the eta-contracted term with one rule.
 const rew = (
   prover: Prover,
   maxt: number,
@@ -224,7 +220,6 @@ const rew = (
   return { thm: joined, skel: condSkel(context, ruleLhs, ruleRhs) };
 };
 
-// rewritec's rews: the first rule that rewrites the term.
 const rews = (
   prover: Prover,
   maxt: number,
@@ -239,7 +234,6 @@ const rews = (
   return undefined;
 };
 
-// rewritec: one rewrite step at the root of a term.
 const rewritec = (
   prover: Prover,
   maxt: number,
@@ -271,7 +265,6 @@ const rewritec = (
 
 const incrementTerm = (increment: number, term: Term) => incrIndexes([], increment, term);
 
-// congc: applies a congruence rule to a term.
 const congc = (
   prover: (thm: Thm) => Thm | undefined,
   maxt: number,
@@ -317,12 +310,10 @@ interface PremRules {
   readonly asm: Thm | undefined;
 }
 
-// bottomc: bottom-up rewriting with the simpset of the context.
 const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
-  // Isabelle's botc recurses after each rewrite at the top and chains the steps on the way back,
-  // so a simpset that rewrites forever keeps every step until Isabelle runs out of memory. This
-  // loops and chains each step as it goes, which gives the same theorem, so such a simpset runs
-  // into the time limit holding only the latest one.
+  // Isabelle's botc recurses after each rewrite at the top, so a simpset that rewrites forever
+  // keeps every step until Isabelle runs out of memory. This loops and chains each step as it goes,
+  // which gives the same theorem but holds only the latest step.
   const botc = (skel: Term, context: SimpContext, term: Term): Thm | undefined => {
     let chained: Thm | undefined;
     let currentSkel = skel;
@@ -563,7 +554,6 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
   return tryBotc;
 };
 
-// Drule.flexflex_unique
 const flexflexUnique = (limits: Limits, thm: Thm): Thm => {
   if (thm.tpairs.length === 0) return thm;
   const results = listOfSeq(flexflexRule(limits, thm));
@@ -579,7 +569,6 @@ const flexflexUnique = (limits: Limits, thm: Thm): Thm => {
   );
 };
 
-// rewrite_cterm: proves term == term' by rewriting.
 export const rewriteCterm = (
   mode: RewriteMode,
   prover: Prover,

@@ -1,7 +1,5 @@
-// Ported from Isabelle2025's Pure/raw_simplifier.ML, the simpset and its rewrite rules. Copyright
-// (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
-// LICENSE.
-//
+// Ported from Isabelle2025's Pure/raw_simplifier.ML. Copyright (c) 1986-2025 University of
+// Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 // Isabelle/TLA+ declares no congruence procedures, so the simpset leaves them out.
 
 import { TlaIsabelleError } from "../../../errors";
@@ -75,8 +73,6 @@ export interface Simpset {
   readonly safeSolvers: readonly Solver[];
 }
 
-// The part of an Isabelle proof context that the simplifier reads: the simpset, the time limits,
-// and the counter that names the free variables standing for bound ones.
 export interface SimpContext {
   readonly limits: Limits;
   readonly simpset: Simpset;
@@ -116,8 +112,6 @@ const hasNewTVar = (type: Typ, keys: ReadonlySet<string>): boolean => {
   return false;
 };
 
-// rewrite_rule_extra_vars: whether the right-hand sides have variables outside the left-hand side
-// and the premises.
 const rewriteRuleExtraVars = (prems: readonly Term[], elhs: Term, erhss: readonly Term[]) => {
   const terms = [elhs, ...prems];
   const vars = terms.flatMap(varsOf);
@@ -249,7 +243,6 @@ const mkRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
   return rruleEqTrue(context, thm, decomposed.lhs, decomposed.elhs, decomposed.rhs, thm);
 };
 
-// default_reorient: catches looping rules and stupid orientations.
 const defaultReorient = (prems: readonly Term[], lhs: Term, rhs: Term) =>
   rewriteRuleExtraVars(prems, lhs, [rhs]) ||
   headOf(lhs).kind === "Var" ||
@@ -277,7 +270,6 @@ const orientRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
   return rruleEqTrue(context, symmetric, flipped.lhs, flipped.elhs, flipped.rhs, thm);
 };
 
-// extract_safe_rrules: the rewrite rules of an assumption, oriented to avoid loops.
 export const extractSafeRrules = (context: SimpContext, thm: Thm): RawRrule[] =>
   context.simpset.mkRews.mk(thm, context).flatMap((rew) => orientRrule(context, rew));
 
@@ -295,7 +287,6 @@ export const addSimps = (context: SimpContext, thms: readonly Thm[]): Simpset =>
     .flatMap((rew) => mkRrule(context, rew))
     .reduce((simpset, raw) => insertRrule(raw, simpset), context.simpset);
 
-// mk_procrule: the rewrite rule a simplification procedure proves.
 export const mkProcrule = (thm: Thm): Rrule[] => {
   const decomposed = decompSimp(thm);
   if (rewriteRuleExtraVars(decomposed.prems, decomposed.lhs, [decomposed.rhs])) return [];
@@ -307,7 +298,6 @@ export const addPrems = (thms: readonly Thm[], simpset: Simpset): Simpset => ({
   prems: [...thms, ...simpset.prems],
 });
 
-// Rebuilds a rule net from Net.entries, as the reference simpset lists them.
 export const rulesFromEntries = (thms: readonly Thm[]): Net<Rrule> =>
   thms.reduceRight<Net<Rrule>>((net, thm) => {
     const decomposed = decompSimp(thm);
@@ -319,7 +309,6 @@ export const emptyCongs: Table<string, Thm> = emptyTable((left: string, right: s
   left === right ? 0 : left < right ? -1 : 1,
 );
 
-// empty_ss: rewrites with meta-equalities only, and solves no subgoal.
 export const emptySimpset: Simpset = {
   rules: emptyNet,
   prems: [],
