@@ -62,6 +62,10 @@ const CASES: Record<string, (string | [string, string])[]> = {
     "[]",
     ["[0 in list, 1 in list, -1 in list]", "const list = [42];"],
     [
+      "list.every((value: number, index: number, array: unknown) => typeof array === 'object')",
+      "const list = [0, 1];",
+    ],
+    [
       "[list.filter((value) => value), list.some((value) => (value > 1 ? 'yes' : '')), list.findIndex((value) => value)]",
       "const list = [0, 1, 2];",
     ],
