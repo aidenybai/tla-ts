@@ -10,7 +10,10 @@ import {
 import type { DecideOptions } from "../../verdict";
 import {
   AstManager,
+  FAMILY_MODEL_VALUE,
   FAMILY_USER,
+  KIND_APP,
+  KIND_QUANTIFIER,
   OP_DIV,
   OP_IDIV,
   OP_MOD,
@@ -23,7 +26,17 @@ import {
 import { Goal, PRECISION_NAMES } from "./goal";
 import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
-import { DEFAULT_PRINT_OPTIONS, type PrintOptions, printExpr } from "./smt2-printer";
+import {
+  DEFAULT_PRINT_OPTIONS,
+  formatSort,
+  getQuotedName,
+  mkSeq1,
+  mkSeq5,
+  mkText,
+  type PrintOptions,
+  printExpr,
+  renderFormat,
+} from "./smt2-printer";
 import {
   createCommandReader,
   createSmtlibReader,
@@ -491,7 +504,7 @@ export const runSmtlibScript = (
       if (list.items[1] === undefined)
         throw new SmtParseError("apply needs a tactic argument", list.end);
       const tactic = getTactic(list.items[1], list.end).build(params);
-      for (const name of ["print_model_converter", "print_benchmark", "print_dependencies"])
+      for (const name of ["print_model_converter", "print_dependencies"])
         if (params.get(name) === true) throw new SmtUnsupportedError(`the parameter :${name}`);
       state.manager.limit.restart(Date.now() + options.timeLimitMs);
       const goals = (() => {
@@ -503,23 +516,74 @@ export const runSmtlibScript = (
           return undefined;
         }
       })();
-      if (goals === undefined || params.get("print") === false) return;
+      if (goals === undefined) return;
+      const manager = state.manager;
       const environment = getPrintEnvironment();
-      print(
-        [
-          "(goals",
-          ...goals.map((goal) =>
-            [
-              "(goal",
-              ...goal.forms.items.map(
-                (form) => `  ${printExpr(state.manager, environment, form, 2)}`,
+      if (params.get("print") !== false)
+        print(
+          [
+            "(goals",
+            ...goals.map((goal) =>
+              [
+                "(goal",
+                ...goal.forms.items.map(
+                  (form) => `  ${printExpr(state.manager, environment, form, 2)}`,
+                ),
+                `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
+              ].join("\n"),
+            ),
+            ")",
+          ].join("\n"),
+        );
+      if (params.get("print_benchmark") !== true) return;
+      const assertions =
+        goals.length === 1
+          ? goals[0].forms.items
+          : [
+              manager.mkOr(
+                goals.map((goal) =>
+                  goal.forms.size === 1 ? goal.forms.items[0] : manager.mkAnd(goal.forms.items),
+                ),
               ),
-              `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
-            ].join("\n"),
+            ];
+      for (const assertion of assertions) manager.incRef(assertion);
+      const visited = new Set<number>();
+      const decls = new Set<number>();
+      for (const assertion of assertions) {
+        const todo = [assertion];
+        while (todo.length > 0) {
+          const expr = todo.pop() as number;
+          if (visited.has(expr)) continue;
+          visited.add(expr);
+          if (manager.kinds[expr] === KIND_QUANTIFIER) {
+            const data = manager.getQuantifier(expr);
+            todo.push(data.body, ...data.patterns);
+          } else if (manager.kinds[expr] === KIND_APP) {
+            manager.pushArgs(expr, todo);
+            const decl = manager.decls[expr];
+            const family = manager.funcDecls[decl].family;
+            if (family === FAMILY_USER || family === FAMILY_MODEL_VALUE) decls.add(decl);
+          }
+        }
+      }
+      const lines = [...decls].map((decl) => {
+        const funcDecl = manager.funcDecls[decl];
+        return renderFormat(
+          mkSeq1(
+            [
+              mkText(getQuotedName(funcDecl.name)),
+              mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, sort))),
+              formatSort(manager, funcDecl.range),
+            ],
+            "declare-fun",
           ),
-          ")",
-        ].join("\n"),
-      );
+          environment.options,
+        );
+      });
+      for (const assertion of assertions)
+        lines.push(`(assert ${printExpr(manager, environment, assertion, 8)})`);
+      print([...lines, "(check-sat)"].join("\n"));
+      for (const assertion of assertions) manager.decRef(assertion);
     },
     "get-unsat-core": (list) => {
       if (!settings.isProducingUnsatCores)
