@@ -13,40 +13,16 @@ import { getKind } from "./types";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
 // constants, which compare by identity.
-const CONSTRUCTORS = new Set([
-  "Object",
-  "Function",
-  "Array",
-  "String",
-  "Boolean",
-  "Number",
-  "Symbol",
-  "BigInt",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "WeakRef",
-  "FinalizationRegistry",
-  "Promise",
-  "RegExp",
-  "Date",
-  "ArrayBuffer",
-  "DataView",
-]);
+// A global that names a built-in object, such as Math or Array.
+const isGlobal = (name: string) => !/[.%\s]/.test(name) && Object.hasOwn(BUILT_INS, name);
 
 const isLibrary = (symbol: ts.Symbol) =>
   (symbol.declarations ?? []).length > 0 &&
   (symbol.declarations ?? []).every((declaration) => declaration.getSourceFile().isDeclarationFile);
 
-const NAMESPACES = new Set(["Math", "JSON", "Reflect", "Atomics"]);
-
 const getBuiltIn = (node: ts.Expression, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  return ts.isIdentifier(node) &&
-    (CONSTRUCTORS.has(node.text) || NATIVE_ERRORS.has(node.text) || NAMESPACES.has(node.text)) &&
-    symbol !== undefined &&
-    isLibrary(symbol)
+  return ts.isIdentifier(node) && isGlobal(node.text) && symbol !== undefined && isLibrary(symbol)
     ? node.text
     : undefined;
 };
@@ -209,7 +185,7 @@ const getGlobal = (name: string, node: ts.Node, context: Context) => {
   return symbol;
 };
 
-const isConstructor = (name: string) => CONSTRUCTORS.has(name) || NATIVE_ERRORS.has(name);
+const isConstructor = (name: string) => isGlobal(name) && BUILT_INS[name][1];
 
 // A built-in constructor is a model value, as error constructors are. Function.prototype is one
 // too, as it's a function, and other built-in objects are references by their paths, which no
