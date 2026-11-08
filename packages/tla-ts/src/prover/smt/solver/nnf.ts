@@ -60,7 +60,6 @@ export class DefinedNames {
     this.exprs.reset();
   }
 
-  // The definition comes with a reference, and is -1 when the expression already has a name.
   mkName(expr: number) {
     const manager = this.manager;
     const existing = this.names.get(expr);

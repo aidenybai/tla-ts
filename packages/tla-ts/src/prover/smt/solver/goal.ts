@@ -66,7 +66,6 @@ export class Goal {
     this.precision = getPrecisionUnion(this.precision, precision);
   }
 
-  // The goal holds the declaration and the definition.
   addConverter(decl: number, def = -1) {
     this.manager.incDeclRef(decl);
     if (def !== -1) this.manager.incRef(def);

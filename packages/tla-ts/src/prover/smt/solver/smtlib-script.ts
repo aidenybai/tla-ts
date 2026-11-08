@@ -364,7 +364,6 @@ export const runSmtlibScript = (
     script.state.check?.model?.decRef();
     script.state.check = undefined;
   };
-  // The text after the last newline waits for the rest of its line.
   let pendingText = "";
   const write = (text: string, isDiagnostic: boolean) => {
     if (isDiagnostic && !settings.isDiagnosticOnStdout) return;
