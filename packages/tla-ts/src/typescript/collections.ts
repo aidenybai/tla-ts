@@ -927,6 +927,21 @@ export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, co
 export const translateNew = (node: ts.NewExpression, scope: Scope, context: Context) => {
   const constructor = node.expression.getText();
   const argument = node.arguments?.[0];
+  // new Array(length) makes an array of holes, which a sequence can't hold, and new Array with
+  // any other arguments makes an array of them.
+  if (constructor === "Array" && node.arguments?.some(ts.isSpreadElement) !== true) {
+    const elements = (node.arguments ?? []).map((element) =>
+      translateExpression(element, scope, context),
+    );
+    if (argument === undefined || elements.length > 1 || !isNumberLike(argument, context)) {
+      return tuple(elements);
+    }
+    return ifExpression(
+      apply("=", [elements[0], number(0)]),
+      tuple([]),
+      apply("Assert", [boolean(false), string("TLA+ sequences can't have holes")]),
+    );
+  }
   if (constructor === "Set") {
     if (argument === undefined) return set([]);
     if (ts.isArrayLiteralExpression(argument) && !argument.elements.some(ts.isSpreadElement)) {
