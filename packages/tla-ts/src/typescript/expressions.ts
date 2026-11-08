@@ -483,7 +483,10 @@ const translatePropertyAccess = (
   const size =
     name === "length" || name === "size" ? translateSize(receiver, scope, context) : undefined;
   if (size !== undefined) return size;
-  if (getKind(receiver, context) !== "other") {
+  if (
+    getKind(receiver, context) !== "other" ||
+    context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0
+  ) {
     throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
   }
   return getField(translateExpression(receiver, scope, context), name);

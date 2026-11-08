@@ -15,6 +15,7 @@ const CASES: [string, string][] = [
   ["integers past 32 bits", "count = 2147483648;"],
   ["rest parameters", "const add = (...more: number[]) => more.length; count = add(1, 2);"],
   ["string methods as values", "count = label.includes.length;"],
+  ["properties of functions", "count = step.length;"],
   ["converting an array to a string", "label = `${values}`;"],
   ["bitwise and", "count = count & 1;"],
   ["bitwise or", "count = count | 1;"],
