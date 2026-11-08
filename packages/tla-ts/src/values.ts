@@ -2016,6 +2016,16 @@ const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
     ? searchLikeTlc(element, set.elements).isFound
     : isElementOfLikeTlc(element, getWrittenElements(set));
 
+// ModelValue#modelValueMember, which a set of a Java class that holds no model value calls.
+const isModelValueMember = (modelValue: ModelValue, set: Value) => {
+  if (modelValue.type !== undefined) {
+    throw new TlaEvaluationError(
+      `Attempted to check if the typed model value ${prettyPrint(formatValue(modelValue))} is an element of\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  return false;
+};
+
 const isElementOfSet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
@@ -2027,7 +2037,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       return isElementOfLikeTlc(element, set.elements);
     case "Interval":
       if (typeof element === "number") return element >= set.low && element <= set.high;
-      if (set.low <= set.high && !isModelValue(element)) {
+      if (set.low <= set.high && (!isModelValue(element) || element.type !== undefined)) {
         throw new TlaEvaluationError(
           `Attempted to check if the value:\n${formatValue(element)}\nis in the integer interval ${formatValue(set)}`,
         );
@@ -2035,7 +2045,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       return false;
     case "InfiniteSet": {
       if (set.name === "Any") return true;
-      if (isModelValue(element)) return false;
+      if (isModelValue(element)) return isModelValueMember(element, set);
       const isMemberType =
         set.name === "STRING" ? typeof element === "string" : typeof element === "number";
       if (!isMemberType) {
@@ -2056,7 +2066,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
     case "FunctionSet": {
       if (!isFunctionValue(element)) {
-        if (isModelValue(element)) return false;
+        if (isModelValue(element)) return isModelValueMember(element, set);
         // SetOfFcnsValue.member prints the element without Values.ppr.
         throw new TlaEvaluationError(
           `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
@@ -2076,7 +2086,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
     case "RecordSet": {
       const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
       if (!functionValue || !isRecordDomain(functionValue.domain)) {
-        if (isModelValue(element)) return false;
+        if (isModelValue(element)) return isModelValueMember(element, set);
         throw new TlaEvaluationError(
           `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${formatValue(set)}`,
         );
@@ -2095,7 +2105,8 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
         const isFunction =
           isFunctionValue(element) &&
           toFiniteFunction(element).domain.every((key) => typeof key === "number");
-        if (isFunction || isModelValue(element)) return false;
+        if (isModelValue(element)) return isModelValueMember(element, set);
+        if (isFunction) return false;
         throw new TlaEvaluationError(
           `Attempted to check if non-tuple\n${formatValue(element)}\nis in the set of tuples:\n${formatValue(set)}`,
         );
@@ -2131,7 +2142,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
     case "SequenceSet": {
       const elements = getSequenceElements(element);
       if (elements === undefined) {
-        if (isModelValue(element)) return false;
+        if (isModelValue(element)) return isModelValueMember(element, set);
         // Sequences.member raises TLC_MODULE_CHECK_MEMBER_OF.
         throw new TlaModuleError(
           `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
