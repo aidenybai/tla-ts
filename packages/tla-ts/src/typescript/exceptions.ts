@@ -3,6 +3,7 @@ import type { Expression } from "../ast";
 import { type Context, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
+import { getEngineError } from "./heap";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { apply, field, identifier, ifExpression, junction, record, set, string } from "./tla";
@@ -60,6 +61,24 @@ export const getConstructor = (symbol: ts.Symbol, context: Context, preferred = 
   return identifier(name);
 };
 
+const getNative = (name: string, node: ts.Node, context: Context) => {
+  const symbol = context.checker
+    .getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Value)
+    .find((candidate) => candidate.name === name && isNative(candidate));
+  if (symbol === undefined) throw new TlaTypeScriptError(`Unknown built-in: ${name}`, node);
+  return symbol;
+};
+
+// An error that JavaScript itself throws, such as the TypeError of a failed defineProperty.
+export const translateEngineError = (name: string, node: ts.Node, context: Context) => {
+  const symbol = getNative(name, node, context);
+  return record("Record", [
+    { name: "constructor", value: getConstructor(symbol, context) },
+    { name: "message", value: string("") },
+    { name: "name", value: string(name) },
+  ]);
+};
+
 export const translateNewError = (
   node: ts.NewExpression,
   classes: ts.Symbol[],
@@ -103,10 +122,12 @@ const isCaught = (node: ts.Expression, context: Context) => {
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
   const visit = (child: ts.Node) => {
-    if (ts.isNewExpression(child)) {
-      const classes = getErrorClass(getSymbol(child.expression, context.checker), context.checker);
-      if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
-    }
+    const thrown = getEngineError(child);
+    const created = ts.isNewExpression(child)
+      ? getSymbol(child.expression, context.checker)
+      : thrown && getNative(thrown, child, context);
+    const classes = getErrorClass(created, context.checker);
+    if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
     ts.forEachChild(child, visit);
   };
   visit(node.getSourceFile());

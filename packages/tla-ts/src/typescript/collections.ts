@@ -183,7 +183,7 @@ const translateUnordered = (
     const argument = node.arguments[0];
     const record =
       getKind(argument, context) === "object"
-        ? useJavaScript("Own", [getHeap(scope, node, context), translate(argument)], context)
+        ? useJavaScript("Enumerable", [getHeap(scope, node, context), translate(argument)], context)
         : translate(argument);
     if (method === "keys") return { set: getDomain(record), isMapped: false };
     if (method === "values") return getValues(record, context);

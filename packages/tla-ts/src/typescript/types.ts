@@ -60,6 +60,9 @@ const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
     ? type.types.every((member) => isEvery(member, flags))
     : (type.flags & flags) !== 0;
 
+// The plain objects that built-in functions take or give.
+const LIBRARY_OBJECTS = new Set(["PropertyDescriptor", "PropertyDescriptorMap"]);
+
 const isPlainObject = (type: ts.Type, checker: ts.TypeChecker) => {
   const symbol = type.getSymbol();
   return (
@@ -73,9 +76,10 @@ const isPlainObject = (type: ts.Type, checker: ts.TypeChecker) => {
     symbol !== undefined &&
     (symbol.flags & ts.SymbolFlags.Class) === 0 &&
     (symbol.declarations ?? []).length > 0 &&
-    (symbol.declarations ?? []).every(
-      (declaration) => !declaration.getSourceFile().isDeclarationFile,
-    )
+    (LIBRARY_OBJECTS.has(symbol.name) ||
+      (symbol.declarations ?? []).every(
+        (declaration) => !declaration.getSourceFile().isDeclarationFile,
+      ))
   );
 };
 

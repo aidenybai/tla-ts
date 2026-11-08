@@ -23,8 +23,15 @@ import {
   translateToString,
 } from "./expressions";
 import { and, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
-import { translateThrown } from "./exceptions";
-import { getAllocated, getHeap, translateObject, translatePropertyKey } from "./heap";
+import { translateEngineError, translateThrown } from "./exceptions";
+import {
+  getAllocated,
+  getHeap,
+  isObjectChange,
+  translateObject,
+  translateObjectChange,
+  translatePropertyKey,
+} from "./heap";
 import { useJavaScript } from "./javascript";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import {
@@ -46,6 +53,7 @@ import {
   define,
   except,
   exceptAt,
+  field,
   identifier,
   ifExpression,
   index,
@@ -390,6 +398,37 @@ const translateCallStatement = (
 ): Formula => {
   const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
     argumentNodes.map((argument) => translateExpression(argument, path.scope, context));
+  const heapSymbol = context.heap;
+  if (isObjectChange(expression) && heapSymbol !== undefined) {
+    const translated = translateObjectChange(expression, path.scope, context);
+    const name = context.names.getFresh(translated.isFallible ? "change" : "heap");
+    const withHeap = (heap: Expression) => ({
+      ...path,
+      scope: {
+        ...path.scope,
+        bindings: new Map([...path.scope.bindings, [heapSymbol, heap]]),
+      },
+    });
+    const definitions = [define(name, [], translated.change)];
+    if (!translated.isFallible) {
+      return letIn(definitions, continueWith(withHeap(identifier(name))));
+    }
+    const after = withHeap(field(identifier(name), "heap"));
+    const uncaught = apply("Assert", [boolean(false), string("TypeError")]);
+    return letIn(
+      definitions,
+      ifThenElse(
+        field(identifier(name), "isDone"),
+        continueWith(after),
+        frame.throwTo === undefined
+          ? leaf(uncaught)
+          : frame.throwTo(after, {
+              value: translateEngineError("TypeError", expression, context),
+              uncaught,
+            }),
+      ),
+    );
+  }
   if (isMethodCall(expression)) {
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
@@ -734,6 +773,7 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     }
     const isHeapChanged =
       ts.isObjectLiteralExpression(node) ||
+      isObjectChange(node) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
     if (context.heap !== undefined && isHeapChanged) changed.add(context.heap);

@@ -110,6 +110,12 @@ const LOGICAL_OPERATORS = new Map([
   [ts.SyntaxKind.BarBarToken, "Or" as const],
 ]);
 
+const OBJECT_TESTS = new Map([
+  ["isExtensible", "IsExtensible"],
+  ["isSealed", "IsSealed"],
+  ["isFrozen", "IsFrozen"],
+]);
+
 const concatenate = (parts: Expression[]) =>
   parts.reduce((left, right) => apply("\\o", [left, right]));
 
@@ -365,6 +371,18 @@ const translateCall = (
       return boolean(false);
     }
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
+  }
+  const test = OBJECT_TESTS.get(method);
+  if (global === "Object" && test !== undefined && node.arguments.length > 0) {
+    const argument = node.arguments[0];
+    const value = translateExpression(argument, scope, context);
+    if (getKind(argument, context) === "object") {
+      return useJavaScript(test, [getHeap(scope, node, context), value], context);
+    }
+    const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
+    if (names?.every((name) => name !== "object" && name !== "function")) {
+      return boolean(method !== "isExtensible");
+    }
   }
   const isPrototypeHasOwn =
     method === "call" &&

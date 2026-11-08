@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import type { Context } from "./context";
+import { type Context, isMethodCall, type MethodCall } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { useJavaScript } from "./javascript";
@@ -125,4 +125,48 @@ export const getAllocated = (node: ts.Node, context: Context): ts.ObjectLiteralE
   return ts.isObjectLiteralExpression(node) && isObjectValue(node, context)
     ? [...nested, node]
     : nested;
+};
+
+// The operators of the built-in functions that change an object's properties, with how many
+// arguments each takes and which of them must be objects.
+const OBJECT_CHANGES = new Map([
+  ["defineProperty", { operator: "DefineProperty", arity: 3, objects: [0, 2] }],
+  ["defineProperties", { operator: "DefineProperties", arity: 2, objects: [0, 1] }],
+  ["freeze", { operator: "Freeze", arity: 1, objects: [0] }],
+  ["seal", { operator: "Seal", arity: 1, objects: [0] }],
+  ["preventExtensions", { operator: "PreventExtensions", arity: 1, objects: [0] }],
+]);
+
+export const isObjectChange = (node: ts.Node): node is MethodCall =>
+  isMethodCall(node) &&
+  node.expression.expression.getText() === "Object" &&
+  OBJECT_CHANGES.has(node.expression.name.text);
+
+// The error that JavaScript itself may throw where a node runs.
+export const getEngineError = (node: ts.Node) =>
+  isObjectChange(node) && node.expression.name.text.startsWith("define") ? "TypeError" : undefined;
+
+// A call that changes an object's properties. A definition gives a record of the heap after it
+// and whether it succeeded, since one that fails throws a TypeError, and the others give the heap.
+export const translateObjectChange = (node: MethodCall, scope: Scope, context: Context) => {
+  const method = node.expression.name.text;
+  const change = OBJECT_CHANGES.get(method);
+  const isObject = (position: number) => {
+    const argument = node.arguments.at(position);
+    return argument !== undefined && getKind(argument, context) === "object";
+  };
+  if (change === undefined || !change.objects.every(isObject)) {
+    throw new TlaTypeScriptError(`Unsupported statement: ${node.getText()}`, node);
+  }
+  const values = node.arguments
+    .slice(0, change.arity)
+    .map((argument, position) =>
+      method === "defineProperty" && position === 1
+        ? translatePropertyKey(argument, scope, context)
+        : translateExpression(argument, scope, context),
+    );
+  return {
+    change: useJavaScript(change.operator, [getHeap(scope, node, context), ...values], context),
+    isFallible: method.startsWith("define"),
+  };
 };

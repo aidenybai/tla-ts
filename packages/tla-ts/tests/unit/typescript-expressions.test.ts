@@ -244,6 +244,45 @@ const CASES: Record<string, (string | [string, string])[]> = {
       "const point = { a: 1 };\nconst has = (value: { a: number }) => Object.hasOwn(value, 'a');",
     ],
     [
+      "[box.a, box.hasOwnProperty('a'), new Set(Object.keys(box)), caught]",
+      `const box: { a?: number } = {};
+      Object.defineProperty(box, "a", { value: 1 });
+      Object.defineProperty(box, "a", { value: 1, enumerable: false });
+      let caught = "none";
+      try {
+        Object.defineProperty(box, "a", { value: 2 });
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }`,
+    ],
+    [
+      "[caught, 'a' in box, box.b]",
+      `const box: { b?: number } = {};
+      Object.defineProperty(box, "b", { value: 1 });
+      let caught = false;
+      try {
+        Object.defineProperties(box, { a: { value: 1, writable: true }, b: { value: 2 } });
+      } catch {
+        caught = true;
+      }`,
+    ],
+    [
+      "[Object.isFrozen(frozen), Object.isSealed(sealed), Object.isFrozen(sealed), Object.isExtensible(empty), Object.isFrozen(empty), Object.isFrozen(1), Object.isExtensible(open)]",
+      `const frozen = { a: 1 };
+      const sealed = { a: 1 };
+      const empty = {};
+      const open = {};
+      Object.freeze(frozen);
+      Object.seal(sealed);
+      Object.preventExtensions(empty);`,
+    ],
+    [
+      "[copy.a, 'b' in copy, base.b]",
+      `const base = { a: 1, b: 0 };
+      Object.defineProperty(base, "b", { enumerable: false });
+      const copy = { ...base };`,
+    ],
+    [
       "[point.x, point === other]",
       "const make = () => ({ x: 4 });\nconst point = make();\nconst other = make();",
     ],

@@ -45,15 +45,45 @@ LOCAL Inherited == {
   "toString", "valueOf", "__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__",
   "__lookupSetter__"}
 
-EmptyObject == [keys |-> <<>>, values |-> <<>>]
+LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE]
+
+EmptyObject == [keys |-> <<>>, values |-> <<>>, attributes |-> <<>>, extensible |-> TRUE]
 
 Put(object, key, value) ==
   IF key = "__proto__"
   THEN Assert(FALSE, "tla-ts can't set an object's prototype")
-  ELSE [keys |-> IF key \\in DOMAIN object.values THEN object.keys ELSE Append(object.keys, key),
-        values |-> (key :> value) @@ object.values]
+  ELSE IF key \\in DOMAIN object.values
+  THEN [object EXCEPT !.values = (key :> value) @@ @]
+  ELSE [object EXCEPT !.keys = Append(@, key),
+                      !.values = (key :> value) @@ @,
+                      !.attributes = (key :> Writable) @@ @]
+
+LOCAL IsIndex(key) ==
+  /\\ Len(key) > 0
+  /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
+  /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
+  /\\ Assert(Len(key) < 10, "tla-ts can't order keys this big")
+
+RECURSIVE ToIndex(_)
+ToIndex(key) ==
+  IF key = ""
+  THEN 0
+  ELSE 10 * ToIndex(SubSeq(key, 1, Len(key) - 1))
+         + (CHOOSE digit \\in 0..9 : ToString(digit) = SubSeq(key, Len(key), Len(key)))
+
+OwnKeys(object) ==
+  SortSeq(SelectSeq(object.keys, IsIndex), LAMBDA left, right : ToIndex(left) < ToIndex(right))
+    \\o SelectSeq(object.keys, LAMBDA key : ~IsIndex(key))
+
+LOCAL EnumerableKeys(object) ==
+  SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
 
 Own(heap, ref) == heap[ref[Ref]].values
+
+Enumerable(heap, ref) ==
+  LET object == heap[ref[Ref]]
+  IN [key \\in {other \\in DOMAIN object.values : object.attributes[other].enumerable}
+        |-> object.values[key]]
 
 RECURSIVE PutAll(_, _, _)
 PutAll(object, values, keys) ==
@@ -61,7 +91,8 @@ PutAll(object, values, keys) ==
   THEN object
   ELSE PutAll(Put(object, Head(keys), values[Head(keys)]), values, Tail(keys))
 
-Spread(object, heap, ref) == PutAll(object, Own(heap, ref), heap[ref[Ref]].keys)
+Spread(object, heap, ref) ==
+  PutAll(object, Own(heap, ref), EnumerableKeys(heap[ref[Ref]]))
 
 HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
 
@@ -72,7 +103,14 @@ Has(heap, ref, key) ==
 
 Get(heap, ref, key) == IF Has(heap, ref, key) THEN Own(heap, ref)[key] ELSE Undefined
 
-SetProperty(heap, ref, key, value) == [heap EXCEPT ![ref[Ref]] = Put(@, key, value)]
+CanPut(heap, ref, key) ==
+  LET object == heap[ref[Ref]]
+  IN IF key \\in DOMAIN object.values THEN object.attributes[key].writable ELSE object.extensible
+
+SetProperty(heap, ref, key, value) ==
+  IF CanPut(heap, ref, key)
+  THEN [heap EXCEPT ![ref[Ref]] = Put(@, key, value)]
+  ELSE Assert(FALSE, "tla-ts can't throw the TypeError of a failed write")
 
 SameValue(left, right) ==
   /\\ TypeOf(left) = TypeOf(right)
@@ -80,6 +118,102 @@ SameValue(left, right) ==
               \\/ IsRef(left) \\/ IsRef(right),
             "tla-ts can't compare objects by identity")
   /\\ left = right
+
+ToBoolean(value) ==
+  CASE value \\in {Undefined, Null} -> FALSE
+    [] TypeOf(value) = "boolean" -> value
+    [] TypeOf(value) = "number" -> value # 0
+    [] TypeOf(value) = "string" -> value # ""
+    [] OTHER -> TRUE
+
+LOCAL Fields == {"value", "writable", "enumerable", "configurable"}
+
+LOCAL ToDescriptor(heap, ref) ==
+  IF Has(heap, ref, "get") \\/ Has(heap, ref, "set")
+  THEN Assert(FALSE, "tla-ts can't define accessors")
+  ELSE [fields |-> {field \\in Fields : Has(heap, ref, field)},
+        value |-> Get(heap, ref, "value"),
+        writable |-> ToBoolean(Get(heap, ref, "writable")),
+        enumerable |-> ToBoolean(Get(heap, ref, "enumerable")),
+        configurable |-> ToBoolean(Get(heap, ref, "configurable"))]
+
+LOCAL CanApply(object, key, descriptor) ==
+  LET has(field) == field \\in descriptor.fields
+      current == object.attributes[key]
+  IN IF key \\notin DOMAIN object.values
+     THEN object.extensible
+     ELSE \\/ current.configurable
+          \\/ /\\ ~(has("configurable") /\\ descriptor.configurable)
+             /\\ ~(has("enumerable") /\\ descriptor.enumerable # current.enumerable)
+             /\\ \\/ current.writable
+                \\/ /\\ ~(has("writable") /\\ descriptor.writable)
+                   /\\ ~(has("value") /\\ ~SameValue(descriptor.value, object.values[key]))
+
+LOCAL Apply(object, key, descriptor) ==
+  LET has(field) == field \\in descriptor.fields
+      isNew == key \\notin DOMAIN object.values
+      pick(field) ==
+        IF has(field) THEN descriptor[field]
+        ELSE IF isNew THEN FALSE
+        ELSE object.attributes[key][field]
+      value ==
+        IF has("value") THEN descriptor.value
+        ELSE IF isNew THEN Undefined
+        ELSE object.values[key]
+  IN [object EXCEPT
+        !.keys = IF isNew THEN Append(@, key) ELSE @,
+        !.values = (key :> value) @@ @,
+        !.attributes = (key :> [writable |-> pick("writable"),
+                                enumerable |-> pick("enumerable"),
+                                configurable |-> pick("configurable")]) @@ @]
+
+RECURSIVE ApplyAll(_, _, _)
+ApplyAll(object, keys, descriptors) ==
+  IF keys = <<>>
+  THEN [object |-> object, isDone |-> TRUE]
+  ELSE IF CanApply(object, Head(keys), Head(descriptors))
+  THEN ApplyAll(Apply(object, Head(keys), Head(descriptors)), Tail(keys), Tail(descriptors))
+  ELSE [object |-> object, isDone |-> FALSE]
+
+DefineProperty(heap, ref, key, descriptor) ==
+  IF IsRef(ref) /\\ IsRef(descriptor)
+  THEN LET applied == ApplyAll(heap[ref[Ref]], <<key>>, <<ToDescriptor(heap, descriptor)>>)
+       IN [heap |-> [heap EXCEPT ![ref[Ref]] = applied.object], isDone |-> applied.isDone]
+  ELSE [heap |-> heap, isDone |-> FALSE]
+
+DefineProperties(heap, ref, properties) ==
+  LET keys == EnumerableKeys(heap[properties[Ref]])
+      values == [position \\in DOMAIN keys |-> Own(heap, properties)[keys[position]]]
+  IN IF ~IsRef(ref) \\/ ~IsRef(properties) \\/ \\E position \\in DOMAIN keys : ~IsRef(values[position])
+     THEN [heap |-> heap, isDone |-> FALSE]
+     ELSE LET descriptors == [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])]
+              applied == ApplyAll(heap[ref[Ref]], keys, descriptors)
+          IN [heap |-> [heap EXCEPT ![ref[Ref]] = applied.object], isDone |-> applied.isDone]
+
+LOCAL Restrict(heap, ref, isFrozen) ==
+  LET object == heap[ref[Ref]]
+      attributes ==
+        [key \\in DOMAIN object.attributes |->
+          [object.attributes[key] EXCEPT !.configurable = FALSE,
+                                         !.writable = IF isFrozen THEN FALSE ELSE @]]
+  IN [heap EXCEPT ![ref[Ref]] = [object EXCEPT !.extensible = FALSE, !.attributes = attributes]]
+
+PreventExtensions(heap, ref) == [heap EXCEPT ![ref[Ref]].extensible = FALSE]
+
+Seal(heap, ref) == Restrict(heap, ref, FALSE)
+
+Freeze(heap, ref) == Restrict(heap, ref, TRUE)
+
+IsExtensible(heap, ref) == heap[ref[Ref]].extensible
+
+IsSealed(heap, ref) ==
+  LET object == heap[ref[Ref]]
+  IN ~object.extensible /\\ \\A key \\in DOMAIN object.attributes : ~object.attributes[key].configurable
+
+IsFrozen(heap, ref) ==
+  LET object == heap[ref[Ref]]
+  IN IsSealed(heap, ref) /\\ \\A key \\in DOMAIN object.attributes : ~object.attributes[key].writable
+
 ===============================================================================`;
 
 export const useJavaScript = (operator: string, args: Expression[], context: Context) => {
