@@ -17,10 +17,10 @@ import {
   isOutOfRange,
   overrideWithJava,
 } from "./builtins";
-import type { Builtin, BuiltinArgument } from "./evaluate";
+import type { Builtin, BuiltinArgument, Context } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import { createBagsOperators } from "./bags";
-import { createJsonOperators, type FileSystem } from "./json";
+import { createIoUtilsOperators, createJsonOperators, type FileSystem } from "./json";
 import { createRandomizationOperators, createRandomSubsetSet } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc/tlcext-operators";
 import { createTlcOperators } from "./tlc/tlc-operators";
@@ -520,8 +520,10 @@ export const getJavaOverrides = (
   runtime: CheckerRuntime,
   files: FileSystem,
   builtins: ReadonlyMap<string, Builtin>,
+  evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
+  if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
   const operators = getStandardModule(name, print, runtime, files, builtins)?.operators;
   return name === "Randomization" && operators
