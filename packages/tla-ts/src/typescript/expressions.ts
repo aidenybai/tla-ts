@@ -9,6 +9,7 @@ import {
 } from "./collections";
 import {
   type Context,
+  formatString,
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
@@ -20,7 +21,16 @@ import { TlaTypeScriptError } from "../errors";
 import { wrap, wrapEquated } from "./formula";
 import { getDefinition, translateHelperCall, translateLocalCall } from "./functions";
 import type { Scope } from "./scope";
-import { getKind, isBooleanLike, isNumericKey, isObject, translateUnknown } from "./types";
+import {
+  getField,
+  getKind,
+  getPropertyKey,
+  isBooleanLike,
+  isFieldName,
+  isNumericKey,
+  isObject,
+  translateUnknown,
+} from "./types";
 
 interface Field {
   key: string;
@@ -85,12 +95,17 @@ const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, co
   return sequences.length === 1 ? sequences[0] : sequences.map(wrap).join(" \\o ");
 };
 
-const getField = (key: string) => (isNumericKey(key) ? `[${key}]` : `.${key}`);
-
-const formatRecord = (fields: Field[]) =>
-  fields.every((field) => isNumericKey(field.key))
-    ? fields.map((field) => `(${field.key} :> ${field.value})`).join(" @@ ")
-    : `[${fields.map((field) => `${field.key} |-> ${field.value}`).join(", ")}]`;
+const formatRecord = (fields: Field[], node: ts.Node) => {
+  if (fields.every((field) => isNumericKey(field.key))) {
+    return fields.map((field) => `(${field.key} :> ${field.value})`).join(" @@ ");
+  }
+  if (fields.some((field) => isNumericKey(field.key))) {
+    throw new TlaTypeScriptError("Give an object only numeric keys or none", node);
+  }
+  return fields.every((field) => isFieldName(field.key))
+    ? `[${fields.map((field) => `${field.key} |-> ${field.value}`).join(", ")}]`
+    : fields.map((field) => `(${formatString(field.key)} :> ${field.value})`).join(" @@ ");
+};
 
 const translateObjectLiteral = (
   node: ts.ObjectLiteralExpression,
@@ -99,9 +114,7 @@ const translateObjectLiteral = (
 ) => {
   const checker = context.checker;
   const getKey = (property: ts.ObjectLiteralElementLike) =>
-    property.name === undefined || ts.isComputedPropertyName(property.name)
-      ? undefined
-      : property.name.getText().replace(/^["']|["']$/g, "");
+    property.name === undefined ? undefined : getPropertyKey(property.name);
   const getValue = (property: ts.ObjectLiteralElementLike) => {
     if (ts.isPropertyAssignment(property)) {
       return translateExpression(property.initializer, scope, context);
@@ -124,6 +137,7 @@ const translateObjectLiteral = (
         }
         return { key, value: getValue(property) };
       }),
+      node,
     );
   }
   // { ...base, a: 1 } updates fields that base already has with EXCEPT.
@@ -174,6 +188,7 @@ const translateObjectLiteral = (
             : getValue(member),
         };
       }),
+    node,
   );
 };
 
@@ -275,10 +290,10 @@ const translateToString = (node: ts.Expression, scope: Scope, context: Context) 
 
 const translateTemplate = (node: ts.TemplateExpression, scope: Scope, context: Context) => {
   const parts = [
-    ...(node.head.text === "" ? [] : [JSON.stringify(node.head.text)]),
+    ...(node.head.text === "" ? [] : [formatString(node.head.text)]),
     ...node.templateSpans.flatMap((span) => {
       const value = translateToString(span.expression, scope, context);
-      return span.literal.text === "" ? [value] : [value, JSON.stringify(span.literal.text)];
+      return span.literal.text === "" ? [value] : [value, formatString(span.literal.text)];
     }),
   ];
   return parts.length === 1 ? parts[0] : parts.map(wrap).join(" \\o ");
@@ -390,6 +405,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
           key: property.name,
           value: getPreviousVariable(property.name, node, context),
         })),
+      node,
     );
   }
   const declared = translateDeclared(node, symbol, scope, context);
@@ -421,7 +437,7 @@ const translatePropertyAccess = (
   }
   const size =
     name === "length" || name === "size" ? translateSize(receiver, scope, context) : undefined;
-  return size ?? `${wrap(translateExpression(receiver, scope, context))}.${name}`;
+  return size ?? `${wrap(translateExpression(receiver, scope, context))}${getField(name)}`;
 };
 
 const translateElementAccess = (

@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import {
   type Context,
   type Definition,
+  formatString,
   type FunctionNode,
   getCallee,
   getFunction,
@@ -236,7 +237,7 @@ export const translateThrow = (statement: ts.ThrowStatement, scope: Scope, conte
   const message =
     ts.isNewExpression(thrown) && thrown.arguments?.[0] !== undefined
       ? translateExpression(thrown.arguments[0], scope, context)
-      : JSON.stringify(thrown.getText());
+      : formatString(thrown.getText());
   return `Assert(FALSE, ${message})`;
 };
 

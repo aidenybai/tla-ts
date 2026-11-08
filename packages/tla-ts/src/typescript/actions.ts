@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { getUpdatedValue, MUTATING_METHODS } from "./collections";
 import {
   type Context,
+  formatString,
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
@@ -12,7 +13,7 @@ import { translateExpression, translateKey } from "./expressions";
 import { and, DISABLED, type Formula, letIn, text, wrap, wrapEquated } from "./formula";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import { bindPattern, bindValues, createStateScope, type Scope } from "./scope";
-import { getKind } from "./types";
+import { getField, getKind } from "./types";
 
 interface Path {
   scope: Scope;
@@ -75,7 +76,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
       throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
     }
     const target = getTarget(node.expression, path, context);
-    return { ...target, selector: `${target.selector}.${node.name.text}` };
+    return { ...target, selector: `${target.selector}${getField(node.name.text)}` };
   }
   if (ts.isElementAccessExpression(node)) {
     const target = getTarget(node.expression, path, context);
@@ -149,7 +150,7 @@ const assignPattern = (
         return assignPattern(
           property.name,
           undefined,
-          `${wrap(value)}.${property.name.text}`,
+          `${wrap(value)}${getField(property.name.text)}`,
           current,
           context,
         );
@@ -158,7 +159,7 @@ const assignPattern = (
         return assignPattern(
           property.initializer,
           undefined,
-          `${wrap(value)}.${property.name.text}`,
+          `${wrap(value)}${getField(property.name.text)}`,
           current,
           context,
         );
@@ -239,7 +240,7 @@ const translateCallStatement = (
       return and([text(`PrintT(${value})`), continueWith(path)]);
     }
     if (isConsole && method === "assert") {
-      const message = values[1] ?? JSON.stringify("Assertion failed");
+      const message = values[1] ?? formatString("Assertion failed");
       return and([text(`Assert(${values[0]}, ${message})`), continueWith(path)]);
     }
     if (MUTATING_METHODS.has(method)) {

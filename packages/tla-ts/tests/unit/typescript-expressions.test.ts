@@ -54,6 +54,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
     '"hello".length',
     ['letter === "a"', 'const letter: string = "a";'],
     ['letter !== "b"', 'const letter: string = "a";'],
+    "'a\\0b\\u0001c\\td\"e\\\\f'",
   ],
   arrays: [
     "[]",
@@ -156,6 +157,8 @@ const CASES: Record<string, (string | [string, string])[]> = {
     "'a' in { a: 1 }",
     "Object.fromEntries(new Set(['a', 'b']).values().map((key) => [key, key + '!']))",
     "({ 1: 'one', 2: 'two' })[2]",
+    "{ IF: 1, 'b-c': 2, bre\\u0061k: 3 }",
+    "{ IF: 1, 'b-c': 2 }['b-c'] + { IF: 1 }.IF",
   ],
   helpers: [
     ["double(4)", "const double = (value: number) => value * 2;"],

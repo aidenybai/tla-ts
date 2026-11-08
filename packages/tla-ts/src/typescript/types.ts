@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import ts from "@typescript/typescript6";
-import { type Context, translateString, type Unknown } from "./context";
+import { type Context, formatString, translateString, type Unknown } from "./context";
+import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
 import { indent, wrap } from "./formula";
 
@@ -63,6 +64,19 @@ export const isSet = (node: ts.Expression, context: Context) =>
 
 // TLA+ records only have identifier fields, so an object with numeric keys becomes a function.
 export const isNumericKey = (key: string) => /^-?\d+$/.test(key);
+
+export const isFieldName = (key: string) => /^\w*[A-Za-z]\w*$/.test(key) && !KEYWORDS.has(key);
+
+// A key that can't be a record field, such as a keyword, selects a function by its string.
+export const getField = (key: string) => {
+  if (isNumericKey(key)) return `[${key}]`;
+  return isFieldName(key) ? `.${key}` : `[${formatString(key)}]`;
+};
+
+export const getPropertyKey = (name: ts.PropertyName) =>
+  ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)
+    ? name.text
+    : undefined;
 
 const getLiteral = (type: ts.Type, context: Context) => {
   if (type.isStringLiteral()) return translateString(type.value, context);
@@ -174,6 +188,9 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
   );
   if (!Array.isArray(fields)) return fields;
   const keys = properties.map((property) => property.name);
+  const unnamed = keys.find((key) => !isNumericKey(key) && !isFieldName(key));
+  if (unnamed !== undefined)
+    return getInfinite(type, `TLA+ can't name the field ${unnamed}`, context);
   if (!keys.some(isNumericKey)) {
     return `[${keys.map((key, index) => `${key} : ${fields[index]}`).join(", ")}]`;
   }

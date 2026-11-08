@@ -125,6 +125,11 @@ const CASES: Record<string, Case[]> = {
       statements: "var local = 1; local += 2; count = local;",
     },
     {
+      variables: "count = 0, record = { IF: 1, 'b-c': 2 }",
+      statements:
+        "record.IF = 5; record['b-c'] += 1; const { 'b-c': inner, IF } = record; count = inner + IF;",
+    },
+    {
       variables: "phase: 'a' | 'b' | 'c' = 'b', count = 0",
       statements: `switch (phase) {
         case 'a':

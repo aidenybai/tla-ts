@@ -106,8 +106,21 @@ export const getFunction = (node: ts.Node | undefined): FunctionNode | undefined
 export const getCallee = (node: ts.Expression, context: Context) =>
   getFunction(node) ?? getFunction(getSymbol(node, context.checker)?.valueDeclaration);
 
+const ESCAPES = new Map([
+  ["\\", "\\\\"],
+  ['"', '\\"'],
+  ["\n", "\\n"],
+  ["\t", "\\t"],
+  ["\r", "\\r"],
+  ["\f", "\\f"],
+]);
+
+// TLA+ strings escape only these characters, and hold any other as it is.
+export const formatString = (value: string) =>
+  `"${value.replace(/[\\"\n\t\r\f]/g, (character) => ESCAPES.get(character) ?? character)}"`;
+
 export const translateString = (value: string, context: Context) =>
-  context.modelValues.get(value) ?? JSON.stringify(value);
+  context.modelValues.get(value) ?? formatString(value);
 
 // A name, a number, a string, or the @ of an EXCEPT, which costs nothing to repeat.
 const isTrivial = (value: string) => /^(@|[A-Za-z_]\w*'?|-?\d+|"[^"\\]*")$/.test(value);

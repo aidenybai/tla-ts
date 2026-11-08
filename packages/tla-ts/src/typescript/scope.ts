@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { type Context, getSymbol } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { indent, wrap } from "./formula";
+import { getField, getPropertyKey } from "./types";
 
 export interface Scope {
   // The TLA+ expression for each variable, parameter, and local in scope.
@@ -79,10 +80,16 @@ export const bindPatternInline = (
     if (element.dotDotDotToken !== undefined || element.initializer !== undefined) {
       throw new TlaTypeScriptError("Rest elements and default values aren't supported", element);
     }
-    const part = ts.isArrayBindingPattern(pattern)
-      ? `${wrap(value)}[${index + 1}]`
-      : `${wrap(value)}.${(element.propertyName ?? element.name).getText()}`;
-    return bindPatternInline(element.name, part, current, context);
+    if (ts.isArrayBindingPattern(pattern)) {
+      return bindPatternInline(element.name, `${wrap(value)}[${index + 1}]`, current, context);
+    }
+    const name = element.propertyName ?? element.name;
+    const key =
+      ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)
+        ? undefined
+        : getPropertyKey(name);
+    if (key === undefined) throw new TlaTypeScriptError("Unsupported key", element);
+    return bindPatternInline(element.name, `${wrap(value)}${getField(key)}`, current, context);
   }, scope);
 };
 
