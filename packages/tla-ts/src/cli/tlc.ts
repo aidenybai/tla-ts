@@ -97,7 +97,6 @@ const EXIT_CODES: Record<CheckStatus, number> = {
 const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
 
 // TLC names the file of a -dump by its format unless the name already ends that way.
-// The Json module reads and writes with java.io, which fails on a directory this way.
 const checkNotDirectory = (path: string) => {
   if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
     throw new TlaEvaluationError(`${path} (Is a directory)`);

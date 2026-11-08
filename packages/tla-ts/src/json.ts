@@ -46,10 +46,8 @@ const OPEN_OPTIONS = new Set([
 
 const UTF_8_NAMES = new Set(["utf-8", "utf8", "unicode-1-1-utf-8"]);
 
-// The charsets every JVM supports besides UTF-8, which tla-ts doesn't encode.
 const STANDARD_CHARSETS = new Set(["us-ascii", "iso-8859-1", "utf-16", "utf-16be", "utf-16le"]);
 
-// Value#toRcd: a function whose domain holds only strings.
 const toRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
   const functionValue = toFiniteFunction(value);
@@ -85,7 +83,6 @@ const toObjectJson = (functionValue: FunctionValue) =>
     )
     .join(",")}}`;
 
-// TLC writes a function other than a tuple or a record as an array when it is a sequence.
 const toFunctionJson = (value: Value) => {
   const functionValue = toFiniteFunction(value);
   const elements = getSequenceElements(functionValue);
