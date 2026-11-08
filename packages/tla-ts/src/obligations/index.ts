@@ -67,7 +67,7 @@ const formatLocus = (locus: Locus | undefined) =>
   locus ? `${locus.startLine}:${locus.startColumn}:${locus.endLine}:${locus.endColumn}` : "";
 
 const findTab = (source: string) => {
-  const tokens = tokenize(source);
+  const tokens = tokenize(source, true);
   const lines = source.split("\n");
   const endLine = tokens.at(-1)?.line ?? lines.length;
   const moduleEnd =
@@ -132,6 +132,18 @@ const loadMule = (
 ): Mule => {
   if (!MODULE_HEADER.test(input.source)) throw new TlaProofError("No tokens in file");
   const parsed = parseSource(input.source);
+  const proofFailure = Array.isArray(parsed) ? parsed[0].proof : undefined;
+  if (Array.isArray(parsed) && proofFailure) {
+    const locus = {
+      file: input.file,
+      startLine: parsed[0].line,
+      startColumn: parsed[0].column,
+      endLine: proofFailure.stop.line,
+      endColumn: proofFailure.stop.column,
+    };
+    warnError(onWarning, locus, parsed[0].reason);
+    throw new TlaProofError(parsed[0].reason, { failure: proofFailure.exception });
+  }
   if (Array.isArray(parsed)) {
     parsed.forEach((failure) => {
       const text = `File ${JSON.stringify(input.file)}, line ${failure.line}, character ${failure.column}\n${failure.reason}`;
@@ -146,7 +158,7 @@ const loadMule = (
             endLine: failure.line,
             endColumn: failure.column + 1,
           },
-          failure.reason,
+          `${failure.reason}\n`,
         ),
       );
     });

@@ -1,4 +1,5 @@
 import type { SourceRange } from "./ast";
+import type { Locus } from "./obligations/expression";
 import { EXIT_STATUS, getExitCode, setExitCode } from "./exit-codes";
 import type { PcalNode } from "./pcal/ast";
 import type { Value } from "./values";
@@ -29,6 +30,8 @@ export interface SyntaxFailure {
   line: number;
   column: number;
   isEnd: boolean;
+  // tlapm's proof parser fails over a range, up to stop, with its own exception.
+  proof?: { stop: { line: number; column: number }; exception: string };
 }
 
 // An error SANY reports at a location, such as "In module M" or a range in a module.
@@ -239,6 +242,18 @@ export class TlaProverError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
     this.name = "TlaProverError";
+  }
+}
+
+// compute_meth rejects a method pragma, which tlapm reports where the pragma or the proof citing it
+// is, and then leaves the obligation unproved.
+export class TlaMethodError extends TlaProverError {
+  readonly locus: Locus | undefined;
+
+  constructor(message: string, locus: Locus | undefined) {
+    super(message);
+    this.name = "TlaMethodError";
+    this.locus = locus;
   }
 }
 

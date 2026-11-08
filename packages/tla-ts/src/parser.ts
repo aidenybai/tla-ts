@@ -259,6 +259,78 @@ const TLAPM_PUNCTUATION = new Set([
 
 const UNNAMED_STEP_LABELS = new Set(["", "*", "-"]);
 
+interface Point {
+  line: number;
+  column: number;
+}
+
+// A location as tlapm's Loc.locus has it, with stop just past the end.
+interface Span {
+  start: Point;
+  stop: Point;
+}
+
+// What tlapm's proof parser reads a proof as before nesting it: leaf proofs, and steps without
+// their proofs. first is the index of the first token, before any PROOF, and end of the last.
+type Preproof =
+  | { kind: "Leaf"; proof: Proof; span: Span; first: number; end: number }
+  | {
+      kind: "Step";
+      token: Token;
+      isProof: boolean;
+      body: StepBody;
+      head: SourceRange;
+      statement: SourceRange;
+      span: Span;
+      first: number;
+      start: number;
+      end: number;
+    };
+
+interface NestedProof {
+  proof: Proof | undefined;
+  span: Span;
+  next: number;
+  end: number | undefined;
+}
+
+interface NestedSteps {
+  level: number;
+  steps: ProofStep[];
+  span: Span;
+  next: number;
+  end: number;
+}
+
+const LEAF_NAMES: Record<string, string> = {
+  Obvious: "n OBVIOUS",
+  Omitted: "n OMITTED",
+  By: " BY",
+};
+
+const comparePoints = (left: Point, right: Point) =>
+  left.line - right.line || left.column - right.column;
+
+const mergeSpans = (left: Span, right: Span): Span => ({
+  start: comparePoints(left.start, right.start) <= 0 ? left.start : right.start,
+  stop: comparePoints(left.stop, right.stop) >= 0 ? left.stop : right.stop,
+});
+
+const getSpan = (range: SourceRange): Span => ({
+  start: { line: range.start.line, column: range.start.column },
+  stop: { line: range.end.line, column: range.end.column + 1 },
+});
+
+// P_parser fails with these where it can't nest a proof's steps.
+const createProofError = (message: string, span: Span, exception = "Proof.Parser") =>
+  new TlaSyntaxError(message, undefined, {
+    reason: message,
+    line: span.start.line,
+    column: span.start.column,
+    isEnd: false,
+    proof: { stop: span.stop, exception },
+  });
+
 const FACT_KEYWORDS = new Set([
   "CASE",
   "CHOOSE",
@@ -347,7 +419,11 @@ export const extractModule = (source: string, name: string) => {
 // generator.
 type ParseMode = "tlc" | "tlapm" | "sany";
 
-const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source)): Module => {
+const parse = (
+  source: string,
+  mode: ParseMode,
+  sourceTokens = tokenize(source, mode === "tlapm"),
+): Module => {
   const isTlapm = mode === "tlapm";
   const tokens = isTlapm ? sourceTokens : sourceTokens.map(readAtAsIdentifier);
   const cursor = { index: 0, offsideColumns: [] as number[] };
@@ -436,6 +512,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     if (TLAPM_PUNCTUATION.has(token.text) || token.kind === "Number" || token.kind === "Decimal")
       return token.text;
     if (token.kind === "String") return JSON.stringify(token.text);
+    if (token.kind === "Step") return token.text;
     if (isTlapmKeyword(token)) return `keyword ${token.text}`;
     return token.kind === "Identifier" ? `identifier ${token.text}` : `operator ${token.text}`;
   };
@@ -972,7 +1049,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     const isStep = token.kind === "Step" && isStepReference(token);
-    if (isStep && getProofLevel() < 0 && proofLevels.length <= 1) {
+    if (!isTlapm && isStep && getProofLevel() < 0 && proofLevels.length <= 1) {
       throw createError("Step number used outside proof", token);
     }
     if (isStep && token.text[1] === "+") {
@@ -1656,10 +1733,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     return defs;
   };
 
-  const parseFacts = () => ({
-    facts: isFactAhead() ? parseSeparated(parseFact) : [],
-    defs: accept("DEF") || accept("DEFS") ? parseDefs() : [],
-  });
+  const parseFacts = () => {
+    const facts = isFactAhead() ? parseSeparated(parseFact) : [];
+    const isDef = accept("DEF") || accept("DEFS");
+    if (isTlapm && facts.length === 0 && !isDef) throw createUnexpected("Expected a fact");
+    return { facts, defs: isDef ? parseDefs() : [] };
+  };
 
   const parseUseOrHide = (): UseOrHide => {
     const start = cursor.index;
@@ -1849,25 +1928,27 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     return withRange({ ...step, body, head, statement, proof }, start);
   };
 
-  const parseProofBody = (): Proof => {
-    const location = getLocation(peek());
-    if (isAt("BY") || (isAt("PROOF") && isAt("BY", 1))) {
-      accept("PROOF");
-      advance();
+  // A BY, OBVIOUS, or OMITTED proof, located at its PROOF if it has one.
+  const parseLeafProof = (
+    location: SourceLocation,
+  ): Exclude<Proof, { kind: "Steps" }> | undefined => {
+    if (accept("BY")) {
       const keyword = getRange(cursor.index - 1);
       return { kind: "By", isOnly: accept("ONLY"), ...parseFacts(), keyword, location };
     }
-    const terminal = peek(isAt("PROOF") ? 1 : 0);
-    if (
-      terminal.kind === "Keyword" &&
-      (terminal.text === "OBVIOUS" || terminal.text === "OMITTED")
-    ) {
-      accept("PROOF");
-      advance();
-      const keyword = getRange(cursor.index - 1);
-      return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", keyword, location };
-    }
+    const terminal = peek();
+    if (terminal.kind !== "Keyword" || (terminal.text !== "OBVIOUS" && terminal.text !== "OMITTED"))
+      return undefined;
+    advance();
+    const keyword = getRange(cursor.index - 1);
+    return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", keyword, location };
+  };
+
+  const parseProofBody = (): Proof => {
+    const location = getLocation(peek());
     accept("PROOF");
+    const leaf = parseLeafProof(location);
+    if (leaf) return leaf;
     const steps = [parseStep()];
     while (steps[steps.length - 1].body.kind !== "Qed") steps.push(parseStep());
     return { kind: "Steps", level: getProofLevel(), steps, location };
@@ -1879,6 +1960,164 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     const proof = withProofScope(parseProofBody);
     proofLevels.pop();
     return withRange(proof, start);
+  };
+
+  const isPreproofStart = () =>
+    peek().kind === "Step" || (peek().kind === "Keyword" && PROOF_STARTS.has(peek().text));
+
+  // tlapm locates a USE or HIDE step by its keywords and DEF clause.
+  const getStepSpan = (head: SourceRange, body: StepBody) => {
+    if (body.kind !== "Use" && body.kind !== "Hide") return getSpan(head);
+    const lastDef = body.defs[body.defs.length - 1]?.location.range;
+    return mergeSpans(getSpan({ ...head, end: head.start }), getSpan(lastDef ?? body.keyword));
+  };
+
+  // P_parser.preproof.
+  const parsePreproof = (): Preproof => {
+    const first = cursor.index;
+    const location = getLocation(peek());
+    const isProof = accept("PROOF");
+    const leaf = parseLeafProof(location);
+    if (leaf) {
+      const proof = withRange(leaf, first);
+      return { kind: "Leaf", proof, span: getSpan(proof.keyword), first, end: cursor.index - 1 };
+    }
+    const token = peek();
+    if (token.kind !== "Step") {
+      throw createUnexpected(`Expected a step number but found ${describeToken(token)}`);
+    }
+    const start = cursor.index;
+    advance();
+    const statementStart = cursor.index;
+    const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
+    const head = getRange(start);
+    return {
+      kind: "Step",
+      token,
+      isProof,
+      body,
+      head,
+      statement: getRange(statementStart),
+      span: getStepSpan(head, body),
+      first,
+      start,
+      end: cursor.index - 1,
+    };
+  };
+
+  // P_parser.to_proof: the proof that starts at index, where a backtrack leaves the proof
+  // implicitly omitted.
+  const nestProof = (
+    items: Preproof[],
+    index: number,
+    level: number,
+    levelSpan: Span,
+  ): NestedProof => {
+    const item = items[index];
+    if (!item) return { proof: undefined, span: levelSpan, next: index, end: undefined };
+    if (item.kind === "Leaf")
+      return { proof: item.proof, span: item.span, next: index + 1, end: item.end };
+    const nested = nestSteps(items, index, level, levelSpan, true);
+    if (!nested) return { proof: undefined, span: levelSpan, next: index, end: undefined };
+    const location = {
+      ...getLocation(tokens[item.first]),
+      range: getRange(item.first, nested.end),
+    };
+    return {
+      proof: { kind: "Steps", level: nested.level, steps: nested.steps, location },
+      span: nested.span,
+      next: nested.next,
+      end: nested.end,
+    };
+  };
+
+  // P_parser.to_steps: the steps at one level through its QED step, or undefined to backtrack.
+  const nestSteps = (
+    items: Preproof[],
+    index: number,
+    level: number,
+    levelSpan: Span,
+    isFirst: boolean,
+  ): NestedSteps | undefined => {
+    const item = items[index];
+    if (!item) {
+      throw createProofError(
+        `Unexpected end of (sub)proof at level ${level} before QED step`,
+        levelSpan,
+      );
+    }
+    if (item.kind === "Leaf") {
+      throw createProofError(
+        `Expecting a proof step but found a${LEAF_NAMES[item.proof.kind]} leaf proof`,
+        item.span,
+      );
+    }
+    if (!isFirst && item.isProof) {
+      throw createProofError("PROOF keyword found in step that does not begin subproof", item.span);
+    }
+    const implicit = item.token.text[1];
+    if (implicit === "+" && !isFirst) {
+      throw createProofError("<+> used but no subproof expected", item.span);
+    }
+    const stepLevel =
+      implicit === "*"
+        ? level - (isFirst && !item.isProof ? 1 : 0)
+        : implicit === "+"
+          ? level
+          : getStepLevel(item.token);
+    if (stepLevel < level || (!isFirst && stepLevel > level)) return undefined;
+    const proof = PROVABLE_STEPS.has(item.body.kind)
+      ? nestProof(items, index + 1, stepLevel + 1, item.span)
+      : { proof: undefined, span: item.span, next: index + 1, end: undefined };
+    const end = proof.end ?? item.end;
+    const step: ProofStep = {
+      name: getStepName(item.token),
+      token: item.token.text,
+      body: item.body,
+      head: item.head,
+      statement: item.statement,
+      proof: proof.proof,
+      location: { ...getLocation(item.token), range: getRange(item.start, end) },
+    };
+    const span = mergeSpans(item.span, proof.span);
+    if (item.body.kind === "Qed") {
+      return { level: stepLevel, steps: [step], span, next: proof.next, end };
+    }
+    const rest = nestSteps(
+      items,
+      proof.next,
+      stepLevel,
+      { start: span.stop, stop: span.stop },
+      false,
+    );
+    return (
+      rest && {
+        ...rest,
+        level: stepLevel,
+        steps: [step, ...rest.steps],
+        span: mergeSpans(span, rest.span),
+      }
+    );
+  };
+
+  // P_parser.proof and toplevel: tlapm reads every step and leaf proof that follows, then nests
+  // them by level, where the first step counts as having PROOF.
+  const parseTlapmProof = () => {
+    if (!isPreproofStart()) return undefined;
+    const items: Preproof[] = [];
+    while (isPreproofStart()) items.push(parsePreproof());
+    const first = items[0];
+    if (first.kind === "Step") items[0] = { ...first, isProof: true };
+    const nested = nestProof(items, 0, 0, first.span);
+    const extra = items[nested.next];
+    if (extra) {
+      throw createProofError(
+        "extra step(s) after finished proof",
+        extra.span,
+        "Proof.Parser.toplevel",
+      );
+    }
+    return nested.proof;
   };
 
   // SANY binds the name of a theorem or assumption that a module already defines to the first
@@ -1899,6 +2138,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     }
     const parsed = withProofScope(() => {
       const statement = isAt("ASSUME") ? parseAssumeProve() : parseExpression();
+      if (isTlapm) return { statement, proof: parseTlapmProof() };
       return { statement, proof: isProofStart(peek()) ? parseProof() : undefined };
     });
     const statement = parsed.statement;

@@ -1,6 +1,8 @@
 // tlapm's method pragmas: the new (*{ by (prover:"zenon"; timeout:@) }*) after a definition, which
 // E_parser.read_new_method reads into a Bpragma, and the old (*{ by (zenon) }*) of Method_prs.
 
+import type { Locus } from "./expression";
+
 type PragmaValue =
   | { kind: "Default" }
   | { kind: "String"; value: string }
@@ -9,6 +11,7 @@ type PragmaValue =
 export interface PragmaSetting {
   hint: string;
   value: PragmaValue;
+  location: Locus;
 }
 
 interface Position {
@@ -16,11 +19,12 @@ interface Position {
   column: number;
 }
 
-type Token =
-  | { kind: "Ident"; text: string }
-  | { kind: "String"; text: string }
-  | { kind: "Number"; text: string }
-  | { kind: "Punct"; text: string };
+interface Token {
+  kind: "Ident" | "String" | "Number" | "Punct";
+  text: string;
+  start: Position;
+  length: number;
+}
 
 const PUNCTUATION = ["(", ")", ";", ":", "@", ","];
 
@@ -58,18 +62,18 @@ const tokenizePragma = (lines: string[], start: Position) => {
       /^"(\\.|[^"\\])*"/.exec(rest);
     if (match) {
       const text = match[0];
-      tokens.push(
-        text.startsWith('"')
-          ? { kind: "String", text: JSON.parse(text) }
-          : /^\d/.test(text)
-            ? { kind: "Number", text }
-            : { kind: "Ident", text },
-      );
+      const isString = text.startsWith('"');
+      tokens.push({
+        kind: isString ? "String" : /^\d/.test(text) ? "Number" : "Ident",
+        text: isString ? JSON.parse(text) : text,
+        start: { ...position },
+        length: text.length,
+      });
       position.column += text.length;
       continue;
     }
     if (!PUNCTUATION.includes(rest[0])) return undefined;
-    tokens.push({ kind: "Punct", text: rest[0] });
+    tokens.push({ kind: "Punct", text: rest[0], start: { ...position }, length: 1 });
     position.column++;
   }
   return undefined;
@@ -164,7 +168,7 @@ export const readOldMethod = (lines: string[], start: Position) => {
 
 // read_new_method: by (hint: value; ...), repeated, where a value is a string, a number, or @ for
 // the argument the definition is applied to.
-export const readNewMethod = (lines: string[], start: Position) => {
+export const readNewMethod = (lines: string[], start: Position, file: string) => {
   const tokens = tokenizePragma(lines, start);
   if (!tokens) return undefined;
   let index = 0;
@@ -183,7 +187,17 @@ export const readNewMethod = (lines: string[], start: Position) => {
       index++;
       const value = getValue(tokens[index++]);
       if (!value) return undefined;
-      settings.push({ hint: hint.text, value });
+      settings.push({
+        hint: hint.text,
+        value,
+        location: {
+          file,
+          startLine: hint.start.line + 1,
+          startColumn: hint.start.column + 1,
+          endLine: hint.start.line + 1,
+          endColumn: hint.start.column + 1 + hint.length,
+        },
+      });
       if (isPunct(tokens[index], ")")) break;
       if (!isPunct(tokens[index], ";")) return undefined;
       index++;

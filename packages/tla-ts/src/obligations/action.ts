@@ -24,7 +24,7 @@ import {
   type Scope,
 } from "./expression";
 import { getLevelInfo, LEVEL_NUMBERS } from "./levels";
-import { rewriteUnchanged } from "./temporal";
+import { expandFairness, rewriteUnchanged } from "./temporal";
 
 // Which of ENABLED and \cdot a pass handles, and whether it may expand the definitions that
 // soundness needs expanded, as the AutoUSE directive allows.
@@ -447,7 +447,13 @@ export const lambdify = (
   expression: Expr,
   options = LAMBDIFY_ALL,
 ) => {
-  const expanded = expandDefinitions(options, onWarning, scope, expression, undefined);
+  const expanded = expandDefinitions(
+    options,
+    onWarning,
+    scope,
+    options.isEnabled ? expandFairness(expression) : expression,
+    undefined,
+  );
   return checkArity(lambdifyOperators(anonymizer, onWarning, scope, expanded, options, false));
 };
 

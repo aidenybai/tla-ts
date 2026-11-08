@@ -1,13 +1,16 @@
 // Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
 
-import { TlaProverError, TlaUnsupportedError } from "../errors";
+import { TlaMethodError, TlaProverError, TlaUnsupportedError } from "../errors";
 import {
   getChildren,
   getLocusPosition,
+  getLocusPrefix,
   mapHyp,
   type Expr,
   type Hyp,
+  type ObligationWarning,
   type Sequent,
+  type Warn,
 } from "../obligations/expression";
 import { getObligations, type PrintedObligation } from "../obligations";
 import { renderDoc } from "../obligations/format";
@@ -25,13 +28,13 @@ import {
   normalizeExpand,
   normalizeSequent,
 } from "./prep/normalize";
-import { findMethods, type Method } from "./prep/methods";
+import { FRONTENDS, findMethods, type Method } from "./prep/methods";
 import { encodePtl } from "./ptl/encode";
 import { encodeSmt } from "./smt/encode";
 import type { EncodingSession } from "./smt/rewrite";
 import { encodeZenon } from "./zenon/encode";
 import type { TlapmResult } from "./tlapm/tlapm";
-import { TLAPS_MODULE } from "./tlaps-module";
+import { TLAPM_LIBRARY } from "./tlapm-library";
 import type { Decision } from "./verdict";
 
 interface ObligationBase {
@@ -87,10 +90,23 @@ export interface ProofAttempt {
   timeUsedMs?: number;
 }
 
-interface ProofReport {
+interface ProofResult {
   obligation: ProofObligation;
   attempts: ProofAttempt[];
 }
+
+interface ProofReport extends ProofResult {
+  warnings: ObligationWarning[];
+}
+
+// The frontends in the order Prep.normalize_expand names the one whose soundness check failed.
+const FAILING_FRONTENDS = [
+  "expandenabled",
+  "expandcdot",
+  "lambdify",
+  "enabledaxioms",
+  "levelcomparison",
+];
 
 // Why a method left an obligation unproved: a prover decided so, or tla-ts couldn't try it.
 interface MethodFailure {
@@ -201,7 +217,7 @@ const getNote = (method: Method, decision: Decision) =>
   (method.prover === "smt" || method.prover === "z3") &&
   decision.output !== undefined &&
   /^(sat|unknown)/.test(decision.output)
-    ? `(* SMT failed with status = ${decision.output} *)\n`
+    ? `\n(* SMT failed with status = ${decision.output} *)\n`
     : undefined;
 
 // The frontends and Prep.flatten add no CASE without OTHER, so the SMT encoder standardizes one
@@ -242,18 +258,18 @@ const getUnprovedReport = (
   status: "failed" | "unsupported",
   reason: string,
   attempts: ProofAttempt[] = [],
-): ProofReport => ({ obligation: { ...getObligationBase(obligation), status, reason }, attempts });
+): ProofResult => ({ obligation: { ...getObligationBase(obligation), status, reason }, attempts });
 
-// A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, and
-// Toolbox.normalize, which keeps pragmas, for a reused one.
+// A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, as far as
+// normalize_expr for a frontend's, and Toolbox.normalize, which keeps pragmas, for a reused one.
 export const formatNormalized = (
   obligation: PrintedObligation,
-  isReused: boolean,
+  attempt: ProofAttempt,
   options: PrinterOptions,
 ) =>
   `${formatObligation(
-    isReused
-      ? normalizeSequent(expandDefs(obligation.sequent, false))
+    attempt.isReused || FRONTENDS.has(attempt.method.prover)
+      ? normalizeSequent(expandDefs(obligation.sequent, !attempt.isReused))
       : normalizeExpand(obligation),
     options,
   )}\n`;
@@ -334,7 +350,8 @@ const proveWithBackends = async (
   index: number,
   run: ProveRun,
   signal: AbortSignal | undefined,
-): Promise<ProofReport> => {
+  onWarning: Warn,
+): Promise<ProofResult> => {
   if (obligation.kind.kind === "Error")
     return getUnprovedReport(obligation, "failed", obligation.kind.message);
   const found = findMethods(obligation, run.settings.defaultMethods);
@@ -351,7 +368,7 @@ const proveWithBackends = async (
   await earlier;
   const attempts: ProofAttempt[] = [];
   const failures: MethodFailure[] = [];
-  const getProvedReport = (prover: string): ProofReport => ({
+  const getProvedReport = (prover: string): ProofResult => ({
     obligation: { ...getObligationBase(obligation), status: "proved", prover },
     attempts,
   });
@@ -381,7 +398,33 @@ const proveWithBackends = async (
     reuse(firstPrior);
     return getProvedReport(firstPrior.method.prover);
   }
-  const sequent = normalizeExpand(obligation, methods);
+  const expanded = (() => {
+    try {
+      return normalizeExpand(obligation, methods, onWarning);
+    } catch (error) {
+      if (!(error instanceof TlaProverError)) throw error;
+      return error;
+    }
+  })();
+  // Prep.normalize_expand: a failed soundness check is the result of its frontend, and no backend
+  // runs.
+  if (expanded instanceof TlaProverError) {
+    const prover = FAILING_FRONTENDS.find((name) => methods.frontends.has(name)) ?? "";
+    record({
+      method: { prover, timeLimitMs: Infinity },
+      isProved: false,
+      isReused: false,
+      reason: expanded.message,
+      note: `${expanded.message}\nObligation:\n\n`,
+    });
+    return getUnprovedReport(
+      obligation,
+      "failed",
+      `${prover} failed: ${expanded.message}`,
+      attempts,
+    );
+  }
+  const sequent = expanded;
   // Fpfile.fp_writes keeps no trivial result, but adds the fingerprint.
   if (obligation.kind.kind === "Support" && isTrivial(sequent)) {
     run.results.set(fingerprint, run.results.get(fingerprint) ?? new Map());
@@ -402,8 +445,9 @@ const proveWithBackends = async (
       continue;
     }
     if (!run.isProving) continue;
-    // Prep.prove_with: the Trivial method proves anything, and the Fail method nothing.
-    if (method.prover === "trivial") return getProvedReport(method.prover);
+    // Prep.prove_with: the Trivial method stops without a result, and the Fail method proves nothing.
+    if (method.prover === "trivial")
+      return getUnprovedReport(obligation, "failed", "the trivial method", attempts);
     if (method.prover === "fail") {
       failures.push({ reason: "the fail method", isDecided: true });
       continue;
@@ -415,7 +459,7 @@ const proveWithBackends = async (
         isProved: false,
         isReused: false,
         warning,
-        note: `\\* ${warning}\n`,
+        note: `\n\\* ${warning}\n`,
         shipped: `${formatObligation(shipFirstOrder(sequent, run.settings.isFlattened))}\n`,
       });
       failures.push({ reason: warning.trim(), isDecided: true });
@@ -501,7 +545,11 @@ const proveWithBackends = async (
 
 // An error that escapes proveWithBackends: what tla-ts can't handle is unsupported, and what tlapm
 // refuses, as a frontend's soundness check, fails.
-const getErrorReport = (obligation: PrintedObligation, error: unknown) => {
+const getErrorReport = (obligation: PrintedObligation, error: unknown, onWarning: Warn) => {
+  if (error instanceof TlaMethodError) {
+    onWarning({ text: `${getLocusPrefix(error.locus)}${error.message}`, channel: "toolbox" });
+    return getUnprovedReport(obligation, "failed", error.message);
+  }
   if (error instanceof TlaUnsupportedError)
     return getUnprovedReport(obligation, "unsupported", error.message);
   if (error instanceof TlaProverError)
@@ -581,9 +629,11 @@ export const proveObligations = async (
       options.signal?.throwIfAborted();
       const done = Promise.withResolvers<void>();
       run.tasks.push({ done: done.promise, session: undefined });
-      const report = proveWithBackends(obligation, index, run, options.signal).catch(
-        (error: unknown) => getErrorReport(obligation, error),
-      );
+      const warnings: ObligationWarning[] = [];
+      const onWarning: Warn = (warning) => warnings.push(warning);
+      const report = proveWithBackends(obligation, index, run, options.signal, onWarning)
+        .catch((error: unknown) => getErrorReport(obligation, error, onWarning))
+        .then((result): ProofReport => ({ ...result, warnings }));
       pending.push(report);
       running.add(done.promise);
       const settle = () => {
@@ -620,7 +670,7 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
     (moduleName) => {
       const source = options.loadModule?.(moduleName);
       if (source !== undefined) modules.set(moduleName, source);
-      const loaded = source ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
+      const loaded = source ?? TLAPM_LIBRARY.get(moduleName);
       return loaded === undefined ? undefined : { file: `${moduleName}.tla`, source: loaded };
     },
   );

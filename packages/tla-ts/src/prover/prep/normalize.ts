@@ -18,7 +18,9 @@ import {
   type ExceptPoint,
   type Expr,
   type Hyp,
+  type Locus,
   type Sequent,
+  type Warn,
 } from "../../obligations/expression";
 import {
   bumpBy,
@@ -196,15 +198,21 @@ export const normalizeSequent = (sequent: Sequent): Sequent => {
 
 // expand_enabled_cdot: the first frontend the methods cite, in tlapm's order, transforms the
 // obligation. Its soundness checks throw a TlaProverError, as tlapm then runs no backend.
-const expandEnabledCdot = (sequent: Sequent, frontends: Set<string>): Sequent => {
+const expandEnabledCdot = (
+  sequent: Sequent,
+  locus: Locus | undefined,
+  frontends: Set<string>,
+  onWarning: Warn,
+): Sequent => {
   const isEnabled = frontends.has("expandenabled");
   const isCdot = frontends.has("expandcdot");
   const isAutoUse = frontends.has("autouse");
   const isLambdify = frontends.has("lambdify");
   if (!isEnabled && !isCdot && !isLambdify) {
     if (frontends.has("levelcomparison")) return checkLevelChange(sequent);
-    if (frontends.has("enabledaxioms")) return implicationToEnabled(sequent);
-    return sequent;
+    if (!frontends.has("enabledaxioms")) return sequent;
+    onWarning({ text: "expr has ENABLEDaxioms property ===", channel: "stdout" });
+    return implicationToEnabled(sequent, locus, onWarning);
   }
   // Expr.Anon's anon, which only meets the names that lambdification binds.
   const anonymizer = createAnonymizer(
@@ -217,12 +225,12 @@ const expandEnabledCdot = (sequent: Sequent, frontends: Set<string>): Sequent =>
   const expression: Expr = { kind: "Sequent", sequent };
   const result =
     isEnabled || isCdot
-      ? expandActionOperators(anonymizer, () => {}, undefined, expression, {
+      ? expandActionOperators(anonymizer, onWarning, undefined, expression, {
           isEnabled,
           isCdot,
           isAutoUse,
         })
-      : lambdify(anonymizer, () => {}, undefined, expression, {
+      : lambdify(anonymizer, onWarning, undefined, expression, {
           isEnabled: true,
           isCdot: true,
           isAutoUse,
@@ -233,9 +241,16 @@ const expandEnabledCdot = (sequent: Sequent, frontends: Set<string>): Sequent =>
 
 // normalize_expand: expand_defs, Elab.normalize, then the frontends the obligation cites.
 export const normalizeExpand = (
-  obligation: { sequent: Sequent; method?: OldMethod },
+  obligation: { sequent: Sequent; method?: OldMethod; locus?: Locus },
   methods = findMethods(obligation),
-) => expandEnabledCdot(normalizeSequent(expandDefs(obligation.sequent)), methods.frontends);
+  onWarning: Warn = () => {},
+) =>
+  expandEnabledCdot(
+    normalizeSequent(expandDefs(obligation.sequent)),
+    obligation.locus,
+    methods.frontends,
+    onWarning,
+  );
 
 // trivial: the goal is TRUE, or find_fact finds it as a hypothesis, visible or not: a fact
 // alpha-equivalent to it, or the x \in S of a declaration NEW x \in S.

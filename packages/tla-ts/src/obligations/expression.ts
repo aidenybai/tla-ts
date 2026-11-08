@@ -10,7 +10,7 @@ export interface Locus {
   endColumn: number;
 }
 
-interface ObligationWarning {
+export interface ObligationWarning {
   text: string;
   channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout" | "error";
   locus?: Locus;
