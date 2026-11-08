@@ -77,6 +77,40 @@ const SIMPLIFY_PARAMETERS = new Set([
   ":split_concat_eq",
 ]);
 
+// The defaults of the parameters that get-option reads and that the port follows.
+const PARAMETER_DEFAULTS = new Map([
+  ["auto_config", "true"],
+  ["smt.relevancy", "2"],
+  ["smt.mbqi", "true"],
+  ["rlimit", "0"],
+  ["rewriter.hi_div0", "true"],
+]);
+
+const BUILTIN_OPTIONS = new Set([
+  ":print-success",
+  ":print-warning",
+  ":expand-definitions",
+  ":interactive-mode",
+  ":produce-proofs",
+  ":produce-unsat-cores",
+  ":produce-unsat-assumptions",
+  ":produce-models",
+  ":produce-assignments",
+  ":produce-assertions",
+  ":regular-output-channel",
+  ":diagnostic-output-channel",
+  ":random-seed",
+  ":verbosity",
+  ":global-decls",
+  ":global-declarations",
+  ":numeral-as-real",
+  ":error-behavior",
+  ":int-real-coercions",
+  ":reproducible-resource-limit",
+]);
+
+const getParameterName = (keyword: string) => keyword.slice(1).toLowerCase().replaceAll("-", "_");
+
 const getRewriterOptions = (manager: AstManager, items: SExpr[]): RewriterOptions => {
   const parameters = new Map<string, boolean>();
   for (let index = 0; index < items.length; index += 2) {
@@ -185,6 +219,10 @@ export const runSmtlibScript = (
   const commands = createCommandReader(text);
   const settings = {
     isPrintingSuccess: false,
+    isProducingModels: true,
+    isProducingUnsatCores: false,
+    isExitingOnError: false,
+    parameters: new Map<string, string>(),
     isMbqi: true,
     isHiDiv0: true,
     rlimit: 0,
@@ -351,10 +389,29 @@ export const runSmtlibScript = (
     },
     "set-option": (list) => {
       const option = list.items[1];
-      const optionName =
-        option?.kind === "keyword" ? option.text.toLowerCase().replaceAll("-", "_") : "";
+      const keyword = option?.kind === "keyword" ? option.text : "";
+      const optionName = `:${getParameterName(keyword)}`;
       const value = list.items[2];
       const isTrue = isSymbol(value, "true");
+      if (keyword === ":produce-models") settings.isProducingModels = isTrue;
+      if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
+      if (keyword === ":int-real-coercions" && !isTrue)
+        throw new SmtUnsupportedError("the option :int-real-coercions false");
+      if (keyword === ":error-behavior") {
+        if (!isSymbol(value, "immediate-exit") && !isSymbol(value, "continued-execution"))
+          throw new SmtParseError(
+            "error setting :error-behavior, 'immediate-execution' or 'continued-execution' expected",
+            list.end,
+          );
+        settings.isExitingOnError = isSymbol(value, "immediate-exit");
+      }
+      if (
+        keyword !== "" &&
+        !BUILTIN_OPTIONS.has(keyword) &&
+        value !== undefined &&
+        value.kind !== "list"
+      )
+        settings.parameters.set(getParameterName(keyword), value.text);
       if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
       if (optionName === ":rlimit" && value?.kind === "numeral")
@@ -376,6 +433,36 @@ export const runSmtlibScript = (
         booleanOption === undefined
       )
         throw new SmtUnsupportedError(`the option ${optionName}`);
+    },
+    "get-option": (list) => {
+      const option = list.items[1];
+      if (option?.kind !== "keyword")
+        throw new SmtParseError("invalid command argument, keyword expected", option ?? list.end);
+      const builtinValues = new Map<string, boolean | string>([
+        [":print-success", settings.isPrintingSuccess],
+        [":produce-models", settings.isProducingModels],
+        [":produce-unsat-cores", settings.isProducingUnsatCores],
+        [":int-real-coercions", true],
+        [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
+      ]);
+      const name = getParameterName(option.text);
+      const value =
+        builtinValues.get(option.text) ??
+        (BUILTIN_OPTIONS.has(option.text)
+          ? undefined
+          : (settings.parameters.get(name) ?? PARAMETER_DEFAULTS.get(name)));
+      if (value === undefined) throw new SmtUnsupportedError(`the option ${option.text}`);
+      print(String(value));
+    },
+    "get-info": (list) => {
+      const info = list.items[1];
+      if (info?.kind !== "keyword")
+        throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
+      if (info.text !== ":error-behavior")
+        throw new SmtUnsupportedError(`the information ${info.text}`);
+      print(
+        `(:error-behavior ${settings.isExitingOnError ? "immediate-exit" : "continued-execution"})`,
+      );
     },
     "set-logic": (list) => {
       const logic = list.items[1];
@@ -408,6 +495,7 @@ export const runSmtlibScript = (
     } catch (error) {
       if (!(error instanceof SmtParseError)) throw error;
       report(error);
+      if (settings.isExitingOnError) return;
       commands.skip(report);
     }
   }

@@ -146,6 +146,27 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("reads options back, and stops at an error once told to, as in z3test's error.smt2", () => {
+    expect(
+      run([
+        "(get-option :smt.relevancy)",
+        "(set-option :auto-config false)",
+        "(get-option :auto-config)",
+        "(define-const x Bool 10)",
+        "(set-option :error-behavior immediate-exit)",
+        "(get-option :error-behavior)",
+        "(define-const x Bool 10)",
+        '(echo "continued...")',
+      ]),
+    ).toEqual([
+      "2",
+      "false",
+      '(error "line 4 column 23: invalid constant definition, sort mismatch")',
+      "immediate-exit",
+      '(error "line 7 column 23: invalid constant definition, sort mismatch")',
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() => run(["(declare-const f Float32)"])).toThrow(SmtUnsupportedError);
     expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);
