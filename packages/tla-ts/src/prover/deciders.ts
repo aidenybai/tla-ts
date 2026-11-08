@@ -26,8 +26,22 @@ export const DECIDERS: Record<string, (text: string, options: DecideOptions) => 
   ls4: decidePtl,
 };
 
+// Z3 prints its verdict, and Zenon its proof or why it gave up.
 export const decide = (prover: string, text: string, options: DecideOptions): Decision => {
   const start = performance.now();
+  if (prover === "zenon") {
+    const decision = decideZenon(text, options);
+    return {
+      verdict: decision.verdict,
+      ...("proof" in decision && { output: decision.proof }),
+      ...("error" in decision && { errorOutput: decision.error }),
+      timeUsedMs: performance.now() - start,
+    };
+  }
   const verdict = DECIDERS[prover](text, options);
-  return { verdict, timeUsedMs: performance.now() - start };
+  return {
+    verdict,
+    ...((prover === "smt" || prover === "z3") && { output: `${verdict}\n` }),
+    timeUsedMs: performance.now() - start,
+  };
 };

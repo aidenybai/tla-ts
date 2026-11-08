@@ -350,8 +350,8 @@ const printLemma = (sequent: Sequent) => {
 
   // pp_print_sequent_outer: the obligation's sequent as the lines of a lemma's fixes, assumes and
   // shows. A pragma's definition ends it with an empty line in place of the goal.
+  const lines: string[] = [];
   const printSequent = (sequent: Sequent) => {
-    const lines: string[] = [];
     for (const hyp of sequent.context) {
       switch (hyp.kind) {
         case "Flex": {
@@ -384,62 +384,97 @@ const printLemma = (sequent: Sequent) => {
           break;
         }
         case "Defn":
-          if (hyp.definition.kind === "Bpragma") return [...lines, ""];
+          if (hyp.definition.kind === "Bpragma") {
+            lines.push("");
+            return;
+          }
           lines.push(`(* usable definition ${hyp.definition.name} suppressed *)`);
           adjoin(hyp.definition.name);
           break;
       }
     }
-    return [...lines, `shows "${printExpr(sequent.active)}"`];
+    lines.push(`shows "${printExpr(sequent.active)}"`);
   };
 
-  try {
-    const lines = printSequent(sequent);
-    return {
-      text: lines.join("\n"),
-      isAssumed: lines.some((line) => line.startsWith("assumes ")),
-    };
-  } catch (error) {
-    if (!(error instanceof TlaUnsupportedError)) throw error;
-    throw new TlaProverError(`isabelle : unsupported operator ${error.message}`);
-  }
+  // The lines printed before an unsupported operator, which tlapm leaves in the file it writes.
+  const failure = (() => {
+    try {
+      printSequent(sequent);
+      return undefined;
+    } catch (error) {
+      if (error instanceof TlaProverError) return error;
+      if (!(error instanceof TlaUnsupportedError)) throw error;
+      return new TlaProverError(`isabelle : unsupported operator ${error.message}`);
+    }
+  })();
+  return {
+    text: lines.join("\n"),
+    isAssumed: lines.some((line) => line.startsWith("assumes ")),
+    failure,
+  };
 };
 
-// thy_temp: the theory tlapm writes for Isabelle to prove obligation id.
-export const encodeIsabelle = (id: number, sequent: Sequent, tactic: string): string => {
+// What thy_temp writes before the lemma: the obligation's location and fingerprint.
+interface ObligationSource {
+  location: string;
+  fingerprint: string;
+}
+
+// thy_temp: the theory tlapm writes for Isabelle to prove obligation id, named after its file. It
+// writes the lines before an unsupported operator, then fails.
+export const encodeIsabelle = (
+  id: number,
+  sequent: Sequent,
+  tactic: string,
+  name: string,
+  source: ObligationSource,
+  write: (text: string) => void,
+) => {
   const lemma = printLemma(sequent);
-  return [
-    ...getTheoryHeader(`tlapm_${id}`, false),
-    `lemma ob'${id}:`,
-    `${lemma.text}(is "PROP ?ob'${id}")`,
-    "proof -",
-    `show "PROP ?ob'${id}"`,
-    `${lemma.isAssumed ? "using assms " : ""}by ${tactic}`,
-    "qed",
-    "end",
-    "",
-  ].join("\n");
+  write(
+    [
+      ...getTheoryHeader(name, false),
+      `(* Generated from ${source.location} *)`,
+      `lemma ob'${id}: (* ${source.fingerprint} *)`,
+      lemma.text,
+    ].join("\n"),
+  );
+  if (lemma.failure) throw lemma.failure;
+  write(
+    [
+      `(is "PROP ?ob'${id}")`,
+      "proof -",
+      `show "PROP ?ob'${id}"`,
+      `${lemma.isAssumed ? "using assms " : ""}by ${tactic}`,
+      "qed",
+      "end",
+      "",
+    ].join("\n"),
+  );
 };
 
+// A proof tlapm writes in the module's theory: Isabelle's tactic, or Zenon's Isar proof.
 interface IsabelleProof {
   id: number;
   sequent: Sequent;
-  tactic: string;
+  proof: string;
 }
 
-// Isabelle.thy_init, thy_write and thy_close.
+// Isabelle.thy_init, thy_write and thy_close. thy_write leaves out a lemma it can't print.
 export const encodeIsabelleTheory = (name: string, proofs: IsabelleProof[]) =>
   [
-    ...getTheoryHeader(name, true),
-    ...proofs.flatMap((proof) => [
-      `lemma ob'${proof.id}:`,
-      `${printLemma(proof.sequent).text}(is "PROP ?ob'${proof.id}")`,
-      "proof -",
-      `ML_command \\<open> writeln "*** TLAPS ENTER ${proof.id}"; \\<close>`,
-      `show "PROP ?ob'${proof.id}"`,
-      `using assms by ${proof.tactic}`,
-      `ML_command \\<open> writeln "*** TLAPS EXIT ${proof.id}"; \\<close> qed`,
-    ]),
-    "end",
-    "",
-  ].join("\n");
+    `${getTheoryHeader(name, true).join("\n")}\n`,
+    ...proofs.flatMap((proof) => {
+      const lemma = printLemma(proof.sequent);
+      if (lemma.failure) return [];
+      return [
+        `lemma ob'${proof.id}:`,
+        `${lemma.text}(is "PROP ?ob'${proof.id}")`,
+        "proof -",
+        `ML_command \\<open> writeln "*** TLAPS ENTER ${proof.id}"; \\<close>`,
+        `show "PROP ?ob'${proof.id}"`,
+        `${proof.proof}ML_command \\<open> writeln "*** TLAPS EXIT ${proof.id}"; \\<close> qed\n`,
+      ].join("\n");
+    }),
+    "end\n",
+  ].join("");

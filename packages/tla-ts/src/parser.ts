@@ -986,6 +986,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         const params = getNames(accept("(") ? parseSeparated(expectName) : []);
         if (params.names.length > 0) expect(")");
         expect("::");
+        const head = getRange(start);
         const body = parseExpression();
         // TLAplusParser.labelDoesNotChangeParse.
         if (
@@ -1002,6 +1003,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           name,
           params: params.names,
           paramRanges: params.ranges,
+          head,
           body,
           location,
         };
@@ -2053,10 +2055,13 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           module.units.push({ kind: "Use", use });
           continue;
         }
-        case "RECURSIVE":
-          advance();
-          module.units.push({ kind: "Recursive", declarations: declareRecursive() });
+        case "RECURSIVE": {
+          const unitLocation = getLocation(advance());
+          const declarations = declareRecursive();
+          unitLocation.range = getRange(tokenIndex);
+          module.units.push({ kind: "Recursive", declarations, location: unitLocation });
           continue;
+        }
         case "INSTANCE":
           addDefinitionUnit(
             module,

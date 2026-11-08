@@ -193,3 +193,26 @@ export const readNewMethod = (lines: string[], start: Position) => {
   }
   return groups;
 };
+
+// Proof.Parser's suppress: a (*{_}*) or (*{suppress}*) just before the keyword of a BY, OBVIOUS,
+// USE, HAVE, TAKE, or WITNESS, whose obligations Proof.Gen.collect then leaves out.
+export const isSuppressedAt = (lines: string[], keyword: Position) => {
+  const close = { ...keyword };
+  while (lines[close.line].slice(0, close.column).trimEnd() === "") {
+    if (close.line === 0) return false;
+    close.line--;
+    close.column = lines[close.line].length;
+  }
+  if (!lines[close.line].slice(0, close.column).trimEnd().endsWith("}*)")) return false;
+  for (let line = close.line; line >= 0; line--) {
+    const open = lines[line].lastIndexOf("(*{", line === close.line ? close.column : undefined);
+    if (open === -1) continue;
+    const tokens = tokenizePragma(lines, { line, column: open });
+    return (
+      tokens?.length === 1 &&
+      tokens[0].kind === "Ident" &&
+      (tokens[0].text === "_" || tokens[0].text === "suppress")
+    );
+  }
+  return false;
+};

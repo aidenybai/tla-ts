@@ -53,8 +53,8 @@ const PROVERS: Record<string, { prover: string; seconds: number; isBudgeted?: bo
   z3: { prover: "z3", seconds: SMT_SECONDS, isBudgeted: true },
   smt: { prover: "smt", seconds: SMT_SECONDS, isBudgeted: true },
   cvc3: { prover: "cvc3", seconds: SMT_SECONDS },
-  cooper: { prover: "cooper", seconds: 0 },
-  fail: { prover: "fail", seconds: 0 },
+  cooper: { prover: "cooper", seconds: Infinity },
+  fail: { prover: "fail", seconds: Infinity },
   smt2lib: { prover: "smt", seconds: SMT_SECONDS, isBudgeted: true },
   smt2z3: { prover: "z3", seconds: SMT_SECONDS, isBudgeted: true },
   smt3: { prover: "smt", seconds: SMT_SECONDS, isBudgeted: true },
@@ -206,7 +206,10 @@ const getCitedMethods = (sequent: Sequent) => {
 
 // The methods find_meth selects: the frontends to apply, and the provers to try in order, which
 // are tlapm's default ones when the obligation cites only frontends or nothing.
-export const findMethods = (obligation: { sequent: Sequent; method?: OldMethod }) => {
+export const findMethods = (
+  obligation: { sequent: Sequent; method?: OldMethod },
+  defaultMethods = DEFAULT_METHODS,
+) => {
   const methods =
     obligation.method === undefined
       ? getCitedMethods(obligation.sequent)
@@ -216,6 +219,38 @@ export const findMethods = (obligation: { sequent: Sequent; method?: OldMethod }
     frontends: new Set(
       methods.flatMap((method) => (FRONTENDS.has(method.prover) ? [method.prover] : [])),
     ),
-    provers: provers.length > 0 ? provers : DEFAULT_METHODS,
+    provers: provers.length > 0 ? provers : defaultMethods,
   };
 };
+
+// Params.mk_meth's names, by the name compute_meth gives the same method.
+const DEFAULT_METHOD_NAMES: Record<string, string> = {
+  zenon: "zenon",
+  smt: "smt",
+  z3: "z3",
+  cvc4: "cvc33",
+  yices: "yices3",
+  verit: "verit",
+  zipper: "zipper",
+  spass: "spass",
+  tptp: "tptp",
+  ls4: "ls4",
+};
+
+// Params.parse_default_methods: the methods --method names, each with its default time unless
+// name:seconds gives one. Throws a TlaProverError, as Arg.Bad, for an unknown method.
+export const parseDefaultMethods = (text: string) =>
+  text.split(",").map((entry): Method => {
+    const separator = entry.indexOf(":");
+    const name = separator === -1 ? entry : entry.slice(0, separator);
+    const seconds = separator === -1 ? undefined : Number.parseFloat(entry.slice(separator + 1));
+    if (Number.isNaN(seconds))
+      throw new TlaProverError("--method: bad timeout specification: not a number");
+    if (name === "auto" || name === "blast" || name === "force")
+      return getProverMethod("isabelle", seconds, undefined, name);
+    if (name === "fail") return { prover: "fail", timeLimitMs: Infinity };
+    const known = DEFAULT_METHOD_NAMES[name];
+    if (known === undefined)
+      throw new TlaProverError(`--method: unknown method ${JSON.stringify(name)}`);
+    return getProverMethod(known, seconds, undefined, undefined);
+  });

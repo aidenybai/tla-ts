@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { availableParallelism } from "node:os";
@@ -13,14 +14,17 @@ import {
   type PrintedObligation,
 } from "../obligations";
 import { format, renderDoc } from "../obligations/format";
-import { printSequent } from "../obligations/printer";
+import { printSequent, type PrinterOptions } from "../obligations/printer";
+import { parseDefaultMethods, type Method } from "../prover/prep/methods";
 import {
   encodeProofTheory,
   formatNormalized,
   proveObligations,
+  TLAPM_VERSION,
   type ProofAttempt,
 } from "../prover/prove";
 import { TLAPS_MODULE } from "../prover/tlaps-module";
+import type { Decision } from "../prover/verdict";
 import { getTlapmPaths } from "../prover/tlapm/tlapm";
 import {
   getKnownResults,
@@ -57,8 +61,6 @@ const printObligationMessage = (obligation: PrintedObligation, status: string, f
     `status:${status}`,
     ...fields,
   ]);
-
-const TLAPM_VERSION = "9ed0376";
 
 const quoteShellArgument = (arg: string) =>
   /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
@@ -103,18 +105,45 @@ const UNPROVED_ENDING = [
   "",
 ].join("\n");
 
-const generateObligations = (generate: () => ModuleObligations[]) => {
+// Errors.loc and Errors.msg, which each Errors.set replaces and prepends to.
+interface ErrorSetting {
+  location?: string;
+  message: string;
+}
+
+// Tlapm_lib.init: when tlapm ends abnormally, the toolbox reports what Errors.set recorded, or a bug.
+const generateObligations = (
+  generate: (errorSetting: ErrorSetting) => ModuleObligations[],
+  isToolbox: boolean,
+) => {
+  const errorSetting: ErrorSetting = { message: "" };
   try {
-    return generate();
+    return generate(errorSetting);
   } catch (error) {
     if (!(error instanceof TlaProofError)) throw error;
     console.error(` tlapm ending abnormally with ${error.exception}\n`);
+    if (!isToolbox) return undefined;
+    if (errorSetting.message === "")
+      printToolboxMessage([
+        "type:error",
+        "url:http://tla.msr-inria.inria.fr/bugs",
+        `msg:Oops, this seems to be a bug in TLAPM.\nPlease give feedback to developers.\n\n\n ${error.exception}\n`,
+      ]);
+    else
+      printToolboxMessage([
+        "type:warning",
+        `msg:${errorSetting.location === undefined ? "" : `${errorSetting.location}\n\n`}${errorSetting.message}`,
+      ]);
     return undefined;
   }
 };
 
 // Toolbox.print_res_aux.
-const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
+const printAttempt = (
+  obligation: PrintedObligation,
+  attempt: ProofAttempt,
+  printing: PrinterOptions,
+) => {
   const timeLimitMs = attempt.method.timeLimitMs;
   const used =
     attempt.timeUsedMs === undefined
@@ -125,11 +154,6 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
       ? ""
       : `time-limit: ${timeLimitMs === Infinity ? "inf" : Number((timeLimitMs / 1000).toPrecision(6))}${used}`;
   const method = [attempt.method.tactic, times].filter(Boolean).join("; ");
-  const isSmt = attempt.method.prover === "smt" || attempt.method.prover === "z3";
-  const note =
-    isSmt && attempt.reason === "false" && attempt.verdict
-      ? `(* SMT failed with status = ${attempt.verdict}\n *)\n`
-      : "";
   printObligationMessage(obligation, attempt.isProved ? "proved" : "failed", [
     `prover:${attempt.method.prover}`,
     ...(method === "" ? [] : [`meth:${method}`]),
@@ -138,7 +162,7 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
     ...(attempt.isProved
       ? []
       : [
-          `obl:${attempt.isReused ? "" : `\n${note}`}${formatNormalized(obligation, attempt.isReused)}`,
+          `obl:${attempt.isReused ? "" : `\n${attempt.note ?? ""}`}${attempt.shipped ?? formatNormalized(obligation, attempt.isReused, { ...printing, isTemporal: attempt.method.prover === "ls4" })}`,
         ]),
   ]);
 };
@@ -159,29 +183,89 @@ interface ProvingSettings {
   workers: number;
   isFingerprinted: (obligation: PrintedObligation) => boolean;
   fingerprints: FingerprintTable;
+  backends: BackendSettings;
+  printing: PrinterOptions;
+  // --debug tempfiles: Util.rm_temp_file keeps each backend's temporary files.
+  isKeepingFiles: boolean;
+  solver: string | undefined;
 }
+
+interface BackendSettings {
+  defaultMethods: Method[] | undefined;
+  stretch: number;
+  isFlattened: boolean;
+  smtLogic: string;
+}
+
+const SMT_PROOF_MARKERS = [/^unsat/m, /SPASS beiseite: Proof found/, /SZS status Theorem/];
+
+// Prep.gen_smt_solve with --solver: the command reads the obligation from $file and prints its
+// answer, whatever its exit status, and tlapm stops it at the time limit.
+const solveWith = (
+  command: string,
+  path: string,
+  text: string,
+  timeLimitMs: number,
+  isKeepingFiles: boolean,
+): Decision => {
+  const outputPath = `${path}.out`;
+  writeFileSync(path, text);
+  const start = performance.now();
+  spawnSync(
+    "sh",
+    ["-c", `file=${quoteShellArgument(path)}; ${command} >${quoteShellArgument(outputPath)}`],
+    {
+      stdio: ["ignore", "inherit", "inherit"],
+      timeout: Number.isFinite(timeLimitMs) ? timeLimitMs : undefined,
+    },
+  );
+  const timeUsedMs = performance.now() - start;
+  const output = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
+  if (!isKeepingFiles) [path, outputPath].forEach((file) => rmSync(file, { force: true }));
+  const isProved = SMT_PROOF_MARKERS.some((marker) => marker.test(output));
+  return {
+    verdict: isProved ? "unsat" : output.startsWith("sat") ? "sat" : "unknown",
+    output,
+    timeUsedMs,
+  };
+};
 
 // Tlapm_lib.process_obs. Returns whether some obligation failed.
 const proveModule = async (
   module: ModuleObligations,
-  theoryPath: string,
+  directory: string,
   fingerprintsPath: string,
   settings: ProvingSettings,
 ) => {
   const knownResults = getKnownResults(settings.fingerprints);
+  const solver = settings.solver;
   const reports = await proveObligations(module.obligations, {
+    ...settings.backends,
     workers: settings.workers,
     results: knownResults.results,
     isFingerprinted: settings.isFingerprinted,
     isProving: settings.isProving,
+    ...(settings.isKeepingFiles && {
+      onInput: (file: string, text: string) => writeFileSync(`${directory}/${file}`, text),
+    }),
+    ...(solver !== undefined && {
+      solveSmt: async (file: string, text: string, timeLimitMs: number) =>
+        solveWith(solver, `${directory}/${file}`, text, timeLimitMs, settings.isKeepingFiles),
+    }),
     onReport: (report, obligation) => {
+      report.attempts.forEach((attempt) => {
+        if (attempt.isReused) return;
+        if (attempt.errorOutput !== undefined) process.stdout.write(attempt.errorOutput);
+        if (attempt.warning !== undefined) process.stderr.write(`${attempt.warning}\n`);
+      });
       if (!settings.isToolbox) return;
       if (report.obligation.status === "trivial")
         return printObligationMessage(obligation, "trivial", ["prover:tlapm", "already:false"]);
       if (obligation.kind.kind === "Error") return printFailedObligation(obligation, "user error");
-      report.attempts.forEach((attempt) => printAttempt(obligation, attempt));
+      report.attempts.forEach((attempt) => printAttempt(obligation, attempt, settings.printing));
     },
   });
+  const theoryPath = `${directory}/${module.name}.thy`;
   writeFileSync(theoryPath, encodeProofTheory(module.name, reports, module.obligations));
   console.log(`(* created new ${JSON.stringify(theoryPath)} *)`);
   knownResults.save(fingerprintsPath);
@@ -201,7 +285,7 @@ const proveModule = async (
     .toReversed()
     .forEach((entry) =>
       console.error(
-        `${getAtPrefix(entry.obligation.locus)}${renderDoc(format("[ERROR]: @[<v2>Could not prove or check:@,%a@]", printSequent(entry.obligation.sequent)), 35)}`,
+        `${getAtPrefix(entry.obligation.locus)}${renderDoc(format("[ERROR]: @[<v2>Could not prove or check:@,%a@]", printSequent(entry.obligation.sequent, settings.printing)), 35)}`,
       ),
     );
   const total = `${module.obligations.length} obligation${module.obligations.length > 1 ? "s" : ""}`;
@@ -213,12 +297,32 @@ const proveModule = async (
   return unproved.length > 0;
 };
 
+// The --debug flags that tla-ts follows. Every other flag changes what tlapm prints or how it
+// encodes obligations.
+const DEBUG_FLAGS = new Set(["tempfiles", "hidden", "alldefs"]);
+
 export const runTlapm = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
   const isProcessing = !parsed.has("-N") && !parsed.has("--summary");
+  // Tlapm_args.set_debug_flags: each --debug sets the flags it lists, or clears those with a -.
+  const debugFlags = parsed.options
+    .flatMap((option) => (option.name === "--debug" ? option.values[0].split(",") : []))
+    .reduce(
+      (flags, flag) =>
+        flag.startsWith("-")
+          ? new Set([...flags].filter((innerFlag) => innerFlag !== flag.slice(1)))
+          : new Set([...flags, flag]),
+      new Set<string>(),
+    );
+  const printing = {
+    isShowingHidden: debugFlags.has("hidden"),
+    isShowingAllDefinitions: debugFlags.has("alldefs"),
+  };
+  const unsupportedFlag = [...debugFlags].find((flag) => !DEBUG_FLAGS.has(flag));
   const unsupported =
     parsed.unknown[0] ??
-    (isProcessing && parsed.has("--printallobs") ? "--printallobs" : undefined);
+    (isProcessing && parsed.has("--printallobs") ? "--printallobs" : undefined) ??
+    (unsupportedFlag === undefined ? undefined : `--debug ${unsupportedFlag}`);
   if (unsupported !== undefined) {
     console.error(`Error: tla-ts tlapm does not support the tlapm option ${unsupported}.`);
     return 1;
@@ -234,6 +338,10 @@ export const runTlapm = async (args: string[]) => {
   );
   if (nonInteger) {
     console.error(`Error: option '${nonInteger.name}' expects an integer.`);
+    return 1;
+  }
+  if (parsed.get("--stretch")?.some((value) => Number.isNaN(Number(value)))) {
+    console.error("Error: option '--stretch' expects a float.");
     return 1;
   }
   if (parsed.has("--version")) {
@@ -265,7 +373,7 @@ export const runTlapm = async (args: string[]) => {
     getLibraryDirectories(parsed),
   );
   const moduleNames = new Set<string>();
-  const modules = generateObligations(() => {
+  const modules = generateObligations((errorSetting) => {
     const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
     if (missingIndex !== -1) {
       const missing = files[missingIndex];
@@ -285,7 +393,13 @@ export const runTlapm = async (args: string[]) => {
       },
       {
         lines,
+        printing,
         onWarning: (warning) => {
+          if (warning.channel === "error") {
+            errorSetting.location = warning.locus && getLocusText(warning.locus);
+            errorSetting.message = `${warning.text}\n\n${errorSetting.message}`;
+            return;
+          }
           if (warning.channel === "stdout") return console.log(warning.text);
           const isToolboxMessage =
             warning.channel === "toolbox" || warning.channel === "toolboxOnly";
@@ -295,11 +409,12 @@ export const runTlapm = async (args: string[]) => {
         },
       },
     );
-  });
+  }, isToolbox);
   if (!modules) return TLAPM_FAILURE_STATUS;
   const cacheDirectory =
     parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
   const forgottenLines = parsed.get("--nofpl")?.map(Number) ?? [0, 0];
+  const methods = parsed.get("--method")?.[0];
   const settings: ProvingSettings = {
     isToolbox,
     isProving: !parsed.has("--noproving"),
@@ -312,6 +427,15 @@ export const runTlapm = async (args: string[]) => {
         obligation.locus.endLine <= forgottenLines[1]
       ),
     fingerprints: new Map(),
+    backends: {
+      defaultMethods: methods === undefined ? undefined : parseDefaultMethods(methods),
+      stretch: Number(parsed.get("--stretch")?.[0] ?? 1),
+      isFlattened: !parsed.has("--noflatten"),
+      smtLogic: parsed.get("--smt-logic")?.[0] ?? "UFNIA",
+    },
+    printing,
+    isKeepingFiles: debugFlags.has("tempfiles"),
+    solver: parsed.get("--solver")?.[0] ?? process.env.TLAPM_SMT_SOLVER,
   };
   const statuses: number[] = [];
   for (const [index, module] of modules.entries()) {
@@ -355,12 +479,7 @@ export const runTlapm = async (args: string[]) => {
         (name) => `${name}.tla`,
       ),
     );
-    const isFailed = await proveModule(
-      module,
-      `${directory}/${module.name}.thy`,
-      fingerprintsPath,
-      settings,
-    );
+    const isFailed = await proveModule(module, directory, fingerprintsPath, settings);
     if (isFailed && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
     if (isFailed && !parsed.has("--strict") && !isToolbox) {
       console.error(UNPROVED_ENDING);

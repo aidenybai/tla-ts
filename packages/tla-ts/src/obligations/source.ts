@@ -30,7 +30,7 @@ import {
   type Sequent,
 } from "./expression";
 import type { ModuleUnit, Mule } from "./module";
-import { findPragma, readNewMethod, readOldMethod } from "./pragma";
+import { findPragma, isSuppressedAt, readNewMethod, readOldMethod } from "./pragma";
 import {
   expandChoose,
   expandFcn,
@@ -136,6 +136,9 @@ export const createSource = (
 
   const getMethod = (range: SourceRange | undefined) =>
     range && readOldMethod(lines, { line: range.end.line - 1, column: range.end.column });
+
+  const isSuppressed = (keyword: SourceRange) =>
+    isSuppressedAt(lines, { line: keyword.start.line - 1, column: keyword.start.column - 1 });
 
   // A method pragma belongs to the node it follows, whose locus then takes it in.
   const withMethod = (range: SourceRange) => {
@@ -614,7 +617,12 @@ export const createSource = (
           {
             kind: "Parens",
             expression: recurse(expression.body),
-            form: { kind: "Nlabel", label: expression.name, names: expression.params },
+            form: {
+              kind: "Nlabel",
+              label: expression.name,
+              names: expression.params,
+              location: expression.head && getRangeLocus(expression.head),
+            },
           },
           { location },
         );
@@ -813,7 +821,11 @@ export const createSource = (
     if (!proof) return { kind: "Omitted", omission: "Implicit", location: enclosing };
     switch (proof.kind) {
       case "Obvious":
-        return { kind: "Obvious", ...withMethod(proof.keyword) };
+        return {
+          kind: "Obvious",
+          ...withMethod(proof.keyword),
+          isSuppressed: isSuppressed(proof.keyword),
+        };
       case "Omitted":
         return {
           kind: "Omitted",
@@ -828,6 +840,7 @@ export const createSource = (
           location: getRangeLocus(proof.keyword),
           step: { kind: "Unnamed", level, id: 0 },
           method: getMethod(proof.location.range),
+          isSuppressed: isSuppressed(proof.keyword),
         };
       case "Steps": {
         // A <*> first step takes the enclosing level only after PROOF, and the top level
@@ -874,6 +887,7 @@ export const createSource = (
       ...converted,
       ...withMethod(step.head),
       step: number,
+      isSuppressed: isSuppressed(step.statement),
     });
     switch (body.kind) {
       case "Use":
@@ -891,6 +905,7 @@ export const createSource = (
               location,
               step: number,
               method: getMethod(body.location.range),
+              isSuppressed: isSuppressed(body.keyword),
             }
           : { kind: "Hide", usable, location, step: number };
       }
@@ -958,7 +973,10 @@ export const createSource = (
               name: getCanonicalName(declaration.name),
               shape: declaration.arity,
             })),
-            location: getLocus(unit.declarations[0].location),
+            // Module.Parser locates each RECURSIVE declaration at its whole unit.
+            location: getLocus(
+              unit.kind === "Constants" ? unit.declarations[0].location : unit.location,
+            ),
           };
         case "Variables":
           return {

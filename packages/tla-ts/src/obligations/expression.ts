@@ -10,9 +10,12 @@ export interface Locus {
   endColumn: number;
 }
 
+// The channel error is Errors.set, which records the locus and message that tlapm's toolbox reports
+// when tlapm ends abnormally.
 interface ObligationWarning {
   text: string;
-  channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout";
+  channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout" | "error";
+  locus?: Locus;
 }
 
 export type Warn = (warning: ObligationWarning) => void;
@@ -37,6 +40,12 @@ export const getAtPrefix = (locus: Locus | undefined) => `${getLocationText(locu
 export const getErrorNote = (locus: Locus | undefined, message: string): ObligationWarning => ({
   text: `${getAtPrefix(locus)}Error: ${message}`,
   channel: "stderr",
+});
+
+export const getErrorSetting = (locus: Locus | undefined, message: string): ObligationWarning => ({
+  text: message,
+  channel: "error",
+  locus,
 });
 
 export const getLocusPrefix = (locus: Locus | undefined) =>
@@ -149,7 +158,7 @@ interface ExceptSpec {
 
 export type ParenForm =
   | { kind: "Syntax" }
-  | { kind: "Nlabel"; label: string; names: string[] }
+  | { kind: "Nlabel"; label: string; names: string[]; location?: Locus }
   | { kind: "Xlabel"; label: string; indices: { name: string; index: number }[] };
 
 export interface Param {

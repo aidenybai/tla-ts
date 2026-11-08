@@ -296,11 +296,13 @@ export interface FairnessExpression {
   location: SourceLocation;
 }
 
+// head is the range of the label up to its ::.
 export interface LabelExpression {
   kind: "Label";
   name: string;
   params: string[];
   paramRanges?: SourceRange[];
+  head?: SourceRange;
   body: Expression;
   location: SourceLocation;
 }
@@ -512,7 +514,7 @@ export interface Theorem {
 // The units of a module in source order, for consumers that need the order across kinds.
 export type ModuleUnit =
   | { kind: "Constants" | "Variables"; declarations: Declaration[]; location: SourceLocation }
-  | { kind: "Recursive"; declarations: Declaration[] }
+  | { kind: "Recursive"; declarations: Declaration[]; location: SourceLocation }
   | { kind: "Definition"; definition: Definition }
   | { kind: "Instance"; instance: Instance }
   | { kind: "Assumption"; assumption: Assumption }

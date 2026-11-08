@@ -12,6 +12,7 @@ import {
 } from "../../obligations/expression";
 import { compareStrings } from "../ocaml";
 import { createPrinter } from "./context";
+import { layOutCommand } from "./layout";
 import { getSymbolSpec, type CollectState, type SymbolSpec } from "./data";
 import type { Entry } from "./flatten";
 import { declare, getTlaName, MEM } from "./format";
@@ -182,7 +183,9 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           if (isExpanded(hyp))
             return next({ kind: "unsupported", reason: "an expanded definition" });
           if (definition.kind === "Instance")
-            return next({ kind: "unsupported", reason: "an instance" });
+            return next({ kind: "unsupported", reason: "an instance" }, [
+              `; omitted declaration of '${definition.name}' (missing type)`,
+            ]);
           if (definition.kind === "Recursive") {
             const symbol = encoder.getUniqueName(`CONSTANT_${definition.name}_`);
             return next({ kind: "operator", symbol, arity: definition.shape }, [
@@ -194,11 +197,14 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           const body = definition.body;
           const params = body.kind === "Lambda" ? body.params : [];
           if (params.some((param) => param.shape > 0))
-            return next({
-              kind: "secondOrder",
-              name: definition.name,
-              shapes: params.map((param) => param.shape),
-            });
+            return next(
+              {
+                kind: "secondOrder",
+                name: definition.name,
+                shapes: params.map((param) => param.shape),
+              },
+              [`; omitted declaration of '${definition.name}' (second-order)`],
+            );
           const symbol = encoder.getUniqueName(definition.name);
           return next({ kind: "operator", symbol, arity: params.length }, [
             declare(symbol, params.length),
@@ -206,7 +212,7 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
         }
         case "Fact": {
           const binding: Binding = { kind: "unsupported", reason: "a reference to a fact" };
-          if (hyp.visibility === "Hidden") return next(binding);
+          if (hyp.visibility === "Hidden") return next(binding, ["; hidden fact"]);
           const isOmitted = isSecondOrder(hyp.expression);
           const entries = encoder.getEntries(
             `(assert ${encoder.encodeBool(hyp.expression, state.env, { ...HYPOTHESIS, isOmitted })})`,
@@ -214,7 +220,12 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           return next(
             binding,
             isOmitted
-              ? entries.map((entry) => (typeof entry === "string" ? { omitted: entry } : entry))
+              ? [
+                  ...entries.map((entry) =>
+                    typeof entry === "string" ? { omitted: entry } : entry,
+                  ),
+                  "; omitted fact (second-order)",
+                ]
               : entries,
           );
         }
@@ -223,10 +234,18 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
     { env: undefined, entries: [] },
   );
 
+// What Smtlib.pp_print_obligation prints before the logic.
+export interface SmtHeader {
+  version: string;
+  id: number;
+  location: string;
+  logic: string;
+}
+
 // Smtlib.pp_print_obligation: the logic, the sort, the builtin symbols by name, their axioms,
-// then the hypotheses in order, the goal last. It throws a TlaUnsupportedError for what the
-// encoding can't express, where tlapm's encoder fails.
-export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
+// then the hypotheses in order, the goal last, each hypothesis followed by an empty line. It
+// throws a TlaUnsupportedError for what the encoding can't express, where tlapm's encoder fails.
+export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: SmtHeader) => {
   const simplified = sortRecordFields(
     simplifyRecordEqualities({ kind: "Sequent", sequent: prepared }),
   );
@@ -238,38 +257,55 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
     : encoder.getEntries(
         `(assert (! (not ${encoder.encodeBool(sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
       );
-  const entries = [...context.entries, ...goal];
   const printer = createPrinter(encoder.declared);
-  const collected = collectSymbols(entries, encoder);
+  const collected = collectSymbols([...context.entries, ...goal], encoder);
   const declarations = [...collected.symbols]
     .toSorted((left, right) => compareStrings(left[0], right[0]))
     .flatMap((symbol) => (symbol[1].declaration === undefined ? [] : [symbol[1].declaration]));
   const axioms = [...collected.axioms.values()]
     .toSorted(compareAxioms)
-    .flatMap((entry) =>
-      entry.formula === undefined ? [] : [`(assert (! ${entry.formula} :named |${entry.label}|))`],
+    .map((entry) =>
+      entry.formula === undefined
+        ? "; omitted fact (second-order)"
+        : `(assert (! ${entry.formula} :named |${entry.label}|))`,
     );
   const keys = new Set(collected.axioms.keys());
-  const lines = [
-    ...declarations,
-    ...axioms,
-    ...entries.flatMap((entry) => {
+  const getLines = (entries: Entry[]) =>
+    entries.flatMap((entry) => {
       if (typeof entry === "string") return [entry];
       return "omitted" in entry ? [] : entry.getLines(keys);
-    }),
-  ];
+    });
+  const hypotheses = [...declarations, ...axioms, ...getLines(context.entries)];
+  const goalLines = getLines(goal);
   // Smtlib.collect_sorts declares Idv only when a symbol or a bound variable has that sort.
   // Type.Synthesize gives that sort to each definition left in the context, though none is printed.
   const isIdvUsed =
-    lines.some((line) => /\bIdv\b/.test(line)) ||
+    [...hypotheses, ...goalLines].some((line) => /\bIdv\b/.test(line)) ||
     sequent.context.some(
       (hyp) =>
         hyp.kind === "Defn" &&
         (hyp.definition.kind === "Operator" || hyp.definition.kind === "Recursive") &&
         !isExpanded(hyp),
     );
-  return ["(set-logic UFNIA)", ...(isIdvUsed ? ["(declare-sort Idv 0)"] : []), ...lines]
-    .map(printer.resolve)
-    .concat("(check-sat)", "(exit)")
-    .join("\n");
+  // pp_print_assert prints the name of an axiom, or of the goal, before it.
+  const printCommand = (line: string) => {
+    if (line.startsWith(";")) return `${line}\n`;
+    const command = layOutCommand(printer.resolve(line));
+    const name = /:named \|([^|]*)\|\)\)$/.exec(line)?.[1];
+    if (name === undefined) return `${command}\n`;
+    return `;; ${name === "Goal" ? name : `Axiom: ${name}`}\n${command}\n`;
+  };
+  return [
+    `;; TLA+ Proof Manager ${header.version}\n`,
+    `;; Proof obligation #${header.id}\n`,
+    `;; Generated from ${header.location}\n\n`,
+    `(set-logic ${header.logic})\n\n`,
+    ";; Sorts\n\n",
+    isIdvUsed ? "(declare-sort Idv 0)\n" : "",
+    "\n;; Hypotheses\n\n",
+    hypotheses.length === 0 ? "\n" : "",
+    ...hypotheses.map((line) => `${printCommand(line)}\n`),
+    ...goalLines.map((line) => `${printCommand(line)}\n`),
+    "(check-sat)\n(exit)\n",
+  ].join("");
 };

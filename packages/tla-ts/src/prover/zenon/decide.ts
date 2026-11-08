@@ -97,11 +97,20 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
   };
 };
 
-type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown" };
+type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown"; error?: string };
+
+// What Prove.prove prints on stderr when it gives up. Zenon never reaches the time limit tlapm
+// gives it, since tlapm stops it first.
+const FAILURE_ERRORS: Partial<Record<SearchFailure | "zenon error", string>> = {
+  exhausted: "Zenon error: exhausted search space without finding a proof\n",
+  "memory limit": "Zenon error: could not find a proof within the memory size limit\n",
+};
 
 // Zenon's verdict on a .znn file: "unsat" with the Isar proof that tlapm writes, when Zenon refutes
 // the hypotheses with a proof that the checker accepts and prints it within the time limit.
 export const decideZenon = (text: string, options: DecideOptions): ZenonDecision => {
-  const isar = runZenon(text, options).isar;
-  return isar === undefined ? { verdict: "unknown" } : { verdict: "unsat", proof: isar };
+  const run = runZenon(text, options);
+  if (run.isar !== undefined) return { verdict: "unsat", proof: run.isar };
+  const error = run.failure === undefined ? undefined : FAILURE_ERRORS[run.failure];
+  return { verdict: "unknown", ...(error !== undefined && { error }) };
 };

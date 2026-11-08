@@ -115,7 +115,7 @@ const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
   };
   for (const original of expression.sequent.context) {
     const hyp = substituteHyp(state.substitution, original);
-    if (hyp.kind !== "Fresh" || !hyp.domain || original.kind !== "Fresh" || !original.domain) {
+    if (hyp.kind !== "Fresh" || !hyp.domain) {
       push(
         hyp.kind === "Fact"
           ? { ...hyp, expression: prepareHyps(state.scope, hyp.expression) }
@@ -126,7 +126,6 @@ const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
     }
     const domain = prepareHyps(state.scope, hyp.domain);
     push({ ...hyp, domain: undefined });
-    // tlapm judges the time of the domain as written, one hypothesis too deep.
     push({
       kind: "Fact",
       expression: applyBuiltin(
@@ -135,7 +134,7 @@ const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
         domain,
       ),
       visibility: hyp.domainVisibility,
-      time: hyp.level === "Constant" ? getTime(state.scope, original.domain) : "Now",
+      time: hyp.level === "Constant" ? getTime(state.scope, shiftExpr(1, domain)) : "Now",
       location: hyp.location,
     });
     state.substitution = {
