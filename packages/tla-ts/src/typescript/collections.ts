@@ -32,6 +32,7 @@ import {
   number,
   quantify,
   set,
+  string,
   tuple,
 } from "./tla";
 import { getKind, isBooleanType, isNumberLike, type Kind, translateUnknown } from "./types";
@@ -643,6 +644,24 @@ const translateSequenceOperation = (
             index(sequence, [index(indices, [identifier(kept)])]),
           );
         });
+      },
+    ],
+    [
+      "join",
+      () => {
+        const isText = (type: ts.Type | undefined) =>
+          type !== undefined && (type.flags & ts.TypeFlags.StringLike) !== 0;
+        if (
+          !isText(call.elementType) ||
+          (argument !== undefined && !isText(context.checker.getTypeAtLocation(argument)))
+        ) {
+          throw new TlaTypeScriptError("join() needs strings", node);
+        }
+        return useJavaScript(
+          "Join",
+          [sequence, argument === undefined ? string(",") : translate(argument)],
+          context,
+        );
       },
     ],
     ["reduce", getReduced(false)],

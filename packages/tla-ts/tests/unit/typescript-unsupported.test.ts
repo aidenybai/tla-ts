@@ -116,7 +116,7 @@ const CASES: [string, string][] = [
     "a callback array parameter typed as an object",
     "count = [1].filter((_, __, array: { length: number }) => array.length === 1).length;",
   ],
-  ["a conversion whose type is unknown", "const value: unknown = count; label = String(value);"],
+  ["a conversion whose type is unknown", "const value: unknown = label; count = Number(value);"],
   ["an unknown call in a callback", "values = values.map(() => Math.random());"],
   ["a test that doesn't return a boolean", "values = values.filter((value) => value);"],
 ];

@@ -36,6 +36,12 @@ SequenceWith(sequence, index, value) ==
      THEN [sequence EXCEPT ![relative + 1] = value]
      ELSE Assert(FALSE, "tla-ts can't throw the RangeError of with()")
 
+RECURSIVE Join(_, _)
+Join(sequence, separator) ==
+  CASE sequence = <<>> -> ""
+    [] Len(sequence) = 1 -> Head(sequence)
+    [] OTHER -> Head(sequence) \\o separator \\o Join(Tail(sequence), separator)
+
 RECURSIVE ReduceAt(_, _, _)
 ReduceAt(Op(_, _), accumulator, positions) ==
   IF positions = <<>>
@@ -355,6 +361,14 @@ SameValue(left, right) ==
             "tla-ts can't compare objects by identity")
   /\\ IF IsRef(left) \\/ IsRef(right) THEN ToString(left) = ToString(right) ELSE left = right
 
+StringOf(value) ==
+  CASE value = Undefined -> "undefined"
+    [] value = Null -> "null"
+    [] TypeOf(value) = "boolean" -> IF value THEN "true" ELSE "false"
+    [] TypeOf(value) = "string" -> value
+    [] TypeOf(value) = "number" -> ToString(value)
+    [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
+
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
     [] TypeOf(value) = "boolean" -> value
@@ -605,6 +619,7 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     if (kind === "number") return apply("ToString", [value]);
     if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
     if (isEmpty) return string(kind);
+    if (names === undefined) return useJavaScript("StringOf", [value], context);
   }
   throw unsupported;
 };
