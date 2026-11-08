@@ -731,7 +731,19 @@ const isConstantExpression = (program: Program, expression: Expression, scope: T
 interface Frame {
   scope: TierScope;
   primed: (string | undefined)[];
+  // The code that reads each unprimed variable, which is the next state's inside a primed expression.
+  variables: string[];
 }
+
+const getVariableCodes = (program: Program) => program.variableTypes.map((_, index) => `v${index}`);
+
+// An expression primed as a whole reads every variable in the next state, where priming again is an
+// error.
+const getNextFrame = (frame: Frame): Frame => {
+  const variables = frame.primed.flatMap((code) => (code === undefined ? [] : [code]));
+  if (variables.length !== frame.primed.length) return unsupported();
+  return { scope: frame.scope, primed: frame.primed.map(() => undefined), variables };
+};
 
 const withBinding = (scope: TierScope, name: string, binding: Binding): TierScope =>
   new Map(scope).set(name, binding);
@@ -882,7 +894,7 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
   }
   const global = findGlobalName(name, program.environment);
   if (global?.kind === "Variable") {
-    return { type: program.variableTypes[global.index], emit: () => `v${global.index}` };
+    return { type: program.variableTypes[global.index], emit: () => frame.variables[global.index] };
   }
   if (global?.kind === "Value") return compileConstant(program, global.value);
   if (global?.kind === "Definition") {
@@ -1077,7 +1089,7 @@ const getApplied = (program: Program, expression: Expression, frame: Frame) =>
 const isStructural = (program: Program, expression: Expression, frame: Frame): boolean => {
   const body =
     getDefinitionBody(program, expression, frame) ?? getApplied(program, expression, frame)?.body;
-  if (body) return isStructural(program, body, { scope: new Map(), primed: frame.primed });
+  if (body) return isStructural(program, body, { ...frame, scope: new Map() });
   if (expression.kind === "Apply" && isUnion(program, expression, frame)) {
     return expression.args.some((set) => isStructural(program, set, frame));
   }
@@ -1114,14 +1126,14 @@ const compileMembership = (
     };
   }
   const body = getDefinitionBody(program, setExpression, frame);
-  if (body && isStructural(program, body, { scope: new Map(), primed: frame.primed })) {
-    return compileMembership(program, element, body, { scope: new Map(), primed: frame.primed });
+  if (body && isStructural(program, body, { ...frame, scope: new Map() })) {
+    return compileMembership(program, element, body, { ...frame, scope: new Map() });
   }
   const applied = getApplied(program, setExpression, frame);
   if (
     setExpression.kind === "Apply" &&
     applied &&
-    isStructural(program, applied.body, { scope: new Map(), primed: frame.primed })
+    isStructural(program, applied.body, { ...frame, scope: new Map() })
   ) {
     const expansion = getExpansion(program, setExpression, frame);
     if (expansion) {
@@ -2072,13 +2084,42 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       const target = expression.expression;
       if (target.kind !== "Identifier") return unsupported();
       const global = findGlobalName(target.name, program.environment);
+      if (!frame.scope.has(target.name) && global?.kind === "Definition") {
+        return compileIdentifier(program, target.name, getNextFrame(frame));
+      }
       if (frame.scope.has(target.name) || global?.kind !== "Variable") return unsupported();
       const code = frame.primed[global.index] ?? unsupported();
       return { type: program.variableTypes[global.index], emit: () => code };
     }
+    case "Unchanged":
+      return compileUnchanged(program, expression.expression, frame);
     default:
       return unsupported();
   }
+};
+
+// TLC evaluates UNCHANGED e outside an action's conjuncts as e' = e, which for a tuple holds when
+// each element is unchanged.
+const compileUnchanged = (program: Program, expression: Expression, frame: Frame): Compiled => {
+  const body = getDefinitionBody(program, expression, frame);
+  if (body?.kind === "Tuple")
+    return compileUnchanged(program, body, { ...frame, scope: new Map() });
+  if (expression.kind === "Tuple") {
+    const elements = expression.elements.map((element) =>
+      compileUnchanged(program, element, frame),
+    );
+    return {
+      type: BOOL,
+      emit: () =>
+        elements.length === 0
+          ? "true"
+          : elements.map((element) => `(${element.emit()})`).join(" && "),
+    };
+  }
+  const current = compileValue(program, expression, frame);
+  const next = compileValue(program, expression, getNextFrame(frame));
+  unify(current.type, next.type);
+  return { type: BOOL, emit: () => `H.same(${next.emit()}, ${current.emit()})` };
 };
 
 const compileSequenceConstruction = (
@@ -2233,7 +2274,11 @@ const compileStep = (
     const guards = pending.map((item) => {
       if (item.expression.kind !== "Unchanged") {
         return expectType(
-          compileValue(program, item.expression, { scope: item.scope, primed }),
+          compileValue(program, item.expression, {
+            scope: item.scope,
+            primed,
+            variables: getVariableCodes(program),
+          }),
           BOOL,
         );
       }
@@ -2247,7 +2292,7 @@ const compileStep = (
   }
   const [first, ...rest] = pending;
   const expression = first.expression;
-  const frame = { scope: first.scope, primed };
+  const frame = { scope: first.scope, primed, variables: getVariableCodes(program) };
   const continueWith = (scope: TierScope, expressions: Expression[], inlining = first.inlining) =>
     compileStep(
       program,
@@ -3210,21 +3255,26 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     unprimed,
   );
   const compilePredicate = (expression: Expression) =>
-    expectType(compileValue(program, expression, { scope: new Map(), primed: unprimed }), BOOL);
+    expectType(
+      compileValue(program, expression, {
+        scope: new Map(),
+        primed: unprimed,
+        variables: getVariableCodes(program),
+      }),
+      BOOL,
+    );
   const invariants = check.invariants.map(compilePredicate);
   const constraints = check.constraints.map(compilePredicate);
   const initialPredicates = check.initialPredicates.map(compilePredicate);
   const successor = program.variableTypes.map(() => getName(program, "n"));
   // [A]_v holds when A does or v is unchanged.
-  const actionProperties = check.actionProperties.map((property) => ({
-    action: expectType(
-      compileValue(program, property.action, { scope: new Map(), primed: successor }),
-      BOOL,
-    ),
-    unchanged: getUnchangedVariables(program, property.subscript, new Map()).map(
-      (index) => `H.same(${successor[index]}, v${index})`,
-    ),
-  }));
+  const actionProperties = check.actionProperties.map((property) => {
+    const frame = { scope: new Map(), primed: successor, variables: getVariableCodes(program) };
+    return {
+      action: expectType(compileValue(program, property.action, frame), BOOL),
+      unchanged: compileUnchanged(program, property.subscript, frame),
+    };
+  });
   program.variableTypes.forEach(closeType);
   const parameters = program.variableTypes.map((_, index) => `v${index}`).join(", ");
   const unpack = `const [${parameters}] = state;`;
@@ -3276,7 +3326,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const initialPredicateCodes = initialPredicates.map(predicate);
   const actionPropertyCodes = actionProperties.map(
     (property) =>
-      `(state, next) => { ${unpack} const [${successor.join(", ")}] = next; return (${property.action.emit()}) || (${["true", ...property.unchanged].join(" && ")}); }`,
+      `(state, next) => { ${unpack} const [${successor.join(", ")}] = next; return (${property.action.emit()}) || (${property.unchanged.emit()}); }`,
   );
   const values = program.plains.values;
   const ranks = new Int32Array(values.length);
