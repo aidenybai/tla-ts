@@ -1,0 +1,152 @@
+// Runs test262 through the TypeScript compiler. Tests that Node fails or that aren't valid
+// TypeScript are skipped, not blamed on the compiler.
+// Usage: bun scripts/run.ts test262 [--verbose] [test path prefixes]
+
+import { readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { runInNewContext } from "node:vm";
+import ts from "@typescript/typescript6";
+import { TlaTypeScriptError } from "../src/errors";
+import { check } from "../src/parallel";
+import { compile } from "../src/typescript/compile";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, listFiles } from "./corpora";
+
+type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
+
+interface TestRun {
+  id: string;
+  outcome: Outcome;
+  reason: string;
+}
+
+interface Metadata {
+  includes: string[];
+  flags: string[];
+  isNegative: boolean;
+}
+
+const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
+
+const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
+
+// Compiled TypeScript is a strict mode module.
+const SKIPPED_FLAGS = new Set(["noStrict", "raw", "module", "async"]);
+
+const getMetadata = (source: string): Metadata => {
+  const frontmatter = /\/\*---([\s\S]*?)---\*\//.exec(source)?.[1] ?? "";
+  const getList = (key: string) => {
+    const inline = new RegExp(`^${key}:\\s*\\[([^\\]]*)\\]`, "m").exec(frontmatter);
+    if (inline !== null) {
+      return inline[1]
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    const block = new RegExp(`^${key}:\\s*\\n((?:\\s+-.*\\n?)*)`, "m").exec(frontmatter);
+    return block === null ? [] : [...block[1].matchAll(/-\s*(\S+)/g)].map((match) => match[1]);
+  };
+  return {
+    includes: getList("includes"),
+    flags: getList("flags"),
+    isNegative: /^negative:/m.test(frontmatter),
+  };
+};
+
+const getSkipReason = (metadata: Metadata) => {
+  if (metadata.isNegative) return "negative test";
+  const flag = metadata.flags.find((candidate) => SKIPPED_FLAGS.has(candidate));
+  if (flag !== undefined) return `flag ${flag}`;
+  return metadata.includes.length > 0 ? `includes ${metadata.includes.join(", ")}` : undefined;
+};
+
+const getNodeError = (source: string) => {
+  try {
+    const output = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ESNext,
+        moduleDetection: ts.ModuleDetectionKind.Force,
+      },
+    }).outputText;
+    runInNewContext(output, { exports: {} });
+    return undefined;
+  } catch (error) {
+    return String(error);
+  }
+};
+
+const getFirstLine = (text: string) => text.split("\n")[0];
+
+const runTest = async (path: string): Promise<TestRun> => {
+  const id = relative(TEST_DIRECTORY, path);
+  const source = readFileSync(path, "utf8");
+  const skipReason = getSkipReason(getMetadata(source));
+  if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
+  const program = `${HARNESS}\n${source}`;
+  const nodeError = getNodeError(program);
+  if (nodeError !== undefined) {
+    return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
+  }
+  try {
+    const result = await check({ ...compile(program, "test262.ts"), onPrint: () => {} });
+    return result.status === "success" || result.status === "deadlock"
+      ? { id, outcome: "pass", reason: "" }
+      : {
+          id,
+          outcome: "wrong",
+          reason: (result.failure?.message ?? result.status).replaceAll("\n", " "),
+        };
+  } catch (error) {
+    if (!(error instanceof TlaTypeScriptError)) {
+      return { id, outcome: "wrong", reason: String(error).replaceAll("\n", " ") };
+    }
+    const reason = getFirstLine(error.message);
+    return /: error TS\d+: /.test(reason)
+      ? { id, outcome: "skipped", reason: `type error: ${reason}` }
+      : { id, outcome: "untranslatable", reason };
+  }
+};
+
+const getReasonKind = (reason: string) =>
+  reason
+    .replace(/^type error: \S+\(\d+,\d+\): /, "type ")
+    .replace(/^\S+:\d+:\d+ /, "")
+    .split(": ")[0];
+
+const isVerbose = process.argv.includes("--verbose");
+const prefixes = process.argv.slice(2).filter((argument) => !argument.startsWith("--"));
+const paths = listFiles(TEST_DIRECTORY)
+  .filter((path) => path.endsWith(".js") && !path.includes("_FIXTURE"))
+  .filter((path) => {
+    const id = relative(TEST_DIRECTORY, path);
+    return prefixes.length === 0 || prefixes.some((prefix) => id.startsWith(prefix));
+  })
+  .sort();
+
+const runs: TestRun[] = [];
+for (const path of paths) {
+  const run = await runTest(path);
+  runs.push(run);
+  if (isVerbose || run.outcome === "wrong") {
+    console.log(`${run.outcome.toUpperCase()} ${run.id}${run.reason ? ` ${run.reason}` : ""}`);
+  }
+}
+
+const countBy = (items: string[]) =>
+  [...Map.groupBy(items, (item) => item)].map((entry) => ({
+    key: entry[0],
+    count: entry[1].length,
+  }));
+
+const outcomes = countBy(runs.map((run) => run.outcome));
+console.log(
+  `${runs.length} tests: ${outcomes.map((entry) => `${entry.count} ${entry.key}`).join(", ")}`,
+);
+for (const outcome of ["untranslatable", "skipped"]) {
+  console.log(`Most common reasons a test is ${outcome}:`);
+  countBy(runs.filter((run) => run.outcome === outcome).map((run) => getReasonKind(run.reason)))
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 10)
+    .forEach((entry) => console.log(`  ${entry.count} ${entry.key}`));
+}
+process.exit(runs.some((run) => run.outcome === "wrong") ? 1 : 0);
