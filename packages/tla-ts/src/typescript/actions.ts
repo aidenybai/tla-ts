@@ -22,7 +22,7 @@ import {
   translateKey,
   translateToString,
 } from "./expressions";
-import { and, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
+import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import { translateEngineError, translateThrown } from "./exceptions";
 import {
   getAllocated,
@@ -656,18 +656,22 @@ const allocate = (
     },
     { definitions: [], scope: path.scope },
   );
+  const rest = continueWith({ ...path, scope: allocated.scope });
   const heap = allocated.scope.bindings.get(symbol);
-  return letIn(
-    allocated.definitions,
-    heap === undefined
-      ? continueWith({ ...path, scope: allocated.scope })
-      : forceHeap(heap, continueWith({ ...path, scope: allocated.scope })),
-  );
+  if (!path.isLooping) {
+    return allocated.definitions.reduceRight(
+      (body, definition) => bindValue(definition.name, definition.body, body),
+      rest,
+    );
+  }
+  return letIn(allocated.definitions, heap === undefined ? rest : forceHeap(heap, rest));
 };
 
 // Evaluates a heap where a statement changes it, as TLA+ evaluates definitions only where they're
 // used, so that a change tla-ts can't make stops the run there rather than once the heap is read.
-// The rest is an IF's branch, not a conjunct, as a loop's body gives values rather than a formula.
+// An action binds the heap with \E instead, since it evaluates a LET definition that may call
+// Assert again at each reference, and each heap refers to the one before it. The rest is an IF's
+// branch, not a conjunct, as a loop's body gives values rather than a formula.
 const forceHeap = (heap: Expression, rest: Formula) =>
   ifThenElse(apply("=", [heap, heap]), rest, leaf(boolean(false)));
 
@@ -679,19 +683,16 @@ const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => F
     return continueWith(path);
   }
   const name = context.names.getFresh("heap");
-  return letIn(
-    [define(name, [], heap)],
-    forceHeap(
-      identifier(name),
-      continueWith({
-        ...path,
-        scope: {
-          ...path.scope,
-          bindings: new Map([...path.scope.bindings, [symbol, identifier(name)]]),
-        },
-      }),
-    ),
-  );
+  const rest = continueWith({
+    ...path,
+    scope: {
+      ...path.scope,
+      bindings: new Map([...path.scope.bindings, [symbol, identifier(name)]]),
+    },
+  });
+  return path.isLooping
+    ? letIn([define(name, [], heap)], forceHeap(identifier(name), rest))
+    : bindValue(name, heap, rest);
 };
 
 const translateDeclarations = (

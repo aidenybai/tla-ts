@@ -1,9 +1,15 @@
 import type { Expression, OperatorDefinition } from "../ast";
-import { boolean, ifExpression, junction, letExpression, not } from "./tla";
+import { boolean, bound, ifExpression, junction, letExpression, not, quantify, set } from "./tla";
 
 // The structure tla-ts generates for function bodies, kept until the end so that disabled paths
 // simplify away.
-export type Formula = ExpressionFormula | DisabledFormula | AndFormula | IfFormula | LetFormula;
+export type Formula =
+  | ExpressionFormula
+  | DisabledFormula
+  | AndFormula
+  | IfFormula
+  | LetFormula
+  | BindFormula;
 
 interface ExpressionFormula {
   kind: "expression";
@@ -30,6 +36,15 @@ interface IfFormula {
 interface LetFormula {
   kind: "let";
   definitions: OperatorDefinition[];
+  body: Formula;
+}
+
+// A name bound to a value, which an action evaluates once where it would evaluate a LET definition
+// that may call Assert at each reference.
+interface BindFormula {
+  kind: "bind";
+  name: string;
+  value: Expression;
   body: Formula;
 }
 
@@ -68,12 +83,18 @@ export const letIn = (definitions: OperatorDefinition[], body: Formula): Formula
   return { kind: "let", definitions, body };
 };
 
+export const bindValue = (name: string, value: Expression, body: Formula): Formula =>
+  body.kind === "disabled" ? body : { kind: "bind", name, value, body };
+
 export const render = (formula: Formula): Expression => {
   if (formula.kind === "disabled") return boolean(false);
   if (formula.kind === "expression") return formula.expression;
   if (formula.kind === "and") return junction("And", formula.items.map(render), true);
   if (formula.kind === "if") {
     return ifExpression(formula.condition, render(formula.whenTrue), render(formula.whenFalse));
+  }
+  if (formula.kind === "bind") {
+    return quantify("Exists", [bound(formula.name, set([formula.value]))], render(formula.body));
   }
   return letExpression(formula.definitions, render(formula.body));
 };
