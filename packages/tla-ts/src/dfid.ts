@@ -45,6 +45,29 @@ interface StateEntry {
   fingerprint: bigint;
 }
 
+interface CheckerState {
+  isDone: boolean;
+  errorCode: number;
+  continuedCode: number;
+  isKeepingCallStack: boolean;
+  errorEntry: StateEntry | undefined;
+  stopCode: number;
+  isMoreLevel: boolean;
+}
+
+interface StateHolder {
+  state: Value[] | undefined;
+}
+
+interface Processing {
+  successor: (Value | undefined)[] | undefined;
+}
+
+interface LevelLoop {
+  isTerminated: boolean;
+  code: number;
+}
+
 const DONE = 1;
 const LEVELED = 2;
 
@@ -54,8 +77,6 @@ const LONG_MAX = (1n << 63n) - 1n;
 
 const INITIAL_BUCKETS = 1n << 16n;
 const MAX_LOAD = 20n;
-
-const STOP_REPLAY = new Error("The replay stopped");
 
 // MemFPIntSet.checkFPs reads a fingerprint back with the sign of its low word extended over its
 // high word, and compares two fingerprints in one bucket by Math.abs of their difference but two in
@@ -177,12 +198,12 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const isLeafStatus = (status: number) => status === 0 || status >>> 2 === fingerprintSet.level;
 
   const statistics = { generated: 0 };
-  const checker = {
+  const checker: CheckerState = {
     isDone: false,
     errorCode: NO_ERROR,
     continuedCode: NO_ERROR,
     isKeepingCallStack: false,
-    errorEntry: undefined as StateEntry | undefined,
+    errorEntry: undefined,
     stopCode: 0,
     isMoreLevel: false,
   };
@@ -221,12 +242,12 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
             ),
     });
   const levels = new WeakMap<(Value | undefined)[], number>();
-  const current = { state: undefined as Value[] | undefined };
+  const current: StateHolder = { state: undefined };
   runtime.getLevel = (state) => levels.get(state) ?? 0;
   runtime.getCurrentState = () => current.state;
 
   const initialEntries: StateEntry[] = [];
-  const errorState = { state: undefined as Value[] | undefined };
+  const errorState: StateHolder = { state: undefined };
   const computeInitialStates = (): number => {
     const generated: (Value | undefined)[][] = [];
     const addGenerated = (state: (Value | undefined)[]) => {
@@ -350,7 +371,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     const entry = stack[depth];
     const state = entry.state;
     const result = { isDeadlocked: true, isAllDone: true, isNoLeaf: true };
-    const processing = { successor: undefined as (Value | undefined)[] | undefined };
+    const processing: Processing = { successor: undefined };
     const report = (code: number, text: string, isKeepingCallStack: boolean) => {
       if (setErrorState(entry, isKeepingCallStack, code)) {
         printTrace(code, text, text, depth, processing.successor);
@@ -501,31 +522,26 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const replayExpansion = (entry: StateEntry) => {
     const tracing = createTracingEnvironment(environment);
     try {
-      nextActions.forEach((action) => {
+      const isPassed = nextActions.every((action) => {
         const successors: Value[][] = [];
         replaySuccessors([action], entry.state, tracing, (successor) => successors.push(successor));
         statistics.generated += successors.length;
-        successors.forEach((successor) => {
-          if (!successor.every((value) => value !== undefined)) throw STOP_REPLAY;
-          const isPassed = search.checkReplayedSuccessor(
-            entry.state,
-            successor,
-            tracing,
-            () => setStatus(runtime.getFingerprint(successor), 0) === 0,
-          );
-          if (!isPassed) throw STOP_REPLAY;
-        });
+        return successors.every(
+          (successor) =>
+            successor.every((value) => value !== undefined) &&
+            search.checkReplayedSuccessor(
+              entry.state,
+              successor,
+              tracing,
+              () => setStatus(runtime.getFingerprint(successor), 0) === 0,
+            ),
+        );
       });
+      if (isPassed) return;
     } catch (error) {
-      if (
-        error !== STOP_REPLAY &&
-        !(error instanceof TlaEvaluationError) &&
-        !isStackOverflow(error)
-      ) {
-        throw error;
-      }
-      output({ kind: "nested-expressions", callStack: tracing.callStack?.expressions ?? [] });
+      if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
     }
+    output({ kind: "nested-expressions", callStack: tracing.callStack?.expressions ?? [] });
   };
 
   const finish = (code: number) => {
@@ -551,21 +567,16 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       isHeadedError(failure) && failure.cause instanceof TlaEvaluationError
         ? failure.cause
         : failure;
-    if (errorState.state) {
-      const initial = `While working on the initial state:\n${formatState(toRecord(errorState.state))}`;
-      message(
-        MESSAGE_CODE.initialState,
-        `${inner.message}\n${initial}`,
-        `${formatNestedMessage(inner.message, true)}\n${initial}`,
-      );
-    } else {
-      const unexpected = getUnexpectedMessage("computing initial states", inner);
-      message(
-        MESSAGE_CODE.general,
-        `${unexpected}${inner.message}`,
-        `${unexpected}${formatNestedMessage(inner.message, true)}`,
-      );
-    }
+    const initialState = errorState.state;
+    const prefix = initialState ? "" : getUnexpectedMessage("computing initial states", inner);
+    const suffix = initialState
+      ? `\nWhile working on the initial state:\n${formatState(toRecord(initialState))}`
+      : "";
+    message(
+      initialState ? MESSAGE_CODE.initialState : MESSAGE_CODE.general,
+      `${prefix}${inner.message}${suffix}`,
+      `${prefix}${formatNestedMessage(inner.message, true)}${suffix}`,
+    );
     // TLC prints its Tool in place of the call stack, named by an identity hash.
     statistics.generated = 0;
     initialEntries.length = 0;
@@ -590,7 +601,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     reportSuccess();
     return finish(NO_ERROR);
   }
-  const loop: { isTerminated: boolean; code: number } = {
+  const loop: LevelLoop = {
     isTerminated: false,
     code: MESSAGE_CODE.general,
   };
@@ -600,9 +611,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       if (!errorEntry && checker.continuedCode === NO_ERROR) {
         loop.code = NO_ERROR;
         reportSuccess();
-      } else if (errorEntry && checker.isKeepingCallStack) {
-        replayExpansion(errorEntry);
       }
+      if (errorEntry && checker.isKeepingCallStack) replayExpansion(errorEntry);
       break;
     }
     message(
