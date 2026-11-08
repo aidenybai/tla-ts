@@ -48,6 +48,11 @@ export const getErrorSetting = (locus: Locus | undefined, message: string): Obli
   locus,
 });
 
+export const warnError = (onWarning: Warn, locus: Locus | undefined, message: string) => {
+  onWarning(getErrorNote(locus, message));
+  onWarning(getErrorSetting(locus, message));
+};
+
 export const getLocusPrefix = (locus: Locus | undefined) =>
   locus ? `${getLocusText(locus)} :\n` : "";
 

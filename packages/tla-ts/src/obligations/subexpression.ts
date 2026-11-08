@@ -13,6 +13,7 @@ import {
   getParamFresh,
   mapChildren,
   mapSelectorArgs,
+  warnError,
   type Bound,
   type Defn,
   type Expr,
@@ -207,8 +208,7 @@ const instantiate = (onWarning: Warn, expression: Expr, args: Expr[]): Expr => {
       return substituteExpr(consAll(args, shift(0)), expression.body);
     default: {
       const message = "Cannot instantiate non-binding expression";
-      onWarning(getErrorNote(expression.location, message));
-      onWarning(getErrorSetting(expression.location, message));
+      warnError(onWarning, expression.location, message);
       throw new TlaProofError(message, { failure: "Expr.Deref.deref_inst" });
     }
   }
@@ -230,8 +230,7 @@ const abstract = (onWarning: Warn, definitionCount: number, expression: Expr): [
         return [{ name: expression.name, shape: 0 }];
       default: {
         const message = "Cannot abstract over bound variables in a non-binding expression";
-        onWarning(getErrorNote(expression.location, message));
-        onWarning(getErrorSetting(expression.location, message));
+        warnError(onWarning, expression.location, message);
         throw new TlaProofError(message, { failure: "Expr.Deref.deref_at" });
       }
     }
@@ -249,8 +248,7 @@ const getNumbered = (
 ): [Defn[], Expr] => {
   const checkAtMost = (count: number) => {
     if (position <= count) return;
-    onWarning(getErrorNote(origin.location, message));
-    onWarning(getErrorSetting(origin.location, message));
+    warnError(onWarning, origin.location, message);
     throw new TlaProofError(message, { failure: "Expr.Deref.deref_num" });
   };
   const pick = (items: Expr[]) => {
@@ -268,8 +266,7 @@ const getNumbered = (
         const hyp = sequent.context[position - 1];
         if (hyp && hyp.kind !== "Fact") {
           const hypMessage = "subexpression reference does not resolve to an expression";
-          onWarning(getErrorNote(expression.location, hypMessage));
-          onWarning(getErrorSetting(expression.location, hypMessage));
+          warnError(onWarning, expression.location, hypMessage);
           throw new TlaProofError(hypMessage, { failure: "Expr.Deref.deref_num" });
         }
         const shifted = substituteExpr(
@@ -351,14 +348,12 @@ const getNumbered = (
         ]);
     }
     const emptyMessage = "Expression has no subexpressions";
-    onWarning(getErrorNote(expression.location, emptyMessage));
-    onWarning(getErrorSetting(expression.location, emptyMessage));
+    warnError(onWarning, expression.location, emptyMessage);
     throw new TlaProofError(emptyMessage, { failure: "Expr.Deref.deref_num" });
   })();
   if (isUnresolved(result)) {
     const badMessage = `Cannot resolve subexpression reference !${position}`;
-    onWarning(getErrorNote(expression.location, badMessage));
-    onWarning(getErrorSetting(expression.location, badMessage));
+    warnError(onWarning, expression.location, badMessage);
     throw new TlaProofError(badMessage, { failure: "Expr.Deref.deref_num" });
   }
   return [expression.kind === "Let" ? expression.definitions : [], result];
@@ -391,8 +386,7 @@ const resolveLabel = (
   if (indices.length !== labelArgs.length && labelArgs.length > 0) {
     const plural = indices.length === 1 ? "" : "s";
     const message = `Expected ${indices.length} argument${plural} for labelled reference !${label}, but found ${labelArgs.length}`;
-    onWarning(getErrorNote(found.expression.location, message));
-    onWarning(getErrorSetting(found.expression.location, message));
+    warnError(onWarning, found.expression.location, message);
     throw new TlaProofError(message, { failure: "Expr.Deref.deref_lsub" });
   }
   const params =
@@ -448,8 +442,7 @@ const resolveLetOperator = (
 ): Resolution => {
   if (expression.kind !== "Let") {
     const message = "not a LET expression";
-    onWarning(getErrorNote(expression.location, message));
-    onWarning(getErrorSetting(expression.location, message));
+    warnError(onWarning, expression.location, message);
     throw new TlaProofError(message, { failure: "Expr.Deref.deref_letop" });
   }
   const index = expression.definitions.findIndex(
@@ -458,8 +451,7 @@ const resolveLetOperator = (
   const definition = expression.definitions[index];
   if (!definition || definition.kind !== "Operator") {
     const message = `no definition of operator ${label}`;
-    onWarning(getErrorNote(expression.location, message));
-    onWarning(getErrorSetting(expression.location, message));
+    warnError(onWarning, expression.location, message);
     throw new TlaProofError(message, { failure: "Expr.Deref.deref_letop" });
   }
   const body = definition.body;
@@ -522,8 +514,7 @@ const resolveSelectors = (
   }
   if (state.expression.isAtomic) {
     const message = "Expression has no subexpressions";
-    onWarning(getErrorNote(state.expression.location, message));
-    onWarning(getErrorSetting(state.expression.location, message));
+    warnError(onWarning, state.expression.location, message);
     return UNRESOLVED;
   }
   const expression = isLabel ? state.expression : stripParens(state.expression);
@@ -616,8 +607,7 @@ export const resolveSubexpression = (
   );
   if (isUnresolved(result)) {
     const message = "Could not resolve subexpression reference";
-    onWarning(getErrorNote(operator.location, message));
-    onWarning(getErrorSetting(operator.location, message));
+    warnError(onWarning, operator.location, message);
     throw new TlaProofError(message, { failure: "Expr.Anon: 2" });
   }
   return result;
