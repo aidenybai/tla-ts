@@ -2,10 +2,11 @@
 
 class Test262Error extends Error {}
 
-// TypeScript's lib types new Object() as Object, which primitives also have.
+// TypeScript's lib types new Object() as Object, which primitives also have, and which has no
+// properties to write.
 // oxlint-disable-next-line no-unused-vars
 interface ObjectConstructor {
-  new (value?: null): object;
+  new (value?: null): { [key: string]: unknown };
 }
 
 // oxlint-disable-next-line no-unused-vars
