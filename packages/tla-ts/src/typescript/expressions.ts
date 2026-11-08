@@ -311,7 +311,9 @@ const translateCall = (
   if (helper !== undefined) return translateHelperCall(helper, node, scope, context);
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
-    if (operator === undefined) return translateLocalCall(node, scope, context);
+    if (operator === undefined || (symbol !== undefined && scope.functions.has(symbol))) {
+      return translateLocalCall(node, scope, context);
+    }
     if (operator.kind !== "Identifier") {
       throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
     }

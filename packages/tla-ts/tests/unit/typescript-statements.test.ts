@@ -266,6 +266,11 @@ const CASES: Record<string, Case[]> = {
     {
       variables: "count = 0",
       statements:
+        "let probe: () => number; { const inner = 3; probe = () => inner; } count = probe();",
+    },
+    {
+      variables: "count = 0",
+      statements:
         "let run: () => void; run = () => { count += 1; }; run(); if (count > 0) run = () => { count += 10; }; run();",
     },
     {
