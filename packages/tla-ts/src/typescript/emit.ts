@@ -1,4 +1,5 @@
 import type { Context } from "./context";
+import { indent } from "./formula";
 import { TlaTypeScriptError } from "../errors";
 import type { Model } from "./model";
 
@@ -47,8 +48,10 @@ export const createSections = (): Sections => ({
   assumptions: [],
 });
 
-const formatConjunction = (items: string[]) =>
-  items.length === 1 ? ` ${items[0]}` : `\n${items.map((item) => `  /\\ ${item}`).join("\n")}`;
+const formatConjunction = (items: string[]) => {
+  if (items.length > 1) return `\n${items.map((item) => `  /\\ ${item}`).join("\n")}`;
+  return items[0].includes("\n") ? `\n  ${indent(items[0], "  ")}` : ` ${items[0]}`;
+};
 
 const formatDisjunction = (items: string[]) =>
   items.length === 0

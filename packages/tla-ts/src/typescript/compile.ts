@@ -1,9 +1,9 @@
 import { basename } from "node:path";
 import ts from "@typescript/typescript6";
-import { writesState } from "./actions";
+import { translateScript, writesState } from "./actions";
 import { type Context, createContext } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
-import { indent, wrapEquated } from "./formula";
+import { indent, render, wrapEquated } from "./formula";
 import { translateBody } from "./functions";
 import { type Exported, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
@@ -55,7 +55,11 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const context = createContext(program.checker);
   const model = readModel(program.sourceFile, context);
   const sections = createSections();
-  sections.init.push(...model.variables.map((variable) => translateInitial(variable, context)));
+  sections.init.push(
+    ...(model.script.every(ts.isVariableStatement)
+      ? model.variables.map((variable) => translateInitial(variable, context))
+      : [render(translateScript(model.script, context))]),
+  );
   for (const definition of model.exported) translateExported(definition, model, sections, context);
   const moduleName = basename(fileName, ".ts")
     .split(/[^A-Za-z0-9]+/)

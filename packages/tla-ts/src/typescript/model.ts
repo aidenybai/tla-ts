@@ -30,6 +30,7 @@ interface Declared {
 
 export interface Model {
   variables: Variable[];
+  script: ts.Statement[];
   exported: Exported[];
   // Top-level functions and constants by their TypeScript names, which @leadsTo refers to.
   topLevel: Map<string, HelperDeclaration>;
@@ -90,23 +91,21 @@ const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context
   return `{${names.join(", ")}}`;
 };
 
-// The functions and constants a statement declares. Types and imports declare none.
+const isDeclaration = (statement: ts.Statement) =>
+  ts.isImportDeclaration(statement) ||
+  ts.isTypeAliasDeclaration(statement) ||
+  ts.isInterfaceDeclaration(statement) ||
+  ts.isEnumDeclaration(statement) ||
+  (ts.isExportDeclaration(statement) && statement.isTypeOnly) ||
+  (ts.isFunctionDeclaration(statement) && statement.body !== undefined);
+
+// The functions and constants a statement declares.
 const getDeclarations = (statement: ts.Statement): Declared[] => {
-  if (
-    ts.isImportDeclaration(statement) ||
-    ts.isTypeAliasDeclaration(statement) ||
-    ts.isInterfaceDeclaration(statement) ||
-    ts.isEnumDeclaration(statement) ||
-    (ts.isExportDeclaration(statement) && statement.isTypeOnly)
-  ) {
-    return [];
-  }
-  if (ts.isFunctionDeclaration(statement) && statement.name !== undefined && statement.body) {
+  if (ts.isFunctionDeclaration(statement) && statement.body !== undefined) {
+    if (statement.name === undefined) throw new TlaTypeScriptError("Name this function", statement);
     return [{ name: statement.name.text, declaration: statement }];
   }
-  if (!ts.isVariableStatement(statement)) {
-    throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
-  }
+  if (!ts.isVariableStatement(statement)) return [];
   const flags = statement.declarationList.flags;
   return statement.declarationList.declarations.map((declaration) => {
     if (!ts.isIdentifier(declaration.name)) {
@@ -153,6 +152,7 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
   });
   return {
     variables,
+    script: statements.filter((statement) => !isDeclaration(statement)),
     exported: exported.map((definition) => ({
       ...definition,
       name: context.names.getFresh(definition.name),

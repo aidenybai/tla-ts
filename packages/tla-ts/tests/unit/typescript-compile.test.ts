@@ -207,6 +207,54 @@ describe("actions", () => {
   });
 });
 
+describe("top-level statements", () => {
+  it("run once before the first step", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      count += 5;
+      export const step = () => {
+        if (count >= 7) return;
+        count++;
+      };
+      export const isBelowSeven = () => count < 7;
+    `);
+    expect(getTrace(result)).toEqual([{ count: "5" }, { count: "6" }, { count: "7" }]);
+  });
+
+  it("run helpers that change state", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      const add = (amount: number) => {
+        count += amount;
+      };
+      add(2);
+      add(3);
+    `);
+    expect(getTrace(result)).toEqual([{ count: "5" }]);
+  });
+
+  it("read a constant as it was where the code declares it", async () => {
+    const result = await checkModel(`
+      let count = 1;
+      const before = count;
+      count = 2;
+      if (before !== 1) throw new Error("before changed");
+    `);
+    expect(result.status).toBe("deadlock");
+    expect(getTrace(result)).toEqual([{ count: "2" }]);
+  });
+
+  it("stop the check when they throw", async () => {
+    const result = await checkModel(`
+      let count = 1;
+      count++;
+      if (count === 2) throw new Error("count is two");
+    `);
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toContain("count is two");
+  });
+});
+
 describe("values", () => {
   it("updates records by key", async () => {
     const result = await checkModel(`

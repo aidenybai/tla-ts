@@ -11,7 +11,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateKey } from "./expressions";
 import { and, DISABLED, type Formula, letIn, text, wrap, wrapEquated } from "./formula";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
-import { bindPattern, bindValues, type Scope } from "./scope";
+import { bindPattern, bindValues, createStateScope, type Scope } from "./scope";
 import { getKind } from "./types";
 
 interface Path {
@@ -439,6 +439,25 @@ export const translateAction = (
   return translateStatements(
     statements,
     { scope, mutable: new Set(context.variables.keys()), isAssigned: false },
+    context,
+    { next: finish, exit: finish, breakTo: undefined, inlining: new Set() },
+  );
+};
+
+export const translateScript = (statements: readonly ts.Statement[], context: Context): Formula => {
+  const finish = (path: Path) =>
+    and(
+      [...context.variables].map((entry) =>
+        text(`${entry[1]} = ${wrapEquated(path.scope.bindings.get(entry[0]) ?? entry[1])}`),
+      ),
+    );
+  return translateStatements(
+    statements,
+    {
+      scope: createStateScope(context),
+      mutable: new Set(context.variables.keys()),
+      isAssigned: false,
+    },
     context,
     { next: finish, exit: finish, breakTo: undefined, inlining: new Set() },
   );
