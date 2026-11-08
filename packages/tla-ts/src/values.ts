@@ -1237,7 +1237,7 @@ export const getIntervalElements = (value: IntervalValue): Value[] => {
 };
 
 const isIntervalDomain = (domain: Value[]) =>
-  domain.length > 0 && (domain === intervalDomains[domain.length] || intervalArrays.has(domain));
+  (domain.length > 0 && domain === intervalDomains[domain.length]) || intervalArrays.has(domain);
 
 // A set such as (1..2) \cap S, whose elements are the shared array, gets a copy.
 export const getFunctionDomain = (set: Value): Value[] => {
@@ -2233,7 +2233,12 @@ const findKeyIndexLikeTlc = (
     if (keyType !== undefined && typeof argument !== keyType) {
       throw new TlaEvaluationError(describeWrongKey(functionValue, argument));
     }
-    if (keyType === undefined && !valueVersion.is174 && isIntervalDomain(domain)) {
+    if (
+      keyType === undefined &&
+      !valueVersion.is174 &&
+      typeof argument !== "number" &&
+      isIntervalDomain(domain)
+    ) {
       throw createNonIntegerKeyError(argument);
     }
   }
