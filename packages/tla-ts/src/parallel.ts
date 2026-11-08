@@ -31,6 +31,7 @@ import { createStateEncoder, type EncodedStates } from "./transfer";
 import type { TlcVersion } from "./tlc/version";
 import {
   createCanonicalizer,
+  getRankedString,
   getRankedStringCount,
   setStringOrder,
   setValueVersion,
@@ -56,7 +57,7 @@ export interface StartMessage {
   remaining: Int32Array;
 }
 
-export interface LevelMessage {
+interface LevelMessage {
   type: "level";
   generated: number;
   added: number;
@@ -66,7 +67,7 @@ export interface LevelMessage {
 
 export type WorkerMessage =
   | { type: "ready" }
-  | { type: "abort" }
+  | { type: "abort"; string?: string }
   | { type: "paused" }
   | LevelMessage;
 
@@ -96,7 +97,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   // The search on the calling thread prints and reports what this one did while it started, so it
   // skips that.
-  const fallBack = () => {
+  const fallBack = (createdString?: string) => {
+    if (createdString !== undefined) {
+      options.onProgress?.({ kind: "sequential-fallback", string: createdString });
+    }
     const skipped = { count: printed.count };
     return checkSequentially({
       ...options,
@@ -233,7 +237,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     if (!(error instanceof TlaEvaluationError)) throw error;
     return fallBack();
   }
-  if (getRankedStringCount() !== startupStrings) return fallBack();
+  if (getRankedStringCount() !== startupStrings) return fallBack(getRankedString(startupStrings));
   statistics.depth = statistics.generatedStates === 0 ? 0 : 1;
   statistics.initialStates = {
     generated: statistics.generatedStates,
@@ -325,7 +329,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     const messages = await collectLevels(await reported);
     if (isAborted(messages)) {
       terminate();
-      return fallBack();
+      const aborted = messages.find(
+        (message) => message.type === "abort" && message.string !== undefined,
+      );
+      return fallBack(aborted?.type === "abort" ? aborted.string : undefined);
     }
     const levels = messages.flatMap((message) => (message.type === "level" ? [message] : []));
     const added = levels.reduce((sum, message) => sum + message.added, 0);

@@ -1,5 +1,17 @@
 # tla-ts
 
+## 0.0.9
+
+### Patch Changes
+
+- Check a spec whose union mixes tuples and strings, as TLC does. It used to fail to fingerprint the set (#362, #378).
+- Parse a recursive operator that passes an operator parameter to itself (#363, #378).
+- Lint a constant definition with many records in linear time instead of quadratic time (#361, #378).
+- Warn when a parallel check falls back to one worker because the search created a string. The CLI names the string on stderr, and `onProgress` gets a `sequential-fallback` event (#360, #378).
+- Support `-continue`. `tla-ts Spec.tla -continue` prints each invariant and action property violation and keeps exploring, like TLC, instead of rejecting the flag. `check()` takes `isContinued` and reports each violation to `onProgress` as a `violation` event. A continued check runs on one worker (#358).
+- Compile specs faster and evaluate them as TLC does. One pass over the definitions computes their levels, effects and read variables, and the evaluator's value caches are gone, so operators and lazy functions evaluate again at each use. State checking is 5 to 15% slower without the fingerprinter's value cache, and a check no longer shares TLC's own modules with earlier checks in the process (#357).
+- Read TLA+ source faster. The lexer classifies characters by code through one table instead of testing them with regular expressions, and tries only the operators that start with the current character (#355).
+
 ## 0.0.8
 
 ### Patch Changes

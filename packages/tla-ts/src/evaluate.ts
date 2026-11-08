@@ -48,6 +48,7 @@ import {
   getLazySubsets,
   getStreamedElements,
   getFunctionClass,
+  getNormalizedSetElements,
   getSequenceElements,
   isElementOf,
   isEnumerable,
@@ -476,7 +477,7 @@ const checkEnumerable = (set: Value, expression: Expression, version: TlcVersion
 const getEnumeratedElements = (set: Value, expression: Expression, version: TlcVersion) => {
   checkEnumerable(set, expression, version);
   if (typeof set === "object" && set.kind === "Interval") return getIntervalElements(set);
-  return getLazySubsets(set) ?? toFiniteSet(set).elements;
+  return getLazySubsets(set) ?? getNormalizedSetElements(set);
 };
 
 // The elements Tool.contexts binds to the bound of a quantifier or a set map. TLC 1.7.4 streams a

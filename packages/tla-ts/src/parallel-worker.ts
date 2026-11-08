@@ -5,7 +5,7 @@ import {
   isSharedFingerprintsFull,
   writeStateFingerprint,
 } from "./fingerprints";
-import type { CoordinatorMessage, LevelMessage, StartMessage, WorkerMessage } from "./parallel";
+import type { CoordinatorMessage, StartMessage, WorkerMessage } from "./parallel";
 import { createSearch } from "./search";
 import { getSuccessors, type Successor } from "./successors";
 import { createTlcOrder } from "./tlc/order";
@@ -13,6 +13,7 @@ import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import {
   createCanonicalizer,
+  getRankedString,
   getRankedStringCount,
   setStringOrder,
   setValueVersion,
@@ -188,7 +189,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   const report = (message: WorkerMessage) =>
     parent.postMessage(message, message.type === "level" ? [message.fingerprints.buffer] : []);
 
-  const runLevel = async (): Promise<LevelMessage | undefined> => {
+  const runLevel = async (): Promise<WorkerMessage | undefined> => {
     const expansion: Expansion = {
       states: frontier.states,
       origin: 0,
@@ -222,7 +223,9 @@ const runWorker = (start: StartMessage, parent: Port) => {
       }
       if (!(await steal(expansion))) break;
     }
-    if (getRankedStringCount() !== startupStrings) return undefined;
+    if (getRankedStringCount() !== startupStrings) {
+      return { type: "abort", string: getRankedString(startupStrings) };
+    }
     frontier.states = expansion.next;
     Atomics.store(remaining, workerIndex, frontier.states.length);
     return {

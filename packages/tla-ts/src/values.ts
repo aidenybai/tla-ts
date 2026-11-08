@@ -344,6 +344,9 @@ export const rankString = (text: string) => {
 
 export const getRankedStringCount = () => stringOrder.size;
 
+export const getRankedString = (rank: number) =>
+  Object.keys(stringOrder.ranks).find((text) => stringOrder.ranks[text] === rank);
+
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
 const compareStrings = (left: string, right: string) => {
@@ -1578,8 +1581,14 @@ const enumerateSet = (
           `Attempted to enumerate S \\ T when S:\n${formatValue(value.left)}\nis not enumerable.`,
         );
       }
-      if (value.operator === "\\cup")
-        return getSortedUnion(toFiniteSet(value.left), toFiniteSet(value.right)).elements;
+      if (value.operator === "\\cup") {
+        return computeLikeTlcOnFailure(
+          (union) => getSortedUnion(toFiniteSet(union.left), toFiniteSet(union.right)).elements,
+          (union) => sortLikeTlc(listUnionLikeTlc(union)),
+          value,
+          value,
+        );
+      }
       const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
       const other = isLeftEnumerated ? value.right : value.left;
@@ -1621,6 +1630,24 @@ export const toFiniteSet = (value: Value): SetValue => {
   if (lazy) lazy.enumerated = set;
   return set;
 };
+
+// SetCupValue#toSetEnum.
+const listUnionLikeTlc = (union: SetOperationValue) => [
+  ...toFiniteSet(union.left).elements,
+  ...toFiniteSet(union.right).elements,
+];
+
+// EnumerableValue#elements(NORMALIZED) sorts a union outside its methods, so a failed comparison
+// isn't a fingerprint failure.
+export const getNormalizedSetElements = (value: Value) =>
+  typeof value === "object" && value.kind === "SetOperation" && value.operator === "\\cup"
+    ? computeLikeTlcOnFailure(
+        (union) => toFiniteSet(union).elements,
+        (union) => sortLikeTlc(callTracedMethod(union, () => listUnionLikeTlc(union))),
+        value,
+        value,
+      )
+    : toFiniteSet(value).elements;
 
 // TLC's Enumerator for a lazy set streams the sets it combines until the set caches its elements,
 // so an element that two of them share comes up once for each.
