@@ -1642,10 +1642,16 @@ const compileFunctionConstruction = (
     if (expression.isRecursive || isKeptLazy || context.isKeepLazy || !isEnumerable(domain)) {
       return createLazy(domain, context);
     }
-    // TLC builds a function over a domain other than a set enumeration or an interval lazily, so
-    // its body fails only where TLC forces it, as the replay does. Building it at once is faster
-    // otherwise.
-    if (!isReducibleSet(domain)) {
+    // TLC builds a function lazily unless the set of each bound is a set enumeration or an
+    // interval, so its body fails only where TLC forces it, as the replay does. Building it at once
+    // is faster otherwise.
+    const isReducibleDomain =
+      bounds.length === 1
+        ? isReducibleSet(domain)
+        : typeof domain === "object" &&
+          domain.kind === "ProductSet" &&
+          domain.factors.every(isReducibleSet);
+    if (!isReducibleDomain) {
       if (callStack) return createLazy(domain, context);
       try {
         return construct(domain, context);
