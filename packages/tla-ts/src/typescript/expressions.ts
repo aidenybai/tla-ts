@@ -79,6 +79,15 @@ const ORDERING_OPERATORS = new Set([
   ts.SyntaxKind.GreaterThanEqualsToken,
 ]);
 
+const ARITHMETIC_OPERATORS = new Set([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.PercentToken,
+  ...ORDERING_OPERATORS,
+]);
+
 const LOGICAL_OPERATORS = new Map([
   [ts.SyntaxKind.AmpersandAmpersandToken, "And" as const],
   [ts.SyntaxKind.BarBarToken, "Or" as const],
@@ -323,7 +332,7 @@ const translateCall = (
 };
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
-const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
+export const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
   const flags = context.checker.getTypeAtLocation(node).flags;
   if (getKind(node, context) === "string") return value;
@@ -365,6 +374,15 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       translateToString(node.right, scope, context),
     ]);
   }
+  if (ORDERING_OPERATORS.has(kind) && isString) {
+    throw new TlaTypeScriptError("TLA+ strings have no order, so compare them with === only", node);
+  }
+  if (
+    ARITHMETIC_OPERATORS.has(kind) &&
+    (!isNumberLike(node.left, context) || !isNumberLike(node.right, context))
+  ) {
+    throw new TlaTypeScriptError(`${node.operatorToken.getText()} needs numbers`, node);
+  }
   if (kind === ts.SyntaxKind.PlusToken)
     return apply("+", [translate(node.left), translate(node.right)]);
   if (kind === ts.SyntaxKind.PercentToken) {
@@ -387,9 +405,6 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   }
   if (kind === ts.SyntaxKind.SlashToken) {
     throw new TlaTypeScriptError("Write division as Math.floor(a / b) or Math.trunc(a / b)", node);
-  }
-  if (ORDERING_OPERATORS.has(kind) && isString) {
-    throw new TlaTypeScriptError("TLA+ strings have no order, so compare them with === only", node);
   }
   const operator = BINARY_OPERATORS.get(kind);
   if (operator === undefined) {

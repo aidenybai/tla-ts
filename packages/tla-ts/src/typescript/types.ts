@@ -79,7 +79,7 @@ export const isBooleanLike = (node: ts.Expression, context: Context) =>
   isBooleanType(context.checker.getTypeAtLocation(node));
 
 export const isNumberLike = (node: ts.Expression, context: Context) =>
-  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike);
+  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike | ts.TypeFlags.Never);
 
 export const isSet = (node: ts.Expression, context: Context) =>
   isSetType(context.checker.getTypeAtLocation(node));

@@ -11,7 +11,7 @@ import {
   share,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { translateExpression, translateKey } from "./expressions";
+import { translateExpression, translateKey, translateToString } from "./expressions";
 import { and, DISABLED, type Formula, letIn, leaf } from "./formula";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import { bindPattern, bindValues, createStateScope, type Scope } from "./scope";
@@ -28,7 +28,7 @@ import {
   tuple,
   unchanged,
 } from "./tla";
-import { getField, getKind, getPathStep } from "./types";
+import { getField, getKind, getPathStep, isNumberLike } from "./types";
 
 interface Path {
   scope: Scope;
@@ -240,6 +240,9 @@ const getRemovedValue = (
 const getAssignedPath = (expression: ts.Expression, path: Path, context: Context) => {
   if (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) {
     const operator = INCREMENT_OPERATORS.get(expression.operator);
+    if (operator !== undefined && !isNumberLike(expression.operand, context)) {
+      throw new TlaTypeScriptError(`${expression.getText()} needs a number`, expression);
+    }
     return operator === undefined
       ? undefined
       : assign(expression.operand, path, context, (current) =>
@@ -252,12 +255,19 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     const value = translateExpression(expression.right, path.scope, context);
     return assignPattern(expression.left, expression.right, value, path, context);
   }
-  const operator =
-    kind === ts.SyntaxKind.PlusEqualsToken && getKind(expression.left, context) === "string"
-      ? "\\o"
-      : COMPOUND_OPERATORS.get(kind);
+  const isConcatenated =
+    kind === ts.SyntaxKind.PlusEqualsToken && getKind(expression.left, context) === "string";
+  const operator = isConcatenated ? "\\o" : COMPOUND_OPERATORS.get(kind);
   if (operator === undefined) return undefined;
-  const value = translateExpression(expression.right, path.scope, context);
+  if (
+    !isConcatenated &&
+    (!isNumberLike(expression.left, context) || !isNumberLike(expression.right, context))
+  ) {
+    throw new TlaTypeScriptError(`${expression.operatorToken.getText()} needs numbers`, expression);
+  }
+  const value = isConcatenated
+    ? translateToString(expression.right, path.scope, context)
+    : translateExpression(expression.right, path.scope, context);
   return assign(expression.left, path, context, (current) => apply(operator, [current, value]));
 };
 

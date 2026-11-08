@@ -12,6 +12,8 @@ const CASES: [string, string][] = [
   ["division", "count = count / 2;"],
   ["fractions", "count = 1.5;"],
   ["negative zero", "count = -0;"],
+  ["arithmetic on a value that isn't a number", "const value: any = true; count = count + value;"],
+  ["incrementing a value that isn't a number", "let value: any = true; value++; count = value;"],
   ["integers past 32 bits", "count = 2147483648;"],
   ["rest parameters", "const add = (...more: number[]) => more.length; count = add(1, 2);"],
   ["string methods as values", "count = label.includes.length;"],
