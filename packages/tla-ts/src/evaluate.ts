@@ -1738,7 +1738,7 @@ const compileSetComprehension = (
       names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
       predicate: formatRange(range),
     };
-    const predicateRange = describeRange(expression.predicate);
+    const predicateNode = describeNode(expression.predicate);
     const createFiltered = (
       base: Value,
       context: Context,
@@ -1758,7 +1758,7 @@ const compileSetComprehension = (
         const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
         if (typeof value !== "boolean") {
           throw new TlaEvaluationError(
-            `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateRange} yielded non-Boolean value.`,
+            `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
           );
         }
         return value;
@@ -1780,7 +1780,7 @@ const compileSetComprehension = (
           const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
           if (typeof value !== "boolean") {
             throw new TlaEvaluationError(
-              `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateRange}`,
+              `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateNode}`,
             );
           }
           return value;
