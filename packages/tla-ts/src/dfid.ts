@@ -79,8 +79,8 @@ const INITIAL_BUCKETS = 1n << 16n;
 const MAX_LOAD = 20n;
 
 // MemFPIntSet.checkFPs reads a fingerprint back with the sign of its low word extended over its
-// high word, and compares two fingerprints in one bucket by Math.abs of their difference but two in
-// different buckets only when the difference doesn't overflow.
+// high word, and compares two fingerprints in one bucket by Math.abs of their difference but two
+// in different buckets only when the difference doesn't overflow.
 const getFingerprintDistance = (fingerprints: bigint[], buckets: bigint) => {
   const values = fingerprints.map((fingerprint) => {
     const low = BigInt.asIntN(32, fingerprint);

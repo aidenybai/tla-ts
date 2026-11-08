@@ -245,7 +245,6 @@ const generateApply = (
   return generateDelegate(generator, expression, frame);
 };
 
-// Whether an expression only reads values, so that it constructs no function whatever the control.
 const isConstructionFree = (
   expression: Expression,
   frame: Frame,
@@ -271,8 +270,7 @@ const isConstructionFree = (
   }
 };
 
-// Whether the generated code evaluates an expression only in the context its frame names. A primed
-// expression doesn't, since it shares the generated function's primed context.
+// A primed expression shares the generated function's primed context, so it isn't read-only.
 const isReadOnly = (expression: Expression): boolean => {
   switch (expression.kind) {
     case "Identifier":
@@ -335,8 +333,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         : isReadOnly(expression.function)
           ? generate(expression.function, keepLazyFrame)
           : generateDelegate(generator, expression.function, keepLazyFrame);
-      // Tool#evalAppl checks that it applies a function before it evaluates the argument. The check
-      // is written out, as calling expectFunction for each application costs more.
+      // Tool#evalAppl checks that it applies a function before it evaluates the argument. The check is
+      // written out, as calling expectFunction for each application costs more.
       const functionCode = `(applied = ${evaluatedFunction}, typeof applied === "object" && (applied.kind === "Function" || applied.kind === "LazyFunction") ? applied : expectFunction(applied, ${addReference(generator, expression)}))`;
       const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";

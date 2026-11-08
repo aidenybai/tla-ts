@@ -27,8 +27,8 @@ export interface LiveSuccessor {
 export interface Lasso {
   prefix: number[];
   cycle: number[];
-  // Whether the solution that the lasso violates constrains the cycle, as a liveness property does.
-  // TLC warns that a stuttering counterexample to one may come from a missing fairness constraint.
+  // TLC warns that a stuttering counterexample to a liveness property may come from a missing
+  // fairness constraint.
   isCycleConstrained: boolean;
 }
 
@@ -61,10 +61,8 @@ interface Pool<Data extends Int32Array | Uint8Array> {
   create: (length: number) => Data;
 }
 
-// TLC's behavior graph for one solution: a node per state, or per state and tableau node.
 interface BehaviorGraph {
   solution: Solution;
-  // One id per distinct action check across the solutions.
   actionIds: Int32Array;
   nodeStates: number[];
   nodeTableaux: number[];
@@ -103,7 +101,6 @@ const containsAlways = (expression: LiveExpression): boolean => {
   }
 };
 
-// TLC's OrderOfSolution#hasEmptyPEMAndBoxFreePromises, negated.
 const isCycleConstrained = (solution: Solution) =>
   solution.promises.some((promise) => containsAlways(promise.body)) ||
   solution.models.some(
@@ -177,7 +174,6 @@ const getStateResult = (behavior: BehaviorGraph, node: number, position: number)
     behavior.nodeStates[node] * behavior.solution.stateChecks.length + position
   ] === 1;
 
-// A node owns one entry in each per-node array of its graph.
 const pushNode = (behavior: BehaviorGraph, state: number, tableauNode: number) => {
   behavior.nodeStates.push(state);
   behavior.nodeTableaux.push(tableauNode);
@@ -435,7 +431,6 @@ export const createLivenessChecker = (
     return table.slots.filter((entry): entry is LiveSuccessor => entry !== undefined);
   };
 
-  // TLC's TableauLiveChecker#addNextState for a node it finds after it expanded the node's state.
   const expandLate = (
     behavior: BehaviorGraph,
     tableau: Tableau,
@@ -547,7 +542,6 @@ export const createLivenessChecker = (
     writeNode(behavior, index, successors, actions, stateResults);
   };
 
-  // The shortest path from an initial node to the node, last node first, as TLC's getPath finds it.
   const getPath = (behavior: BehaviorGraph, target: number) => {
     if (behavior.initial.includes(target)) return [target];
     const parents = new Map<number, number>();
@@ -631,8 +625,8 @@ export const createLivenessChecker = (
       return getLasso(root, members, membersByState);
     };
 
-    // TLC's LiveWorker#printTrace: a prefix to the root, a greedy walk through the component
-    // until it satisfies every check, and a breadth-first path back to the root.
+    // TLC's LiveWorker#printTrace: a prefix to the root, a greedy walk through the component until it
+    // satisfies every check, and a breadth-first path back to the root.
     const getLasso = (
       root: number,
       members: Set<number>,
@@ -729,7 +723,6 @@ export const createLivenessChecker = (
       };
     };
 
-    // TLC's LiveWorker#bfsPostFix, the states from the walk's end back to the root, last first.
     const getClosingPath = (
       root: number,
       end: number,

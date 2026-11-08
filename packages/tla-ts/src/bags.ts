@@ -92,7 +92,7 @@ const findCount = (functionValue: FunctionValue, element: Value) => {
   return position === -1 ? undefined : functionValue.range[position];
 };
 
-// Bags.java casts each count to IntValue, so a count that isn't an integer fails with Java's
+// Bags.java casts each count to IntValue, so a count that isn't an integer fails with a
 // ClassCastException.
 const toCount = (value: Value) => {
   if (typeof value === "number") return value;

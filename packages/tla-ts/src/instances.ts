@@ -16,8 +16,6 @@ import { getArity, getBoundNames, getPatternNames, isBefore, LOCAL_RESOLUTION } 
 
 export const substitutedExpressions = new WeakSet<Expression>();
 
-// Applications inside an instance with substitutions or parameters, which TLC evaluates in a
-// context that binds them.
 export const contextualApplications = new WeakSet<Expression>();
 
 export const renameLocals = (

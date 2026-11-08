@@ -81,7 +81,6 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       : options.config;
   const print = options.onPrint ?? console.log;
   const printed = { count: 0 };
-  // What each point the search reports is about, such as the invariant TLC warns about.
   const getKey = (progress: CheckProgress) =>
     [
       progress.kind,

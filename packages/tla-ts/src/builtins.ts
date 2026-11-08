@@ -12,9 +12,8 @@ import {
   type Value,
 } from "./values";
 
-// TLC evaluates these operators in its core, or its Java code for them takes integers, so a wrong
-// argument is an evaluation failure. Every other standard-module operator checks its arguments in
-// Java and raises an EvalException.
+// TLC evaluates these in its core, or its Java code takes integers, so a wrong argument is an
+// evaluation failure. Every other standard-module operator raises an EvalException.
 const CORE_OPERATOR_NAMES = new Set([
   "=",
   "#",
@@ -46,7 +45,6 @@ const CORE_OPERATOR_NAMES = new Set([
 const createArgumentError = (name: string, message: string) =>
   CORE_OPERATOR_NAMES.has(name) ? new TlaEvaluationError(message) : new TlaModuleError(message);
 
-// TLC's EC.TLC_MODULE_ARGUMENT_ERROR.
 export const createModuleArgumentError = (
   position: string,
   name: string,
@@ -236,8 +234,8 @@ export const createJavaOverrideError = (signature: string, message: string) =>
   new TlaEvaluationError(getJavaOverrideMessage(signature, message));
 
 // TLC reports a failure inside an operator's Java method as a failure of the method, except an
-// EvalException that the method raises itself, and as an EvalException for a NullPointerException.
-// A method that evaluates its own arguments reports every failure as a failure of the method.
+// EvalException the method raises itself, and a NullPointerException as an EvalException. A method
+// that evaluates its own arguments reports every failure as a failure of the method.
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
   const reportAsJavaFailure =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>

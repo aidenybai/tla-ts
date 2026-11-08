@@ -63,7 +63,6 @@ const toLocationValue = (location: SourceLocation) => {
   ]);
 };
 
-// TLC's RecordValue(Action): the action's name and location, with the values of its parameters.
 export const toActionValue = (action: SpecAction) => {
   const fields: [string, Value][] = [
     ["name", action.name],
@@ -528,14 +527,12 @@ export const getSubscriptVariables = (
   return collect(subscript, scope) ? variables : undefined;
 };
 
-// TLC's initial predicates, which it conjoins to compute the initial states.
 export const getInitActions = (
   config: ModelConfig,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
 ) => getSpecDescription(config, environment, instanceActions).inits;
 
-// TLC's split of the next-state relation into the actions it names in a behavior.
 export const getNextActions = (
   config: ModelConfig,
   environment: Environment,
@@ -550,7 +547,6 @@ const formatParameters = (action: SpecAction) =>
 export const getActionLabel = (action: SpecAction, version?: TlcVersion, isInitial = false) =>
   `${action.name === UNNAMED_ACTION ? (isInitial ? "Initial predicate" : "Action") : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
 
-// TLC's Action.getInvocationSignature, which names the action and the values of its parameters.
 export const getActionSignature = (action: SpecAction) =>
   `${action.name}${formatParameters(action)}`;
 
