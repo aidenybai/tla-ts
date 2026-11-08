@@ -5,10 +5,10 @@ import { compile } from "../../src/typescript/compile";
 // TypeScript with no TLA+ equivalent fails to compile with a TlaTypeScriptError at the construct, rather
 // than producing a spec that TLC rejects or that means something else.
 const CASES: [string, string][] = [
-  ["for loops", "for (let index = 0; index < 2; index++) count++;"],
-  ["for-of loops", "for (const value of [1, 2]) count += value;"],
-  ["while loops", "while (count < 2) count++;"],
-  ["do loops", "do { count++; } while (count < 2);"],
+  ["for-in loops", "for (const key in record) count++;"],
+  ["for-of loops over a set", "for (const value of new Set([1, 2])) count += value;"],
+  ["returning from a loop", "while (count < 2) { count++; return; }"],
+  ["changing an array a for-of iterates", "for (const value of values) values.pop();"],
   ["division", "count = count / 2;"],
   ["fractions", "count = 1.5;"],
   ["negative zero", "count = -0;"],

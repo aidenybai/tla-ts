@@ -57,6 +57,29 @@ const CASES: Record<string, Case[]> = {
     },
     { variables: "values: number[] = [1]", statements: "values[1] = 2; values[2] = values[0];" },
   ],
+  loops: [
+    {
+      variables: "count = 0",
+      statements: "for (let index = 0; index < 3; index++) count += index;",
+    },
+    { variables: "count = 0", statements: "for (const value of [4, 5, 6]) count += value;" },
+    { variables: "count = 0", statements: "while (count < 5) count += 2;" },
+    { variables: "count = 9", statements: "do { count++; } while (count < 5);" },
+    { variables: "count = 9", statements: "while (count < 5) count++;" },
+    {
+      variables: "count = 0, total = 0",
+      statements:
+        "for (let index = 0; ; index++) { if (index === 4) break; if (index % 2 === 0) continue; count++; total += index; }",
+    },
+    {
+      variables: "values: number[] = []",
+      statements: "for (const [first, second] of [[1, 2], [3, 4]]) values.push(first * second);",
+    },
+    {
+      variables: "count = 0",
+      statements: "let index = 0; while (true) { index++; if (index > 3) break; count += index; }",
+    },
+  ],
   arrays: [
     { variables: "queue: number[] = [1]", statements: "queue.push(2); queue.push(3, 4);" },
     { variables: "queue = [1, 2, 3]", statements: "queue.pop(); queue.shift();" },

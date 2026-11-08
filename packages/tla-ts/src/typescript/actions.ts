@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import type { ExceptPathStep, Expression } from "../ast";
+import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import { getUpdatedValue, MUTATING_METHODS, removeLast } from "./collections";
 import {
   type Context,
@@ -11,15 +11,23 @@ import {
   share,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { translateExpression, translateKey, translateToString } from "./expressions";
-import { and, DISABLED, type Formula, letIn, leaf } from "./formula";
+import {
+  translateCondition,
+  translateExpression,
+  translateKey,
+  translateToString,
+} from "./expressions";
+import { and, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import { bindPattern, bindValues, createStateScope, type Scope } from "./scope";
 import {
   apply,
   boolean,
+  call,
+  define,
   except,
   exceptAt,
+  identifier,
   ifExpression,
   index,
   number,
@@ -54,6 +62,7 @@ interface Frame {
   // What a return statement does: end the action, or leave an inlined helper.
   exit: (path: Path) => Formula;
   breakTo: ((path: Path) => Formula) | undefined;
+  continueTo: ((path: Path) => Formula) | undefined;
   // Helpers being inlined, to reject recursion.
   inlining: Set<ts.Declaration>;
 }
@@ -327,6 +336,7 @@ const translateCallStatement = (
       next: afterCall,
       exit: afterCall,
       breakTo: undefined,
+      continueTo: undefined,
       inlining: new Set([...frame.inlining, helper]),
     }),
   );
@@ -390,6 +400,174 @@ const translateDeclarations = (
   );
 };
 
+const getChanged = (loop: ts.Node, path: Path, context: Context) => {
+  const changed = new Set<ts.Symbol>();
+  const visit = (node: ts.Node) => {
+    const written = getWritten(node);
+    if (written !== undefined) {
+      getWrittenSymbols(written, context).forEach((symbol) => changed.add(symbol));
+    }
+    if (ts.isCallExpression(node) && writesState(node, context)) {
+      context.variables.forEach((_, symbol) => changed.add(symbol));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(loop);
+  return [...path.mutable].filter((symbol) => changed.has(symbol));
+};
+
+const translateLoop = (
+  loop: ts.IterationStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const initializer = ts.isForStatement(loop) ? loop.initializer : undefined;
+  if (initializer === undefined)
+    return translateIterations(loop, path, context, frame, continueWith);
+  const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
+  return ts.isVariableDeclarationList(initializer)
+    ? translateDeclarations(initializer.declarations, path, context, runLoop)
+    : translateExpressionStatement(initializer, path, context, frame, runLoop);
+};
+
+const translateIterations = (
+  loop: ts.IterationStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  if (ts.isForInStatement(loop)) throw new TlaTypeScriptError("for-in isn't supported", loop);
+  const iterated = ts.isForOfStatement(loop) ? loop : undefined;
+  if (iterated !== undefined && getKind(iterated.expression, context) !== "sequence") {
+    throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
+  }
+  const changed = getChanged(loop, path, context);
+  const isIteratedChanged = (node: ts.Node): boolean =>
+    (ts.isIdentifier(node) &&
+      changed.some((symbol) => symbol === getSymbol(node, context.checker))) ||
+    (ts.forEachChild(node, (child) => isIteratedChanged(child) || undefined) ?? false);
+  if (iterated !== undefined && isIteratedChanged(iterated.expression)) {
+    throw new TlaTypeScriptError(
+      "Don't change an array while a for-of iterates it",
+      iterated.expression,
+    );
+  }
+  const name = context.names.getFresh("Loop");
+  const parameters = changed.map((symbol) => {
+    const binding = path.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const position = context.names.getFresh("position");
+  const sequence = context.names.getFresh("sequence");
+  const getValues = (current: Path) =>
+    changed.flatMap((symbol) => current.scope.bindings.get(symbol) ?? []);
+  const bindValues = (current: Path, values: Expression[]): Path => ({
+    ...current,
+    scope: {
+      ...current.scope,
+      bindings: new Map([
+        ...current.scope.bindings,
+        ...changed.map((symbol, index): [ts.Symbol, Expression] => [symbol, values[index]]),
+      ]),
+    },
+  });
+  const done = (current: Path) => leaf(tuple(getValues(current)));
+  const repeat = (current: Path) =>
+    leaf(
+      call(name, [
+        ...(iterated === undefined ? [] : [apply("+", [identifier(position), number(1)])]),
+        ...getValues(current),
+      ]),
+    );
+  const test = (current: Path) => {
+    if (iterated !== undefined) {
+      return apply("<=", [identifier(position), apply("Len", [identifier(sequence)])]);
+    }
+    const condition =
+      ts.isWhileStatement(loop) || ts.isDoStatement(loop)
+        ? loop.expression
+        : ts.isForStatement(loop)
+          ? loop.condition
+          : undefined;
+    return condition === undefined
+      ? boolean(true)
+      : translateCondition(condition, current.scope, context);
+  };
+  const testAgain = (current: Path) => ifThenElse(test(current), repeat(current), done(current));
+  const advance = (current: Path) =>
+    ts.isForStatement(loop) && loop.incrementor !== undefined
+      ? translateExpressionStatement(loop.incrementor, current, context, frame, repeat)
+      : repeat(current);
+  const bodyFrame: Frame = {
+    ...frame,
+    next: ts.isDoStatement(loop) ? testAgain : advance,
+    exit: () => {
+      throw new TlaTypeScriptError("Return after the loop ends instead", loop);
+    },
+    breakTo: done,
+    continueTo: ts.isDoStatement(loop) ? testAgain : advance,
+  };
+  const translateBody = (current: Path) => {
+    if (iterated === undefined) {
+      return translateStatements([loop.statement], current, context, bodyFrame);
+    }
+    const declared = iterated.initializer;
+    if (!ts.isVariableDeclarationList(declared) || declared.declarations.length !== 1) {
+      throw new TlaTypeScriptError("Declare the element of a for-of", declared);
+    }
+    const element = index(identifier(sequence), [identifier(position)]);
+    const bound = bindPattern(declared.declarations[0].name, element, current.scope, context);
+    return letIn(
+      bound.definitions,
+      translateStatements([loop.statement], { ...current, scope: bound.scope }, context, bodyFrame),
+    );
+  };
+  const inner = bindValues(
+    path,
+    parameters.map((parameter) => identifier(parameter)),
+  );
+  const operator: OperatorDefinition = {
+    ...define(
+      name,
+      [...(iterated === undefined ? [] : [position]), ...parameters].map((parameter) => ({
+        name: parameter,
+        arity: 0,
+      })),
+      render(
+        ts.isDoStatement(loop)
+          ? translateBody(inner)
+          : ifThenElse(test(inner), translateBody(inner), done(inner)),
+      ),
+    ),
+    isRecursive: true,
+  };
+  const result = context.names.getFresh("loop");
+  const after = bindValues(
+    path,
+    changed.map((_, position) => index(identifier(result), [number(position + 1)])),
+  );
+  return letIn(
+    [
+      ...(iterated === undefined
+        ? []
+        : [define(sequence, [], translateExpression(iterated.expression, path.scope, context))]),
+      operator,
+      define(
+        result,
+        [],
+        call(name, [...(iterated === undefined ? [] : [number(1)]), ...getValues(path)]),
+      ),
+    ],
+    continueWith({
+      ...after,
+      isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+    }),
+  );
+};
+
 const translateStatements = (
   statements: readonly ts.Statement[],
   path: Path,
@@ -431,8 +609,16 @@ const translateStatements = (
     return frame.exit(path);
   }
   if (ts.isBreakStatement(statement)) {
-    if (frame.breakTo === undefined) throw new TlaTypeScriptError("Unsupported break", statement);
+    if (frame.breakTo === undefined || statement.label !== undefined) {
+      throw new TlaTypeScriptError("Unsupported break", statement);
+    }
     return frame.breakTo(path);
+  }
+  if (ts.isContinueStatement(statement)) {
+    if (frame.continueTo === undefined || statement.label !== undefined) {
+      throw new TlaTypeScriptError("Unsupported continue", statement);
+    }
+    return frame.continueTo(path);
   }
   if (ts.isThrowStatement(statement)) return leaf(translateThrow(statement, path.scope, context));
   if (ts.isSwitchStatement(statement)) {
@@ -453,10 +639,7 @@ const translateStatements = (
     return translateExpressionStatement(statement.expression, path, context, frame, continueWith);
   }
   if (ts.isIterationStatement(statement, false)) {
-    throw new TlaTypeScriptError(
-      "Loops aren't supported. Use map(), filter(), every(), some(), or a parameter",
-      statement,
-    );
+    return translateLoop(statement, path, context, frame, continueWith);
   }
   throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
 };
@@ -488,7 +671,13 @@ export const translateAction = (
     statements,
     { scope, mutable: new Set(context.variables.keys()), isAssigned: false },
     context,
-    { next: finish, exit: finish, breakTo: undefined, inlining: new Set() },
+    {
+      next: finish,
+      exit: finish,
+      breakTo: undefined,
+      continueTo: undefined,
+      inlining: new Set(),
+    },
   );
 };
 
@@ -507,7 +696,13 @@ export const translateScript = (statements: readonly ts.Statement[], context: Co
       isAssigned: false,
     },
     context,
-    { next: finish, exit: finish, breakTo: undefined, inlining: new Set() },
+    {
+      next: finish,
+      exit: finish,
+      breakTo: undefined,
+      continueTo: undefined,
+      inlining: new Set(),
+    },
   );
 };
 
@@ -523,31 +718,57 @@ const getRoot = (node: ts.Expression): ts.Expression => {
     : node;
 };
 
+const getWritten = (node: ts.Node) => {
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return node.left;
+  }
+  if (
+    (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
+    INCREMENT_OPERATORS.has(node.operator)
+  ) {
+    return node.operand;
+  }
+  return isMethodCall(node) && MUTATING_METHODS.has(node.expression.name.text)
+    ? node.expression.expression
+    : undefined;
+};
+
+const getWrittenSymbols = (target: ts.Expression, context: Context): ts.Symbol[] => {
+  if (ts.isArrayLiteralExpression(target)) {
+    return target.elements.flatMap((element) => getWrittenSymbols(element, context));
+  }
+  if (ts.isObjectLiteralExpression(target)) {
+    return target.properties.flatMap((property) =>
+      ts.isPropertyAssignment(property)
+        ? getWrittenSymbols(property.initializer, context)
+        : ts.isShorthandPropertyAssignment(property)
+          ? getWrittenSymbols(property.name, context)
+          : [],
+    );
+  }
+  if (ts.isSpreadElement(target)) return getWrittenSymbols(target.expression, context);
+  const root = getRoot(target);
+  const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+  return symbol === undefined ? [] : [symbol];
+};
+
 // Whether a function assigns a state variable, directly or through a helper it calls.
 export const writesState = (
   node: ts.Node,
   context: Context,
   visited = new Set<ts.Node>(),
 ): boolean => {
-  const isStateRoot = (target: ts.Expression) => {
-    const root = getRoot(target);
-    const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
-    return symbol !== undefined && context.variables.has(symbol);
-  };
-  const isAssignment =
-    ts.isBinaryExpression(node) &&
-    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-    isStateRoot(node.left);
-  const isUpdate =
-    (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
-    INCREMENT_OPERATORS.has(node.operator) &&
-    isStateRoot(node.operand);
-  const isMutation =
-    isMethodCall(node) &&
-    MUTATING_METHODS.has(node.expression.name.text) &&
-    isStateRoot(node.expression.expression);
-  if (isAssignment || isUpdate || isMutation) return true;
+  const written = getWritten(node);
+  if (
+    written !== undefined &&
+    getWrittenSymbols(written, context).some((symbol) => context.variables.has(symbol))
+  ) {
+    return true;
+  }
   if (ts.isCallExpression(node)) {
     const helper = getTopLevelDeclaration(getSymbol(node.expression, context.checker));
     if (helper !== undefined && !visited.has(helper)) {

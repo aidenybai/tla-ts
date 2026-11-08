@@ -716,12 +716,12 @@ describe("errors", () => {
     ).toThrow("spec.ts:2:38 Write division as Math.floor(a / b) or Math.trunc(a / b)");
   });
 
-  it("rejects loops", () => {
+  it("rejects for-in loops", () => {
     expect(() =>
       compile(
-        `let count = 0;\nexport const step = () => {\n  for (const index of [1, 2]) count += index;\n};`,
+        `let count = 0;\nexport const step = () => {\n  for (const key in { a: 1 }) count++;\n};`,
       ),
-    ).toThrow("spec.ts:3:3 Loops aren't supported");
+    ).toThrow("spec.ts:3:3 for-in isn't supported");
   });
 
   it("rejects Object.is on objects", () => {
