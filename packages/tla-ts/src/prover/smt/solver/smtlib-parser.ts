@@ -797,6 +797,13 @@ export const createSmtlibReader = (
       return manager.mkArraySort(head.text === "Set" ? [parameters[0], SORT_BOOL] : parameters);
     }
     const decl = sortDecls.get(head.text);
+    if (decl === undefined && hasFpa && FPA_SORT_NAMES.has(head.text)) {
+      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
+      if (head.text === "FloatingPoint") return mkFloatSort([], sexpr);
+      if (parameters.length > 0)
+        throw new SmtUnsupportedError("parameters on a floating-point sort");
+      return parseSort(head, context, bindings);
+    }
     if (decl === undefined) {
       if (THEORY_SORTS.has(head.text) && !isArray)
         throw new SmtUnsupportedError(`the sort ${head.text}`);
