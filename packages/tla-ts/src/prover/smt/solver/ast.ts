@@ -183,6 +183,7 @@ interface QuantifierData {
   patterns: number[];
   weight: number;
   qid: string;
+  skid?: string;
 }
 
 const BUILTIN_DECLS: [string, number, number, number][] = [
@@ -1211,8 +1212,17 @@ export class AstManager {
     return this.funcDecls.length - 1;
   }
 
-  mkFreshFuncDecl(prefix: SmtSymbol | null, domain: number[], range: number, isSkolem = true) {
-    const name = prefix === null ? this.freshId : `${getSymbolName(prefix)}!${this.freshId}`;
+  mkFreshFuncDecl(
+    prefix: SmtSymbol | null,
+    domain: number[],
+    range: number,
+    isSkolem = true,
+    suffix = "",
+  ) {
+    const name =
+      prefix === null && suffix === ""
+        ? this.freshId
+        : `${prefix === null ? "sk" : getSymbolName(prefix)}!${suffix === "" ? "" : `${suffix}!`}${this.freshId}`;
     this.freshId++;
     const decl = this.mkFuncDecl(name, domain, range, isSkolem);
     this.declRefCounts[decl] = 0;
@@ -1465,7 +1475,14 @@ export class AstManager {
       data.body
     }:${data.patterns.join(",")}:${data.weight}`;
     const existing = this.table.get(key);
-    if (existing !== undefined) return this.revive(existing);
+    if (existing !== undefined) {
+      // A dead quantifier comes back as the new one Z3 makes, with its skolem id.
+      if (this.ids[existing] === -1) {
+        const old = this.getQuantifier(existing);
+        this.quantifiers.set(existing, { ...old, skid: data.skid });
+      }
+      return this.revive(existing);
+    }
     const id = this.create(
       KIND_QUANTIFIER,
       -1,

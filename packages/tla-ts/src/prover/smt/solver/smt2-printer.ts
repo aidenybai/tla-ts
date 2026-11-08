@@ -569,6 +569,9 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
           .slice(frame.start, frame.start + data.patterns.length)
           .map((pattern) => mkCompose(mkText(":pattern "), mkIndent(9, pattern))),
         ...(data.weight === 1 ? [] : [mkCompose(mkText(":weight "), mkText(String(data.weight)))]),
+        ...(data.skid === undefined
+          ? []
+          : [mkCompose(mkText(":skolemid "), mkText(getQuotedName(data.skid)))]),
         ...(data.qid === "" ? [] : [mkCompose(mkText(":qid "), mkText(getQuotedName(data.qid)))]),
       ];
       const body =

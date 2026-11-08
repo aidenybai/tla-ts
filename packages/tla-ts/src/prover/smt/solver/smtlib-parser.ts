@@ -1012,6 +1012,7 @@ export const createSmtlibReader = (
     };
     const weight = Number(getAttribute(":weight") ?? 1);
     const qid = getAttribute(":qid") ?? "";
+    const skid = getAttribute(":skolemid");
     unbindSortedVars(varSorts.length);
     // pop_quant_frame: the invalid patterns leave the parser's stack before the quantifier is made,
     // and the valid ones after.
@@ -1035,6 +1036,7 @@ export const createSmtlibReader = (
       patterns,
       weight,
       qid,
+      ...(skid === undefined ? {} : { skid }),
     });
     for (const pattern of patterns) manager.decRef(pattern);
     for (const boundVar of boundVars) manager.decRef(boundVar);

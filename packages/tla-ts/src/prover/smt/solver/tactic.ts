@@ -10,15 +10,18 @@ import type { AstManager } from "./ast";
 import { ctxSimplify } from "./ctx-simplify";
 import type { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { propagateValues } from "./propagate-values";
 import { ProtoModel } from "./proto-model";
 import { simplifyGoal } from "./quant-tactics";
+import { RefVector } from "./ref-vector";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { isSymbol, type SExpr, type SmtList, type SmtToken } from "./smtlib-parser";
 import { solveGoal } from "./solver";
 
 const PARAM_BOOL = 0;
 const PARAM_UINT = 1;
+const PARAM_SYMBOL = 2;
 
 export type TacticParam = boolean | number | string;
 export type TacticParams = ReadonlyMap<string, TacticParam>;
@@ -174,6 +177,45 @@ const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
   return [goal];
 };
 
+const NNF_MODES = new Map([
+  ["skolem", NNF_SKOLEM],
+  ["quantifiers", NNF_QUANT],
+  ["full", NNF_FULL],
+]);
+
+const NNF_DESCRS = getDescrs("nnf", [
+  ["mode", PARAM_SYMBOL, "skolem", true],
+  ["max_memory", PARAM_UINT, UINT_MAX, true],
+  ["sk_hack", PARAM_BOOL, false],
+  ["ignore_labels", PARAM_BOOL, false],
+]);
+
+const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
+  const mode = NNF_MODES.get(String(params.get("mode") ?? "skolem"));
+  if (mode === undefined) throw new SmtUnsupportedError("an invalid NNF mode");
+  const names = new DefinedNames(manager);
+  const nnf = new Nnf(manager, names, mode);
+  const definitions = new RefVector(manager);
+  const size = goal.forms.size;
+  for (let index = 0; !goal.isInconsistent && index < size; index++) {
+    const result = nnf.apply(goal.forms.items[index], definitions);
+    goal.update(index, result);
+    manager.decRef(result);
+  }
+  for (const definition of definitions.items) {
+    if (goal.isInconsistent) break;
+    goal.assert(definition);
+  }
+  goal.depth++;
+  if (!goal.isInconsistent)
+    for (let index = 0; index < names.numNames; index++)
+      goal.addConverter(names.getNameDecl(index));
+  definitions.reset();
+  nnf.release();
+  names.release();
+  return [goal];
+};
+
 const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "simplify",
@@ -232,6 +274,18 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
+  [
+    "snf",
+    { descrs: NNF_DESCRS, build: (environment, params) => runNnf(environment.manager, params) },
+  ],
+  [
+    "nnf",
+    {
+      descrs: NNF_DESCRS,
+      build: (environment, params) =>
+        runNnf(environment.manager, new Map([...params, ["mode", "full"]])),
+    },
+  ],
   ["skip", { descrs: new Map(), build: () => (goal) => [goal] }],
   [
     "fail",
@@ -262,12 +316,12 @@ const UNPORTED_TACTICS = new Set(
     "distribute-forall dom-simplify dt2bv elim-predicates elim-small-bv elim-term-ite " +
     "elim-uncnstr elim-uncnstr2 eq2bv euf-completion factor ff-sat ff-simplify ff-solve " +
     "ff-unique ff2bv fix-dl-var fm fold-unfold fpa2bv horn horn-simplify injectivity lia " +
-    "lia2card lia2pb lira lra macro-finder max-bv-sharing nla2bv nlqsat nlsat nnf " +
+    "lia2card lia2pb lira lra macro-finder max-bv-sharing nla2bv nlqsat nlsat " +
     "normalize-bounds nra occf pb-preprocess pb2bv pqffd propagate-bv-bounds " +
     "propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt purify-arith qe qe_rec " +
     "qe-light qe2 qfaufbv qfauflia qfbv qfbv-sls qffd qffp qffpbv qffplra qfidl qflia qflra " +
     "qfnia qfnra qfnra-nlsat qfuf qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args " +
-    "reduce-args2 reduce-bv-size sat sat-preprocess sls-smt smtfd snf solve-eqs " +
+    "reduce-args2 reduce-bv-size sat sat-preprocess sls-smt smtfd solve-eqs " +
     "solver-subsumption special-relations split-clause subpaving symmetry-reduce tseitin-cnf " +
     "tseitin-cnf-core ufbv ufbv-rewriter uflra ufnia unit-subsume-simplify"
   ).split(" "),
