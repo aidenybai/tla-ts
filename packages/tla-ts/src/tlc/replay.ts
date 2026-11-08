@@ -5,6 +5,7 @@ import {
   bindDefinitions,
   bindLazyArguments,
   bindOperatorArguments,
+  describeRange,
   evaluate,
   forEachBinding,
   freezeCallStack,
@@ -372,6 +373,36 @@ const ASSIGNMENT_OPERATORS = new Set(["=", "\\in", "\\subseteq"]);
 
 export const LITERAL_KINDS = new Set<Expression["kind"]>(["Number", "Decimal", "String"]);
 
+const ENABLED_TEMPORAL_FORMS: Partial<Record<Expression["kind"], string>> = {
+  Always: "[]",
+  Eventually: "<>",
+  WeakFairness: "WF",
+  StrongFairness: "SF",
+};
+
+// Tool#enabled rejects a temporal formula, and a quantifier or CHOOSE without a bound, with
+// messages of its own.
+export const getEnabledFailure = (expression: Expression) => {
+  const form =
+    expression.kind === "Apply" && (expression.operator === "~>" || expression.operator === "-+->")
+      ? expression.operator === "~>"
+        ? "a ~> b"
+        : "a -+-> formula"
+      : ENABLED_TEMPORAL_FORMS[expression.kind];
+  if (form !== undefined) {
+    return `In computing ENABLED, TLC encountered a temporal formula (${form}).\n${describeRange(expression)}`;
+  }
+  if (expression.kind === "UnboundedQuantifier") {
+    return expression.isTemporal
+      ? `In computing ENABLED, TLC encountered temporal quantifier.\n${describeRange(expression)}`
+      : `In computing ENABLED, TLC encountered unbounded quantifier. Make sure that the expression is of form ${expression.quantifier === "Forall" ? "\\A" : "\\E"} x \\in S: P(x).\n${describeRange(expression)}`;
+  }
+  if (expression.kind === "Choose" && expression.set === undefined) {
+    return `In computing ENABLED, TLC encountered unbounded CHOOSE. Make sure that the expression is of form CHOOSE x \\in S: P(x).\n${describeRange(expression)}`;
+  }
+  return undefined;
+};
+
 const visitApplication = (
   replay: Replay,
   expression: Expression,
@@ -516,6 +547,8 @@ const visitApplication = (
       }
       break;
   }
+  const failure = replay.isEnabled ? getEnabledFailure(expression) : undefined;
+  if (failure !== undefined) throw new TlaEvaluationError(failure);
   visitValue(replay, evaluate(expression, context), items, partial);
 };
 

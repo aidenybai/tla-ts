@@ -253,6 +253,18 @@ export const describeRange = (expression: Expression) => {
   return range ? formatRange(range) : describeLocation(expression);
 };
 
+const TEMPORAL_FORMS = {
+  Always: "[]A",
+  Eventually: "<>A",
+  WeakFairness: "WF",
+  StrongFairness: "SF",
+};
+
+const createTemporalFormulaError = (form: string, expression: Expression) =>
+  new TlaEvaluationError(
+    `TLC encountered a temporal formula (${form}) when evaluating a predicate or action.\n${describeRange(expression)}`,
+  );
+
 // SANY prints a numeral as written and any other expression by its location.
 export const describeNode = (expression: Expression) =>
   expression.kind === "Number"
@@ -1442,9 +1454,12 @@ const compileApply = (
     const right = getEvaluator(args[1], environment);
     return (context) => isEquivalent(left(context), right(context), expression);
   }
-  if (expression.operator === "~>") {
+  if (expression.operator === "~>" || expression.operator === "-+->") {
     return () => {
-      throw new TlaEvaluationError("TLC cannot evaluate a temporal formula such as ~> in a state");
+      throw createTemporalFormulaError(
+        expression.operator === "~>" ? "a ~> b" : "a -+-> formula",
+        expression,
+      );
     };
   }
   const global = isLocallyResolved(expression)
@@ -1981,6 +1996,12 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "UnboundedQuantifier":
       return () => {
         const operator = expression.quantifier === "Forall" ? "\\A" : "\\E";
+        if (expression.isTemporal) {
+          throw createTemporalFormulaError(
+            expression.quantifier === "Forall" ? "\\AA" : "\\EE",
+            expression,
+          );
+        }
         throw new TlaEvaluationError(
           `TLC attempted to evaluate an unbounded ${operator}.\nMake sure that the expression is of form ${operator} x \\in S: P(x).\n${describeRange(expression)}`,
         );
@@ -2086,9 +2107,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "WeakFairness":
     case "StrongFairness":
       return () => {
-        throw new TlaEvaluationError(
-          `TLC cannot evaluate a temporal formula in a state at ${describeLocation(expression)}`,
-        );
+        throw createTemporalFormulaError(TEMPORAL_FORMS[expression.kind], expression);
       };
   }
 };

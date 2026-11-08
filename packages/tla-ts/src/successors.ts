@@ -44,7 +44,7 @@ import {
 } from "./evaluate";
 import { mapChildren } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
-import { isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc/replay";
+import { getEnabledFailure, isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc/replay";
 import {
   formatValue,
   getStreamedElements,
@@ -458,11 +458,13 @@ const compileConjunction = (
     runFrom(0, run, scope, partial, action, onComplete);
 };
 
-const compileGuard =
-  (expression: Expression): Runner =>
-  (run, scope, partial, action, _isFixed, onComplete) => {
+const compileGuard = (expression: Expression): Runner => {
+  const enabledFailure = getEnabledFailure(expression);
+  return (run, scope, partial, action, _isFixed, onComplete) => {
+    if (run.isEnabled && enabledFailure !== undefined) throw createRunError(run, enabledFailure);
     if (holds(run, expression, getContext(run, scope, partial))) onComplete(partial, action);
   };
+};
 
 const compileMembership = (
   expression: Expression & { kind: "Apply" },
