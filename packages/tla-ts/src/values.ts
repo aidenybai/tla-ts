@@ -1570,7 +1570,7 @@ const enumerateSet = (
       getUnionSets(value).forEach((set, index) => {
         const unionSet = getUnionSet(set, index, value);
         if (isBeyondSetBound(unionSet)) throw new TlaEvaluationError(SET_BOUND_MESSAGE);
-        toFiniteSet(unionSet).elements.forEach((element) => addBoundedElement(elements, element));
+        getStreamedElements(unionSet).forEach((element) => addBoundedElement(elements, element));
       });
       return toFiniteSet(createEnumeratedSet(elements)).elements;
     }
@@ -1600,21 +1600,15 @@ const enumerateSet = (
       if (value.operator === "\\cup") {
         if (isBeyondSetBound(value.left)) {
           // TLC opens the right set's enumerator before it streams the left set past the bound.
-          toFiniteSet(value.right);
+          getStreamedElements(value.right);
           throw new TlaEvaluationError(SET_BOUND_MESSAGE);
         }
-        const left = toFiniteSet(value.left);
-        const right = isBeyondSetBound(value.right) ? undefined : toFiniteSet(value.right);
-        if (!right || left.elements.length + right.elements.length > SET_BOUND) {
+        const left = getStreamedElements(value.left);
+        const right = isBeyondSetBound(value.right) ? undefined : getStreamedElements(value.right);
+        if (!right || left.length + right.length > SET_BOUND) {
           throw new TlaEvaluationError(SET_BOUND_MESSAGE);
         }
-        return computeLikeTlcOnFailure(
-          (finiteLeft, finiteRight) => getSortedUnion(finiteLeft, finiteRight).elements,
-          (finiteLeft, finiteRight) =>
-            sortLikeTlc([...finiteLeft.elements, ...finiteRight.elements]),
-          left,
-          right,
-        );
+        return toFiniteSet(createEnumeratedSet([...left, ...right])).elements;
       }
       const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
@@ -1623,14 +1617,14 @@ const enumerateSet = (
       forEachElement(
         typeof enumerated === "object" && enumerated.kind === "Interval"
           ? enumerated
-          : toFiniteSet(enumerated).elements,
+          : getStreamedElements(enumerated),
         (element) => {
           if (isElementOf(element, other) === (value.operator === "\\cap")) {
             addBoundedElement(kept, element);
           }
         },
       );
-      return kept;
+      return toFiniteSet(createEnumeratedSet(kept)).elements;
     }
     case "InfiniteSet":
     case "SequenceSet":
@@ -1737,7 +1731,7 @@ const streamElements = (value: ObjectValue): Value[] => {
       getStreamedElements(getUnionSet(set, index, value)),
     );
   }
-  if (value.kind === "FilteredSet" && !isOverriddenSet(value.base)) {
+  if (value.kind === "FilteredSet" && isTlcEnumerable(value.base)) {
     return getStreamedElements(value.base).filter((element) => value.test(element, false));
   }
   const components = getCombinedSets(value);
