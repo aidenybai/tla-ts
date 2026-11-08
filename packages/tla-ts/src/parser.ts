@@ -1928,7 +1928,6 @@ const parse = (
     return withRange({ ...step, body, head, statement, proof }, start);
   };
 
-  // A BY, OBVIOUS, or OMITTED proof, located at its PROOF if it has one.
   const parseLeafProof = (
     location: SourceLocation,
   ): Exclude<Proof, { kind: "Steps" }> | undefined => {
@@ -1972,7 +1971,6 @@ const parse = (
     return mergeSpans(getSpan({ ...head, end: head.start }), getSpan(lastDef ?? body.keyword));
   };
 
-  // P_parser.preproof.
   const parsePreproof = (): Preproof => {
     const first = cursor.index;
     const location = getLocation(peek());
