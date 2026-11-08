@@ -7,15 +7,13 @@ import {
   defineHigherOrderOperator,
   defineLazyOperator,
   defineOperator,
+  createModuleArgumentError,
   defineStateOperator,
-  getElements,
-  getEnumerableSet,
-  getFunction,
   getOperator,
-  getSequence,
   getThunk,
   getValue,
   overrideWithJava,
+  toEnumeratedSet,
 } from "../builtins";
 import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "../runtime";
 import { createActionRecord, setTlcValue } from "./tlcext-operators";
@@ -28,7 +26,11 @@ import {
   createTuple,
   createWrittenFunction,
   formatValue,
+  getSequenceElements,
   getWrittenPairs,
+  isEqualLikeTlc,
+  isFunctionValue,
+  toFiniteFunction,
   toFiniteSet,
   type Value,
   rankString,
@@ -179,10 +181,20 @@ export const createTlcOperators = (
   defineOperator(":>", 2, (args) =>
     createFunction([[getValue(args, 0, ":>"), getValue(args, 1, ":>")]]),
   ),
+  // TLC's CombineFcn converts both arguments before it checks either, and keeps a key of the
+  // second function unless it equals a key of the first.
   defineOperator("@@", 2, (args) => {
-    const left = getFunction(args, 0, "@@");
-    const right = getFunction(args, 1, "@@");
-    return createWrittenFunction([...getWrittenPairs(left), ...getWrittenPairs(right)]);
+    const leftValue = getValue(args, 0, "@@");
+    const rightValue = getValue(args, 1, "@@");
+    const left = isFunctionValue(leftValue) ? toFiniteFunction(leftValue) : undefined;
+    const right = isFunctionValue(rightValue) ? toFiniteFunction(rightValue) : undefined;
+    if (!left) throw createModuleArgumentError("first", "@@", "function", leftValue);
+    if (!right) throw createModuleArgumentError("second", "@@", "function", rightValue);
+    const leftPairs = getWrittenPairs(left);
+    const addedPairs = getWrittenPairs(right).filter(
+      (pair) => !leftPairs.some((leftPair) => isEqualLikeTlc(pair[0], leftPair[0])),
+    );
+    return createWrittenFunction([...leftPairs, ...addedPairs]);
   }),
   defineOperator("ToString", 1, (args) =>
     rankString(formatValue(getValue(args, 0, "ToString"), true)),
@@ -193,7 +205,7 @@ export const createTlcOperators = (
     return value;
   }),
   defineOperator("Permutations", 1, (args) => {
-    const elements = getElements(args, 0, "Permutations");
+    const elements = toEnumeratedSet(getValue(args, 0, "Permutations"), "Permutations").elements;
     return createSet(
       getPermutations(elements).map((permutation) =>
         createFunction(
@@ -203,9 +215,12 @@ export const createTlcOperators = (
     );
   }),
   defineHigherOrderOperator("SortSeq", 2, (args) => {
+    const sequence = getValue(args, 0, "SortSeq");
+    const elements = getSequenceElements(sequence);
+    if (!elements) throw createModuleArgumentError("first", "SortSeq", "natural number", sequence);
     const precedes = getOperator(args, 1, "SortSeq");
     return createTuple(
-      getSequence(args, 0, "SortSeq").reduce<Value[]>((sorted, element) => {
+      elements.reduce<Value[]>((sorted, element) => {
         const position = sorted.findIndex(
           (existing) => precedes.call([element, existing]) === true,
         );
@@ -242,6 +257,6 @@ export const createTlcOperators = (
   }),
   defineConstant("Any", ANY_SET),
   defineOperator("RandomElement", 1, (args) =>
-    getRandomElement(getEnumerableSet(args, 0, "RandomElement"), runtime.getRandom()),
+    getRandomElement(getValue(args, 0, "RandomElement"), runtime.getRandom()),
   ),
 ];

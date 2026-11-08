@@ -1,9 +1,11 @@
+import { toEnumeratedSet } from "../builtins";
 import { TlaEvaluationError } from "../errors";
 import type { TlcVersion } from "./version";
 import {
   createRecord,
   createSortedFunction,
   createTuple,
+  formatValue,
   getFunctionDomain,
   isEmptySet,
   toFiniteSet,
@@ -214,18 +216,13 @@ export const getRandomSubset = (
   return getSubsetIndices(count, elements.length, random).map((index) => elements[Number(index)]);
 };
 
-const pickElement = (elements: Value[], random: JavaRandom) => {
-  const element = elements[Math.floor(random.nextDouble() * elements.length)];
-  if (element === undefined) throw new TlaEvaluationError("RandomElement of the empty set");
-  return element;
-};
-
 // TLC!RandomElement chooses each component of a set of functions, records, or tuples
-// separately, and otherwise indexes the enumerated set with nextDouble.
+// separately, and otherwise indexes the enumerated set with nextDouble, which fails on an empty
+// set as Java's array access does.
 export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "FunctionSet") {
     // TLC builds the chosen function without the interval its domain came from.
-    const domain = [...getFunctionDomain(set.domain)];
+    const domain = [...toEnumeratedSet(set.domain, "RandomElement", set).elements];
     return createSortedFunction(
       domain,
       domain.map(() => getRandomElement(set.range, random)),
@@ -245,8 +242,17 @@ export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "Interval") {
     const size = Math.max(0, set.high - set.low + 1);
     const offset = Math.floor(random.nextDouble() * size);
-    if (offset >= size) throw new TlaEvaluationError("RandomElement of the empty set");
+    if (offset >= size) {
+      throw new TlaEvaluationError(
+        `Attempted to retrieve out-of-bounds element from the interval value ${formatValue(set)}.`,
+      );
+    }
     return set.low + offset;
   }
-  return pickElement(toFiniteSet(set).elements, random);
+  const elements = toEnumeratedSet(set, "RandomElement").elements;
+  const index = Math.floor(random.nextDouble() * elements.length);
+  if (index >= elements.length) {
+    throw new TlaEvaluationError(`Index ${index} out of bounds for length ${elements.length}`);
+  }
+  return elements[index];
 };

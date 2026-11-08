@@ -3,11 +3,8 @@ import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluat
 import {
   formatValue,
   getFunctionClass,
-  getSequenceElements,
-  isEnumerable,
-  isFunctionValue,
+  isOverriddenSet,
   isSetValue,
-  toFiniteFunction,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
   setTrace,
@@ -44,7 +41,6 @@ const CORE_OPERATOR_NAMES = new Set([
   "..",
   "Seq",
   "IsFiniteSet",
-  "RandomElement",
 ]);
 
 const createArgumentError = (name: string, message: string) =>
@@ -61,6 +57,17 @@ export const createModuleArgumentError = (
     `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${formatValue(value)}`,
   );
 
+// TLC's toSetEnum, which is null for a value other than a set, or for a set that a module
+// overrides, such as Nat.
+export const toEnumeratedSet = (value: Value, name: string, reported = value) => {
+  if (!isSetValue(value) || isOverriddenSet(value)) {
+    throw new TlaModuleError(
+      `Applying ${name} to the following value,\nwhich is not a finite set:\n${formatValue(reported)}`,
+    );
+  }
+  return toFiniteSet(value);
+};
+
 const isOperatorValue = (argument: BuiltinArgument): argument is OperatorValue =>
   typeof argument === "object" && argument.kind === "Operator";
 
@@ -70,17 +77,6 @@ export const getValue = (args: BuiltinArgument[], index: number, name: string): 
     throw createArgumentError(name, `${name} expects a value as argument ${index + 1}`);
   }
   return argument;
-};
-
-export const getNumber = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (typeof value !== "number") {
-    throw createArgumentError(
-      name,
-      `${name} expects an integer but received ${formatValue(value)}`,
-    );
-  }
-  return value;
 };
 
 export const getBoolean = (args: BuiltinArgument[], index: number, name: string) => {
@@ -96,42 +92,6 @@ export const getSet = (args: BuiltinArgument[], index: number, name: string) => 
   if (!isSetValue(value))
     throw createArgumentError(name, `${name} expects a set but received ${formatValue(value)}`);
   return value;
-};
-
-export const getEnumerableSet = (args: BuiltinArgument[], index: number, name: string) => {
-  const set = getSet(args, index, name);
-  if (!isEnumerable(set)) {
-    throw createArgumentError(
-      name,
-      `${name} cannot enumerate the non-enumerable set ${formatValue(set)}`,
-    );
-  }
-  return set;
-};
-
-export const getElements = (args: BuiltinArgument[], index: number, name: string) =>
-  toFiniteSet(getEnumerableSet(args, index, name)).elements;
-
-export const getSequence = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  const elements = getSequenceElements(value);
-  if (!elements)
-    throw createArgumentError(
-      name,
-      `${name} expects a sequence but received ${formatValue(value)}`,
-    );
-  return elements;
-};
-
-export const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (!isFunctionValue(value)) {
-    throw createArgumentError(
-      name,
-      `${name} expects a function but received ${formatValue(value)}`,
-    );
-  }
-  return toFiniteFunction(value);
 };
 
 export const getOperator = (args: BuiltinArgument[], index: number, name: string) => {
