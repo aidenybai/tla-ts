@@ -265,6 +265,11 @@ const CASES: Record<string, Case[]> = {
     },
     {
       variables: "count = 0",
+      statements:
+        "let run: () => void; run = () => { count += 1; }; run(); if (count > 0) run = () => { count += 10; }; run();",
+    },
+    {
+      variables: "count = 0",
       statements: "twice(() => { count += 1; }); twice(add);",
       setup:
         "const add = () => { count += 10; };\nconst twice = (run: () => void) => { run(); run(); };",

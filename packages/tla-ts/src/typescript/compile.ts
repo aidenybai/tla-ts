@@ -71,7 +71,12 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
         ),
     )
       ? model.variables.map((variable) => translateInitial(variable, context))
-      : [locate(render(translateScript(model.script, context)), getLocation(model.script[0]))]),
+      : [
+          locate(
+            render(translateScript(model.script, model.exported.length === 0, context)),
+            getLocation(model.script[0]),
+          ),
+        ]),
   );
   for (const definition of model.exported) translateExported(definition, model, sections, context);
   return emit(getModuleName(fileName), program.sourceFile, model, sections, context);

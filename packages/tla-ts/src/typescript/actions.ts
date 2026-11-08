@@ -57,6 +57,8 @@ interface Path {
   // State variables and mutable locals, which assignments may change.
   mutable: Set<ts.Symbol>;
   isAssigned: boolean;
+  isLast: boolean;
+  isLooping: boolean;
 }
 
 interface Target {
@@ -180,8 +182,8 @@ const assign = (
   const target = getTarget(node, path, context);
   const value = target.update(getValue);
   return {
+    ...path,
     scope: { ...path.scope, bindings: new Map([...path.scope.bindings, [target.symbol, value]]) },
-    mutable: path.mutable,
     isAssigned: path.isAssigned || context.variables.has(target.symbol),
   };
 };
@@ -304,8 +306,27 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   if (!ts.isBinaryExpression(expression)) return undefined;
   const kind = expression.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
+    const assigned = getFunction(expression.right);
+    const symbol = ts.isIdentifier(expression.left)
+      ? getSymbol(expression.left, context.checker)
+      : undefined;
+    const isLocal = symbol !== undefined && !context.variables.has(symbol);
+    if (
+      assigned !== undefined &&
+      symbol !== undefined &&
+      path.mutable.has(symbol) &&
+      !path.isLooping &&
+      (isLocal || path.isLast)
+    ) {
+      const functions = new Map([...path.scope.functions, [symbol, assigned]]);
+      return { ...path, scope: { ...path.scope, functions } };
+    }
     const value = translateExpression(expression.right, path.scope, context);
-    return assignPattern(expression.left, expression.right, value, path, context);
+    const after = assignPattern(expression.left, expression.right, value, path, context);
+    if (symbol === undefined || !after.scope.functions.has(symbol)) return after;
+    const functions = new Map(after.scope.functions);
+    functions.delete(symbol);
+    return { ...after, scope: { ...after.scope, functions } };
   }
   const isConcatenated =
     kind === ts.SyntaxKind.PlusEqualsToken && getKind(expression.left, context) === "string";
@@ -552,6 +573,9 @@ const translateIterations = (
     throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
   }
   const changed = getChanged(loop, path, context);
+  if (changed.some((symbol) => path.scope.functions.has(symbol))) {
+    throw new TlaTypeScriptError("Don't reassign a function inside a loop", loop);
+  }
   const isIteratedChanged = (node: ts.Node): boolean =>
     (ts.isIdentifier(node) &&
       changed.some((symbol) => symbol === getSymbol(node, context.checker))) ||
@@ -642,10 +666,13 @@ const translateIterations = (
       translateStatements([loop.statement], { ...current, scope: bound.scope }, context, bodyFrame),
     );
   };
-  const inner = bindValues(
-    path,
-    parameters.map((parameter) => identifier(parameter)),
-  );
+  const inner = {
+    ...bindValues(
+      path,
+      parameters.map((parameter) => identifier(parameter)),
+    ),
+    isLooping: true,
+  };
   const operator: OperatorDefinition = {
     ...define(
       name,
@@ -863,7 +890,13 @@ export const translateAction = (
   };
   return translateStatements(
     statements,
-    { scope, mutable: new Set(context.variables.keys()), isAssigned: false },
+    {
+      scope,
+      mutable: new Set(context.variables.keys()),
+      isAssigned: false,
+      isLast: false,
+      isLooping: false,
+    },
     context,
     {
       next: finish,
@@ -876,7 +909,11 @@ export const translateAction = (
   );
 };
 
-export const translateScript = (statements: readonly ts.Statement[], context: Context): Formula => {
+export const translateScript = (
+  statements: readonly ts.Statement[],
+  isLast: boolean,
+  context: Context,
+): Formula => {
   const finish = (path: Path) =>
     and(
       [...context.variables].map((entry) =>
@@ -897,6 +934,8 @@ export const translateScript = (statements: readonly ts.Statement[], context: Co
       scope: { ...createStateScope(context), uninitialized: new Set(declared) },
       mutable: new Set(context.variables.keys()),
       isAssigned: false,
+      isLast,
+      isLooping: false,
     },
     context,
     {

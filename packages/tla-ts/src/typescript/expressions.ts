@@ -476,6 +476,9 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (node.text === "undefined") return getUndefined(context);
   rejectBeforeDeclaration(node, scope, context);
   const symbol = getSymbol(node, context.checker);
+  if (symbol !== undefined && scope.functions.has(symbol)) {
+    throw new TlaTypeScriptError(`${node.text} holds a function, so only call it`, node);
+  }
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
   if (binding !== undefined) return binding;
   if (symbol !== undefined && symbol === scope.previous) {

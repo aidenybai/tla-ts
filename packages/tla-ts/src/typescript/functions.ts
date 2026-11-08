@@ -185,7 +185,8 @@ export const translateHelperCall = (
 
 // A call to a function declared inside another, which is inlined.
 export const translateLocalCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
-  const callee = getCallee(node.expression, context);
+  const symbol = getSymbol(node.expression, context.checker);
+  const callee = (symbol && scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   if (callee === undefined) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }

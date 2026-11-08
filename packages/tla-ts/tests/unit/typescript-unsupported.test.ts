@@ -39,6 +39,15 @@ const CASES: [string, string][] = [
     "try { throw 1; } catch (error) { for (var error of [1]) count = 1; }",
   ],
   [
+    "reassigning a function inside a loop",
+    "let run: () => void; run = () => { count++; }; for (const value of [1]) run = () => { count--; };",
+  ],
+  [
+    "reading a variable that holds a function",
+    "let run: () => void; run = () => { count++; }; const other = run; other();",
+  ],
+  ["assigning a function to a state variable", "label = () => 'a';"],
+  [
     "an unsupported value returned from an inlined call",
     "const getLength = () => { return step.length; }; getLength();",
   ],
