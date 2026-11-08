@@ -72,6 +72,9 @@ const SIMPLIFY_PARAMETERS = new Set([
   ":sort_sums",
   ":arith_lhs",
   ":gcd_rounding",
+  ":hi_div0",
+  ":mul2concat",
+  ":split_concat_eq",
 ]);
 
 const getRewriterOptions = (items: SExpr[]): RewriterOptions => {
@@ -94,6 +97,11 @@ const getRewriterOptions = (items: SExpr[]): RewriterOptions => {
       isSortSums: getParameter(":sort_sums"),
       isArithIneqLhs: getParameter(":arith_lhs"),
       isGcdRounding: getParameter(":gcd_rounding"),
+    },
+    bv: {
+      isHiDiv0: parameters.get(":hi_div0") ?? true,
+      isMul2concat: getParameter(":mul2concat"),
+      isSplitConcatEq: getParameter(":split_concat_eq"),
     },
   };
 };

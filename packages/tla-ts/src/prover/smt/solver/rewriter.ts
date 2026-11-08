@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
 // license, see z3-license.txt. Only the rewrites that tlapm's encoding exercises are ported.
 import { ArithRewriter, KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
+import { type BvRewriterOptions, BvRewriter, DEFAULT_BV_OPTIONS } from "./bv-rewriter";
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
@@ -8,12 +9,17 @@ import {
   AstManager,
   FAMILY_ARITH,
   FAMILY_BASIC,
+  FAMILY_BV,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_ABS,
   OP_ADD,
   OP_AND,
+  OP_BADD,
+  OP_BAND,
+  OP_BOR,
+  OP_BXOR,
   OP_DISTINCT,
   OP_DIV,
   OP_EQ,
@@ -32,6 +38,7 @@ import {
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
+  OP_UBV2INT,
   OP_UMINUS,
   OP_UNINTERPRETED,
   OP_XOR,
@@ -52,6 +59,7 @@ export interface RewriterOptions {
   // pull_cheap_ite: a binary predicate or a function of an ite with values distributes over the ite.
   readonly isPullingCheapIte?: boolean;
   readonly isKeepingDistinct?: boolean;
+  readonly bv?: BvRewriterOptions;
 }
 
 // The parameters that asserted_formulas gives the kernel's rewriters.
@@ -80,6 +88,7 @@ interface ReduceFrame {
 // rewriter_tpl with th_rewriter_cfg.
 export class Rewriter extends RewriterTpl {
   private arith: ArithRewriter;
+  private bv: BvRewriter;
   private substitution = new Map<number, number>();
   private unusedVarsEliminator: UnusedVarsEliminator;
   private der: Der;
@@ -94,6 +103,13 @@ export class Rewriter extends RewriterTpl {
   ) {
     super(manager);
     this.arith = new ArithRewriter(manager, options.arith);
+    this.bv = new BvRewriter(manager, options.arith, options.bv ?? DEFAULT_BV_OPTIONS, {
+      mkEq: (left, right) => this.mkEq(left, right),
+      mkIte: (condition, thenExpr, elseExpr) => {
+        const result = this.mkIte(condition, thenExpr, elseExpr);
+        return typeof result === "number" ? result : result.expr;
+      },
+    });
     this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
     this.der = new Der(manager);
   }
@@ -152,11 +168,19 @@ export class Rewriter extends RewriterTpl {
     return this.substitution.size === 0 ? undefined : this.substitution.get(expr);
   }
 
-  // flat_assoc: th_rewriter flattens and, or and + into an enclosing application of the same
-  // operator.
+  // flat_assoc: th_rewriter flattens and, or, +, bvadd, bvor, bvand and bvxor into an enclosing
+  // application of the same operator.
   isFlatAssoc(decl: number) {
     const op = this.manager.funcDecls[decl].op;
-    return op === OP_AND || op === OP_OR || op === OP_ADD;
+    return (
+      op === OP_AND ||
+      op === OP_OR ||
+      op === OP_ADD ||
+      op === OP_BADD ||
+      op === OP_BOR ||
+      op === OP_BAND ||
+      op === OP_BXOR
+    );
   }
 
   isRewritingPatterns() {
@@ -319,7 +343,8 @@ export class Rewriter extends RewriterTpl {
         return this.pullIteCore(decl, second, first, sort, true);
     }
     const family = manager.funcDecls[decl].family;
-    if (family !== FAMILY_BASIC && family !== FAMILY_ARITH) return undefined;
+    if (family !== FAMILY_BASIC && family !== FAMILY_ARITH && family !== FAMILY_BV)
+      return undefined;
     if (manager.isUniqueValue(first) && this.isIteValueTree(second))
       return this.pullIteCore(decl, second, first, sort, true);
     if (manager.isUniqueValue(second) && this.isIteValueTree(first))
@@ -363,10 +388,41 @@ export class Rewriter extends RewriterTpl {
     return true;
   }
 
+  // reduce_eq: the equality rewrites of the arguments' theory, then those of an equality of
+  // ubv2int terms and apply_tamagotchi.
+  private reduceEq(left: number, right: number) {
+    const manager = this.manager;
+    const sort = manager.sorts[left];
+    const theoryResult = isArithSort(sort)
+      ? this.arith.mkEq(left, right)
+      : manager.isBvSort(sort)
+        ? this.bv.mkEqCore(left, right)
+        : undefined;
+    if (theoryResult !== undefined) return theoryResult;
+    if (manager.getOp(left) === OP_UBV2INT || manager.getOp(right) === OP_UBV2INT) {
+      const bv2intResult = this.bv.mkEqBv2int(left, right);
+      if (bv2intResult !== undefined) return bv2intResult;
+    }
+    return this.applyTamagotchi(left, right) ?? this.applyTamagotchi(right, left);
+  }
+
+  // apply_tamagotchi: (= (= x bit1) A) is (= x (ite A bit1 bit0)).
+  private applyTamagotchi(eq: number, other: number): Rewrite | undefined {
+    const manager = this.manager;
+    const eqBit = this.bv.getEqBit(eq);
+    if (eqBit === undefined) return undefined;
+    const bit = manager.mkBvNumeral(eqBit.bit, 1);
+    const otherBit = manager.mkBvNumeral(1n - eqBit.bit, 1);
+    const ite = manager.mkApp(OP_ITE, [other, bit, otherBit], manager.sorts[bit]);
+    return { expr: manager.mkEq(eqBit.term, ite), depth: 2 };
+  }
+
   // The reductions of the Boolean and arithmetic rewriters, which the model evaluator applies too.
   reduceAppCore(decl: number, args: number[]): number | Rewrite {
     const manager = this.manager;
-    const op = manager.funcDecls[decl].op;
+    const funcDecl = manager.funcDecls[decl];
+    if (funcDecl.family === FAMILY_BV) return this.bv.mkAppCore(decl, args) ?? -1;
+    const op = funcDecl.op;
     switch (op) {
       case OP_AND:
         return this.mkAndCore(args);
@@ -379,15 +435,19 @@ export class Rewriter extends RewriterTpl {
       case OP_XOR:
         return this.mkEq(this.mkNot(args[0]), args[1]);
       case OP_EQ:
-        return (
-          (isArithSort(manager.sorts[args[0]]) ? this.arith.mkEq(args[0], args[1]) : undefined) ??
-          this.mkEqCore(args[0], args[1]) ??
-          -1
-        );
+        return this.reduceEq(args[0], args[1]) ?? this.mkEqCore(args[0], args[1]) ?? -1;
       case OP_DISTINCT:
-        return this.mkDistinct(args);
+        return (
+          (args.length > 0 && manager.isBvSort(manager.sorts[args[0]])
+            ? this.bv.mkDistinct(args)
+            : undefined) ?? this.mkDistinct(args)
+        );
       case OP_ITE:
-        return this.mkIte(args[0], args[1], args[2]);
+        return (
+          (manager.isBvSort(manager.sorts[args[1]])
+            ? this.bv.mkIteCore(args[0], args[1], args[2])
+            : undefined) ?? this.mkIte(args[0], args[1], args[2])
+        );
       case OP_LE:
         return this.arith.mkLe(args[0], args[1]) ?? -1;
       case OP_GE:
