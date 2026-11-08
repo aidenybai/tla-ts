@@ -1,7 +1,6 @@
 import { TlaEvaluationError } from "./errors";
 import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
-  createTautologyError,
   evaluateLive,
   evaluateOnLasso,
   toLiveExpression,
@@ -225,9 +224,6 @@ export const createLivenessChecker = (
   const formula =
     fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
   const solutions = getSolutions(formula);
-  if (solutions.length === 0) {
-    throw createTautologyError();
-  }
   const actionIds = new Map<string, number>();
   const behaviors = solutions.map((solution): BehaviorGraph => ({
     solution,

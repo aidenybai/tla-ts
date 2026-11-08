@@ -2782,6 +2782,8 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       // TLC normalizes a lambda's domain to print it, but evaluates its body afterward.
       const formatRange = (inner: Value) =>
         formatValue(inner, isStrict, isNormalized && getFunctionClass(value) !== "lambda");
+      // TLC's Java code builds records without fields, such as TLCGet("stats").actions.
+      if (functionValue.domain.length === 0 && getFunctionClass(value) === "record") return "[]";
       if (functionValue.domain.every((key, index) => key === index + 1)) {
         return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
       }

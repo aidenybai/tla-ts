@@ -1,6 +1,8 @@
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readSync,
   realpathSync,
@@ -14,6 +16,7 @@ import { version } from "../../package.json";
 import type { Expression } from "../ast";
 import { describeRange } from "../evaluate";
 import type {
+  CheckOptions,
   CheckProgress,
   InitialStateViolation,
   OutputLine,
@@ -38,6 +41,7 @@ import {
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { check } from "../parallel";
 import { parseModule } from "../parser";
+import { simulate, type SimulationOutput, type SimulationStatistics } from "../simulate";
 import type { StateDump } from "../state-graph";
 import {
   formatProbability,
@@ -60,7 +64,8 @@ import {
   type MessagePrinter,
 } from "../tlc/messages";
 import { formatState } from "../values";
-import { CHECK_COMMAND, USAGE, type ParsedArgs } from "./options";
+import { USAGE } from "./options";
+import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
 import {
   createModuleLoader,
   findModuleFile,
@@ -85,16 +90,6 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "liveness-violation": EXIT_STATUS.livenessViolation,
   "postcondition-violation": EXIT_STATUS.assumptionViolation,
   error: EXIT_STATUS.error,
-};
-
-const isJavaLong = (text: string) =>
-  /^[+-]?\d+$/.test(text) && BigInt.asIntN(64, BigInt(text)) === BigInt(text);
-
-const getWorkerCount = (values: string[] | undefined) => {
-  if (!values) return 1;
-  return values[0] === "auto"
-    ? availableParallelism()
-    : Math.max(1, Number.parseInt(values[0], 10) || 1);
 };
 
 const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
@@ -461,7 +456,13 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
     violation.unwitnessed ??
     (status === "postcondition-violation" ? undefined : violation.postcondition);
   if (postcondition?.counts) console.log(postcondition.counts);
-  if (postcondition) print(postcondition.code, MESSAGE_LEVEL.error, postcondition.message);
+  if (postcondition) {
+    print(
+      postcondition.code,
+      MESSAGE_LEVEL.error,
+      formatInnerMessage(postcondition.code, postcondition.message, printer.isTool),
+    );
+  }
   // TLC checks assumptions before it starts the search, so it has no statistics to print.
   return !isInitial && status !== "assumption-violation";
 };
@@ -531,7 +532,13 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     printTraceOutput(printer, failure.traceOutput);
     const postcondition = failure.postcondition;
     if (postcondition?.counts) console.log(postcondition.counts);
-    if (postcondition) print(postcondition.code, MESSAGE_LEVEL.error, postcondition.message);
+    if (postcondition) {
+      print(
+        postcondition.code,
+        MESSAGE_LEVEL.error,
+        formatInnerMessage(postcondition.code, postcondition.message, printer.isTool),
+      );
+    }
     if (!failure.isCallStackFirst) printCallStack();
   } else if (result.violation) {
     if (!printViolation(result.status, result.violation, printer)) return;
@@ -622,6 +629,20 @@ const createFileDescriber = (
 const printWelcome = (printer: MessagePrinter) =>
   printer.print(MESSAGE_CODE.version, MESSAGE_LEVEL.none, `TLC2 Version ${version} (rev: tla-ts)`);
 
+// MonolithSpecExtractor.config: the lines after the first "---- CONFIG name ----" line, up to a
+// line that starts with "====". The lexer of the configuration needs a newline to end a comment.
+const getEmbeddedConfig = (contents: string, name: string) => {
+  const marker = new RegExp(`^-----*\\s*CONFIG\\s+${RegExp.escape(name)}\\s*-----*$`);
+  const lines = contents.split(/\r?\n/);
+  const start = lines.findIndex((line) => marker.test(line));
+  if (start === -1) return "\n";
+  const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
+  return `${lines
+    .slice(start + 1, end === -1 ? undefined : end)
+    .join("\n")
+    .trim()}\n`;
+};
+
 // TLC.printErrorMsg: TLC says which version it is, then why it can't read its options.
 const printCommandLineError = (printer: MessagePrinter, message: string) => {
   printWelcome(printer);
@@ -635,78 +656,112 @@ const printCommandLineError = (printer: MessagePrinter, message: string) => {
 
 // TLC.printStartupBanner, with what runs tla-ts in place of the JVM. tla-ts keeps its fingerprints
 // and its queue of states in memory.
-const printStartupBanner = (printer: MessagePrinter, seed: string, workers: number) =>
+const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
+  const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
+  if (args.mode === "model-check") {
+    printer.print(
+      MESSAGE_CODE.modelChecking,
+      MESSAGE_LEVEL.none,
+      `Running breadth-first search Model-Checking with fp 0 and seed ${args.seed} with ${workers}, MemFPSet, MemStateQueue).`,
+    );
+    return;
+  }
   printer.print(
-    MESSAGE_CODE.modelChecking,
+    MESSAGE_CODE.simulating,
     MESSAGE_LEVEL.none,
-    `Running breadth-first search Model-Checking with fp 0 and seed ${BigInt(seed)} with ${workers} worker${workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit, MemFPSet, MemStateQueue).`,
+    `Running Random Simulation with seed ${args.seed} with ${workers}).`,
+  );
+};
+
+const printSimulation = (printer: MessagePrinter, output: SimulationOutput) => {
+  const print = printer.print;
+  switch (output.kind) {
+    case "message":
+      print(
+        output.code,
+        output.isError ? MESSAGE_LEVEL.error : MESSAGE_LEVEL.none,
+        printer.isTool ? output.toolMessage : output.message,
+      );
+      return;
+    case "behavior": {
+      const last = output.trace[output.trace.length - 1];
+      if (!output.isLastStateOnly) {
+        printTrace(printer, output.trace);
+        return;
+      }
+      print(MESSAGE_CODE.errorState, MESSAGE_LEVEL.none, "The error state is:\n");
+      print(MESSAGE_CODE.statePrint1, MESSAGE_LEVEL.state, `:\n${formatState(last.state)}`);
+      return;
+    }
+    case "progress": {
+      const statistics = output.statistics;
+      if (printer.isTool) {
+        printSimulationProgress(printer, statistics);
+        return;
+      }
+      const variance = statistics.levelM2 / (statistics.traces + 1);
+      print(
+        MESSAGE_CODE.simulationProgress,
+        MESSAGE_LEVEL.none,
+        `Progress: ${statistics.generatedStates} states checked, ${statistics.traces} traces generated (trace length: mean=${statistics.levelMean}, var(x)=${Math.round(variance)}, sd=${Math.round(Math.sqrt(variance))})`,
+      );
+      return;
+    }
+    case "summary":
+      if (printer.isTool) printSimulationProgress(printer, output.statistics);
+      print(
+        MESSAGE_CODE.simulationStats,
+        MESSAGE_LEVEL.none,
+        `The number of states generated: ${output.statistics.generatedStates}\nSimulation using seed ${output.statistics.seed} and aril ${output.statistics.aril}`,
+      );
+  }
+};
+
+// With -tool, TLC reports the progress of a simulation as it reports that of model checking.
+const printSimulationProgress = (printer: MessagePrinter, statistics: SimulationStatistics) =>
+  printer.print(
+    MESSAGE_CODE.simulationProgress,
+    MESSAGE_LEVEL.none,
+    `Progress(${statistics.traces}) at ${formatTlcDate(new Date())}: ${statistics.generatedStates} states generated, -1 distinct states found, -1 states left on queue.`,
   );
 
 // TLC loads Integers for the binary trace that its trace exploration spec records. -generateSpecTE
 // turns the spec on, and -tool, -continue, -noGenerateSpecTE and -noTE turn it off, as
 // -noGenerateSpecTEBin and -noTEBin turn off the binary trace. TLC 1.7.4 records no such trace.
-const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
-  const flags = [...args.unknown, ...args.options.map((option) => option.name)];
-  const hasFlag = (name: string, alias = name) =>
-    flags.some((flag) => flag === name || flag.toLowerCase() === alias.toLowerCase());
-  const isSpecGenerated =
-    hasFlag("-generateSpecTE") ||
-    (!hasFlag("-noGenerateSpecTE", "-noTE") && !hasFlag("-tool") && !hasFlag("-continue"));
-  return version !== "1.7.4" && isSpecGenerated && !hasFlag("-noGenerateSpecTEBin", "-noTEBin");
+const isTraceRecorded = (args: TlcArguments, version: TlcVersion) =>
+  version !== "1.7.4" &&
+  (args.isTraceSpecForced || (!args.isTraceSpecDisabled && !args.isTool && !args.isContinued)) &&
+  !args.isTraceBinaryDisabled;
+
+// FileUtil.makeMetaDir: a new directory in the -metadir, or in states, named by the time.
+const createMetadir = (args: TlcArguments) => {
+  const now = new Date();
+  const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+  const name = `${pad(now.getFullYear() % 100)}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
+  const directory = join(args.metadir ?? "states", name);
+  mkdirSync(directory, { recursive: true });
+  return directory;
 };
 
 const checkSpec = async (
   specPath: string,
-  args: ParsedArgs,
+  args: TlcArguments,
+  dump: StateDump | undefined,
   java: JavaProperties,
   printer: MessagePrinter,
 ) => {
-  // TLC.handleParameters: TLC reads its options before it says which version it is.
-  const seed = args.has("-seed") ? args.get("-seed")?.[0] : "0";
-  if (seed === undefined) return printCommandLineError(printer, "Error: seed required.");
-  if (!isJavaLong(seed)) {
-    return printCommandLineError(
-      printer,
-      `Error: An integer for seed required. But encountered ${seed}`,
-    );
-  }
-  const livenessCheck = args.has("-lncheck") ? args.get("-lncheck")?.[0]?.toLowerCase() : "default";
-  if (livenessCheck === undefined) {
-    return printCommandLineError(
-      printer,
-      "Error: expect a strategy such as final for -lncheck option.",
-    );
-  }
-  const dumpValues = args.get("-dump");
-  if (dumpValues?.length === 0) {
-    return printCommandLineError(printer, "Error: A file name for dumping states required.");
-  }
-  const unsupportedFormat =
-    dumpValues?.length === 2 &&
-    UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
-  if (unsupportedFormat) {
-    console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
-    return 1;
-  }
-  const fingerprintIndex = args.get("-fp")?.[0];
-  if (fingerprintIndex !== undefined && Number(fingerprintIndex) !== 0) {
-    console.error(
-      `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${fingerprintIndex}.`,
-    );
-    return 1;
-  }
-  const workers = getWorkerCount(args.get("-workers"));
+  const workers = args.workers;
+  const livenessCheck = args.livenessCheck;
+  const seed = args.seed;
   const version = printer.version;
   printWelcome(printer);
-  printStartupBanner(printer, seed, workers);
-  const configPath =
-    args.get("-config")?.[0] ??
-    (args.has("-config") ? undefined : specPath.replace(/\.tla$/, ".cfg"));
-  if (!configPath || !existsSync(configPath)) {
+  printStartupBanner(printer, args);
+  const configPath = args.configPath ?? specPath.replace(/\.tla$/, ".cfg");
+  if (!existsSync(configPath)) {
     printer.print(
       MESSAGE_CODE.configFileError,
       MESSAGE_LEVEL.error,
-      `TLC encountered the following error when trying to read the configuration file ${configPath ?? ""}:\nFile not found.`,
+      `TLC encountered the following error when trying to read the configuration file ${configPath}:\nFile not found.`,
     );
     return EXIT_STATUS.configParseError;
   }
@@ -741,7 +796,13 @@ const checkSpec = async (
   // when it can't read it.
   const config = (() => {
     try {
-      return parseConfig(readFileSync(configPath, "utf8"), version);
+      const contents = readFileSync(configPath, "utf8");
+      return parseConfig(
+        configPath.endsWith(".tla")
+          ? getEmbeddedConfig(contents, configPath.replaceAll(".tla", ""))
+          : contents,
+        version,
+      );
     } catch (error) {
       if (!(error instanceof TlaConfigError)) throw error;
       return error;
@@ -758,7 +819,7 @@ const checkSpec = async (
     return EXIT_STATUS.error;
   }
   if (config instanceof TlaConfigError) return printFailure(config);
-  if (args.has("-deadlock")) config.checkDeadlock = false;
+  if (!args.isDeadlockChecked) config.checkDeadlock = false;
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
   const loadModule = createModuleLoader(directories);
@@ -791,13 +852,7 @@ const checkSpec = async (
     reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
     {
       fileName: specName,
-      describeFile: createFileDescriber(
-        specPath,
-        directories,
-        java,
-        args.get("-metadir")?.[0],
-        version,
-      ),
+      describeFile: createFileDescriber(specPath, directories, java, args.metadir, version),
       version,
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
       rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
@@ -820,16 +875,16 @@ const checkSpec = async (
         undefined,
       );
     }
-    const result = await check({
+    const options: CheckOptions = {
       workers,
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
-      seed: BigInt(seed),
-      dump: dumpValues && getStateDump(dumpValues),
+      seed,
+      dump,
       isTool: printer.isTool,
-      isContinued: args.has("-continue"),
+      isContinued: args.isContinued,
       isTraceRecorded: isRecorded,
       isSanyReported: true,
-      isWarningEnabled: !args.has("-nowarning"),
+      isWarningEnabled: args.isWarningEnabled,
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       source,
@@ -845,7 +900,19 @@ const checkSpec = async (
         mkdirSync(dirname(resolve(path)), { recursive: true });
         writeFileSync(path, content);
       },
-    });
+    };
+    if (args.mode === "simulate") {
+      const status = simulate({
+        ...options,
+        traceDepth: args.traceDepth,
+        traceCount: args.traceCount,
+        aril: args.aril,
+        onSimulation: (output) => printSimulation(printer, output),
+      });
+      printFinished();
+      return status;
+    }
+    const result = await check(options);
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
@@ -873,9 +940,56 @@ const formatSanyErrors = (error: TlaSyntaxError, specName: string) => {
 };
 
 export const checkSpecs = async (args: string[], java: JavaProperties) => {
-  const parsed = CHECK_COMMAND.parse(args);
-  const inputs = getInputPaths(parsed.positionals);
-  const isConfigured = parsed.has("-config");
+  const version = java.tlcVersion ?? "master";
+  const parsed = parseTlcArguments(args);
+  if ("error" in parsed) {
+    if (parsed.isUncaught) {
+      console.error(`Exception in thread "main" ${parsed.error}`);
+      return 1;
+    }
+    return printCommandLineError(createMessagePrinter(parsed.isTool, true, version), parsed.error);
+  }
+  if (parsed.isUsage) {
+    console.log(USAGE);
+    return 1;
+  }
+  const dumpValues = parsed.dump;
+  const unsupportedFormat =
+    dumpValues?.length === 2 &&
+    UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
+  if (unsupportedFormat) {
+    console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
+    return 1;
+  }
+  if (parsed.fingerprintIndex !== 0) {
+    console.error(
+      `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${parsed.fingerprintIndex}.`,
+    );
+    return 1;
+  }
+  // TLC opens the file of a -dump as it reads its arguments, in the meta directory it creates for
+  // ${metadir}.
+  const dump =
+    parsed.dump &&
+    getStateDump(
+      parsed.dump.map((value) =>
+        value.includes("${metadir}") ? value.replace("${metadir}", createMetadir(parsed)) : value,
+      ),
+    );
+  const dumpPath = dump?.path;
+  if (dumpPath !== undefined) {
+    try {
+      closeSync(openSync(dumpPath, "w"));
+    } catch {
+      console.log(`Error: Unable to write to file ${dumpPath}`);
+      return printCommandLineError(
+        createMessagePrinter(parsed.isTool, true, version),
+        `Error: Given file name ${dumpPath} for dumping states invalid.`,
+      );
+    }
+  }
+  const inputs = getInputPaths(parsed.specs);
+  const isConfigured = parsed.configPath !== undefined;
   // Like TLC, a spec named without an extension is the .tla file of that name. A glob also matches
   // modules that only other specs import, which have no configuration.
   const specPaths = inputs
@@ -893,8 +1007,10 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     )
     .map((input) => input.path);
   if (specPaths.length === 0) {
-    console.error(USAGE);
-    return 1;
+    return printCommandLineError(
+      createMessagePrinter(parsed.isTool, true, version),
+      "Error: Missing input TLA+ module.",
+    );
   }
   if (isConfigured && specPaths.length > 1) {
     console.error("Error: -config applies to one specification, but several were given.");
@@ -914,12 +1030,8 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     // TLC checks one spec, so tla-ts names each of several it checks.
     if (paths.length > 1)
       console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
-    const printer = createMessagePrinter(
-      parsed.has("-tool"),
-      !parsed.has("-nowarning"),
-      java.tlcVersion ?? "master",
-    );
-    exitCodes.push(await reportErrors(() => checkSpec(path, parsed, java, printer), printer));
+    const printer = createMessagePrinter(parsed.isTool, parsed.isWarningEnabled, version);
+    exitCodes.push(await reportErrors(() => checkSpec(path, parsed, dump, java, printer), printer));
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };

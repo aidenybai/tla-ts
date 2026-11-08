@@ -5,7 +5,6 @@ import {
   createStackOverflowError,
   getErrorExitCode,
   isStackOverflow,
-  TlaConfigError,
   TlaEvaluationError,
   TlaIllegalStateError,
   TlaIncompleteSuccessorError,
@@ -16,7 +15,6 @@ import {
 } from "./errors";
 import {
   createTracingEnvironment,
-  evaluate,
   formatRange,
   getDefinition,
   isImpure,
@@ -24,7 +22,13 @@ import {
   type Environment,
   type FingerprintFailure,
 } from "./evaluate";
-import { EXIT_STATUS, getExitCode, setExitCode, withLivenessExitCode } from "./exit-codes";
+import {
+  EXIT_STATUS,
+  getExitCode,
+  getMessageExitStatus,
+  setExitCode,
+  withLivenessExitCode,
+} from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
 import {
   createLivenessChecker,
@@ -33,11 +37,9 @@ import {
   type LiveSuccessor,
 } from "./liveness-checker";
 import {
-  createIdentifier,
   createSearch,
+  getIncompleteSuccessorMessage,
   findAssumptionViolation,
-  getConfigDefinition,
-  getContext,
   reportInitialStatesProgress,
   reportStartup,
   withNextStateExitCode,
@@ -65,7 +67,6 @@ import {
   type Successor,
 } from "./successors";
 import {
-  formatNestedMessage,
   getCodedMessage,
   getFailureMessage,
   getWrappedException,
@@ -75,6 +76,7 @@ import {
   withUnexpectedException,
   type FailureMessage,
 } from "./tlc/messages";
+import { createTautologyError } from "./liveness";
 import { createTlcOrder } from "./tlc/order";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -88,12 +90,10 @@ import {
   getFingerprintError,
   getHeldValues,
   getValueHash,
-  isFunctionValue,
   isSameValue,
   markFingerprinted,
   setStringOrder,
   setValueVersion,
-  toFiniteFunction,
   type Value,
 } from "./values";
 
@@ -323,38 +323,16 @@ const appendTraceOutput = <Traced extends Behavior>(behavior: Traced, lines: Out
 const INITIAL_RECOVERY_FAILURE = "Failed to recover the initial state from its fingerprint.";
 const NEXT_RECOVERY_FAILURE = "Failed to recover the next state from its fingerprint.";
 
-const toAliasRecord = (value: Value, fieldOrder: string[]) => {
-  if (!isFunctionValue(value)) return undefined;
-  const record = toFiniteFunction(value);
-  if (!record.domain.every((key) => typeof key === "string")) return undefined;
-  const entries = record.domain.map((key, index): [string, Value] => [
-    String(key),
-    record.range[index],
-  ]);
-  return Object.fromEntries(
-    entries.sort((left, right) => fieldOrder.indexOf(left[0]) - fieldOrder.indexOf(right[0])),
-  );
-};
-
 // Stops a replay where TLC stops it without a failure, as at a violated invariant.
 const STOP_REPLAY = new Error("The replay stopped");
-
-// The codes of the errors in the configuration and the spec that TLC's EC.ExitStatus maps to a
-// configuration error.
-const CONFIG_ERROR_CODES = new Set([
-  ...Array.from({ length: 24 }, (_, index) => 2222 + index),
-  2272,
-  2273,
-  2274,
-  2280,
-  2281,
-]);
 
 // When TLC's replay of the initial states doesn't fail again, it exits with the code of the
 // TLCRuntimeException it reported.
 const getInitialExitCode = (error: TlaEvaluationError) => {
   const coded = getCodedMessage(error.message);
-  return coded && !coded.isEvalException && CONFIG_ERROR_CODES.has(coded.code)
+  return coded &&
+    !coded.isEvalException &&
+    getMessageExitStatus(coded.code) === EXIT_STATUS.configParseError
     ? EXIT_STATUS.configParseError
     : getErrorExitCode(error);
 };
@@ -742,6 +720,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }),
     ),
   );
+  // ModelChecker rejects a temporal property whose negation has no solution.
+  if (liveness?.branches === 0) throw createTautologyError();
   // TLC 1.7.4 creates its model checker, which TLCGet reads, once it has built the liveness checker.
   runtime.isStarted = true;
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
@@ -756,10 +736,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const seenStates = { slots: new Int32Array(1 << 17), size: 0, shift: 16 };
   const canonicalizeState = createCanonicalizer();
 
-  const toRecord = (state: Value[]): Record<string, Value> =>
-    Object.fromEntries(
-      search.getTlcOrder().map((index) => [environment.variables[index], state[index]]),
-    );
+  const toRecord = search.toRecord;
   const getAliasState = (
     alias: string,
     steps: Successor[],
@@ -775,20 +752,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       (steps[position + 1] ?? steps[loopStart ?? position]).state,
     );
   };
-  const evaluateAlias = (alias: string, state: Value[], next: Value[] | undefined) => {
-    try {
-      const body = getConfigDefinition("alias", alias, environment).body;
-      const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
-      const fieldOrder = body.kind === "Record" ? body.fields.map((field) => field.name) : [];
-      return toAliasRecord(value, fieldOrder) ?? toRecord(state);
-    } catch (error) {
-      if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
-      return {
-        ...toRecord(state),
-        _ALIASEvalError: formatNestedMessage(error.message, options.isTool ?? false),
-      };
-    }
-  };
+  const evaluateAlias = (alias: string, state: Value[], next: Value[] | undefined) =>
+    search.evaluateAlias(alias, state, next, options.isTool ?? false);
   // TLC finds the action of a step as the first action that takes it, evaluated as when the search
   // expanded the previous state, by the values of a successor it holds and otherwise by fingerprint.
   const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
@@ -994,14 +959,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const actions = getSpecNextActions();
     const action =
       actions.length === 1 ? actions[0] : actions.find((item) => item.name === error.action);
-    const missing = error.variables;
-    const subject =
-      actions.length === 1
-        ? "the next-state action"
-        : `action ${error.action} of the next-state relation`;
-    // TLC 1.7.4 says a variable is not assigned rather than not defined.
-    const verb = is174 ? "assigned" : "defined";
-    const message = `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
+    const message = getIncompleteSuccessorMessage(
+      error.variables,
+      error.action,
+      actions.length,
+      options.version,
+    );
     const undefinedValue = createModelValue("null");
     const partial = error.state.map((value) => value ?? undefinedValue);
     const failure = createFailureResult(error, getStateTrace(index));
@@ -1706,7 +1669,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       });
     }
   } catch (error) {
-    return createFailureResult(error, { trace: [] });
+    // ModelChecker reports that a postcondition is constant as an exception it did not expect.
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return createFailureResult(
+      setExitCode(
+        new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
+        EXIT_STATUS.error,
+      ),
+      { trace: [] },
+    );
   }
   return createSuccess();
 };

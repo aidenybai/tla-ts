@@ -47,10 +47,18 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
+import { getSubscriptVariables } from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
-import { MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
+import { formatNestedMessage, MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
 import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
-import { formatValue, isUpdatedElementOf, type Value } from "./values";
+import type { TlcVersion } from "./tlc/version";
+import {
+  formatValue,
+  isFunctionValue,
+  isUpdatedElementOf,
+  toFiniteFunction,
+  type Value,
+} from "./values";
 
 interface NamedExpression {
   name: string;
@@ -259,7 +267,12 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
   return true;
 };
 
-const getSpecification = (config: ModelConfig, environment: Environment): Specification => {
+const getSpecification = (
+  config: ModelConfig,
+  environment: Environment,
+  getVariableOrder: () => string[],
+  onProgress: CheckOptions["onProgress"],
+): Specification => {
   if (config.specification === undefined) {
     const getOperator = (name: string | undefined, description: string) => {
       if (name === undefined) return undefined;
@@ -300,6 +313,29 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
       );
     }
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
+      // TLC warns when it can't tell that the subscript holds every variable, since it then
+      // checks fewer stuttering steps than the specification allows.
+      const variables = getSubscriptVariables(
+        conjunct.expression.subscript,
+        item.scope,
+        environment,
+      );
+      if (variables === undefined) {
+        onProgress?.({
+          kind: "warning",
+          code: MESSAGE_CODE.subscriptUndetermined,
+          text: "TLC could not determine if the subscript of the next-state relation contains\nall state variables. Proceed with fingers crossed.",
+        });
+      }
+      getVariableOrder()
+        .filter((name) => variables !== undefined && !variables.includes(name))
+        .forEach((name) =>
+          onProgress?.({
+            kind: "warning",
+            code: MESSAGE_CODE.subscriptMissingVariable,
+            text: `The subscript of the next-state relation specified by the specification\ndoes not seem to contain the state variable ${name}`,
+          }),
+        );
       nextActions.push({ expression: conjunct.expression.action, scope: item.scope });
       return;
     }
@@ -558,6 +594,16 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
 
 interface Search {
   properties: Properties;
+  // A state as TLC prints it, its variables in TLC's order.
+  toRecord: (state: Value[]) => Record<string, Value>;
+  // The state TLC prints for an ALIAS, which names the fields of the record the alias is, or reports
+  // why TLC fails to evaluate it.
+  evaluateAlias: (
+    alias: string,
+    state: Value[],
+    next: Value[] | undefined,
+    isTool: boolean,
+  ) => Record<string, Value>;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
@@ -594,6 +640,33 @@ interface Search {
   // After a counterexample, TLC skips the postconditions when one of them is constant.
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
+
+const toAliasRecord = (value: Value, fieldOrder: string[]) => {
+  if (!isFunctionValue(value)) return undefined;
+  const record = toFiniteFunction(value);
+  if (!record.domain.every((key) => typeof key === "string")) return undefined;
+  const entries = record.domain.map((key, index): [string, Value] => [
+    String(key),
+    record.range[index],
+  ]);
+  return Object.fromEntries(
+    entries.sort((left, right) => fieldOrder.indexOf(left[0]) - fieldOrder.indexOf(right[0])),
+  );
+};
+
+// TLC names the action that leaves a successor incomplete when the next-state relation has several.
+export const getIncompleteSuccessorMessage = (
+  missing: string[],
+  action: string | undefined,
+  actionCount: number,
+  version: TlcVersion | undefined,
+) => {
+  const subject =
+    actionCount === 1 ? "the next-state action" : `action ${action} of the next-state relation`;
+  // TLC 1.7.4 says a variable is not assigned rather than not defined.
+  const verb = version === "1.7.4" ? "assigned" : "defined";
+  return `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
+};
 
 export const getContext = (
   environment: Environment,
@@ -679,7 +752,7 @@ export const createSearch = (
   onProgress?: CheckOptions["onProgress"],
 ): Search | undefined => {
   const configInvariants = getInvariants(config.invariants, environment);
-  const spec = getSpecification(config, environment);
+  const spec = getSpecification(config, environment, getVariableOrder, onProgress);
   const properties = getProperties(config, environment, onProgress);
   const invariants = getStateChecks([...configInvariants, ...properties.invariants], environment);
   // The invariants TLC evaluates, each of which may have several conjuncts among the checks.
@@ -805,9 +878,23 @@ export const createSearch = (
       counts: prettyPrint(formatValue(getPossibleCounts(runtime), true)),
     };
   };
+  const toRecord = (state: Value[]): Record<string, Value> =>
+    Object.fromEntries(getTlcOrder().map((index) => [environment.variables[index], state[index]]));
   return {
     properties,
     spec,
+    toRecord,
+    evaluateAlias: (alias, state, next, isTool) => {
+      try {
+        const body = getConfigDefinition("alias", alias, environment).body;
+        const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
+        const fieldOrder = body.kind === "Record" ? body.fields.map((field) => field.name) : [];
+        return toAliasRecord(value, fieldOrder) ?? toRecord(state);
+      } catch (error) {
+        if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
+        return { ...toRecord(state), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
+      }
+    },
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,
@@ -949,10 +1036,8 @@ export const createSearch = (
       if (constant !== undefined) {
         if (isAfterViolation) return undefined;
         throw setExitCode(
-          new TlaEvaluationError(
-            `${UNEXPECTED_EXCEPTION}The post condition ${constant} cannot be a constant.`,
-          ),
-          EXIT_STATUS.error,
+          new TlaEvaluationError(`The post condition ${constant} cannot be a constant.`),
+          EXIT_STATUS.configParseError,
         );
       }
       const unwitnessed = findUnwitnessedPossible();

@@ -65,7 +65,8 @@ const getPrimes = () => {
   return PRIMES;
 };
 
-const nextPrime = (random: JavaRandom) => {
+// RandomGenerator.nextPrime.
+export const nextPrime = (random: JavaRandom) => {
   const primes = getPrimes();
   const choice = { index: primes.length };
   while (choice.index === primes.length) {

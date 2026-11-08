@@ -113,7 +113,7 @@ export const setTlcValue = (
     return;
   }
   if (key === "pause") {
-    if (value !== true) return;
+    if (value !== true || !runtime.pause) return;
     print("Press enter to resume model checking.");
     runtime.pause();
     return;

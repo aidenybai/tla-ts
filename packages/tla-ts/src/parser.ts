@@ -626,7 +626,9 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         start,
       );
     }
-    if (isAt("<<") || isAt("(")) return parsePrimary();
+    // SANY's ReducedExpression: a name, or an expression in parentheses, braces, brackets or angle
+    // brackets.
+    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[")) return parsePrimary();
     throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
   };
 

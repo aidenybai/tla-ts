@@ -61,6 +61,8 @@ const getRuntimeValue = (
       ? !TLC_174_KEYS.has(key) || (!runtime.isStarted && CHECKER_KEYS_174.has(key))
       : !runtime.isStarted && CHECKER_KEYS.has(key);
   if (isUndefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+  const simulated = runtime.getSimulationValue?.(key, state);
+  if (simulated !== undefined) return simulated;
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":
