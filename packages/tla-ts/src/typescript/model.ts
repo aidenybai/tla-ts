@@ -67,8 +67,9 @@ const getTags = (node: ts.Node) =>
     }),
   );
 
-const isExported = (node: ts.Declaration) =>
-  (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0;
+const isExported = (node: HelperDeclaration) =>
+  (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0 &&
+  ts.isSourceFile(ts.isVariableDeclaration(node) ? node.parent.parent.parent : node.parent);
 
 const isLet = (declared: Declared) =>
   ts.isVariableDeclaration(declared.declaration) &&
@@ -92,6 +93,7 @@ const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context
 };
 
 const isDeclaration = (statement: ts.Statement) =>
+  ts.isModuleDeclaration(statement) ||
   ts.isImportDeclaration(statement) ||
   ts.isTypeAliasDeclaration(statement) ||
   ts.isInterfaceDeclaration(statement) ||
@@ -101,6 +103,20 @@ const isDeclaration = (statement: ts.Statement) =>
 
 // The functions and constants a statement declares.
 const getDeclarations = (statement: ts.Statement): Declared[] => {
+  if (ts.isModuleDeclaration(statement)) {
+    const body = statement.body;
+    if (body === undefined) return [];
+    if (ts.isModuleDeclaration(body)) return getDeclarations(body);
+    if (!ts.isModuleBlock(body)) return [];
+    return body.statements.flatMap((inner) => {
+      const isConst =
+        ts.isVariableStatement(inner) && (inner.declarationList.flags & ts.NodeFlags.Const) !== 0;
+      if (!isDeclaration(inner) && !isConst) {
+        throw new TlaTypeScriptError(`Unsupported statement: ${inner.getText()}`, inner);
+      }
+      return getDeclarations(inner);
+    });
+  }
   if (ts.isFunctionDeclaration(statement) && statement.body !== undefined) {
     if (statement.name === undefined) throw new TlaTypeScriptError("Name this function", statement);
     return [{ name: statement.name.text, declaration: statement }];

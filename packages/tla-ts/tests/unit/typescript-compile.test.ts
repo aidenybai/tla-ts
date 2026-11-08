@@ -513,6 +513,41 @@ describe("definitions", () => {
     expect(getTrace(result)?.at(-1)).toEqual({ count: "4" });
   });
 
+  it("compiles a namespace's functions and constants as helpers, not actions", async () => {
+    const result = await checkModel(`
+      namespace limits {
+        export const max = 3;
+        export function clamp(value: number) {
+          return value > max ? max : value;
+        }
+      }
+      let count = limits.clamp(5);
+      export const step = () => {
+        if (count <= 0) return;
+        count--;
+      };
+    `);
+    expect([result.status, result.distinctStates]).toEqual(["deadlock", 4]);
+  });
+
+  it("compiles a namespace that merges with a function", async () => {
+    const result = await checkModel(`
+      function check(value: number) {
+        if (value !== 2) throw new Error("not two");
+      }
+      namespace check {
+        export function isPositive(value: number) {
+          if (value <= 0) throw new Error("not positive");
+        }
+      }
+      let count = 2;
+      check(count);
+      count = -1;
+      check.isPositive(count);
+    `);
+    expect(result.failure?.message).toContain("not positive");
+  });
+
   it("compiles constants and functions imported from other files", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/counter.ts");
     const result = await check(compile(readFileSync(path, "utf8"), path));

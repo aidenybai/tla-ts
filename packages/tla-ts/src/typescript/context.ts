@@ -72,18 +72,23 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
 export const isMethodCall = (node: ts.Node): node is MethodCall =>
   ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression);
 
+const isTopLevel = (statement: ts.Node): boolean => {
+  const parent = statement.parent;
+  if (ts.isSourceFile(parent)) return true;
+  const namespace = ts.isModuleBlock(parent) ? parent.parent : parent;
+  return ts.isModuleDeclaration(namespace) && isTopLevel(namespace);
+};
+
 // The declaration of a constant or function at the top level of a module, which becomes a TLA+
 // definition.
 export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
   const declaration = symbol?.valueDeclaration;
   if (declaration === undefined) return undefined;
-  if (ts.isFunctionDeclaration(declaration) && ts.isSourceFile(declaration.parent)) {
-    return declaration;
-  }
+  if (ts.isFunctionDeclaration(declaration) && isTopLevel(declaration)) return declaration;
   const isTopLevelConst =
     ts.isVariableDeclaration(declaration) &&
     ts.isVariableStatement(declaration.parent.parent) &&
-    ts.isSourceFile(declaration.parent.parent.parent) &&
+    isTopLevel(declaration.parent.parent) &&
     (declaration.parent.flags & ts.NodeFlags.Const) !== 0;
   return isTopLevelConst ? declaration : undefined;
 };
