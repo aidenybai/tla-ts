@@ -229,9 +229,12 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
     return expression.operands.flatMap((operand) => getConjuncts(operand, environment));
   if (expression.kind === "Identifier" && !environment.constants.has(expression.name)) {
     const definition = getDefinition(expression.name, environment);
-    if (definition?.kind === "Operator" && definition.params.length === 0) {
-      return getConjuncts(definition.body, environment);
-    }
+    // A definition that TLC computed when it started stays its value.
+    const isUnfolded =
+      definition?.kind === "Operator" &&
+      definition.params.length === 0 &&
+      getStartupValue(definition, environment) === undefined;
+    if (isUnfolded) return getConjuncts(definition.body, environment);
   }
   return [expression];
 };
