@@ -26,6 +26,9 @@ import { createPossibleOperators, createTlcExtOperators } from "./tlc/tlcext-ope
 import { createTlcOperators } from "./tlc/tlc-operators";
 import { TLC_JAVA_METHODS } from "./tlc/jar-data";
 import {
+  addBoundedElement,
+  forEachElement,
+  isBeyondSetBound,
   createSet,
   createSortedSet,
   compareValues,
@@ -63,6 +66,8 @@ import {
   type SetValue,
   type Value,
   rankString,
+  SET_BOUND,
+  SET_BOUND_MESSAGE,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
 import { getSanyStandardModules } from "./sany/modules";
@@ -101,18 +106,26 @@ const combineReducible = (
   set: ReducibleSet,
   other: Value,
 ): Value => {
-  const elements = set.kind === "Interval" ? toFiniteSet(set).elements : getWrittenElements(set);
+  if (set.kind === "Interval") getCardinality(set);
+  const elements = set.kind === "Interval" ? set : getWrittenElements(set);
   if (operator !== "\\cup") {
     const isKept = operator === "\\cap";
-    const kept = elements.filter((element) => isElementOf(element, other) === isKept);
+    const kept: Value[] = [];
+    forEachElement(elements, (element) => {
+      if (isElementOf(element, other) === isKept) addBoundedElement(kept, element);
+    });
     return isNormalizedReducible(set) ? createNormalizedSet(kept) : createEnumeratedSet(kept);
   }
-  if (elements.length === 0) return other;
+  if (isEmptySet(set)) return other;
   if (!isReducibleSet(other)) {
     return markStreamedSet({ kind: "SetOperation", operator, left: set, right: other });
   }
-  const added = toFiniteSet(other).elements.filter((element) => !isElementOf(element, set));
-  return createEnumeratedSet([...elements, ...added]);
+  const union: Value[] = [];
+  forEachElement(elements, (element) => addBoundedElement(union, element));
+  forEachElement(other.kind === "Interval" ? other : toFiniteSet(other).elements, (element) => {
+    if (!isElementOf(element, set)) addBoundedElement(union, element);
+  });
+  return createEnumeratedSet(union);
 };
 
 export const CORE_OPERATORS: Builtin[] = [
@@ -176,7 +189,9 @@ export const CORE_OPERATORS: Builtin[] = [
         isReducibleSet(right) &&
         !isMixedSet(left) &&
         !isMixedSet(right) &&
-        !isFilteredByInterval
+        !isFilteredByInterval &&
+        !isBeyondSetBound(left) &&
+        !isBeyondSetBound(right)
       ) {
         if (operator === "\\cup" && isEmptySet(left)) return right;
         const merge =
@@ -198,6 +213,9 @@ export const CORE_OPERATORS: Builtin[] = [
               const isSorted =
                 written === leftSet.elements &&
                 (added.length === 0 || compareValues(written[written.length - 1], added[0]) < 0);
+              if (written.length + added.length > SET_BOUND) {
+                throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+              }
               if (isSorted && !leftSet.isNormalized) return merged;
               const union = merged === leftSet ? createSortedSet(merged.elements) : merged;
               if (!isSorted) union.writtenElements = [...written, ...added];

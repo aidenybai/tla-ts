@@ -16,15 +16,14 @@ import {
   isFiniteSet,
   isOverriddenSet,
   isSetValue,
+  SET_BOUND,
+  SET_BOUND_MESSAGE,
   toFiniteSet,
   type Value,
 } from "./values";
 
 const RANDOM_SUBSET_SIGNATURE =
   "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)";
-
-// TLCGlobals.setBound: TLC 1.7.4's ValueVec holds at most this many elements of a set.
-const SET_BOUND_174 = 1000000;
 
 const getCount = (value: Value, position: string, name: string) => {
   if (typeof value !== "number" || value < 0) {
@@ -147,11 +146,8 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
         (total, factor) => total * toFiniteSet(factor).elements.length,
         1,
       );
-      if (size > SET_BOUND_174) {
-        throw createJavaOverrideError(
-          RANDOM_SUBSET_SIGNATURE,
-          `Attempted to construct a set with too many elements (>${SET_BOUND_174}).`,
-        );
+      if (size > SET_BOUND) {
+        throw createJavaOverrideError(RANDOM_SUBSET_SIGNATURE, SET_BOUND_MESSAGE);
       }
     }
     return createSet(getRandomSubset(count, set, runtime.getRandom(), runtime.version));

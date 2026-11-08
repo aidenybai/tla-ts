@@ -32,7 +32,9 @@ import {
   describeMissingArgument,
   compareValues,
   createFunction,
+  addBoundedElement,
   createNonIntegerKeyError,
+  forEachElement,
   createRecord,
   createEnumeratedSet,
   createSortedFunction,
@@ -1747,17 +1749,18 @@ const compileSetComprehension = (
       const base = set(context);
       // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
       if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
-      return createNormalizedSet(
-        toFiniteSet(base).elements.filter((element) => {
-          const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
-          if (typeof value !== "boolean") {
-            throw new TlaEvaluationError(
-              `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateNode}`,
-            );
-          }
-          return value;
-        }),
-      );
+      const kept: Value[] = [];
+      const visit = (element: Value) => {
+        const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
+        if (typeof value !== "boolean") {
+          throw new TlaEvaluationError(
+            `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateNode}`,
+          );
+        }
+        if (value) addBoundedElement(kept, element);
+      };
+      forEachElement(base.kind === "Interval" ? base : toFiniteSet(base).elements, visit);
+      return createNormalizedSet(kept);
     };
   }
   if (expression.kind === "SetMap") {
@@ -1765,7 +1768,7 @@ const compileSetComprehension = (
     return (context) => {
       const elements: Value[] = [];
       forEachBinding(expression.bounds, context, (scope) => {
-        elements.push(mapped(withScope(context, scope)));
+        addBoundedElement(elements, mapped(withScope(context, scope)));
         return false;
       });
       return createEnumeratedSet(elements);

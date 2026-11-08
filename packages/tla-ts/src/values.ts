@@ -176,6 +176,28 @@ const isLazySet = (value: ObjectValue): value is ConvertibleSetValue =>
   value.kind !== "LazyFunction";
 
 export const MAXIMUM_INTEGER = 2147483647;
+
+// TLCGlobals.setBound: a ValueVec that TLC grows one element at a time holds at most this many.
+export const SET_BOUND = 1000000;
+
+export const SET_BOUND_MESSAGE = `Attempted to construct a set with too many elements (>${SET_BOUND}).`;
+
+export const addBoundedElement = (elements: Value[], element: Value) => {
+  if (elements.length === SET_BOUND) throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+  elements.push(element);
+};
+
+export const isBeyondSetBound = (value: Value) =>
+  typeof value === "object" && value.kind === "Interval" && value.high - value.low >= SET_BOUND;
+
+// TLC steps through an interval without building its elements.
+export const forEachElement = (
+  elements: IntervalValue | Value[],
+  visit: (element: Value) => void,
+) => {
+  if (Array.isArray(elements)) return elements.forEach(visit);
+  for (let element = elements.low; element <= elements.high; element++) visit(element);
+};
 export const MINIMUM_INTEGER = -2147483648;
 const MAXIMUM_ENUMERATED_SUBSET_BASE = 30;
 
@@ -1535,9 +1557,12 @@ const enumerateSet = (
       }
       return toFiniteSet(value.base).elements.filter((element) => value.test(element, false));
     case "Union": {
-      const elements = getUnionSets(value).flatMap(
-        (set, index) => toFiniteSet(getUnionSet(set, index, value)).elements,
-      );
+      const elements: Value[] = [];
+      getUnionSets(value).forEach((set, index) => {
+        const unionSet = getUnionSet(set, index, value);
+        if (isBeyondSetBound(unionSet)) throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+        toFiniteSet(unionSet).elements.forEach((element) => addBoundedElement(elements, element));
+      });
       return toFiniteSet(createEnumeratedSet(elements)).elements;
     }
     case "SetOperation": {
@@ -1564,19 +1589,39 @@ const enumerateSet = (
         );
       }
       if (value.operator === "\\cup") {
+        if (isBeyondSetBound(value.left)) {
+          // TLC opens the right set's enumerator before it streams the left set past the bound.
+          toFiniteSet(value.right);
+          throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+        }
+        const left = toFiniteSet(value.left);
+        const right = isBeyondSetBound(value.right) ? undefined : toFiniteSet(value.right);
+        if (!right || left.elements.length + right.elements.length > SET_BOUND) {
+          throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+        }
         return computeLikeTlcOnFailure(
-          (left, right) => getSortedUnion(left, right).elements,
-          (left, right) => sortLikeTlc([...left.elements, ...right.elements]),
-          toFiniteSet(value.left),
-          toFiniteSet(value.right),
+          (finiteLeft, finiteRight) => getSortedUnion(finiteLeft, finiteRight).elements,
+          (finiteLeft, finiteRight) =>
+            sortLikeTlc([...finiteLeft.elements, ...finiteRight.elements]),
+          left,
+          right,
         );
       }
       const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
       const enumerated = isLeftEnumerated ? value.left : value.right;
       const other = isLeftEnumerated ? value.right : value.left;
-      return toFiniteSet(enumerated).elements.filter(
-        (element) => isElementOf(element, other) === (value.operator === "\\cap"),
+      const kept: Value[] = [];
+      forEachElement(
+        typeof enumerated === "object" && enumerated.kind === "Interval"
+          ? enumerated
+          : toFiniteSet(enumerated).elements,
+        (element) => {
+          if (isElementOf(element, other) === (value.operator === "\\cap")) {
+            addBoundedElement(kept, element);
+          }
+        },
       );
+      return kept;
     }
     case "InfiniteSet":
     case "SequenceSet":
