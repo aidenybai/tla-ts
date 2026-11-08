@@ -14,6 +14,7 @@ import { getContext } from "./search";
 import { forEachInitialState, hasBranches } from "./successors";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
+  advanceCombination,
   compareValues,
   isEnumerable,
   isSameValue,
@@ -165,6 +166,7 @@ const addAtom = (type: StrType, plains: Plains, value: Value) => {
 const createMix = (): MixType => ({ kind: "Mix", target: undefined });
 const MAXIMUM_COMPARISONS = 8;
 const ATOM_BASE = 2 ** 32;
+const MAXIMUM_SUBSET_BASE = 20;
 const MASK_BITS = 31;
 const MAXIMUM_INTEGER = 2147483647;
 const MINIMUM_INTEGER = -2147483648;
@@ -927,6 +929,18 @@ const compileBound = (
         const end = getName(program, "e");
         return `for (let ${name} = ${low.emit()}, ${end} = ${high.emit()}; ${name} <= ${end}; ${name}++)`;
       },
+    };
+  }
+  if (
+    setExpression.kind === "Apply" &&
+    isBuiltin(program, frame, setExpression.operator, "SUBSET")
+  ) {
+    const base = compileValue(program, setExpression.args[0], frame);
+    getSetElement(base);
+    return {
+      element: base.type,
+      header: (name) =>
+        `for (const ${name} of H.${isMask(base.type, program.plains) ? "subsetMasks" : "subsets"}(${base.emit()}))`,
     };
   }
   if (setExpression.kind === "Apply" && setExpression.operator === "DOMAIN") {
@@ -2319,8 +2333,30 @@ const UNION: Kept = { isCommonKept: true, isLeftKept: true, isRightKept: true };
 const INTERSECTION: Kept = { isCommonKept: true, isLeftKept: false, isRightKept: false };
 const DIFFERENCE: Kept = { isCommonKept: false, isLeftKept: true, isRightKept: false };
 
+// TLC enumerates SUBSET S by size, and subsets of one size in the order of S.
+const getSubsets = <Subset>(count: number, toSubset: (indices: number[]) => Subset) => {
+  if (count > MAXIMUM_SUBSET_BASE) deopt();
+  const subsets: Subset[] = [];
+  for (let size = 0; size <= count; size++) {
+    const indices = Array.from({ length: size }, (_, index) => index);
+    do subsets.push(toSubset(indices));
+    while (advanceCombination(indices, count));
+  }
+  return subsets;
+};
+
 const HELPERS = {
   EMPTY: Object.freeze([]),
+  subsets: (base: Plain[]) =>
+    getSubsets(base.length, (indices) => indices.map((index) => base[index])),
+  subsetMasks: (mask: number) => {
+    const bits = Array.from({ length: MASK_BITS }, (_, bit) => bit).filter(
+      (bit) => (mask & (1 << bit)) !== 0,
+    );
+    return getSubsets(bits.length, (indices) =>
+      indices.reduce((subset, index) => subset | (1 << bits[index]), 0),
+    );
+  },
   same: isSame,
   deopt,
   at: (target: Plain[], position: number) =>
