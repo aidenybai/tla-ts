@@ -347,6 +347,13 @@ const createContexts = (getParsed: ModuleSet) => {
     const recursiveNames = new Set(
       module.definitions.filter((definition) => definition.isRecursive).map((item) => item.name),
     );
+    const declarationKeywords = new Set(
+      module.units.flatMap((moduleUnit) =>
+        moduleUnit.kind === "Constants" || moduleUnit.kind === "Variables"
+          ? [`${moduleUnit.location.line}:${moduleUnit.location.column}`]
+          : [],
+      ),
+    );
     const depth = { value: 0 };
     tokens.slice(unit.start, unit.end).forEach((_, offset) => {
       const index = unit.start + offset;
@@ -364,8 +371,13 @@ const createContexts = (getParsed: ModuleSet) => {
       }
       if (token.kind === "ModuleEnd") depth.value--;
       if (depth.value !== 1 || token.kind !== "Keyword") return;
-      if (token.text === "CONSTANT" || token.text === "CONSTANTS") declare(index, "constant");
-      if (token.text === "VARIABLE" || token.text === "VARIABLES") declare(index, "variable");
+      const isDeclaration = declarationKeywords.has(`${token.line}:${token.column}`);
+      if (isDeclaration && (token.text === "CONSTANT" || token.text === "CONSTANTS")) {
+        declare(index, "constant");
+      }
+      if (isDeclaration && (token.text === "VARIABLE" || token.text === "VARIABLES")) {
+        declare(index, "variable");
+      }
       if (token.text === "RECURSIVE") {
         const names = getDeclarations(tokens, index + 1);
         if (names.every((name) => recursiveNames.has(name))) declare(index, "definition");
