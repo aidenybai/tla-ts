@@ -2642,6 +2642,14 @@ const expandLazySet = (value: LazySetValue) => {
 
 const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
   if (isStrict) return expandLazySet(value);
+  // TLC sizes the base of SUBSET before it enumerates it, and only a failure to size it is quiet.
+  if (
+    value.kind === "Subset" &&
+    isFunctionValue(value.base) &&
+    (value.base.kind === "Function" || isEnumerable(value.base.domain))
+  ) {
+    return expandLazySet(value);
+  }
   // TLC prints a set it can't enumerate symbolically, except in Print, PrintT, and ToString.
   if (!isEnumerable(value)) return undefined;
   try {
