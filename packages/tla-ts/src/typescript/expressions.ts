@@ -382,6 +382,20 @@ const translateCall = (
     }
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
   }
+  if (
+    global === "Object" &&
+    method === "getOwnPropertyNames" &&
+    node.arguments.length === 1 &&
+    context.heap !== undefined &&
+    (getKind(node.arguments[0], context) === "object" ||
+      isBuiltInObject(node.arguments[0], context))
+  ) {
+    return useJavaScript(
+      "OwnPropertyNames",
+      [getHeap(scope, node, context), translateObjectValue(node.arguments[0], scope, context)],
+      context,
+    );
+  }
   const test = OBJECT_TESTS.get(method);
   // Only freeze, seal, and preventExtensions on a script's objects, or on the built-in objects a
   // script's heap holds, make an object inextensible.

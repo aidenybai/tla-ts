@@ -141,6 +141,17 @@ LOCAL Value(object, key) ==
 
 Own(heap, ref) == Lookup(heap, ref).values
 
+\\* The keys a for-in visits: each enumerable key once, own keys first, and none that an object
+\\* nearer the start of the prototype chain has.
+RECURSIVE ForInKeys(_, _)
+ForInKeys(heap, ref) ==
+  LET object == Lookup(heap, ref)
+      inherited == IF object.prototype = Null THEN <<>> ELSE ForInKeys(heap, object.prototype)
+  IN SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
+       \\o SelectSeq(inherited, LAMBDA key : key \\notin DOMAIN object.values)
+
+OwnPropertyNames(heap, ref) == OwnKeys(Lookup(heap, ref))
+
 Enumerable(heap, ref) ==
   LET object == Lookup(heap, ref)
   IN [key \\in {other \\in DOMAIN object.values : object.attributes[other].enumerable}
@@ -318,6 +329,19 @@ SetProperty(heap, ref, key, value) ==
   IF CanPut(heap, ref, key)
   THEN Update(heap, ref, Put(Lookup(heap, ref), key, value))
   ELSE Assert(FALSE, "tla-ts can't throw the TypeError of a failed write")
+
+CanDelete(heap, ref, key) ==
+  LET object == Lookup(heap, ref)
+  IN key \\notin DOMAIN object.values \\/ object.attributes[key].configurable
+
+Delete(heap, ref, key) ==
+  LET object == Lookup(heap, ref)
+      kept == DOMAIN object.values \\ {key}
+  IN IF key \\in DOMAIN object.values
+     THEN Update(heap, ref, [object EXCEPT !.keys = SelectSeq(@, LAMBDA other : other # key),
+                                           !.values = [other \\in kept |-> @[other]],
+                                           !.attributes = [other \\in kept |-> @[other]]])
+     ELSE heap
 
 SameValue(left, right) ==
   /\\ TypeOf(left) = TypeOf(right)

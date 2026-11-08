@@ -26,6 +26,7 @@ import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render
 import { translateEngineError, translateThrown } from "./exceptions";
 import {
   getAllocated,
+  getHeap,
   isAllocation,
   isObjectChange,
   translateAllocated,
@@ -567,6 +568,29 @@ const translateExpressionStatement = (
       ),
     );
   }
+  // Deleting a property that can't change throws a TypeError, as scripts run in strict mode.
+  if (ts.isDeleteExpression(expression)) {
+    const deleted = getHeapWrite(expression.expression, path, context);
+    if (deleted === undefined) {
+      throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
+    }
+    const heap = useJavaScript("Delete", [deleted.heap, deleted.ref, deleted.key], context);
+    return ifThenElse(
+      useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context),
+      shareHeap(
+        {
+          ...path,
+          scope: {
+            ...path.scope,
+            bindings: new Map([...path.scope.bindings, [deleted.symbol, heap]]),
+          },
+        },
+        context,
+        continueWith,
+      ),
+      throwTypeError(path, expression, context, frame),
+    );
+  }
   const assigned = getAssignedPath(expression, path, context);
   if (assigned === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
@@ -819,6 +843,7 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     }
     const isHeapChanged =
       ts.isObjectLiteralExpression(node) ||
+      ts.isDeleteExpression(node) ||
       isObjectChange(node) ||
       isAllocation(node, context) ||
       (written !== undefined &&
@@ -862,12 +887,23 @@ const translateIterations = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  if (ts.isForInStatement(loop)) throw new TlaTypeScriptError("for-in isn't supported", loop);
-  const iterated = ts.isForOfStatement(loop) ? loop : undefined;
-  if (iterated !== undefined && getKind(iterated.expression, context) !== "sequence") {
+  const iterated = ts.isForOfStatement(loop) || ts.isForInStatement(loop) ? loop : undefined;
+  const isForIn =
+    iterated !== undefined &&
+    ts.isForInStatement(iterated) &&
+    (getKind(iterated.expression, context) === "object" ||
+      (context.heap !== undefined && isBuiltInObject(iterated.expression, context)));
+  if (ts.isForInStatement(loop) && !isForIn) {
+    throw new TlaTypeScriptError("for-in iterates only objects", loop.expression);
+  }
+  if (iterated !== undefined && !isForIn && getKind(iterated.expression, context) !== "sequence") {
     throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
   }
   const changed = getChanged(loop, path, context);
+  // A for-in skips a key that its body deletes before visiting it, which a list of keys can't.
+  if (isForIn && changed.some((symbol) => symbol === context.heap)) {
+    throw new TlaTypeScriptError("Don't change objects while a for-in iterates one", loop);
+  }
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {
     throw new TlaTypeScriptError("Don't reassign a function inside a loop", loop);
   }
@@ -997,7 +1033,22 @@ const translateIterations = (
     [
       ...(iterated === undefined
         ? []
-        : [define(sequence, [], translateExpression(iterated.expression, path.scope, context))]),
+        : [
+            define(
+              sequence,
+              [],
+              isForIn
+                ? useJavaScript(
+                    "ForInKeys",
+                    [
+                      getHeap(path.scope, iterated.expression, context),
+                      translateObjectValue(iterated.expression, path.scope, context),
+                    ],
+                    context,
+                  )
+                : translateExpression(iterated.expression, path.scope, context),
+            ),
+          ]),
       operator,
       define(
         result,

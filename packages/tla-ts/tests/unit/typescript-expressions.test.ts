@@ -341,6 +341,40 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[Object.getOwnPropertyNames(box), 'b' in box, caught, Object.getOwnPropertyNames(Math.abs), Object.hasOwn(Math, 'answer'), Object.hasOwn(Math, 'abs'), Object.hasOwn(Math.abs, 'name')]",
+      `const box: { [key: string]: number } = { b: 1, 2: 3, a: 2, 1: 4 };
+      delete box.b;
+      delete box.missing;
+      Object.defineProperty(box, "fixed", { value: 5 });
+      let caught = "none";
+      try {
+        delete box.fixed;
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      Object.defineProperty(Math, "answer", { value: 42, configurable: true });
+      // @ts-expect-error Math has no answer
+      delete Math.answer;
+      // @ts-expect-error A function's name is read-only
+      delete Math.abs.name;`,
+    ],
+    [
+      "[keys, inherited]",
+      `const base = { a: 1, b: 2, 3: 0 };
+      const child: { [key: string]: number } = Object.create(base);
+      child.c = 3;
+      child[1] = 4;
+      Object.defineProperty(child, "b", { value: 5, enumerable: false });
+      let keys = "";
+      for (const key in child) {
+        keys = keys + key;
+      }
+      let inherited = 0;
+      for (const key in Math) {
+        inherited = inherited + 1;
+      }`,
+    ],
+    [
       "objects.map((object) => Array.prototype.filter.call(object, () => true).length)",
       `const base = { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1 };
       const objects = [{ ...base, length: undefined }, { ...base, length: null }, { ...base, length: true }, { ...base, length: false }, { ...base, length: 0 }, { ...base, length: -3 }, { ...base, length: 2 }, { ...base, length: "" }, { ...base, length: "2" }, { ...base, length: "0002.0" }, { ...base, length: "2E0" }, { ...base, length: "2.3E-1" }, { ...base, length: "1e1" }, { ...base, length: "-4294967294" }, { ...base, length: "0x2" }, { ...base, length: "0X1" }, { ...base, length: "0o2" }, { ...base, length: "0b10" }, { ...base, length: "-0x2" }, { ...base, length: "one" }, { ...base, length: "1e" }, { ...base, length: "." }, { ...base, length: ".5" }, { ...base, length: "-Infinity" }];`,
