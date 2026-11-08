@@ -477,8 +477,5 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
   if (isCall) {
     evaluate(node.arguments[0], scope, context);
   }
-  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  return symbol === undefined
-    ? translateBuiltIn(name, node, scope, context)
-    : getConstructor(symbol, context);
+  return translateBuiltIn(name, node, scope, context);
 };

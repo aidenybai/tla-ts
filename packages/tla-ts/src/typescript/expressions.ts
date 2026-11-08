@@ -36,7 +36,7 @@ import {
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
-import { isBuiltInObject, translateIntrinsic } from "./intrinsics";
+import { isBuiltInObject, translateBuiltInObject, translateIntrinsic } from "./intrinsics";
 import {
   getTypeNames,
   isComparable,
@@ -459,24 +459,28 @@ const translateCall = (
   }
   const arrayLike = translateArrayLikeCall(node, scope, context);
   if (arrayLike !== undefined) return arrayLike;
-  const isPrototypeHasOwn =
+  const calledMethod =
     method === "call" &&
     ts.isPropertyAccessExpression(receiver) &&
-    receiver.name.text === "hasOwnProperty" &&
-    receiver.expression.getText() === "Object.prototype";
+    receiver.expression.getText() === "Object.prototype"
+      ? receiver.name.text
+      : undefined;
+  const ownMethod =
+    calledMethod ?? (global === "Object" && method === "hasOwn" ? "hasOwnProperty" : method);
   const owned =
-    method === "hasOwnProperty" && node.arguments.length === 1
-      ? [receiver, node.arguments[0]]
-      : (global === "Object" && method === "hasOwn") || isPrototypeHasOwn
-        ? node.arguments
+    calledMethod !== undefined || (global === "Object" && method === "hasOwn")
+      ? node.arguments
+      : node.arguments.length === 1
+        ? [receiver, node.arguments[0]]
         : [];
   const isOwner =
+    (ownMethod === "hasOwnProperty" || ownMethod === "propertyIsEnumerable") &&
     owned.length === 2 &&
     (getKind(owned[0], context) === "object" ||
       (context.heap !== undefined && isBuiltInObject(owned[0], context)));
   if (isOwner) {
     return useJavaScript(
-      "HasOwn",
+      ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
       [
         getHeap(scope, node, context),
         translateObjectValue(owned[0], scope, context),
@@ -635,6 +639,10 @@ const translateEnumMember = (node: ts.Node, symbol: ts.Symbol, context: Context)
 };
 
 // The value that an enum or a top-level declaration gives a name.
+// A built-in object where a script's heap holds it.
+const isHeapBuiltIn = (node: ts.Expression, scope: Scope, context: Context) =>
+  context.heap !== undefined && scope.bindings.has(context.heap) && isBuiltInObject(node, context);
+
 const translateDeclared = (
   node: ts.Node,
   symbol: ts.Symbol | undefined,
@@ -678,6 +686,9 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   if (symbol !== undefined && context.variables.has(symbol)) {
     throw new TlaTypeScriptError(`${node.text} can't be read here`, node);
   }
+  const builtIn =
+    context.heap === undefined ? undefined : translateBuiltInObject(node, scope, context);
+  if (builtIn !== undefined) return builtIn;
   if (symbol !== undefined && getErrorClass(symbol, context.checker) !== undefined) {
     return getConstructor(symbol, context);
   }
@@ -700,10 +711,10 @@ const translatePropertyAccess = (
   if (intrinsic !== undefined) return intrinsic;
   const receiver = node.expression;
   const name = node.name.text;
-  if (getKind(receiver, context) === "object") {
+  if (getKind(receiver, context) === "object" || isHeapBuiltIn(receiver, scope, context)) {
     return useJavaScript(
       "Get",
-      [getHeap(scope, node, context), translateExpression(receiver, scope, context), string(name)],
+      [getHeap(scope, node, context), translateObjectValue(receiver, scope, context), string(name)],
       context,
     );
   }
@@ -733,12 +744,12 @@ const translateElementAccess = (
   isDefined: boolean,
 ) => {
   const kind = getKind(node.expression, context);
-  if (kind === "object") {
+  if (kind === "object" || isHeapBuiltIn(node.expression, scope, context)) {
     return useJavaScript(
       "Get",
       [
         getHeap(scope, node, context),
-        translateExpression(node.expression, scope, context),
+        translateObjectValue(node.expression, scope, context),
         translatePropertyKey(node.argumentExpression, scope, context),
       ],
       context,

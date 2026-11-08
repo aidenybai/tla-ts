@@ -189,6 +189,10 @@ Describe(heap, ref, key) ==
 
 HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
 
+IsEnumerableOwn(heap, ref, key) ==
+  LET object == Lookup(heap, ref)
+  IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
+
 Prototype(heap, ref) == Lookup(heap, ref).prototype
 
 RECURSIVE Has(_, _, _)
@@ -311,7 +315,8 @@ IsWritable(heap, ref, key) ==
   LET object == Lookup(heap, ref)
   IN CASE key \\notin DOMAIN object.values ->
             object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
-       [] object.attributes[key].kind = "data" -> object.attributes[key].writable
+       [] object.attributes[key].kind # "accessor" -> object.attributes[key].writable
+       [] object.values[key].set = Undefined -> FALSE
        [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
 
 CanPut(heap, ref, key) ==
