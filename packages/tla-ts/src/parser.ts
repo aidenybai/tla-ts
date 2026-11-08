@@ -924,6 +924,7 @@ const parse = (
             if (accept(".")) {
               if (!isFieldName(peek()))
                 throw createUnexpected(`Expected a field name but found ${describeToken(peek())}`);
+              if (!isTlapm && isAt("@")) throw createUnexpected("@ used in !.@");
               path.push({ kind: "Field", name: advance().text });
               continue;
             }
