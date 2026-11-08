@@ -9,6 +9,7 @@ import {
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
+  OP_ALGEBRAIC_NUM,
   OP_BV_NUM,
   OP_DT_ACCESSOR,
   OP_DT_CONSTRUCTOR,
@@ -96,6 +97,13 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   }
   if (decl.family === FAMILY_MODEL_VALUE)
     return { name: decl.name, parameters: [PARAM_INT, manager.values[expr]], domain: [], range };
+  if (decl.op === OP_ALGEBRAIC_NUM)
+    return {
+      name: decl.name,
+      parameters: [PARAM_EXTERNAL, manager.getAlgebraicId(expr)],
+      domain: [],
+      range,
+    };
   if (decl.op === OP_BV_NUM)
     return {
       name: decl.name,

@@ -38,6 +38,7 @@ import {
   OP_LOG,
   OP_PI,
   OP_E,
+  OP_ALGEBRAIC_NUM,
   SORT_INT,
 } from "./ast";
 import { isAstLess } from "./ast-lt";
@@ -49,6 +50,9 @@ export interface ArithRewriterOptions {
   readonly isSortSums: boolean;
   readonly isArithIneqLhs: boolean;
   readonly isGcdRounding: boolean;
+  readonly isAnumSimp: boolean;
+  readonly isExpandPower: boolean;
+  readonly maxDegree: number;
 }
 
 const ARITH_OPS: ReadonlySet<number> = new Set([
@@ -87,6 +91,7 @@ const ARITH_OPS: ReadonlySet<number> = new Set([
   OP_LOG,
   OP_PI,
   OP_E,
+  OP_ALGEBRAIC_NUM,
 ]);
 
 export class PolyRewriter {

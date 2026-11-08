@@ -6,6 +6,7 @@ import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { grow, shrink } from "./array";
 import type { DatatypeDef } from "./datatype-decl-plugin";
+import { AlgebraicManager, type Anum } from "./nlsat/algebraic";
 import type { Mpf } from "./mpf";
 import type { ResourceLimit } from "./rlimit";
 
@@ -78,6 +79,7 @@ export const OP_ATAN2 = 45;
 export const OP_LOG = 46;
 export const OP_PI = 47;
 export const OP_E = 48;
+export const OP_ALGEBRAIC_NUM = 49;
 export const OP_UNINTERPRETED = 60;
 const OP_MODEL_VALUE = 61;
 
@@ -308,6 +310,7 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["log", FAMILY_ARITH, OP_LOG, SORT_REAL],
   ["pi", FAMILY_ARITH, OP_PI, SORT_REAL],
   ["euler", FAMILY_ARITH, OP_E, SORT_REAL],
+  ["RootObject", FAMILY_ARITH, OP_ALGEBRAIC_NUM, SORT_REAL],
 ];
 
 // Z3's family ids and decl kinds, which its AST hashes include.
@@ -460,6 +463,12 @@ const SIGNATURE_ITE = 1;
 const SIGNATURE_DIV0 = 2;
 const SIGNATURE_MODEL_VALUE = 3;
 const SIGNATURE_NUMERAL = 4;
+const SIGNATURE_ALGEBRAIC = 5;
+
+interface AlgebraicNumeral {
+  value: Anum;
+  id: number;
+}
 
 interface SignatureDecl {
   smallId: number;
@@ -481,6 +490,11 @@ export class AstManager {
   sorts = new Int32Array(1024);
   values = new Int32Array(1024);
   private numeralValues: Rational[] = [];
+  // An irrational numeral is never shared: each takes a fresh id, which its deletion frees.
+  private algebraicNumerals: AlgebraicNumeral[] = [];
+  private freeAlgebraicIds: number[] = [];
+  private nextAlgebraicId = 0;
+  private algebraicManager: AlgebraicManager | undefined;
   private intNumerals = new Map<bigint, number>();
   // One more than the largest free de Bruijn index, so 0 means the expression is ground.
   freeVarBounds = new Int32Array(1024);
@@ -667,6 +681,7 @@ export class AstManager {
     if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
     if (decl === OP_POWER0)
       return 8 * (decl + 64 * this.sorts[this.getArg(expr, 0)]) + SIGNATURE_DIV0;
+    if (decl === OP_ALGEBRAIC_NUM) return 8 * this.getAlgebraicId(expr) + SIGNATURE_ALGEBRAIC;
     if (decl === OP_DISTINCT || decl === OP_PATTERN)
       return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
@@ -819,6 +834,8 @@ export class AstManager {
       this.deleteNode(node);
       if (this.kinds[node] === KIND_APP) {
         const smallId = this.releaseDecl(node);
+        if (this.decls[node] === OP_ALGEBRAIC_NUM)
+          this.freeAlgebraicIds.push(this.getAlgebraicId(node));
         if (smallId !== -1) worklist.push(-1 - smallId);
       }
       // The children: the arguments of an application, and the body and then the patterns of a
@@ -908,7 +925,10 @@ export class AstManager {
   }
 
   private revive(expr: number) {
-    if (this.ids[expr] === -1) this.registerNode(expr);
+    if (this.ids[expr] !== -1) return expr;
+    if (this.decls[expr] === OP_ALGEBRAIC_NUM)
+      this.algebraicNumerals[this.values[expr]].id = this.mkAlgebraicId();
+    this.registerNode(expr);
     return expr;
   }
 
@@ -1559,7 +1579,12 @@ export class AstManager {
   mkApp(decl: number, args: number[], sort: number, start = 0) {
     const funcDecl = this.funcDecls[decl];
     // Numerals and model values carry their value, so only mkNumeral and mkModelValue create them.
-    if (decl === OP_NUM || funcDecl.family === FAMILY_MODEL_VALUE || funcDecl.op === OP_BV_NUM)
+    if (
+      decl === OP_NUM ||
+      decl === OP_ALGEBRAIC_NUM ||
+      funcDecl.family === FAMILY_MODEL_VALUE ||
+      funcDecl.op === OP_BV_NUM
+    )
       throw new SmtInvariantError(`${funcDecl.name} needs a value`);
     let hash = decl;
     for (let index = start; index < args.length; index++)
@@ -1652,6 +1677,45 @@ export class AstManager {
         ]),
       ),
     );
+  }
+
+  get am() {
+    this.algebraicManager ??= new AlgebraicManager();
+    return this.algebraicManager;
+  }
+
+  mkAlgebraicNumeral(value: Anum, sort = SORT_REAL) {
+    if (this.am.isRational(value)) return this.mkNumeralOfSort(this.am.toRational(value), sort);
+    if (sort === SORT_INT)
+      throw new SmtInvariantError("invalid irrational value passed as an integer");
+    const id = this.mkAlgebraicId();
+    this.algebraicNumerals.push({ value: this.am.copy(value), id });
+    const expr = this.create(
+      KIND_APP,
+      OP_ALGEBRAIC_NUM,
+      [],
+      SORT_REAL,
+      this.algebraicNumerals.length - 1,
+      this.getFuncDeclHash("RootObject", [], SORT_REAL, getInfoHash(Z3_ARITH_FAMILY, 1, [id])),
+    );
+    this.registerNode(expr);
+    return expr;
+  }
+
+  private mkAlgebraicId() {
+    return this.freeAlgebraicIds.pop() ?? this.nextAlgebraicId++;
+  }
+
+  isAlgebraicNumeral(expr: number) {
+    return this.getOp(expr) === OP_ALGEBRAIC_NUM;
+  }
+
+  getAlgebraicValue(expr: number) {
+    return this.algebraicNumerals[this.values[expr]].value;
+  }
+
+  getAlgebraicId(expr: number) {
+    return this.algebraicNumerals[this.values[expr]].id;
   }
 
   mkRealNumeral(value: Rational) {

@@ -349,6 +349,17 @@ const formatNumeral = (manager: AstManager, options: PrintOptions, expr: number)
   return value.num < 0n ? mkSeq1([unsigned], "-") : unsigned;
 };
 
+const formatAlgebraicNumeral = (manager: AstManager, options: PrintOptions, expr: number) => {
+  const am = manager.am;
+  const value = manager.getAlgebraicValue(expr);
+  if (!options.isDecimal) return mkText(am.displayRootSmt2(value));
+  const magnitude = am.copy(value);
+  const isNegative = am.isNeg(value);
+  if (isNegative) am.neg(magnitude);
+  const text = mkText(am.displayDecimal(magnitude, options.decimalPrecision));
+  return isNegative ? mkSeq1([text], "-") : text;
+};
+
 interface PrintFrame {
   expr: number;
   index: number;
@@ -417,6 +428,7 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
 
   const formatConst = (expr: number) => {
     if (manager.getOp(expr) === OP_NUM) return formatNumeral(manager, options, expr);
+    if (manager.isAlgebraicNumeral(expr)) return formatAlgebraicNumeral(manager, options, expr);
     if (manager.isBvNumeral(expr)) return formatBvNumeral(manager, options, expr);
     const fpValue = getFpNumeral(manager, expr);
     return fpValue === undefined

@@ -108,7 +108,11 @@ const SIMPLIFY_PARAMETERS = new Set([
   "hi_div0",
   "mul2concat",
   "split_concat_eq",
+  "algebraic_number_evaluator",
+  "expand_power",
 ]);
+
+const SIMPLIFY_UINT_PARAMETERS = new Set(["max_degree"]);
 
 const PARAMETER_DEFAULTS = new Map([
   ["auto_config", "true"],
@@ -148,9 +152,14 @@ const getSimplifyParams = (items: SExpr[]) => {
   for (let index = 0; index < items.length; index += 2) {
     const keyword = items[index];
     const name = keyword.kind === "keyword" ? getParameterName(keyword.text) : "";
-    if (!SIMPLIFY_PARAMETERS.has(name) || !isSymbol(items[index + 1]))
+    const value = items[index + 1];
+    if (SIMPLIFY_UINT_PARAMETERS.has(name) && value?.kind === "numeral") {
+      params.set(name, Number(value.text));
+      continue;
+    }
+    if (!SIMPLIFY_PARAMETERS.has(name) || !isSymbol(value))
       throw new SmtUnsupportedError(`the parameter :${name} of the simplifier`);
-    params.set(name, isSymbol(items[index + 1], "true"));
+    params.set(name, isSymbol(value, "true"));
   }
   return params;
 };

@@ -20,12 +20,16 @@ import { getEuclideanDiv, getEuclideanMod, getGcd, Rational } from "./rational";
 import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
 import type { Rewrite } from "./rewriter-tpl";
 import { shrink } from "./array";
+import { Anum } from "./nlsat/algebraic";
 
 export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
   isSom: true,
   isSortSums: true,
   isArithIneqLhs: true,
   isGcdRounding: true,
+  isAnumSimp: true,
+  isExpandPower: false,
+  maxDegree: 64,
 };
 
 export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
@@ -33,6 +37,9 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isSortSums: false,
   isArithIneqLhs: false,
   isGcdRounding: false,
+  isAnumSimp: true,
+  isExpandPower: false,
+  maxDegree: 64,
 };
 
 const getCeilDiv = (dividend: bigint, divisor: bigint) => -getEuclideanDiv(-dividend, divisor);
@@ -350,8 +357,112 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
+  override mkAdd(args: number[]) {
+    if (!this.isAnumSimpTarget(args)) return super.mkAdd(args);
+    const folded = this.foldAnums(args, true);
+    if (typeof folded === "number") return folded;
+    return super.mkAdd(folded) ?? this.manager.mkApp(OP_ADD, folded, SORT_REAL);
+  }
+
+  override mkMul(args: number[]) {
+    if (!this.isAnumSimpTarget(args)) return super.mkMul(args);
+    const folded = this.foldAnums(args, false);
+    if (typeof folded === "number") return folded;
+    return super.mkMul(folded) ?? this.manager.mkApp(OP_MUL, folded, SORT_REAL);
+  }
+
+  private isSimpAlgebraic(expr: number) {
+    const manager = this.manager;
+    return (
+      manager.isAlgebraicNumeral(expr) &&
+      manager.am.degree(manager.getAlgebraicValue(expr)) <= this.options.maxDegree
+    );
+  }
+
+  private isAnumSimpTarget(args: number[]) {
+    if (!this.options.isAnumSimp) return false;
+    let numIrrational = 0;
+    let numRational = 0;
+    for (const arg of args) {
+      if (this.manager.isNumeral(arg)) {
+        numRational++;
+        if (numIrrational > 0) return true;
+      }
+      if (this.isSimpAlgebraic(arg)) {
+        numIrrational++;
+        if (numIrrational > 1 || numRational > 0) return true;
+      }
+    }
+    return false;
+  }
+
+  private foldAnums(args: number[], isAdd: boolean) {
+    const manager = this.manager;
+    const am = manager.am;
+    const identity = isAdd ? Rational.zero : Rational.one;
+    const combine = (first: Anum, second: Anum) =>
+      isAdd ? am.add(first, second) : am.mul(first, second);
+    let result = new Anum(identity);
+    const newArgs: number[] = [];
+    for (const arg of args) {
+      const degree = am.degree(result);
+      if (degree > 1 && degree > this.options.maxDegree) {
+        newArgs.push(manager.mkAlgebraicNumeral(result));
+        result = new Anum(identity);
+      }
+      if (manager.isNumeral(arg)) result = combine(result, new Anum(this.getValue(arg)));
+      else if (this.isSimpAlgebraic(arg)) result = combine(result, manager.getAlgebraicValue(arg));
+      else newArgs.push(arg);
+    }
+    if (newArgs.length === 0) return manager.mkAlgebraicNumeral(result);
+    newArgs.push(manager.mkAlgebraicNumeral(result));
+    return newArgs;
+  }
+
+  private getAlgebraicValue(expr: number): Anum | undefined {
+    const manager = this.manager;
+    const am = manager.am;
+    if (manager.isNumeral(expr)) return new Anum(this.getValue(expr));
+    if (manager.isAlgebraicNumeral(expr)) return am.copy(manager.getAlgebraicValue(expr));
+    const op = manager.getOp(expr);
+    if ((op !== OP_ADD && op !== OP_MUL) || manager.getNumArgs(expr) !== 2) return undefined;
+    const first = this.getAlgebraicValue(manager.getArg(expr, 0));
+    const second = first && this.getAlgebraicValue(manager.getArg(expr, 1));
+    if (first === undefined || second === undefined) return undefined;
+    return op === OP_ADD ? am.add(first, second) : am.mul(first, second);
+  }
+
+  private mkAnumDiv(left: number, right: number) {
+    const manager = this.manager;
+    const am = manager.am;
+    const isLeftAlgebraic = manager.isAlgebraicNumeral(left);
+    const isRightAlgebraic = manager.isAlgebraicNumeral(right);
+    if (isLeftAlgebraic && manager.isNumeral(right)) {
+      if (this.getValue(right).isZero()) return undefined;
+      return manager.mkAlgebraicNumeral(
+        am.div(manager.getAlgebraicValue(left), new Anum(this.getValue(right))),
+      );
+    }
+    if (isLeftAlgebraic && isRightAlgebraic) {
+      if (!this.isSimpAlgebraic(left) || !this.isSimpAlgebraic(right)) return undefined;
+      return manager.mkAlgebraicNumeral(
+        am.div(manager.getAlgebraicValue(left), manager.getAlgebraicValue(right)),
+      );
+    }
+    return manager.mkAlgebraicNumeral(
+      am.div(new Anum(this.getValue(left)), manager.getAlgebraicValue(right)),
+    );
+  }
+
   mkDiv(left: number, right: number) {
     const manager = this.manager;
+    if (
+      this.options.isAnumSimp &&
+      ((manager.isAlgebraicNumeral(left) &&
+        (manager.isNumeral(right) || manager.isAlgebraicNumeral(right))) ||
+        (manager.isAlgebraicNumeral(right) && manager.isNumeral(left)))
+    )
+      return this.mkAnumDiv(left, right);
     this.currSort = manager.sorts[left];
     if (!manager.isNumeral(right) || this.getValue(right).isZero()) return undefined;
     const divisor = this.getValue(right);
@@ -727,6 +838,14 @@ export class ArithRewriter extends PolyRewriter {
       return this.isHolding(this.getValue(left), this.getValue(right), kind)
         ? manager.trueExpr
         : manager.falseExpr;
+    const leftValue = this.options.isAnumSimp ? this.getAlgebraicValue(left) : undefined;
+    const rightValue = leftValue && this.getAlgebraicValue(right);
+    if (leftValue !== undefined && rightValue !== undefined) {
+      const comparison = manager.am.compare(leftValue, rightValue);
+      const isHolding =
+        kind === KIND_LE ? comparison <= 0 : kind === KIND_GE ? comparison >= 0 : comparison === 0;
+      return isHolding ? manager.trueExpr : manager.falseExpr;
+    }
     const separated = this.getSeparated(left, right, kind);
     if (separated !== undefined) return separated;
     const bound = this.getBound(left, right, kind) ?? this.getBound(right, left, getInverse(kind));

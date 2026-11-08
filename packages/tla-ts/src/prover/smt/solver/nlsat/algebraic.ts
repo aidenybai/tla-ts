@@ -176,6 +176,37 @@ const getExtended = (values: readonly (Anum | undefined)[], variable: number, an
   return extended;
 };
 
+const getSmt2Numeral = (value: bigint) => (value < 0n ? `(- ${-value})` : `${value}`);
+
+const getSmt2Monomial = (coeff: bigint, degree: number) => {
+  if (degree === 0) return getSmt2Numeral(coeff);
+  const power = degree === 1 ? "x" : `(^ x ${degree})`;
+  return coeff === 1n ? power : `(* ${getSmt2Numeral(coeff)} ${power})`;
+};
+
+const getUpolynomialSmt2 = (p: Upolynomial) => {
+  if (p.length === 0) return "0";
+  const nonzero = p.flatMap((coeff, degree) => (coeff === 0n ? [] : [degree]));
+  if (nonzero.length === 1) return getSmt2Monomial(p[nonzero[0]], nonzero[0]);
+  return `(+ ${nonzero
+    .reverse()
+    .map((degree) => getSmt2Monomial(p[degree], degree))
+    .join(" ")})`;
+};
+
+const getRationalDecimal = (value: Rational, precision: number) => {
+  const magnitude = value.num < 0n ? -value.num : value.num;
+  const sign = value.num < 0n ? "-" : "";
+  let remainder = magnitude % value.den;
+  if (remainder === 0n) return `${sign}${magnitude / value.den}`;
+  const digits: string[] = [];
+  for (let index = 0; index < precision && remainder !== 0n; index++) {
+    digits.push(`${(remainder * 10n) / value.den}`);
+    remainder = (remainder * 10n) % value.den;
+  }
+  return `${sign}${magnitude / value.den}.${digits.join("")}${remainder === 0n ? "" : "?"}`;
+};
+
 const sameCoeffs = (first: Upolynomial, second: Upolynomial) =>
   first.length === second.length && first.every((coeff, index) => coeff === second[index]);
 
@@ -196,6 +227,16 @@ export class AlgebraicManager {
   degree(anum: Anum) {
     if (this.isZero(anum)) return 0;
     return anum.value instanceof Rational ? 1 : anum.value.p.length - 1;
+  }
+
+  isNeg(anum: Anum) {
+    return anum.value instanceof Rational ? anum.value.isNegative() : !anum.value.upper.isPos;
+  }
+
+  toRational(anum: Anum) {
+    if (!this.isRational(anum) || !(anum.value instanceof Rational))
+      throw new SmtInvariantError("expected a rational algebraic number");
+    return anum.value;
   }
 
   copy(anum: Anum) {
@@ -335,7 +376,7 @@ export class AlgebraicManager {
     return factorUpolynomial(this.um, p, FACTOR_PARAMS);
   }
 
-  private isolateUnivariateRoots(up: Upolynomial) {
+  isolateUnivariateRoots(up: Upolynomial) {
     const roots: Anum[] = [];
     if (up.length === 0) return roots;
     const hasZeroRoot = this.um.hasZeroRoots(up);
@@ -852,6 +893,64 @@ export class AlgebraicManager {
     if (exponent === 1) return this.copy(anum);
     if (anum.value instanceof Rational) return new Anum(anum.value.pow(exponent));
     return this.mkPower(anum, exponent);
+  }
+
+  root(anum: Anum, k: number): Anum {
+    if (k === 0) throw new SmtInvariantError("0-th root is indeterminate");
+    if (k === 1 || this.isZero(anum)) return this.copy(anum);
+    if (this.isNeg(anum) && k % 2 === 0)
+      throw new SmtInvariantError("even root of negative number is not real");
+    if (anum.value instanceof Rational) return this.rootRational(anum.value, k);
+    return this.mkRoot(anum, k);
+  }
+
+  private rootRational(value: Rational, k: number) {
+    const exact = value.root(k);
+    if (exact !== undefined) return new Anum(exact);
+    const p = [-value.num, ...Array.from({ length: k - 1 }, () => 0n), value.den];
+    const converted = Mpbq.fromRational(value);
+    const bound = converted.isExact ? converted.value : converted.value.mul2k(1);
+    return value.isNegative()
+      ? this.mkAnum(p, bound.sub(Mpbq.one), Mpbq.zero, false)
+      : this.mkAnum(p, Mpbq.zero, bound.add(Mpbq.one), false);
+  }
+
+  // Res_y(x^k - y, p(y)) has a^(1/k) as a root.
+  private mkRoot(anum: Anum, k: number): Anum {
+    const cell = getCell(anum);
+    const x = this.pm.sub(this.pm.mkVar(X, k), this.pm.mkVar(Y));
+    const factored = this.factor(
+      this.pm.toCoeffs(this.pm.resultant(x, this.pm.fromCoeffs(cell.p, Y), Y)),
+    );
+    const factors = factored.factors.factors;
+    const sequences: (Upolynomial[] | null)[] = factors.map((factor) => this.um.sturmSeq(factor));
+    const saved = this.saveInterval(anum);
+    while (true) {
+      const interval = { lower: cell.lower.rootLower(k), upper: cell.upper.rootUpper(k) };
+      const found = this.findIsolatingFactor(factors, sequences, interval);
+      if (found !== null) {
+        this.restoreIfTooSmall(saved);
+        return this.setCore(found, interval, factored.isComplete);
+      }
+      if (!this.refine(anum)) {
+        this.restoreIfTooSmall(saved);
+        return this.root(anum, k);
+      }
+    }
+  }
+
+  displayRootSmt2(anum: Anum) {
+    if (this.isZero(anum)) return "(root-obj x 1)";
+    if (anum.value instanceof Rational)
+      return `(root-obj ${getUpolynomialSmt2([-anum.value.num, anum.value.den])} 1)`;
+    return `(root-obj ${getUpolynomialSmt2(anum.value.p)} ${this.getRootIndex(anum)})`;
+  }
+
+  displayDecimal(anum: Anum, precision: number) {
+    if (anum.value instanceof Rational) return getRationalDecimal(anum.value, precision);
+    const cell = anum.value;
+    const refined = this.um.refineToPrecision(cell.p, cell.lower, cell.upper, precision * 4);
+    return (refined.isInterval ? refined.upper : refined.lower).toDecimal(precision);
   }
 
   // mk_add_polynomial: Res_y(pa(x - y), pb(y)), which has a + b as a root.

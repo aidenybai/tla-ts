@@ -92,6 +92,7 @@ import {
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
+import { UpolynomialManager } from "./nlsat/upolynomial";
 
 export interface ParserOptions {
   isIgnoringBadPatterns: boolean;
@@ -117,6 +118,7 @@ export interface SmtList {
   offset: number;
   // Z3 reports an error in making an application at its closing parenthesis.
   end: SmtToken;
+  follower?: SmtToken;
 }
 
 export type SExpr = SmtToken | SmtList;
@@ -174,6 +176,8 @@ interface ListSortDecl {
 type SortDecl = ConstantSortDecl | UserSortDecl | DatatypeSortDecl | DefinedSortDecl | ListSortDecl;
 
 const NO_BINDINGS: ReadonlyMap<string, number> = new Map();
+
+const UPOLYNOMIALS = new UpolynomialManager();
 
 interface SmtProblem {
   assertions: number[];
@@ -628,10 +632,13 @@ export const createCommandReader = (text: string) => {
       offset: open.offset,
       end: open,
     };
+    let rootObject: SmtList | undefined;
     for (let current = root; ;) {
       const token = take();
       if (token === undefined)
         throw new SmtParseError("unexpected end of file", scanner.getPosition());
+      if (rootObject !== undefined) rootObject.follower = token;
+      rootObject = undefined;
       if (token.kind === "(") {
         const list: SmtList = {
           kind: "list",
@@ -652,6 +659,7 @@ export const createCommandReader = (text: string) => {
         continue;
       }
       current.end = token;
+      if (isSymbol(current.items[0], "root-obj")) rootObject = current;
       state.depth--;
       const parent = stack.pop();
       if (parent === undefined) return root;
@@ -1212,6 +1220,102 @@ export const createSmtlibReader = (
     return mkApp(OP_AND, pairs, at);
   };
 
+  const parseUpolynomial = (sexpr: SExpr): bigint[] => {
+    if (sexpr.kind === "numeral") return UPOLYNOMIALS.set([BigInt(sexpr.text)]);
+    if (sexpr.kind === "decimal") {
+      const parts = sexpr.text.split(".");
+      const value = Rational.of(BigInt(parts[0] + parts[1]), 10n ** BigInt(parts[1].length));
+      if (!value.isInt())
+        throw new SmtParseError(
+          "invalid univariate polynomial, integer coefficient expected",
+          sexpr,
+        );
+      return UPOLYNOMIALS.set([value.num]);
+    }
+    if (sexpr.kind === "symbol") {
+      if (sexpr.text !== "x")
+        throw new SmtParseError("invalid univariate polynomial, variable 'x' expected", sexpr);
+      return [0n, 1n];
+    }
+    if (sexpr.kind !== "list")
+      throw new SmtParseError("invalid univariate polynomial, unexpected ", sexpr);
+    const head = sexpr.items[0];
+    if (!isSymbol(head))
+      throw new SmtParseError("invalid univariate polynomial, symbol expected", sexpr);
+    const operands = sexpr.items.slice(1);
+    if (head.text === "^") {
+      if (operands.length !== 2)
+        throw new SmtParseError(
+          "invalid univariate polynomial, '^' operator expects two arguments",
+          sexpr,
+        );
+      const exponent = operands[1];
+      if (exponent.kind !== "numeral" || BigInt(exponent.text) > 0xffffffffn)
+        throw new SmtParseError(
+          "invalid univariate polynomial, exponent must be an unsigned integer",
+          exponent,
+        );
+      return UPOLYNOMIALS.pw(parseUpolynomial(operands[0]), Number(exponent.text));
+    }
+    const combine =
+      head.text === "+"
+        ? UPOLYNOMIALS.add
+        : head.text === "-"
+          ? UPOLYNOMIALS.sub
+          : head.text === "*"
+            ? UPOLYNOMIALS.mul
+            : undefined;
+    if (combine === undefined)
+      throw new SmtParseError(
+        "invalid univariate polynomial, '+', '-', '^' or '*' expected",
+        sexpr,
+      );
+    if (operands.length === 0)
+      throw new SmtParseError(
+        `invalid univariate polynomial, '${head.text}' operator expects at least one argument`,
+        sexpr,
+      );
+    const first = parseUpolynomial(operands[0]);
+    if (head.text === "-" && operands.length === 1) return UPOLYNOMIALS.neg(first);
+    return operands
+      .slice(1)
+      .reduce(
+        (result, operand) => combine.call(UPOLYNOMIALS, result, parseUpolynomial(operand)),
+        first,
+      );
+  };
+
+  const parseRootObj = (list: SmtList) => {
+    const polynomial = list.items[1] ?? list.end;
+    const index = list.items[2] ?? list.end;
+    if (index.kind !== "numeral")
+      throw new SmtParseError("invalid root-obj, (unsigned) integer expected", index);
+    if (BigInt(index.text) > 0xffffffffn)
+      throw new SmtParseError(
+        "invalid root-obj, index must fit in an unsigned machine integer",
+        index,
+      );
+    if (BigInt(index.text) === 0n)
+      throw new SmtParseError("invalid root-obj, index must be >= 1", index);
+    if (list.items.length > 3)
+      throw new SmtParseError("invalid root-obj, ')' expected", list.items[3]);
+    const coeffs = parseUpolynomial(polynomial);
+    const follower = list.follower ?? list.end;
+    if (coeffs.length === 0)
+      throw new SmtParseError(
+        "invalid root object, polynomial must not be the zero polynomial",
+        follower,
+      );
+    const roots = manager.am.isolateUnivariateRoots(coeffs);
+    const root = roots[Number(index.text) - 1];
+    if (root === undefined)
+      throw new SmtParseError(
+        "invalid root object, polynomial does have sufficient roots",
+        follower,
+      );
+    return manager.mkAlgebraicNumeral(root);
+  };
+
   const parseBvNumeral = (list: SmtList) => {
     const name = list.items[1];
     const indices = list.items.slice(2);
@@ -1713,12 +1817,11 @@ export const createSmtlibReader = (
         );
         return;
       }
-      if (
-        head.text === "as" ||
-        head.text === "lambda" ||
-        head.text === "match" ||
-        head.text === "root-obj"
-      )
+      if (head.text === "root-obj") {
+        results.push(parseRootObj(current));
+        return;
+      }
+      if (head.text === "as" || head.text === "lambda" || head.text === "match")
         throw new SmtUnsupportedError(`the expression ${head.text}`);
       if (["forall", "exists", "let", "!"].includes(head.text)) results.push(parseLeaf(current));
       else frames.push({ head, indices: [], list: current, start: results.length, next: 1 });
