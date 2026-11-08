@@ -160,6 +160,9 @@ const isDescriptor = (type: ts.Type | undefined) =>
 // a descriptor that is possibly undefined, an object given properties after it's made, a
 // descriptor whose attributes aren't booleans, an object that Object.create makes, and a parameter
 // or variable with no type to infer. Each only adds types, so Node runs the same program.
+const isKeyType = (type: ts.Type) =>
+  (type.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike)) !== 0;
+
 const loosen = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(PROGRAM_PATH);
@@ -183,12 +186,20 @@ const loosen = () => {
     ) {
       edits.set(node.getEnd(), "!");
     }
+    // A variable that holds an object literal may get properties that the literal lacks.
+    const accessed =
+      diagnostic.code === 2339 && ts.isPropertyAccessExpression(parent)
+        ? parent
+        : diagnostic.code === 7053
+          ? ts.findAncestor(node, ts.isElementAccessExpression)
+          : undefined;
     if (
-      diagnostic.code === 2339 &&
-      ts.isPropertyAccessExpression(parent) &&
-      ts.isIdentifier(parent.expression)
+      accessed !== undefined &&
+      ts.isIdentifier(accessed.expression) &&
+      (ts.isPropertyAccessExpression(accessed) ||
+        isKeyType(checker.getTypeAtLocation(accessed.argumentExpression)))
     ) {
-      const declaration = checker.getSymbolAtLocation(parent.expression)?.valueDeclaration;
+      const declaration = checker.getSymbolAtLocation(accessed.expression)?.valueDeclaration;
       if (
         declaration !== undefined &&
         ts.isVariableDeclaration(declaration) &&
