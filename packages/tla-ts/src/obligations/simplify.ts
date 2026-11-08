@@ -5,6 +5,7 @@
 import { TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
 import {
+  adjoinAll,
   applyBuiltin,
   at,
   getFact,
@@ -32,6 +33,7 @@ import {
   substituteBounds,
   substituteExpr,
 } from "./substitution";
+import { getTime } from "./temporal";
 
 // tlapm builds nodes with x @@ step, which copies all of the step's properties.
 const getProps = (from: Step) => ({
@@ -392,7 +394,14 @@ export const createSimplifier = (counter: Counter) => {
         const connective = exposeConnective(context, goal);
         const isImplication = isBinary(connective, "Implies");
         const sequent: Sequent = {
-          context: [getFact(step.expression, "Visible", time, step.location)],
+          context: [
+            getFact(
+              step.expression,
+              "Visible",
+              getTime(adjoinAll(undefined, context), step.expression),
+              step.location,
+            ),
+          ],
           active: isImplication ? shiftExpr(1, connective.args[1]) : connective,
         };
         const proof: Proof = isImplication
@@ -439,7 +448,14 @@ export const createSimplifier = (counter: Counter) => {
         const assertion: Step = {
           kind: "Assert",
           sequent: {
-            context: [getFact(step.expression, "Visible", time, step.location)],
+            context: [
+              getFact(
+                step.expression,
+                "Visible",
+                getTime(adjoinAll(undefined, context), step.expression),
+                step.location,
+              ),
+            ],
             active: shiftExpr(1, goal),
           },
           proof: step.proof,
@@ -469,7 +485,15 @@ export const createSimplifier = (counter: Counter) => {
         if (shifted.kind !== "Quant") throw new TlaProofError("Proof.Simplify.simplify_step/PICK");
         const hyps = [
           ...getBoundHyps(shifted.bounds),
-          getFact(shifted.body, "Visible", assertTime, shifted.body.location),
+          getFact(
+            shifted.body,
+            "Visible",
+            getTime(
+              adjoinAll(undefined, [...assertContext, ...getBoundHyps(shifted.bounds)]),
+              shifted.body,
+            ),
+            shifted.body.location,
+          ),
         ];
         const [nextContext, nextGoal, sufficed, nextTime] = simplifyStep(
           assertContext,

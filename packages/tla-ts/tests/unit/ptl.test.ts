@@ -119,7 +119,9 @@ describe("PTL backend matches tlapm with LS4", () => {
     expect(getVerdict(["THEOREM ASSUME x = 1 PROVE [](x = 1)", "  BY PTL"])).toBe("sat");
   });
 
-  it("splits on cases that hold only now under an assumption about an operator a proof defines", () => {
+  // tlapm b91fb6c judges the time of a CASE by its expression, so a constant case holds always even
+  // in a scope that holds only now.
+  it("fails to split on constant cases under an assumption about an operator a proof defines", () => {
     const verdict = getVerdict([
       "THEOREM TRUE",
       "<1>. DEFINE P(T) == T # {}",
@@ -131,7 +133,7 @@ describe("PTL backend matches tlapm with LS4", () => {
       "  <2>. QED  BY <2>1, <2>2, PTL",
       "<1>. QED  OBVIOUS",
     ]);
-    expect(verdict).toBe("unsat");
+    expect(verdict).toBe("sat");
   });
 
   it("fails to split on constant cases, which hold always", () => {
