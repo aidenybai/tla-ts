@@ -1089,6 +1089,33 @@ export const markNormalized = (value: Value): void => {
   }
 };
 
+// TLC's Value.normalize sorts a set enumeration, and the sets a lazy set it hasn't cached combines.
+export const normalizeShallowly = (value: Value): void => {
+  if (typeof value !== "object" || isCachedSet(value)) return;
+  switch (value.kind) {
+    case "Set":
+      value.isNormalized = true;
+      return;
+    case "MixedSet":
+      toFiniteSet(value);
+      return;
+    case "FilteredSet":
+    case "Subset":
+      return normalizeShallowly(value.base);
+    case "SetOperation":
+      if (value.operator === "\\cup") return;
+      normalizeShallowly(value.left);
+      return normalizeShallowly(value.right);
+    case "FunctionSet":
+      normalizeShallowly(value.domain);
+      return normalizeShallowly(value.range);
+    case "RecordSet":
+      return value.sets.forEach(normalizeShallowly);
+    case "ProductSet":
+      return value.factors.forEach(normalizeShallowly);
+  }
+};
+
 export const isEqualLikeTlc = (left: Value, right: Value) =>
   computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
 

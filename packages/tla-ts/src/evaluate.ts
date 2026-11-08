@@ -49,6 +49,7 @@ import {
   getIntervalElements,
   getLazySubsets,
   getStreamedElements,
+  normalizeShallowly,
   getFunctionClass,
   getSequenceElements,
   isElementOf,
@@ -1793,6 +1794,7 @@ const compileSetComprehension = (
         `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
       );
     }
+    normalizeShallowly(base);
     const chosen = { value: undefined as Value | undefined };
     const elements = getNormalizedElements(base, set, context.environment.runtime.version);
     const pattern = expression.pattern;
