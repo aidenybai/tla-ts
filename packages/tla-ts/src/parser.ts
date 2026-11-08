@@ -414,7 +414,8 @@ const getOperatorApplication = (
 // root module's file, from its ---- MODULE line to the next ==== line.
 export const extractModule = (source: string, name: string) => {
   const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
-  const lines = source.split(/\r?\n/);
+  // MonolithSpecExtractor.module writes each line it reads, with its own line terminator.
+  const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);
   const start = lines.findIndex((line) => header.test(line));
   if (start === -1) return undefined;
   const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
