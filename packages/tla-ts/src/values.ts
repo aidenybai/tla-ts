@@ -2604,18 +2604,15 @@ const expandLazySet = (value: LazySetValue) => {
   if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
     return toFiniteSet(value);
   }
-  if (
-    value.kind === "FunctionSet" &&
-    isEnumerable(value.domain) &&
-    getCardinality(value.domain) === 0
-  ) {
-    return createSortedSet([createSortedFunction([], [])]);
+  // Each toString enumerates a small set through toSetEnum, which first asks whether the set is
+  // empty. SetOfFcnsValue#toString asks whether the domain is empty before it sizes the domain and
+  // then the range.
+  if (value.kind === "FunctionSet") {
+    const domainSize = isEmptySet(value.domain) ? 0 : getCardinality(value.domain);
+    const size = domainSize === 0 ? 1 : getCardinality(value.range) ** domainSize;
+    return size <= MAXIMUM_EXPANDED_PRODUCT ? toFiniteSet(value) : undefined;
   }
-  const size =
-    value.kind === "FunctionSet"
-      ? getCardinality(value.range) ** getCardinality(value.domain)
-      : getProductSize(value.kind === "RecordSet" ? value.sets : value.factors);
-  if (size === 0) return EMPTY_SET;
+  const size = getProductSize(value.kind === "RecordSet" ? value.sets : value.factors);
   return size <= MAXIMUM_EXPANDED_PRODUCT ? toFiniteSet(value) : undefined;
 };
 
@@ -2670,6 +2667,58 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
   } catch (error) {
     if (error instanceof TlaEvaluationError) return undefined;
     throw error;
+  }
+};
+
+// Print and PrintT print deep copies of their values that IValue#deepNormalize normalized, so the
+// sets they normalize stay as they were outside the print.
+export const formatNormalizedCopies = (values: Value[]) => {
+  const marked: SetValue[] = [];
+  const normalize = (value: Value): void => {
+    if (typeof value !== "object") return;
+    switch (value.kind) {
+      case "Set":
+        value.elements.forEach(normalize);
+        if (normalizedSets.has(value)) return;
+        normalizedSets.add(value);
+        marked.push(value);
+        return;
+      case "MixedSet":
+        value.elements.forEach(normalize);
+        toFiniteSet(value);
+        return;
+      case "Function":
+        value.range.forEach(normalize);
+        return;
+      case "SetOperation":
+        normalize(value.left);
+        normalize(value.right);
+        return;
+      case "FunctionSet":
+        normalize(value.domain);
+        normalize(value.range);
+        return;
+      case "RecordSet":
+        value.sets.forEach(normalize);
+        return;
+      case "ProductSet":
+        value.factors.forEach(normalize);
+        return;
+      case "Subset":
+      case "Union":
+      case "FilteredSet":
+      case "SequenceSet":
+        normalize(value.base);
+        return;
+      default:
+        return;
+    }
+  };
+  try {
+    values.forEach(normalize);
+    return values.map((value) => formatValue(value, true, true));
+  } finally {
+    marked.forEach((set) => normalizedSets.delete(set));
   }
 };
 

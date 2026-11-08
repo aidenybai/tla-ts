@@ -25,6 +25,7 @@ import {
   createSet,
   createTuple,
   createWrittenFunction,
+  formatNormalizedCopies,
   formatValue,
   getSequenceElements,
   getWrittenPairs,
@@ -159,13 +160,12 @@ export const createTlcOperators = (
   runtime: CheckerRuntime,
 ): Builtin[] => [
   defineOperator("Print", 2, (args) => {
-    print(
-      `${prettyPrint(formatValue(getValue(args, 0, "Print"), true, true))}  ${prettyPrint(formatValue(getValue(args, 1, "Print"), true, true))}`,
-    );
+    const texts = formatNormalizedCopies([getValue(args, 0, "Print"), getValue(args, 1, "Print")]);
+    print(texts.map(prettyPrint).join("  "));
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(prettyPrint(formatValue(getValue(args, 0, "PrintT"), true, true)));
+    print(prettyPrint(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0]));
     return true;
   }),
   defineOperator("Assert", 2, (args) => {
