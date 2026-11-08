@@ -3,6 +3,7 @@ import {
   type Context,
   getCallee,
   getSymbol,
+  getUndefined,
   isMethodCall,
   type MethodCall,
   share,
@@ -362,8 +363,7 @@ const translateSequenceOperation = (
     isNegative(inner) ? apply("-", [getLength(), translate(inner.operand)]) : translate(inner);
   const orUndefined = (exists: Expression, value: Expression) => {
     if (isDefined) return value;
-    context.prelude.add("Undefined");
-    return ifExpression(exists, value, identifier("Undefined"));
+    return ifExpression(exists, value, getUndefined(context));
   };
   const translateEach =
     (format: (bounds: ReturnType<typeof bound>[], body: Expression) => Expression) => () => {
@@ -536,8 +536,7 @@ const translateUnorderedMethod = (
   if (method === "some") return quantify("Exists", bounds, body);
   const chosen = choose(element.variable, source.set, body);
   if (isDefined) return chosen;
-  context.prelude.add("Undefined");
-  return ifExpression(quantify("Exists", bounds, body), chosen, identifier("Undefined"));
+  return ifExpression(quantify("Exists", bounds, body), chosen, getUndefined(context));
 };
 
 const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) => {
@@ -580,13 +579,12 @@ const translateMapMethod = (
   const key = translateExpression(node.arguments[0], scope, context);
   if (method === "has") return apply("\\in", [key, getDomain(value)]);
   if (isDefined) return index(value, [key]);
-  context.prelude.add("Undefined");
   return share(value, "map", context, (sharedMap) =>
     share(key, "key", context, (sharedKey) =>
       ifExpression(
         apply("\\in", [sharedKey, getDomain(sharedMap)]),
         index(sharedMap, [sharedKey]),
-        identifier("Undefined"),
+        getUndefined(context),
       ),
     ),
   );

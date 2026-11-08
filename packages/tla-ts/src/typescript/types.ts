@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } from "../ast";
-import { type Context, translateString, type Unknown } from "./context";
+import { type Context, getUndefined, translateString, type Unknown } from "./context";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -111,8 +111,7 @@ const getLiteral = (type: ts.Type, context: Context): Expression | undefined => 
     return identifier("Null");
   }
   if (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
-    context.prelude.add("Undefined");
-    return identifier("Undefined");
+    return getUndefined(context);
   }
   return undefined;
 };

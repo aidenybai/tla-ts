@@ -116,6 +116,11 @@ const isTrivial = (value: Expression): boolean =>
   ["Identifier", "Number", "String", "ExceptAt"].includes(value.kind) ||
   (value.kind === "Prime" && isTrivial(value.expression));
 
+export const getUndefined = (context: Context) => {
+  context.prelude.add("Undefined");
+  return identifier("Undefined");
+};
+
 // Binds a value that an expression repeats to a LET definition, so that TLC evaluates it once.
 export const share = (
   value: Expression,

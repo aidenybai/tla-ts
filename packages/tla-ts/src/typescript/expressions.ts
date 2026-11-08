@@ -13,6 +13,7 @@ import {
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
+  getUndefined,
   isMethodCall,
   share,
   translateString,
@@ -429,10 +430,7 @@ const translateDeclared = (
 };
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
-  if (node.text === "undefined") {
-    context.prelude.add("Undefined");
-    return identifier("Undefined");
-  }
+  if (node.text === "undefined") return getUndefined(context);
   const symbol = getSymbol(node, context.checker);
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
   if (binding !== undefined) return binding;

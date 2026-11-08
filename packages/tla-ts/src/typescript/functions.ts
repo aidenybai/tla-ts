@@ -8,6 +8,7 @@ import {
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
+  getUndefined,
   type HelperDeclaration,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
@@ -152,10 +153,7 @@ export const translateHelperCall = (
   }
   const values = definition.parameters.map((parameter, index) => {
     const argument = argumentNodes.at(index);
-    if (argument === undefined) {
-      context.prelude.add("Undefined");
-      return identifier("Undefined");
-    }
+    if (argument === undefined) return getUndefined(context);
     return parameter.arity > 0
       ? translateOperatorArgument(argument, scope, context)
       : translateExpression(argument, scope, context);
