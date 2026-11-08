@@ -254,9 +254,15 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
         throw createJavaOverrideError(signature, error.message);
       }
     };
+  const evaluate = reportAsJavaFailure(builtin.evaluate);
   return {
     ...builtin,
-    evaluate: reportAsJavaFailure(builtin.evaluate),
+    evaluate: (args, context) => {
+      if (args.length !== builtin.arity) {
+        throw createJavaOverrideError(signature, `array is not of length ${builtin.arity}`);
+      }
+      return evaluate(args, context);
+    },
     evaluateUnary: builtin.evaluateUnary && reportAsJavaFailure(builtin.evaluateUnary),
     evaluateBinary: builtin.evaluateBinary && reportAsJavaFailure(builtin.evaluateBinary),
   };
