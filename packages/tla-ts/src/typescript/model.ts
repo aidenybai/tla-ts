@@ -5,6 +5,7 @@ import {
   getFunction,
   getSymbol,
   type HelperDeclaration,
+  isInlined,
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
@@ -79,7 +80,7 @@ const isLet = (declared: Declared) =>
   ts.isVariableDeclaration(declared.declaration) &&
   ((declared.declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
     !ts.isIdentifier(declared.declaration.name)) &&
-  getFunction(declared.declaration) === undefined;
+  !isInlined(declared.declaration.initializer);
 
 // The string literals of a @symmetric type become model values, which TLC can permute.
 const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context) => {

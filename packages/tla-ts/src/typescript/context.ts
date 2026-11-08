@@ -43,7 +43,11 @@ export interface MethodCall extends ts.CallExpression {
   readonly expression: ts.PropertyAccessExpression;
 }
 
-export type FunctionNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+export type FunctionNode =
+  | ts.FunctionDeclaration
+  | ts.ArrowFunction
+  | ts.FunctionExpression
+  | ts.MethodDeclaration;
 
 export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 
@@ -95,21 +99,94 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
   return isTopLevelConst ? declaration : undefined;
 };
 
+const isPlain = (node: FunctionNode) =>
+  node.asteriskToken === undefined &&
+  !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+
 // The function a node is, or that a variable declaration initializes.
 export const getFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
   if (node === undefined) return undefined;
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
-    const isPlain =
-      node.asteriskToken === undefined &&
-      !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
-    return isPlain ? node : undefined;
+    return isPlain(node) ? node : undefined;
   }
   return ts.isVariableDeclaration(node) ? getFunction(node.initializer) : undefined;
 };
 
-// The function that a callee or callback names: one written in place, or one declared elsewhere.
+// A class whose definition and instances run no code, so only its methods matter.
+const isInert = (node: ts.ClassLikeDeclaration) =>
+  node.heritageClauses === undefined &&
+  node.members.every(
+    (member) =>
+      ts.isSemicolonClassElement(member) ||
+      ((ts.isMethodDeclaration(member) || ts.isAccessor(member)) &&
+        !ts.isComputedPropertyName(member.name)),
+  );
+
+// The class a node names, from a class declaration or a variable that a class expression
+// initializes.
+export const getClass = (node: ts.Node | undefined, context: Context) => {
+  const declaration =
+    node === undefined ? undefined : getSymbol(node, context.checker)?.valueDeclaration;
+  if (declaration === undefined) return undefined;
+  const found = ts.isVariableDeclaration(declaration) ? declaration.initializer : declaration;
+  return found !== undefined && ts.isClassLike(found) && isInert(found) ? found : undefined;
+};
+
+// Whether a variable's initializer is a function or a class, which tla-ts inlines where it's used
+// instead of storing.
+export const isInlined = (node: ts.Node | undefined) =>
+  getFunction(node) !== undefined ||
+  (node !== undefined && ts.isClassExpression(node) && isInert(node));
+
+// A method whose class the call names exactly: a static method on the class, or a method on a
+// new instance.
+// The method that a getter like `get method() { return this.#method; }` returns.
+const getReturnedMethod = (getter: ts.GetAccessorDeclaration, context: Context) => {
+  const statement = getter.body?.statements.length === 1 ? getter.body.statements[0] : undefined;
+  const returned =
+    statement !== undefined && ts.isReturnStatement(statement) ? statement.expression : undefined;
+  if (
+    returned === undefined ||
+    !ts.isPropertyAccessExpression(returned) ||
+    returned.expression.kind !== ts.SyntaxKind.ThisKeyword
+  ) {
+    return undefined;
+  }
+  return getSymbol(returned.name, context.checker)?.valueDeclaration;
+};
+
+const getMethod = (node: ts.Expression, context: Context) => {
+  if (!ts.isPropertyAccessExpression(node)) return undefined;
+  const named = getSymbol(node.name, context.checker)?.valueDeclaration;
+  const declaration =
+    named !== undefined && ts.isGetAccessor(named) ? getReturnedMethod(named, context) : named;
+  if (
+    declaration === undefined ||
+    named === undefined ||
+    !ts.isMethodDeclaration(declaration) ||
+    !isPlain(declaration) ||
+    declaration.parent !== named.parent
+  ) {
+    return undefined;
+  }
+  const isStatic =
+    ts.canHaveModifiers(named) &&
+    ts.getModifiers(named)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
+  const receiver = node.expression;
+  const owner = isStatic
+    ? receiver
+    : ts.isNewExpression(receiver) && (receiver.arguments ?? []).length === 0
+      ? receiver.expression
+      : undefined;
+  return getClass(owner, context) === declaration.parent ? declaration : undefined;
+};
+
+// The function that a callee or callback names: one written in place, one declared elsewhere, or
+// a method of a known class.
 export const getCallee = (node: ts.Expression, context: Context) =>
-  getFunction(node) ?? getFunction(getSymbol(node, context.checker)?.valueDeclaration);
+  getFunction(node) ??
+  getFunction(getSymbol(node, context.checker)?.valueDeclaration) ??
+  getMethod(node, context);
 
 export const translateString = (value: string, context: Context) => {
   const modelValue = context.modelValues.get(value);

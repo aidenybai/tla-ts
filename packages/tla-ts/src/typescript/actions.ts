@@ -12,6 +12,7 @@ import {
   getUndefined,
   isMethodCall,
   share,
+  isInlined,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -367,8 +368,8 @@ const translateCallStatement = (
       const message = values[1] ?? string("Assertion failed");
       return and([leaf(apply("Assert", [values[0], message])), continueWith(path)]);
     }
-    if (MUTATING_METHODS.has(method)) {
-      const kind = getKind(receiver, context);
+    const kind = getKind(receiver, context);
+    if (MUTATING_METHODS.has(method) && kind !== "other") {
       return continueWith(
         assign(receiver, path, context, (current) => {
           const value = getUpdatedValue(current, kind, expression, path.scope, context);
@@ -482,7 +483,7 @@ const translateDeclarations = (
   rejectCatchRedeclaration(declaration);
   const rest = declarations.slice(1);
   const initializer = declaration.initializer;
-  if (getFunction(initializer) !== undefined) {
+  if (isInlined(initializer)) {
     return translateDeclarations(
       rest,
       { ...path, scope: initialize(path.scope, declaration, context) },

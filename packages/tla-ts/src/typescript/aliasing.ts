@@ -3,6 +3,7 @@ import { getWritten } from "./actions";
 import { MUTATING_METHODS } from "./collections";
 import { type Context, getCallee, getSymbol, isMethodCall } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getKind } from "./types";
 
 const COPYING_METHODS = new Set([
   "slice",
@@ -59,6 +60,11 @@ interface Written {
   symbol: ts.Symbol;
   depth: number;
 }
+
+const isUpdate = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  MUTATING_METHODS.has(node.expression.name.text) &&
+  getKind(node.expression.expression, context) !== "other";
 
 const holdsObject = (type: ts.Type): boolean =>
   type.isUnion() || type.isIntersection()
@@ -247,7 +253,7 @@ const getEscapes = (
       return getWritten(parent.parent) === parent ? [] : getFrom(parent, getPart(depths));
     }
     const method = parent.name.text;
-    if (MUTATING_METHODS.has(method)) return [];
+    if (isUpdate(call, context)) return [];
     const fromCallbacks = call.arguments.flatMap((argument) => {
       const callback = getCallee(argument, context);
       const parameter = callback?.parameters[0];
@@ -264,7 +270,7 @@ const getEscapes = (
   if (ts.isCallExpression(parent) && parent.arguments.includes(node)) {
     if (isMethodCall(parent)) {
       const method = parent.expression.name.text;
-      if (MUTATING_METHODS.has(method)) {
+      if (isUpdate(parent, context)) {
         return land(getPath(parent.expression.expression, context), getContainer(depths));
       }
       if (COPYING_METHODS.has(method)) return getFrom(parent, getCopy(depths));
@@ -304,10 +310,10 @@ export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
     );
   const collect = (node: ts.Node) => {
     const written = getWritten(node);
-    if (written !== undefined && isMethodCall(node) && node.expression.expression === written) {
-      const path = getPath(written, context);
+    if (isUpdate(node, context)) {
+      const path = written && getPath(written, context);
       if (path !== undefined) addChanged([path]);
-    } else if (written !== undefined) {
+    } else if (written !== undefined && !isMethodCall(node)) {
       addChanged(getChangedInPlace(written, context));
     }
     if (ts.isForOfStatement(node) && !ts.isVariableDeclarationList(node.initializer)) {
@@ -319,7 +325,8 @@ export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
   if (changed.size === 0) return;
   const visit = (node: ts.Node) => {
     if (ts.isTypeNode(node)) return;
-    const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+    const isName = ts.getNameOfDeclaration(node.parent as ts.Declaration) === node;
+    const symbol = ts.isIdentifier(node) && !isName ? getSymbol(node, context.checker) : undefined;
     if (symbol !== undefined || (ts.isCallExpression(node) && !isMethodCall(node))) {
       const escapes = getEscapes(
         node as ts.Expression,

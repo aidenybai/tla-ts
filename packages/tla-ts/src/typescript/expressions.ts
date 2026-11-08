@@ -10,6 +10,7 @@ import {
 import type { Expression } from "../ast";
 import {
   type Context,
+  getCallee,
   getElement,
   getFunction,
   getSymbol,
@@ -309,6 +310,10 @@ const translateCall = (
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
   if (helper !== undefined) return translateHelperCall(helper, node, scope, context);
+  const callee = isMethodCall(node) ? getCallee(node.expression, context) : undefined;
+  if (callee !== undefined && ts.isMethodDeclaration(callee)) {
+    return translateLocalCall(node, scope, context);
+  }
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
     if (operator === undefined || (symbol !== undefined && scope.functions.has(symbol))) {

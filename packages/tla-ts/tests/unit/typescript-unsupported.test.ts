@@ -89,6 +89,11 @@ const CASES: [string, string][] = [
     "storing an object that then changes",
     "let rows = [values]; rows[0].push(4); count = values.length;",
   ],
+  ["a method that reads this", "class Box { size() { return this; } } new Box().size();"],
+  [
+    "a method of a class with fields",
+    "class Box { size = 1; grow() { count++; } } new Box().grow();",
+  ],
   ["an unknown call in a callback", "values = values.map(() => Math.random());"],
   ["a test that doesn't return a boolean", "values = values.filter((value) => value);"],
 ];

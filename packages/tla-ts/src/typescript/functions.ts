@@ -10,6 +10,7 @@ import {
   getTopLevelDeclaration,
   getUndefined,
   type HelperDeclaration,
+  isInlined,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
@@ -225,7 +226,7 @@ const translatePure = (
     const bound = statement.declarationList.declarations.reduce<Bound>(
       (current, declaration) => {
         const initializer = declaration.initializer;
-        if (getFunction(initializer) !== undefined) return current;
+        if (isInlined(initializer)) return current;
         const value =
           initializer === undefined
             ? getUndefined(context)
