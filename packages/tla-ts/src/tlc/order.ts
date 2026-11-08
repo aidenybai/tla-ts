@@ -13,7 +13,6 @@ import {
   TLC_MODULE_SOURCES,
   TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
-  USER_STANDARD_MODULES,
 } from "./jar-data";
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
@@ -281,8 +280,8 @@ const readModuleText = (text: string | undefined): ModuleText => {
   };
 };
 
-// The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
-// returns, the modules that follow the root module, and the modules nested in any of these. A
+// The modules TLC reads for a spec: the root module, the files the loader returns, TLC's standard
+// modules, the modules that follow the root module, and the modules nested in any of these. A
 // module without a source has no tokens.
 const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   const files = new Map<string, ParsedModule>();
@@ -302,10 +301,7 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     const text =
       name === undefined
         ? source
-        : ((USER_STANDARD_MODULES.has(name) ? loadModule?.(name) : undefined) ??
-          TLC_MODULE_SOURCES.get(name) ??
-          loadModule?.(name) ??
-          extractModule(source, name));
+        : (loadModule?.(name) ?? TLC_MODULE_SOURCES.get(name) ?? extractModule(source, name));
     const { tokens, ranges, getModule } = readText(text);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
     const file = { tokens, ...range, getModule };

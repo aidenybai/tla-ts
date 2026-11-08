@@ -9,7 +9,6 @@ import {
   type OperatorParam,
   type SourceLocation,
 } from "./ast";
-import { BUNDLED_MODULES } from "./bundled-modules";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
 import {
@@ -64,7 +63,7 @@ import {
   type Symbols,
 } from "./resolve";
 import { createRuntime } from "./runtime";
-import { USER_STANDARD_MODULES } from "./tlc/jar-data";
+import { getSanyStandardModules } from "./sany/modules";
 import { getSanyParseError } from "./sany/parse-error";
 import {
   CORE_OPERATORS,
@@ -406,11 +405,12 @@ export const createEnvironment = (
   };
 
   const getStandardSymbols = (name: string) => {
-    // SANY reads a module from the user's directories before its standard modules.
-    if (USER_STANDARD_MODULES.has(name) && options.loadModule?.(name) !== undefined)
+    const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
+    // SANY reads a module from the user's directories before its standard modules, so a standard
+    // module that uses a user's module by name is linked from its source.
+    if ([name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined))
       return undefined;
     const symbols = addStandardModule(name);
-    const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (symbols) useModule(name, dependencies);
     // TLC loads the Java class of each module a standard module uses, so one that uses Integers
     // overrides the arithmetic of Naturals.
@@ -440,7 +440,7 @@ export const createEnvironment = (
   const loadModule = (name: string, importer: string) => {
     const source =
       options.loadModule?.(name) ??
-      BUNDLED_MODULES.get(name) ??
+      getSanyStandardModules(runtime.version).get(name) ??
       extractModule(options.source, name);
     if (source === undefined) throw createMissingModuleError(name, importer);
     const module = parseModuleFile(source, name, order);

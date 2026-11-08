@@ -74,9 +74,3 @@ _TEPosition ==
        ELSE IF TLCGet("level") = 0 THEN 1 ELSE TLCGet("level")
 
 =============================================================================`;
-
-export const BUNDLED_MODULES = new Map([
-  ["Reals", REALS],
-  ["RealTime", REAL_TIME],
-  ["Toolbox", TOOLBOX],
-]);

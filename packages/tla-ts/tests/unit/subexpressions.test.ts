@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
@@ -12,7 +12,10 @@ const checkSubexpressions = (source: string, configName: string) =>
   check({
     source,
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
-    loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+    loadModule: (name) => {
+      const path = join(DIRECTORY, `${name}.tla`);
+      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+    },
   });
 
 describe("subexpression references match TLC", () => {
