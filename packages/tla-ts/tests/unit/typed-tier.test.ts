@@ -28,6 +28,7 @@ describe("typed tier matches TLC", () => {
     ["SortedSequences", 3637],
     ["SymmetricProcesses", 553],
     ["SymmetricFunctions", 1361],
+    ["SymmetricCounters", 1102],
     ["SubsetOrder", 20],
     ["ActionProperties", 34],
     ["RecordMembership", 18],
