@@ -71,6 +71,8 @@ const definitionLevels = new WeakMap<Definition, number>();
 
 const closureLevels = new WeakMap<Closure, number>();
 
+const thunkLevels = new WeakMap<Thunk, number>();
+
 const definitionThunks = new WeakSet<Thunk>();
 
 const getConstantContext = (environment: Environment, scope: Scope | undefined): Context => ({
@@ -96,7 +98,14 @@ export const getLevel = (
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
     if (binding.kind === "Value") return CONSTANT_LEVEL;
-    if (binding.kind === "Thunk") return getLevel(binding.expression, binding.scope, environment);
+    if (binding.kind === "Thunk") {
+      const cached = thunkLevels.get(binding);
+      if (cached !== undefined) return cached;
+      thunkLevels.set(binding, CONSTANT_LEVEL);
+      const level = getLevel(binding.expression, binding.scope, environment);
+      thunkLevels.set(binding, level);
+      return level;
+    }
     const operator = binding.operator;
     if (operator.kind !== "Closure") return CONSTANT_LEVEL;
     const cached = closureLevels.get(operator);
