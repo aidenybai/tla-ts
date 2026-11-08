@@ -4540,10 +4540,16 @@ describe("parseConfig matches TLC", () => {
   });
 
   it("reads values the way TLC does", () => {
-    expect(parseConfig('CONSTANT S = "a\\"b\\\\n"').constants[0].value).toEqual({
+    expect(parseConfig('CONSTANT S = "a b"').constants[0].value).toEqual({
       kind: "String",
-      value: 'a\\"b\\\\n',
+      value: "a b",
     });
+    expect(() => parseConfig('CONSTANT S = "a\\"b"')).toThrow(
+      new TlaConfigError(
+        "TLC found an error in the configuration file:\nescape sequences are not supported in strings at line 1",
+      ),
+    );
+    expect(parseConfig('CONSTANT N <- "a"').substitutions[0].target).toBe('"a"');
     ["CONSTANT N = -1", "CONSTANT S = {1,}"].forEach((source) =>
       expect(() => parseConfig(source)).toThrow(TlaConfigError),
     );
