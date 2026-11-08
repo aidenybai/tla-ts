@@ -10,6 +10,7 @@ import {
 import type { Expression } from "../ast";
 import {
   type Context,
+  getElement,
   getFunction,
   getSymbol,
   getTopLevelDeclaration,
@@ -500,7 +501,9 @@ const translateElementAccess = (
 ) => {
   const value = translateExpression(node.expression, scope, context);
   const key = translateKey(node, scope, context);
-  if (getKind(node.expression, context) !== "string") return index(value, [key]);
+  const kind = getKind(node.expression, context);
+  if (kind === "sequence" && !isDefined) return getElement(value, key, context);
+  if (kind !== "string") return index(value, [key]);
   return share(value, "string", context, (text) =>
     share(key, "position", context, (position) => {
       const character = apply("SubSeq", [text, position, position]);

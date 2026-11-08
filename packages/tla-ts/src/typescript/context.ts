@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { createNames, type Names } from "./names";
-import { identifier, letExpression, define, string } from "./tla";
+import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
 export interface Definition {
   name: string;
@@ -131,3 +131,14 @@ export const share = (
   const name = context.names.getFresh(base);
   return letExpression([define(name, [], value)], use(identifier(name)));
 };
+
+export const getElement = (sequence: Expression, position: Expression, context: Context) =>
+  share(sequence, "sequence", context, (shared) =>
+    share(position, "position", context, (at) =>
+      ifExpression(
+        apply("\\in", [at, apply("DOMAIN", [shared])]),
+        index(shared, [at]),
+        getUndefined(context),
+      ),
+    ),
+  );

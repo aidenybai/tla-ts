@@ -65,6 +65,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
     "[...[1, 2], 3, ...[4]]",
     "[1, 2, 3][0]",
     "[1, 2, 3][2]",
+    "[[1, 2][5], [1, 2][-1]]",
     "[1, 2, 3].length",
     "[1, 2, 3].at(-1)",
     "[1, 2, 3].at(0)",
@@ -214,6 +215,10 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ],
     ["run()", "const run = () => { const nothing = () => {}; return nothing(); };"],
     ["run()", "const run = () => { let value: number | undefined; return value; };"],
+    [
+      "run()",
+      "const run = () => { const values: number[] = [1]; const [first, second] = values; return [first, second]; };",
+    ],
     ["call()", "let call = () => 4;"],
     [
       "count(new Set([1, 2, 3]))",

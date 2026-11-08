@@ -1,9 +1,9 @@
 import ts from "@typescript/typescript6";
-import { type Context, getSymbol, getUndefined, share } from "./context";
+import { type Context, getElement, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
-import { apply, define, identifier, ifExpression, index, number } from "./tla";
+import { apply, define, identifier, ifExpression, number } from "./tla";
 import { getField, getPropertyKey } from "./types";
 
 export interface Scope {
@@ -87,7 +87,7 @@ export const bindPatternInline = (
     if (ts.isArrayBindingPattern(pattern)) {
       return bindPatternInline(
         element.name,
-        index(value, [number(position + 1)]),
+        getElement(value, number(position + 1), context),
         current,
         context,
       );
