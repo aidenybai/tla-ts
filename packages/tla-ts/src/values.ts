@@ -128,6 +128,9 @@ export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
   apply: (argument: Value) => Value;
+  // For a function of several bounds, the length of each bound's tuple pattern, or undefined for a
+  // name.
+  boundTupleLengths?: (number | undefined)[];
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
   enumerated?: FunctionValue;
@@ -2276,12 +2279,64 @@ const findKeyIndexLikeTlc = (
   return computeLikeTlcOnFailure(findSortedIndex, failKeyLikeTlc, domain, argument);
 };
 
+// FcnLambdaValue#apply for a function of several bounds, except that TLC indexes past an argument
+// tuple shorter than the bounds and ignores one longer.
+const checkBoundArguments = (
+  functionValue: LazyFunctionValue,
+  tupleLengths: (number | undefined)[],
+  argument: Value,
+) => {
+  const domain = functionValue.domain;
+  const elements = getSequenceElements(argument);
+  const describe = (position: string, shown: Value, problem: string) =>
+    `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe ${position} is:\n${prettyPrint(formatValue(shown))}\nwhich ${problem}.\n`;
+  if (elements === undefined) {
+    throw new TlaEvaluationError(
+      describe("argument list", argument, "does not match its formal parameter"),
+    );
+  }
+  if (
+    elements.length !== tupleLengths.length ||
+    typeof domain !== "object" ||
+    domain.kind !== "ProductSet"
+  ) {
+    throw new TlaEvaluationError(
+      `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
+    );
+  }
+  tupleLengths.forEach((tupleLength, index) => {
+    const element = elements[index];
+    const position = `argument number ${index + 1}`;
+    if (!isElementOf(element, domain.factors[index])) {
+      throw new TlaEvaluationError(
+        describe(
+          position,
+          element,
+          tupleLength === undefined
+            ? `is not in the function's domain ${formatValue(domain)}`
+            : "is not in its domain",
+        ),
+      );
+    }
+    if (tupleLength !== undefined && getSequenceElements(element)?.length !== tupleLength) {
+      throw new TlaEvaluationError(
+        describe(position, element, "does not match its formal parameter"),
+      );
+    }
+  });
+};
+
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
   describeMissing?: (functionValue: FunctionValue, argument: Value) => string,
 ): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction") {
+    const tupleLengths = functionValue.boundTupleLengths;
+    if (tupleLengths !== undefined) {
+      checkBoundArguments(functionValue, tupleLengths, argument);
+      return functionValue.apply(argument);
+    }
     if (!isElementOf(argument, functionValue.domain)) {
       throw new TlaEvaluationError(
         getFunctionClass(functionValue) === "lambda"
@@ -2333,6 +2388,7 @@ export const updateFunction = (
         domain: functionValue.domain,
         apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
         source: functionValue.source,
+        boundTupleLengths: functionValue.boundTupleLengths,
       },
       getFunctionClass(functionValue),
     );

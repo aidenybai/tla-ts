@@ -722,15 +722,24 @@ const createLazyFunction = (
   domain: Value,
   compute: (argument: Value, self: LazyFunctionValue) => Value,
   source: LazyFunctionSource | undefined,
+  boundTupleLengths: (number | undefined)[] | undefined,
 ) => {
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
     domain,
     source,
+    boundTupleLengths,
     apply: (argument) => compute(argument, self),
   };
   return self;
 };
+
+const getBoundTupleLengths = (bounds: Bound[]) =>
+  bounds.length === 1
+    ? undefined
+    : bounds.map((bound) =>
+        bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
+      );
 
 // The function constructor of a definition, which SANY locates at the whole definition.
 const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
@@ -757,6 +766,7 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
       definition.bounds,
       domain,
     ),
+    getBoundTupleLengths(definition.bounds),
   );
   keepLambda({
     value: functionValue,
@@ -1610,6 +1620,7 @@ const compileFunctionConstruction = (
     return createFunction(pairs);
   };
   const template = getLazyFunctionTemplate(bounds, expression.body);
+  const boundTupleLengths = getBoundTupleLengths(bounds);
   const createLazy = (domain: Value, context: Context) => {
     const scope = context.scope;
     const functionValue = keepLambda({
@@ -1617,6 +1628,7 @@ const compileFunctionConstruction = (
         domain,
         (argument) => body(withScope(context, bindArgument(bounds, scope, argument))),
         getLazyFunctionSource(template, bounds, domain),
+        boundTupleLengths,
       ),
       bounds,
       body: expression.body,
