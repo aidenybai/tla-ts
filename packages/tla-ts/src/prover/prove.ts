@@ -73,10 +73,9 @@ export interface ProveOptions {
   workers?: number;
 }
 
-// What one method concluded about an obligation, as tlapm's toolbox messages report it: the proof
-// it writes in the module's theory, or the note it prepends to the obligation.
-// warning is what Errors.warn prints, and shipped the obligation as a method that prints its own
-// shipped form gives it.
+// What one method concluded about an obligation, as tlapm's toolbox messages report it. proof is
+// what tlapm writes in the module's theory, note what it prepends to the obligation, warning what
+// Errors.warn prints, and shipped the obligation as a method that prints it gives it.
 export interface ProofAttempt {
   method: Method;
   isProved: boolean;
@@ -135,7 +134,7 @@ interface BackendInput {
   write: (text: string) => void;
 }
 
-// An encoder writes what it encodes. It throws a TlaUnsupportedError for what tla-ts can't encode.
+// An encoder throws a TlaUnsupportedError for what tla-ts can't encode.
 type Encoder = (input: BackendInput) => void;
 
 // Action.process_obligation, the frontend for every backend but LS4, Isabelle included, then
@@ -167,33 +166,31 @@ const encodeSmtProblem: Encoder = (input) => {
   );
 };
 
-const ENCODERS: Record<string, Encoder> = {
-  smt: encodeSmtProblem,
-  z3: encodeSmtProblem,
-  zenon: (input) =>
-    input.write(
-      encodeZenon(input.obligation.id, shipFirstOrder(input.sequent, input.settings.isFlattened)),
-    ),
-  isabelle: (input) =>
-    encodeIsabelle(
-      input.obligation.id,
-      shipFirstOrder(input.sequent, input.settings.isFlattened),
-      input.method.tactic ?? "auto",
-      input.name,
-      { location: getLocation(input.obligation), fingerprint: input.fingerprint },
-      input.write,
-    ),
+// Each backend's encoder, and the suffix of the temporary file Prep.mk_temps writes its input to.
+const BACKENDS: Record<string, { encode: Encoder; suffix: string }> = {
+  smt: { encode: encodeSmtProblem, suffix: ".smt" },
+  z3: { encode: encodeSmtProblem, suffix: ".smt2" },
+  zenon: {
+    encode: (input) =>
+      input.write(
+        encodeZenon(input.obligation.id, shipFirstOrder(input.sequent, input.settings.isFlattened)),
+      ),
+    suffix: ".znn",
+  },
+  isabelle: {
+    encode: (input) =>
+      encodeIsabelle(
+        input.obligation.id,
+        shipFirstOrder(input.sequent, input.settings.isFlattened),
+        input.method.tactic ?? "auto",
+        input.name,
+        { location: getLocation(input.obligation), fingerprint: input.fingerprint },
+        input.write,
+      ),
+    suffix: ".thy",
+  },
   // Pltl.process_obligation is LS4's frontend.
-  ls4: (input) => input.write(encodePtl(input.sequent)),
-};
-
-// The suffix of the temporary file Prep.mk_temps writes each backend's input to.
-const SUFFIXES: Record<string, string> = {
-  smt: ".smt",
-  z3: ".smt2",
-  zenon: ".znn",
-  isabelle: ".thy",
-  ls4: ".ls4",
+  ls4: { encode: (input) => input.write(encodePtl(input.sequent)), suffix: ".ls4" },
 };
 
 // Filename.open_temp_file names a file tlapm_ and six random hexadecimal digits.
@@ -281,13 +278,17 @@ export const encodeProofTheory = (
   encodeIsabelleTheory(
     name,
     reports.flatMap((report, index) =>
-      report.attempts
-        .filter((attempt) => attempt.proof && !attempt.isReused)
-        .map((attempt) => ({
-          id: report.obligation.id,
-          sequent: shipFirstOrder(normalizeExpand(obligations[index])),
-          proof: attempt.proof ?? "",
-        })),
+      report.attempts.flatMap((attempt) =>
+        attempt.proof && !attempt.isReused
+          ? [
+              {
+                id: report.obligation.id,
+                sequent: shipFirstOrder(normalizeExpand(obligations[index])),
+                proof: attempt.proof,
+              },
+            ]
+          : [],
+      ),
     ),
   );
 
@@ -297,15 +298,15 @@ export const encodeForBackend = (
   prover: string,
   session: EncodingSession,
 ) => {
-  const encode = ENCODERS[prover];
-  if (!encode) throw new TlaUnsupportedError(`the ${prover} backend`);
+  const backend = BACKENDS[prover];
+  if (!backend) throw new TlaUnsupportedError(`the ${prover} backend`);
   const methods = findMethods(obligation);
   const method = methods.provers.find((candidate) => candidate.prover === prover) ?? {
     prover,
     timeLimitMs: Infinity,
   };
   const chunks: string[] = [];
-  encode({
+  backend.encode({
     obligation,
     sequent: normalizeExpand(obligation, methods),
     fingerprint: getFingerprint(obligation.sequent),
@@ -433,48 +434,39 @@ const proveWithBackends = async (
       failures.push({ reason: warning.trim(), isDecided: true });
       continue;
     }
-    const encode = ENCODERS[method.prover];
-    if (!encode) {
+    const backend = BACKENDS[method.prover];
+    if (!backend) {
       skip(method, `tla-ts has no ${method.prover} backend`);
       continue;
     }
     try {
       const isCaseNumbered =
-        encode === encodeSmtProblem &&
+        backend.encode === encodeSmtProblem &&
         (sequent.context.some(isIncompleteCaseHyp) || hasIncompleteCase(sequent.active));
       const session = isCaseNumbered ? await getSession(run, index) : { caseErrors: 0 };
       const name = getTemporaryName();
-      const file = `${name}${SUFFIXES[method.prover]}`;
+      const file = `${name}${backend.suffix}`;
       const chunks: string[] = [];
-      // Prep.mk_temps creates the file before the encoder writes to it. A backend that fails to
-      // encode the obligation leaves the file as far as it got, and doesn't try the obligation.
-      const encodingError = (() => {
-        try {
-          encode({
-            obligation,
-            sequent,
-            fingerprint,
-            method,
-            session,
-            name,
-            settings: run.settings,
-            write: (text) => chunks.push(text),
-          });
-          return undefined;
-        } catch (error) {
-          if (error instanceof TlaProverError) return error;
-          throw error;
-        } finally {
-          run.settings.onInput?.(file, chunks.join(""));
-        }
-      })();
-      if (encodingError) {
-        record({ method, isProved: false, isReused: false, reason: encodingError.message });
-        failures.push({
-          reason: `${method.prover} failed: ${encodingError.message}`,
-          isDecided: true,
+      // Prep.mk_temps creates the file before the encoder writes to it, so a failed encoding leaves
+      // the file as far as it got.
+      try {
+        backend.encode({
+          obligation,
+          sequent,
+          fingerprint,
+          method,
+          session,
+          name,
+          settings: run.settings,
+          write: (text) => chunks.push(text),
         });
+      } catch (error) {
+        if (!(error instanceof TlaProverError)) throw error;
+        record({ method, isProved: false, isReused: false, reason: error.message });
+        failures.push({ reason: `${method.prover} failed: ${error.message}`, isDecided: true });
         continue;
+      } finally {
+        run.settings.onInput?.(file, chunks.join(""));
       }
       const text = chunks.join("");
       const decision =
