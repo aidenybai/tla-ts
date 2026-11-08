@@ -1,4 +1,4 @@
-import type { Expression } from "./ast";
+import type { Expression, Module } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
 import {
@@ -98,7 +98,8 @@ import {
 } from "./values";
 
 export interface CheckOptions {
-  source: string;
+  // A spec's text, or a module that a compiler built without one.
+  source: string | Module;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
   loadClass?: (name: string) => Uint8Array | undefined;

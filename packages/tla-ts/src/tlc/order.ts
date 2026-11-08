@@ -1,11 +1,10 @@
 // TLC orders strings and model values by when it first interned their text, and compares a
 // state's variables in the order of SANY's symbol table. This reproduces both orders.
-import type { Module, SourceLocation } from "../ast";
+import { type Declaration, type Expression, getChildren, type Module } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
 import { tokenize, type Token } from "../lexer";
 import { extractModule, parseModule } from "../parser";
-import { isBefore } from "../resolve";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
@@ -40,14 +39,7 @@ interface ParsedModule {
 
 type ModuleLoader = ((name: string) => string | undefined) | undefined;
 
-interface ModuleUnit {
-  location: SourceLocation;
-  apply: (table: SymbolTable) => void;
-}
-
 const SEMANTIC_PRELUDE = ["LAMBDA", "$$InAssume", "nullODN", "nullOpArg", "nullLabelNode"];
-
-const THEOREM_KEYWORDS = new Set(["THEOREM", "LEMMA", "COROLLARY", "PROPOSITION"]);
 
 const CANONICAL_OPERATORS = new Map(
   SANY_OPERATOR_SYNONYMS.flatMap((synonyms) => synonyms.map((name) => [name, synonyms[0]])),
@@ -126,7 +118,8 @@ const getDeclarations = (tokens: Token[], start: number) => {
   }
 };
 
-const getLocation = (token: Token) => ({ line: token.line, column: token.column });
+const getNames = (declarations: Declaration[]) =>
+  declarations.map((declaration) => declaration.name);
 
 interface ModuleReferences {
   key: string;
@@ -251,19 +244,25 @@ const findModule = (modules: Module[], name: string): Module | undefined =>
 // The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
 // returns, the modules that follow the root module, and the modules nested in any of these. A
 // module without a source has no tokens.
-const createModuleSet = (source: string, loadModule: ModuleLoader) => {
+const createModuleSet = (source: string | Module, loadModule: ModuleLoader) => {
+  const rootText = typeof source === "string" ? source : undefined;
   const files = new Map<string, ParsedModule>();
   const nestedModules = new Map<string, ParsedModule>();
   const getFile = (name: string | undefined) => {
     const cached = files.get(name ?? "");
     if (cached) return cached;
+    if (name === undefined && typeof source !== "string") {
+      const file = { tokens: [], start: 0, end: 0, getModule: () => source };
+      files.set("", file);
+      return file;
+    }
     const text =
       name === undefined
-        ? source
+        ? rootText
         : ((USER_STANDARD_MODULES.has(name) ? loadModule?.(name) : undefined) ??
           TLC_MODULE_SOURCES.get(name) ??
           loadModule?.(name) ??
-          extractModule(source, name));
+          (rootText === undefined ? undefined : extractModule(rootText, name)));
     const tokens = text === undefined ? [] : tokenize(text);
     const ranges = getRanges(tokens);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
@@ -289,106 +288,68 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name);
 };
 
+const internExpressionStrings = (expression: Expression, intern: (text: string) => void): void => {
+  if (expression.kind === "String") intern(expression.value);
+  getChildren(expression).forEach((child) => internExpressionStrings(child, intern));
+};
+
+const internStrings = (module: Module, intern: (text: string) => void) =>
+  module.units.forEach((unit) => {
+    if (unit.kind === "Definition") {
+      const definition = unit.definition;
+      if (definition.kind === "Function") {
+        definition.bounds.forEach((bound) => internExpressionStrings(bound.set, intern));
+      }
+      internExpressionStrings(definition.body, intern);
+    }
+    if (unit.kind === "Assumption") internExpressionStrings(unit.assumption.expression, intern);
+  });
+
 // SANY's Context of each module, which the root module has under undefined.
-const createContexts = (source: string, loadModule: ModuleLoader) => {
+const createContexts = (source: string | Module, loadModule: ModuleLoader) => {
   const getParsed = createModuleSet(source, loadModule);
-  const getUnits = (unit: ParsedModule) => {
-    const tokens = unit.tokens;
-    const module = unit.getModule();
-    const units: ModuleUnit[] = [];
-    const statementLocations: SourceLocation[] = [];
-    const declare = (index: number, kind: SymbolKind) => {
-      const names = getDeclarations(tokens, index + 1);
-      units.push({
-        location: getLocation(tokens[index]),
-        apply: (table) => names.forEach((name) => table.put(createEntry(name, kind, false))),
-      });
-    };
-    const recursiveNames = new Set(
-      module.definitions.filter((definition) => definition.isRecursive).map((item) => item.name),
-    );
-    const depth = { value: 0 };
-    tokens.slice(unit.start, unit.end).forEach((_, offset) => {
-      const index = unit.start + offset;
-      const token = tokens[index];
-      if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
-        depth.value++;
-        if (depth.value === 2) {
-          const name = tokens[index + 2].text;
-          units.push({
-            location: getLocation(token),
-            apply: (table) => table.put(createEntry(name, "module", false)),
-          });
-        }
-        return;
+  const getUnits = (module: Module) =>
+    module.units.map((unit) => (table: SymbolTable) => {
+      const declare = (names: string[], kind: SymbolKind) =>
+        names.forEach((name) => table.put(createEntry(getCanonicalName(name), kind, false)));
+      if (unit.kind === "Constants") declare(getNames(unit.declarations), "constant");
+      if (unit.kind === "Variables") declare(getNames(unit.declarations), "variable");
+      if (unit.kind === "Module") table.put(createEntry(unit.module.name, "module", false));
+      if (unit.kind === "Recursive") {
+        const recursiveNames = new Set(
+          module.definitions
+            .filter((definition) => definition.isRecursive)
+            .map((item) => item.name),
+        );
+        const names = getNames(unit.declarations);
+        if (names.every((name) => recursiveNames.has(name))) declare(names, "definition");
       }
-      if (token.kind === "ModuleEnd") depth.value--;
-      if (depth.value !== 1 || token.kind !== "Keyword") return;
-      if (token.text === "CONSTANT" || token.text === "CONSTANTS") declare(index, "constant");
-      if (token.text === "VARIABLE" || token.text === "VARIABLES") declare(index, "variable");
-      if (token.text === "RECURSIVE") {
-        const names = getDeclarations(tokens, index + 1);
-        if (names.every((name) => recursiveNames.has(name))) declare(index, "definition");
+      if (unit.kind === "Definition") {
+        const definition = unit.definition;
+        table.put(createEntry(getCanonicalName(definition.name), "definition", definition.isLocal));
       }
-      const isNamedTheorem =
-        THEOREM_KEYWORDS.has(token.text) &&
-        tokens[index + 1]?.kind === "Identifier" &&
-        tokens[index + 2]?.text === "==";
-      if (isNamedTheorem) {
-        statementLocations.push(getLocation(token));
-        units.push({
-          location: getLocation(token),
-          apply: (table) => table.put(createEntry(tokens[index + 1].text, "theorem", false)),
+      const fact =
+        unit.kind === "Theorem"
+          ? unit.theorem
+          : unit.kind === "Assumption"
+            ? unit.assumption
+            : undefined;
+      if (fact?.name !== undefined) table.put(createEntry(fact.name, "theorem", false));
+      if (unit.kind === "Instance") {
+        const instance = unit.instance;
+        const instancee = getContext(instance.module).enumerate();
+        const prefix = instance.name === undefined ? "" : `${instance.name}!`;
+        const definitions = instancee.filter((entry) => entry.kind === "definition");
+        const theorems = instancee.filter((entry) => entry.kind === "theorem");
+        [...definitions, ...theorems].forEach((entry) => {
+          if (entry.isLocal) return;
+          table.put(createEntry(`${prefix}${entry.name}`, entry.kind, instance.isLocal));
         });
+        if (instance.name !== undefined) {
+          table.put(createEntry(instance.name, "definition", instance.isLocal));
+        }
       }
     });
-    module.assumptions.forEach((assumption) => {
-      statementLocations.push(assumption.location);
-      const name = assumption.name;
-      if (name === undefined) return;
-      units.push({
-        location: assumption.location,
-        apply: (table) => table.put(createEntry(name, "theorem", false)),
-      });
-    });
-    const isStatement = (location: SourceLocation) =>
-      statementLocations.some(
-        (statement) => statement.line === location.line && statement.column === location.column,
-      );
-    module.definitions.forEach((definition) => {
-      if (isStatement(definition.location)) return;
-      const name = getCanonicalName(definition.name);
-      units.push({
-        location: definition.location,
-        apply: (table) => table.put(createEntry(name, "definition", definition.isLocal)),
-      });
-    });
-    module.instances.forEach((instance) => {
-      units.push({
-        location: instance.location,
-        apply: (table) => {
-          const instancee = getContext(instance.module).enumerate();
-          const prefix = instance.name === undefined ? "" : `${instance.name}!`;
-          const definitions = instancee.filter((entry) => entry.kind === "definition");
-          const theorems = instancee.filter((entry) => entry.kind === "theorem");
-          [...definitions, ...theorems].forEach((entry) => {
-            if (entry.isLocal) return;
-            table.put(createEntry(`${prefix}${entry.name}`, entry.kind, instance.isLocal));
-          });
-          if (instance.name !== undefined) {
-            table.put(createEntry(instance.name, "definition", instance.isLocal));
-          }
-        },
-      });
-    });
-    return units.sort((left, right) =>
-      isBefore(left.location, right.location)
-        ? -1
-        : isBefore(right.location, left.location)
-          ? 1
-          : 0,
-    );
-  };
 
   const contexts = new Map<string, SymbolTable>();
   // Where the entries a module adds itself start, after those of the modules it extends.
@@ -408,7 +369,7 @@ const createContexts = (source: string, loadModule: ModuleLoader) => {
       }),
     );
     ownStarts.set(table, table.inserted.length);
-    getUnits(unit).forEach((item) => item.apply(table));
+    getUnits(unit.getModule()).forEach((apply) => apply(table));
     return table;
   };
   return {
@@ -424,7 +385,7 @@ const createContexts = (source: string, loadModule: ModuleLoader) => {
 // ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
 // order, and checks that the configuration assigns each constant in it.
 export const getTlcDeclarationOrder = (
-  source: string,
+  source: string | Module,
   loadModule: ModuleLoader,
   kind: "variable" | "constant",
 ): string[] =>
@@ -439,7 +400,7 @@ export const getTlcDeclarationOrder = (
 // ModuleNode.getOpDefs, in which TLC computes the constant definitions as it starts. An INSTANCE
 // adds the definitions of the module it instantiates in the order that module's Hashtable
 // enumerates them.
-export const createTlcDefinitionOrder = (source: string, loadModule: ModuleLoader) => {
+export const createTlcDefinitionOrder = (source: string | Module, loadModule: ModuleLoader) => {
   const contexts = createContexts(source, loadModule);
   // The root module's context reads every file of the spec, and so finds the modules nested in
   // the files it extends or instantiates.
@@ -451,14 +412,14 @@ export const createTlcDefinitionOrder = (source: string, loadModule: ModuleLoade
       .map((entry) => entry.name);
 };
 
-export const getTlcVariableOrder = (source: string, loadModule: ModuleLoader) =>
+export const getTlcVariableOrder = (source: string | Module, loadModule: ModuleLoader) =>
   getTlcDeclarationOrder(source, loadModule, "variable");
 
 // Every string TLC interns before model checking starts, in order: values in the config, TLC's
 // startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, string
 // literals in semantic analysis order, and the names TLC interns for TLCGet.
 export const getTlcStringOrder = (
-  source: string,
+  source: string | Module,
   config: ModelConfig,
   loadModule: ModuleLoader,
 ): string[] => {
@@ -486,7 +447,17 @@ export const getTlcStringOrder = (
   const getUnitReferences = (name: string | undefined) => {
     const cached = unitReferences.get(name);
     if (cached) return cached;
-    const references = getModuleReferences(getUnitTokens(name), name, innerModules);
+    const references =
+      name === undefined && typeof source !== "string"
+        ? {
+            key: "",
+            unit: undefined,
+            extends: source.extends,
+            instances: source.instances.map((instance) => instance.module),
+            inner: [],
+            allExtends: new Set(source.extends),
+          }
+        : getModuleReferences(getUnitTokens(name), name, innerModules);
     unitReferences.set(name, references);
     return references;
   };
@@ -523,6 +494,9 @@ export const getTlcStringOrder = (
   const findInstantiation = createSearch((module) => module.instances);
   const parsedUnits = new Set<string | undefined>([undefined]);
   const dependencies = new Map<string | undefined, string[]>();
+  // A module without source text has no tokens to intern, so its strings come only from its
+  // literals, and order differently than TLC orders those of the same module as text.
+  if (typeof source !== "string") SANY_NODE_NAMES.forEach(intern);
   getParsedTexts(getUnitTokens(undefined)).forEach((text, index) => {
     if (index === 3) SANY_NODE_NAMES.forEach(intern);
     intern(text);
@@ -555,6 +529,10 @@ export const getTlcStringOrder = (
       ...unitDependencies.filter((item) => extendees.has(item)),
       ...unitDependencies.filter((item) => !extendees.has(item)),
     ].forEach(analyze);
+    if (name === undefined && typeof source !== "string") {
+      internStrings(source, intern);
+      return;
+    }
     getUnitTokens(name).forEach((token) => {
       if (token.kind === "String") intern(token.text);
     });
