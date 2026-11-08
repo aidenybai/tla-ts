@@ -1,20 +1,24 @@
 import {
-  createJavaOverrideError,
   createModuleArgumentError,
   defineStateOperator,
   getJavaClassName,
   getValue,
+  isOutOfRange,
+  overrideWithJava,
 } from "./builtins";
+import { TlaEvaluationError } from "./errors";
 import type { Builtin } from "./evaluate";
+import { readJson, type JsonElement } from "./json-reader";
 import {
   createRecord,
   createTuple,
   formatValue,
   getSequenceElements,
   isFunctionValue,
-  isSetValue,
+  isTlcEnumerable,
   toFiniteFunction,
   toFiniteSet,
+  type FunctionValue,
   type Value,
   rankString,
 } from "./values";
@@ -24,187 +28,171 @@ export interface FileSystem {
   writeFile: ((path: string, content: string) => void) | undefined;
 }
 
-interface ParseContext {
-  source?: string;
-}
-
-const TO_JSON_SIGNATURE =
-  "public static tlc2.value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException";
-const TO_JSON_ARRAY_SIGNATURE =
-  "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonArray(tlc2.value.IValue) throws java.io.IOException";
-const TO_JSON_OBJECT_SIGNATURE =
-  "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonObject(tlc2.value.IValue) throws java.io.IOException";
-const SERIALIZE_SIGNATURE =
-  "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.serialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException";
-const ND_SERIALIZE_SIGNATURE =
-  "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException";
-const DESERIALIZE_SIGNATURE =
-  "public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException";
-const ND_DESERIALIZE_SIGNATURE =
-  "public static tlc2.value.IValue tlc2.module.Json.ndDeserialize(tlc2.value.impl.StringValue) throws java.io.IOException";
-
-const isRecord = (value: Value) => {
-  if (!isFunctionValue(value)) return false;
-  const domain = toFiniteFunction(value).domain;
-  return domain.length > 0 && domain.every((key) => typeof key === "string");
+// Value#toRcd: a function whose domain holds only strings.
+const toRecord = (value: Value) => {
+  if (!isFunctionValue(value)) return undefined;
+  const functionValue = toFiniteFunction(value);
+  const fields = functionValue.domain.flatMap((key, index): [string, Value][] =>
+    typeof key === "string" ? [[key, functionValue.range[index]]] : [],
+  );
+  return fields.length === functionValue.domain.length ? createRecord(fields) : undefined;
 };
 
-const createUnsupportedError = (method: string, value: Value) =>
-  createJavaOverrideError(
-    method,
+const createUnsupportedError = (value: Value) =>
+  new TlaEvaluationError(
     `Cannot convert value: unsupported value type tlc2.value.impl.${getJavaClassName(value)}`,
   );
 
 const toJsonString = (text: string) =>
   JSON.stringify(text).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
 
-const toSetJson = (value: Value, method: string) => {
-  if (typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet")) {
-    throw createUnsupportedError(method, value);
-  }
-  return `[${toFiniteSet(value)
-    .elements.map((element) => toJson(element, method))
-    .join(",")}]`;
-};
+const toArrayJson = (elements: Value[]) => `[${elements.map(toJson).join(",")}]`;
 
-const toFunctionJson = (value: Value, method: string) => {
-  const functionValue = toFiniteFunction(value);
-  const elements = getSequenceElements(functionValue);
-  if (elements) return `[${elements.map((element) => toJson(element, method)).join(",")}]`;
-  return `{${functionValue.domain
+const toObjectJson = (functionValue: FunctionValue) =>
+  `{${functionValue.domain
     .map(
       (key, index) =>
-        `${toJsonString(typeof key === "string" ? key : formatValue(key))}:${toJson(functionValue.range[index], method)}`,
+        `${toJsonString(typeof key === "string" ? key : formatValue(key))}:${toJson(functionValue.range[index])}`,
     )
     .join(",")}}`;
+
+// TLC writes a function other than a tuple or a record as an array when it is a sequence.
+const toFunctionJson = (value: Value) => {
+  const functionValue = toFiniteFunction(value);
+  const elements = getSequenceElements(functionValue);
+  return elements ? toArrayJson(elements) : toObjectJson(functionValue);
 };
 
-const toJson = (value: Value, method: string): string => {
+const isFunctionClass = (className: string) =>
+  className === "FcnRcdValue" || className === "FcnLambdaValue";
+
+const toJson = (value: Value): string => {
   if (typeof value === "string") return toJsonString(value);
   if (typeof value !== "object") return String(value);
   if (value.kind === "ModelValue") return toJsonString(value.name);
-  if (isSetValue(value)) return toSetJson(value, method);
-  return toFunctionJson(value, method);
+  const className = getJavaClassName(value);
+  if (className === "RecordValue") return toObjectJson(toFiniteFunction(value));
+  if (className === "TupleValue") return toArrayJson(toFiniteFunction(value).range);
+  if (isFunctionClass(className)) return toFunctionJson(value);
+  if (isTlcEnumerable(value)) return toArrayJson(toFiniteSet(value).elements);
+  throw createUnsupportedError(value);
 };
 
 const toJsonArray = (value: Value) => {
-  if (isSetValue(value)) return toSetJson(value, TO_JSON_ARRAY_SIGNATURE);
-  if (!isFunctionValue(value) || isRecord(value))
-    throw createUnsupportedError(TO_JSON_ARRAY_SIGNATURE, value);
-  return toFunctionJson(value, TO_JSON_ARRAY_SIGNATURE);
+  const className = getJavaClassName(value);
+  if (className === "TupleValue") return toArrayJson(toFiniteFunction(value).range);
+  if (isFunctionClass(className)) return toFunctionJson(value);
+  if (isTlcEnumerable(value)) return toArrayJson(toFiniteSet(value).elements);
+  throw createUnsupportedError(value);
 };
 
 const toJsonObject = (value: Value) => {
-  if (!isFunctionValue(value)) throw createUnsupportedError(TO_JSON_OBJECT_SIGNATURE, value);
-  return toFunctionJson(value, TO_JSON_OBJECT_SIGNATURE);
+  const className = getJavaClassName(value);
+  if (className === "RecordValue") return toObjectJson(toFiniteFunction(value));
+  if (className === "TupleValue") {
+    return `{${toFiniteFunction(value)
+      .range.map((element, index) => `"${index}":${toJson(element)}`)
+      .join(",")}}`;
+  }
+  if (isFunctionClass(className)) return toFunctionJson(value);
+  throw createUnsupportedError(value);
 };
 
-// TLC reads a JSON number with Gson's intValue, which truncates the exact decimal toward zero and
-// keeps its low 32 bits, so 3000000000 becomes -1294967296 and 1.5 becomes 1.
-const toInteger = (source: string) => {
-  const [, sign, whole = "0", fraction = "", exponent = "0"] =
-    /^(-?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source) ?? [];
-  const digits = BigInt(whole + fraction);
-  const shift = Number(exponent) - fraction.length;
-  const magnitude = shift >= 0 ? digits * 10n ** BigInt(shift) : digits / 10n ** BigInt(-shift);
-  return Number(BigInt.asIntN(32, sign === "-" ? -magnitude : magnitude));
-};
-
-const fromJson = (json: unknown, method: string): Value => {
-  if (typeof json === "boolean" || typeof json === "number") return json;
-  if (typeof json === "string") return rankString(json);
-  if (Array.isArray(json)) return createTuple(json.map((element) => fromJson(element, method)));
-  if (json !== null && typeof json === "object") {
+const fromJson = (element: JsonElement): Value => {
+  if (element === null) {
+    throw new TlaEvaluationError("Cannot convert value: unsupported JSON value null");
+  }
+  if (typeof element === "boolean") return element;
+  if (typeof element === "string") return rankString(element);
+  if (Array.isArray(element)) return createTuple(element.map(fromJson));
+  if (element instanceof Map) {
     return createRecord(
-      Object.entries(json).map(([key, field]): [string, Value] => [
-        rankString(key),
-        fromJson(field, method),
-      ]),
+      [...element].map((member): [string, Value] => [rankString(member[0]), fromJson(member[1])]),
     );
   }
-  throw createJavaOverrideError(
-    method,
-    `Cannot convert value: unsupported JSON value ${String(json)}`,
-  );
-};
-
-const parseJson = (text: string, method: string) => {
-  if (text.trim() === "") return fromJson(null, method);
-  try {
-    return fromJson(
-      JSON.parse(text, (_, value: unknown, context?: ParseContext) =>
-        typeof value === "number" ? toInteger(context?.source ?? String(value)) : value,
-      ),
-      method,
+  const value = Number(element.literal);
+  if (!/^-?\d+$/.test(element.literal) || isOutOfRange(value)) {
+    throw new TlaEvaluationError(
+      `Cannot convert value: expected a 32-bit integer JSON number, but found ${element.literal}`,
     );
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-    throw createJavaOverrideError(method, error.message);
   }
+  return value || 0;
 };
 
-const getPath = (value: Value, method: string) => {
+const getPath = (value: Value) => {
   if (typeof value !== "string") {
-    throw createJavaOverrideError(
-      method,
+    throw new TlaEvaluationError(
       `Cannot cast tlc2.value.impl.${getJavaClassName(value)} to tlc2.value.impl.StringValue`,
     );
   }
   return value;
 };
 
-const readText = (files: FileSystem, path: string, method: string) => {
+const readText = (files: FileSystem, path: string) => {
   const text = files.readFile?.(path);
-  if (text === undefined) {
-    throw createJavaOverrideError(method, `${path} (No such file or directory)`);
-  }
+  if (text === undefined) throw new TlaEvaluationError(`${path} (No such file or directory)`);
   return text;
 };
 
 export const createJsonOperators = (files: FileSystem): Builtin[] => [
-  defineStateOperator("ToJson", 1, (args) =>
-    rankString(toJson(getValue(args, 0, "ToJson"), TO_JSON_SIGNATURE)),
+  overrideWithJava(
+    defineStateOperator("ToJson", 1, (args) => rankString(toJson(getValue(args, 0, "ToJson")))),
+    "public static tlc2.value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException",
   ),
-  defineStateOperator("ToJsonArray", 1, (args) =>
-    rankString(toJsonArray(getValue(args, 0, "ToJsonArray"))),
+  overrideWithJava(
+    defineStateOperator("ToJsonArray", 1, (args) =>
+      rankString(toJsonArray(getValue(args, 0, "ToJsonArray"))),
+    ),
+    "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonArray(tlc2.value.IValue) throws java.io.IOException",
   ),
-  defineStateOperator("ToJsonObject", 1, (args) =>
-    rankString(toJsonObject(getValue(args, 0, "ToJsonObject"))),
+  overrideWithJava(
+    defineStateOperator("ToJsonObject", 1, (args) =>
+      rankString(toJsonObject(getValue(args, 0, "ToJsonObject"))),
+    ),
+    "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonObject(tlc2.value.IValue) throws java.io.IOException",
   ),
-  defineStateOperator("JsonSerialize", 2, (args) => {
-    const path = getPath(getValue(args, 0, "JsonSerialize"), SERIALIZE_SIGNATURE);
-    const value = getValue(args, 1, "JsonSerialize");
-    if (!getSequenceElements(value) && !isRecord(value)) {
-      throw createModuleArgumentError("second", "JsonSerialize", "sequence or record", value);
-    }
-    files.writeFile?.(path, toJson(value, SERIALIZE_SIGNATURE));
-    return true;
-  }),
-  defineStateOperator("ndJsonSerialize", 2, (args) => {
-    const path = getPath(getValue(args, 0, "ndJsonSerialize"), ND_SERIALIZE_SIGNATURE);
-    const value = getValue(args, 1, "ndJsonSerialize");
-    const elements = getSequenceElements(value);
-    if (!elements) {
-      throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", value);
-    }
-    files.writeFile?.(
-      path,
-      elements.map((element) => `${toJson(element, ND_SERIALIZE_SIGNATURE)}\n`).join(""),
-    );
-    return true;
-  }),
-  defineStateOperator("JsonDeserialize", 1, (args) => {
-    const path = getPath(getValue(args, 0, "JsonDeserialize"), DESERIALIZE_SIGNATURE);
-    return parseJson(readText(files, path, DESERIALIZE_SIGNATURE), DESERIALIZE_SIGNATURE);
-  }),
-  defineStateOperator("ndJsonDeserialize", 1, (args) => {
-    const path = getPath(getValue(args, 0, "ndJsonDeserialize"), ND_DESERIALIZE_SIGNATURE);
-    return createTuple(
-      readText(files, path, ND_DESERIALIZE_SIGNATURE)
-        .split(/\r\n|\r|\n/)
-        .map((line) => line.trim())
-        .filter((line) => line !== "")
-        .map((line) => parseJson(line, ND_DESERIALIZE_SIGNATURE)),
-    );
-  }),
+  overrideWithJava(
+    defineStateOperator("JsonSerialize", 2, (args) => {
+      const path = getPath(getValue(args, 0, "JsonSerialize"));
+      const value = getValue(args, 1, "JsonSerialize");
+      if (!getSequenceElements(value) && !toRecord(value)) {
+        throw createModuleArgumentError("second", "JsonSerialize", "sequence or record", value);
+      }
+      files.writeFile?.(path, toJson(value));
+      return true;
+    }),
+    "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.serialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
+  ),
+  overrideWithJava(
+    defineStateOperator("ndJsonSerialize", 2, (args) => {
+      const path = getPath(getValue(args, 0, "ndJsonSerialize"));
+      const value = getValue(args, 1, "ndJsonSerialize");
+      const elements = getSequenceElements(value);
+      if (!elements) {
+        throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", value);
+      }
+      files.writeFile?.(path, elements.map((element) => `${toJson(element)}\n`).join(""));
+      return true;
+    }),
+    "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
+  ),
+  overrideWithJava(
+    defineStateOperator("JsonDeserialize", 1, (args) =>
+      fromJson(readJson(readText(files, getPath(getValue(args, 0, "JsonDeserialize"))))),
+    ),
+    "public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException",
+  ),
+  overrideWithJava(
+    defineStateOperator("ndJsonDeserialize", 1, (args) =>
+      createTuple(
+        readText(files, getPath(getValue(args, 0, "ndJsonDeserialize")))
+          .split(/\r\n|\r|\n/)
+          // Java's String#trim strips every character up to the space.
+          .map((line) => line.replace(/^[^!-\uffff]+|[^!-\uffff]+$/g, ""))
+          .filter((line) => line !== "")
+          .map((line) => fromJson(readJson(line))),
+      ),
+    ),
+    "public static tlc2.value.IValue tlc2.module.Json.ndDeserialize(tlc2.value.impl.StringValue) throws java.io.IOException",
+  ),
 ];
