@@ -8,8 +8,6 @@ export const TLAPM_BINARY = join(TLAPM_DIRECTORY, "bin/tlapm");
 export const TLAPM_BACKENDS = join(TLAPM_DIRECTORY, "lib/tlapm/backends/bin");
 const ISABELLE_DIRECTORY = join(TLAPM_DIRECTORY, "lib/tlapm/backends/Isabelle-install");
 
-// What a test declares tlapm does, by its exit status under --strict (src/params.ml#exit_status).
-// tlapm exits 3 when it ends abnormally, which covers every parse, semantic and level error.
 export const TLAPM_OUTCOME_EXITS = {
   any: [0, 3, 10, 11, 12],
   proved: [0],
@@ -19,12 +17,8 @@ export const TLAPM_OUTCOME_EXITS = {
   rejected: [3],
 };
 
-// A backend test declares the verdict its backend reaches.
 export const BACKEND_VERDICTS = ["unsat", "sat", "unknown"];
 
-// obligations: the obligations tlapm generates, without proving them.
-// proof: each obligation's final status and the backend that closed it.
-// encoding: the proof, plus the input tlapm writes for each backend.
 export const TLAPM_MODES = ["obligations", "proof", "encoding"];
 
 const MODE_ARGUMENTS: Record<string, string[]> = {
@@ -33,7 +27,6 @@ const MODE_ARGUMENTS: Record<string, string[]> = {
   encoding: ["--debug", "tempfiles"],
 };
 
-// One thread makes the order of backend calls, and so of their temporary files, deterministic.
 export const getTlapmArguments = (mode: string, cacheDirectory: string) => [
   "--strict",
   "--toolbox",
@@ -46,7 +39,6 @@ export const getTlapmArguments = (mode: string, cacheDirectory: string) => [
   ...MODE_ARGUMENTS[mode],
 ];
 
-// The backend a test file feeds, by the extension of the temporary file tlapm writes for it.
 export const BACKEND_EXTENSIONS: Record<string, string> = {
   ".smt": "z3",
   ".smt2": "z3",
@@ -57,13 +49,10 @@ export const BACKEND_EXTENSIONS: Record<string, string> = {
 
 export const getBackend = (path: string) => BACKEND_EXTENSIONS[extname(path)];
 
-// A .smt2 test is one of z3test's regressions, a whole SMT-LIB script. It runs the way z3test runs
-// it (scripts/util.py#test_benchmark), and its recording is everything Z3 prints.
 export const isSmtScript = (path: string) => extname(path) === ".smt2";
 
 const quoteShell = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 
-// Isabelle's ML_Syntax.print_string_bytes, as src/params.ml#ml_string_bytes ports it.
 const quoteMl = (text: string) =>
   `"${[...text]
     .map((character) => {
@@ -77,7 +66,6 @@ const quoteMl = (text: string) =>
     })
     .join("")}"`;
 
-// tlapm's command line for each backend (src/params.ml).
 export const getBackendOracleCommand = (backend: string, file: string) => {
   if (isSmtScript(file)) return [join(TLAPM_BACKENDS, "z3"), "model_validate=true", file];
   if (backend === "z3")
@@ -108,8 +96,6 @@ export const getBackendOracleCommand = (backend: string, file: string) => {
   ];
 };
 
-// Reduces a backend's output to its verdict, the way tlapm reads it (src/backend/*.ml). Zenon's
-// proof follows, because tlapm hands it to Isabelle.
 export const getBackendVerdict = (backend: string, output: string, exit: number) => {
   if (backend === "z3") {
     const answer = output.split("\n").find((line) => BACKEND_VERDICTS.includes(line.trim()));
@@ -128,18 +114,12 @@ export const getBackendVerdict = (backend: string, output: string, exit: number)
 
 const TEMPORARY_NAME = /\btlapm_[0-9a-f]{6}\b/g;
 const TIME_USED = /; time-used: [\d.]+ \(\d+%\)/g;
-// When tlapm crashes, it prints an OCaml backtrace, whose line numbers depend on the OCaml that built
-// it, then its configuration, which holds machine paths (src/tlapm_lib.ml#main).
 const BACKTRACE_LINE =
   /^(Raised at|Raised by primitive operation at|Called from|Re-raised at) .*\n/gm;
-// Isabelle's theory keeps each proof Zenon found, after the command line that ran Zenon, which names
-// temporary files and holds PATH (src/backend/prep.ml#zenon_prove).
 const ZENON_COMMAND = /(\(\* BEGIN ZENON INPUT\n);; .*\n/g;
-// A backend that isn't installed is reported with the whole PATH (src/params.ml#get_exec).
 const MISSING_EXECUTABLE = /(not found in this PATH:\n).*\n/g;
-// tlapm looks for a backend with `type <name>` in sh (src/params.ml#get_exec). bash, macOS's sh,
-// reports the failure on stderr, and dash, Ubuntu's, on stdout, which tlapm discards. The line
-// after it reports the same failure.
+// tlapm finds a backend with `type <name>` in sh. bash reports a miss on stderr and dash on stdout,
+// and tlapm's next line reports it again.
 const SHELL_NOT_FOUND = /^sh: .*type: \S+: not found\n/gm;
 const CONFIG_DUMP = /^version == ".*"\n((?!@!!).*\S.*\n)*/gm;
 
@@ -147,8 +127,6 @@ interface ToolboxMessage {
   fields: Map<string, string>;
 }
 
-// tlapm frames each toolbox message in @!!BEGIN and @!!END, one @!!key:value per line. A value
-// runs until the next field, so an obligation's text spans several lines.
 const parseToolboxMessage = (block: string): ToolboxMessage => {
   const fields = new Map<string, string>();
   const state = { key: "" };
@@ -168,9 +146,6 @@ const parseToolboxMessage = (block: string): ToolboxMessage => {
 const formatToolboxMessage = (message: ToolboxMessage) =>
   [...message.fields.entries()].map((entry) => `@${entry[0]}: ${entry[1]}`).join("\n");
 
-// Keeps what a proof run decides, and drops what changes between runs: the version banner, times,
-// paths and the names of temporary files. Obligation messages arrive in the order their backends
-// finish, so each obligation keeps its first message and its last, in order of id.
 export const normalizeTlapmTranscript = (output: string, directory: string) => {
   const text = output
     .replaceAll(`/private${directory}`, "")
@@ -220,15 +195,12 @@ export const normalizeTlapmTranscript = (output: string, directory: string) => {
   );
 };
 
-// The status of each obligation, the coarse part of a transcript that a verdict compares first.
 export const getTlapmStatuses = (transcript: string) =>
   transcript
     .split("\n")
     .filter((line) => /^@(status|prover|type|count): /.test(line))
     .join("\n");
 
-// The inputs tlapm wrote for its backends under --debug tempfiles. Their names are random, so they
-// are ordered by backend, then by content.
 export const getEncodings = (cacheDirectory: string, moduleName: string) => {
   const directory = join(cacheDirectory, `${moduleName}.tlaps`);
   const files = readdirSync(directory).filter((name) => getBackend(name) !== undefined);

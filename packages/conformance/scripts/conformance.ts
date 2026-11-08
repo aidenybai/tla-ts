@@ -1,8 +1,3 @@
-// Runs the suite against a host and compares each result with the oracle's recording.
-// Usage: pnpm conformance [--host tla-ts|tlc|tlapm|"<command>"] [--shard <i>/<n>]
-// [--time-limit <seconds>] [--memory-limit <MB>] [--update-baseline] [--verbose] [path filter]...
-// The tlc and tlapm hosts are the oracles, and each runs only its own suite.
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,7 +13,6 @@ import {
 import { getBackend, getTlapmStatuses } from "./tlapm";
 import { getMessageCodes } from "./transcript";
 
-// From the coarsest difference to the finest, so a score can say how close a host is.
 type Verdict =
   | "pass"
   | "text-mismatch"
@@ -60,15 +54,12 @@ const limits = {
 };
 const isUpdatingBaseline = hasFlag("--update-baseline");
 const isVerbose = hasFlag("--verbose");
-// A host given as a command has no baseline, and its results go in one file.
 const hostLabel = hostName in HOSTS ? hostName : "custom";
 const baselinePath = join(import.meta.dirname, "../baselines", `${hostLabel}.json`);
 const baseline: Record<string, Verdict> = existsSync(baselinePath)
   ? JSON.parse(readFileSync(baselinePath, "utf8"))
   : {};
 
-// The coarse part of a transcript: TLC's message codes, tlapm's obligation statuses, or a backend's
-// verdict.
 const getMessages = (test: SuiteTest, transcript: string) => {
   if (test.suite === "tlc") return getMessageCodes(transcript);
   return getBackend(test.path) ? transcript.split("\n")[0] : getTlapmStatuses(transcript);

@@ -1,9 +1,3 @@
-// Ports tlapm's own tests, and those of Zenon and Isabelle in tlapm's checkout, into
-// test/tlapm/imported, recorded from the pinned tlapm. Each test declares the outcome its harness
-// checks. A test that needs what the suite can't express, such
-// as two runs or a shell pipeline, is skipped, and so is one that doesn't reproduce here.
-// Usage: bun scripts/run.ts import-tlapm <tlapm checkout>
-
 import {
   existsSync,
   mkdirSync,
@@ -27,23 +21,17 @@ import {
 } from "./test-file";
 
 const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(2, availableParallelism()));
-// An Isabelle proof can run for minutes and use gigabytes, so the importer leaves out such tests.
 const LIMITS = { milliseconds: 120_000, memoryBytes: 4 * 1024 ** 3 };
 const IMPORT_DIRECTORY = join(SUITE_DIRECTORY, "tlapm/imported");
-// Zenon can write a proof of tens of megabytes for a short input, too large to keep in the repository.
 const MAX_RECORDING_BYTES = 1024 ** 2;
 
 interface PendingTest {
-  // Where the test goes, relative to test/tlapm/imported, and where its fixtures come from.
   directory: string;
   sourceDirectory: string;
   fileName: string;
   metadata: TestMetadata;
   module: string;
-  // Fixture modules beside the test that it EXTENDS or INSTANCEs.
   fixtures: string[];
-  // The outcomes that agree with what tlapm's harness checks. The test records the one tlapm
-  // reaches. Without this list, tlapm's harness checks nothing that fixes the outcome.
   acceptedOutcomes?: string[];
 }
 
@@ -62,7 +50,6 @@ const listFiles = (directory: string): string[] =>
       return statSync(path).isDirectory() ? listFiles(path) : [path];
     });
 
-// The text after the last ==== holds the harness's directives, one `key: value` per line.
 const splitTrailer = (text: string) => {
   const lines = text.split("\n");
   const end = lines.findLastIndex((line) => /^={4,}/.test(line));
@@ -83,7 +70,6 @@ const getReferencedModules = (module: string) =>
       .filter((name) => /^\w+$/.test(name)),
   );
 
-// The fixtures beside a test that it reaches through EXTENDS and INSTANCE, transitively.
 const getFixtures = (directory: string, module: string, seen = new Set<string>()): string[] =>
   getReferencedModules(module).flatMap((name) => {
     const path = join(directory, `${name}.tla`);
@@ -92,7 +78,6 @@ const getFixtures = (directory: string, module: string, seen = new Set<string>()
     return [`${name}.tla`, ...getFixtures(directory, readFileSync(path, "utf8"), seen)];
   });
 
-// The flags of a `command: ${TLAPM} <flags> ${FILE}` line, less those the suite always sets.
 const getCommandFlags = (command: string) => {
   const match = /^\$\{TLAPM\}(.*)\$\{FILE\}\s*$/.exec(command);
   if (!match) return undefined;
@@ -128,7 +113,6 @@ const getHarnessTest = (path: string): PendingTest | string => {
   );
   const outcome =
     result && RESULT_OUTCOMES[result] ? RESULT_OUTCOMES[result] : isFailing ? "failed" : "proved";
-  // Without --strict, tlapm exits 0 when it omits a step, and the suite's --strict makes that 11.
   const isStrict = flags.includes("--strict");
   const acceptedOutcomes =
     result === "0" && checks.length > 0 && !isStrict
@@ -157,8 +141,6 @@ const getHarnessTest = (path: string): PendingTest | string => {
   };
 };
 
-// A soundness test states a false theorem, so some obligation must fail, unless `known:` marks a
-// bug that still proves it (test/TOOLS/do_soundness_tests).
 const getSoundnessTest = (path: string): PendingTest => {
   const trailer = splitTrailer(readFileSync(path, "utf8"));
   const flags = trailer.directives
@@ -191,8 +173,6 @@ const toSnakeCase = (text: string) =>
     .replace(/^_|_$/g, "")
     .toLowerCase();
 
-// Each case of the tree-sitter syntax corpus is a module with its expected parse tree. The suite can
-// see only whether tlapm accepts the module.
 const getCorpusTests = (path: string): PendingTest[] => {
   const text = readFileSync(path, "utf8");
   const cases = [...text.matchAll(/={3,}\|\|\|\n(.+)\n={3,}\|\|\|\n([\s\S]*?)\n-{3,}\|\|\|\n/g)];
@@ -222,7 +202,6 @@ const getCorpusTests = (path: string): PendingTest[] => {
   });
 };
 
-// SANY's equivalence modules, which tlapm's tests parse with both parsers.
 const getSanyTest = (path: string): PendingTest => ({
   directory: relative(testDirectory, dirname(path)),
   sourceDirectory: dirname(path),
@@ -238,8 +217,6 @@ const getSanyTest = (path: string): PendingTest => ({
   fixtures: getFixtures(dirname(path), readFileSync(path, "utf8")),
 });
 
-// A test from the backends' own trees, in tlapm's checkout, goes to the same path under the import
-// directory.
 const getBackendTreeTest = (path: string, metadata: TestMetadata, acceptedOutcome: string) => ({
   directory: relative(checkout, dirname(path)),
   sourceDirectory: dirname(path),
@@ -250,8 +227,6 @@ const getBackendTreeTest = (path: string, metadata: TestMetadata, acceptedOutcom
   acceptedOutcomes: [acceptedOutcome],
 });
 
-// Zenon must prove each of its own tests (zenon/test/Makefile). The suite runs Zenon with tlapm's
-// command line, so the recording also holds the Isar proof tlapm hands to Isabelle.
 const getZenonTest = (path: string) =>
   getBackendTreeTest(
     path,
@@ -264,7 +239,6 @@ const getZenonTest = (path: string) =>
     "unsat",
   );
 
-// tlapm must check every proof in Zenon's regression tests with Zenon (zenon/regression/test.sh).
 const getZenonRegressionTest = (path: string) =>
   getBackendTreeTest(
     path,
@@ -279,7 +253,6 @@ const getZenonRegressionTest = (path: string) =>
     "proved",
   );
 
-// Isabelle's TLA+ sessions must check these theories (isabelle/ROOT).
 const getIsabelleTest = (path: string) =>
   getBackendTreeTest(
     path,
@@ -307,7 +280,6 @@ const pendingTests: PendingTest[] = [
   ...files
     .filter((path) => path.includes("/syntax_corpus/") && path.endsWith(".txt"))
     .flatMap(getCorpusTests),
-  // Zenon's Focal tests (.coz) are left out, since tlapm never gives Zenon Focal input.
   ...listFiles(join(checkout, "zenon/test"))
     .filter((path) => path.endsWith(".znn"))
     .map(getZenonTest),
@@ -333,9 +305,8 @@ const writePending = (pending: PendingTest, outcome: string) => {
   writeFileSync(getTestPath(pending), `(*---\n${formatYaml(metadata)}\n---*)\n${pending.module}`);
 };
 
-// Every file is written before any test runs, and rewritten only after all have run, because a test
-// copies its fixtures and a fixture can be a test too. A test file serves as a fixture, since tlapm
-// ignores the header and the recording outside the module.
+// A fixture can be a test too, so every file is written before any test runs and rewritten after
+// all have run.
 rmSync(IMPORT_DIRECTORY, { recursive: true, force: true });
 const testPaths = new Set(pendingTests.map(getTestPath));
 const fixturePaths = new Set(
@@ -359,7 +330,6 @@ pendingTests.forEach((pending) => writePending(pending, pending.metadata.outcome
 const host = getHost("tlapm");
 const kept = new Map<PendingTest, { outcome: string; recording: Recording }>();
 
-// A test is kept only if two runs agree, since a proof near a time limit can go either way.
 await runPool(pendingTests, WORKERS, async (pending) => {
   const path = getTestPath(pending);
   const test = parseTest(path, readFileSync(path, "utf8"));
@@ -367,7 +337,6 @@ await runPool(pendingTests, WORKERS, async (pending) => {
   const context = { name: "model", source: test.source, config: "" };
   const first = await runTest(host, test, context, LIMITS);
   const second = first.exceeded ? first : await runTest(host, test, context, LIMITS);
-  // A backend test's outcome is its verdict, and a tlapm test's is its exit status.
   const observed = getBackend(path)
     ? first.transcript.split("\n")[0]
     : Object.entries(TLAPM_OUTCOME_EXITS).find(
@@ -395,8 +364,6 @@ await runPool(pendingTests, WORKERS, async (pending) => {
   });
 });
 
-// Only the fixtures of kept tests stay. A skipped test that a kept test includes stays as a plain
-// module.
 const keptFixturePaths = new Set(
   [...kept.keys()].flatMap((pending) =>
     pending.fixtures.map((fixture) => join(IMPORT_DIRECTORY, pending.directory, fixture)),

@@ -1,7 +1,3 @@
-// tla-ts's host for backend tests: runs its port of a tlapm backend on one input and prints the
-// verdict the way getBackendVerdict reduces the real backend's output.
-// Usage: node .scripts/tla-ts-backend.js <z3|zenon|isabelle|ls4> <file>
-
 import { readFileSync } from "node:fs";
 import { decideIsabelle } from "../../tla-ts/src/prover/isabelle/decide";
 import { decidePtl } from "../../tla-ts/src/prover/ptl/decide";
@@ -9,7 +5,6 @@ import { decideSmt } from "../../tla-ts/src/prover/smt/solver/solver";
 import { decideZenon } from "../../tla-ts/src/prover/zenon/decide";
 import { getBackendVerdict } from "./tlapm";
 
-// tlapm's default time limits in seconds (src/method.ml).
 const TIME_LIMITS: Record<string, number> = { z3: 5, zenon: 10, isabelle: 30, ls4: 10 };
 
 const backend = process.argv[2];
