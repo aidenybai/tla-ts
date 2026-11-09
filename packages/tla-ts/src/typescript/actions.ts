@@ -1322,15 +1322,26 @@ const runCertainDefault = (
     path,
     context,
   );
-  return translateCallStatement(first, path, context, frame, (after, value) =>
+  const withResult = (after: Path, value: Expression | undefined) =>
     continueWith({
       ...after,
       scope: {
         ...after.scope,
         results: new Map([...after.scope.results, [first, value ?? getUndefined(context)]]),
       },
-    }),
-  );
+    });
+  const binding = ts.findAncestor(first.parent, (node) => !ts.isParenthesizedExpression(node));
+  const pattern =
+    binding !== undefined &&
+    (ts.isBindingElement(binding) || ts.isParameter(binding)) &&
+    ts.isArrayBindingPattern(binding.name)
+      ? binding.name
+      : undefined;
+  const taken =
+    pattern &&
+    isGeneratorType(first, context) &&
+    takeFromGenerator(pattern, first, evaluated, path, context, frame, withResult);
+  return taken || translateCallStatement(first, path, context, frame, withResult);
 };
 
 // The defaults that binding a name to a value certainly evaluates, in order: its own where the

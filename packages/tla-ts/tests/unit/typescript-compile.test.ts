@@ -1177,6 +1177,15 @@ describe("errors", () => {
     ).toThrow("tla-ts can't follow a generator here");
   });
 
+  it("destructures arrays from a generator that a default makes", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nlet first = 0;\nlet second = 0;\nlet taken = 0;\nfunction* g() {\n  first += 1;\n  yield 1;\n  second += 1;\n  yield 2;\n}\nfunction take([[value] = g()]: Iterable<number>[]) {\n  taken = value;\n}\ntake([]);\nif (taken !== 1 || first !== 1 || second !== 0) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("reads strings through their search, slice, and trim methods", async () => {
     const result = await check(
       compile(
