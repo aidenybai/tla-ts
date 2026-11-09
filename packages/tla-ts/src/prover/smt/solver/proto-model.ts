@@ -4,12 +4,14 @@
 import { TermEnumeration } from "./term-enumeration";
 import {
   AstManager,
+  FAMILY_SEQ,
   KIND_APP,
   KIND_VAR,
   OP_AND,
   OP_EQ,
   OP_CONST_ARRAY,
   OP_ITE,
+  OP_SEQ_TO_RE,
   SORT_BOOL,
   isArithSort,
 } from "./ast";
@@ -22,6 +24,7 @@ import { mkArrayApp } from "./array-decl-plugin";
 import { mkFpNumeral, mkRmNumeral } from "./fpa-decl-plugin";
 import { MPF_ROUND_TOWARD_ZERO, mkZero } from "./mpf";
 import { RandomGen } from "./random-gen";
+import { mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
 import { Rational } from "./rational";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { ModelEvaluator } from "./model-evaluator";
@@ -42,6 +45,10 @@ const getManagerSomeValue = (manager: AstManager, sort: number): number => {
       [getManagerSomeValue(manager, manager.getArrayRange(sort))],
       [sort],
     );
+  if (manager.isSeqSort(sort)) return mkEmptySeq(manager, sort);
+  if (manager.isReSort(sort))
+    return mkSeqApp(manager, OP_SEQ_TO_RE, [mkEmptySeq(manager, manager.getReSeqSort(sort))]);
+  if (manager.isCharSort(sort)) return manager.mkChar(65);
   if (!manager.isDatatypeSort(sort)) return manager.mkModelValue(0, sort);
   const constructor = getNonRecConstructor(manager, sort);
   return manager.mkApp(
@@ -369,7 +376,13 @@ export class ProtoModel {
 
   getSomeValue(sort: number): number {
     const manager = this.manager;
-    if (manager.isFpSort(sort) || manager.isRmSort(sort)) return getManagerSomeValue(manager, sort);
+    if (
+      manager.isFpSort(sort) ||
+      manager.isRmSort(sort) ||
+      manager.getSortFamily(sort) === FAMILY_SEQ ||
+      manager.isCharSort(sort)
+    )
+      return getManagerSomeValue(manager, sort);
     if (this.isFinal) {
       const first = manager.isUninterpretedSort(sort)
         ? this.values.get(sort)?.[Symbol.iterator]().next().value
