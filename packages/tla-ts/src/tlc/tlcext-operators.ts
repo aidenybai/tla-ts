@@ -1,5 +1,4 @@
 import {
-  defineHigherOrderOperator,
   defineLazyOperator,
   defineOperator,
   defineStateOperator,
@@ -41,7 +40,6 @@ import {
   getFingerprintError,
   getSequenceElements,
   getValueKey,
-  isEqualLikeTlc,
   isFunctionValue,
   toFiniteSet,
   valuesEqual,
@@ -160,10 +158,7 @@ const mentionsVariables = (
   return getChildren(expression).some((child) => mentionsVariables(child, environment, visited));
 };
 
-export const createTlcExtOperators = (
-  print: (text: string) => void,
-  runtime: CheckerRuntime,
-): Builtin[] => {
+export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
   const globalCaches = new Map<Expression, Map<string, Value>>();
   const stateCaches = new WeakMap<(Value | undefined)[], Map<Expression, Map<string, Value>>>();
   const getStateCaches = (state: (Value | undefined)[]) => {
@@ -172,17 +167,6 @@ export const createTlcExtOperators = (
     return caches;
   };
   return [
-    defineOperator("AssertEq", 2, (args) => {
-      const left = getValue(args, 0, "AssertEq");
-      const right = getValue(args, 1, "AssertEq");
-      const isEqual = isEqualLikeTlc(left, right);
-      if (!isEqual) {
-        print(formatValue("Assertion failed", true));
-        print(formatValue(left, true));
-        print(formatValue(right, true));
-      }
-      return isEqual;
-    }),
     defineLazyOperator("AssertError", 2, (args) => {
       const message = getOperator(args, 0, "AssertError").expression;
       if (message && message.kind !== "String") {
@@ -205,21 +189,6 @@ export const createTlcExtOperators = (
       const key = getValue(args, 0, "TLCGetOrDefault");
       return getRegister(runtime, key) ?? getValue(args, 1, "TLCGetOrDefault");
     }),
-    {
-      ...defineHigherOrderOperator("TLCGetAndSet", 4, (args) => {
-        const key = getValue(args, 0, "TLCGetAndSet");
-        const previous = getRegister(runtime, key) ?? getValue(args, 3, "TLCGetAndSet");
-        const update = getOperator(args, 1, "TLCGetAndSet");
-        setTlcValue(
-          runtime,
-          print,
-          key,
-          update.call([previous, getValue(args, 2, "TLCGetAndSet")]),
-        );
-        return previous;
-      }),
-      isStateLevel: true,
-    },
     defineStateOperator("Trace", 0, (_, context) => {
       const variables = context?.environment.variables ?? [];
       // TLC evaluates an assumption in an empty state, which assigns none of the variables.

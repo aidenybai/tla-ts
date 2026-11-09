@@ -398,7 +398,11 @@ export const createEnvironment = (
   const getStandardSymbols = (name: string) => {
     const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     // SANY reads a user's module before a standard one, so a standard module using it is linked.
-    if ([name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined))
+    // TLCExt defines AssertEq and TLCGetAndSet in TLA+, so it is linked from its source too.
+    if (
+      name === "TLCExt" ||
+      [name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined)
+    )
       return undefined;
     const symbols = addStandardModule(name);
     if (symbols) useModule(name, dependencies);
