@@ -31,7 +31,6 @@ import type {
 import { parseConfig } from "../config";
 import { checkDepthFirst, type DepthFirstOutput } from "../dfid";
 import {
-  getErrorExitCode,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
@@ -74,6 +73,7 @@ import {
   getInputPaths,
   getToolsJar,
   getStandardModulesUrl,
+  getTopLevelExitCode,
   printError,
   printMissingFile,
   printMissingFile174,
@@ -844,7 +844,7 @@ const checkSpec = async (
       printError(error, printer);
     }
     printFinished();
-    return getErrorExitCode(error);
+    return getTopLevelExitCode(error);
   };
   // TLC reads the configuration file before it parses the spec, and prints how long it ran even
   // when it can't read it.

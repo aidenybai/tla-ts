@@ -10,7 +10,7 @@ import {
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "../errors";
-import { getMessageExitStatus, setExitCode } from "../exit-codes";
+import { setExitCode } from "../exit-codes";
 import type { TlcVersion } from "./version";
 
 export const MESSAGE_CODE = {
@@ -21,6 +21,7 @@ export const MESSAGE_CODE = {
   nestedExpression: 2103,
   assumptionFalse: 2104,
   assumptionEvaluationError: 2105,
+  unchangedVariableChanged: 2143,
   exceptAppliedToUnknownField: 2144,
   fingerprintFailed: 2147,
   initialStateIncomplete: 2106,
@@ -121,7 +122,7 @@ export const createMessagePrinter = (
     print: (code, level, text) => {
       const isWarning = level === MESSAGE_LEVEL.warning;
       if (isWarning && errorCodes.includes(code)) {
-        throw setExitCode(new TlaWarningAsError(code, text), getMessageExitStatus(code));
+        throw new TlaWarningAsError(code, text);
       }
       if (isWarning && !isWarningEnabled) return;
       if (level !== MESSAGE_LEVEL.error && suppressedCodes.includes(code)) return;
@@ -155,6 +156,8 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2117, "Failed to recover the next state from its fingerprint.", true],
   [2123, "Failed to recover the initial state from its fingerprint.", true],
   [2132, "The first argument of Assert evaluated to FALSE; the second argument was:\n%1%", true],
+  [2143, "The variable %1% was changed while it is specified as UNCHANGED at\n%2%", false],
+  [2144, "The EXCEPT was applied to non-existing fields of the value at\n%1%", false],
   [2145, "TLCGet(%1%) was undefined.", true],
   [
     2154,

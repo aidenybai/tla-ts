@@ -203,12 +203,7 @@ export const reportStartup = (
   onProgress: CheckOptions["onProgress"],
 ) => {
   const environment = specification.environment;
-  const warned = new Set<string>();
-  environment.runtime.warn = (code, text) => {
-    if (warned.has(text)) return;
-    warned.add(text);
-    onProgress?.({ kind: "warning", code, text });
-  };
+  environment.runtime.warn = (code, text) => onProgress?.({ kind: "warning", code, text });
   onProgress?.({ kind: "parsed" });
   // TLC loads the classes of the modules before it computes the constant definitions.
   specification.javaOverrides.forEach((override) =>

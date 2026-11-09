@@ -17,7 +17,6 @@ export interface CheckerRuntime {
     | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: (() => void) | undefined;
-  // TLC prints each distinct warning once.
   warn: (code: number, text: string) => void;
   // TLC's -nowarning turns the warnings off, and with them the shortcut that evaluates the rest
   // of an action once it assigns every variable, since that shortcut skips a warning.

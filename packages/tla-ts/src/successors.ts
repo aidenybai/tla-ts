@@ -44,7 +44,13 @@ import {
 } from "./evaluate";
 import { mapChildren } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
-import { getEnabledFailure, isAssignedShortcut, LITERAL_KINDS, replayEnabled } from "./tlc/replay";
+import {
+  getEnabledFailure,
+  isAssignedShortcut,
+  LITERAL_KINDS,
+  replayEnabled,
+  warnChangedUnchanged,
+} from "./tlc/replay";
 import {
   formatValue,
   getStreamedElements,
@@ -83,7 +89,7 @@ type Runner = (
 type Conjunct = { expression: Expression } & (
   | { kind: "Guard" }
   | { kind: "Assign"; index: number; value: Expression }
-  | { kind: "Unchanged"; indices: number[] }
+  | { kind: "Unchanged"; variables: UnchangedVariable[] }
   | { kind: "Branch"; runner: Runner }
 );
 
@@ -230,24 +236,29 @@ const isPossiblyAssignable = (target: Expression, isInit: boolean) =>
   (target.kind === "Identifier" && (isInit || isLocallyResolved(target))) ||
   (!isInit && target.kind === "Prime");
 
-const getUnchangedIndices = (
+interface UnchangedVariable {
+  index: number;
+  expression: Expression;
+}
+
+const getUnchangedVariables = (
   expression: Expression,
   environment: Environment,
   visited = new Set<string>(),
-): number[] | undefined => {
+): UnchangedVariable[] | undefined => {
   if (expression.kind === "Tuple") {
-    const indices = expression.elements.map((element) =>
-      getUnchangedIndices(element, environment, visited),
+    const variables = expression.elements.map((element) =>
+      getUnchangedVariables(element, environment, visited),
     );
-    return indices.every((item) => item !== undefined) ? indices.flat() : undefined;
+    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
   }
   if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
   const index = environment.variableIndex.get(expression.name);
-  if (index !== undefined) return [index];
+  if (index !== undefined) return [{ index, expression }];
   const definition = getZeroArityBody(expression.name, environment);
   if (!definition) return undefined;
   visited.add(expression.name);
-  return getUnchangedIndices(definition.body, environment, visited);
+  return getUnchangedVariables(definition.body, environment, visited);
 };
 
 const ACTION_KINDS = new Set([
@@ -345,8 +356,8 @@ const toConjunct = (
     }
   }
   if (!isInit && expression.kind === "Unchanged") {
-    const indices = getUnchangedIndices(expression.expression, environment);
-    if (indices) return { kind: "Unchanged", expression, indices };
+    const variables = getUnchangedVariables(expression.expression, environment);
+    if (variables) return { kind: "Unchanged", expression, variables };
   }
   if (isGuard(expression, environment, isInit)) return { kind: "Guard", expression };
   return { kind: "Branch", expression, runner: getRunner(expression, environment, isInit) };
@@ -425,12 +436,13 @@ const compileConjunction = (
         const state = run.current;
         if (!state) return;
         let unchanged: State | undefined;
-        for (const variable of conjunct.indices) {
-          const assigned = (unchanged ?? current)[variable];
+        for (const variable of conjunct.variables) {
+          const assigned = (unchanged ?? current)[variable.index];
           if (assigned === undefined) {
             unchanged ??= current.slice();
-            unchanged[variable] = state[variable];
-          } else if (!valuesEqual(assigned, state[variable])) {
+            unchanged[variable.index] = state[variable.index];
+          } else if (!valuesEqual(assigned, state[variable.index])) {
+            warnChangedUnchanged(run.environment, variable.index, variable.expression);
             return;
           }
         }
@@ -581,8 +593,8 @@ const compileFunctionAction = (
 };
 
 const compileUnchanged = (expression: Expression, environment: Environment): Runner => {
-  const indices = getUnchangedIndices(expression, environment);
-  if (indices) return compileConjunction([getUnchangedWrapper(expression)], environment, false);
+  if (getUnchangedVariables(expression, environment))
+    return compileConjunction([getUnchangedWrapper(expression)], environment, false);
   if (expression.kind === "Tuple")
     return getRunner(getUnchangedWrapper(expression), environment, false);
   const unchanged = getUnchangedWrapper(expression);
