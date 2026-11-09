@@ -27,6 +27,12 @@ export interface TlcArguments {
   errorCodes: number[];
   userFile: string | undefined;
   isUsage: boolean;
+  invariants: RuntimeInvariant[];
+}
+
+export interface RuntimeInvariant {
+  modules: string[];
+  expression: string;
 }
 
 // TLC prints a command line error as -tool asks only if -tool came first. An argument TLC reads
@@ -142,6 +148,7 @@ const createDefaults = (): TlcArguments => ({
   errorCodes: [],
   userFile: undefined,
   isUsage: false,
+  invariants: [],
 });
 
 const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
@@ -250,7 +257,14 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       continue;
     }
     if (flag === "-inv") {
-      if (take() === undefined) return getMissing();
+      const expression = take();
+      if (expression === undefined) return getMissing();
+      parsed.invariants.push({
+        modules: [
+          ...new Set([...expression.matchAll(/INSTANCE\s+(\w+)/g)].map((match) => match[1])),
+        ],
+        expression,
+      });
       continue;
     }
     if (flag === "-teSpecOutDir") {
@@ -274,6 +288,10 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       if (parseJavaInteger(text, 32) === undefined) {
         return reject(`Error: An integer for -invlevel required. But encountered ${text}`);
       }
+      parsed.invariants.push({
+        modules: ["TLC", "Naturals"],
+        expression: `LET _T == INSTANCE TLC _N == INSTANCE Naturals IN _N!<(_T!TLCGet("level"), ${text})`,
+      });
       continue;
     }
     if (flag === "-debugger") {
