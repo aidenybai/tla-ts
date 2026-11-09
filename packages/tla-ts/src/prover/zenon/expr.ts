@@ -93,17 +93,20 @@ const SKELETONS = {
 
 const ZERO = toInt63(0);
 
+// Most expressions have no metavariables, and share this list.
+const NO_METAS: Expr[] = [];
+
 const makeConstant = (kind: "true" | "false", id: number, skeleton: Int63): ConstantExpr => ({
-  id,
   kind,
   symbol: "",
   args: [],
+  id,
   hash: createHasher().hashIntAndStrings(skeleton.high, skeleton.low, undefined),
   skeleton,
   freeVars: undefined,
   size: 1,
   taus: 0,
-  metas: [],
+  metas: NO_METAS,
 });
 
 export const TRUE = makeConstant("true", 0, SKELETONS.true);
@@ -155,6 +158,7 @@ export const difference = (left: Expr[], right: Expr[]) =>
 
 // Zenon's union on small sets: the first list's new elements in reverse, then the second list.
 export const union = (left: Expr[], right: Expr[]) => {
+  if (left.length === 0) return right;
   const added = difference(left, right);
   return added.length === 0 ? right : [...added.reverse(), ...right];
 };
@@ -284,7 +288,8 @@ export const createExpressions = () => {
   // expressions are equal exactly when their kind, symbol and children are, so they're found by
   // those before their hash is computed.
   const binders = new Map<number, BinderExpr[]>();
-  const interned = new Map<number, Expr[]>();
+  // Most keys have one expression, which the table holds without a list.
+  const interned = new Map<number, Expr | Expr[]>();
   // Numbers for the symbols, so an expression hashes by its symbol and children without strings.
   const symbolIds = new Map<string, number>();
   let nextId = FALSE.id + 1;
@@ -293,15 +298,20 @@ export const createExpressions = () => {
   // definitions, so the first name Zenon gives out is zenon_Vf.
   let nameCounter = "e";
 
-  const create = <Shape extends Pick<Expr, "kind" | "symbol" | "args">>(
-    shape: Shape,
+  // Every field is written in one literal, so the object holds them all in place.
+  const create = <Kind extends ExprKind, Symbol extends string, Args extends Expr[] | []>(
+    kind: Kind,
+    symbol: Symbol,
+    args: Args,
     skeleton: Int63,
     freeVars: List<string> | undefined,
     size: number,
     taus: number,
     metas: Expr[],
   ) => ({
-    ...shape,
+    kind,
+    symbol,
+    args,
     id: nextId++,
     hash: hasher.hashIntAndStrings(skeleton.high, skeleton.low, freeVars),
     skeleton,
@@ -336,38 +346,37 @@ export const createExpressions = () => {
   ): Result => {
     let key = getSymbolId(symbol);
     for (const arg of args) key = Math.imul(key, 0x01000193) ^ arg.id;
-    const bucket = interned.get(key);
-    const existing = bucket?.find(
-      (inner): inner is Result =>
-        inner.kind === kind &&
-        inner.symbol === symbol &&
-        inner.args.length === args.length &&
-        inner.args.every((child, index) => child === args[index]),
-    );
+    const entry = interned.get(key);
+    const isMatch = (inner: Expr): inner is Result =>
+      inner.kind === kind &&
+      inner.symbol === symbol &&
+      inner.args.length === args.length &&
+      inner.args.every((child, index) => child === args[index]);
+    const existing = Array.isArray(entry)
+      ? entry.find(isMatch)
+      : entry !== undefined && isMatch(entry)
+        ? entry
+        : undefined;
     if (existing !== undefined) return existing;
     const result = build();
-    if (bucket === undefined) interned.set(key, [result]);
-    else bucket.push(result);
+    if (entry === undefined) interned.set(key, result);
+    else if (Array.isArray(entry)) entry.push(result);
+    else interned.set(key, [entry, result]);
     createdCount++;
     return result;
   };
 
   const evar = (name: string) =>
     intern("var", name, [], (): VarExpr =>
-      create(
-        { kind: "var", symbol: name, args: [] },
-        ZERO,
-        { head: name, tail: undefined },
-        1,
-        0,
-        [],
-      ),
+      create("var", name, [], ZERO, { head: name, tail: undefined }, 1, 0, NO_METAS),
     );
 
   const emeta = (quantified: Expr) =>
     intern("meta", "", [quantified], (): MetaExpr =>
       create(
-        { kind: "meta", symbol: "", args: [quantified] },
+        "meta",
+        "",
+        [quantified],
         combine(SKELETONS.meta, quantified.skeleton),
         undefined,
         1,
@@ -382,7 +391,7 @@ export const createExpressions = () => {
       let freeVars: List<string> | undefined = undefined;
       let size = 1;
       let taus = 0;
-      let metas: Expr[] = [];
+      let metas = NO_METAS;
       for (const arg of args) {
         skeleton = combine(arg.skeleton, skeleton);
         freeVars = unionNames(freeVars, arg.freeVars);
@@ -391,7 +400,9 @@ export const createExpressions = () => {
         metas = union(arg.metas, metas);
       }
       return create(
-        { kind: "app", symbol, args },
+        "app",
+        symbol,
+        args,
         combine(SKELETONS.app, skeleton),
         freeVars,
         size,
@@ -403,7 +414,9 @@ export const createExpressions = () => {
   const enot = (operand: Expr) =>
     intern("not", "", [operand], (): NotExpr =>
       create(
-        { kind: "not", symbol: "", args: [operand] },
+        "not",
+        "",
+        [operand],
         combine(SKELETONS.not, operand.skeleton),
         operand.freeVars,
         operand.size + 1,
@@ -415,7 +428,9 @@ export const createExpressions = () => {
   const binary = (kind: "and" | "or" | "imply" | "equiv", left: Expr, right: Expr) =>
     intern(kind, "", [left, right], (): BinaryExpr =>
       create(
-        { kind, symbol: "", args: [left, right] },
+        kind,
+        "",
+        [left, right],
         combine(SKELETONS[kind], combine(left.skeleton, right.skeleton)),
         unionNames(left.freeVars, right.freeVars),
         left.size + right.size + 1,
@@ -432,7 +447,9 @@ export const createExpressions = () => {
   ) =>
     mergeBinder(
       create(
-        { kind, symbol: type, args: [variable, body] },
+        kind,
+        type,
+        [variable, body],
         combine(SKELETONS[kind], combine(toInt63(hasher.hashString(type)), body.skeleton)),
         removeName(variable.symbol, body.freeVars),
         kind === "tau" || kind === "lam" ? 1 : body.size + 1,
