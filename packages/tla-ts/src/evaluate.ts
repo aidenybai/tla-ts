@@ -852,11 +852,33 @@ export const evaluateStartupDefinitions = (definitions: Definition[], environmen
     }
   });
 
+// TLC reuses a cached value while each variable the cached state assigns keeps its value.
+const isStateWithin = (state: State | undefined, cached: State | undefined) => {
+  if (cached === undefined || state === cached) return true;
+  try {
+    return cached.every(
+      (value, index) =>
+        value === undefined || (state?.[index] !== undefined && valuesEqual(state[index], value)),
+    );
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return false;
+    throw error;
+  }
+};
+
 const forceThunk = (thunk: Thunk, context: Context) => {
-  const isSameState = thunk.state === context.state && thunk.next === context.next;
-  if (isSameState && thunk.cache !== undefined) return thunk.cache;
+  const cache = thunk.cache;
+  const isCached =
+    cache !== undefined &&
+    isStateWithin(context.state, thunk.state) &&
+    isStateWithin(context.next, thunk.next);
+  if (isCached) return cache;
   const value = evaluate(thunk.expression, withScope(context, thunk.scope));
-  if (isSameState && (!thunk.isStreamed || isSettledValue(value))) thunk.cache = value;
+  if (!thunk.isStreamed || isSettledValue(value)) {
+    thunk.cache = value;
+    thunk.state = context.state;
+    thunk.next = context.next;
+  }
   return value;
 };
 
