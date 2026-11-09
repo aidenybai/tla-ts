@@ -12,7 +12,6 @@ import {
   bindDefinitions,
   bindOperatorArguments,
   evaluate,
-  expectBoolean,
   forEachBinding,
   forEachBoundElement,
   getBoundElements,
@@ -40,7 +39,7 @@ import {
   type LiveEnabled,
   type LiveExpression,
 } from "./tableau";
-import type { Value } from "./values";
+import { isEqualLikeTlc, type Value } from "./values";
 
 export interface ScopedExpression {
   expression: Expression;
@@ -335,15 +334,11 @@ export const toLiveExpression = (
       return {
         kind: "Action",
         expression: expression.action,
-        unchanged: {
-          kind: "Unchanged",
-          expression: expression.subscript,
-          location: expression.location,
-        },
+        subscript: expression.subscript,
         scope,
       };
     }
-    return { kind: "Action", expression, unchanged: undefined, scope };
+    return { kind: "Action", expression, subscript: undefined, scope };
   };
 
   const expansion = { depth: 0 };
@@ -561,11 +556,7 @@ export const toLiveExpression = (
         const taken: LiveExpression = {
           kind: "Action",
           expression: expression.action,
-          unchanged: {
-            kind: "Unchanged",
-            expression: expression.subscript,
-            location: step.location,
-          },
+          subscript: expression.subscript,
           scope,
           enabled,
         };
@@ -618,13 +609,17 @@ export const evaluateLive = (
     }
     case "Action": {
       if (expression.enabled && stateCache.get(expression.enabled) === false) return false;
-      const context = { environment, scope: expression.scope, state, next };
+      const scope = expression.scope;
+      const subscript = expression.subscript;
       if (
-        expression.unchanged &&
-        expectBoolean(evaluate(expression.unchanged, context), "a subscript")
+        subscript &&
+        isEqualLikeTlc(
+          evaluate(subscript, { environment, scope, state, next: undefined }),
+          evaluate(subscript, { environment, scope, state: next, next: undefined }),
+        )
       )
         return false;
-      const value = evaluate(expression.expression, context);
+      const value = evaluate(expression.expression, { environment, scope, state, next });
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
       }

@@ -550,7 +550,6 @@
   "tlc/temporal/counterexample/postcondition_after_liveness_violation": "text-mismatch",
   "tlc/temporal/counterexample/safety_like_continue": "exit-mismatch",
   "tlc/temporal/formula/enabled_lambda_higher_order": "exit-mismatch",
-  "tlc/temporal/formula/subscript_eval_error_in_check": "text-mismatch",
   "tlc/temporal/implied_action/in_instance_substituted": "text-mismatch",
   "tlc/temporal/implied_action/subscript_eval_error_when_body_false": "text-mismatch",
   "tlc/temporal/next_subscript/instance_subscript_partial": "text-mismatch",
