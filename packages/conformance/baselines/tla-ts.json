@@ -487,7 +487,6 @@
   "tlc/imported/sany/syntax/sets/sets_mistaken_set_filter_tuples_test": "text-mismatch",
   "tlc/imported/tlc/tool/DepthFirstDieHardTest/DieHard": "exit-mismatch",
   "tlc/imported/tlc/tool/EvalExceptionTest/DistBakery": "text-mismatch",
-  "tlc/imported/tlc/tool/Github362Test/Github362": "text-mismatch",
   "tlc/imported/tlc/tool/Github687specATest/Github687spec": "message-mismatch",
   "tlc/imported/tlc/tool/Github687specDTest/Github687spec": "message-mismatch",
   "tlc/imported/tlc/tool/Github715bTest/Github715": "exit-mismatch",

@@ -1417,7 +1417,9 @@ export const createEnvironment = (
         getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
           (name) => {
             const definition = definitions.get(linked.visible.get(name)?.key ?? name);
-            return definition ? [definition] : [];
+            // TLC doesn't compute the copy of a definition from a module instantiated with
+            // substitutions.
+            return definition && !substitutedDefinitions.has(definition) ? [definition] : [];
           },
         ),
       ),

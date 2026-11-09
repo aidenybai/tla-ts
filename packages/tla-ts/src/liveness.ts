@@ -16,6 +16,7 @@ import {
   forEachBoundElement,
   getBoundElements,
   getDefinition,
+  getStartupValue,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
@@ -232,11 +233,13 @@ export const expandTemporal = (
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);
+    // TLC expands a definition it didn't compute at startup, even a constant one.
     if (
       !binding &&
       definition?.kind === "Operator" &&
       definition.params.length === 0 &&
-      getDefinitionLevel(definition, environment) > CONSTANT_LEVEL
+      (getDefinitionLevel(definition, environment) > CONSTANT_LEVEL ||
+        getStartupValue(definition, environment) === undefined)
     ) {
       if (expanding.has(definition)) {
         throw createStackOverflowError();
