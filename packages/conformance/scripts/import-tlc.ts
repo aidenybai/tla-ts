@@ -69,6 +69,16 @@ interface PendingTest {
   isOutcomeObserved: boolean;
 }
 
+// TLC's output for these leaks a Java exception or an internal name.
+const TLC_BUG_MODULES = new Set([
+  "PrintTraceException",
+  "E4294_Module_Test",
+  "sets_mistaken_set_filter_tuples_test",
+]);
+
+const getFeatures = (feature: string, moduleName: string) =>
+  TLC_BUG_MODULES.has(moduleName) ? [feature, "tlc-bug"] : [feature];
+
 const skipped: string[] = [];
 
 const listFiles = (directory: string): string[] =>
@@ -203,7 +213,7 @@ const portModelTest = (javaPath: string): PendingTest | undefined => {
   const metadata: TestMetadata = {
     description: `Ported from TLC's ${className}.`,
     source: `${TOOLS_PATH}/${relative(toolsDirectory, javaPath)}`,
-    features: [isSuite ? "tlc-suite" : "tlc-regression"],
+    features: getFeatures(isSuite ? "tlc-suite" : "tlc-regression", specName),
     ...(moduleText.includes("AssertError(") ? { flags: ["exit-only"] } : {}),
     outcome,
     ...(!isEmbeddedConfig && existsSync(configPath)
@@ -232,7 +242,7 @@ const portSemanticCorpus = () =>
       metadata: {
         description: `Ported from SANY's semantic corpus: ${basename(path)}.`,
         source: `${TOOLS_PATH}/${relative(toolsDirectory, path)}`,
-        features: ["sany-semantic"],
+        features: getFeatures("sany-semantic", basename(path, ".tla")),
         outcome: "success",
       },
       fixtures: [],
@@ -252,7 +262,7 @@ const portErrorCorpus = () =>
         metadata: {
           description: `SANY reports ${moduleName.split("_")[0]}. Ported from SANY's error corpus.`,
           source: `${TOOLS_PATH}/${relative(toolsDirectory, path)}`,
-          features: ["sany-errors"],
+          features: getFeatures("sany-errors", moduleName),
           outcome: isWarning ? "success" : "parse-error",
         },
         fixtures: [],
@@ -293,7 +303,7 @@ const portParserCorpus = () =>
             metadata: {
               description: `${title}. Ported from SANY's syntax corpus.`,
               source: `${TOOLS_PATH}/${relative(toolsDirectory, path)}`,
-              features: ["sany-syntax"],
+              features: getFeatures("sany-syntax", slug),
               outcome: "success",
             },
             fixtures: [],

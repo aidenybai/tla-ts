@@ -3,6 +3,7 @@ description: Ported from TLC's PrintTraceExceptionTest.
 source: tlatools/org.lamport.tlatools/test/tlc2/tool/PrintTraceExceptionTest.java
 features:
   - tlc-regression
+  - tlc-bug
 outcome: safety-violation
 config: |
   INIT Init
