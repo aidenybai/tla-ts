@@ -1964,7 +1964,12 @@ const compileField = (program: Program, record: Compiled, field: string): Compil
         return position === -1 ? "H.deopt()" : `(${code})[${position}]`;
       }
       const name = getName(program, "r");
-      return `((${name}) => H.at(${name}, ${getFieldIndexCode(program, record.type, field, name)}))(${code})`;
+      const index = getFieldIndexCode(program, record.type, field, name);
+      if (resolved.kind === "Rec" && resolved.shapes.every((shape) => shape.includes(field))) {
+        return `((${name}) => ${name}[${index}])(${code})`;
+      }
+      // A shape without the field has the index -1.
+      return `((${name}) => { const i = ${index}; return i >= 0 ? ${name}[i] : H.deopt(); })(${code})`;
     },
   };
 };

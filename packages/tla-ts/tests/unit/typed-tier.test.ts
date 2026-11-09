@@ -99,6 +99,7 @@ describe("typed tier matches TLC", () => {
     ["TupleLengths", "error", undefined],
     ["OperatorDomains", "error", undefined],
     ["SubSeqRanges", "error", undefined],
+    ["MissingFields", "error", undefined],
   ])("reports the property %s violates, as TLC does", async (name, status, property) => {
     const result = await checkFixture(name, true);
     expect([result.status, result.violation?.name]).toEqual([status, property]);
