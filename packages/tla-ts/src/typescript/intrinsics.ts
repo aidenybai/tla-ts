@@ -202,10 +202,15 @@ const getBuiltInValue = (name: string, node: ts.Node, context: Context) => {
   return useJavaScript(":>", [identifier("Ref"), string(name)], context);
 };
 
-// Function.prototype, which the constructor object of a class inherits from.
-export const translateFunctionPrototype = (node: ts.Node, context: Context) => {
-  context.builtIns.add("Function.prototype");
-  return getBuiltInValue("Function.prototype", node, context);
+// Function.prototype, which the constructor object of a class inherits from, or Array.prototype,
+// which an array that the heap holds inherits from.
+export const translatePrototype = (
+  name: "Function.prototype" | "Array.prototype",
+  node: ts.Node,
+  context: Context,
+) => {
+  context.builtIns.add(name);
+  return getBuiltInValue(name, node, context);
 };
 
 // A built-in object. A script may change a property that a path to one reads, so a script reads

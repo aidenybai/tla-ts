@@ -28,12 +28,29 @@ import {
   getBuiltIn,
   isBuiltInObject,
   translateBuiltInObject,
-  translateFunctionPrototype,
+  translatePrototype,
 } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { createStateScope, type Scope } from "./scope";
-import { apply, boolean, functionFrom, identifier, junction, number, record, string } from "./tla";
-import { getKind, isEvery, isHeapType, isNumberLike } from "./types";
+import {
+  apply,
+  boolean,
+  functionFrom,
+  identifier,
+  junction,
+  number,
+  record,
+  string,
+  tuple,
+} from "./tla";
+import {
+  getArrayLiteral,
+  getKind,
+  isEvery,
+  isHeapType,
+  isNumberLike,
+  isSequenceType,
+} from "./types";
 
 const SHORT_CIRCUITS = new Set([
   ts.SyntaxKind.AmpersandAmpersandToken,
@@ -349,7 +366,11 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
     define(
       define(
         define(
-          useJavaScript("ClassObject", [translateFunctionPrototype(node, context)], context),
+          useJavaScript(
+            "ClassObject",
+            [translatePrototype("Function.prototype", node, context)],
+            context,
+          ),
           string("length"),
           number(length === -1 ? parameters.length : length),
           [false, false, true],
@@ -457,6 +478,17 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   }
   if (ts.isObjectLiteralExpression(node)) {
     return useJavaScript("Allocate", [heap, translateObject(node, scope, context)], context);
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    const array = useJavaScript(
+      "ArrayObject",
+      [
+        translatePrototype("Array.prototype", node, context),
+        tuple(node.elements.map((element) => translateExpression(element, scope, context))),
+      ],
+      context,
+    );
+    return useJavaScript("Allocate", [heap, array], context);
   }
   if (isNewObject(node, context)) {
     return useJavaScript("Allocate", [heap, identifier("EmptyObject")], context);
@@ -606,6 +638,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
   const created = getNewClass(node, context);
   const isAllocated =
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
+    (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
     isNewObject(node, context) ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes &&
@@ -613,6 +646,96 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
       ts.isNewExpression(node) &&
       (getRunConstructor(created) === undefined || isStatementNew(node)));
   return isAllocated ? [...nested, node] : nested;
+};
+
+// The Object functions that treat an array as an object, so that the heap holds the array.
+const ARRAY_OBJECT_USES = new Set([
+  "defineProperty",
+  "defineProperties",
+  "getOwnPropertyDescriptor",
+  "getOwnPropertyDescriptors",
+  "freeze",
+  "seal",
+  "preventExtensions",
+  "isExtensible",
+  "isFrozen",
+  "isSealed",
+  "getPrototypeOf",
+  "setPrototypeOf",
+]);
+
+// Whether an array that the heap holds may appear here, where tla-ts reads it as an object.
+const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
+  const parent = node.parent;
+  if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
+    return parent.expression === node;
+  }
+  if (ts.isTypeOfExpression(parent)) return true;
+  if (ts.isBinaryExpression(parent)) {
+    const kind = parent.operatorToken.kind;
+    return (
+      kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+      kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      (kind === ts.SyntaxKind.InKeyword && parent.right === node)
+    );
+  }
+  if (!ts.isCallExpression(parent) || !parent.arguments.some((argument) => argument === node)) {
+    return false;
+  }
+  const callee = parent.expression.getText();
+  const parameter = context.checker.getContextualType(node);
+  return (
+    /^Object\.\w+$/.test(callee) ||
+    callee === "Array.isArray" ||
+    /^Array\.prototype\.\w+\.call$/.test(callee) ||
+    (parameter !== undefined &&
+      (parameter.flags & ts.TypeFlags.Any) === 0 &&
+      !isSequenceType(context.checker.getNonNullableType(parameter), context.checker))
+  );
+};
+
+// The array literals that a script passes to the Object functions that treat arrays as objects.
+// Each use of a variable that holds one must read it as an object.
+export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
+  const arrays = new Set<ts.ArrayLiteralExpression>();
+  const find = (node: ts.Node) => {
+    const argument = ts.isCallExpression(node) ? node.arguments.at(0) : undefined;
+    const callee = ts.isCallExpression(node) ? node.expression : undefined;
+    const literal = argument === undefined ? undefined : getArrayLiteral(argument, context);
+    if (
+      literal !== undefined &&
+      callee !== undefined &&
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "Object" &&
+      ARRAY_OBJECT_USES.has(callee.name.text) &&
+      literal.elements.every(
+        (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
+      )
+    ) {
+      arrays.add(literal);
+    }
+    ts.forEachChild(node, find);
+  };
+  find(sourceFile);
+  const check = (node: ts.Node) => {
+    if (
+      ts.isIdentifier(node) &&
+      !(ts.isVariableDeclaration(node.parent) && node.parent.name === node) &&
+      !isArrayObjectUse(node, context)
+    ) {
+      const literal = getArrayLiteral(node, context);
+      if (literal !== undefined && arrays.has(literal)) {
+        throw new TlaTypeScriptError(
+          "Use an array that tla-ts holds as an object only through its properties",
+          node,
+        );
+      }
+    }
+    ts.forEachChild(node, check);
+  };
+  if (arrays.size > 0) check(sourceFile);
+  return arrays;
 };
 
 // The operators of the built-in functions that change an object's properties, with how many
@@ -634,16 +757,25 @@ export const isObjectChange = (node: ts.Node): node is MethodCall =>
     OBJECT_CHANGES.has(node.expression.name.text)) ||
     isConstruct(node));
 
-// The error that JavaScript itself may throw where a node runs.
-// The error that JavaScript itself may throw where a node runs, which instanceof checks for: a
+// The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
 // failed definition or Reflect.construct, a new of a value that isn't a constructor, or a reduce
-// of an empty array.
-export const getEngineError = (node: ts.Node) =>
-  (isObjectChange(node) && (node.expression.name.text.startsWith("define") || isConstruct(node))) ||
-  ts.isNewExpression(node) ||
-  (isMethodCall(node) && node.expression.name.text.startsWith("reduce"))
-    ? "TypeError"
-    : undefined;
+// of an empty array, and the RangeError of an array's invalid length.
+export const getEngineErrors = (node: ts.Node, context: Context) => {
+  const isDefinition = isObjectChange(node) && node.expression.name.text.startsWith("define");
+  if (
+    isDefinition &&
+    context.heapArrays.size > 0 &&
+    getArrayLiteral(node.arguments[0], context) !== undefined
+  ) {
+    return ["TypeError", "RangeError"];
+  }
+  return isDefinition ||
+    (isObjectChange(node) && isConstruct(node)) ||
+    ts.isNewExpression(node) ||
+    (isMethodCall(node) && node.expression.name.text.startsWith("reduce"))
+    ? ["TypeError"]
+    : [];
+};
 
 // Reflect.construct of a function with an empty body, without arguments, only checks that its
 // target and its newTarget are constructors, as harness/isConstructor.js uses it.
@@ -682,6 +814,7 @@ const translateConstruct = (node: MethodCall, scope: Scope, context: Context) =>
                 context,
               ),
       },
+      { name: "isRangeError", value: boolean(false) },
     ]),
     isFallible: true,
   };

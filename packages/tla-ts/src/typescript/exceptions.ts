@@ -3,7 +3,7 @@ import type { Expression } from "../ast";
 import { type Context, getHeapClass, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
-import { getEngineError, getHeap, translateObjectValue } from "./heap";
+import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { getKind } from "./types";
@@ -135,10 +135,9 @@ const isCaught = (node: ts.Expression, context: Context) => {
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
   const visit = (child: ts.Node) => {
-    const thrown = getEngineError(child);
     [
       ts.isNewExpression(child) ? getSymbol(child.expression, context.checker) : undefined,
-      thrown && getNative(thrown, child, context),
+      ...getEngineErrors(child, context).map((thrown) => getNative(thrown, child, context)),
     ].forEach((created) => {
       const classes = getErrorClass(created, context.checker);
       if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));

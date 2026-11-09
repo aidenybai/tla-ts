@@ -958,13 +958,23 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't throw the RangeError of with()");
   });
 
-  it("fails the check where defineProperty takes an array, which isn't in the heap", async () => {
+  it("fails the check where defineProperty takes an array that isn't in the heap", async () => {
     const result = await check(
       compile(
-        `const values: object = [];\nObject.defineProperty(values, "0", { value: 1 });\nlet result = 1;`,
+        `const values: object = [0].slice(1);\nObject.defineProperty(values, "0", { value: 1 });\nlet result = 1;`,
       ),
     );
     expect(result.failure?.message).toContain("tla-ts can't use <<>> as an object here");
+  });
+
+  it("rejects an array in the heap where it's read as a value", () => {
+    expect(() =>
+      compile(
+        `const values = [1];\nObject.defineProperty(values, "0", { value: 2 });\nconst copy = values;`,
+      ),
+    ).toThrow(
+      "spec.ts:3:14 Use an array that tla-ts holds as an object only through its properties",
+    );
   });
 
   it("rejects division without rounding", () => {

@@ -186,7 +186,7 @@ KeyOf(value) == IF value = NegativeZero THEN 0 ELSE value
 ArrayLength(value) ==
   IF value = NegativeZero \\/ (IsInteger(value) /\\ value >= 0)
   THEN Magnitude(value)
-  ELSE Assert(FALSE, "tla-ts can't throw the RangeError of new Array")
+  ELSE Assert(FALSE, "tla-ts can't throw the RangeError of an invalid array length")
 
 \\* An index after ToIntegerOrInfinity, counting back from length where it's negative. An infinite
 \\* index lands just past either end.
@@ -327,11 +327,23 @@ Define(object, key, value, isWritable, isEnumerable, isConfigurable) ==
 ClassObject(functionPrototype) ==
   [EmptyObject EXCEPT !.isCallable = TRUE, !.prototype = functionPrototype]
 
+\\* Whether one string of digits is below another of the same length.
+RECURSIVE DigitsBelow(_, _)
+DigitsBelow(left, right) ==
+  LET digit(text) == CHOOSE value \\in 0..9 : ToString(value) = SubSeq(text, 1, 1)
+  IN /\\ left # ""
+     /\\ \\/ digit(left) < digit(right)
+        \\/ digit(left) = digit(right) /\\ DigitsBelow(Tail(left), Tail(right))
+
+\\* An array index is below 2^32 - 1, where TLC's integers hold only those below 2^31.
 LOCAL IsIndex(key) ==
   /\\ Len(key) > 0
   /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
   /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
-  /\\ Assert(Len(key) < 10, "tla-ts can't order keys this big")
+  /\\ \\/ Len(key) < 10
+     \\/ /\\ Len(key) = 10
+        /\\ Assert(~DigitsBelow(key, "4294967295"), "tla-ts can't order keys this big")
+        /\\ FALSE
 
 RECURSIVE ToIndex(_)
 ToIndex(key) ==
@@ -483,8 +495,10 @@ LOCAL ParseFitting(text, radix) ==
 
 LOCAL Prefix(text, length) == IF Len(text) < length THEN text ELSE SubSeq(text, 1, length)
 
-\\* ToLength of a string: ToNumber's grammar, without whitespace, truncated and clamped at 0.
-LOCAL ToLengthOfText(text) ==
+\\* ToNumber of a string, without whitespace, which Use takes as its kind, its sign, and its
+\\* magnitude truncated toward 0. TLC evaluates an argument only where Use reads it, so a magnitude
+\\* too big for TLC doesn't stop the check where Use doesn't need it.
+LOCAL ReadNumber(text, Use(_, _, _)) ==
   LET prefix == Prefix(text, 2)
       body == SubSeq(text, 3, Len(text))
       radix == CASE prefix \\in {"0x", "0X"} -> 16
@@ -513,18 +527,31 @@ LOCAL ToLengthOfText(text) ==
       shift ==
         (IF Prefix(exponentText, 1) = "-" THEN -1 ELSE 1) * ParseFitting(exponentDigits, 10)
           - Len(fraction)
-  IN CASE text = "" -> 0
+      kept == Len(significand) + shift
+      magnitude ==
+        CASE significand = "0" \\/ kept <= 0 -> 0
+          [] shift >= 0 -> ParseFitting(significand, 10) * 10 ^ shift
+          [] OTHER -> ParseFitting(SubSeq(significand, 1, kept), 10)
+      isExact ==
+        \\/ significand = "0"
+        \\/ shift >= 0
+        \\/ \\A position \\in (IF kept < 1 THEN 1 ELSE kept + 1)..Len(significand) :
+             SubSeq(significand, position, position) = "0"
+  IN CASE text = "" -> Use("integer", FALSE, 0)
        [] radix # 10 /\\ body # "" /\\ CharactersOf(body) \\subseteq DigitsOf(radix) ->
-            ParseFitting(body, radix)
-       [] isDecimal /\\ (isNegative \\/ significand = "0") -> 0
-       [] isDecimal /\\ shift >= 0 -> ParseFitting(significand, 10) * 10 ^ shift
-       [] isDecimal /\\ -shift >= Len(significand) -> 0
-       [] isDecimal -> ParseFitting(SubSeq(significand, 1, Len(significand) + shift), 10)
-       [] text = "-Infinity" -> 0
-       [] /\\ text \\notin {"Infinity", "+Infinity"}
-          /\\ CharactersOf(text) \\subseteq CharactersOf(Alphanumerics) \\cup {"+", "-", ".", "_", "!"} ->
-            0
-       [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(text) \\o " to a length")
+            Use("integer", FALSE, ParseFitting(body, radix))
+       [] isDecimal -> Use(IF isExact THEN "integer" ELSE "fraction", isNegative, magnitude)
+       [] text \\in {"Infinity", "+Infinity", "-Infinity"} -> Use("infinity", isNegative, 0)
+       [] CharactersOf(text) \\subseteq CharactersOf(Alphanumerics) \\cup {"+", "-", ".", "_", "!"} ->
+            Use("nan", FALSE, 0)
+       [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(text) \\o " to a number")
+
+\\* ToLength of a string, truncated and clamped at 0.
+LOCAL ToLengthOfText(text) ==
+  ReadNumber(text, LAMBDA kind, isNegative, magnitude :
+    CASE kind = "nan" \\/ isNegative -> 0
+      [] kind = "infinity" -> Assert(FALSE, "tla-ts can't convert " \\o ToString(text) \\o " to a length")
+      [] OTHER -> magnitude)
 
 \\* ToLength of a length property.
 ToLength(value) ==
@@ -613,14 +640,6 @@ IsPrototypeOf(heap, owner, ref) ==
   IN /\\ prototype # Null
      /\\ \\/ ToString(prototype) = ToString(owner)
         \\/ IsPrototypeOf(heap, owner, prototype)
-
-SetProperty(heap, ref, key, value) ==
-  LET accessor == AccessorOf(heap, ref, key)
-  IN CASE ~CanPut(heap, ref, key) ->
-            Assert(FALSE, "tla-ts can't throw the TypeError of a failed write")
-       [] accessor = Undefined -> Update(heap, ref, Put(Lookup(heap, ref), key, value))
-       [] accessor.set \\in DOMAIN ConstantFunctions -> heap
-       [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
 
 CanDelete(heap, ref, key) ==
   LET object == Lookup(heap, ref)
@@ -748,13 +767,105 @@ DefineAccessor(object, key, field, function, isEnumerable) ==
                       set |-> function, writable |-> FALSE, enumerable |-> isEnumerable,
                       configurable |-> TRUE])
 
+LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
+
+IsArray(heap, value) == IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
+
+\\* An array that a script makes, which holds its elements under their indices, and its length.
+ArrayObject(prototype, elements) ==
+  LET indices == {ToString(position - 1) : position \\in DOMAIN elements}
+  IN [keys |-> [position \\in DOMAIN elements |-> ToString(position - 1)] \\o <<"length">>,
+      values |-> [key \\in indices \\cup {"length"} |->
+                   IF key = "length" THEN Len(elements) ELSE elements[ToIndex(key) + 1]],
+      attributes |-> [key \\in indices \\cup {"length"} |->
+                       IF key = "length"
+                       THEN [Writable EXCEPT !.enumerable = FALSE, !.configurable = FALSE]
+                       ELSE Writable],
+      extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isOpaque |-> FALSE,
+      privates |-> <<>>, isArray |-> TRUE]
+
+\\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
+LOCAL ArrayLengthOf(value) ==
+  CASE value = Null -> 0
+    [] TypeOf(value) = "boolean" -> IF value THEN 1 ELSE 0
+    [] TypeOf(value) = "string" ->
+         ReadNumber(value, LAMBDA kind, isNegative, magnitude :
+           IF kind = "integer" /\\ (~isNegative \\/ magnitude = 0) THEN magnitude ELSE -1)
+    [] value = NegativeZero -> 0
+    [] IsInteger(value) /\\ value >= 0 -> value
+    [] IsNumber(value) \\/ value = Undefined -> -1
+    [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to an array length")
+
+LOCAL Ordinary(object, key, descriptor) ==
+  IF CanApply(object, key, descriptor)
+  THEN [object |-> Apply(object, key, descriptor), isDone |-> TRUE, isRangeError |-> FALSE]
+  ELSE [object |-> object, isDone |-> FALSE, isRangeError |-> FALSE]
+
+\\* ArraySetLength, which deletes the elements past a smaller length, from the last, and stops at
+\\* one it can't delete.
+LOCAL SetLength(object, descriptor) ==
+  LET length == ArrayLengthOf(descriptor.value)
+      removed == {key \\in DOMAIN object.values : IsIndex(key) /\\ ToIndex(key) >= length}
+      blocked == {ToIndex(key) : key \\in {other \\in removed : ~object.attributes[other].configurable}}
+      kept == IF blocked = {} THEN length ELSE (CHOOSE index \\in blocked : \\A other \\in blocked : other <= index) + 1
+      deleted == {key \\in removed : ToIndex(key) >= kept}
+      remaining == DOMAIN object.values \\ deleted
+      trimmed == [object EXCEPT !.keys = SelectSeq(@, LAMBDA key : key \\notin deleted),
+                                !.values = [key \\in remaining |-> @[key]],
+                                !.attributes = [key \\in remaining |-> @[key]]]
+  IN CASE length < 0 -> [object |-> object, isDone |-> FALSE, isRangeError |-> TRUE]
+       [] length >= object.values["length"] ->
+            Ordinary(object, "length", [descriptor EXCEPT !.value = length])
+       [] ~object.attributes["length"].writable -> [object |-> object, isDone |-> FALSE, isRangeError |-> FALSE]
+       [] ~CanApply(object, "length", [descriptor EXCEPT !.value = length, !.writable = TRUE]) ->
+            [object |-> object, isDone |-> FALSE, isRangeError |-> FALSE]
+       [] OTHER ->
+            [object |-> Apply(trimmed, "length", [descriptor EXCEPT !.value = kept]),
+             isDone |-> blocked = {},
+             isRangeError |-> FALSE]
+
+\\* An object's [[DefineOwnProperty]], where an index past an array's end grows its length.
+LOCAL DefineOwn(object, key, descriptor) ==
+  CASE ~IsArrayObject(object) -> Ordinary(object, key, descriptor)
+    [] key = "length" /\\ "value" \\in descriptor.fields -> SetLength(object, descriptor)
+    [] IsIndex(key) ->
+         LET length == object.values["length"]
+             defined == Ordinary(object, key, descriptor)
+         IN CASE ToIndex(key) >= length /\\ ~object.attributes["length"].writable ->
+                   [object |-> object, isDone |-> FALSE, isRangeError |-> FALSE]
+              [] ~defined.isDone \\/ ToIndex(key) < length -> defined
+              [] OTHER -> [defined EXCEPT !.object.values["length"] = ToIndex(key) + 1]
+    [] OTHER -> Ordinary(object, key, descriptor)
+
+\\* The descriptor of a write, which changes a property's value or makes a writable one.
+LOCAL WriteDescriptor(object, key, value) ==
+  [fields |-> IF key \\in DOMAIN object.values
+              THEN {"value"}
+              ELSE {"value", "writable", "enumerable", "configurable"},
+   isAccessor |-> FALSE, isData |-> TRUE, isValid |-> TRUE, value |-> value, get |-> Undefined,
+   set |-> Undefined, writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE]
+
+SetProperty(heap, ref, key, value) ==
+  LET accessor == AccessorOf(heap, ref, key)
+      object == Lookup(heap, ref)
+      written == DefineOwn(object, key, WriteDescriptor(object, key, value))
+      failed == Assert(FALSE, "tla-ts can't throw the TypeError of a failed write")
+  IN CASE ~CanPut(heap, ref, key) -> failed
+       [] accessor = Undefined /\\ IsArrayObject(object) ->
+            CASE written.isDone -> Update(heap, ref, written.object)
+              [] written.isRangeError ->
+                   Assert(FALSE, "tla-ts can't throw the RangeError of an invalid array length")
+              [] OTHER -> failed
+       [] accessor = Undefined -> Update(heap, ref, Put(object, key, value))
+       [] accessor.set \\in DOMAIN ConstantFunctions -> heap
+       [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
+
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==
   IF keys = <<>>
-  THEN [object |-> object, isDone |-> TRUE]
-  ELSE IF CanApply(object, Head(keys), Head(descriptors))
-  THEN ApplyAll(Apply(object, Head(keys), Head(descriptors)), Tail(keys), Tail(descriptors))
-  ELSE [object |-> object, isDone |-> FALSE]
+  THEN [object |-> object, isDone |-> TRUE, isRangeError |-> FALSE]
+  ELSE LET defined == DefineOwn(object, Head(keys), Head(descriptors))
+       IN IF defined.isDone THEN ApplyAll(defined.object, Tail(keys), Tail(descriptors)) ELSE defined
 
 \\* Whether a value is an object, where a function throws a TypeError if it isn't. An object that
 \\* isn't in the heap, such as an array, stops the run.
@@ -775,8 +886,9 @@ DefineProperty(heap, ref, key, descriptor) ==
         /\\ IsObjectArgument(descriptor)
         /\\ converted.isValid
         /\\ CanDefineOn(ref, converted)
-     THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
-     ELSE [heap |-> heap, isDone |-> FALSE]
+     THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
+           isRangeError |-> applied.isRangeError]
+     ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
 DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
@@ -785,13 +897,14 @@ DefineProperties(heap, ref, properties) ==
   IN IF \\/ ~IsObjectArgument(ref)
         \\/ ~IsObjectArgument(properties)
         \\/ \\E position \\in DOMAIN keys : ~IsObjectArgument(values[position])
-     THEN [heap |-> heap, isDone |-> FALSE]
+     THEN [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
      ELSE LET descriptors == [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])]
               applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
           IN IF \\A position \\in DOMAIN keys :
                   descriptors[position].isValid /\\ CanDefineOn(ref, descriptors[position])
-             THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone]
-             ELSE [heap |-> heap, isDone |-> FALSE]
+             THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
+                   isRangeError |-> applied.isRangeError]
+             ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
 Create(heap, prototype, properties) ==
   LET created == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype])
@@ -878,6 +991,11 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
   const read = ts.isParenthesizedExpression(node.expression)
     ? node.expression.expression
     : node.expression;
+  // An element of an array or a string may also lie past the end.
+  const kind =
+    ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)
+      ? getKind(read.expression, context)
+      : undefined;
   const isProperty =
     kind === "object" ||
     (ts.isElementAccessExpression(read) && (kind === "sequence" || kind === "string"));
@@ -995,11 +1113,6 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     }
     if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
     if (isEmpty) return string(kind);
-  // An element of an array or a string may also lie past the end.
-  const kind =
-    ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)
-      ? getKind(read.expression, context)
-      : undefined;
     if (names === undefined) return useJavaScript("StringOf", [value], context);
   }
   throw unsupported;

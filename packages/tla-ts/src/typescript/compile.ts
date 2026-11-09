@@ -5,7 +5,7 @@ import { type Context, createContext } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
-import { translateConstantFunctions } from "./heap";
+import { findHeapArrays, translateConstantFunctions } from "./heap";
 import { translateBuiltIns } from "./intrinsics";
 import { type Exported, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
@@ -100,6 +100,7 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
         Number(node.operand.text) === 0) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = usesSpecialNumbers(sourceFile);
+    context.heapArrays = findHeapArrays(sourceFile, context);
   }
   const model = readModel(sourceFile, context);
   rejectSharing(program.sourceFile, context);

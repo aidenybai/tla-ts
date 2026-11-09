@@ -35,6 +35,8 @@ export interface Context {
   constantFunctions: Map<string, Expression>;
   // Whether a script names NaN, Infinity, or -0, so that its numbers compute as JavaScript's.
   hasSpecialNumbers: boolean;
+  // The array literals that a script uses as objects, which its heap holds.
+  heapArrays: Set<ts.ArrayLiteralExpression>;
 }
 
 export interface Unknown {
@@ -79,6 +81,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   builtIns: new Set(),
   constantFunctions: new Map(),
   hasSpecialNumbers: false,
+  heapArrays: new Set(),
 });
 
 export const hasObjectLiteral = (node: ts.Node): boolean =>

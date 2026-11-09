@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
   checkElement,
+  getArrayLikeCall,
   getCallbackReceiver,
   getUpdatedValue,
   HOLE_SKIPPING_METHODS,
@@ -101,6 +102,7 @@ import {
   rejectAnyReceiver,
   getField,
   getKind,
+  isHeapArray,
   getPathStep,
   isHeapType,
   isNumberLike,
@@ -582,7 +584,11 @@ const translateCallStatement = (
       ifThenElse(
         field(identifier(name), "isDone"),
         continueWith(after),
-        throwTypeError(after, expression, context, frame),
+        ifThenElse(
+          field(identifier(name), "isRangeError"),
+          throwError("RangeError", after, expression, context, frame),
+          throwTypeError(after, expression, context, frame),
+        ),
       ),
     );
   }
@@ -776,18 +782,17 @@ interface LoopCall {
 const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCall | undefined => {
   if (!isMethodCall(node)) return undefined;
   const target = node.expression.expression;
-  const isArrayLike =
+  const isCall =
     node.expression.name.text === "call" &&
     ts.isPropertyAccessExpression(target) &&
     target.expression.getText() === "Array.prototype" &&
     node.arguments.length > 0 &&
     getKind(node.arguments[0], context) === "object";
+  const isArrayLike = isCall || isHeapArray(target, context);
   const method =
-    isArrayLike && ts.isPropertyAccessExpression(target)
-      ? target.name.text
-      : node.expression.name.text;
-  const receiver = isArrayLike ? node.arguments[0] : target;
-  const callbackArguments = isArrayLike ? node.arguments.slice(1) : node.arguments;
+    isCall && ts.isPropertyAccessExpression(target) ? target.name.text : node.expression.name.text;
+  const receiver = isCall ? node.arguments[0] : target;
+  const callbackArguments = isCall ? node.arguments.slice(1) : node.arguments;
   if (!LOOP_METHODS.has(method) || (!isArrayLike && getKind(receiver, context) !== "sequence")) {
     return undefined;
   }
@@ -1473,12 +1478,21 @@ const bindOnce = (path: Path, name: string, value: Expression, rest: Formula) =>
     : bindValue(name, value, rest);
 
 // Throws the TypeError that JavaScript throws where a change to an object fails.
-const throwTypeError = (path: Path, node: ts.Node, context: Context, frame: Frame) => {
-  const uncaught = apply("Assert", [boolean(false), string("TypeError")]);
+const throwError = (
+  name: "TypeError" | "RangeError",
+  path: Path,
+  node: ts.Node,
+  context: Context,
+  frame: Frame,
+) => {
+  const uncaught = apply("Assert", [boolean(false), string(name)]);
   return frame.throwTo === undefined
     ? leaf(uncaught)
-    : frame.throwTo(path, { value: translateEngineError("TypeError", node, context), uncaught });
+    : frame.throwTo(path, { value: translateEngineError(name, node, context), uncaught });
 };
+
+const throwTypeError = (path: Path, node: ts.Node, context: Context, frame: Frame) =>
+  throwError("TypeError", path, node, context, frame);
 
 // Names the heap after a statement changes it, so that later statements share it.
 const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => Formula) => {
@@ -1564,6 +1578,25 @@ const translateDeclarations = (
       (initializer === undefined
         ? getUndefined(context)
         : translateExpression(initializer, allocated.scope, context));
+    // An array-like call reads the object's elements, which may run a getter that tla-ts can't
+    // call, and new Array(length) may make holes that a sequence can't hold, so the declaration
+    // evaluates them where it runs.
+    const mayStop = (node: ts.Node): boolean =>
+      !ts.isFunctionLike(node) &&
+      ((ts.isCallExpression(node) && getArrayLikeCall(node, context) !== undefined) ||
+        (ts.isNewExpression(node) &&
+          node.expression.getText() === "Array" &&
+          node.arguments?.length === 1) ||
+        (ts.forEachChild(node, mayStop) ?? false));
+    if (initializer !== undefined && mayStop(initializer)) {
+      const name = context.names.getFresh("value");
+      return bindOnce(
+        allocated,
+        name,
+        value,
+        bindDeclaration(declarations, identifier(name), allocated, context, frame, continueWith),
+      );
+    }
     return bindDeclaration(
       declarations,
       value,

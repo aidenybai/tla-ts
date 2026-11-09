@@ -985,6 +985,29 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const proto = Object.getPrototypeOf(AggregateError);`,
     ],
     [
+      "[grown, threw, values.length, values[1], ranged, Array.isArray(values), Object.getOwnPropertyNames(values), values.filter((value) => value !== 5), total, values.at(-1), values.toReversed()]",
+      `const values = [0, 1, 2];
+      Object.defineProperty(values, "1", { value: 5, configurable: false });
+      values[4] = 7;
+      const grown = values.length;
+      let threw = false;
+      try {
+        Object.defineProperty(values, "length", { value: 0 });
+      } catch (error) {
+        threw = error instanceof TypeError;
+      }
+      let ranged = false;
+      try {
+        Object.defineProperty(values, "length", { value: -1 });
+      } catch (error) {
+        ranged = error instanceof RangeError;
+      }
+      let total = 0;
+      values.forEach((value) => {
+        total += value;
+      });`,
+    ],
+    [
       "objects.map((object) => Array.prototype.filter.call(object, () => true).length)",
       `const base = { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1 };
       const objects = [{ ...base, length: undefined }, { ...base, length: null }, { ...base, length: true }, { ...base, length: false }, { ...base, length: 0 }, { ...base, length: -3 }, { ...base, length: 2 }, { ...base, length: "" }, { ...base, length: "2" }, { ...base, length: "0002.0" }, { ...base, length: "2E0" }, { ...base, length: "2.3E-1" }, { ...base, length: "1e1" }, { ...base, length: "-4294967294" }, { ...base, length: "0x2" }, { ...base, length: "0X1" }, { ...base, length: "0o2" }, { ...base, length: "0b10" }, { ...base, length: "-0x2" }, { ...base, length: "one" }, { ...base, length: "1e" }, { ...base, length: "." }, { ...base, length: ".5" }, { ...base, length: "-Infinity" }];`,

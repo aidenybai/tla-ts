@@ -39,7 +39,14 @@ import {
   string,
   tuple,
 } from "./tla";
-import { getKind, isBooleanType, isNumberLike, type Kind, translateUnknown } from "./types";
+import {
+  getKind,
+  isBooleanType,
+  isHeapArray,
+  isNumberLike,
+  type Kind,
+  translateUnknown,
+} from "./types";
 
 interface Unordered {
   set: Expression;
@@ -1006,6 +1013,10 @@ export const translateMethod = (
 };
 
 const ARRAY_LIKE_METHODS = new Set([
+  "at",
+  "slice",
+  "with",
+  "toReversed",
   "every",
   "some",
   "filter",
@@ -1033,29 +1044,36 @@ export const HOLE_SKIPPING_METHODS = new Set([
   "reduceRight",
 ]);
 
-// Array.prototype.method.call(object, ...arguments) on an array-like object, which runs on the
-// object's elements, or undefined for any other call.
-export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+// Array.prototype.method.call(object, ...arguments) on an array-like object, or a method call on
+// an array that the heap holds, which runs on the object's elements, or undefined for any other
+// call.
+export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
-  const target = ts.isPropertyAccessExpression(callee) ? callee.expression : undefined;
-  const object = node.arguments[0];
-  if (
-    !ts.isPropertyAccessExpression(callee) ||
-    callee.name.text !== "call" ||
-    target === undefined ||
-    !ts.isPropertyAccessExpression(target) ||
-    target.expression.getText() !== "Array.prototype" ||
-    !ARRAY_LIKE_METHODS.has(target.name.text) ||
-    object === undefined ||
-    getKind(object, context) !== "object"
-  ) {
-    return undefined;
-  }
-  const method = target.name.text;
+  if (!ts.isPropertyAccessExpression(callee)) return undefined;
+  const target = callee.expression;
+  const isCall =
+    callee.name.text === "call" &&
+    ts.isPropertyAccessExpression(target) &&
+    target.expression.getText() === "Array.prototype";
+  const method = isCall ? target.name.text : callee.name.text;
+  const object = isCall ? node.arguments.at(0) : isHeapArray(target, context) ? target : undefined;
+  return ARRAY_LIKE_METHODS.has(method) &&
+    object !== undefined &&
+    getKind(object, context) === "object"
+    ? { method, object, methodArguments: isCall ? node.arguments.slice(1) : node.arguments }
+    : undefined;
+};
+
+export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const call = getArrayLikeCall(node, context);
+  if (call === undefined) return undefined;
+  const method = call.method;
+  const object = call.object;
+  const methodArguments = call.methodArguments;
   const heap = getHeap(scope, node, context);
   const operate = (owner: Expression, sequence: Expression, indices?: Expression) =>
     translateSequenceOperation(
-      { node, method, arguments: node.arguments.slice(1), elementType: undefined, owner, indices },
+      { node, method, arguments: methodArguments, elementType: undefined, owner, indices },
       sequence,
       scope,
       context,
@@ -1063,7 +1081,7 @@ export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, co
     );
   // A search from an index counts from the length, which the present elements don't have.
   const isSkippingHoles =
-    HOLE_SKIPPING_METHODS.has(method) && (!method.endsWith("ndexOf") || node.arguments.length < 3);
+    HOLE_SKIPPING_METHODS.has(method) && (!method.endsWith("ndexOf") || methodArguments.length < 2);
   return share(translateExpression(object, scope, context), "object", context, (owner) =>
     isSkippingHoles
       ? share(

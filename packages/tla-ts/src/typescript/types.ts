@@ -3,6 +3,7 @@ import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } fr
 import {
   type Context,
   getHeapClass,
+  getSymbol,
   getUndefined,
   isHeapClass,
   isHeapFunction,
@@ -131,7 +132,28 @@ export const rejectAnyReceiver = (node: ts.Expression, context: Context) => {
   }
 };
 
+// The array literal that an expression is, or that the variable it names holds.
+export const getArrayLiteral = (node: ts.Expression, context: Context) => {
+  if (ts.isArrayLiteralExpression(node)) return node;
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  return declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    ts.isArrayLiteralExpression(declaration.initializer)
+    ? declaration.initializer
+    : undefined;
+};
+
+export const isHeapArray = (node: ts.Expression, context: Context) => {
+  if (context.heapArrays.size === 0) return false;
+  const literal = getArrayLiteral(node, context);
+  return literal !== undefined && context.heapArrays.has(literal);
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
+  if (isHeapArray(node, context)) return "object";
   const checker = context.checker;
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
   if (isSequenceType(type, checker)) return "sequence";

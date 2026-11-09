@@ -471,6 +471,13 @@ const translateCall = (
   }
   if (global === "Array" && method === "isArray" && node.arguments.length === 1) {
     const argument = node.arguments[0];
+    if (getKind(argument, context) === "object") {
+      return useJavaScript(
+        "IsArray",
+        [getHeap(scope, node, context), translateExpression(argument, scope, context)],
+        context,
+      );
+    }
     translateExpression(argument, scope, context);
     const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
     if (getKind(argument, context) === "sequence" && names?.every((name) => name === "object")) {
@@ -1166,7 +1173,9 @@ const translateNode = (
       translateExpression(node.whenFalse, scope, context),
     );
   }
-  if (ts.isArrayLiteralExpression(node)) return translateArrayLiteral(node, scope, context);
+  if (ts.isArrayLiteralExpression(node) && !context.heapArrays.has(node)) {
+    return translateArrayLiteral(node, scope, context);
+  }
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);
   if (ts.isPropertyAccessExpression(node)) return translatePropertyAccess(node, scope, context);
   if (ts.isElementAccessExpression(node)) {
@@ -1177,6 +1186,7 @@ const translateNode = (
   const functionValue = getFunctionValue(node, context);
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
   const isHeapObject =
+    (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     isHeapFunction(node, context) ||
     getNewClass(node, context) !== undefined ||
