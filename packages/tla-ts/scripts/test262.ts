@@ -309,6 +309,52 @@ const loosen = () => {
         " as unknown as new (...args: unknown[]) => { [key: string]: unknown })",
       );
     }
+    // A test may call a function with fewer arguments than it declares, which leaves the others
+    // undefined, or with more, which only its arguments object holds. A rest parameter takes the
+    // extra arguments without changing the function's length.
+    const count = /but got (\d+)/.exec(ts.flattenDiagnosticMessageText(diagnostic.messageText, ""));
+    const called =
+      diagnostic.code === 2554 && count !== null
+        ? ts.findAncestor(
+            node,
+            (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+              (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
+              (ancestor.arguments?.length ?? 0) === Number(count[1]),
+          )
+        : undefined;
+    const callee = called && checker.getResolvedSignature(called)?.getDeclaration();
+    if (
+      called !== undefined &&
+      callee !== undefined &&
+      ts.isFunctionLike(callee) &&
+      callee.getSourceFile() === sourceFile
+    ) {
+      const parameters = callee.parameters.filter(
+        (parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this",
+      );
+      const given = called.arguments?.length ?? 0;
+      parameters.slice(given).forEach((parameter) => {
+        if (
+          ts.isIdentifier(parameter.name) &&
+          parameter.questionToken === undefined &&
+          parameter.initializer === undefined &&
+          parameter.dotDotDotToken === undefined
+        ) {
+          edits.set(parameter.name.getEnd(), "?");
+        }
+      });
+      if (
+        given > parameters.length &&
+        parameters.every((parameter) => parameter.dotDotDotToken === undefined)
+      ) {
+        edits.set(
+          callee.parameters.end,
+          callee.parameters.length === 0 || callee.parameters.hasTrailingComma
+            ? "...extraArguments: unknown[]"
+            : ", ...extraArguments: unknown[]",
+        );
+      }
+    }
     const literal = ts.findAncestor(node, ts.isObjectLiteralExpression);
     if (diagnostic.code === 2322 && literal && isDescriptor(checker.getContextualType(literal))) {
       edits.set(literal.getEnd(), " as unknown as PropertyDescriptor");
