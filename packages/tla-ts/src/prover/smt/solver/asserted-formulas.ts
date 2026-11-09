@@ -1,7 +1,18 @@
 // Ported from Z3 (src/solver/assertions/asserted_formulas.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
-import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
+import {
+  AstManager,
+  KIND_APP,
+  KIND_QUANTIFIER,
+  OP_AND,
+  OP_EQ,
+  OP_ITE,
+  OP_NOT,
+  OP_OR,
+  SORT_BOOL,
+} from "./ast";
 import { mkNot } from "./ast-util";
+import { simplifyInjAxiom } from "./inj-axiom";
 import { MacroManager } from "./macro-finder";
 import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
@@ -242,6 +253,9 @@ export class AssertedFormulas {
     this.setEliminateAnd(true);
     this.reduceAsserted();
     if (this.isInconsistent) return;
+    if (this.hasQuantifiers && this.simplifyFormulas((formula) => this.refineInjAxiom(formula)))
+      this.isReducePending = true;
+    if (this.isInconsistent) return;
     this.findMacros();
     if (this.isInconsistent) return;
     if (
@@ -289,6 +303,15 @@ export class AssertedFormulas {
       return;
     }
     result.push(expr);
+  }
+
+  private refineInjAxiom(formula: number) {
+    const manager = this.manager;
+    const refined =
+      manager.kinds[formula] === KIND_QUANTIFIER ? simplifyInjAxiom(manager, formula) : undefined;
+    if (refined !== undefined) return refined;
+    manager.incRef(formula);
+    return formula;
   }
 
   private findMacros() {
