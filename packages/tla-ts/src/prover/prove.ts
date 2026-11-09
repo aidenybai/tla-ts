@@ -96,10 +96,10 @@ interface ProofReport extends ProofResult {
   warnings: ObligationWarning[];
 }
 
-// The frontends in the order Prep.normalize_expand names the one whose soundness check failed.
 // tlapm checks a backend's time limit only once its --wait period has passed.
 const BACKEND_WAIT_MS = 3000;
 
+// The frontends in the order Prep.normalize_expand names the one whose soundness check failed.
 const FAILING_FRONTENDS = [
   "expandenabled",
   "expandcdot",
