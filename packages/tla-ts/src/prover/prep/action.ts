@@ -445,28 +445,33 @@ const coalesceModal: Rewrite = (scope, expression) => {
   const hyp = hypScope?.hyp;
   if (!hyp) throw new TlapmBugError();
   const args = expression.args;
+  const applyCoalesced = (applied: Expr) =>
+    at(
+      { kind: "Apply", operator: applied, args: args.map((inner) => coalesceModal(scope, inner)) },
+      expression,
+    );
   if (hyp.kind === "Defn" && hyp.definition.kind === "Operator") {
     const substitutive = getSubstitutiveArgs(hypScope.rest, hyp.definition);
     const isKept = args.every(
       (inner, position) => getLevel(scope, inner) === 0 || substitutive[args.length - position - 1],
     );
     if (isKept) return mapScoped(scope, expression, coalesceModal, adjoin);
-    const opaque = coalesceOperator(scope, hyp.definition.name, substitutive, operator, args);
-    return at(
-      { kind: "Apply", operator: opaque, args: args.map((inner) => coalesceModal(scope, inner)) },
-      expression,
+    return applyCoalesced(
+      coalesceOperator(scope, hyp.definition.name, substitutive, operator, args),
     );
   }
   if (hyp.kind === "Flex") return mapScoped(scope, expression, coalesceModal, adjoin);
   if (hyp.kind === "Fresh") {
-    if (hyp.level === "Constant") {
-      return at(
-        { kind: "Apply", operator, args: args.map((inner) => coalesceModal(scope, inner)) },
-        expression,
-      );
-    }
-    const notSubstitutive = args.map(() => false);
-    return coalesceOperator(scope, hyp.name, notSubstitutive, operator, args);
+    if (hyp.level === "Constant") return applyCoalesced(operator);
+    return applyCoalesced(
+      coalesceOperator(
+        scope,
+        hyp.name,
+        args.map(() => false),
+        operator,
+        args,
+      ),
+    );
   }
   throw new TlapmBugError();
 };

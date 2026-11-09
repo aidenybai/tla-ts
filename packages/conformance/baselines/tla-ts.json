@@ -241,7 +241,6 @@
   "tlapm/imported/parser/step_expressions/step_expressions_step_expression_requiring_lookahead": "message-mismatch",
   "tlapm/imported/parser/step_expressions/step_expressions_step_expression_with_parameterized_subscript": "message-mismatch",
   "tlapm/imported/parser/use_or_hide/use_or_hide_use_hide_modules": "text-mismatch",
-  "tlapm/imported/soundness_tests/fresh_operator_args_stest": "exit-mismatch",
   "tlapm/imported/zenon/test/test13.znn": "text-mismatch",
   "tlapm/imported/zenon/test/test14.znn": "text-mismatch",
   "tlapm/imported/zenon/test/test21.znn": "text-mismatch",
