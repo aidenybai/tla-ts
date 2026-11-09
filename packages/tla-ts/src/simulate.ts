@@ -1,4 +1,4 @@
-import type { CheckOptions, Postcondition, TraceStep, Violation } from "./check";
+import type { CheckOptions, TraceStep, Violation } from "./check";
 import {
   isStackOverflow,
   TlaEvaluationError,
@@ -178,6 +178,17 @@ export const simulate = (options: SimulationOptions): number => {
   if (!search) {
     throw new TlaUnsupportedError("tla-ts can't simulate a specification without variables");
   }
+  const reportPostcondition = () => {
+    const postcondition = search.findPostconditionViolation();
+    if (!postcondition) return undefined;
+    if (postcondition.counts !== undefined) (options.onPrint ?? console.log)(postcondition.counts);
+    message(
+      postcondition.code,
+      postcondition.message,
+      formatInnerMessage(postcondition.code, postcondition.message, true),
+    );
+    return postcondition;
+  };
   const temporalProperties = search.properties.liveness;
   const createTemporalChecker = (successors: number[][], states: Value[][]) =>
     withLivenessExitCode(() =>
@@ -302,17 +313,13 @@ export const simulate = (options: SimulationOptions): number => {
           `Invariant ${violated.name} is violated by the initial state:\n${formatState(alias)}`,
         );
         runtime.counterExample = getCounterExample([node]);
-        const postcondition = search.findPostconditionViolation();
-        if (postcondition) {
-          message(
-            postcondition.code,
-            postcondition.message,
-            formatInnerMessage(postcondition.code, postcondition.message, true),
-          );
-        }
+        reportPostcondition();
         return EXIT_STATUS.safetyViolation;
       }
-      if (search.satisfiesConstraints(state)) initialStates.push(node);
+      if (search.satisfiesConstraints(state)) {
+        search.trackStatePossible(state);
+        initialStates.push(node);
+      }
     } catch (error) {
       return reportInitialException(error, state);
     }
@@ -444,12 +451,11 @@ export const simulate = (options: SimulationOptions): number => {
             };
             return true;
           }
-          if (
-            search.satisfiesConstraints(node.state, current.state) &&
-            search.satisfiesActionConstraints(current.state, node.state)
-          ) {
-            successors.push(node);
-          }
+          if (!search.satisfiesConstraints(node.state, current.state)) return false;
+          search.trackStatePossible(node.state);
+          if (!search.satisfiesActionConstraints(current.state, node.state)) return false;
+          search.trackActionPossible(current.state, node.state);
+          successors.push(node);
           return false;
         },
         action.scope,
@@ -590,14 +596,7 @@ export const simulate = (options: SimulationOptions): number => {
   const last = reported[reported.length - 1];
   const errorStatus = last ? getMessageExitStatus(last.code) : EXIT_STATUS.success;
   if (last) runtime.counterExample = getCounterExample(getTrace(last.node));
-  const postcondition: Postcondition | undefined = search.findPostconditionViolation();
-  if (postcondition) {
-    message(
-      postcondition.code,
-      postcondition.message,
-      formatInnerMessage(postcondition.code, postcondition.message, true),
-    );
-  }
+  const postcondition = reportPostcondition();
   const postconditionStatus = postcondition
     ? getMessageExitStatus(postcondition.code)
     : EXIT_STATUS.success;
