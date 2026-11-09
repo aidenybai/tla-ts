@@ -1026,6 +1026,24 @@ interface ReevaluatedDefinitions {
   streamed: ReadonlySet<Definition>;
 }
 
+// A LET's function definition has one function constructor, as in SANY, so its code compiles once
+// however often the LET is evaluated.
+const letFunctionConstructions = new WeakMap<FunctionDefinition, Expression>();
+
+const getLetFunctionConstruction = (definition: FunctionDefinition): Expression => {
+  const known = letFunctionConstructions.get(definition);
+  if (known) return known;
+  const construction: Expression = {
+    kind: "FunctionConstruction",
+    bounds: definition.bounds,
+    body: definition.body,
+    location: definition.location,
+    isRecursive: true,
+  };
+  letFunctionConstructions.set(definition, construction);
+  return construction;
+};
+
 export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
@@ -1040,13 +1058,7 @@ export const bindDefinitions = (
     if (definition.kind === "Function") {
       node.binding = {
         kind: "Thunk",
-        expression: {
-          kind: "FunctionConstruction",
-          bounds: definition.bounds,
-          body: definition.body,
-          location: definition.location,
-          isRecursive: true,
-        },
+        expression: getLetFunctionConstruction(definition),
         scope: node,
         state: context.state,
         next: context.next,
