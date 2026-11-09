@@ -1630,6 +1630,23 @@ describe("errors", () => {
     }
   });
 
+  it("makes an object of the properties that an object pattern's rest element takes", async () => {
+    const result = await checkModel(`
+      const prototype = { inherited: 1 };
+      const source: { [key: string]: unknown } = Object.create(prototype);
+      source.a = 1;
+      source.b = 2;
+      Object.defineProperty(source, "hidden", { value: 3, enumerable: false });
+      const { a, ...rest } = source;
+      const keys = Object.keys(rest);
+      if (keys.length !== 1 || rest.b !== 2 || rest.hidden !== undefined) throw new Error("keys");
+      if (rest.inherited !== undefined || Object.getPrototypeOf(rest) !== Object.prototype) {
+        throw new Error("prototype");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

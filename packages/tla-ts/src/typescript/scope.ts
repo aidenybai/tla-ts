@@ -231,7 +231,42 @@ export const bindPatternInline = (
       );
     }
     if (element.dotDotDotToken !== undefined) {
-      throw new TlaTypeScriptError("Object rest elements aren't supported", element);
+      // A new object with the properties that the other elements don't name.
+      const excluded = pattern.elements.flatMap((other) => {
+        if (other === element) return [];
+        const otherName = other.propertyName ?? other.name;
+        const otherKey =
+          ts.isIdentifier(otherName) ||
+          ts.isStringLiteral(otherName) ||
+          ts.isNumericLiteral(otherName)
+            ? getPropertyKey(otherName)
+            : undefined;
+        if (otherKey === undefined) {
+          throw new TlaTypeScriptError(
+            "Object rest elements need the other keys to be names",
+            other,
+          );
+        }
+        return [string(otherKey)];
+      });
+      if (heapSymbol === undefined || !isHeapType(type, pattern, context)) {
+        throw new TlaTypeScriptError("Object rest elements need an object in a script", element);
+      }
+      const heap = getHeap(current, element, context);
+      const allocated = useJavaScript(
+        "Allocate",
+        [heap, useJavaScript("RestObject", [heap, value, set(excluded)], context)],
+        context,
+      );
+      return bindNames(
+        { ...current, bindings: new Map([...current.bindings, [heapSymbol, allocated]]) },
+        [
+          {
+            name: useJavaScript("Allocated", [allocated], context),
+            symbol: getSymbol(element.name, context.checker),
+          },
+        ],
+      );
     }
     const name = element.propertyName ?? element.name;
     const key =
@@ -272,6 +307,7 @@ export const bindPatternInline = (
     return bound;
   }
   const keys = pattern.elements.flatMap((element) => {
+    if (element.dotDotDotToken !== undefined) return [];
     const name = element.propertyName ?? element.name;
     const key =
       ts.isIdentifier(name) || ts.isStringLiteral(name) ? getPropertyKey(name) : undefined;

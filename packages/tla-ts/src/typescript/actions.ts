@@ -2718,7 +2718,9 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     const isHeapChanged =
       getArgumentsOwner(node, context.checker) !== undefined ||
       getAllocated(node, context).includes(node) ||
-      (ts.isBindingElement(node) && context.heapArrays.has(node)) ||
+      (ts.isBindingElement(node) &&
+        (context.heapArrays.has(node) ||
+          (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||
       isObjectChange(node) ||
