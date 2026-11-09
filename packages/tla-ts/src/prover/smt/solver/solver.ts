@@ -1,6 +1,11 @@
 // Ported from Z3 (src/smt/smt_solver.cpp, src/smt/smt_kernel.cpp, src/smt/smt_setup.cpp), MIT
 // license, see z3-license.txt. It decides like `z3 -smt2 AUTO_CONFIG=false smt.MBQI=true`.
-import { isStackOverflow, SmtCanceledError, SmtUnsupportedError } from "../../../errors";
+import {
+  isStackOverflow,
+  SmtCanceledError,
+  type SmtParseError,
+  SmtUnsupportedError,
+} from "../../../errors";
 import type { DecideOptions, Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
 import { AstManager } from "./ast";
@@ -72,7 +77,15 @@ export const solveAssuming = (
 export const getVerdict = (result: number): Verdict =>
   result === L_FALSE ? "unsat" : result === L_TRUE ? "sat" : "unknown";
 
-export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
+const rethrow = (error: SmtParseError) => {
+  throw error;
+};
+
+export const checkSmt = (
+  text: string,
+  options: DecideOptions,
+  report: (error: SmtParseError) => void = rethrow,
+): SmtCheck => {
   const manager = new AstManager(
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
@@ -82,10 +95,15 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   // solver::assert_expr counts one for each assertion.
   const incremental = new AssertedFormulas(manager);
   manager.limit.inc();
-  const problem = parseSmtlib(text, manager, (assertion) => {
-    manager.limit.inc();
-    incremental.assertExpr(assertion);
-  });
+  const problem = parseSmtlib(
+    text,
+    manager,
+    (assertion) => {
+      manager.limit.inc();
+      incremental.assertExpr(assertion);
+    },
+    report,
+  );
   if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
   // cmd_context::check_sat bounds the steps of the search by the rlimit from the count so far.
   manager.limit.push(problem.rlimit);
@@ -96,10 +114,15 @@ export const checkSmt = (text: string, options: DecideOptions): SmtCheck => {
   };
 };
 
-// Throws SmtParseError on malformed input. Anything else it cannot decide is unknown.
-export const decideSmt = (text: string, options: DecideOptions): Verdict => {
+// report gets each SmtParseError, and Z3 goes on past one only when report returns. Anything else
+// it cannot decide is unknown.
+export const decideSmt = (
+  text: string,
+  options: DecideOptions,
+  report: (error: SmtParseError) => void = rethrow,
+): Verdict => {
   try {
-    return checkSmt(text, options).verdict;
+    return checkSmt(text, options, report).verdict;
   } catch (error) {
     if (
       error instanceof SmtUnsupportedError ||

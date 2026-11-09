@@ -49,6 +49,7 @@ import {
 } from "./smtlib-parser";
 import { OptContext } from "./opt-context";
 import { isInNraFragment } from "./opt-nlsat";
+import { isSupportedLogic } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import type { Context } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -69,7 +70,6 @@ const SILENT_COMMANDS = new Set([
   "pop",
   "reset",
   "reset-assertions",
-  "set-logic",
   "set-option",
   "set-info",
   "minimize",
@@ -280,6 +280,7 @@ interface ScriptObjective {
 
 interface ScriptState {
   manager: AstManager;
+  logic: string | undefined;
   reader: SmtlibReader;
   assertions: number[];
   names: number[];
@@ -305,7 +306,7 @@ const MANAGERLESS_COMMANDS = new Set([
 export const runSmtlibScript = (
   text: string,
   options: DecideOptions,
-  print: (line: string) => void,
+  print: (line: string, isDiagnostic?: boolean) => void,
 ) => {
   const commands = createCommandReader(text);
   const settings = {
@@ -330,6 +331,7 @@ export const runSmtlibScript = (
     manager.isHiDiv0 = settings.isHiDiv0;
     return {
       manager,
+      logic: undefined,
       reader: createSmtlibReader(manager, undefined, settings.parserOptions),
       assertions: [],
       names: [],
@@ -525,11 +527,11 @@ export const runSmtlibScript = (
     script.state.check = undefined;
   };
   let pendingText = "";
+  const printDiagnostic = (line: string) => print(line, !settings.isDiagnosticOnStdout);
   const write = (text: string, isDiagnostic: boolean) => {
-    if (isDiagnostic && !settings.isDiagnosticOnStdout) return;
     const lines = (pendingText + text).split("\n");
     pendingText = lines.pop() ?? "";
-    for (const line of lines) print(line);
+    for (const line of lines) (isDiagnostic ? printDiagnostic : print)(line);
   };
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
     compileTactic(
@@ -570,6 +572,11 @@ export const runSmtlibScript = (
     assert: (list) => {
       const state = script.state;
       const assertion = state.reader.parseAssertion(list.items[1] ?? list.end);
+      const logicError = state.reader.getLogicError(assertion.formula);
+      if (logicError !== undefined) {
+        state.manager.decRef(assertion.formula);
+        throw new SmtParseError(logicError, list.end);
+      }
       state.assertions.push(assertion.formula);
       if (state.hasChecked) state.isIncremental = true;
       resetOptimizer();
@@ -931,6 +938,8 @@ export const runSmtlibScript = (
       )
         settings.parameters.set(getParameterName(keyword), value.text);
       if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
+      if (!BUILTIN_OPTIONS.has(keyword) && settings.parameters.get("smtlib2_compliant") === "true")
+        settings.isPrintingSuccess = true;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
       if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
       if (optionName === ":rlimit" && value?.kind === "numeral")
@@ -994,14 +1003,24 @@ export const runSmtlibScript = (
       );
     },
     "set-logic": (list) => {
+      const state = script.state;
       const logic = list.items[1];
       if (!isSymbol(logic))
         throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
-      script.state.reader = createSmtlibReader(
-        script.state.manager,
-        logic.text,
-        settings.parserOptions,
-      );
+      if (state.logic !== undefined)
+        throw new SmtParseError("the logic has already been set", list.end);
+      if (state.assertions.length > 0)
+        throw new SmtParseError("logic must be set before initialization", list.end);
+      if (!isSupportedLogic(logic.text)) {
+        print("unsupported");
+        printDiagnostic(
+          `; ignoring unsupported logic ${logic.text} line: ${list.line} position: ${list.column}`,
+        );
+        return;
+      }
+      state.logic = logic.text;
+      state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
+      if (settings.isPrintingSuccess) print("success");
     },
     "set-info": () => {},
   };

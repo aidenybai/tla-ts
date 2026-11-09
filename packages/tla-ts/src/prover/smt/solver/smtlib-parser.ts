@@ -89,6 +89,7 @@ import {
   getFpaSignature,
   mkFpaAppOf,
 } from "./fpa-decl-plugin";
+import { createLogicChecker } from "./check-logic";
 import { ObjMap } from "./hashtable";
 import {
   CHAR_OP_NAMES,
@@ -99,6 +100,15 @@ import {
   SEQ_SORT_NAMES,
 } from "./seq-decl-plugin";
 import { Rational } from "./rational";
+import {
+  logicHasArith,
+  logicHasArray,
+  logicHasBv,
+  logicHasFpa,
+  logicHasRealsOnly,
+  logicHasSeq,
+  isSupportedLogic,
+} from "./smt-logics";
 import { replaceFreeVars } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
 
@@ -513,15 +523,6 @@ interface MappedDecl {
 }
 const ARRAY_EXTENSION_LOGICS = new Set(["HORN", "ALL"]);
 
-const isArrayLogic = (logic: string | undefined) =>
-  logic === undefined ||
-  logic.startsWith("QF_A") ||
-  logic.startsWith("A") ||
-  logic === "ALL" ||
-  logic === "HO_ALL" ||
-  logic === "SMTFD" ||
-  logic === "HORN";
-
 const BUILTIN_NAMES = new Set([
   "true",
   "false",
@@ -535,8 +536,6 @@ const BUILTIN_NAMES = new Set([
   ...SEQ_OP_NAMES.keys(),
   ...CHAR_OP_NAMES.keys(),
 ]);
-
-const SEQ_LOGICS = new Set(["QF_BVRE", "QF_S", "QF_SLIA", "QF_SNIA", "ALL", "HO_ALL"]);
 
 const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 
@@ -722,10 +721,18 @@ export const createSmtlibReader = (
   logic?: string,
   options: ParserOptions = DEFAULT_PARSER_OPTIONS,
 ) => {
+  const hasArith = logic === undefined || logicHasArith(logic);
+  const hasBv = logic === undefined || logicHasBv(logic);
+  const isNumeralAsReal = logic !== undefined && logicHasRealsOnly(logic);
+  const logicChecker = createLogicChecker(manager, logic);
   const sortDecls = new Map<string, SortDecl>([
     ["Bool", { kind: "sort", sort: SORT_BOOL }],
-    ["Int", { kind: "sort", sort: SORT_INT }],
-    ["Real", { kind: "sort", sort: SORT_REAL }],
+    ...(hasArith
+      ? [
+          ["Int", { kind: "sort", sort: SORT_INT }] as const,
+          ["Real", { kind: "sort", sort: SORT_REAL }] as const,
+        ]
+      : []),
     ...(logic === undefined ? [["List", { kind: "list" }] as const] : []),
   ]);
   const funcs = new Map<string, readonly number[]>();
@@ -746,14 +753,20 @@ export const createSmtlibReader = (
     names.set(name, value);
   };
 
-  const hasArrays = isArrayLogic(logic);
-  const hasFpa = logic === undefined || logic === "ALL" || logic.includes("FP");
+  const hasArrays = logic === undefined || logicHasArray(logic);
+  const hasFpa = logic === undefined || logicHasFpa(logic);
   const hasArrayExtensions = logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic);
-  const hasSeq = logic === undefined || SEQ_LOGICS.has(logic);
+  const hasSeq = logic === undefined || logicHasSeq(logic);
 
   const getFirstFunc = (name: string) => funcs.get(name)?.[0];
 
+  const checkDecl = (decl: number, at: SExpr) => {
+    const error = logicChecker.checkDecl(decl);
+    if (error !== undefined) throw new SmtParseError(error, at);
+  };
+
   const insertFunc = (decl: number, at: SExpr) => {
+    checkDecl(decl, at);
     const funcDecl = manager.funcDecls[decl];
     const name = String(funcDecl.name);
     if (macros.has(name))
@@ -939,6 +952,8 @@ export const createSmtlibReader = (
       if (hasFpa && isSymbol(sexpr.items[1], "FloatingPoint"))
         return mkFloatSort(sexpr.items.slice(2), sexpr);
       const width = sexpr.items[2];
+      if (!hasBv && isSymbol(sexpr.items[1], "BitVec"))
+        throw new SmtParseError("unknown sort 'BitVec'", width ?? sexpr.end);
       if (
         !isSymbol(sexpr.items[1], "BitVec") ||
         sexpr.items.length !== 3 ||
@@ -1228,6 +1243,7 @@ export const createSmtlibReader = (
     });
 
   const isBvOpName = (name: string) =>
+    hasBv &&
     BV_OP_NAMES.has(name) &&
     (!BV_EXTENSION_NAMES.has(name) || logic === undefined || BV_EXTENSION_LOGICS.has(logic));
 
@@ -1727,7 +1743,10 @@ export const createSmtlibReader = (
   };
 
   const parseLeaf = (sexpr: SExpr): number => {
-    if (sexpr.kind === "numeral") return manager.mkNumeral(BigInt(sexpr.text));
+    if (sexpr.kind === "numeral")
+      return isNumeralAsReal
+        ? manager.mkRealNumeral(Rational.of(BigInt(sexpr.text), 1n))
+        : manager.mkNumeral(BigInt(sexpr.text));
     if (sexpr.kind === "decimal") {
       const parts = sexpr.text.split(".");
       return manager.mkRealNumeral(
@@ -2286,6 +2305,8 @@ export const createSmtlibReader = (
       for (const domainVar of vars) manager.incRef(domainVar);
       for (const domainVar of vars) manager.decRef(domainVar);
     }
+    const decl = manager.mkFuncDecl(symbol.text, domain, range);
+    checkDecl(decl, list.end);
     if (macros.has(symbol.text))
       throw new SmtUnsupportedError(`the overloaded symbol ${symbol.text}`);
     const existing = funcs.get(symbol.text) ?? [];
@@ -2301,7 +2322,7 @@ export const createSmtlibReader = (
         `invalid declaration, ${domain.length === 0 ? "constant" : "function"} '${symbol.text}' (with the given signature) already declared`,
         list.end,
       );
-    declare(funcs, symbol.text, [...existing, manager.mkFuncDecl(symbol.text, domain, range)]);
+    declare(funcs, symbol.text, [...existing, decl]);
   };
 
   const parseFormula = (sexpr: SExpr) => {
@@ -2354,6 +2375,7 @@ export const createSmtlibReader = (
     parseTerm,
     parseFormula,
     parseAssertion,
+    getLogicError: logicChecker.checkExpr,
     push,
     pop,
     isUsed,
@@ -2375,18 +2397,18 @@ export const DECLARATIONS = new Set([
   "define-sort",
 ]);
 
+// Z3 reports an error in a command, skips the command and goes on.
 export const parseSmtlib = (
   text: string,
   manager: AstManager,
   assertExpr: (assertion: number) => void,
+  report: (error: SmtParseError) => void,
 ): SmtProblem => {
   const commands = createCommandReader(text);
-  const reader = createSmtlibReader(manager);
+  const state = { reader: createSmtlibReader(manager), logic: "", rlimit: 0 };
   const assertions: number[] = [];
-  let rlimit = 0;
-  for (let list = commands.read(); list !== undefined; list = commands.read()) {
+  const runCommand = (list: SmtList) => {
     const name = expectSymbol(list.items[0], "invalid command, symbol expected", list).text;
-    if (name === "check-sat") return { assertions, hasCheckSat: true, rlimit };
     const option = list.items[1];
     const value = list.items[2];
     if (
@@ -2395,17 +2417,43 @@ export const parseSmtlib = (
       option.text === ":rlimit" &&
       value?.kind === "numeral"
     )
-      rlimit = Number(value.text);
-    if (DECLARATIONS.has(name)) {
+      state.rlimit = Number(value.text);
+    if (name === "set-logic") {
+      if (!isSymbol(option))
+        throw new SmtParseError("invalid logic name, symbol expected", option ?? list.end);
+      if (state.logic !== "") throw new SmtParseError("the logic has already been set", list.end);
+      if (assertions.length > 0)
+        throw new SmtParseError("logic must be set before initialization", list.end);
+      if (!isSupportedLogic(option.text)) return;
+      state.logic = option.text;
+      state.reader = createSmtlibReader(manager, option.text);
+    } else if (DECLARATIONS.has(name)) {
       if (name === "define-fun" || name === "define-sort" || name === "define-const")
         throw new SmtUnsupportedError(`the command ${name} is not supported`);
-      reader.declareCommand(list);
+      state.reader.declareCommand(list);
     } else if (name === "assert") {
-      const assertion = reader.parseFormula(list.items[1] ?? list.end);
+      const assertion = state.reader.parseFormula(list.items[1] ?? list.end);
+      const logicError = state.reader.getLogicError(assertion);
+      if (logicError !== undefined) {
+        manager.decRef(assertion);
+        throw new SmtParseError(logicError, list.end);
+      }
       assertions.push(assertion);
       assertExpr(assertion);
     } else if (name === "push" || name === "pop")
       throw new SmtUnsupportedError(`the command ${name} is not supported`);
+  };
+  for (;;) {
+    try {
+      const list = commands.read();
+      if (list === undefined) return { assertions, hasCheckSat: false, rlimit: state.rlimit };
+      if (isSymbol(list.items[0], "check-sat"))
+        return { assertions, hasCheckSat: true, rlimit: state.rlimit };
+      runCommand(list);
+    } catch (error) {
+      if (!(error instanceof SmtParseError)) throw error;
+      report(error);
+      commands.skip(report);
+    }
   }
-  return { assertions, hasCheckSat: false, rlimit };
 };

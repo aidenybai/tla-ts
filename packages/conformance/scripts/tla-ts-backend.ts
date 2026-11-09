@@ -12,15 +12,22 @@ const backend = process.argv[2];
 const text = readFileSync(process.argv[3], "utf8");
 const options = { timeLimitMs: TIME_LIMITS[backend] * 1000 };
 
+// The oracle records Z3's stdout followed by its stderr.
 if (isSmtScript(process.argv[3])) {
-  runSmtlibScript(text, options, (line) => console.log(line));
+  const diagnostics: string[] = [];
+  runSmtlibScript(text, options, (line, isDiagnostic) =>
+    isDiagnostic ? diagnostics.push(line) : console.log(line),
+  );
+  for (const line of diagnostics) console.log(line);
 } else if (backend === "zenon") {
   const decision = decideZenon(text, options);
   console.log(
     decision.verdict === "unsat" ? getBackendVerdict("zenon", decision.proof, 0) : decision.verdict,
   );
+} else if (backend === "z3") {
+  console.log(decideSmt(text, options, () => {}));
 } else {
-  const decide = { z3: decideSmt, isabelle: decideIsabelle, ls4: decidePtl }[backend];
+  const decide = { isabelle: decideIsabelle, ls4: decidePtl }[backend];
   if (!decide) {
     console.error(`Unknown backend ${backend}`);
     process.exit(1);
