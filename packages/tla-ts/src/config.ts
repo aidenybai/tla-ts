@@ -174,13 +174,13 @@ const tokenizeConfig = (source: string) => {
       skip(text);
       continue;
     }
+    const operator = matchUnicodeToken(source, cursor.index) ?? matchOperator(source, cursor.index);
     const symbol = SYMBOLS.find((candidate) => rest.startsWith(candidate));
-    if (symbol) {
+    if (symbol && symbol.length >= (operator?.length ?? 0)) {
       tokens.push({ kind: "Symbol", text: symbol, line });
       skip(symbol);
       continue;
     }
-    const operator = matchUnicodeToken(source, cursor.index) ?? matchOperator(source, cursor.index);
     if (!operator) {
       addLexicalError(cursor.index, "");
       return tokens;
