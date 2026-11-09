@@ -307,6 +307,8 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [5007, "TLC found an error in the configuration file:\n%1%", false],
   // The general message is a prefix of the others above.
   [5002, "TLC found an error in the configuration file at line %1%\n", false],
+  [2250, "A state predicate was evaluated to a non-boolean value.", false],
+  [2252, "Encountered an action predicate that's not a boolean.", false],
   [2253, "Temporal formula is a tautology (its negation is unsatisfiable).", false],
   [
     2301,

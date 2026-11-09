@@ -600,12 +600,15 @@ export const evaluateLive = (
       const cached = stateCache.get(expression);
       if (cached !== undefined) return cached;
       const context = { environment, scope: expression.scope, state, next: undefined };
-      const result =
+      const value =
         expression.kind === "State"
-          ? expectBoolean(evaluate(expression.expression, context), "a temporal property predicate")
+          ? evaluate(expression.expression, context)
           : isEnabled(expression.step, context);
-      stateCache.set(expression, result);
-      return result;
+      if (typeof value !== "boolean") {
+        throw new TlaEvaluationError("A state predicate was evaluated to a non-boolean value.");
+      }
+      stateCache.set(expression, value);
+      return value;
     }
     case "Action": {
       if (expression.enabled && stateCache.get(expression.enabled) === false) return false;
@@ -615,7 +618,11 @@ export const evaluateLive = (
         expectBoolean(evaluate(expression.unchanged, context), "a subscript")
       )
         return false;
-      return expectBoolean(evaluate(expression.expression, context), "an action predicate");
+      const value = evaluate(expression.expression, context);
+      if (typeof value !== "boolean") {
+        throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
+      }
+      return value;
     }
     case "Not":
       return !recurse(expression.body);
