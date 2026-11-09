@@ -1061,6 +1061,40 @@ const compileBound = (
     );
     return { element, header: (name) => `for (const ${name} of ${getCode()})` };
   }
+  const expansion =
+    setExpression.kind === "Apply" ? getExpansion(program, setExpression, frame) : undefined;
+  if (expansion) {
+    return inline(program, expansion.definition, () =>
+      compileBound(program, expansion.definition.body, { ...frame, scope: expansion.scope }),
+    );
+  }
+  // TLC enumerates a set of records with its fields sorted, the last one varying fastest.
+  if (setExpression.kind === "RecordSet") {
+    const fields = [...setExpression.fields].sort((left, right) =>
+      left.name < right.name ? -1 : 1,
+    );
+    const names = fields.map((field) => field.name);
+    const loops = fields.map((field) => ({
+      name: getName(program, "q"),
+      ...compileBound(program, field.value, frame),
+    }));
+    const element = createRecord(
+      names,
+      loops.map((loop) => loop.element),
+    );
+    return {
+      element,
+      header: (name) => {
+        const resolved = resolveType(element);
+        if (resolved.kind !== "Rec") return unsupported();
+        const shape = getShapeIndex(resolved, names);
+        const values = resolved.shapes[shape].map((field) => loops[names.indexOf(field)].name);
+        const record = resolved.shapes.length === 1 ? values : [shape, ...values];
+        const once = getName(program, "o");
+        return `${loops.map((loop) => loop.header(loop.name)).join(" ")} for (let ${name} = [${record.join(", ")}], ${once} = true; ${once}; ${once} = false)`;
+      },
+    };
+  }
   if (setExpression.kind === "Apply" && isBuiltin(program, frame, setExpression.operator, "..")) {
     const [low, high] = setExpression.args.map((arg) =>
       expectInt(compileValue(program, arg, frame)),
@@ -1214,6 +1248,32 @@ const compileMembership = (
   setExpression: Expression,
   frame: Frame,
 ): Compiled => {
+  if (
+    setExpression.kind === "FunctionSet" &&
+    !isConstantExpression(program, setExpression.domain, frame.scope)
+  ) {
+    const domain = setExpression.domain;
+    if (domain.kind !== "Apply" || !isBuiltin(program, frame, domain.operator, "..")) {
+      return unsupported();
+    }
+    const [low, high] = domain.args.map((arg) => expectInt(compileValue(program, arg, frame)));
+    const range: Type = createVar();
+    unify(element.type, { kind: "Seq", element: range });
+    const name = getName(program, "e");
+    const [sequence, first, last] = ["s", "l", "h"].map((prefix) => getName(program, prefix));
+    const inner = compileMembership(
+      program,
+      { type: range, emit: () => name },
+      setExpression.range,
+      frame,
+    );
+    // A sequence has the domain 1..Len(s), which an empty interval equals only when s is empty.
+    return {
+      type: BOOL,
+      emit: () =>
+        `((${sequence}, ${first}, ${last}) => (${last} < ${first} ? ${sequence}.length === 0 : ${first} === 1 && ${sequence}.length === ${last}) && ${sequence}.every((${name}) => ${inner.emit()}))(${element.emit()}, ${low.emit()}, ${high.emit()})`,
+    };
+  }
   if (setExpression.kind === "FunctionSet") {
     const range: Type = createVar();
     const domain = getElements(evaluateConstant(program, setExpression.domain));
