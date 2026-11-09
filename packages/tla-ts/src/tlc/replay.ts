@@ -198,7 +198,13 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
         : error;
     }
   })();
-  return !isEqualLikeTlc(before, after);
+  try {
+    return !isEqualLikeTlc(before, after);
+  } catch (error) {
+    // TLC's v0.equals(v1) raises a FingerprintException when v0 has a source.
+    freezeCallStack(replay.callStack, [before], error);
+    throw error;
+  }
 };
 
 const proceedAssigned = (replay: Replay, items: ActionItem | undefined, partial: Value[]): void => {
