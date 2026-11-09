@@ -1861,6 +1861,10 @@ const parse = (
     const start = cursor.index;
     const location = getLocation(expect("ASSUME"));
     const assumptions = parseSeparated(() => {
+      if (peek().kind === "Identifier" && isAt("::", 1) && isAt("ASSUME", 2)) {
+        advance();
+        advance();
+      }
       if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
       if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text)) return parseNewSymbol();
       return parseExpression();
