@@ -248,7 +248,7 @@ const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
 export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
   const isSorted = functionValue.hash !== 0 || functionValue.fingerprint !== 0;
   const keys = (isSorted ? undefined : functionValue.writtenKeys) ?? functionValue.domain;
-  return keys.map((key) => [key, functionValue.range[findSortedIndex(functionValue.domain, key)]]);
+  return keys.map((key) => [key, functionValue.range[functionValue.domain.indexOf(key)]]);
 };
 
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
