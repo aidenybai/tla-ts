@@ -5,14 +5,14 @@
 // Each run builds its expressions in its own store, so that fresh names and hashes start over.
 
 import { TlaZenonError } from "../../errors";
-import { combine, createHasher, toInt63, type Int63 } from "./ocaml";
+import { combine, createHasher, toInt63, type Int63, type List } from "./ocaml";
 
 // What every expression caches about itself.
 interface ExprData {
   id: number;
   hash: number;
   skeleton: Int63;
-  freeVars: string[];
+  freeVars: List<string> | undefined;
   size: number;
   taus: number;
   metas: Expr[];
@@ -98,9 +98,9 @@ const makeConstant = (kind: "true" | "false", id: number, skeleton: Int63): Cons
   kind,
   symbol: "",
   args: [],
-  hash: createHasher().hashIntAndStrings(skeleton.high, skeleton.low, []),
+  hash: createHasher().hashIntAndStrings(skeleton.high, skeleton.low, undefined),
   skeleton,
-  freeVars: [],
+  freeVars: undefined,
   size: 1,
   taus: 0,
   metas: [],
@@ -121,19 +121,33 @@ const isBinder = (expression: Expr): expression is BinderExpr =>
   expression.kind === "tau" ||
   expression.kind === "lam";
 
-// Zenon's str_union: the names of the first list missing from the second, in reverse, then the
-// second. Hashes depend on this order.
-const unionNames = (left: string[], right: string[]) => {
-  if (left.length === 0) return right;
-  if (right.length === 0) return left;
-  const result = [...right];
-  for (const name of left) if (!result.includes(name)) result.unshift(name);
+export const someName = (names: List<string> | undefined, predicate: (name: string) => boolean) => {
+  for (let cell = names; cell !== undefined; cell = cell.tail)
+    if (predicate(cell.head)) return true;
+  return false;
+};
+
+const hasName = (names: List<string> | undefined, name: string) => {
+  for (let cell = names; cell !== undefined; cell = cell.tail) if (cell.head === name) return true;
+  return false;
+};
+
+// Zenon's str_union: the names of the first list missing from the second, in reverse, consed onto
+// the second, which the result shares. Hashes depend on this order.
+const unionNames = (left: List<string> | undefined, right: List<string> | undefined) => {
+  if (right === undefined) return left;
+  let result = right;
+  for (let cell = left; cell !== undefined; cell = cell.tail)
+    if (!hasName(result, cell.head)) result = { head: cell.head, tail: result };
   return result;
 };
 
-const removeName = (name: string, names: string[]) => {
-  const index = names.indexOf(name);
-  return index === -1 ? names : [...names.slice(0, index), ...names.slice(index + 1)];
+// Zenon's remove, which copies the names before the removed one and shares the rest.
+const removeName = (name: string, names: List<string> | undefined): List<string> | undefined => {
+  if (names === undefined) return undefined;
+  if (names.head === name) return names.tail;
+  const tail = removeName(name, names.tail);
+  return tail === names.tail ? names : { head: names.head, tail };
 };
 
 export const difference = (left: Expr[], right: Expr[]) =>
@@ -148,8 +162,8 @@ export const union = (left: Expr[], right: Expr[]) => {
 export const isDisjoint = (left: Expr[], right: Expr[]) =>
   !left.some((inner) => right.includes(inner));
 
-const intersects = (env: Expr[], names: string[]) =>
-  names.some((name) => env.some((variable) => variable.symbol === name));
+const intersects = (env: Expr[], names: List<string> | undefined) =>
+  someName(names, (name) => env.some((variable) => variable.symbol === name));
 
 const isSameBinding = (leftEnv: Expr[], left: Expr, rightEnv: Expr[], right: Expr) => {
   const leftIndex = leftEnv.indexOf(left);
@@ -191,8 +205,8 @@ const isEqualInEnv = (leftEnv: Expr[], rightEnv: Expr[], left: Expr, right: Expr
     default:
       return (
         isBinder(right) &&
-        left.args[1].freeVars.includes(left.args[0].symbol) ===
-          right.args[1].freeVars.includes(right.args[0].symbol) &&
+        hasName(left.args[1].freeVars, left.args[0].symbol) ===
+          hasName(right.args[1].freeVars, right.args[0].symbol) &&
         isEqualInEnv(
           [left.args[0], ...leftEnv],
           [right.args[0], ...rightEnv],
@@ -204,8 +218,8 @@ const isEqualInEnv = (leftEnv: Expr[], rightEnv: Expr[], left: Expr, right: Expr
 };
 
 const isEqualBody = (leftVar: Expr, rightVar: Expr, left: Expr, right: Expr) => {
-  const isLeftBound = left.freeVars.includes(leftVar.symbol);
-  const isRightBound = right.freeVars.includes(rightVar.symbol);
+  const isLeftBound = hasName(left.freeVars, leftVar.symbol);
+  const isRightBound = hasName(right.freeVars, rightVar.symbol);
   return (
     (!isLeftBound && !isRightBound && left === right) ||
     (isLeftBound && isRightBound && isEqualInEnv([leftVar], [rightVar], left, right))
@@ -257,11 +271,11 @@ type Substitution = [Expr, Expr][];
 
 const lookup = (map: Substitution, variable: Expr) => map.find((pair) => pair[0] === variable)?.[1];
 
-const isIrrelevant = (names: string[], map: Substitution) =>
-  names.every((name) => map.every((pair) => pair[0].symbol !== name));
+const isIrrelevant = (names: List<string> | undefined, map: Substitution) =>
+  !someName(names, (name) => map.some((pair) => pair[0].symbol === name));
 
 const hasConflict = (variable: Expr, map: Substitution) =>
-  map.some((pair) => pair[1].freeVars.includes(variable.symbol));
+  map.some((pair) => hasName(pair[1].freeVars, variable.symbol));
 
 // The store of one run's expressions, and the operations that build expressions in it.
 export const createExpressions = () => {
@@ -282,7 +296,7 @@ export const createExpressions = () => {
   const create = <Shape extends Pick<Expr, "kind" | "symbol" | "args">>(
     shape: Shape,
     skeleton: Int63,
-    freeVars: string[],
+    freeVars: List<string> | undefined,
     size: number,
     taus: number,
     metas: Expr[],
@@ -340,7 +354,14 @@ export const createExpressions = () => {
 
   const evar = (name: string) =>
     intern("var", name, [], (): VarExpr =>
-      create({ kind: "var", symbol: name, args: [] }, ZERO, [name], 1, 0, []),
+      create(
+        { kind: "var", symbol: name, args: [] },
+        ZERO,
+        { head: name, tail: undefined },
+        1,
+        0,
+        [],
+      ),
     );
 
   const emeta = (quantified: Expr) =>
@@ -348,7 +369,7 @@ export const createExpressions = () => {
       create(
         { kind: "meta", symbol: "", args: [quantified] },
         combine(SKELETONS.meta, quantified.skeleton),
-        [],
+        undefined,
         1,
         0,
         [quantified],
@@ -358,7 +379,7 @@ export const createExpressions = () => {
   const eapp = (symbol: string, args: Expr[]) =>
     intern("app", symbol, args, (): AppExpr => {
       let skeleton = toInt63(hasher.hashString(symbol));
-      let freeVars: string[] = [];
+      let freeVars: List<string> | undefined = undefined;
       let size = 1;
       let taus = 0;
       let metas: Expr[] = [];
