@@ -29,6 +29,8 @@ import {
 interface IntType {
   kind: "Int";
   target: IntType | MixType | undefined;
+  // Whether the integers are the keys of a sequence, which a function on other keys replaces.
+  isSequenceKey: boolean;
 }
 
 interface BoolType {
@@ -197,7 +199,11 @@ const SPARSE = { reason: "sparse" };
 // action that sends a message reveals its fields to an earlier action that reads them.
 const UNKNOWN = { reason: "unknown" };
 
-const createInt = (): IntType => ({ kind: "Int", target: undefined });
+const createInt = (isSequenceKey = false): IntType => ({
+  kind: "Int",
+  target: undefined,
+  isSequenceKey,
+});
 const createStr = (): StrType => ({
   kind: "Str",
   target: undefined,
@@ -339,6 +345,9 @@ const unify = (left: Type, right: Type): void => {
       leftType.hasString ||= rightType.hasString;
       checkAtoms(leftType);
     }
+    if (leftType.kind === "Int" && rightType.kind === "Int") {
+      leftType.isSequenceKey ||= rightType.isSequenceKey;
+    }
     if (leftType.kind === rightType.kind) {
       rightType.target = leftType;
       return;
@@ -392,6 +401,7 @@ const unify = (left: Type, right: Type): void => {
   }
   const kinds = [leftType.kind, rightType.kind];
   if (kinds.includes("Seq") && (kinds.includes("Map") || kinds.includes("Rec"))) throw SPARSE;
+  if ([leftType, rightType].some((type) => type.kind === "Int" && type.isSequenceKey)) throw SPARSE;
   if (leftType.kind !== rightType.kind) return unsupported();
   if (leftType.kind === "Map" && rightType.kind === "Map") {
     unify(leftType.keys, rightType.keys);
@@ -816,8 +826,14 @@ const getComparerCode = (program: Program, type: Type): string => {
 // The shapes of a record whose type isn't known yet come from the values it unifies with. A value
 // that isn't a record or a model value fails to unify with it.
 const expectRecord = (type: Type) => {
-  const kind = resolveType(type).kind;
-  if (kind === "Var" || kind === "Str" || kind === "Empty") {
+  const unresolved = resolveType(type);
+  const kind = unresolved.kind;
+  if (
+    kind === "Var" ||
+    kind === "Str" ||
+    kind === "Empty" ||
+    (unresolved.kind === "Int" && unresolved.isSequenceKey)
+  ) {
     unify(type, { kind: "Rec", shapes: [], fields: new Map(), target: undefined });
   }
   const resolved = resolveType(type);
@@ -1269,7 +1285,7 @@ const compileBound = (
     const type = resolveType(target.type);
     if (type.kind !== "Seq" && type.kind !== "Fn") return unsupported();
     return {
-      element: type.kind === "Seq" ? createInt() : type.key,
+      element: type.kind === "Seq" ? createInt(true) : type.key,
       header: (name) => {
         const resolved = resolveType(type);
         if (resolved.kind === "Map") {
@@ -2052,7 +2068,7 @@ const compileBuiltin = (
     if (resolved.kind !== "Seq" && resolved.kind !== "Fn") return unsupported();
     const type: SetType = {
       kind: "Set",
-      element: resolved.kind === "Fn" ? resolved.key : createInt(),
+      element: resolved.kind === "Fn" ? resolved.key : createInt(true),
     };
     return {
       type,
