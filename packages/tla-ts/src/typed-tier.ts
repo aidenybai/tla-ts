@@ -1100,6 +1100,7 @@ const bindArguments = (
   definition: OperatorDefinition,
   args: Expression[],
   frame: Frame,
+  names?: LazyDefinition[],
 ): TierScope =>
   definition.params.reduce<TierScope>((scope, param, index) => {
     const arg = args[index];
@@ -1120,9 +1121,16 @@ const bindArguments = (
     };
     // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action.
     if (isBranching(program, arg, frame.scope)) return withBinding(scope, param.name, source);
+    const value = compileValue(program, arg, frame);
+    if (!names || arg.kind === "Identifier" || arg.kind === "Number" || arg.kind === "String") {
+      return withBinding(scope, param.name, { kind: "Code", compiled: value, source });
+    }
+    // TLC evaluates an argument where the body uses it, and keeps its value, as for a LET.
+    const name = getName(program, "l");
+    names.push({ name, value });
     return withBinding(scope, param.name, {
       kind: "Code",
-      compiled: compileValue(program, arg, frame),
+      compiled: { type: value.type, emit: () => getLazyCode(name) },
       source,
     });
   }, new Map());
@@ -1160,6 +1168,7 @@ const getExpansion = (
   program: Program,
   expression: Expression & { kind: "Apply" },
   frame: Frame,
+  names?: LazyDefinition[],
 ) => {
   const binding = frame.scope.get(expression.operator);
   if (binding?.kind === "Code") return unsupported();
@@ -1167,13 +1176,16 @@ const getExpansion = (
     const definition = binding.definition;
     const scope = new Map([
       ...binding.scope,
-      ...bindArguments(program, definition, expression.args, frame),
+      ...bindArguments(program, definition, expression.args, frame, names),
     ]);
     return { definition, scope };
   }
   const definition = resolveDefinition(program, expression.operator);
   if (definition)
-    return { definition, scope: bindArguments(program, definition, expression.args, frame) };
+    return {
+      definition,
+      scope: bindArguments(program, definition, expression.args, frame, names),
+    };
   return program.environment.definitions.has(expression.operator) ? unsupported() : undefined;
 };
 
@@ -2558,7 +2570,8 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     case "Identifier":
       return compileIdentifier(program, expression.name, frame);
     case "Apply": {
-      const expansion = getExpansion(program, expression, frame);
+      const names: LazyDefinition[] = [];
+      const expansion = getExpansion(program, expression, frame, names);
       if (!expansion) return compileBuiltin(program, expression, frame);
       const definition = expansion.definition;
       // SequencesExt's FlattenSeq returns its argument when that is empty, so one branch has the
@@ -2586,12 +2599,18 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
             ),
         };
       }
-      if (definition.kind === "Operator" && definition.isRecursive) {
-        return compileRecursion(program, definition, expansion.scope, frame);
-      }
-      return inline(program, definition, () =>
-        compileValue(program, definition.body, { ...frame, scope: expansion.scope }),
-      );
+      const body =
+        definition.kind === "Operator" && definition.isRecursive
+          ? compileRecursion(program, definition, expansion.scope, frame)
+          : inline(program, definition, () =>
+              compileValue(program, definition.body, { ...frame, scope: expansion.scope }),
+            );
+      return names.length === 0
+        ? body
+        : {
+            type: body.type,
+            emit: () => `(() => { ${getDeclarations(names)} return ${body.emit()}; })()`,
+          };
     }
     case "And":
     case "Or": {
