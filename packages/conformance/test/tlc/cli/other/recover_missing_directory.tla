@@ -5,6 +5,8 @@ outcome: tlc-error
 config: |
   INIT Init
   NEXT Next
+features:
+  - tlc-bug
 args:
   - -recover
   - no_such_checkpoint
