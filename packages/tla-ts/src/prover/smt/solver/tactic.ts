@@ -11,6 +11,7 @@ import { AssertedFormulas } from "./asserted-formulas";
 import { card2bv } from "./card2bv";
 import { Context } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
+import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import type { Definition, Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Der } from "./der";
@@ -376,6 +377,20 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
+  [
+    "ctx-solver-simplify",
+    {
+      descrs: SMT_DESCRS,
+      isRejectingUnknown: false,
+      build: (environment, params) =>
+        inPlace(
+          createCtxSolverSimplify(environment.manager, {
+            isMbqi: getBool(params, "mbqi", environment.isMbqi),
+            isFindingMacros: environment.isFindingMacros,
+          }),
+        ),
+    },
+  ],
   ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
   [
     "purify-arith",
@@ -610,7 +625,7 @@ const UNPORTED_TACTICS = new Set(
   (
     "ackermannize_bv add-bounds aig bit-blast blast-term-ite bv_bound_chk bv-divrem-bounds " +
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
-    "ctx-solver-simplify degree-shift demodulator diff-neq distribute-forall dom-simplify " +
+    "degree-shift demodulator diff-neq distribute-forall dom-simplify " +
     "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
     "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
