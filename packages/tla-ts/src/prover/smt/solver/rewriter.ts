@@ -622,8 +622,6 @@ export class Rewriter extends RewriterTpl {
     return isNegated ? this.mkNot(result) : result;
   }
 
-  // Each disjunct is simplified with the others assumed false, forward and then backward, until a
-  // backward pass changes nothing.
   private simplifyLocalCtx(initialArgs: number[]) {
     const manager = this.manager;
     let args = initialArgs;
