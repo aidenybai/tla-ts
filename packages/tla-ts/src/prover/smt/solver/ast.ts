@@ -678,6 +678,8 @@ export class AstManager {
   readonly piExpr: number;
   readonly eulerExpr: number;
   isHiDiv0 = true;
+  isSeqUsed = false;
+  isReUsed = false;
 
   constructor(readonly limit: ResourceLimit) {
     for (const builtin of BUILTIN_DECLS)

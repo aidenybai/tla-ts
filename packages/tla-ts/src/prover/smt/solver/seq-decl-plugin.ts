@@ -486,6 +486,35 @@ const getCharSignature = (
   return mkSignature(kind, "char.from_bv", domain, charSort);
 };
 
+const RE_KINDS = new Set([
+  OP_RE_PLUS,
+  OP_RE_STAR,
+  OP_RE_OPTION,
+  OP_RE_RANGE,
+  OP_RE_OF_PRED,
+  OP_RE_COMPLEMENT,
+  OP_RE_REVERSE,
+  OP_RE_DERIVATIVE,
+  OP_INTERNAL_REGEXP_FULL_CHAR,
+  OP_RE_FULL_CHAR_SET,
+  OP_RE_FULL_SEQ_SET,
+  OP_INTERNAL_REGEXP_EMPTY,
+  OP_RE_EMPTY_SET,
+  OP_RE_LOOP,
+  OP_RE_POWER,
+  OP_RE_UNION,
+  OP_RE_CONCAT,
+  OP_RE_INTERSECT,
+  OP_RE_DIFF,
+  OP_RE_XOR,
+  OP_SEQ_REPLACE_RE_ALL,
+  OP_SEQ_REPLACE_RE,
+  OP_SEQ_TO_RE,
+  OP_INTERNAL_STRING_TO_REGEXP,
+  OP_SEQ_IN_RE,
+  OP_INTERNAL_STRING_IN_REGEXP,
+]);
+
 export const getSeqSignature = (
   manager: AstManager,
   kind: number,
@@ -494,6 +523,8 @@ export const getSeqSignature = (
   range?: number,
 ): SeqSignature | string => {
   if (CHAR_KINDS.has(kind)) return getCharSignature(manager, kind, parameters, domain);
+  manager.isSeqUsed = true;
+  if (RE_KINDS.has(kind)) manager.isReUsed = true;
   switch (kind) {
     case OP_SEQ_EMPTY: {
       const rng = match(manager, getPsig(kind), domain, range);
@@ -696,4 +727,66 @@ export const formatZstring = (chars: readonly number[]) => {
     else parts.push(char === 34 ? '""' : String.fromCharCode(char));
   });
   return `"${parts.join("")}"`;
+};
+
+export const mkSeqApp = (
+  manager: AstManager,
+  op: number,
+  args: number[],
+  parameters: readonly number[] = [],
+  range?: number,
+) => {
+  const signature = getSeqSignature(
+    manager,
+    op,
+    parameters,
+    args.map((arg) => manager.sorts[arg]),
+    range,
+  );
+  if (typeof signature === "string") throw new SmtInvariantError(signature);
+  return mkSeqAppOf(manager, signature, args);
+};
+
+export const mkEmptySeq = (manager: AstManager, sort: number) =>
+  manager.isStringSort(sort) ? manager.mkString([]) : mkSeqApp(manager, OP_SEQ_EMPTY, [], [], sort);
+
+export const mkConcatOf = (manager: AstManager, args: readonly number[], sort: number) =>
+  args.length === 0
+    ? mkEmptySeq(manager, sort)
+    : args.length === 1
+      ? args[0]
+      : mkSeqApp(manager, OP_SEQ_CONCAT, [...args]);
+
+export const mkUnitChar = (manager: AstManager, code: number) =>
+  mkSeqApp(manager, OP_SEQ_UNIT, [manager.mkChar(code)]);
+
+export const isEmptySeq = (manager: AstManager, expr: number) =>
+  manager.getOp(expr) === OP_SEQ_EMPTY || manager.getString(expr)?.length === 0;
+
+export const isBinaryApp = (manager: AstManager, expr: number, op: number) =>
+  manager.getOp(expr) === op && manager.getNumArgs(expr) === 2;
+
+export const getConcat = (manager: AstManager, expr: number, result: number[]) => {
+  const todo = [expr];
+  while (todo.length > 0) {
+    const current = todo.pop()!;
+    if (isBinaryApp(manager, current, OP_SEQ_CONCAT)) {
+      todo.push(manager.getArg(current, 1), manager.getArg(current, 0));
+      continue;
+    }
+    if (!isEmptySeq(manager, current)) result.push(current);
+  }
+  return result;
+};
+
+export const getConcatUnits = (manager: AstManager, expr: number, result: number[]) => {
+  let current = expr;
+  while (isBinaryApp(manager, current, OP_SEQ_CONCAT)) {
+    getConcatUnits(manager, manager.getArg(current, 0), result);
+    current = manager.getArg(current, 1);
+  }
+  const chars = manager.getString(current);
+  if (chars !== undefined) for (const code of chars) result.push(mkUnitChar(manager, code));
+  else if (!isEmptySeq(manager, current)) result.push(current);
+  return result;
 };

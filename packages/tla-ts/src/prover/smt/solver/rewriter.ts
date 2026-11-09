@@ -8,14 +8,17 @@ import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
 import { mkFpaAppCore, mkFpaEqCore } from "./fpa-rewriter";
+import { SeqRewriter } from "./seq-rewriter";
 import {
   AstManager,
   FAMILY_ARITH,
   FAMILY_ARRAY,
   FAMILY_BASIC,
   FAMILY_BV,
+  FAMILY_CHAR,
   FAMILY_DATATYPE,
   FAMILY_FPA,
+  FAMILY_SEQ,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -99,6 +102,7 @@ export class Rewriter extends RewriterTpl {
   private arith: ArithRewriter;
   private bv: BvRewriter;
   private array: ArrayRewriter;
+  private seq: SeqRewriter;
   private substitution = new Map<number, number>();
   private unusedVarsEliminator: UnusedVarsEliminator;
   private der: Der;
@@ -122,6 +126,7 @@ export class Rewriter extends RewriterTpl {
       },
     });
     this.array = new ArrayRewriter(manager);
+    this.seq = new SeqRewriter(manager);
     this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
     this.der = new Der(manager);
   }
@@ -397,7 +402,9 @@ export class Rewriter extends RewriterTpl {
             ? this.array.mkEqCore(left, right)
             : manager.getSortFamily(sort) === FAMILY_FPA
               ? mkFpaEqCore(manager, left, right)
-              : undefined;
+              : manager.getSortFamily(sort) === FAMILY_SEQ
+                ? this.seq.mkEqCore(left, right)
+                : undefined;
     if (theoryResult !== undefined) return theoryResult;
     if (manager.getOp(left) === OP_UBV2INT || manager.getOp(right) === OP_UBV2INT) {
       const bv2intResult = this.bv.mkEqBv2int(left, right);
@@ -423,12 +430,16 @@ export class Rewriter extends RewriterTpl {
     if (funcDecl.family === FAMILY_ARRAY) return this.array.mkAppCore(funcDecl.op, args) ?? -1;
     if (funcDecl.family === FAMILY_DATATYPE) return mkDatatypeAppCore(manager, decl, args) ?? -1;
     if (funcDecl.family === FAMILY_FPA) return mkFpaAppCore(manager, decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_SEQ || funcDecl.family === FAMILY_CHAR)
+      return this.seq.mkAppCore(decl, args) ?? -1;
     const op = funcDecl.op;
     switch (op) {
       case OP_AND:
-        return this.mkAndCore(args);
+        return (
+          (manager.isReUsed ? this.seq.mkBoolApp(true, args) : undefined) ?? this.mkAndCore(args)
+        );
       case OP_OR:
-        return this.mkOr(args);
+        return (manager.isReUsed ? this.seq.mkBoolApp(false, args) : undefined) ?? this.mkOr(args);
       case OP_NOT:
         return this.mkNot(args[0]);
       case OP_IMPLIES:
@@ -436,7 +447,14 @@ export class Rewriter extends RewriterTpl {
       case OP_XOR:
         return this.mkEq(this.mkNot(args[0]), args[1]);
       case OP_EQ:
-        return this.reduceEq(args[0], args[1]) ?? this.mkEqCore(args[0], args[1]) ?? -1;
+        return (
+          this.reduceEq(args[0], args[1]) ??
+          (manager.isSeqUsed && manager.getFamily(args[0]) === FAMILY_SEQ
+            ? this.seq.mkEqCore(args[0], args[1])
+            : undefined) ??
+          this.mkEqCore(args[0], args[1]) ??
+          -1
+        );
       case OP_DISTINCT:
         return (
           (args.length > 0 && manager.isBvSort(manager.sorts[args[0]])
