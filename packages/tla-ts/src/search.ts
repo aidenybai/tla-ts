@@ -888,7 +888,7 @@ export const createSearch = (
     config.symmetry === undefined
       ? undefined
       : getSymmetryGroup(config.symmetry, environment, config.substitutions);
-  if (config.view !== undefined) getConfigOperator("view function", config.view, environment);
+  if (config.view !== undefined) getConfigDefinition("view function", config.view, environment);
   const view =
     config.view === undefined
       ? undefined
