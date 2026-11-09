@@ -32,7 +32,6 @@ const CASES: [string, string][] = [
     "const getChecked = (): number => { throw new Error('no'); }; try { count = getChecked(); } catch { count = 0; }",
   ],
   ["throwing an array", "try { throw values; } catch { count = 0; }"],
-  ["calling a generator", "const make = function* () { count++; }; make();"],
   [
     "yielding inside a loop",
     "const make = function* () { for (const value of values) yield; }; make().next();",

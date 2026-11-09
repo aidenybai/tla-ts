@@ -263,6 +263,8 @@ LOCAL IsBuiltIn(ref) ==
 Lookup(heap, ref) ==
   CASE ref \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of " \\o ToString(ref))
+    [] IsHeap(ref) /\\ heap.objects[ref[Ref]].isOpaque ->
+         Assert(FALSE, "tla-ts can't read the properties of a generator")
     [] IsHeap(ref) -> heap.objects[ref[Ref]]
     [] IsBuiltIn(ref) /\\ BuiltInKey(ref) \\in DOMAIN heap.changed -> heap.changed[BuiltInKey(ref)]
     [] IsBuiltIn(ref) -> BuiltIns[BuiltInKey(ref)]
@@ -318,6 +320,9 @@ Put(object, key, value) ==
                       !.attributes = (key :> Writable) @@ @]
 
 \\* The object that a generator's next gives, which CreateIterResultObject makes.
+\\* A generator object, whose properties tla-ts doesn't model, as only its methods' calls run.
+GeneratorObject == [EmptyObject EXCEPT !.isOpaque = TRUE]
+
 IteratorResult(value, isDone) == Put(Put(EmptyObject, "value", value), "done", isDone)
 
 \\* A property that a class defines, with its attributes.

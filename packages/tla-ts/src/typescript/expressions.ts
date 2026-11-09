@@ -106,6 +106,7 @@ import {
   isFieldName,
   isHeapType,
   isNumberLike,
+  rejectGeneratorUse,
   isNumericKey,
   isObject,
   translateUnknown,
@@ -886,6 +887,7 @@ const translateDeclared = (
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  rejectGeneratorUse(node, context);
   if (
     context.hasSpecialNumbers &&
     (node.text === "NaN" || node.text === "Infinity") &&

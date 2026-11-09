@@ -175,6 +175,34 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   return isFunctionPrototype || isHeapType(type, node, context) ? "object" : "other";
 };
 
+const isGeneratorType = (node: ts.Node, context: Context) =>
+  context.checker.getTypeAtLocation(node).getSymbol()?.name === "Generator";
+
+// A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
+// call of its methods, or into a comparison. Elsewhere, such as an array pattern, a spread, or a
+// function's parameter, code would iterate it in ways that tla-ts doesn't follow.
+export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
+  if (!isGeneratorType(node, context)) return;
+  const outer = ts.findAncestor(node.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor));
+  const isHeld =
+    outer !== undefined &&
+    ((ts.isVariableDeclaration(outer) &&
+      ts.isIdentifier(outer.name) &&
+      isGeneratorType(outer.name, context)) ||
+      (ts.isBinaryExpression(outer) &&
+        outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(outer.left) &&
+        isGeneratorType(outer.left, context)) ||
+      (ts.isBinaryExpression(outer) &&
+        [
+          ts.SyntaxKind.EqualsEqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ].includes(outer.operatorToken.kind)) ||
+      ts.isPropertyAccessExpression(outer) ||
+      ts.isExpressionStatement(outer));
+  if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
+};
+
 export const isObject = (type: ts.Type): boolean =>
   type.isUnion() ? type.types.some(isObject) : (type.flags & ts.TypeFlags.Object) !== 0;
 

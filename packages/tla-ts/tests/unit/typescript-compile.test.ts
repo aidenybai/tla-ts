@@ -1140,11 +1140,27 @@ describe("errors", () => {
       ),
     );
     expect(result.failure).toBeUndefined();
-    expect(() =>
+    const alone = await check(
       compile(
-        `let count = 0;\nvar step: () => Generator<number>;\nstep = function* () { count += 1; };\nstep();`,
+        `let count = 0;\nconst read = () => count;\nvar step: () => Generator<number>;\nstep = function* () { count += 1; };\nstep();\nif (read() !== 0) throw new Error("ran");`,
       ),
-    ).toThrow("spec.ts:4:1 Unsupported statement");
+    );
+    expect(alone.failure).toBeUndefined();
+  });
+
+  it("resumes a generator through next and return", async () => {
+    const result = await check(
+      compile(
+        `const o = {};\nlet log = "";\nconst read = (): string => log;\nfunction* g(start: number) {\n  log += "a" + start;\n  yield 1;\n  log += "b";\n  yield 2;\n  log += "c";\n  return 3;\n}\nconst iter = g(5);\nif (read() !== "") throw new Error("ran early");\nconst first = iter.next();\nif (first.value !== 1 || first.done !== false || read() !== "a5") throw new Error("first");\nconst second = iter.next();\nif (second.value !== 2 || read() !== "a5b") throw new Error("second");\nconst third = iter.next();\nif (third.value !== 3 || third.done !== true || read() !== "a5bc") throw new Error("third");\nconst fourth = iter.next();\nif (fourth.done !== true) throw new Error("fourth");\nconst other = g(7);\nconst closed = other.return(9);\nif (closed.value !== 9 || closed.done !== true || read() !== "a5bc") throw new Error("return");\nconst after = other.next();\nif (after.done !== true) throw new Error("after return");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    const failed = await check(
+      compile(
+        `const o = {};\nlet log = "";\nconst read = (): string => log;\nfunction* g(start: number) {\n  log += "a" + start;\n  yield 1;\n  log += "b";\n  yield 2;\n  log += "c";\n  return 3;\n}\nconst iter = g(5);\nif (read() !== "") throw new Error("ran early");\nconst first = iter.next();\nif (first.value !== 1 || first.done !== false || read() !== "a5") throw new Error("first");\nconst second = iter.next();\nif (second.value !== 3 || read() !== "a5b") throw new Error("second");\nconst third = iter.next();\nif (third.value !== 3 || third.done !== true || read() !== "a5bc") throw new Error("third");\nconst fourth = iter.next();\nif (fourth.done !== true) throw new Error("fourth");\nconst other = g(7);\nconst closed = other.return(9);\nif (closed.value !== 9 || closed.done !== true || read() !== "a5bc") throw new Error("return");\nconst after = other.next();\nif (after.done !== true) throw new Error("after return");`,
+      ),
+    );
+    expect(failed.failure?.message).toContain("second");
   });
 
   it("reads strings through their search, slice, and trim methods", async () => {
