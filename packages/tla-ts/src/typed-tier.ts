@@ -2563,6 +2563,20 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     }
     case "Unchanged":
       return compileUnchanged(program, expression.expression, frame);
+    // TLC computes ENABLED of a state as whether the action has a successor from it.
+    case "Enabled": {
+      if (frame.primed.some((code) => code !== undefined)) return unsupported();
+      const step = compileStep(
+        program,
+        [{ expression: expression.expression, scope: frame.scope, inlining: [] }],
+        frame.primed,
+      );
+      return {
+        type: BOOL,
+        emit: () =>
+          `(() => { let isFound = false; const emit = () => { isFound = true; }; ${step()} return isFound; })()`,
+      };
+    }
     default:
       return unsupported();
   }
