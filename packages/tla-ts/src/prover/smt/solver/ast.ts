@@ -659,7 +659,7 @@ export class AstManager {
   // A deleted declaration keeps its small id here, in case an application of it is created again.
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
-  // The bodies of the functions define-fun-rec defines, -1 before the body is parsed.
+  // -1 until the body is parsed.
   readonly recFunBodies = new Map<number, number>();
   private deletedDecls = new Set<number>();
   private freshId = 0;
@@ -768,7 +768,6 @@ export class AstManager {
     this.macros.set(decl, expr);
   }
 
-  // recfun::def: a recursive function, which the recfun plugin declares with OP_FUN_DEFINED.
   mkRecFuncDecl(name: string, domain: number[], range: number) {
     const decl = this.funcDecls.length;
     this.declHashes[decl] = this.getFuncDeclHash(
