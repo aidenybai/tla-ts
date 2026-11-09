@@ -2770,10 +2770,13 @@ const translateLoop = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  const initializer = ts.isForStatement(loop) ? loop.initializer : undefined;
-  if (initializer === undefined)
-    return translateIterations(loop, path, context, frame, continueWith);
   const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
+  // A for-of or a for-in evaluates what it iterates once, before its first iteration.
+  if (ts.isForOfStatement(loop) || ts.isForInStatement(loop)) {
+    return allocate(loop.expression, path, context, runLoop);
+  }
+  const initializer = ts.isForStatement(loop) ? loop.initializer : undefined;
+  if (initializer === undefined) return runLoop(path);
   return ts.isVariableDeclarationList(initializer)
     ? translateDeclarations(initializer.declarations, path, context, frame, runLoop)
     : translateExpressionStatement(initializer, path, context, frame, runLoop);

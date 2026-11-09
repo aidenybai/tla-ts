@@ -1393,6 +1393,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes the objects that a for-of iterates before its first iteration", async () => {
+    const result = await check(
+      compile(
+        `let x = 0;\nlet counter = 0;\nconst seen: object[] = [];\nfor (const [{ x: inner }] of [[{ x: 2 }], [{ x: 3 }]]) {\n  x += inner;\n  counter += 1;\n}\nfor ({ x } of [{ x: 7 }]) counter += 1;\nif (x !== 7 || counter !== 3) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
