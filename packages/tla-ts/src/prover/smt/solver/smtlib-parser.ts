@@ -2225,8 +2225,71 @@ export const createSmtlibReader = (
     );
   };
 
+  // parse_rec_fun_decl: the variables are bound only while the range is parsed.
+  const declareRecFun = (items: SExpr[], at: SExpr) => {
+    const symbol = expectSymbol(
+      items[0],
+      "invalid function/constant definition, symbol expected",
+      at,
+    );
+    const bound = bindSortedVars(items[1], at);
+    const range = parseSort(items[2] ?? at, "Invalid recursive function definition");
+    unbindSortedVars(bound.varSorts.length);
+    return manager.mkRecFuncDecl(symbol.text, bound.varSorts, range);
+  };
+
+  // parse_rec_fun_body: Z3 reports a body of another sort at the token after it.
+  const defineRecFun = (decl: number, variables: SExpr, body: SExpr, next: SExpr) => {
+    const bound = bindSortedVars(variables, body);
+    const parsed = parseTerm(body);
+    unbindSortedVars(bound.varSorts.length);
+    const range = manager.funcDecls[decl].range;
+    if (manager.sorts[parsed] !== range)
+      throw new SmtParseError(
+        `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[parsed])}`,
+        next,
+      );
+    manager.setRecFunBody(decl, parsed);
+  };
+
   const declareCommand = (list: SmtList) => {
     const name = list.items[0].kind === "list" ? "" : list.items[0].text;
+    if (name === "define-fun-rec") {
+      const decl = declareRecFun(list.items.slice(1), list.end);
+      insertFunc(decl, list.items[4] ?? list.end);
+      defineRecFun(decl, list.items[2], list.items[4] ?? list.end, list.items[5] ?? list.end);
+      return;
+    }
+    if (name === "define-funs-rec") {
+      const message = "invalid recursive function definition, '(' expected";
+      const signatures = expectList(list.items[1], message, list.end).items.map((signature) => {
+        const declaration = expectList(signature, message, signature);
+        const items = declaration.items;
+        if (items.length > 3)
+          throw new SmtParseError("invalid recursive function definition, ')' expected", items[3]);
+        return { items, decl: declareRecFun(items, declaration.end) };
+      });
+      for (const signature of signatures) insertFunc(signature.decl, list.items[2] ?? list.end);
+      const bodies = expectList(list.items[2], message, list.end);
+      signatures.forEach((signature, index) => {
+        const body = bodies.items[index];
+        if (body === undefined)
+          throw new SmtParseError(
+            "the number of declarations does not match number of supplied definitions",
+            bodies.end,
+          );
+        defineRecFun(
+          signature.decl,
+          signature.items[1],
+          body,
+          bodies.items[index + 1] ?? bodies.end,
+        );
+      });
+      const extra = bodies.items[signatures.length];
+      if (extra !== undefined)
+        throw new SmtParseError("invalid recursive function definition, ')' expected", extra);
+      return;
+    }
     if (name === "declare-datatypes") {
       declareDatatypes(list);
       return;
@@ -2400,6 +2463,8 @@ export const DECLARATIONS = new Set([
   "define-fun",
   "define-const",
   "define-sort",
+  "define-fun-rec",
+  "define-funs-rec",
 ]);
 
 // Z3 reports an error in a command, skips the command and goes on.
@@ -2433,7 +2498,7 @@ export const parseSmtlib = (
       state.logic = option.text;
       state.reader = createSmtlibReader(manager, option.text);
     } else if (DECLARATIONS.has(name)) {
-      if (name === "define-fun" || name === "define-sort" || name === "define-const")
+      if (name.startsWith("define-"))
         throw new SmtUnsupportedError(`the command ${name} is not supported`);
       state.reader.declareCommand(list);
     } else if (name === "assert") {

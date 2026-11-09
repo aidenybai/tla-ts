@@ -659,6 +659,8 @@ export class AstManager {
   // A deleted declaration keeps its small id here, in case an application of it is created again.
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
+  // The bodies of the functions define-fun-rec defines, -1 before the body is parsed.
+  readonly recFunBodies = new Map<number, number>();
   private deletedDecls = new Set<number>();
   private freshId = 0;
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
@@ -764,6 +766,35 @@ export class AstManager {
     this.declRefCounts[decl] = 1;
     this.mkSmallId();
     this.macros.set(decl, expr);
+  }
+
+  // recfun::def: a recursive function, which the recfun plugin declares with OP_FUN_DEFINED.
+  mkRecFuncDecl(name: string, domain: number[], range: number) {
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_RECFUN_FAMILY, 0, [0]),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_USER,
+      op: OP_UNINTERPRETED,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters: [],
+    });
+    this.declRefCounts[decl] = 1;
+    this.recFunBodies.set(decl, -1);
+    return decl;
+  }
+
+  setRecFunBody(decl: number, body: number) {
+    this.incRef(body);
+    this.recFunBodies.set(decl, body);
   }
 
   // The signature of a builtin declaration that Z3 makes on first use, or null for a declaration

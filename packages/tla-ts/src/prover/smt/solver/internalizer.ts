@@ -1,6 +1,6 @@
 // Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see
 // z3-license.txt.
-import { SmtInvariantError } from "../../../errors";
+import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
   FAMILY_BASIC,
@@ -822,6 +822,8 @@ export abstract class Internalizer {
 
   private internalizeRec(expr: number, isGateContext: boolean) {
     const manager = this.manager;
+    if (manager.kinds[expr] === KIND_APP && manager.recFunBodies.has(manager.decls[expr]))
+      throw new SmtUnsupportedError("theory_recfun, which recursive functions need");
     if (manager.sorts[expr] === SORT_BOOL) this.internalizeFormula(expr, isGateContext);
     else this.internalizeTerm(expr);
   }
