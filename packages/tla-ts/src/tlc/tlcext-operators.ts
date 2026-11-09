@@ -309,7 +309,9 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
           `The argument of TLCEvalDefinition should be a a zero-arity definition, but instead it is:\n${name}(${parameters.join(", ")})`,
         );
       }
-      return evaluate({ kind: "Identifier", name, location: definition.location }, context);
+      return definition.kind === "Operator"
+        ? evaluate(definition.body, context)
+        : evaluate({ kind: "Identifier", name, location: definition.location }, context);
     }),
   ];
 };
