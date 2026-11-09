@@ -29,6 +29,7 @@ import { Rational } from "./rational";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { ModelEvaluator } from "./model-evaluator";
 import { RefVector } from "./ref-vector";
+import { CharFactory, SeqFactory } from "./seq-factory";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 const getManagerSomeValue = (manager: AstManager, sort: number): number => {
@@ -274,6 +275,8 @@ export class ProtoModel {
   private refCount = 0;
   // A model, rather than the proto_model it was made from, takes its values from the manager.
   private isFinal = false;
+  private seqFactory: SeqFactory | undefined;
+  private charFactory: CharFactory | undefined;
 
   constructor(readonly manager: AstManager) {
     this.boolRandom = new RandomGen(manager.getNumAsts());
@@ -369,13 +372,34 @@ export class ProtoModel {
     return value;
   }
 
+  getSeqFactory() {
+    this.seqFactory ??= new SeqFactory(this.manager, this);
+    return this.seqFactory;
+  }
+
+  getCharFactory() {
+    this.charFactory ??= new CharFactory();
+    return this.charFactory;
+  }
+
   registerValue(value: number) {
-    const sort = this.manager.sorts[value];
+    const manager = this.manager;
+    const sort = manager.sorts[value];
+    if (this.charFactory !== undefined && manager.isCharSort(sort)) {
+      this.charFactory.registerValue(manager.getChar(value));
+      return;
+    }
+    if (this.seqFactory !== undefined && manager.getSortFamily(sort) === FAMILY_SEQ) {
+      this.seqFactory.registerValue(value);
+      return;
+    }
     if (sort !== SORT_BOOL) this.addValue(sort, value);
   }
 
   getSomeValue(sort: number): number {
     const manager = this.manager;
+    if (this.charFactory !== undefined && manager.isCharSort(sort))
+      return manager.mkChar(this.charFactory.getSomeValue());
     if (
       manager.isFpSort(sort) ||
       manager.isRmSort(sort) ||
@@ -485,6 +509,10 @@ export class ProtoModel {
 
   getFreshValue(sort: number): number | null {
     if (sort === SORT_BOOL || this.finiteSorts.has(sort)) return null;
+    if (this.charFactory !== undefined && this.manager.isCharSort(sort))
+      return this.manager.mkChar(this.charFactory.getFreshValue());
+    if (this.seqFactory !== undefined && this.manager.getSortFamily(sort) === FAMILY_SEQ)
+      return this.seqFactory.getFreshValue(sort);
     if (this.manager.isFpSort(sort) || this.manager.isRmSort(sort))
       return getManagerSomeValue(this.manager, sort);
     if (this.manager.isDatatypeSort(sort)) return this.getFreshDatatypeValue(sort);

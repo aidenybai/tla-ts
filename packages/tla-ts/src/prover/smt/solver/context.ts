@@ -45,6 +45,8 @@ import { FC_CONTINUE, FC_DONE, FC_GIVEUP, Theory } from "./theory";
 import { TheoryArray } from "./theory-array";
 import { TheoryBv } from "./theory-bv";
 import { TheoryFpa } from "./theory-fpa";
+import { TheoryChar } from "./theory-char";
+import { TheorySeq } from "./theory-seq";
 import { TheoryDatatype } from "./theory-datatype";
 import { TheoryFiniteSet } from "./theory-finite-set";
 import { TheoryLra } from "./theory-lra";
@@ -146,6 +148,8 @@ export class Context extends Internalizer {
     this.registerPlugin(new TheoryArray(this));
     this.registerPlugin(new TheoryBv(this));
     this.registerPlugin(new TheoryDatatype(this));
+    this.registerPlugin(new TheorySeq(this));
+    this.registerPlugin(new TheoryChar(this));
     this.registerPlugin(new TheoryFpa(this));
     this.registerPlugin(new TheoryFiniteSet(this));
   }
@@ -1363,6 +1367,24 @@ export class Context extends Internalizer {
       }
     }
     this.searchLevel = this.scopeLevel;
+  }
+
+  addTheoryAssumptions(assumptions: number[]) {
+    for (const theory of this.theories) theory.addTheoryAssumptions(assumptions);
+  }
+
+  checkResearching(asserted: AssertedFormulas, assumptions: readonly number[]) {
+    let result: number;
+    for (;;) {
+      this.popToBaseLevel();
+      this.internalizeAssertions(asserted);
+      const all = [...assumptions];
+      this.addTheoryAssumptions(all);
+      this.initAssumptions(all, asserted);
+      result = this.mkUnsatCore(this.search());
+      if (result !== L_FALSE || this.unsatCore.length === 0) return result;
+      if (!this.theories.some((theory) => theory.shouldResearch(this.unsatCore))) return result;
+    }
   }
 
   isAssumption(boolVar: BoolVar) {

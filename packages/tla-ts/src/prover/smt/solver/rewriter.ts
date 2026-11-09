@@ -77,6 +77,7 @@ export interface RewriterOptions {
   readonly isKeepingDistinct?: boolean;
   readonly bv?: BvRewriterOptions;
   readonly isFlatAndOr?: boolean;
+  readonly isCoalescingChars?: boolean;
 }
 
 export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
@@ -126,7 +127,7 @@ export class Rewriter extends RewriterTpl {
       },
     });
     this.array = new ArrayRewriter(manager);
-    this.seq = new SeqRewriter(manager);
+    this.seq = new SeqRewriter(manager, options.isCoalescingChars ?? true);
     this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
     this.der = new Der(manager);
   }

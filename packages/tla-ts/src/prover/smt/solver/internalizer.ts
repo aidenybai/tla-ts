@@ -1,11 +1,9 @@
 // Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see
 // z3-license.txt.
-import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
+import { SmtInvariantError } from "../../../errors";
 import {
   AstManager,
   FAMILY_BASIC,
-  FAMILY_CHAR,
-  FAMILY_SEQ,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -555,6 +553,12 @@ export abstract class Internalizer {
     this.setBoolVarFlag(boolVar, BV_THEORY, true);
   }
 
+  forcePhase(literal: Literal) {
+    const boolVar = getVar(literal);
+    this.setBoolVarFlag(boolVar, BV_PHASE_AVAILABLE, true);
+    this.setBoolVarFlag(boolVar, BV_PHASE, !isNegated(literal));
+  }
+
   setTrueFirstFlag(boolVar: BoolVar) {
     this.trailInts.push(boolVar);
     this.trailKinds.push(UNDO_TRUE_FIRST);
@@ -864,7 +868,6 @@ export abstract class Internalizer {
   }
 
   private internalizeTheoryAtom(expr: number, isGateContext: boolean) {
-    this.requireTheory(this.manager.getFamily(expr));
     const theory = this.getTheory(this.manager.getFamily(expr));
     if (theory === undefined || !theory.internalizeAtom(expr, isGateContext)) return false;
     const boolVar = this.getBoolVar(expr);
@@ -1014,13 +1017,7 @@ export abstract class Internalizer {
 
   private applySortCnstr(expr: number, node: Enode) {
     const sort = this.manager.sorts[expr];
-    this.requireTheory(this.manager.getSortFamily(sort));
     this.getTheory(this.manager.getSortFamily(sort))?.applySortCnstr(node, sort);
-  }
-
-  private requireTheory(family: number) {
-    if ((family === FAMILY_SEQ || family === FAMILY_CHAR) && this.getTheory(family) === undefined)
-      throw new SmtUnsupportedError("the theory of sequences");
   }
 
   mkEqAtom(lhs: number, rhs: number) {

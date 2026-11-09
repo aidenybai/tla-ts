@@ -65,7 +65,9 @@ import {
   OP_SEQ_REPLACE_RE_ALL,
   OP_SEQ_SUFFIX,
   OP_SEQ_TO_RE,
+  OP_SEQ_SKOLEM,
   OP_SEQ_UNIT,
+  getSymbolHash,
   OP_STRING_CONST,
   OP_STRING_FROM_CODE,
   OP_STRING_IS_DIGIT,
@@ -790,3 +792,26 @@ export const getConcatUnits = (manager: AstManager, expr: number, result: number
   else if (!isEmptySeq(manager, current)) result.push(current);
   return result;
 };
+
+export const mkSkolem = (
+  manager: AstManager,
+  name: string,
+  args: readonly number[],
+  range: number,
+  parameters: number[] = [],
+  parameterHashes: number[] = [],
+) => {
+  manager.isSeqUsed = true;
+  const decl = manager.mkSeqDecl(
+    OP_SEQ_SKOLEM,
+    name,
+    parameters,
+    [getSymbolHash(name), ...parameterHashes],
+    args.map((arg) => manager.sorts[arg]),
+    range,
+  );
+  return manager.mkApp(decl, [...args], range);
+};
+
+export const isSkolemOf = (manager: AstManager, expr: number, name: string) =>
+  manager.getOp(expr) === OP_SEQ_SKOLEM && manager.funcDecls[manager.decls[expr]].name === name;

@@ -60,6 +60,7 @@ import {
   OP_SEQ_SUFFIX,
   OP_SEQ_TO_RE,
   OP_SEQ_UNIT,
+  OP_STRING_CONST,
   OP_SLT,
   OP_STRING_FROM_CODE,
   OP_STRING_IS_DIGIT,
@@ -161,12 +162,12 @@ const LIFTING_OPS = new Set([
 
 type Result = number | Rewrite | undefined;
 
-interface SeqPair {
+export interface SeqPair {
   left: number[];
   right: number[];
 }
 
-interface EqPair {
+export interface EqPair {
   left: number;
   right: number;
 }
@@ -235,7 +236,10 @@ const isSameBag = (first: Map<number, number>, second: Map<number, number>) =>
   first.size === second.size && [...first].every(([key, count]) => second.get(key) === count);
 
 export class SeqRewriter {
-  constructor(private manager: AstManager) {}
+  constructor(
+    private manager: AstManager,
+    private isCoalescingChars = true,
+  ) {}
 
   private isOp(expr: number, op: number) {
     return this.manager.getOp(expr) === op;
@@ -379,6 +383,15 @@ export class SeqRewriter {
     const funcDecl = this.manager.funcDecls[decl];
     if (funcDecl.family === FAMILY_CHAR) return this.mkCharAppCore(funcDecl.op, args);
     const op = funcDecl.op;
+    if (op === OP_STRING_CONST)
+      return this.isCoalescingChars
+        ? undefined
+        : this.mkConcatOf(
+            this.manager
+              .getString(this.manager.mkApp(decl, [], funcDecl.range))!
+              .map((code) => this.mkUnit(code)),
+            funcDecl.range,
+          );
     if (UNPORTED_OPS.has(op)) return undefined;
     const result = this.mkSeqAppCore(op, args);
     if (result !== undefined || !LIFTING_OPS.has(op)) return result;
@@ -389,7 +402,7 @@ export class SeqRewriter {
     switch (op) {
       case OP_SEQ_UNIT: {
         const code = this.manager.getChar(args[0]);
-        return code === -1 ? undefined : this.manager.mkString([code]);
+        return code === -1 || !this.isCoalescingChars ? undefined : this.manager.mkString([code]);
       }
       case OP_SEQ_CONCAT:
         return args.length === 1 ? args[0] : this.mkSeqConcat(args[0], args[1]);
@@ -511,8 +524,8 @@ export class SeqRewriter {
 
   private mkSeqConcat(first: number, second: number): Result {
     const manager = this.manager;
-    const firstChars = manager.getString(first);
-    const secondChars = manager.getString(second);
+    const firstChars = this.isCoalescingChars ? manager.getString(first) : undefined;
+    const secondChars = this.isCoalescingChars ? manager.getString(second) : undefined;
     if (
       (firstChars === undefined || secondChars === undefined) &&
       !this.isOp(first, OP_SEQ_CONCAT) &&
@@ -542,7 +555,7 @@ export class SeqRewriter {
     for (const element of elements) {
       const previous = coalesced.length > 0 ? manager.getString(coalesced.at(-1)!) : undefined;
       const chars = manager.getString(element);
-      if (previous !== undefined && chars !== undefined)
+      if (this.isCoalescingChars && previous !== undefined && chars !== undefined)
         coalesced[coalesced.length - 1] = manager.mkString([...previous, ...chars]);
       else coalesced.push(element);
     }
@@ -2043,7 +2056,7 @@ export class SeqRewriter {
     return values.length === 0 ? 0 : getCompositeHash(values.map((value) => hashes[value]));
   }
 
-  private reduceEq(left: number, right: number, eqs: EqPair[]): boolean | undefined {
+  reduceEq(left: number, right: number, eqs: EqPair[]): boolean | undefined {
     const manager = this.manager;
     const pair = { left: getConcat(manager, left, []), right: getConcat(manager, right, []) };
     const isChanged = this.reduceEqOf(pair, eqs);
@@ -2058,6 +2071,21 @@ export class SeqRewriter {
       eqs.push({ left: leftSeq, right: this.mkConcatOf(pair.right, sort) });
     }
     return true;
+  }
+
+  mkLengthOf(seq: number) {
+    const result = this.mkSeqLength(seq);
+    return result === undefined
+      ? this.mkLength(seq)
+      : typeof result === "number"
+        ? result
+        : result.expr;
+  }
+
+  addSeqs(left: readonly number[], right: readonly number[], eqs: EqPair[]) {
+    if (left.length === 0 && right.length === 0) return;
+    const sort = this.manager.sorts[left.length === 0 ? right[0] : left[0]];
+    eqs.push({ left: this.mkConcatOf(left, sort), right: this.mkConcatOf(right, sort) });
   }
 
   reduceEqOf(pair: SeqPair, eqs: EqPair[]): boolean | undefined {

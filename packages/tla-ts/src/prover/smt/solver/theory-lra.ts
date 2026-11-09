@@ -2,9 +2,41 @@
 // license, see z3-license.txt. This class adds the scopes to the chain that theory-lra-state.ts
 // starts.
 import { shrink } from "./array";
+import type { Enode } from "./enode";
+import { NULL_LPVAR } from "./lp/lar-solver";
+import type { Rational } from "./rational";
 import { TheoryLraFinalCheck } from "./theory-lra-final-check";
 
+export interface ArithBound {
+  value: Rational;
+  isStrict: boolean;
+}
+
 export class TheoryLra extends TheoryLraFinalCheck {
+  private getColumnOf(node: Enode) {
+    const thVar = node.getThVar(this.id);
+    return thVar < 0 ? NULL_LPVAR : this.solver.externalToLocalColumn(thVar);
+  }
+
+  getLower(node: Enode): ArithBound | undefined {
+    const column = this.getColumnOf(node);
+    const bound = column === NULL_LPVAR ? undefined : this.solver.getLowerBoundOf(column);
+    return bound === undefined ? undefined : { value: bound.x, isStrict: bound.y.isPositive() };
+  }
+
+  getUpper(node: Enode): ArithBound | undefined {
+    const column = this.getColumnOf(node);
+    const bound = column === NULL_LPVAR ? undefined : this.solver.getUpperBoundOf(column);
+    return bound === undefined ? undefined : { value: bound.x, isStrict: bound.y.isNegative() };
+  }
+
+  getValueOf(node: Enode) {
+    const column = this.getColumnOf(node);
+    const value = column === NULL_LPVAR ? undefined : this.solver.getExactValue(column);
+    if (value === undefined) return undefined;
+    return this.isIntVar(node.getThVar(this.id)) && !value.isInt() ? undefined : value;
+  }
+
   pushScopeEh() {
     this.scopes.push({
       boundsLimit: this.boundsTrail.length,
