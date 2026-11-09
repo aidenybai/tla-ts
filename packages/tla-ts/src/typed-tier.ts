@@ -240,6 +240,7 @@ const MAXIMUM_COMPARISONS = 8;
 const ATOM_BASE = 2 ** 32;
 const MAXIMUM_SUBSET_BASE = 20;
 const MAXIMUM_INSERTION_SORT = 16;
+const MAXIMUM_MOVES_PER_ELEMENT = 8;
 const MAXIMUM_SCANNED_KEYS = 16;
 const MAXIMUM_SEQUENCES = 1 << 20;
 const MASK_BITS = 31;
@@ -3730,17 +3731,20 @@ const HELPERS = {
     }
     return 0;
   },
-  // TLC sorts by insertion, moving each element before those it compares before.
-  // Images of sets are mostly short, where the fixed cost of Array.prototype.sort dominates.
+  // An image of a sorted set is mostly in order, as a permutation moves only the elements its
+  // model values order. Insertion sorts it in about one comparison per element, until it has moved
+  // elements more often than a general sort would compare them.
   sortImage: (set: Plain[], compare: Comparer) => {
-    if (set.length > MAXIMUM_INSERTION_SORT) return set.sort(compare);
+    let moves = 0;
     for (let index = 1; index < set.length; index++) {
+      if (moves > set.length * MAXIMUM_MOVES_PER_ELEMENT) return set.sort(compare);
       const element = set[index];
       let position = index;
       for (; position > 0 && compare(element, set[position - 1]) < 0; position--) {
         set[position] = set[position - 1];
       }
       set[position] = element;
+      moves += index - position;
     }
     return set;
   },
