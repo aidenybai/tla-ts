@@ -1017,33 +1017,55 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
-  const stringMethod =
-    kind === "string" ? STRING_METHODS.get(node.expression.name.text) : undefined;
+  const stringCall = getStringCall(node, kind);
+  const stringMethod = stringCall && STRING_METHODS.get(stringCall.method);
   const isTyped =
+    stringCall !== undefined &&
     stringMethod !== undefined &&
-    node.arguments.length <= stringMethod.parameters.length &&
-    node.arguments.every((argument, position) =>
+    stringCall.methodArguments.length <= stringMethod.parameters.length &&
+    stringCall.methodArguments.every((argument, position) =>
       stringMethod.parameters[position] === "number"
         ? isNumberLike(argument, context)
         : isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.StringLike),
     );
-  if (stringMethod === undefined || !isTyped) {
+  if (stringCall === undefined || stringMethod === undefined || !isTyped) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
+  const translateOptional = (argument: ts.Expression | undefined) =>
+    argument === undefined ? getUndefined(context) : translateExpression(argument, scope, context);
   return useJavaScript(
     stringMethod.operator,
     [
-      translateExpression(receiver, scope, context),
-      ...stringMethod.parameters.map((_, position) => {
-        const argument = node.arguments[position];
-        return argument === undefined
-          ? getUndefined(context)
-          : translateExpression(argument, scope, context);
-      }),
+      stringCall.isPrototypeCall
+        ? useJavaScript("ThisString", [translateOptional(stringCall.owner)], context)
+        : translateExpression(receiver, scope, context),
+      ...stringMethod.parameters.map((_, position) =>
+        translateOptional(stringCall.methodArguments[position]),
+      ),
       ...(stringMethod.trimmed ?? []).map(boolean),
     ],
     context,
   );
+};
+
+// A method call on a string, or String.prototype.method.call(value, ...arguments).
+const getStringCall = (node: MethodCall, kind: Kind) => {
+  const receiver = node.expression.expression;
+  if (
+    node.expression.name.text === "call" &&
+    ts.isPropertyAccessExpression(receiver) &&
+    receiver.expression.getText() === "String.prototype"
+  ) {
+    return {
+      method: receiver.name.text,
+      isPrototypeCall: true,
+      owner: node.arguments.at(0),
+      methodArguments: node.arguments.slice(1),
+    };
+  }
+  return kind === "string"
+    ? { method: node.expression.name.text, isPrototypeCall: false, methodArguments: node.arguments }
+    : undefined;
 };
 
 interface StringMethod {

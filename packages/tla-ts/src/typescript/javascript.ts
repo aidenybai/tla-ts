@@ -707,6 +707,12 @@ LOCAL Text(value) ==
   THEN value
   ELSE Assert(FALSE, "tla-ts can't call a string method on a value that isn't a string")
 
+\\* The string that String.prototype.method.call reads from the value that it calls the method on.
+ThisString(value) ==
+  IF value \\in {Undefined, Null}
+  THEN Assert(FALSE, "tla-ts can't throw the TypeError of a string method on undefined or null")
+  ELSE StringOf(value)
+
 \\* ToIntegerOrInfinity of a number or undefined.
 LOCAL IntegerOf(value) == IF value \\in {Undefined, NaN, NegativeZero} THEN 0 ELSE value
 

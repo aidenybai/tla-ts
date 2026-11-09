@@ -1156,6 +1156,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls a string method on a value that it converts to a string", async () => {
+    const result = await check(
+      compile(
+        `const flag: boolean = true;\nif (String.prototype.slice.call(123, 1) !== "23" || String.prototype.trim.call(flag) !== "true") throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    await expect(
+      check(
+        compile(
+          `const value: number | undefined = undefined;\nif (String.prototype.trim.call(value) === "") throw new Error("empty");`,
+        ),
+      ),
+    ).rejects.toThrow("tla-ts can't throw the TypeError of a string method");
+  });
+
   it("names the functions that a parameter's defaults make", async () => {
     const result = await check(
       compile(
