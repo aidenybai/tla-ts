@@ -1606,6 +1606,30 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops on a getter that a pattern reads where the pattern runs", async () => {
+    const getSource = (statements: string) => `
+      let count = 0;
+      const source = {
+        get v() {
+          count = count + 1;
+          return 2;
+        },
+      };
+      ${statements}
+      if (count !== 1) throw new Error("missed");
+    `;
+    for (const statements of [
+      "const { v } = source;",
+      "function take({ v }: { v: number }) { return 1; } const taken = take(source);",
+      "for (const { v } of [source]) {}",
+      "let v = 0; ({ v } = source);",
+    ]) {
+      expect((await checkModel(getSource(statements))).failure?.message).toContain(
+        "tla-ts can't call getters",
+      );
+    }
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

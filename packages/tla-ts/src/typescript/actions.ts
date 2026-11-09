@@ -73,6 +73,7 @@ import {
 import { isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import {
+  forceHeap,
   getReceiver,
   mayThrow,
   shareArguments,
@@ -421,7 +422,12 @@ const assignPattern = (
     }, path);
   }
   if (ts.isObjectLiteralExpression(target)) {
-    return target.properties.reduce((current, property) => {
+    const isHeapObject = isHeapType(
+      context.checker.getNonNullableType(context.checker.getTypeAtLocation(target)),
+      target,
+      context,
+    );
+    const assigned = target.properties.reduce((current, property) => {
       if (
         !(ts.isShorthandPropertyAssignment(property) || ts.isPropertyAssignment(property)) ||
         !ts.isIdentifier(property.name)
@@ -433,11 +439,7 @@ const assignPattern = (
         : getDefaultedTarget(property.initializer);
       const key = property.name.text;
       if (isPattern(defaulted.target)) rejectNestedPattern(property, current.scope);
-      const part = isHeapType(
-        context.checker.getNonNullableType(context.checker.getTypeAtLocation(target)),
-        target,
-        context,
-      )
+      const part = isHeapObject
         ? useJavaScript(
             "Get",
             [getHeap(current.scope, property, context), value, string(key)],
@@ -454,6 +456,26 @@ const assignPattern = (
         context,
       );
     }, path);
+    // The heap after the pattern reads its properties, which the statement evaluates.
+    const heapSymbol = context.heap;
+    if (heapSymbol === undefined || !isHeapObject) return assigned;
+    const keys = target.properties.flatMap((property) =>
+      property.name !== undefined && ts.isIdentifier(property.name)
+        ? [string(property.name.text)]
+        : [],
+    );
+    const read = useJavaScript(
+      "ReadKeys",
+      [getHeap(assigned.scope, target, context), value, set(keys)],
+      context,
+    );
+    return {
+      ...assigned,
+      scope: {
+        ...assigned.scope,
+        bindings: new Map([...assigned.scope.bindings, [heapSymbol, read]]),
+      },
+    };
   }
   return assign(target, path, context, () => value);
 };
@@ -938,15 +960,21 @@ const inlineBody = (
         next({ ...after, scope: { ...after.scope, previous: inner.scope.previous } }, value);
       return letIn(
         bound.definitions,
-        translateStatements(getBody(callee), { ...inner, scope: bound.scope }, context, {
-          next: afterCall,
-          exit: afterCall,
-          breakTo: undefined,
-          continueTo: undefined,
-          throwTo: frame.throwTo,
-          yieldTo: undefined,
-          inlining: new Set([...frame.inlining, callee]),
-        }),
+        forceHeap(
+          inner.scope,
+          bound.scope,
+          translateStatements(getBody(callee), { ...inner, scope: bound.scope }, context, {
+            next: afterCall,
+            exit: afterCall,
+            breakTo: undefined,
+            continueTo: undefined,
+            throwTo: frame.throwTo,
+            yieldTo: undefined,
+            inlining: new Set([...frame.inlining, callee]),
+          }),
+          leaf(boolean(false)),
+          context,
+        ),
       );
     }),
   );
@@ -2245,7 +2273,15 @@ const translateExpressionStatement = (
       ? expression.operand
       : undefined;
   const write = written === undefined ? undefined : getHeapWrite(written, path, context);
-  if (write === undefined) return continueWith(assigned);
+  if (write === undefined) {
+    return forceHeap(
+      path.scope,
+      assigned.scope,
+      continueWith(assigned),
+      leaf(boolean(false)),
+      context,
+    );
+  }
   const translateWrite = (next: (path: Path) => Formula) =>
     ifThenElse(
       useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
@@ -2644,14 +2680,18 @@ const bindDeclaration = (
     frame,
     continueWith,
   );
-  // A declaration's value runs though nothing reads it, so that a getter it reads, which tla-ts
-  // can't call, stops the check.
+  // A declaration's value runs though nothing reads it, as do the properties that its pattern
+  // reads, so that a getter it reads, which tla-ts can't call, stops the check.
   const named = (symbol && bound.scope.bindings.get(symbol)) ?? value;
   return letIn(
     bound.definitions,
     context.heap === undefined
       ? rest
-      : ifThenElse(apply("=", [named, named]), rest, leaf(boolean(false))),
+      : ifThenElse(
+          apply("=", [named, named]),
+          forceHeap(path.scope, bound.scope, rest, leaf(boolean(false)), context),
+          leaf(boolean(false)),
+        ),
   );
 };
 
@@ -2934,11 +2974,17 @@ const translateIterations = (
       const bound = bindPattern(name, element, allocated.scope, context);
       return letIn(
         bound.definitions,
-        translateStatements(
-          [loop.statement],
-          { ...allocated, scope: bound.scope },
+        forceHeap(
+          allocated.scope,
+          bound.scope,
+          translateStatements(
+            [loop.statement],
+            { ...allocated, scope: bound.scope },
+            context,
+            bodyFrame,
+          ),
+          leaf(boolean(false)),
           context,
-          bodyFrame,
         ),
       );
     });
@@ -3059,11 +3105,17 @@ const translateTry = (
         : bindPattern(declaration.name, thrown.value, caught.scope, context);
     return letIn(
       bound.definitions,
-      translateStatements(
-        catchClause.block.statements,
-        { ...caught, scope: bound.scope },
+      forceHeap(
+        caught.scope,
+        bound.scope,
+        translateStatements(
+          catchClause.block.statements,
+          { ...caught, scope: bound.scope },
+          context,
+          outer,
+        ),
+        leaf(boolean(false)),
         context,
-        outer,
       ),
     );
   };

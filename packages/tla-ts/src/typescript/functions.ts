@@ -187,21 +187,30 @@ const inlineCall = (
   );
   return render(
     values.evaluate(
-      letIn(bound.definitions, forceHeap(scope, bound.scope, leaf(value), context)),
+      letIn(
+        bound.definitions,
+        forceHeap(scope, bound.scope, leaf(value), leaf(getUndefined(context)), context),
+      ),
       leaf(getUndefined(context)),
     ),
   );
 };
 
 // Evaluates the heap that binding patterns gives, which reads the properties that object patterns
-// take, before the rest of the function: TLC would otherwise read them only where something reads
-// what the patterns bind, so a getter that tla-ts can't call wouldn't stop the check.
-const forceHeap = (before: Scope, after: Scope, rest: Formula, context: Context) => {
+// take, before what follows them: TLC would otherwise read them only where something reads what
+// the patterns bind, so a getter that tla-ts can't call wouldn't stop the check.
+export const forceHeap = (
+  before: Scope,
+  after: Scope,
+  rest: Formula,
+  otherwise: Formula,
+  context: Context,
+) => {
   const heapSymbol = context.heap;
   const heap = heapSymbol === undefined ? undefined : after.bindings.get(heapSymbol);
   return heap === undefined || heapSymbol === undefined || heap === before.bindings.get(heapSymbol)
     ? rest
-    : ifThenElse(apply("=", [heap, heap]), rest, leaf(getUndefined(context)));
+    : ifThenElse(apply("=", [heap, heap]), rest, otherwise);
 };
 
 // A function argument to an operator parameter, as a LAMBDA or an operator's name.
@@ -422,10 +431,22 @@ const translatePure = (
     return letIn(
       bound.definitions,
       forced.length === 0
-        ? forceHeap(scope, bound.scope, continueWith(bound.scope), context)
+        ? forceHeap(
+            scope,
+            bound.scope,
+            continueWith(bound.scope),
+            leaf(getUndefined(context)),
+            context,
+          )
         : ifThenElse(
             apply("=", [tuple(forced), tuple(forced)]),
-            forceHeap(scope, bound.scope, continueWith(bound.scope), context),
+            forceHeap(
+              scope,
+              bound.scope,
+              continueWith(bound.scope),
+              leaf(getUndefined(context)),
+              context,
+            ),
             leaf(getUndefined(context)),
           ),
     );
