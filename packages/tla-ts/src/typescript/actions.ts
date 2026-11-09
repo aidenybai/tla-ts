@@ -95,6 +95,7 @@ import {
   ifExpression,
   index,
   number,
+  record,
   prime,
   string,
   tuple,
@@ -145,7 +146,7 @@ interface Frame {
   continueTo: ((path: Path) => Formula) | undefined;
   throwTo: ((path: Path, thrown: Thrown) => Formula) | undefined;
   // What a yield does in an inlined generator: the generator suspends there for good.
-  yieldTo: ((path: Path) => Formula) | undefined;
+  yieldTo: ((path: Path, value?: Expression) => Formula) | undefined;
   // Functions being inlined, to reject recursion.
   inlining: Set<ts.Node>;
 }
@@ -539,7 +540,10 @@ const translateCallStatement = (
   if (loop !== undefined) {
     return translateLoopCall(expression, loop, path, context, frame, continueWith);
   }
-  const first = expression.arguments.at(0);
+  // A first argument that reads properties of a call's result runs the call first.
+  const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
+    node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
+  const first = getRootCall(expression.arguments.at(0));
   if (
     first !== undefined &&
     ts.isCallExpression(first) &&
@@ -595,16 +599,11 @@ const translateCallStatement = (
       ),
     );
   }
-  const called = isGenerator ? undefined : getCalledMethod(expression.expression, context);
+  const called = getCalledMethod(expression.expression, context, isGenerator);
   if (isMethodCall(expression) && called === undefined) {
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
-    if (
-      method === "next" &&
-      expression.arguments.length === 0 &&
-      ts.isCallExpression(receiver) &&
-      getGenerator(receiver.expression, context) !== undefined
-    ) {
+    if (isGeneratorStep(expression, context) && ts.isCallExpression(receiver)) {
       return translateCallStatement(receiver, path, context, frame, continueWith, true);
     }
     const isConsole = receiver.getText() === "console";
@@ -631,9 +630,11 @@ const translateCallStatement = (
       );
     }
   }
-  const callee = isGenerator
-    ? getGenerator(expression.expression, context)
-    : (called?.method ?? getCallback(expression.expression, path, context));
+  const callee =
+    called?.method ??
+    (isGenerator
+      ? getGenerator(expression.expression, context)
+      : getCallback(expression.expression, path, context));
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
@@ -741,15 +742,56 @@ const inlineBody = (
   return translateJoined(node, path, context, continueWith, (next) => {
     const afterCall = (inner: Path, value?: Expression) =>
       next({ ...inner, scope: { ...inner.scope, previous: path.scope.previous } }, value);
+    // A generator's first next gives an object with what it yields or returns.
+    const heapSymbol = context.heap;
+    const afterStep = (isDone: boolean) => (inner: Path, value?: Expression) => {
+      if (heapSymbol === undefined) {
+        return afterCall(
+          inner,
+          record("Record", [
+            { name: "value", value: value ?? getUndefined(context) },
+            { name: "done", value: boolean(isDone) },
+          ]),
+        );
+      }
+      const name = context.names.getFresh("heap");
+      return bindOnce(
+        inner,
+        name,
+        useJavaScript(
+          "Allocate",
+          [
+            getHeap(inner.scope, node, context),
+            useJavaScript(
+              "IteratorResult",
+              [value ?? getUndefined(context), boolean(isDone)],
+              context,
+            ),
+          ],
+          context,
+        ),
+        afterCall(
+          {
+            ...inner,
+            scope: {
+              ...inner.scope,
+              bindings: new Map([...inner.scope.bindings, [heapSymbol, identifier(name)]]),
+            },
+          },
+          useJavaScript("Allocated", [identifier(name)], context),
+        ),
+      );
+    };
+    const afterBody = isGenerator ? afterStep(true) : afterCall;
     return letIn(
       bound.definitions,
       translateStatements(body, { ...path, scope }, context, {
-        next: afterCall,
-        exit: afterCall,
+        next: afterBody,
+        exit: afterBody,
         breakTo: undefined,
         continueTo: undefined,
         throwTo: frame.throwTo,
-        yieldTo: isGenerator ? afterCall : undefined,
+        yieldTo: isGenerator ? afterStep(false) : undefined,
         inlining: new Set([...frame.inlining, callee]),
       }),
     );
@@ -1251,7 +1293,10 @@ const translateExpressionStatement = (
     if (frame.yieldTo === undefined || expression.asteriskToken !== undefined || !isSimple) {
       throw new TlaTypeScriptError("Unsupported yield", expression);
     }
-    return frame.yieldTo(path);
+    return frame.yieldTo(
+      path,
+      yielded === undefined ? undefined : translateExpression(yielded, path.scope, context),
+    );
   }
   const setter = getAssignedSetter(expression, context);
   const setterKey = ts.isBinaryExpression(expression) ? getAccessKey(expression.left) : undefined;
@@ -1524,8 +1569,18 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
   );
 };
 
+// The first next of a generator that a call makes, which runs the generator's body.
+const isGeneratorStep = (node: ts.CallExpression, context: Context) =>
+  isMethodCall(node) &&
+  node.expression.name.text === "next" &&
+  node.arguments.length === 0 &&
+  ts.isCallExpression(node.expression.expression) &&
+  (getGenerator(node.expression.expression.expression, context) ??
+    getCalledMethod(node.expression.expression.expression, context, true)) !== undefined;
+
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
+  isGeneratorStep(node, context) ||
   isHeapCall(node, path, context) ||
   getLoopCall(node, path, context) !== undefined ||
   isStateCall(node, path, context);

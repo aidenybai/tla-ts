@@ -1115,6 +1115,24 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives the result of a generator method's first next", async () => {
+    const result = await check(
+      compile(
+        `let count = 0;\nclass Counter {\n  *step() { count += 1; yield 7; count += 100; }\n  *answer() { return 42; }\n}\nconst counter = new Counter();\nconst yielded = counter.step().next();\nconst check = (actual: unknown, expected: unknown) => { if (actual !== expected) throw new Error("missed"); };\ncheck(counter.answer().next().value, 42);\nif (yielded.value !== 7 || yielded.done !== false || count !== 1) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("gives a generator's first result as a record where a script makes no objects", async () => {
+    const result = await check(
+      compile(
+        `function* double(value: number) { const doubled = value * 2; yield doubled; }\nconst first = double(4).next();\nif (first.value !== 8 || first.done !== false) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

@@ -233,7 +233,6 @@ export const isOnce = (node: ts.Node): boolean =>
 
 const isMethodShape = (node: ts.Node): node is ts.MethodDeclaration =>
   ts.isMethodDeclaration(node) &&
-  node.asteriskToken === undefined &&
   node.body !== undefined &&
   !ts.isComputedPropertyName(node.name) &&
   !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
@@ -683,10 +682,11 @@ export interface CalledMethod {
 }
 
 // The object method that a callee such as obj.name or obj["name"] reads, which the call checks
-// the object still holds.
+// the object still holds: a plain method, or a generator method where the call makes a generator.
 export const getCalledMethod = (
   node: ts.Expression,
   context: Context,
+  isGenerator = false,
 ): CalledMethod | undefined => {
   const isAccess =
     context.heap !== undefined &&
@@ -707,7 +707,7 @@ export const getCalledMethod = (
       : undefined;
   const returned = getter === undefined ? undefined : getReturnedMethod(getter, context);
   const method = getObjectMethod(returned ?? declaration, context);
-  return method === undefined
+  return method === undefined || (method.asteriskToken !== undefined) !== isGenerator
     ? undefined
     : { method, receiver: node.expression, key: name.text, getter };
 };

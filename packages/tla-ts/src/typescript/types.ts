@@ -70,7 +70,12 @@ export const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
     : (type.flags & flags) !== 0;
 
 // The plain objects that built-in functions take or give.
-const LIBRARY_OBJECTS = new Set(["PropertyDescriptor", "PropertyDescriptorMap"]);
+const LIBRARY_OBJECTS = new Set([
+  "PropertyDescriptor",
+  "PropertyDescriptorMap",
+  "IteratorYieldResult",
+  "IteratorReturnResult",
+]);
 
 // An object type, or the object type, which any object may have.
 const isPlainObject = (type: ts.Type, context: Context) => {

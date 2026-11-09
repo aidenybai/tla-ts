@@ -316,6 +316,9 @@ Put(object, key, value) ==
                       !.values = (key :> value) @@ @,
                       !.attributes = (key :> Writable) @@ @]
 
+\\* The object that a generator's next gives, which CreateIterResultObject makes.
+IteratorResult(value, isDone) == Put(Put(EmptyObject, "value", value), "done", isDone)
+
 \\* A property that a class defines, with its attributes.
 Define(object, key, value, isWritable, isEnumerable, isConfigurable) ==
   [object EXCEPT !.keys = IF key \\in DOMAIN object.values THEN @ ELSE Append(@, key),
