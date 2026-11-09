@@ -489,7 +489,6 @@
   "tlc/imported/tlc/tool/EvalExceptionTest/DistBakery": "text-mismatch",
   "tlc/imported/tlc/tool/Github687specATest/Github687spec": "message-mismatch",
   "tlc/imported/tlc/tool/Github687specDTest/Github687spec": "message-mismatch",
-  "tlc/imported/tlc/tool/Github715bTest/Github715": "exit-mismatch",
   "tlc/imported/tlc/tool/PrintTraceExceptionTest/PrintTraceException": "message-mismatch",
   "tlc/imported/tlc/tool/TLCGetLevelTest/TLCGetLevel": "exit-mismatch",
   "tlc/modules/assume_theorem/assume_non_boolean": "text-mismatch",

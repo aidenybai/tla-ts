@@ -446,6 +446,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const search = createSearch(
     config,
     environment,
+    specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     options.onProgress,
   );

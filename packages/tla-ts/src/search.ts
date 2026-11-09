@@ -285,6 +285,7 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
 const getSpecification = (
   config: ModelConfig,
   environment: Environment,
+  variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress: CheckOptions["onProgress"],
 ): Specification => {
@@ -329,6 +330,17 @@ const getSpecification = (
   expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
+    const variableIndex =
+      conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
+        ? environment.variableIndex.get(conjunct.name)
+        : undefined;
+    // TLC looks a variable up as it does an operator, and finds its declaration.
+    if (conjunct.kind === "Identifier" && variableIndex !== undefined) {
+      const range = variableLocations[variableIndex].range;
+      throw new TlaConfigError(
+        `The operator ${conjunct.name}, which equals ${range ? formatRange(range) : conjunct.name},\ncannot be used as a spec`,
+      );
+    }
     if (conjunct.kind === "UnboundedQuantifier" && conjunct.isTemporal) {
       throw setExitCode(
         new TlaConfigError(
@@ -806,6 +818,7 @@ export const prepareSearch = (options: CheckOptions) => {
   const search = createSearch(
     config,
     environment,
+    specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     options.onProgress,
   );
@@ -836,11 +849,18 @@ export const reportAssumptionViolation = (
 export const createSearch = (
   config: ModelConfig,
   environment: Environment,
+  variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress?: CheckOptions["onProgress"],
 ): Search | undefined => {
   const configInvariants = getInvariants(config.invariants, environment);
-  const spec = getSpecification(config, environment, getVariableOrder, onProgress);
+  const spec = getSpecification(
+    config,
+    environment,
+    variableLocations,
+    getVariableOrder,
+    onProgress,
+  );
   const properties = getProperties(config, environment, onProgress);
   const live = config.properties[0];
   const liveRange = live && getDefinition(live, environment)?.location.range;
