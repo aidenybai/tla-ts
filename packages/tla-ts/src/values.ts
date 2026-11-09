@@ -234,9 +234,9 @@ export const describeKind = (value: Value) => {
 export const isTlcInteger = (value: number) =>
   Number.isInteger(value) && value <= MAXIMUM_INTEGER && value >= MINIMUM_INTEGER;
 
-// TLC keeps a record, or a function @@ builds with a key other than an integer, in written order
-// until it sorts it to compare or fingerprint it. ToString, Assert, and error messages show that
-// order.
+// TLC keeps a record, or a function @@ builds, in written order until it sorts it to compare or
+// fingerprint it. It searches the function in that order, and ToString, Assert, and error
+// messages show it, unless every key is an integer.
 const writtenOrderUse = { isUsed: false };
 
 const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
@@ -245,11 +245,22 @@ const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
   return functionValue;
 };
 
-export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
-  const isSorted = functionValue.hash !== 0 || functionValue.fingerprint !== 0;
-  const keys = (isSorted ? undefined : functionValue.writtenKeys) ?? functionValue.domain;
-  return keys.map((key) => [key, functionValue.range[functionValue.domain.indexOf(key)]]);
-};
+const getWrittenKeys = (functionValue: FunctionValue) =>
+  (functionValue.hash !== 0 || functionValue.fingerprint !== 0
+    ? undefined
+    : functionValue.writtenKeys) ?? functionValue.domain;
+
+export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] =>
+  getWrittenKeys(functionValue).map((key) => [
+    key,
+    functionValue.range[functionValue.domain.indexOf(key)],
+  ]);
+
+// TLC sorts a function whose keys are all integers to check whether it is a tuple.
+export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] =>
+  functionValue.domain.every((key) => typeof key === "number")
+    ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
+    : getWrittenPairs(functionValue);
 
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
   setWrittenOrder(createSortedRecord(names, range), writtenNames);
@@ -1277,7 +1288,6 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
   const functionValue = createFunction(pairs);
   const isWrittenSorted =
     functionValue.domain.length !== pairs.length ||
-    pairs.every((pair) => typeof pair[0] === "number") ||
     pairs.every((pair, index) => pair[0] === functionValue.domain[index]);
   return isWrittenSorted
     ? functionValue
@@ -2385,11 +2395,20 @@ export const createNonIntegerKeyError = (argument: Value) =>
 // TLC searches a domain this small linearly with equals, and a larger one with compareTo.
 const LINEAR_SEARCH_LIMIT = 32;
 
-const failKeyLikeTlc = (domain: Value[], argument: Value, error: TlaEvaluationError): never => {
-  if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
-    domain.forEach((key) => equalsLikeTlc(key, argument));
+const findDomainIndex = (functionValue: FunctionValue, argument: Value) =>
+  findSortedIndex(functionValue.domain, argument);
+
+// TLC searches a function it hasn't normalized linearly, in the order its keys were written.
+const failKeyLikeTlc = (
+  functionValue: FunctionValue,
+  argument: Value,
+  error: TlaEvaluationError,
+): never => {
+  const keys = getWrittenKeys(functionValue);
+  if (valueVersion.is174 || keys !== functionValue.domain || keys.length < LINEAR_SEARCH_LIMIT) {
+    keys.forEach((key) => equalsLikeTlc(key, argument));
   } else {
-    findSortedIndex(domain, argument, compareLikeTlc);
+    findSortedIndex(keys, argument, compareLikeTlc);
   }
   throw error;
 };
@@ -2420,7 +2439,7 @@ const findKeyIndexLikeTlc = (
   }
   const identical = findIdenticalKey(domain, argument);
   if (identical !== -1) return identical;
-  return computeLikeTlcOnFailure(findSortedIndex, failKeyLikeTlc, domain, argument);
+  return computeLikeTlcOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
 };
 
 // TLC indexes past an argument tuple shorter than the bounds and ignores one longer.
@@ -3026,7 +3045,7 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       }
       const pairs = isNormalized
         ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
-        : getWrittenPairs(functionValue);
+        : getPrintedPairs(functionValue);
       // A RecordValue always prints as a record, a FcnRcdValue only if its keys are names.
       if (
         getFunctionClass(value) === "record" ||
