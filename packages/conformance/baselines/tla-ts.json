@@ -220,7 +220,6 @@
   "tlapm/errors/arity_level/declared_extra_argument_proof_rejected": "exit-mismatch",
   "tlapm/errors/arity_level/double_prime_in_enabled_accepted": "text-mismatch",
   "tlapm/errors/arity_level/extra_argument_proof_rejected": "exit-mismatch",
-  "tlapm/errors/arity_level/variable_applied": "exit-mismatch",
   "tlapm/errors/parse/incomplete_expression": "text-mismatch",
   "tlapm/errors/parse/mixed_bounded_unbounded_quantifier": "text-mismatch",
   "tlapm/errors/parse/new_step": "text-mismatch",

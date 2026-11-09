@@ -163,6 +163,10 @@ export const createAnonymizer = (
       case "Fresh":
         return anonApply(index, args, from);
       case "Flex":
+        if (args.length > 0)
+          throw new TlapmBugError(
+            'File "src/expr/e_anon.ml", line 224, characters 24-30: Assertion failed',
+          );
         return at({ kind: "Ix", index }, from);
       case "Fact":
         throw new TlapmBugError(
