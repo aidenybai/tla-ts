@@ -24,7 +24,7 @@ export interface IntervalSet {
   isFull: boolean;
 }
 
-interface ComplementMax {
+export interface ComplementMax {
   sup: Anum;
   isAttained: boolean;
 }

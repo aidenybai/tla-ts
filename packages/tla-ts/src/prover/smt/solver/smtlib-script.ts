@@ -47,6 +47,8 @@ import {
   type SmtList,
   type SmtlibReader,
 } from "./smtlib-parser";
+import { OptContext } from "./opt-context";
+import { isInNraFragment } from "./opt-nlsat";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import type { Context } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -245,6 +247,18 @@ const isBeyondOptimization = (manager: AstManager, formulas: number[]) => {
   return false;
 };
 
+const hasIntConst = (manager: AstManager, formulas: number[]) => {
+  const seen = new Set<number>();
+  const stack = [...formulas];
+  for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
+    if (seen.has(expr)) continue;
+    seen.add(expr);
+    if (manager.isUninterpretedConst(expr) && manager.sorts[expr] === SORT_INT) return true;
+    manager.pushArgs(expr, stack);
+  }
+  return false;
+};
+
 interface Scope {
   assertions: number;
   objectives: number;
@@ -258,12 +272,19 @@ interface CheckResult {
   core: number[] | undefined;
 }
 
+interface ScriptObjective {
+  term: number;
+  isSoft: boolean;
+  isMax: boolean;
+}
+
 interface ScriptState {
   manager: AstManager;
   reader: SmtlibReader;
   assertions: number[];
   names: number[];
-  objectives: number[];
+  objectives: ScriptObjective[];
+  optimizer: OptContext | undefined;
   scopes: Scope[];
   check: CheckResult | undefined;
   isProofsEnabled: boolean | undefined;
@@ -310,6 +331,7 @@ export const runSmtlibScript = (
       assertions: [],
       names: [],
       objectives: [],
+      optimizer: undefined,
       scopes: [],
       check: undefined,
       isProofsEnabled: undefined,
@@ -325,6 +347,92 @@ export const runSmtlibScript = (
   const display = (expr: number) => print(format(expr));
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
+  const getNamedAssertions = () => {
+    const state = script.state;
+    const manager = state.manager;
+    const isNamed = state.names.some((name) => name !== -1);
+    return state.assertions.map((assertion, index) =>
+      isNamed && state.names[index] !== -1
+        ? manager.mkApp(OP_IMPLIES, [state.names[index], assertion], SORT_BOOL)
+        : assertion,
+    );
+  };
+  const getOptOptions = () => {
+    const parameters = settings.parameters;
+    if (parameters.get("opt.optsmt_nlsat") === "false")
+      throw new SmtUnsupportedError("nonlinear optimization without nlsat");
+    if ((parameters.get("opt.optsmt_engine") ?? "basic") !== "basic")
+      throw new SmtUnsupportedError("the option :opt.optsmt_engine");
+    if (parameters.get("opt.pareto_nlsat_reuse") === "false")
+      throw new SmtUnsupportedError("pareto optimization without incremental nlsat");
+    return {
+      priority: parameters.get("opt.priority") ?? "lex",
+      bisectRounds: Number(parameters.get("opt.optsmt_bisect_rounds") ?? 64),
+      supremumRlimit: Number(parameters.get("opt.optsmt_nlsat_supremum_rlimit") ?? 100000),
+      isParetoNlsat: parameters.get("opt.pareto_nlsat") !== "false",
+      paretoMaxLemmas: Number(parameters.get("opt.pareto_nlsat_max_lemmas") ?? 128),
+    };
+  };
+  const optimizeNonlinear = (extra: number[]) => {
+    const state = script.state;
+    const manager = state.manager;
+    const objectives = state.objectives;
+    const hard = [...getNamedAssertions(), ...state.names.filter((name) => name !== -1), ...extra];
+    if (
+      objectives.some(
+        (objective) => objective.isSoft || manager.sorts[objective.term] !== SORT_REAL,
+      ) ||
+      !isInNraFragment(manager, [...hard, ...objectives.map((objective) => objective.term)]) ||
+      hasIntConst(manager, [...hard, ...objectives.map((objective) => objective.term)])
+    )
+      throw new SmtUnsupportedError("optimization beyond linear arithmetic");
+    const optOptions = getOptOptions();
+    const pinned = hard.map((form) => {
+      manager.incRef(form);
+      return form;
+    });
+    state.optimizer ??= new OptContext(
+      manager,
+      { manager, isMbqi: settings.isMbqi, write: () => {} },
+      objectives,
+    );
+    const optimizer = state.optimizer;
+    clearCheck();
+    state.manager.limit.push(settings.rlimit);
+    try {
+      const status = optimizer.optimize(hard, {
+        ...optOptions,
+        hasAssumptions: extra.length > 0 || state.names.some((name) => name !== -1),
+      });
+      optimizer.model?.incRef();
+      state.check = {
+        status,
+        context: undefined,
+        isOptimizing: true,
+        model: optimizer.model ?? undefined,
+        core: undefined,
+      };
+      print(getVerdict(status));
+    } catch (error) {
+      if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
+      optimizer.release();
+      state.check = {
+        status: L_UNDEF,
+        context: undefined,
+        isOptimizing: true,
+        model: undefined,
+        core: undefined,
+      };
+      print("unknown");
+    } finally {
+      state.manager.limit.pop();
+      for (const form of pinned) manager.decRef(form);
+    }
+  };
+  const resetOptimizer = () => {
+    script.state.optimizer?.release();
+    script.state.optimizer = undefined;
+  };
   const checkSat = (extra: number[]) => {
     const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
@@ -332,9 +440,14 @@ export const runSmtlibScript = (
     // satisfiable, optsmt and maxsmt only improve the model.
     if (
       state.objectives.length > 0 &&
-      isBeyondOptimization(state.manager, [...state.assertions, ...state.objectives])
-    )
-      throw new SmtUnsupportedError("optimization beyond linear arithmetic");
+      isBeyondOptimization(state.manager, [
+        ...state.assertions,
+        ...state.objectives.map((objective) => objective.term),
+      ])
+    ) {
+      optimizeNonlinear(extra);
+      return;
+    }
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     try {
@@ -345,11 +458,7 @@ export const runSmtlibScript = (
         isNamed || extra.length > 0
           ? solveAssuming(
               manager,
-              state.assertions.map((assertion, index) =>
-                isNamed && state.names[index] !== -1
-                  ? manager.mkApp(OP_IMPLIES, [state.names[index], assertion], SORT_BOOL)
-                  : assertion,
-              ),
+              getNamedAssertions(),
               isNamed ? [...names, ...extra] : extra,
               settings.isMbqi,
             )
@@ -380,8 +489,8 @@ export const runSmtlibScript = (
     const check = script.state.check;
     if (!settings.isProducingModels || check === undefined || check.status === L_FALSE)
       throw new SmtParseError("model is not available", list.end);
-    if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
     if (check.model !== undefined) return check.model;
+    if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
     if (check.context === undefined && check.status !== L_TRUE)
       throw new SmtUnsupportedError("the model of a canceled search");
     const model = check.context?.getModel() ?? new ProtoModel(script.state.manager);
@@ -411,13 +520,15 @@ export const runSmtlibScript = (
   };
   const parseFormulas = (items: SmtList["items"]) =>
     items.map((literal) => script.state.reader.parseFormula(literal));
-  const addObjective = (list: SmtList) => {
+  const addObjective = (list: SmtList, isMax: boolean) => {
     const state = script.state;
     const term = state.reader.parseTerm(list.items[1] ?? list.end);
     const sort = state.manager.sorts[term];
     if (sort !== SORT_INT && sort !== SORT_REAL && !state.manager.isBvSort(sort))
       throw new SmtParseError("Objective must be bit-vector, integer or real", list.end);
-    state.objectives.push(term);
+    resetOptimizer();
+    state.manager.incRef(term);
+    state.objectives.push({ term, isSoft: false, isMax });
   };
   const restoreAssertions = (size: number) => {
     const state = script.state;
@@ -429,6 +540,7 @@ export const runSmtlibScript = (
       const state = script.state;
       const assertion = state.reader.parseAssertion(list.items[1] ?? list.end);
       state.assertions.push(assertion.formula);
+      resetOptimizer();
       if (!settings.isProducingUnsatCores || assertion.name === undefined) state.names.push(-1);
       else {
         const manager = state.manager;
@@ -476,14 +588,16 @@ export const runSmtlibScript = (
         );
       checkSat(parseFormulas(literals.items));
     },
-    minimize: addObjective,
-    maximize: addObjective,
+    minimize: (list) => addObjective(list, false),
+    maximize: (list) => addObjective(list, true),
     "assert-soft": (list) => {
       const state = script.state;
       const formula = state.reader.parseTerm(list.items[1] ?? list.end);
       if (state.manager.sorts[formula] !== SORT_BOOL)
         throw new SmtParseError("Invalid type for expression. Expected Boolean type.", list.end);
-      state.objectives.push(formula);
+      resetOptimizer();
+      state.manager.incRef(formula);
+      state.objectives.push({ term: formula, isSoft: true, isMax: false });
     },
     push: (list) => {
       const state = script.state;
@@ -509,10 +623,14 @@ export const runSmtlibScript = (
       const scope = state.scopes[state.scopes.length - count];
       for (let index = 0; index < count; index++) state.reader.pop();
       restoreAssertions(scope.assertions);
-      state.objectives.length = scope.objectives;
+      resetOptimizer();
+      for (const objective of state.objectives.splice(scope.objectives))
+        state.manager.decRef(objective.term);
       state.scopes.length -= count;
     },
     reset: () => {
+      clearCheck();
+      resetOptimizer();
       script.state = createState();
       settings.isPrintingSuccess = false;
     },
@@ -520,6 +638,8 @@ export const runSmtlibScript = (
       const state = script.state;
       clearCheck();
       restoreAssertions(0);
+      resetOptimizer();
+      for (const objective of state.objectives) state.manager.decRef(objective.term);
       state.objectives = [];
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0 }));
     },
@@ -709,6 +829,12 @@ export const runSmtlibScript = (
       });
       print(`(${lines.join("\n ")})`);
     },
+    "get-objectives": () => {
+      const optimizer = script.state.optimizer;
+      if (optimizer === undefined || script.state.check === undefined)
+        throw new SmtUnsupportedError("the command get-objectives");
+      print(optimizer.getObjectives(format));
+    },
     "get-model": (list) => {
       if (list.items.length > 1) throw new SmtUnsupportedError("the index of get-model");
       const manager = script.state.manager;
@@ -814,6 +940,16 @@ export const runSmtlibScript = (
       const info = list.items[1];
       if (info?.kind !== "keyword")
         throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
+      const optimizer = script.state.optimizer;
+      if (
+        info.text === ":reason-unknown" &&
+        script.state.check?.status === L_UNDEF &&
+        optimizer !== undefined &&
+        optimizer.reasonUnknown !== ""
+      ) {
+        print(`(:reason-unknown "${optimizer.reasonUnknown}")`);
+        return;
+      }
       if (info.text !== ":error-behavior")
         throw new SmtUnsupportedError(`the information ${info.text}`);
       print(

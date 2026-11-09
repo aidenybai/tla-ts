@@ -6,7 +6,7 @@ import {
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import { type AstManager, SORT_BOOL } from "./ast";
+import { type AstManager, KIND_APP, OP_ITE, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { card2bv } from "./card2bv";
 import { Context } from "./context";
@@ -20,6 +20,7 @@ import { elimUncnstr } from "./elim-uncnstr";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
 import { propagateValues } from "./propagate-values";
+import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { ProtoModel } from "./proto-model";
 import { compileProbe, formatProbeValue, type Probe } from "./probes";
@@ -39,6 +40,7 @@ import {
   type SmtToken,
 } from "./smtlib-parser";
 import { solveGoal } from "./solver";
+import { tseitinCnf } from "./tseitin-cnf";
 
 const PARAM_BOOL = 0;
 const PARAM_UINT = 1;
@@ -279,6 +281,15 @@ const NNF_DESCRS = getDescrs("nnf", [
   ["ignore_labels", PARAM_BOOL, false],
 ]);
 
+const TSEITIN_DESCRS = getDescrs("", [
+  ["max_memory", PARAM_UINT, UINT_MAX, true],
+  ["common_patterns", PARAM_BOOL, true],
+  ["distributivity", PARAM_BOOL, true],
+  ["distributivity_blowup", PARAM_UINT, 32],
+  ["ite_chaing", PARAM_BOOL, true],
+  ["ite_extra", PARAM_BOOL, true],
+]);
+
 const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   const mode = NNF_MODES.get(String(params.get("mode") ?? "skolem"));
   if (mode === undefined) throw new SmtUnsupportedError("an invalid NNF mode");
@@ -363,6 +374,78 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
+  [
+    "purify-arith",
+    {
+      descrs: new Map([
+        ...REWRITER_DESCRS,
+        ...getDescrs("", [
+          ["complete", PARAM_BOOL, true, true],
+          ["elim_root_objects", PARAM_BOOL, true],
+          ["elim_inverses", PARAM_BOOL, true],
+        ]),
+      ]),
+      build: (environment, params) => {
+        const manager = environment.manager;
+        const snf = runNnf(manager, new Map());
+        return (goal) => {
+          snf(goal);
+          simplifyGoal(manager, goal, getRewriterOptions(manager, params));
+          purifyArith(manager, goal, getBool(params, "complete", true));
+          simplifyGoal(manager, goal, getRewriterOptions(manager, params));
+          return [goal];
+        };
+      },
+    },
+  ],
+  [
+    "elim-term-ite",
+    {
+      descrs: getDescrs("", [["max_memory", PARAM_UINT, UINT_MAX, true]]),
+      build: (environment) =>
+        inPlace((goal) => {
+          const manager = environment.manager;
+          const seen = new Set<number>();
+          const todo = [...goal.forms.items];
+          for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
+            if (seen.has(expr) || manager.kinds[expr] !== KIND_APP) continue;
+            seen.add(expr);
+            if (manager.getOp(expr) === OP_ITE && manager.sorts[expr] !== SORT_BOOL)
+              throw new SmtUnsupportedError("elim-term-ite on a goal it changes");
+            manager.pushArgs(expr, todo);
+          }
+          goal.depth++;
+        }),
+    },
+  ],
+  [
+    "tseitin-cnf-core",
+    {
+      descrs: TSEITIN_DESCRS,
+      build: (environment) => inPlace((goal) => tseitinCnf(environment.manager, goal)),
+    },
+  ],
+  [
+    "tseitin-cnf",
+    {
+      descrs: TSEITIN_DESCRS,
+      build: (environment, params) =>
+        inPlace((goal) => {
+          const manager = environment.manager;
+          try {
+            tseitinCnf(manager, goal);
+          } catch (error) {
+            if (!(error instanceof SmtTacticError)) throw error;
+            simplifyGoal(manager, goal, {
+              ...getRewriterOptions(manager, params),
+              isEliminatingAnd: true,
+              isKeepingDistinct: false,
+            });
+            tseitinCnf(manager, goal);
+          }
+        }),
+    },
+  ],
   [
     "qe-light",
     {
@@ -518,15 +601,15 @@ const UNPORTED_TACTICS = new Set(
     "ackermannize_bv add-bounds aig bit-blast blast-term-ite bv_bound_chk bv-divrem-bounds " +
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
     "ctx-solver-simplify degree-shift demodulator diff-neq distribute-forall dom-simplify " +
-    "dt2bv elim-predicates elim-small-bv elim-term-ite elim-uncnstr2 eq2bv " +
+    "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
     "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
     "max-bv-sharing nla2bv nlqsat nlsat nra occf pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
-    "purify-arith qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
+    "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args reduce-args2 reduce-bv-size " +
     "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
-    "split-clause subpaving symmetry-reduce tseitin-cnf tseitin-cnf-core ufbv-rewriter"
+    "split-clause subpaving symmetry-reduce ufbv-rewriter"
   ).split(" "),
 );
 
@@ -953,6 +1036,11 @@ const compile = (
 export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr, end: SmtToken) =>
   compile(environment, sexpr, end, false);
 
+export const compileInternalTactic = (environment: TacticEnvironment, text: string) => {
+  const list = createCommandReader(text).read() as SmtList;
+  return compile(environment, list, list.end, true).build(new Map());
+};
+
 interface TacticCheck {
   status: number;
   model: ProtoModel | undefined;
@@ -992,7 +1080,7 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
   return model;
 };
 
-const convertModel = (goal: Goal, model: ProtoModel) =>
+export const convertModel = (goal: Goal, model: ProtoModel) =>
   goal.converters.reduceRight((converted, entry) => {
     if ("convert" in entry) return entry.convert(converted);
     if ("definitions" in entry) return applyDefinitions(entry.definitions, converted);
