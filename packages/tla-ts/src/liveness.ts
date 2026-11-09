@@ -244,10 +244,11 @@ export const expandTemporal = (
       if (expanding.has(definition)) {
         throw createStackOverflowError();
       }
+      // TLC names a part after the operator as the spec writes it, as I!Op outside the instance.
       return expand(
         definition.body,
         undefined,
-        definition.name,
+        (!isSubstituted && environment.instanceNames.get(expression.name)) || definition.name,
         new Set([...expanding, definition]),
         definition,
       );
