@@ -35,8 +35,8 @@ export interface Context {
   constantFunctions: Map<string, Expression>;
   // Whether a script names NaN, Infinity, or -0, so that its numbers compute as JavaScript's.
   hasSpecialNumbers: boolean;
-  // The array literals that a script uses as objects, which its heap holds.
-  heapArrays: Set<ts.ArrayLiteralExpression>;
+  // The array literals and the rest elements that a script uses as objects, which its heap holds.
+  heapArrays: Set<ts.ArrayLiteralExpression | ts.BindingElement>;
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;

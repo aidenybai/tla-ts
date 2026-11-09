@@ -2605,6 +2605,7 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       getWrittenSymbols(written, context).forEach((symbol) => changed.add(symbol));
     }
     const isHeapChanged =
+      (ts.isBindingElement(node) && context.heapArrays.has(node)) ||
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||
       isObjectChange(node) ||

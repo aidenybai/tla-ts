@@ -13,6 +13,7 @@ import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
 import { apply, define, identifier, ifExpression, number, set, string } from "./tla";
 import { getHeap } from "./heap";
+import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { getField, getPathStep, getPropertyKey, isHeapType, isSequenceType } from "./types";
 
@@ -203,11 +204,30 @@ export const bindPatternInline = (
       if (context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike) {
         throw new TlaTypeScriptError("Spread a string with split('') instead", element);
       }
-      return bindPatternInline(
-        element.name,
-        apply("SubSeq", [value, number(position + 1), apply("Len", [value])]),
-        current,
+      const rest = apply("SubSeq", [value, number(position + 1), apply("Len", [value])]);
+      if (!context.heapArrays.has(element) || heapSymbol === undefined) {
+        return bindPatternInline(element.name, rest, current, context);
+      }
+      const heap = useJavaScript(
+        "Allocate",
+        [
+          getHeap(current, element, context),
+          useJavaScript(
+            "ArrayObject",
+            [translateBuiltInValue("Array.prototype", element, context), rest],
+            context,
+          ),
+        ],
         context,
+      );
+      return bindNames(
+        { ...current, bindings: new Map([...current.bindings, [heapSymbol, heap]]) },
+        [
+          {
+            name: useJavaScript("Allocated", [heap], context),
+            symbol: getSymbol(element.name, context.checker),
+          },
+        ],
       );
     }
     if (element.dotDotDotToken !== undefined) {

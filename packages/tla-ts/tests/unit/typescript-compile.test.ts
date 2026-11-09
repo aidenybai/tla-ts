@@ -1349,6 +1349,15 @@ describe("errors", () => {
     ).toThrow("Unsupported call: Object.freeze");
   });
 
+  it("compares the arrays that rest elements make by identity", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nconst values = [2, 1, 3];\nlet same = 0;\nconst check = (left: unknown, right: unknown) => {\n  if (left === right) same += 1;\n};\nfunction take([...rest]: number[]) {\n  check(rest, values);\n  check(rest, rest);\n  if (!Array.isArray(rest) || rest[0] !== 2 || rest.length !== 3) throw new Error("missed");\n}\ntake(values);\nif (same !== 1) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

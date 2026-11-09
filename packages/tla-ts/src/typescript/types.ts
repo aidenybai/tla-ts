@@ -158,7 +158,15 @@ export const getArrayLiteral = (node: ts.Expression, context: Context) => {
 export const isHeapArray = (node: ts.Expression, context: Context) => {
   if (context.heapArrays.size === 0) return false;
   const literal = getArrayLiteral(node, context);
-  return literal !== undefined && context.heapArrays.has(literal);
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  return (
+    (literal !== undefined && context.heapArrays.has(literal)) ||
+    (declaration !== undefined &&
+      ts.isBindingElement(declaration) &&
+      context.heapArrays.has(declaration))
+  );
 };
 
 export const getKind = (node: ts.Expression, context: Context): Kind => {

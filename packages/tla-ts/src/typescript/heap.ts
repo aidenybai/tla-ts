@@ -843,7 +843,7 @@ const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
 // The array literals that a script passes to the Object functions that treat arrays as objects.
 // Each use of a variable that holds one must read it as an object.
 export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
-  const arrays = new Set<ts.ArrayLiteralExpression>();
+  const arrays = new Set<ts.ArrayLiteralExpression | ts.BindingElement>();
   const find = (node: ts.Node) => {
     const argument = ts.isCallExpression(node) ? node.arguments.at(0) : undefined;
     const callee = ts.isCallExpression(node) ? node.expression : undefined;
@@ -864,6 +864,38 @@ export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
     ts.forEachChild(node, find);
   };
   find(sourceFile);
+  // A rest element that a script only reads as an object, and whose identity a comparison or a
+  // call could see, is an array that the heap holds.
+  const references = new Map<ts.Symbol, ts.Identifier[]>();
+  const rests: ts.BindingElement[] = [];
+  const collect = (node: ts.Node) => {
+    if (
+      ts.isBindingElement(node) &&
+      node.dotDotDotToken !== undefined &&
+      ts.isIdentifier(node.name) &&
+      ts.isArrayBindingPattern(node.parent)
+    ) {
+      rests.push(node);
+    }
+    const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+    if (ts.isIdentifier(node) && symbol !== undefined) {
+      references.set(symbol, [...(references.get(symbol) ?? []), node]);
+    }
+    ts.forEachChild(node, collect);
+  };
+  if (context.heap !== undefined) collect(sourceFile);
+  rests.forEach((rest) => {
+    const symbol = getSymbol(rest.name, context.checker);
+    const uses = (symbol === undefined ? [] : (references.get(symbol) ?? [])).filter(
+      (reference) => reference !== rest.name,
+    );
+    if (
+      uses.every((use) => isArrayObjectUse(use, context)) &&
+      uses.some((use) => ts.isCallExpression(use.parent) || ts.isBinaryExpression(use.parent))
+    ) {
+      arrays.add(rest);
+    }
+  });
   const check = (node: ts.Node) => {
     if (
       ts.isIdentifier(node) &&
