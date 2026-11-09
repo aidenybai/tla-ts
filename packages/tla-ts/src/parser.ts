@@ -675,7 +675,7 @@ const parse = (
       const named = expectName();
       return { kind: "Name", name: named.name, ranges: [named.range] };
     }
-    const names = getNames(parseSeparated(expectName));
+    const names = getNames(isAt(">>") ? [] : parseSeparated(expectName));
     expect(">>");
     return { kind: "Tuple", names: names.names, ranges: names.ranges };
   };
