@@ -473,6 +473,32 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("tla-ts can't call getters");
   });
 
+  it("stop the check at a getter that a call reads, though the statement drops its value", async () => {
+    const result = await checkModel(`
+      const holder: { poisoned?: number } = {};
+      Object.defineProperty(holder, "poisoned", {
+        get: function () {
+          throw new TypeError();
+        },
+      });
+      function read() {
+        return holder.poisoned;
+      }
+      read();
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call getters");
+  });
+
+  it("run the value of a call that a callback's statement drops", async () => {
+    const result = await checkModel(`
+      const object = {};
+      ["z"].forEach(function () {
+        Object.freeze(Array.prototype.forEach);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("call a private method that a getter returns", async () => {
     const result = await checkModel(`
       let calls = 0;

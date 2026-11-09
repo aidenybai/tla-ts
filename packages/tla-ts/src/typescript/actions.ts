@@ -1980,8 +1980,14 @@ const translateExpressionStatement = (
   if (ts.isParenthesizedExpression(expression)) {
     return translateExpressionStatement(expression.expression, path, context, frame, continueWith);
   }
+  // A call's value runs though the statement drops it, so that a getter it reads, which tla-ts
+  // can't call, stops the check: TLC would read only a value that something uses.
   if (ts.isCallExpression(expression)) {
-    return translateCallStatement(expression, path, context, frame, continueWith);
+    return translateCallStatement(expression, path, context, frame, (after, value) =>
+      value === undefined || context.heap === undefined
+        ? continueWith(after)
+        : ifThenElse(apply("=", [value, value]), continueWith(after), leaf(boolean(false))),
+    );
   }
   const constructor = getConstructorRun(expression, context);
   if (constructor !== undefined && ts.isNewExpression(expression)) {
