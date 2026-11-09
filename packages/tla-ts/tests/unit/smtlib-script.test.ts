@@ -273,8 +273,13 @@ describe("runSmtlibScript prints what Z3 prints", () => {
   });
 
   it("throws at a theory it does not implement", () => {
-    expect(() => run(["(declare-const f RegLan)"])).toThrow(SmtUnsupportedError);
-    expect(() => run(["(assert (= (str.len 1) 1))"])).toThrow(SmtUnsupportedError);
+    expect(() =>
+      run([
+        "(declare-const s String)",
+        '(assert (str.in_re s (re.* (str.to_re "a"))))',
+        "(check-sat)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
   });
 
   it("throws at a command it does not implement", () => {
