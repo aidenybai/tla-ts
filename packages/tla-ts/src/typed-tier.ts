@@ -85,7 +85,7 @@ interface MapType {
 // A function with an empty domain, before it shows itself to be a sequence or a sparse function.
 interface EmptyType {
   kind: "Empty";
-  target: SeqType | MapType | EmptyType | undefined;
+  target: SeqType | MapType | EmptyType | RecType | undefined;
 }
 
 interface SetType {
@@ -292,6 +292,12 @@ const unify = (left: Type, right: Type): void => {
       rightType.target = sequence;
       return unify(sequence, leftType);
     }
+    // TLC's empty function is also the record without fields.
+    if (leftType.kind === "Rec") {
+      if (getShapeIndex(leftType, []) === -1) leftType.shapes.push([]);
+      rightType.target = leftType;
+      return;
+    }
     if (leftType.kind !== "Seq" && leftType.kind !== "Map" && leftType.kind !== "Empty") {
       return unsupported();
     }
@@ -341,7 +347,7 @@ const unify = (left: Type, right: Type): void => {
     return unify(leftType.values.element, rightType.range);
   }
   const kinds = [leftType.kind, rightType.kind];
-  if (kinds.includes("Seq") && kinds.includes("Map")) throw SPARSE;
+  if (kinds.includes("Seq") && (kinds.includes("Map") || kinds.includes("Rec"))) throw SPARSE;
   if (leftType.kind !== rightType.kind) return unsupported();
   if (leftType.kind === "Map" && rightType.kind === "Map") {
     unify(leftType.keys, rightType.keys);
@@ -562,6 +568,9 @@ const getSize = (value: Value): number => {
   }
 };
 
+const getEmptyRecordCode = (program: Program, record: RecType) =>
+  record.shapes.length === 1 ? "H.EMPTY" : addConstant(program, [getShapeIndex(record, [])]);
+
 const getEmptyMap = (map: MapType, plains: Plains) => [isMask(map.keys, plains) ? 0 : [], []];
 
 const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
@@ -756,7 +765,7 @@ const getComparerCode = (program: Program, type: Type): string => {
 // that isn't a record or a model value fails to unify with it.
 const expectRecord = (type: Type) => {
   const kind = resolveType(type).kind;
-  if (kind === "Var" || kind === "Str") {
+  if (kind === "Var" || kind === "Str" || kind === "Empty") {
     unify(type, { kind: "Rec", shapes: [], fields: new Map(), target: undefined });
   }
   const resolved = resolveType(type);
@@ -1690,10 +1699,12 @@ const compileField = (program: Program, record: Compiled, field: string): Compil
   };
 };
 
-// TLC applies a record to a string as it reads the field of that name.
+// TLC applies a record to a string as it reads the field of that name. An empty function fails
+// either way.
 const getFieldName = (type: Type, args: Expression[]) => {
   const [argument] = args;
-  return args.length === 1 && argument.kind === "String" && resolveType(type).kind === "Rec"
+  const kind = resolveType(type).kind;
+  return args.length === 1 && argument.kind === "String" && (kind === "Rec" || kind === "Empty")
     ? argument.value
     : undefined;
 };
@@ -1905,6 +1916,39 @@ const compileBuiltin = (
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
     return operator === "\\in" ? test : { type: BOOL, emit: () => `!(${test.emit()})` };
   }
+  // The size of a domain doesn't depend on whether its function is a sequence, a sparse function or
+  // a record, which an empty function may not yet show.
+  const [domain] = args;
+  if (
+    operator === "Cardinality" &&
+    args.length === 1 &&
+    domain.kind === "Apply" &&
+    domain.operator === "DOMAIN" &&
+    domain.args.length === 1
+  ) {
+    const target = compileValue(program, domain.args[0], frame);
+    return {
+      type: createInt(),
+      emit: () => {
+        const resolved = closeType(target.type);
+        const code = target.emit();
+        if (resolved.kind === "Seq") return `(${code}).length`;
+        if (resolved.kind === "Fn") return `(${code}, ${resolved.domain.length})`;
+        if (resolved.kind === "Map") {
+          return isMask(resolved.keys, program.plains)
+            ? `H.count((${code})[0])`
+            : `(${code})[0].length`;
+        }
+        if (resolved.kind !== "Rec" || getShapeIndex(resolved, [NULL_FIELD]) !== -1) {
+          return unsupported();
+        }
+        const sizes = resolved.shapes.map((shape) => shape.length);
+        return resolved.shapes.length === 1
+          ? `(${code}, ${sizes[0]})`
+          : `${addConstant(program, sizes)}[(${code})[0]]`;
+      },
+    };
+  }
   if (operator === "DOMAIN" && args.length === 1) {
     const target = compileValue(program, args[0], frame);
     const keys = compileKeys(target);
@@ -2048,8 +2092,13 @@ const compileBuiltin = (
         const other = values[1 - empty];
         return {
           type: BOOL,
-          emit: () =>
-            `(${other.emit()})${closeType(other.type).kind === "Map" ? "[1]" : ""}.length ${isEqual ? "===" : "!=="} 0`,
+          emit: () => {
+            const resolved = closeType(other.type);
+            if (resolved.kind === "Rec") {
+              return `${isEqual ? "" : "!"}H.same(${other.emit()}, ${getEmptyRecordCode(program, resolved)})`;
+            }
+            return `(${other.emit()})${resolved.kind === "Map" ? "[1]" : ""}.length ${isEqual ? "===" : "!=="} 0`;
+          },
         };
       }
       return binary(left, right, BOOL, (leftCode, rightCode) =>
@@ -2390,6 +2439,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
           type,
           emit: () => {
             const resolved = closeType(type);
+            if (resolved.kind === "Rec") return getEmptyRecordCode(program, resolved);
             return resolved.kind === "Map"
               ? addConstant(program, getEmptyMap(resolved, program.plains))
               : "H.EMPTY";
