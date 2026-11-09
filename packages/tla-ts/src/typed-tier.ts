@@ -11,7 +11,7 @@ import {
 import { isConstantLevel } from "./dependencies";
 import { isStackOverflow, TlaError } from "./errors";
 import { permuteValue, type ImageTable } from "./symmetry";
-import { evaluate, findGlobalName, getDefinition, type Environment } from "./evaluate";
+import { evaluate, findGlobalName, getDefinition, type Environment, type Scope } from "./evaluate";
 import { getContext } from "./search";
 import { forEachInitialState, hasBranches } from "./successors";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -133,6 +133,8 @@ export interface TypedCheck {
   actionProperties: TypedActionProperty[];
   init: Expression;
   next: Expression;
+  // The scope of the LET definitions and arguments the specification's conjuncts were expanded in.
+  scope: Scope | undefined;
   isDeadlockChecked: boolean;
   symmetry: ImageTable[] | undefined;
 }
@@ -3542,14 +3544,19 @@ const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean
   // The initial states as bytes, so the interpreter's values for them need not stay alive.
   const initialBytes: Bytes = { data: new Uint8Array(1 << 16), size: 0 };
   const initialStarts = { data: new Int32Array(1 << 10), size: 0 };
-  forEachInitialState(check.init, environment, (state) => {
-    pushWord(initialStarts, initialBytes.size);
-    state.forEach((value, index) => {
-      unifyValue(program.variableTypes[index], value, program.plains);
-      writeValue(initialBytes, value, program.plains);
-    });
-    return false;
-  });
+  forEachInitialState(
+    check.init,
+    environment,
+    (state) => {
+      pushWord(initialStarts, initialBytes.size);
+      state.forEach((value, index) => {
+        unifyValue(program.variableTypes[index], value, program.plains);
+        writeValue(initialBytes, value, program.plains);
+      });
+      return false;
+    },
+    check.scope,
+  );
   const images = check.symmetry ?? [];
   images.forEach((table) => table.forEach((image) => image && getAtom(program.plains, image)));
   const compiled = compileSpec(program, check);

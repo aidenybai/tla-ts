@@ -582,6 +582,7 @@ interface Search {
     | {
         init: Expression;
         next: Expression;
+        scope: Scope | undefined;
         invariants: Expression[];
         constraints: Expression[];
         initialPredicates: Expression[];
@@ -873,7 +874,6 @@ export const createSearch = (
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTypedChecks: () => {
       const isInterpreted =
-        spec.scope !== undefined ||
         [...invariants, ...constraints].some((check) => check.scope !== undefined) ||
         actionConstraints.length > 0 ||
         properties.actionProperties.some((property) => property.scope !== undefined) ||
@@ -884,6 +884,7 @@ export const createSearch = (
         : {
             init: spec.init,
             next: spec.next,
+            scope: spec.scope,
             invariants: invariantPredicates.map((invariant) => invariant.predicate),
             constraints: [...new Set(constraints.map((constraint) => constraint.predicate))],
             initialPredicates: properties.initialPredicates.map(
