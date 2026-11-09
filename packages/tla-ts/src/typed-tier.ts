@@ -5,6 +5,8 @@ import {
   type Bound,
   type Definition,
   type Expression,
+  type FunctionConstructionExpression,
+  type FunctionDefinition,
   type OperatorDefinition,
   type SourceLocation,
 } from "./ast";
@@ -1998,8 +2000,9 @@ const compileApplication = (
   return unsupported();
 };
 
-// TLC applies a function definition that depends on the state without building it: once it finds
-// the argument in the domain, it goes on with the body there, as an action where one is expected.
+// TLC applies a function definition, or an operator defined as a function construction, that
+// depends on the state without building it: once it finds the argument in the domain, it goes on
+// with the body there, as an action where one is expected.
 const getFunctionExpansion = (
   program: Program,
   expression: Expression & { kind: "FunctionApplication" },
@@ -2008,11 +2011,33 @@ const getFunctionExpansion = (
   const target = expression.function;
   if (target.kind !== "Identifier" || frame.scope.has(target.name)) return undefined;
   const global = findGlobalName(target.name, program.environment);
-  if (global?.kind !== "Definition" || global.definition.kind !== "Function") return undefined;
+  if (global?.kind !== "Definition") return undefined;
   const definition = global.definition;
   if (isConstantLevel(definition, program.environment)) return undefined;
-  const bound = definition.bounds[0];
+  if (definition.kind === "Operator") {
+    const construction = definition.body;
+    const isExpanded =
+      definition.params.length === 0 &&
+      construction.kind === "FunctionConstruction" &&
+      !construction.isRecursive &&
+      construction.bounds.length === 1 &&
+      construction.bounds[0].pattern.kind === "Name";
+    return isExpanded
+      ? expandFunction(program, expression, frame, definition, construction)
+      : undefined;
+  }
   if (definition.isSelfReferential || definition.bounds.length !== 1) return unsupported();
+  return expandFunction(program, expression, frame, definition, definition);
+};
+
+const expandFunction = (
+  program: Program,
+  expression: Expression & { kind: "FunctionApplication" },
+  frame: Frame,
+  definition: Definition,
+  construction: FunctionConstructionExpression | FunctionDefinition,
+) => {
+  const bound = construction.bounds[0];
   if (bound.pattern.kind !== "Name") return unsupported();
   const argument = compileValue(program, getArgument(expression.args, expression.location), frame);
   const name = getName(program, "a");
@@ -2024,6 +2049,7 @@ const getFunctionExpansion = (
   );
   return {
     definition,
+    body: construction.body,
     scope: bindCode(new Map(), bound.pattern.name, argument.type, name),
     apply: (body: () => string) =>
       `((${name}) => (${isInDomain.emit()} ? ${body()} : H.deopt()))(${argument.emit()})`,
@@ -2789,7 +2815,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       const expansion = getFunctionExpansion(program, expression, frame);
       if (expansion) {
         const body = inline(program, expansion.definition, () =>
-          compileValue(program, expansion.definition.body, { ...frame, scope: expansion.scope }),
+          compileValue(program, expansion.body, { ...frame, scope: expansion.scope }),
         );
         return { type: body.type, emit: () => expansion.apply(body.emit) };
       }
@@ -3073,7 +3099,7 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
       const expansion = getFunctionExpansion(program, expression, frame);
       if (!expansion) break;
       const ways = inline(program, expansion.definition, () =>
-        getWays(expansion.definition.body, expansion.scope),
+        getWays(expansion.body, expansion.scope),
       );
       return counted(() => expansion.apply(ways.emit));
     }
@@ -3135,10 +3161,10 @@ const compileStep = (
       [...expressions.map((inner) => ({ expression: inner, scope, inlining })), ...rest],
       primed,
     );
-  const continueInto = (definition: Definition, scope: TierScope) =>
+  const continueInto = (definition: Definition, body: Expression, scope: TierScope) =>
     first.inlining.includes(definition)
       ? unsupported()
-      : continueWith(scope, [definition.body], [...first.inlining, definition]);
+      : continueWith(scope, [body], [...first.inlining, definition]);
   switch (expression.kind) {
     case "And":
       return continueWith(first.scope, expression.operands);
@@ -3211,7 +3237,7 @@ const compileStep = (
     case "Identifier": {
       const binding = first.scope.get(expression.name);
       if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
-        return continueInto(binding.definition, binding.scope);
+        return continueInto(binding.definition, binding.definition.body, binding.scope);
       }
       const definition = binding ? undefined : resolveDefinition(program, expression.name);
       if (
@@ -3219,14 +3245,14 @@ const compileStep = (
         definition.params.length === 0 &&
         !isConstantLevel(definition, program.environment)
       ) {
-        return continueInto(definition, new Map());
+        return continueInto(definition, definition.body, new Map());
       }
       break;
     }
     case "FunctionApplication": {
       const expansion = getFunctionExpansion(program, expression, frame);
       if (!expansion) break;
-      const body = continueInto(expansion.definition, expansion.scope);
+      const body = continueInto(expansion.definition, expansion.body, expansion.scope);
       return () => `{ ${expansion.declare()} ${body()} }`;
     }
     case "Forall": {
@@ -3242,7 +3268,7 @@ const compileStep = (
     case "Apply": {
       const expansion = getExpansion(program, expression, frame);
       if (expansion) {
-        return continueInto(expansion.definition, expansion.scope);
+        return continueInto(expansion.definition, expansion.definition.body, expansion.scope);
       }
       const args = expression.args;
       // TLC runs the right side of A => B as an action where A holds.
