@@ -1239,7 +1239,7 @@ export class SeqRewriter {
         return rewrite(this.mkIte(isEqual, found, this.minusOne()), BR_REWRITE_FULL);
       }
       case LONGER: {
-        // Z3 subtracts the sizes as unsigned integers here, so its offset wraps around.
+        // Z3 subtracts these sizes as unsigned integers, so its offset wraps; this one does not.
         if (!otherUnits.every((unit) => this.isUnit(unit))) return undefined;
         let popped = 0;
         while (seqUnits.length >= otherUnits.length) {
