@@ -1,6 +1,7 @@
 // Ported from Z3 (src/nlsat/nlsat_explain.cpp), MIT license, see z3-license.txt. Only Z3's
 // default nlsat parameters are ported, so the cell always comes from the levelwise construction,
 // and Z3's fallback projection (project, add_lcs and the psc_* helpers) is not ported.
+import { SmtInvariantError } from "../../../../errors";
 import type { AlgebraicManager, Anum } from "./algebraic";
 import {
   type AtomTable,
@@ -561,6 +562,39 @@ export class Explain {
     } finally {
       this.isAddAllCoeffs = savedAddAllCoeffs;
     }
+  }
+
+  projectVariable(variable: number, literals: readonly number[], result: ScopedLiterals) {
+    const base = result.size;
+    while (true) {
+      this.result = result;
+      try {
+        const kept: number[] = [];
+        for (const literal of literals) {
+          const atom = this.context.atoms.getAtom(literal);
+          const polynomials =
+            atom === null ? [] : isIneqAtom(atom) ? atom.polynomials : [atom.polynomial];
+          const isContaining =
+            (atom !== null && !isIneqAtom(atom) && atom.maxVar === variable) ||
+            polynomials.some((polynomial) => this.pm.getVars(polynomial).includes(variable));
+          if (isContaining) kept.push(literal);
+          else this.addLiteral(literal ^ 1);
+        }
+        const polynomials = this.collectPolys(kept);
+        if (polynomials.length > 0) {
+          if (this.getMaxVarOfPolys(polynomials) !== variable)
+            throw new SmtInvariantError("nlsat projects the maximal variable");
+          this.project(this.elimVanishingAll(polynomials), variable);
+        }
+        break;
+      } catch (error) {
+        if (!(error instanceof AddAllCoeffsRestart)) throw error;
+        result.shrink(base);
+      } finally {
+        this.resetResult();
+      }
+    }
+    for (let index = 0; index < result.size; index++) result.set(index, result.literals[index] ^ 1);
   }
 
   computeLinearExplanation(literals: readonly number[], result: ScopedLiterals) {

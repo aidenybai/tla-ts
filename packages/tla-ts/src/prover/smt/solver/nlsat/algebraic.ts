@@ -939,6 +939,18 @@ export class AlgebraicManager {
     }
   }
 
+  getPolynomial(anum: Anum) {
+    return anum.value instanceof Rational ? [-anum.value.num, anum.value.den] : [...anum.value.p];
+  }
+
+  getInterval(anum: Anum, precision: number): [Rational, Rational] {
+    if (anum.value instanceof Rational) return [anum.value, anum.value];
+    const cell = anum.value;
+    const refined = this.um.refineToPrecision(cell.p, cell.lower, cell.upper, precision * 4);
+    const lower = refined.lower.toRational();
+    return [lower, refined.isInterval ? refined.upper.toRational() : lower];
+  }
+
   displayRootSmt2(anum: Anum) {
     if (this.isZero(anum)) return "(root-obj x 1)";
     if (anum.value instanceof Rational)
