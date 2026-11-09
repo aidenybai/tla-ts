@@ -503,6 +503,11 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
           `Error: An positive integer or a fraction for fpset memory size/percentage required. But encountered ${text}`,
         );
       }
+      if (size > 1) {
+        process.stdout.write(
+          "Using -fpmem with an abolute memory value has been deprecated. Please allocate memory for the TLC process via the JVM mechanisms and use -fpmem to set the fraction to be used for fingerprint storage.\n",
+        );
+      }
       continue;
     }
     if (flag === "-fpbits") {
