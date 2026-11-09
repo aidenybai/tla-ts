@@ -1163,7 +1163,10 @@ const translateNode = (
     node.kind === ts.SyntaxKind.ThisKeyword &&
     ts.findAncestor(
       node.parent,
-      (ancestor) => ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor),
+      (ancestor) =>
+        (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+        ts.isClassStaticBlockDeclaration(ancestor) ||
+        ts.isPropertyDeclaration(ancestor),
     ) === scope.receiver?.method;
   if (isReceived && scope.receiver !== undefined) return scope.receiver.value;
   if (ts.isNumericLiteral(node)) {

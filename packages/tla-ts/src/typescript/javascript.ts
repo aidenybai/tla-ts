@@ -323,6 +323,14 @@ Define(object, key, value, isWritable, isEnumerable, isConfigurable) ==
                  !.attributes = (key :> [writable |-> isWritable, enumerable |-> isEnumerable,
                                          configurable |-> isConfigurable, kind |-> "data"]) @@ @]
 
+\\* A public field that a class defines on an object, which fails where the object has the key
+\\* unconfigurable, or lacks it and can't grow.
+DefineField(heap, ref, key, value) ==
+  LET object == Lookup(heap, ref)
+  IN IF IF key \\in DOMAIN object.values THEN object.attributes[key].configurable ELSE object.extensible
+     THEN [heap |-> Update(heap, ref, Define(object, key, value, TRUE, TRUE, TRUE)), isDone |-> TRUE]
+     ELSE [heap |-> heap, isDone |-> FALSE]
+
 \\* The object of a class's constructor, which inherits from Function.prototype.
 ClassObject(functionPrototype) ==
   [EmptyObject EXCEPT !.isCallable = TRUE, !.prototype = functionPrototype]

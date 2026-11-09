@@ -1098,9 +1098,11 @@ describe("errors", () => {
     );
   });
 
-  it("rejects a class that runs code as the module loads", () => {
+  it("rejects a class that runs code as a spec loads", () => {
     expect(() =>
-      compile(`let count = 0;\nclass Counter {\n  static {\n    count++;\n  }\n}`),
+      compile(
+        `let count = 0;\nclass Counter {\n  static {\n    count++;\n  }\n}\nexport const step = () => { count++; };`,
+      ),
     ).toThrow("spec.ts:2:1 Unsupported statement");
   });
 
@@ -1108,6 +1110,15 @@ describe("errors", () => {
     const result = await check(
       compile(
         `const read = () => later;\nconst early = read();\nvar later: unknown = 1;\nif (early !== undefined || later !== 1) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("runs a class's static fields and blocks in order as a script loads", async () => {
+    const result = await check(
+      compile(
+        `let order = "";\nclass Counter {\n  static #count = 1;\n  static { order += "a" + this.#count; }\n  static total = Counter.#count + 1;\n  static { order += "b" + this.total; }\n  static #read() { return this.#count; }\n  static read() { return Counter.#read(); }\n}\nif (order !== "a1b2" || Counter.read() !== 1 || Object.keys(Counter).join() !== "total") throw new Error("missed");`,
       ),
     );
     expect(result.failure).toBeUndefined();

@@ -39,6 +39,8 @@ export interface Receiver {
     | ts.ConstructorDeclaration
     | ts.GetAccessorDeclaration
     | ts.SetAccessorDeclaration
+    | ts.ClassStaticBlockDeclaration
+    | ts.PropertyDeclaration
     | HeapFunction;
 }
 

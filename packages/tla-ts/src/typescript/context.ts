@@ -246,14 +246,15 @@ export const isPrivateMember = (node: ts.Node) =>
 const isPlainMethod = (node: ts.Node): node is ts.MethodDeclaration =>
   isMethodShape(node) && !isPrivateMember(node);
 
-// A private method of an instance, which no property holds, so only its class can call it.
+// A private method, which no property holds, so only its class can call it.
 const isPrivateMethod = (node: ts.Node): node is ts.MethodDeclaration =>
-  isMethodShape(node) && isPrivateMember(node) && !isStatic(node);
+  isMethodShape(node) && isPrivateMember(node);
 
 const brands = new WeakMap<ts.Node, string>();
 
 // The key that an object's private names hold a private field's value under, or that marks it
-// with its class's private methods and accessors. Two classes can name private members alike.
+// with its class's private methods and accessors, apart for the class's static ones. Two classes
+// can name private members alike.
 export const getPrivateKey = (member: ts.ClassElement, context: Context) => {
   const owner = member.parent;
   const brand =
@@ -264,7 +265,9 @@ export const getPrivateKey = (member: ts.ClassElement, context: Context) => {
   brands.set(owner, brand);
   return ts.isPropertyDeclaration(member) && ts.isPrivateIdentifier(member.name)
     ? `${brand}${member.name.text}`
-    : brand;
+    : isStatic(member)
+      ? `${brand} static`
+      : brand;
 };
 
 const isLiteralKey = (node: ts.Node) =>
@@ -323,7 +326,7 @@ export const getAssignedSetter = (node: ts.Node, context: Context) =>
     ? getObjectAccessor(node.left, ts.isSetAccessorDeclaration, context)
     : undefined;
 
-const isStatic = (node: ts.Node) =>
+export const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&
   (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
 
@@ -424,9 +427,11 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context) => 
         isPlainMethod(member) ||
         isPrivateMethod(member) ||
         isPlainAccessor(member) ||
+        ts.isClassStaticBlockDeclaration(member) ||
         (ts.isPropertyDeclaration(member) &&
-          !isStatic(member) &&
-          (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name))),
+          (ts.isIdentifier(member.name) ||
+            ts.isPrivateIdentifier(member.name) ||
+            (isStatic(member) && isLiteralKey(member.name)))),
     ) &&
     !isAssigned(symbol, node.getSourceFile(), context);
   heapClasses.set(node, isHeap);

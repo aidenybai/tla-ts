@@ -14,6 +14,7 @@ import {
   getPrivateKey,
   isPlainAccessor,
   isPrivateMember,
+  isStatic,
   isHeapClass,
   isHeapFunction,
   isOnce,
@@ -88,7 +89,7 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
   throw new TlaTypeScriptError("Use a string or a number as a key", node);
 };
 
-const translateMemberKey = (name: ts.PropertyName, scope: Scope, context: Context) => {
+export const translateMemberKey = (name: ts.PropertyName, scope: Scope, context: Context) => {
   if (ts.isComputedPropertyName(name)) return translatePropertyKey(name.expression, scope, context);
   if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return string(name.text);
   if (ts.isNumericLiteral(name)) return getNumericKey(name);
@@ -313,14 +314,12 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
   const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
   const define = (object: Expression, key: Expression, value: Expression, flags: boolean[]) =>
     useJavaScript("Define", [object, key, value, ...flags.map(boolean)], context);
-  const defineMethods = (object: Expression, isStatic: boolean) =>
-    (ts.isClassLike(node) ? node.members : []).reduce<Expression>((current, member) => {
-      const isStaticMember = ((ts.canHaveModifiers(member) && ts.getModifiers(member)) || []).some(
-        (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
-      );
+  const members = ts.isClassLike(node) ? node.members : [];
+  const defineMethods = (object: Expression, isStaticObject: boolean) =>
+    members.reduce<Expression>((current, member) => {
       if (isPrivateMember(member)) return current;
       if (isPlainAccessor(member)) {
-        return isStaticMember === isStatic
+        return isStatic(member) === isStaticObject
           ? useJavaScript(
               "DefineAccessor",
               [
@@ -335,10 +334,7 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
           : current;
       }
       const method = getObjectMethod(member, context);
-      const isStaticMethod = (method === undefined ? [] : (ts.getModifiers(method) ?? [])).some(
-        (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
-      );
-      return method === undefined || isStaticMethod !== isStatic
+      return method === undefined || isStatic(method) !== isStaticObject
         ? current
         : define(
             current,
@@ -362,7 +358,10 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
     define(identifier("EmptyObject"), string("constructor"), getRef(2), [true, false, true]),
     false,
   );
-  const object = defineMethods(
+  const staticBranded = members.find(
+    (member) => isPrivateMember(member) && !ts.isPropertyDeclaration(member) && isStatic(member),
+  );
+  const methods = defineMethods(
     define(
       define(
         define(
@@ -385,6 +384,14 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
     ),
     true,
   );
+  const object =
+    staticBranded === undefined
+      ? methods
+      : useJavaScript(
+          "PrivateAdd",
+          [methods, string(getPrivateKey(staticBranded, context)), boolean(true)],
+          context,
+        );
   return useJavaScript(
     "Allocate",
     [useJavaScript("Allocate", [heap, prototype], context), object],
@@ -403,7 +410,7 @@ const translateInstance = (
 ) => {
   const members = ts.isClassLike(created) ? created.members : [];
   const branded = members.find(
-    (member) => isPrivateMember(member) && !ts.isPropertyDeclaration(member),
+    (member) => isPrivateMember(member) && !ts.isPropertyDeclaration(member) && !isStatic(member),
   );
   const empty =
     branded === undefined
@@ -415,7 +422,7 @@ const translateInstance = (
         );
   return members.reduce<Expression>(
     (object, member) => {
-      if (!ts.isPropertyDeclaration(member)) return object;
+      if (!ts.isPropertyDeclaration(member) || isStatic(member)) return object;
       const value =
         member.initializer === undefined
           ? getUndefined(context)

@@ -24,6 +24,7 @@ import {
   getNewClass,
   skipCasts,
   isPrivateMember,
+  isStatic,
   getPrivateMember,
   getPrivateKey,
   getParameters,
@@ -59,6 +60,7 @@ import {
   translateAllocated,
   translateHasPrivate,
   translateHoldsMethod,
+  translateMemberKey,
   translateObjectChange,
   translateFunctionValue,
   translateObjectValue,
@@ -1109,6 +1111,122 @@ const translateConstruction = (
   );
 };
 
+// A class's static fields and blocks, which run in order once the class exists, with the class
+// as this.
+const translateStaticElements = (
+  node: ts.Node,
+  ref: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const elements = ts.isClassLike(node)
+    ? node.members.filter(
+        (member): member is ts.ClassStaticBlockDeclaration | ts.PropertyDeclaration =>
+          ts.isClassStaticBlockDeclaration(member) ||
+          (ts.isPropertyDeclaration(member) && isStatic(member)),
+      )
+    : [];
+  const heapSymbol = context.heap;
+  if (heapSymbol === undefined) return continueWith(path);
+  return elements.reduceRight<(path: Path) => Formula>(
+    (rest, element) => (before) => {
+      const receiver = { value: ref, method: element };
+      const afterElement = (inner: Path) =>
+        rest({
+          ...inner,
+          scope: {
+            ...inner.scope,
+            receiver: before.scope.receiver,
+            previous: before.scope.previous,
+          },
+        });
+      if (ts.isClassStaticBlockDeclaration(element)) {
+        return translateJoined(element, before, context, afterElement, (next) =>
+          translateStatements(
+            element.body.statements,
+            { ...before, scope: { ...before.scope, receiver } },
+            context,
+            {
+              next,
+              exit: next,
+              breakTo: undefined,
+              continueTo: undefined,
+              throwTo: frame.throwTo,
+              yieldTo: undefined,
+              inlining: frame.inlining,
+            },
+          ),
+        );
+      }
+      return allocate(element.initializer, before, context, (allocated) => {
+        const value = context.names.getFresh("value");
+        const heap = getHeap(allocated.scope, element, context);
+        const withHeap = (changed: Expression) => ({
+          ...allocated,
+          scope: {
+            ...allocated.scope,
+            bindings: new Map([...allocated.scope.bindings, [heapSymbol, changed]]),
+          },
+        });
+        const change = context.names.getFresh("change");
+        const defined = ts.isPrivateIdentifier(element.name)
+          ? bindOnce(
+              allocated,
+              change,
+              useJavaScript(
+                "Update",
+                [
+                  heap,
+                  ref,
+                  useJavaScript(
+                    "PrivateAdd",
+                    [
+                      useJavaScript("Lookup", [heap, ref], context),
+                      string(getPrivateKey(element, context)),
+                      identifier(value),
+                    ],
+                    context,
+                  ),
+                ],
+                context,
+              ),
+              afterElement(withHeap(identifier(change))),
+            )
+          : bindOnce(
+              allocated,
+              change,
+              useJavaScript(
+                "DefineField",
+                [
+                  heap,
+                  ref,
+                  translateMemberKey(element.name, allocated.scope, context),
+                  identifier(value),
+                ],
+                context,
+              ),
+              ifThenElse(
+                field(identifier(change), "isDone"),
+                afterElement(withHeap(field(identifier(change), "heap"))),
+                throwTypeError(withHeap(heap), element, context, frame),
+              ),
+            );
+        return bindOnce(
+          allocated,
+          value,
+          element.initializer === undefined
+            ? getUndefined(context)
+            : translateExpression(element.initializer, { ...allocated.scope, receiver }, context),
+          defined,
+        );
+      });
+    },
+    continueWith,
+  )(path);
+};
+
 const translateExpressionStatement = (
   expression: ts.Expression,
   path: Path,
@@ -1544,6 +1662,19 @@ const translateDeclarations = (
       frame,
       continueWith,
     );
+  }
+  if (
+    initializer !== undefined &&
+    ts.isClassExpression(initializer) &&
+    isHeapClass(initializer, context)
+  ) {
+    return allocate(initializer, path, context, (allocated) => {
+      const ref = allocated.scope.allocated.get(initializer);
+      if (ref === undefined) throw new TlaTypeScriptError("Unsupported class", initializer);
+      return translateStaticElements(initializer, ref, allocated, context, frame, (after) =>
+        bindDeclaration(declarations, ref, after, context, frame, continueWith),
+      );
+    });
   }
   return allocate(initializer, path, context, (allocated) => {
     const constructor = initializer && getConstructorRun(initializer, context);
@@ -2163,10 +2294,17 @@ const translateStatements = (
       if (symbol === undefined || ref === undefined) {
         throw new TlaTypeScriptError("Name this class", statement);
       }
-      return continueWith({
-        ...inner,
-        scope: { ...inner.scope, bindings: new Map([...inner.scope.bindings, [symbol, ref]]) },
-      });
+      return translateStaticElements(
+        statement,
+        ref,
+        {
+          ...inner,
+          scope: { ...inner.scope, bindings: new Map([...inner.scope.bindings, [symbol, ref]]) },
+        },
+        context,
+        frame,
+        continueWith,
+      );
     });
   }
   if (ts.isVariableStatement(statement)) {
