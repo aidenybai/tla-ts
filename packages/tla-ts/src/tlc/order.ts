@@ -5,6 +5,7 @@ import { createMissingModuleError } from "../errors";
 import { tokenize, type Token } from "../lexer";
 import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
+import { SANY_STANDARD_MODULES } from "../sany/modules";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
@@ -293,7 +294,10 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     const text =
       name === undefined
         ? source
-        : (loadModule?.(name) ?? TLC_MODULE_SOURCES.get(name) ?? extractModule(source, name));
+        : (loadModule?.(name) ??
+          TLC_MODULE_SOURCES.get(name) ??
+          SANY_STANDARD_MODULES.get(name) ??
+          extractModule(source, name));
     const { tokens, ranges, getModule } = readText(text);
     const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
     const file = { tokens, ...range, getModule };
