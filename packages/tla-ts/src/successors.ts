@@ -1093,7 +1093,12 @@ const compileAction = (
       return compileUnchanged(expression.expression, environment);
     case "AngleAction": {
       const body = getChildRunner(expression.action);
-      const unchanged = getUnchangedWrapper(expression.subscript);
+      // TLC compares the whole subscript of <<A>>_v, unlike UNCHANGED's, which it splits.
+      const unchanged: Expression = {
+        kind: "Unchanged",
+        expression: expression.subscript,
+        location: expression.subscript.location,
+      };
       const isUnchanged = (run: Run, scope: Scope | undefined, nextPartial: State) => {
         try {
           return holds(run, unchanged, getContext(run, scope, nextPartial));
