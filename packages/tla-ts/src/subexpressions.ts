@@ -405,14 +405,44 @@ export const resolveInstanceSubexpressions = (instance: Instance, module: Module
 
 // Generator.selectorToNode resolves a name in a theorem, a proof, or a fact as it does in a definition.
 export const resolveModuleSubexpressions = (module: Module, available: Definition[]): Module => {
-  const lookup = createLookup([...available, ...module.definitions]);
   const goals = new Set(
     module.theorems.flatMap((theorem) =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve" ? [theorem.name] : [],
     ),
   );
+  // The operands of an ASSUME/PROVE are its assumptions and then its goal.
+  const clauses = module.theorems.flatMap((theorem): Definition[] => {
+    const statement = theorem.statement;
+    if (theorem.name === undefined || statement.kind !== "AssumeProve") return [];
+    const assumptions = statement.assumptions.filter(
+      (assumption) => assumption.kind !== "NewSymbol" && assumption.kind !== "AssumeProve",
+    );
+    if (assumptions.length !== statement.assumptions.length) return [];
+    return [
+      {
+        kind: "Operator",
+        name: theorem.name,
+        params: [],
+        body: {
+          kind: "Tuple",
+          elements: [...assumptions, statement.conclusion],
+          location: statement.location,
+        },
+        isLocal: true,
+        isRecursive: false,
+        location: theorem.location,
+      },
+    ];
+  });
+  const lookup = createLookup([...available, ...module.definitions]);
   const isGoal = (name: string) => goals.has(name);
-  const resolve = (expression: Expression) => resolveSubexpressions(expression, lookup, isGoal);
+  const definitionLookup = createLookup([...available, ...module.definitions, ...clauses]);
+  const resolve = (expression: Expression) =>
+    resolveSubexpressions(
+      expression,
+      definitionLookup,
+      (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
+    );
   // A name in a theorem, a proof, or a fact may also start with a step, a theorem, or a symbol that
   // no definition names.
   const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
