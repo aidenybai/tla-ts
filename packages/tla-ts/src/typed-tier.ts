@@ -708,6 +708,14 @@ interface Program {
   variableTypes: Type[];
   names: { count: number };
   inlining: Definition[];
+  recursions: Map<Definition, Recursion>;
+}
+
+// The function a RECURSIVE operator compiles to, which its applications in its own body call.
+interface Recursion {
+  name: string;
+  params: Type[];
+  result: Type;
 }
 
 const getName = (program: Program, prefix: string) => `${prefix}${program.names.count++}`;
@@ -1005,6 +1013,52 @@ const bindDefinition = (
     compiled: { type: value.type, emit: () => getLazyCode(name) },
     source: { kind: "Operator", definition, scope },
   });
+
+// TLC evaluates a RECURSIVE operator by applying it again, so the tier compiles its body once, into
+// a function its outermost application defines.
+const compileRecursion = (
+  program: Program,
+  definition: OperatorDefinition,
+  scope: TierScope,
+  frame: Frame,
+): Compiled => {
+  // Its applications take their arguments as values, even one bound by name to branch in an action.
+  const args = definition.params.map((param) => {
+    const binding = scope.get(param.name);
+    if (binding?.kind === "Code") return binding.compiled;
+    return binding?.kind === "Operator" && binding.definition.params.length === 0
+      ? compileValue(program, binding.definition.body, { ...frame, scope: binding.scope })
+      : unsupported();
+  });
+  const getCall = (name: string) => `${name}(${args.map((arg) => arg.emit()).join(", ")})`;
+  const known = program.recursions.get(definition);
+  if (known && program.inlining.includes(definition)) {
+    args.forEach((arg, index) => unify(known.params[index], arg.type));
+    return { type: known.result, emit: () => getCall(known.name) };
+  }
+  const recursion = {
+    name: getName(program, "r"),
+    params: args.map((arg) => arg.type),
+    result: createVar(),
+  };
+  program.recursions.set(definition, recursion);
+  const names = args.map(() => getName(program, "p"));
+  const bodyScope = definition.params.reduce(
+    (inner, param, index) => bindCode(inner, param.name, recursion.params[index], names[index]),
+    scope,
+  );
+  const body = inline(program, definition, () =>
+    expectType(
+      compileValue(program, definition.body, { ...frame, scope: bodyScope }),
+      recursion.result,
+    ),
+  );
+  return {
+    type: recursion.result,
+    emit: () =>
+      `((${recursion.name}) => ((${recursion.name} = (${names.join(", ")}) => (${body.emit()})), ${getCall(recursion.name)}))()`,
+  };
+};
 
 const inline = <Result>(program: Program, definition: Definition, compile: () => Result) => {
   if (program.inlining.includes(definition)) return unsupported();
@@ -2456,6 +2510,9 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
               `(${readSequence(program, sequences.type, sequences.emit())}).flatMap((${items}) => ${readSequence(program, inner, items)})`,
             ),
         };
+      }
+      if (definition.kind === "Operator" && definition.isRecursive) {
+        return compileRecursion(program, definition, expansion.scope, frame);
       }
       return inline(program, definition, () =>
         compileValue(program, definition.body, { ...frame, scope: expansion.scope }),
@@ -4388,6 +4445,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     variableTypes: environment.variables.map(createVar),
     names: { count: 0 },
     inlining: [],
+    recursions: new Map(),
   };
   // Every variable of such a spec is assigned before TLC branches on the next-state relation.
   if (environment.variables.length === 0) return unsupported();
