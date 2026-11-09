@@ -1342,7 +1342,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     !options.isContinued &&
     options.isFingerprintDistanceSkipped === true &&
     options.dump === undefined &&
-    config.view === undefined &&
     !hasPostconditions &&
     // The interpreter evaluates again what the tier evaluated before it fell back.
     !search.isImpure("repeated")
