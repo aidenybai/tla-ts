@@ -77,6 +77,9 @@ const LIBRARY_OBJECTS = new Set([
   "IteratorYieldResult",
   "IteratorReturnResult",
   "IArguments",
+  "Boolean",
+  "Number",
+  "String",
 ]);
 
 // An object type, or the object type, which any object may have.

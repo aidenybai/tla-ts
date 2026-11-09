@@ -53,6 +53,7 @@ import {
   isCreation,
   isDescription,
   isNewObject,
+  getNewWrapper,
   getMethodValue,
   translateHasPrivate,
   translateHoldsMethod,
@@ -1271,7 +1272,8 @@ const translateNode = (
     isHeapFunction(node, context) ||
     isFunctionObject(node, context) ||
     getNewClass(node, context) !== undefined ||
-    isNewObject(node, context);
+    isNewObject(node, context) ||
+    getNewWrapper(node, context) !== undefined;
   if (isHeapObject) {
     const allocated = scope.allocated.get(node);
     if (allocated === undefined) {

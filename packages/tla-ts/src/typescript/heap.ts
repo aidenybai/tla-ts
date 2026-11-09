@@ -25,14 +25,14 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor } from "./exceptions";
-import { translateExpression } from "./expressions";
+import { translateExpression, translateToString } from "./expressions";
 import {
   getBuiltIn,
   isBuiltInObject,
   translateBuiltInObject,
   translateBuiltInValue,
 } from "./intrinsics";
-import { useJavaScript } from "./javascript";
+import { translateToNumber, useJavaScript } from "./javascript";
 import { createStateScope, type Scope } from "./scope";
 import {
   apply,
@@ -637,6 +637,36 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (isNewObject(node, context)) {
     return useJavaScript("Allocate", [heap, identifier("EmptyObject")], context);
   }
+  const wrapper = getNewWrapper(node, context);
+  if (wrapper !== undefined && ts.isNewExpression(node)) {
+    // The wrapper's constructor, which its prototype's constructor property holds.
+    context.builtIns.add(wrapper);
+    const argument = node.arguments?.at(0);
+    const primitive =
+      wrapper === "Boolean"
+        ? argument === undefined
+          ? boolean(false)
+          : useJavaScript("ToBoolean", [translateExpression(argument, scope, context)], context)
+        : wrapper === "Number"
+          ? argument === undefined
+            ? number(0)
+            : translateToNumber(argument, node, scope, context)
+          : argument === undefined
+            ? string("")
+            : translateToString(argument, scope, context);
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "WrapperObject",
+          [translateBuiltInValue(`${wrapper}.prototype`, node, context), primitive],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   if (ts.isCallExpression(node) && isDescription(node, context)) {
     const described = useJavaScript(
       "Describe",
@@ -716,7 +746,22 @@ export const isCreation = (node: ts.Node, context: Context) => {
 
 export const isAllocation = (node: ts.Node, context: Context) =>
   (ts.isCallExpression(node) && (isDescription(node, context) || isCreation(node, context))) ||
-  isNewObject(node, context);
+  isNewObject(node, context) ||
+  getNewWrapper(node, context) !== undefined;
+
+// The primitive that new Boolean, new Number, or new String wraps in an object.
+export const getNewWrapper = (node: ts.Node, context: Context) => {
+  const name =
+    context.heap !== undefined && ts.isNewExpression(node)
+      ? getBuiltIn(node.expression, context)
+      : undefined;
+  return (name === "Boolean" || name === "Number" || name === "String") &&
+    ts.isNewExpression(node) &&
+    (node.arguments ?? []).length <= 1 &&
+    !(node.arguments ?? []).some(ts.isSpreadElement)
+    ? name
+    : undefined;
+};
 
 // new Object() with no value, which makes an empty object as {} does.
 export const isNewObject = (node: ts.Node, context: Context) => {
@@ -786,6 +831,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
     (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
     isNewObject(node, context) ||
+    getNewWrapper(node, context) !== undefined ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes &&
       created !== undefined &&

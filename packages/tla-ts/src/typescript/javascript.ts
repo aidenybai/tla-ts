@@ -969,6 +969,10 @@ TagOf(heap, ref) ==
 LOCAL ClassOf(heap, ref) ==
   CASE IsHeap(ref) /\\ IsArrayObject(Lookup(heap, ref)) -> "Array"
     [] IsHeap(ref) /\\ "isArguments" \\in DOMAIN Lookup(heap, ref) -> "Arguments"
+    [] IsHeap(ref) /\\ "primitive" \\in DOMAIN Lookup(heap, ref) ->
+         CASE TypeOf(Lookup(heap, ref).primitive) = "boolean" -> "Boolean"
+           [] TypeOf(Lookup(heap, ref).primitive) = "string" -> "String"
+           [] OTHER -> "Number"
     [] IsHeap(ref) -> IF Lookup(heap, ref).isCallable THEN "Function" ELSE "Object"
     [] BuiltInKey(ref) = "Array.prototype" -> "Array"
     [] Lookup(heap, ref).isCallable -> "Function"
@@ -1035,6 +1039,21 @@ ArgumentsObject(elements, thrower) ==
                          [] OTHER -> Writable],
       extensible |-> TRUE, prototype |-> ObjectPrototype, isCallable |-> FALSE,
       isConstructor |-> FALSE, isOpaque |-> FALSE, privates |-> <<>>, isArguments |-> TRUE]
+
+\\* The object that new Boolean, new Number, or new String makes, which holds the primitive it wraps,
+\\* and a string's characters under their indices and its length.
+WrapperObject(prototype, primitive) ==
+  LET isString == TypeOf(primitive) = "string"
+      length == IF isString THEN Len(primitive) ELSE 0
+      keys == IF isString THEN {ToString(position - 1) : position \\in 1..length} \\cup {"length"} ELSE {}
+      fixed == [writable |-> FALSE, enumerable |-> FALSE, configurable |-> FALSE, kind |-> "data"]
+  IN [keys |-> [position \\in 1..length |-> ToString(position - 1)]
+               \\o (IF isString THEN <<"length">> ELSE <<>>),
+      values |-> [key \\in keys |->
+                   IF key = "length" THEN length ELSE SubSeq(primitive, ToIndex(key) + 1, ToIndex(key) + 1)],
+      attributes |-> [key \\in keys |-> IF key = "length" THEN fixed ELSE [fixed EXCEPT !.enumerable = TRUE]],
+      extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
+      isOpaque |-> FALSE, privates |-> <<>>, primitive |-> primitive]
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==

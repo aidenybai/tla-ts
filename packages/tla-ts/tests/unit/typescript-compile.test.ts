@@ -1420,6 +1420,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("wraps a primitive in the object that new Boolean, Number, or String makes", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nconst flag = new Boolean(false);\nconst count = new Number(-123);\nconst text = new String("ab");\nif (typeof flag !== "object" || typeof text !== "object") throw new Error("typeof");\nif (Object.prototype.toString.call(flag) !== "[object Boolean]") throw new Error("tag b");\nif (Object.prototype.toString.call(count) !== "[object Number]") throw new Error("tag n");\nif (Object.prototype.toString.call(text) !== "[object String]") throw new Error("tag s");\nif (Object.getPrototypeOf(text) !== String.prototype) throw new Error("proto");\nif (Object.getOwnPropertyNames(text).join() !== "0,1,length") throw new Error("names");\nif (Object.keys(text).join() !== "0,1") throw new Error("keys");\nif (text[1] !== "b" || text.length !== 2) throw new Error("index");\nconst left = new Boolean(false);\nconst right = new Boolean(false);\nif (left === right || left !== left) throw new Error("identity");\nif (Array.isArray(flag)) throw new Error("array");\nconst holder = {};\nObject.defineProperty(holder, "p", { value: 1, configurable: count as unknown as boolean });\nconst described = Object.getOwnPropertyDescriptor(holder, "p");\nif (described!.configurable !== true) throw new Error("descriptor");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
