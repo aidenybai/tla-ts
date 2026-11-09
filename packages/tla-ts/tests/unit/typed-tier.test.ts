@@ -5,7 +5,7 @@ import { check } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typed-tier");
 
-const checkFixture = (name: string, isWarningEnabled: boolean) =>
+const checkFixture = (name: string, isWarningEnabled: boolean, isTyped = true) =>
   check({
     source: readFileSync(join(FIXTURES, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, `${name}.cfg`), "utf8"),
@@ -13,7 +13,7 @@ const checkFixture = (name: string, isWarningEnabled: boolean) =>
       const path = join(FIXTURES, `${module}.tla`);
       return existsSync(path) ? readFileSync(path, "utf8") : undefined;
     },
-    isFingerprintDistanceSkipped: true,
+    isFingerprintDistanceSkipped: isTyped,
     isWarningEnabled,
   });
 
@@ -87,6 +87,17 @@ describe("typed tier matches TLC", () => {
     const result = await checkFixture(name, true);
     expect([result.status, result.violation?.name]).toEqual([status, property]);
   });
+
+  it.each(["DeadlockedCounters", "SymmetricDeadlock", "ShallowDeadlock", "ConstrainedDeadlock"])(
+    "reports the deadlock in %s as the interpreter does",
+    async (name) => {
+      const [typed, interpreted] = await Promise.all([
+        checkFixture(name, true),
+        checkFixture(name, true, false),
+      ]);
+      expect(typed).toEqual(interpreted);
+    },
+  );
 
   it("branches on the right side of => only with warnings off, like TLC", async () => {
     const results = await Promise.all([
