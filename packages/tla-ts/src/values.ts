@@ -428,10 +428,17 @@ const compareAny = (other: Value): never => {
   throw new TlaModuleError(`Attempted to compare ANY with the value\n${formatValue(other)}`);
 };
 
+// TLC enumerates a lambda to compare it, even with itself.
+const compareWithItself = (value: Value) => {
+  if (writtenOrderUse.isUsed) forgetWrittenOrder(value);
+  if (value === ANY_SET) compareAny(value);
+  if (typeof value === "object" && value.kind === "LazyFunction") toFiniteFunction(value);
+};
+
 export const compareValues = (left: Value, right: Value): number => {
   if (left === right) {
-    if (writtenOrderUse.isUsed) forgetWrittenOrder(left);
-    return left === ANY_SET ? compareAny(left) : 0;
+    compareWithItself(left);
+    return 0;
   }
   if (typeof left === "object" && typeof right === "object") {
     const leftKind = left.kind;
@@ -612,8 +619,8 @@ export const markFingerprinted = (value: Value): void => {
 export const valuesEqual = (left: Value, right: Value): boolean => {
   cacheSet(left);
   if (left === right) {
-    if (writtenOrderUse.isUsed) forgetWrittenOrder(left);
-    return left !== ANY_SET || compareAny(left);
+    compareWithItself(left);
+    return true;
   }
   if (typeof left !== "object" || typeof right !== "object") {
     if (typeof left === typeof right) return false;

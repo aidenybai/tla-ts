@@ -738,7 +738,10 @@ const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
   location: definition.location,
 });
 
-const createRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
+const createRecursiveFunction = (
+  definition: FunctionDefinition,
+  context: Context,
+): RebindableLazyFunction => {
   const domain = getBoundsDomain(definition.bounds, context);
   const functionValue = createLazyFunction(
     domain,
@@ -763,7 +766,14 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
     body: definition.body,
     scope: bindValue(undefined, definition.name, functionValue),
   });
-  return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
+  const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
+    rebind: (tracing: Environment) => {
+      const rebound = createRecursiveFunction(definition, { ...context, environment: tracing });
+      rebound.enumerated = functionValue.enumerated;
+      return rebound;
+    },
+  });
+  return definition.bounds.length === 1 ? markLambdaFunction(rebindable) : rebindable;
 };
 
 // TLC computes a constant definition eagerly, so a function over a reducible set is a FcnRcdValue.
@@ -1158,8 +1168,14 @@ interface RebindableFilteredSet extends FilteredSetValue {
   rebind: (environment: Environment) => Value;
 }
 
-const isRebindableFilteredSet = (value: Value): value is RebindableFilteredSet =>
-  typeof value === "object" && value.kind === "FilteredSet" && "rebind" in value;
+interface RebindableLazyFunction extends LazyFunctionValue {
+  rebind: (environment: Environment) => Value;
+}
+
+const isRebindable = (value: Value): value is RebindableFilteredSet | RebindableLazyFunction =>
+  typeof value === "object" &&
+  (value.kind === "FilteredSet" || value.kind === "LazyFunction") &&
+  "rebind" in value;
 
 // TLC's CallStackTool rebinds the lazy values it returns, so their later evaluation records too.
 const traceEvaluator =
@@ -1179,7 +1195,7 @@ const traceEvaluator =
     setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
-      const value = isRebindableFilteredSet(computed) ? computed.rebind(environment) : computed;
+      const value = isRebindable(computed) ? computed.rebind(environment) : computed;
       callStack.values.set(expression, value);
       if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
         callStack.sources.set(value, expression);
