@@ -720,24 +720,27 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           // explored it.
           const livenessSource = current.livenessSource;
           current.livenessSource = source;
-          forEachSuccessor(
-            spec.next,
-            state,
-            environment,
-            (successor) => {
-              canonicalizeState(successor.state);
-              const isInModel =
-                search.satisfiesConstraints(successor.state, state) &&
-                search.satisfiesActionConstraints(state, successor.state);
-              if (!isInModel) return false;
-              const fingerprintState = getFingerprintState(successor.state);
-              const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
-              successors.push({ index, state: successor.state });
-              return false;
-            },
-            spec.scope,
-          );
-          current.livenessSource = livenessSource;
+          try {
+            forEachSuccessor(
+              spec.next,
+              state,
+              environment,
+              (successor) => {
+                canonicalizeState(successor.state);
+                const isInModel =
+                  search.satisfiesConstraints(successor.state, state) &&
+                  search.satisfiesActionConstraints(state, successor.state);
+                if (!isInModel) return false;
+                const fingerprintState = getFingerprintState(successor.state);
+                const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
+                successors.push({ index, state: successor.state });
+                return false;
+              },
+              spec.scope,
+            );
+          } finally {
+            current.livenessSource = livenessSource;
+          }
           return successors;
         },
       }),
@@ -806,13 +809,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
-    const action = actions.find((item) =>
-      getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
-        isSameState(getKey(successor.state), key),
-      ),
-    );
-    Object.assign(current, expanding);
-    return action;
+    try {
+      return actions.find((item) =>
+        getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
+          isSameState(getKey(successor.state), key),
+        ),
+      );
+    } finally {
+      Object.assign(current, expanding);
+    }
   };
   // Before TLC prints a trace, it rebuilds from the initial predicate the states it does not keep,
   // all but the last `known` ones. As it prints each later step, it finds the action that takes
