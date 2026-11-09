@@ -33,13 +33,14 @@ interface IntType {
 
 interface BoolType {
   kind: "Bool";
+  target: BoolType | OptType | undefined;
 }
 
 // TLC fails to compare a typed model value with a string or a model value of another type, so a
 // class of atoms holds at most one type of model value, and then no strings.
 interface StrType {
   kind: "Str";
-  target: StrType | MixType | RecType | undefined;
+  target: StrType | MixType | RecType | OptType | undefined;
   modelValueTypes: Set<string>;
   hasString: boolean;
 }
@@ -49,6 +50,13 @@ interface StrType {
 interface MixType {
   kind: "Mix";
   target: MixType | undefined;
+}
+
+// Booleans and untyped model values, which TLC compares only for equality. A value is a boolean or
+// the id of an atom.
+interface OptType {
+  kind: "Opt";
+  target: OptType | undefined;
 }
 
 interface SeqType {
@@ -116,7 +124,8 @@ type Type =
   | SetType
   | VarType
   | LambdaType
-  | MixType;
+  | MixType
+  | OptType;
 
 interface Compiled {
   type: Type;
@@ -180,7 +189,6 @@ const SPARSE = { reason: "sparse" };
 const UNKNOWN = { reason: "unknown" };
 
 const createInt = (): IntType => ({ kind: "Int", target: undefined });
-const BOOL: BoolType = { kind: "Bool" };
 const createStr = (): StrType => ({
   kind: "Str",
   target: undefined,
@@ -202,6 +210,8 @@ const addAtom = (type: StrType, plains: Plains, value: Value) => {
   return getAtom(plains, value);
 };
 const createMix = (): MixType => ({ kind: "Mix", target: undefined });
+
+const createOption = (): OptType => ({ kind: "Opt", target: undefined });
 // TLC finds an untyped model value unequal to and less than any record. A record type that may hold
 // one has a shape whose only field, named by a string no TLA+ string can be, is the model value. A
 // shape of one field orders before records of more fields, and its name before any other name.
@@ -226,9 +236,10 @@ const widen = (): never => {
 
 const createVar = (): VarType => ({ kind: "Var", target: undefined });
 
+const createBool = (): BoolType => ({ kind: "Bool", target: undefined });
+
 const resolveType = (type: Type): Type => {
   if (
-    type.kind === "Bool" ||
     type.kind === "Seq" ||
     type.kind === "Map" ||
     type.kind === "Set" ||
@@ -326,6 +337,27 @@ const unify = (left: Type, right: Type): void => {
     [leftType, rightType].forEach((type) => {
       if (type.kind === "Str" && (type.hasString || type.modelValueTypes.size > 0)) unsupported();
       if (type !== mix) type.target = mix;
+    });
+    return;
+  }
+  const isLeftOption =
+    leftType.kind === "Bool" || leftType.kind === "Opt" || leftType.kind === "Str";
+  const isRightOption =
+    rightType.kind === "Bool" || rightType.kind === "Opt" || rightType.kind === "Str";
+  if (
+    isLeftOption &&
+    isRightOption &&
+    [leftType.kind, rightType.kind].some((kind) => kind === "Bool" || kind === "Opt")
+  ) {
+    if (leftType.kind === rightType.kind) {
+      rightType.target = leftType;
+      return;
+    }
+    const option: OptType =
+      leftType.kind === "Opt" ? leftType : rightType.kind === "Opt" ? rightType : createOption();
+    [leftType, rightType].forEach((type) => {
+      if (type.kind === "Str" && (type.hasString || type.modelValueTypes.size > 0)) unsupported();
+      if (type !== option) type.target = option;
     });
     return;
   }
@@ -429,7 +461,7 @@ const getIntervalBounds = (elements: Value[]) => {
 
 const getValueType = (value: Value, plains: Plains): Type => {
   if (typeof value === "number") return createInt();
-  if (typeof value === "boolean") return BOOL;
+  if (typeof value === "boolean") return createBool();
   if (typeof value === "string" || value.kind === "ModelValue") return createStr();
   if (value.kind === "Interval") return { kind: "Set", element: createInt() };
   if (value.kind !== "Function") {
@@ -540,6 +572,11 @@ const compareAtoms = (left: string | ModelValue, right: string | ModelValue) => 
 
 // TLC fails to compare an integer with a string or a typed model value, so a class of mixed scalars
 // holds neither.
+const getOptionAtom = (plains: Plains, value: Value) =>
+  typeof value === "object" && value.kind === "ModelValue" && value.type === undefined
+    ? getAtom(plains, value)
+    : unsupported();
+
 const getMixedAtom = (plains: Plains, value: Value) =>
   typeof value === "object" && value.kind === "ModelValue" && value.type === undefined
     ? ATOM_BASE + getAtom(plains, value)
@@ -580,6 +617,8 @@ const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
   const resolved = resolveType(type);
   if (resolved.kind === "Int") return typeof value === "number" ? value : unsupported();
   if (resolved.kind === "Bool") return typeof value === "boolean" ? value : unsupported();
+  if (resolved.kind === "Opt")
+    return typeof value === "boolean" ? value : getOptionAtom(plains, value);
   if (resolved.kind === "Str") return addAtom(resolved, plains, value);
   if (resolved.kind === "Mix")
     return typeof value === "number" ? value : getMixedAtom(plains, value);
@@ -700,6 +739,7 @@ const getCompareCode = (program: Program, type: Type, left: string, right: strin
   if (resolved.kind === "Int" || resolved.kind === "Bool") return `(${left}) - (${right})`;
   if (resolved.kind === "Str") return `R[${left}] - R[${right}]`;
   if (resolved.kind === "Mix") return `H.compareMixed(R, ${left}, ${right})`;
+  if (resolved.kind === "Opt") return `H.compareOption(R, ${left}, ${right})`;
   if (resolved.kind === "Set" && isMask(resolved, program.plains)) {
     return `H.compareMasks(${left}, ${right})`;
   }
@@ -1073,6 +1113,16 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
 };
 
 // TLC fails to do arithmetic on, or order, a model value, which a class of mixed scalars may hold.
+// TLC fails to evaluate a model value as a condition.
+const expectBool = (compiled: Compiled): Compiled => {
+  unify(compiled.type, createBool());
+  return {
+    type: compiled.type,
+    emit: () =>
+      resolveType(compiled.type).kind === "Opt" ? `H.bool(${compiled.emit()})` : compiled.emit(),
+  };
+};
+
 const expectInt = (compiled: Compiled): Compiled => {
   unify(compiled.type, createInt());
   return {
@@ -1268,13 +1318,12 @@ const compileQuantifier = (
   frame: Frame,
 ): Compiled => {
   const bounds = compileBounds(program, expression.bounds, frame);
-  const body = expectType(
+  const body = expectBool(
     compileValue(program, expression.body, { ...frame, scope: bounds.scope }),
-    BOOL,
   );
   const isForall = expression.kind === "Forall";
   return {
-    type: BOOL,
+    type: createBool(),
     emit: () =>
       `(() => { ${bounds.getHeaders()} { if (${isForall ? "!" : ""}(${body.emit()})) return ${!isForall}; } return ${isForall}; })()`,
   };
@@ -1342,7 +1391,7 @@ const compileMembership = (
     );
     // A sequence has the domain 1..Len(s), which an empty interval equals only when s is empty.
     return {
-      type: BOOL,
+      type: createBool(),
       emit: () =>
         `((${sequence}, ${first}, ${last}) => (${last} < ${first} ? ${sequence}.length === 0 : ${first} === 1 && ${sequence}.length === ${last}) && ${sequence}.every((${name}) => ${inner.emit()}))(${element.emit()}, ${low.emit()}, ${high.emit()})`,
     };
@@ -1360,7 +1409,7 @@ const compileMembership = (
       frame,
     );
     return {
-      type: BOOL,
+      type: createBool(),
       emit: () => {
         const map = getMap(element.type);
         if (!map) return `${element.emit()}.every((${name}) => ${inner.emit()})`;
@@ -1398,15 +1447,14 @@ const compileMembership = (
       setExpression.bound.set,
       frame,
     );
-    const predicate = expectType(
+    const predicate = expectBool(
       compileValue(program, setExpression.predicate, {
         ...frame,
         scope: bindCode(frame.scope, setExpression.bound.pattern.name, element.type, name),
       }),
-      BOOL,
     );
     return {
-      type: BOOL,
+      type: createBool(),
       emit: () => `((${name}) => ${isInSet.emit()} && ${predicate.emit()})(${element.emit()})`,
     };
   }
@@ -1433,7 +1481,7 @@ const compileMembership = (
       compileMembership(program, { type: element.type, emit: () => name }, set, frame),
     );
     return {
-      type: BOOL,
+      type: createBool(),
       emit: () =>
         `((${name}) => ${tests.length === 0 ? "false" : tests.map((test) => test.emit()).join(" || ")})(${element.emit()})`,
     };
@@ -1467,7 +1515,7 @@ const compileMembership = (
       ),
     );
     return {
-      type: BOOL,
+      type: createBool(),
       emit: () => {
         const resolved = getShape();
         const isShape =
@@ -1492,7 +1540,10 @@ const compileMembership = (
         setExpression.args[0],
         frame,
       );
-      return { type: BOOL, emit: () => `${element.emit()}.every((${name}) => ${test.emit()})` };
+      return {
+        type: createBool(),
+        emit: () => `${element.emit()}.every((${name}) => ${test.emit()})`,
+      };
     }
     if (isBuiltin && operator === "DOMAIN") {
       const target = compileValue(program, setExpression.args[0], frame);
@@ -1503,7 +1554,7 @@ const compileMembership = (
       if (type.kind === "Seq") {
         const index = expectInt(element);
         return {
-          type: BOOL,
+          type: createBool(),
           emit: () =>
             `((${name}) => ${name} >= 1 && ${name} <= (${target.emit()}).length)(${index.emit()})`,
         };
@@ -1512,7 +1563,7 @@ const compileMembership = (
       const atom = createStr();
       unify(element.type, atom);
       return {
-        type: BOOL,
+        type: createBool(),
         emit: () => {
           const record = resolveType(type);
           if (record.kind !== "Rec") return unsupported();
@@ -1543,7 +1594,7 @@ const compileMembership = (
         frame,
       );
       return {
-        type: BOOL,
+        type: createBool(),
         emit: () =>
           isMask(element.type, program.plains)
             ? unsupported()
@@ -1564,7 +1615,7 @@ const compileMembership = (
       unify(element.type, createInt());
       // TLC's Int and Nat hold no untyped model value.
       return {
-        type: BOOL,
+        type: createBool(),
         emit: () => {
           const name = getName(program, "e");
           const checks = [
@@ -1578,7 +1629,7 @@ const compileMembership = (
     if (typeof value === "object" && value.kind === "Interval") {
       unify(element.type, createInt());
       return {
-        type: BOOL,
+        type: createBool(),
         emit: () => {
           const name = getName(program, "e");
           return `((${name}) => ${name} >= ${value.low} && ${name} <= ${value.high})(${element.emit()})`;
@@ -1587,13 +1638,13 @@ const compileMembership = (
     }
     if (getSize(value) > MAXIMUM_CONSTANT_SET) return unsupported();
     const elements = getElements(value);
-    if (elements.length === 0) return { type: BOOL, emit: () => "false" };
+    if (elements.length === 0) return { type: createBool(), emit: () => "false" };
     elements.forEach((inner) => unify(element.type, getValueType(inner, program.plains)));
     const bounds = getIntervalBounds(elements);
     const name = getName(program, "e");
     if (bounds) {
       return {
-        type: BOOL,
+        type: createBool(),
         emit: () =>
           `((${name}) => ${name} >= ${bounds.low} && ${name} <= ${bounds.high})(${element.emit()})`,
       };
@@ -1629,7 +1680,7 @@ const compileMembership = (
         ? `(${name}) => ${code}.has(${name})`
         : `(${name}) => H.isIn(${code}, ${name})`;
     });
-    return { type: BOOL, emit: () => `(${getTest()})(${element.emit()})` };
+    return { type: createBool(), emit: () => `(${getTest()})(${element.emit()})` };
   }
   return compileSetMembership(program, element, compileValue(program, setExpression, frame));
 };
@@ -1637,7 +1688,7 @@ const compileMembership = (
 const compileSetMembership = (program: Program, element: Compiled, set: Compiled): Compiled => {
   unify(set.type, { kind: "Set", element: element.type });
   return {
-    type: BOOL,
+    type: createBool(),
     emit: () =>
       isMask(set.type, program.plains)
         ? `H.has(${set.emit()}, ${element.emit()})`
@@ -1646,7 +1697,7 @@ const compileSetMembership = (program: Program, element: Compiled, set: Compiled
 };
 
 const compileSubset = (program: Program, left: Compiled, right: Compiled): Compiled => ({
-  type: BOOL,
+  type: createBool(),
   emit: () =>
     isMask(left.type, program.plains)
       ? `((${left.emit()}) & ~(${right.emit()})) === 0`
@@ -1939,7 +1990,7 @@ const compileBuiltin = (
   const args = expression.args;
   if (args.length === 2 && (operator === "\\in" || operator === "\\notin")) {
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
-    return operator === "\\in" ? test : { type: BOOL, emit: () => `!(${test.emit()})` };
+    return operator === "\\in" ? test : { type: createBool(), emit: () => `!(${test.emit()})` };
   }
   // The size of a domain doesn't depend on whether its function is a sequence, a sparse function or
   // a record, which an empty function may not yet show.
@@ -2023,8 +2074,8 @@ const compileBuiltin = (
   }
   // TLC fails when the condition of an Assert is false, and only then evaluates its message.
   if (operator === "Assert" && args.length === 2) {
-    const condition = expectType(compileValue(program, args[0], frame), BOOL);
-    return { type: BOOL, emit: () => `((${condition.emit()}) || H.deopt())` };
+    const condition = expectBool(compileValue(program, args[0], frame));
+    return { type: createBool(), emit: () => `((${condition.emit()}) || H.deopt())` };
   }
   if (operator === "SelectSeq" && args.length === 2) {
     const sequence = compileValue(program, args[0], frame);
@@ -2035,7 +2086,7 @@ const compileBuiltin = (
     const name = getName(program, "e");
     const scope = bindCode(binding.scope, binding.definition.params[0].name, element, name);
     const test = inline(program, binding.definition, () =>
-      expectType(compileValue(program, binding.definition.body, { ...frame, scope }), BOOL),
+      expectBool(compileValue(program, binding.definition.body, { ...frame, scope })),
     );
     return {
       type: sequence.type,
@@ -2058,7 +2109,7 @@ const compileBuiltin = (
       right,
     );
     const isBefore = inline(program, binding.definition, () =>
-      expectType(compileValue(program, binding.definition.body, { ...frame, scope }), BOOL),
+      expectBool(compileValue(program, binding.definition.body, { ...frame, scope })),
     );
     return {
       type: sequence.type,
@@ -2085,7 +2136,7 @@ const compileBuiltin = (
       // TLC finds a tuple unequal to a record of another size and a record unequal to <<>>, and
       // fails to compare them otherwise.
       if (leftKind === "Seq" && rightKind === "Rec") {
-        return binary(left, right, BOOL, (leftCode, rightCode) => {
+        return binary(left, right, createBool(), (leftCode, rightCode) => {
           const count = getFieldCountCode(program, right.type, rightCode);
           return `${isEqual ? "" : "!"}((${leftCode}).length !== ${count} ? false : H.deopt())`;
         });
@@ -2094,7 +2145,7 @@ const compileBuiltin = (
         return binary(
           left,
           right,
-          BOOL,
+          createBool(),
           (leftCode, rightCode) =>
             `(${leftCode}, ${isEqual ? "" : "!"}((${rightCode}).length === 0 ? false : H.deopt()))`,
         );
@@ -2107,6 +2158,7 @@ const compileBuiltin = (
           type.kind === "Bool" ||
           type.kind === "Str" ||
           type.kind === "Mix" ||
+          type.kind === "Opt" ||
           (type.kind === "Set" && isMask(type, program.plains))
         );
       };
@@ -2116,7 +2168,7 @@ const compileBuiltin = (
       if (empty !== -1) {
         const other = values[1 - empty];
         return {
-          type: BOOL,
+          type: createBool(),
           emit: () => {
             const resolved = closeType(other.type);
             if (resolved.kind === "Rec") {
@@ -2126,7 +2178,7 @@ const compileBuiltin = (
           },
         };
       }
-      return binary(left, right, BOOL, (leftCode, rightCode) =>
+      return binary(left, right, createBool(), (leftCode, rightCode) =>
         isScalar()
           ? `(${leftCode}) ${isEqual ? "===" : "!=="} (${rightCode})`
           : `${isEqual ? "" : "!"}H.same(${leftCode}, ${rightCode})`,
@@ -2146,27 +2198,23 @@ const compileBuiltin = (
       return binary(
         expectInt(left),
         expectInt(right),
-        BOOL,
+        createBool(),
         (leftCode, rightCode) => `(${leftCode}) ${comparison} (${rightCode})`,
       );
     }
     if (operator === "=>") {
-      unify(left.type, BOOL);
-      unify(right.type, BOOL);
       return binary(
-        left,
-        right,
-        BOOL,
+        expectBool(left),
+        expectBool(right),
+        createBool(),
         (leftCode, rightCode) => `(!(${leftCode}) || (${rightCode}))`,
       );
     }
     if (operator === "<=>" || operator === "\\equiv") {
-      unify(left.type, BOOL);
-      unify(right.type, BOOL);
       return binary(
-        left,
-        right,
-        BOOL,
+        expectBool(left),
+        expectBool(right),
+        createBool(),
         (leftCode, rightCode) => `((${leftCode}) === (${rightCode}))`,
       );
     }
@@ -2216,8 +2264,8 @@ const compileBuiltin = (
   if (values.length === 1) {
     const [operand] = values;
     if (operator === "~" || operator === "\\lnot" || operator === "\\neg") {
-      unify(operand.type, BOOL);
-      return { type: BOOL, emit: () => `!(${operand.emit()})` };
+      const condition = expectBool(operand);
+      return { type: createBool(), emit: () => `!(${condition.emit()})` };
     }
     if (operator === "-.") {
       const integer = expectInt(operand);
@@ -2297,16 +2345,16 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     case "And":
     case "Or": {
       const operands = expression.operands.map((operand) =>
-        expectType(compileValue(program, operand, frame), BOOL),
+        expectBool(compileValue(program, operand, frame)),
       );
       const joiner = expression.kind === "And" ? " && " : " || ";
       return {
-        type: BOOL,
+        type: createBool(),
         emit: () => `(${operands.map((operand) => `(${operand.emit()})`).join(joiner)})`,
       };
     }
     case "If": {
-      const condition = expectType(compileValue(program, expression.condition, frame), BOOL);
+      const condition = expectBool(compileValue(program, expression.condition, frame));
       const consequent = compileValue(program, expression.consequent, frame);
       const alternative = expectType(
         compileValue(program, expression.alternative, frame),
@@ -2321,7 +2369,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     case "Case": {
       const type: Type = createVar();
       const arms = expression.arms.map((arm) => ({
-        condition: expectType(compileValue(program, arm.condition, frame), BOOL),
+        condition: expectBool(compileValue(program, arm.condition, frame)),
         body: expectType(compileValue(program, arm.body, frame), type),
       }));
       const other =
@@ -2392,9 +2440,8 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         [{ pattern: expression.pattern, set: expression.set }],
         frame,
       );
-      const predicate = expectType(
+      const predicate = expectBool(
         compileValue(program, expression.body, { ...frame, scope: bounds.scope }),
-        BOOL,
       );
       // TLC chooses the first element, in its order, that satisfies the predicate.
       return {
@@ -2427,9 +2474,8 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     case "SetFilter": {
       const bounds = compileBounds(program, [expression.bound], frame);
       const loop = bounds.loops[0];
-      const predicate = expectType(
+      const predicate = expectBool(
         compileValue(program, expression.predicate, { ...frame, scope: bounds.scope }),
-        BOOL,
       );
       const result = getName(program, "r");
       const type: SetType = { kind: "Set", element: loop.element };
@@ -2597,7 +2643,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         frame.primed,
       );
       return {
-        type: BOOL,
+        type: createBool(),
         emit: () =>
           `(() => { let isFound = false; const emit = () => { isFound = true; }; ${step()} return isFound; })()`,
       };
@@ -2618,7 +2664,7 @@ const compileUnchanged = (program: Program, expression: Expression, frame: Frame
       compileUnchanged(program, element, frame),
     );
     return {
-      type: BOOL,
+      type: createBool(),
       emit: () =>
         elements.length === 0
           ? "true"
@@ -2628,7 +2674,7 @@ const compileUnchanged = (program: Program, expression: Expression, frame: Frame
   const current = compileValue(program, expression, frame);
   const next = compileValue(program, expression, getNextFrame(frame));
   unify(current.type, next.type);
-  return { type: BOOL, emit: () => `H.same(${next.emit()}, ${current.emit()})` };
+  return { type: createBool(), emit: () => `H.same(${next.emit()}, ${current.emit()})` };
 };
 
 const compileSequenceConstruction = (
@@ -2741,7 +2787,7 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
       );
     }
     case "If": {
-      const condition = expectType(compileValue(program, expression.condition, frame), BOOL);
+      const condition = expectBool(compileValue(program, expression.condition, frame));
       const consequent = getWays(expression.consequent, frame.scope);
       const alternative = getWays(expression.alternative, frame.scope);
       return counted(() => `(${condition.emit()} ? ${consequent.emit()} : ${alternative.emit()})`);
@@ -2770,7 +2816,7 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
         );
       }
       if (expression.operator === "=>") {
-        const condition = expectType(compileValue(program, expression.args[0], frame), BOOL);
+        const condition = expectBool(compileValue(program, expression.args[0], frame));
         const consequent = getWays(expression.args[1], frame.scope);
         return counted(() => `(${condition.emit()} ? ${consequent.emit()} : 1)`);
       }
@@ -2790,7 +2836,7 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
     default:
       break;
   }
-  const guard = expectType(compileValue(program, expression, frame), BOOL);
+  const guard = expectBool(compileValue(program, expression, frame));
   return counted(() => `(${guard.emit()} ? 1 : 0)`);
 };
 
@@ -2814,19 +2860,21 @@ const compileStep = (
   if (program.environment.runtime.isWarningEnabled && primed.every((code) => code !== undefined)) {
     const guards = pending.map((item) => {
       if (item.expression.kind !== "Unchanged") {
-        return expectType(
+        return expectBool(
           compileValue(program, item.expression, {
             scope: item.scope,
             primed,
             variables: getVariableCodes(program),
           }),
-          BOOL,
         );
       }
       const checks = getProjectedVariables(program, item.expression.expression, item.scope).map(
         (index) => `H.same(${primed[index]}, v${index})`,
       );
-      return { type: BOOL, emit: () => (checks.length === 0 ? "true" : checks.join(" && ")) };
+      return {
+        type: createBool(),
+        emit: () => (checks.length === 0 ? "true" : checks.join(" && ")),
+      };
     });
     return () =>
       `if (${guards.map((guard) => `(${guard.emit()})`).join(" && ")}) { emit([${primed.join(", ")}]); }`;
@@ -2876,14 +2924,14 @@ const compileStep = (
       return () => `${bounds.getHeaders()} { ${body()} }`;
     }
     case "If": {
-      const condition = expectType(compileValue(program, expression.condition, frame), BOOL);
+      const condition = expectBool(compileValue(program, expression.condition, frame));
       const consequent = continueWith(first.scope, [expression.consequent]);
       const alternative = continueWith(first.scope, [expression.alternative]);
       return () => `if (${condition.emit()}) { ${consequent()} } else { ${alternative()} }`;
     }
     case "Case": {
       const arms = expression.arms.map((arm) => ({
-        condition: expectType(compileValue(program, arm.condition, frame), BOOL),
+        condition: expectBool(compileValue(program, arm.condition, frame)),
         body: continueWith(first.scope, [arm.body]),
       }));
       const other = expression.other && continueWith(first.scope, [expression.other]);
@@ -2955,7 +3003,7 @@ const compileStep = (
         expression.operator === "=>" &&
         (hasPrime(args[1]) || isBranching(program, args[1], frame.scope))
       ) {
-        const condition = expectType(compileValue(program, args[0], frame), BOOL);
+        const condition = expectBool(compileValue(program, args[0], frame));
         const consequent = continueWith(first.scope, [args[1]]);
         const alternative = compileStep(program, rest, primed);
         return () => `if (${condition.emit()}) { ${consequent()} } else { ${alternative()} }`;
@@ -2982,7 +3030,7 @@ const compileStep = (
     default:
       break;
   }
-  const guard = expectType(compileValue(program, expression, frame), BOOL);
+  const guard = expectBool(compileValue(program, expression, frame));
   const tail = compileStep(program, rest, primed);
   return () => `if (${guard.emit()}) { ${tail()} }`;
 };
@@ -3132,8 +3180,9 @@ const writeScalar = (bytes: Bytes, scalar: number) => {
 
 // Initial states are kept as bytes, while their types are still open, and read back as plains once
 // the types are known.
+// A scalar starts with 0 for an integer, 1 for an atom, and 2 or 3 for a boolean.
 const writeValue = (bytes: Bytes, value: Value, plains: Plains): void => {
-  if (typeof value === "boolean") return writeScalar(bytes, value ? 1 : 0);
+  if (typeof value === "boolean") return writeScalar(bytes, value ? 3 : 2);
   if (typeof value === "number") {
     writeScalar(bytes, 0);
     return writeScalar(bytes, value);
@@ -3172,7 +3221,12 @@ const readScalar = (cursor: Cursor) => {
 
 const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
   const resolved = resolveType(type);
-  if (resolved.kind === "Bool") return readScalar(cursor) === 1;
+  if (resolved.kind === "Bool") return readScalar(cursor) === 3;
+  if (resolved.kind === "Opt") {
+    const tag = readScalar(cursor);
+    if (tag >= 2) return tag === 3;
+    return getOptionAtom(plains, plains.values[readScalar(cursor)]);
+  }
   if (resolved.kind === "Int" || resolved.kind === "Str" || resolved.kind === "Mix") {
     const isAtom = readScalar(cursor) === 1;
     const scalar = readScalar(cursor);
@@ -3410,6 +3464,7 @@ const HELPERS = {
     element >= 0 && element < MASK_BITS && ((mask >>> element) & 1) !== 0,
   count: countBits,
   int: (value: number) => (value < ATOM_BASE ? value : deopt()),
+  bool: (value: Plain) => (typeof value === "boolean" ? value : deopt()),
   // TLC orders a model value before any other value.
   compareMixed: (ranks: Int32Array, left: number, right: number) => {
     const isLeftAtom = left >= ATOM_BASE;
@@ -3417,6 +3472,14 @@ const HELPERS = {
     if (isLeftAtom && isRightAtom) return ranks[left - ATOM_BASE] - ranks[right - ATOM_BASE];
     if (isLeftAtom || isRightAtom) return isLeftAtom ? -1 : 1;
     return left - right;
+  },
+  // TLC orders an untyped model value before any value that isn't a model value.
+  compareOption: (ranks: Int32Array, left: Plain, right: Plain) => {
+    if (typeof left === "number" && typeof right === "number") return ranks[left] - ranks[right];
+    if (typeof left === "number" || typeof right === "number") {
+      return typeof left === "number" ? -1 : 1;
+    }
+    return Number(left) - Number(right);
   },
   compareMasks: (left: number, right: number) => {
     const sizes = countBits(left) - countBits(right);
@@ -3564,6 +3627,10 @@ const getWriter = (codec: Codec, type: Type, code: string): string => {
   const resolved = resolveType(type);
   if (getFixedSize(resolved) * MAXIMUM_SCALAR_BYTES > RESERVED_BYTES) return unsupported();
   if (resolved.kind === "Bool") return `d[n++] = ${code} ? 1 : 0;`;
+  // An option is 0 for FALSE, 1 for TRUE, and its atom plus 2.
+  if (resolved.kind === "Opt") {
+    return `t = ${code}; t = t === false ? 0 : t === true ? 1 : t + 2; if (t < 128) d[n++] = t; else n = H.varint(d, n, t);`;
+  }
   if (resolved.kind === "Int" || resolved.kind === "Str" || isMaskType(codec, resolved)) {
     return `t = ${code}; if (t >= 0 && t < 128) d[n++] = t; else n = H.varint(d, n, t);`;
   }
@@ -3608,6 +3675,8 @@ const getSequenceWriter = (codec: Codec, type: SeqType | SetType) => {
 const getReader = (codec: Codec, type: Type): string => {
   const resolved = resolveType(type);
   if (resolved.kind === "Bool") return "(d[i++] !== 0)";
+  if (resolved.kind === "Opt")
+    return "((t = (t = d[i++]) < 128 ? t : rv(t)) < 2 ? t === 1 : t - 2)";
   if (resolved.kind === "Int" || resolved.kind === "Str" || isMaskType(codec, resolved))
     return "((t = d[i++]) < 128 ? t : rv(t))";
   if (resolved.kind === "Mix") {
@@ -3709,6 +3778,8 @@ const getPermuteCode = (
       return `P[${code}]`;
     case "Mix":
       return `((p) => (p >= ${ATOM_BASE} ? ${ATOM_BASE} + P[p - ${ATOM_BASE}] : p))(${code})`;
+    case "Opt":
+      return `((p) => (typeof p === "number" ? P[p] : p))(${code})`;
     case "Seq":
       return getElementCode(
         resolved.element,
@@ -3808,6 +3879,8 @@ const getSignatureCode = (
       return `Z[${code}] += Math.imul(${getWeight()}, ${scale});`;
     case "Mix":
       return `if (${code} >= ${ATOM_BASE}) Z[${code} - ${ATOM_BASE}] += Math.imul(${getWeight()}, ${scale});`;
+    case "Opt":
+      return `if (typeof ${code} === "number") Z[${code}] += Math.imul(${getWeight()}, ${scale});`;
     case "Seq":
       return getLoop(resolved.element, code);
     case "Set":
@@ -3896,13 +3969,12 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     unprimed,
   );
   const compilePredicate = (expression: Expression) =>
-    expectType(
+    expectBool(
       compileValue(program, expression, {
         scope: new Map(),
         primed: unprimed,
         variables: getVariableCodes(program),
       }),
-      BOOL,
     );
   const invariants = check.invariants.map(compilePredicate);
   const constraints = check.constraints.map(compilePredicate);
@@ -3912,7 +3984,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const actionProperties = check.actionProperties.map((property) => {
     const frame = { scope: new Map(), primed: successor, variables: getVariableCodes(program) };
     return {
-      action: expectType(compileValue(program, property.action, frame), BOOL),
+      action: expectBool(compileValue(program, property.action, frame)),
       unchanged: compileUnchanged(program, property.subscript, frame),
     };
   });
