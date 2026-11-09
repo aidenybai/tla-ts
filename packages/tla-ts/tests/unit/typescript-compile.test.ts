@@ -426,6 +426,20 @@ describe("top-level statements", () => {
     ).toThrow("Give this value a type to use its properties");
   });
 
+  it("stop the check at a getter it can't call, though nothing reads what it gives", async () => {
+    const result = await checkModel(`
+      const holder: { [key: string]: unknown } = {};
+      Object.defineProperty(holder, "length", {
+        get: function () {
+          holder[2] = "two";
+          return 3;
+        },
+      });
+      let found = Array.prototype.indexOf.call(holder, "two");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call getters");
+  });
+
   it("call a private method that a getter returns", async () => {
     const result = await checkModel(`
       let calls = 0;

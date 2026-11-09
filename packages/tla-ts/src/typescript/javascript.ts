@@ -259,14 +259,20 @@ Get(heap, ref, key) ==
             [] object.prototype = Null -> Undefined
             [] OTHER -> Get(heap, object.prototype, key)
 
+\\* TLC builds a function's values only where something reads them. This reads each one, so a getter
+\\* that tla-ts can't call stops the check even where nothing reads what it gives.
+LOCAL Read(values) ==
+  IF \\A position \\in DOMAIN values : values[position] = values[position] THEN values ELSE values
+
 ObjectKeys(heap, ref) == EnumerableKeys(Lookup(heap, ref))
 
 ObjectValues(heap, ref) ==
-  LET keys == ObjectKeys(heap, ref) IN [position \\in DOMAIN keys |-> Get(heap, ref, keys[position])]
+  LET keys == ObjectKeys(heap, ref)
+  IN  Read([position \\in DOMAIN keys |-> Get(heap, ref, keys[position])])
 
 ObjectEntries(heap, ref) ==
   LET keys == ObjectKeys(heap, ref)
-  IN  [position \\in DOMAIN keys |-> <<keys[position], Get(heap, ref, keys[position])>>]
+  IN  Read([position \\in DOMAIN keys |-> <<keys[position], Get(heap, ref, keys[position])>>])
 
 LOCAL IsDigitText(text) ==
   \\A position \\in 1..Len(text) : SubSeq(text, position, position) \\in Digits \\ {"-"}
@@ -369,7 +375,7 @@ ArrayLike(heap, ref) ==
   IN IF \\/ length > KeyCount(heap, ref)
         \\/ \\E position \\in 0..(length - 1) : ~Has(heap, ref, ToString(position))
      THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
-     ELSE [position \\in 1..length |-> Get(heap, ref, ToString(position - 1))]
+     ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
 
 RECURSIVE IndexKeys(_, _)
 IndexKeys(heap, ref) ==
@@ -378,15 +384,17 @@ IndexKeys(heap, ref) ==
        \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
 
 \\* The elements that an array-like object or its prototypes hold below its length, in order, with
-\\* their indices. The array methods that skip holes visit these.
+\\* their indices. The array methods that skip holes visit these. A record holds the length, so TLC
+\\* reads it even when no element is present.
 PresentElements(heap, ref) ==
   LET length == ToLength(Get(heap, ref, "length"))
       present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} : position < length}
       indices == [position \\in 1..Cardinality(present) |->
                    CHOOSE element \\in present :
                      Cardinality({other \\in present : other < element}) = position - 1]
-  IN [indices |-> indices,
-      values |-> [position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))]]
+  IN [length |-> length,
+      indices |-> indices,
+      values |-> Read([position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))])]
 
 \\* The accessor that a write to a key calls, which the object or a prototype holds, or Undefined
 \\* where the write makes or changes a data property.
