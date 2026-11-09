@@ -674,7 +674,6 @@ export const runSmtlibScript = (
       clearCheck();
       resetOptimizer();
       script.state = createState();
-      settings.isPrintingSuccess = false;
     },
     "reset-assertions": () => {
       const state = script.state;
