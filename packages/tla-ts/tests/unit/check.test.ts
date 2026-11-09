@@ -2921,7 +2921,7 @@ describe("DOMAIN matches TLC", () => {
   const printDomain = async (expression: string) => {
     const printed: string[] = [];
     await check({
-      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nASSUME PrintT(${expression})\n====`,
+      source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nASSUME PrintT(${expression})\n====`,
       config: "",
       onPrint: (text) => printed.push(text),
     });
@@ -2940,6 +2940,11 @@ describe("DOMAIN matches TLC", () => {
     ["DOMAIN <<>>", "{}"],
     ["ToString(DOMAIN <<1, 2>>)", '"1..2"'],
     ["\\A i \\in DOMAIN <<1, 2, 3>> : i \\in DOMAIN <<4, 5, 6>>", "TRUE"],
+    ["ToString(DOMAIN [i \\in 1..2000 |-> i])", '"1..2000"'],
+    [
+      "LET f[n \\in 0..1100] == IF n = 0 THEN <<>> ELSE Append(f[n - 1], n) IN ToString(DOMAIN f[1100])",
+      '"1..1100"',
+    ],
   ])("prints %s as %s", async (expression, text) => {
     expect(await printDomain(expression)).toEqual([text]);
   });

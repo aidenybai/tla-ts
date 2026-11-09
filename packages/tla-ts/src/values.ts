@@ -1223,18 +1223,23 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
       );
 };
 
+const MAX_SHARED_INTERVAL_LENGTH = 1024;
 const intervalDomains: Value[][] = [];
+const longIntervalDomains = new Map<number, WeakRef<Value[]>>();
 const intervalValues: IntervalValue[] = [];
 const intervalArrays = new WeakMap<Value[], IntervalValue>();
 
 // TLC keeps the domain of a tuple, or of a function built over an interval, as an interval. Every
 // function over 1..n shares one domain array per length, and the elements of any other interval
 // map to it, so the array's identity records it. Callers must not mutate the returned array.
+// Longer domains are held weakly: a sequence that grows one element at a time would otherwise keep
+// an array of every length it passed through, n * n / 2 numbers in all.
 const getIntervalDomain = (length: number): Value[] => {
-  const cached = intervalDomains[length];
+  const cached = intervalDomains[length] ?? longIntervalDomains.get(length)?.deref();
   if (cached) return cached;
   const domain = Array.from({ length }, (_, index) => index + 1);
-  intervalDomains[length] = domain;
+  if (length > MAX_SHARED_INTERVAL_LENGTH) longIntervalDomains.set(length, new WeakRef(domain));
+  else intervalDomains[length] = domain;
   return domain;
 };
 
@@ -1249,7 +1254,10 @@ export const getIntervalElements = (value: IntervalValue): Value[] => {
 };
 
 const isIntervalDomain = (domain: Value[]) =>
-  domain.length > 0 && (domain === intervalDomains[domain.length] || intervalArrays.has(domain));
+  domain.length > 0 &&
+  (domain === intervalDomains[domain.length] ||
+    domain === longIntervalDomains.get(domain.length)?.deref() ||
+    intervalArrays.has(domain));
 
 // TLC keeps an interval domain only for a function built over an interval itself, so a set
 // such as (1..2) \cap S, whose elements are the shared array, gets a copy.
