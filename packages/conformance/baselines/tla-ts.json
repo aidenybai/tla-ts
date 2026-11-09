@@ -227,7 +227,6 @@
   "tlapm/imported/parser/assume_prove/assume_prove_nested_assume_prove_with_label": "message-mismatch",
   "tlapm/imported/parser/infix_op/infix_op_infix_minus_as_parameter": "text-mismatch",
   "tlapm/imported/parser/number/number_bitfield_number_formats": "text-mismatch",
-  "tlapm/imported/parser/operators/operators_negative_prefix_op_on_rhs_of_infix_gh_tlaplus_tlaplus_893": "message-mismatch",
   "tlapm/imported/parser/operators/operators_nonfix_double_exclamation_operator_gh_tstla_gh97_gh_tlaplus_tlaplus_884": "text-mismatch",
   "tlapm/imported/parser/operators/operators_nonfix_minus_gh_tlaplus_tlaplus_gh884": "message-mismatch",
   "tlapm/imported/parser/operators/operators_nonfix_submodule_excl_gh_tlaplus_tlaplus_gh884": "text-mismatch",

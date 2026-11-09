@@ -1392,7 +1392,7 @@ const parse = (
       }
       advance();
       // SANY reads - after an infix operator as prefix -, and rejects it after one that binds tighter.
-      if (infix.low > NEGATION_PRECEDENCE && isAt("-")) {
+      if (!isTlapm && infix.low > NEGATION_PRECEDENCE && isAt("-")) {
         throw createError(`Precedence conflict between ${token.text} and -`, peek());
       }
       operators.last = operators.preceding = infix;
