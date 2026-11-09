@@ -10,6 +10,7 @@ import {
 import type { DecideOptions } from "../../verdict";
 import {
   AstManager,
+  FAMILY_BASIC,
   FAMILY_MODEL_VALUE,
   FAMILY_USER,
   KIND_APP,
@@ -534,6 +535,31 @@ export const runSmtlibScript = (
       display(simplified);
       rewriter.release();
       manager.decRef(simplified);
+      manager.decRef(term);
+    },
+    // The Boolean rewriter alone matches the simplifier only on Boolean structure over constants.
+    "dbg-bool-flat-rewriter": (list) => {
+      const manager = script.state.manager;
+      if (list.items.length !== 2)
+        throw new SmtParseError("invalid command, one argument expected", list.end);
+      const term = script.state.reader.parseTerm(list.items[1]);
+      manager.incRef(term);
+      const visited = new Set<number>();
+      const todo = [term];
+      while (todo.length > 0) {
+        const expr = todo.pop() as number;
+        if (visited.has(expr)) continue;
+        visited.add(expr);
+        const family = manager.kinds[expr] === KIND_APP ? manager.getFamily(expr) : -1;
+        if (family !== FAMILY_BASIC && family !== FAMILY_USER && !manager.isNumeral(expr))
+          throw new SmtUnsupportedError("the command dbg-bool-flat-rewriter beyond Boolean terms");
+        manager.pushArgs(expr, todo);
+      }
+      const rewriter = new Rewriter(manager, getRewriterOptions(manager, new Map()));
+      const rewritten = rewriter.rewrite(term);
+      display(rewritten);
+      rewriter.release();
+      manager.decRef(rewritten);
       manager.decRef(term);
     },
     apply: (list) => {
