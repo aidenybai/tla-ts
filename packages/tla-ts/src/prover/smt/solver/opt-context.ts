@@ -1,25 +1,33 @@
 // Ported from Z3 (src/opt/opt_context.cpp, src/opt/optsmt.cpp, src/opt/opt_value.cpp), MIT
 // license, see z3-license.txt. Only nonlinear real objectives are ported, and they skip the
 // arithmetic climb that Z3 runs before nlsat, so a result nlsat does not certify is unsupported. A
-// rational optimum has no exact value, as when the climb finds it, so it prints as Z3 prints it.
+// rational optimum has no exact value, as when the climb finds it, so it prints as Z3 prints it. The
+// normalization skips the 0-1 elimination, which no real objective needs.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   OP_ADD,
+  KIND_APP,
   OP_GE,
+  OP_ITE,
+  OP_LE,
   OP_MUL,
   OP_UMINUS,
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
 } from "./ast";
+import { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { AlgebraicManager, type Anum } from "./nlsat/algebraic";
 import { mkAlgebraicEq, NlsatOpt, type NlsatOptResult } from "./opt-nlsat";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
-import type { TacticEnvironment } from "./tactic";
+import { compileInternalTactic, convertModel, type TacticEnvironment } from "./tactic";
+
+const NORMALIZER =
+  "(and-then (using-params simplify :som true) propagate-values solve-eqs simplify)";
 
 export interface OptObjective {
   term: number;
@@ -54,6 +62,9 @@ export class OptContext {
   private upper: ObjectiveValue[] = [];
   private boxModels: ProtoModel[] = [];
   private boxIndex = -1;
+  private normalized: OptObjective[] = [];
+  private normalizedGoal: Goal | null = null;
+  private normalizedTerms: RefVector;
   model: ProtoModel | null = null;
   reasonUnknown = "";
 
@@ -61,16 +72,19 @@ export class OptContext {
     private manager: AstManager,
     private environment: TacticEnvironment,
     private objectives: readonly OptObjective[],
-  ) {}
+  ) {
+    this.normalizedTerms = new RefVector(manager);
+  }
 
   private setModel(model: ProtoModel | null) {
+    if (model !== null && this.normalizedGoal !== null) convertModel(this.normalizedGoal, model);
     model?.incRef();
     this.model?.decRef();
     this.model = model;
   }
 
   private getInternalTerm(index: number, pinned: RefVector) {
-    const objective = this.objectives[index];
+    const objective = this.normalized[index];
     if (objective.isMax) return objective.term;
     const negated = this.manager.mkApp(OP_UMINUS, [objective.term], SORT_REAL);
     pinned.push(negated);
@@ -181,6 +195,81 @@ export class OptContext {
       return L_FALSE;
     }
     this.release();
+    const normalized = this.normalize(hard);
+    if (normalized.length === 1 && this.manager.isFalse(normalized[0])) return L_FALSE;
+    return this.execute(normalized, options);
+  }
+
+  private normalize(hard: readonly number[]) {
+    const manager = this.manager;
+    const goal = new Goal(manager);
+    const decls = this.objectives.map((objective) =>
+      manager.mkFreshFuncDecl(
+        objective.isMax ? "maximize" : "minimize",
+        [manager.sorts[objective.term]],
+        SORT_BOOL,
+      ),
+    );
+    for (const form of hard) goal.assert(form);
+    for (const [index, objective] of this.objectives.entries())
+      goal.assert(manager.mkApp(decls[index], [objective.term], SORT_BOOL));
+    const goals = compileInternalTactic(this.environment, NORMALIZER)(goal);
+    if (goals.length !== 1) throw new SmtUnsupportedError("a normalization into several goals");
+    const result = goals[0];
+    const forms = result.isInconsistent ? [manager.falseExpr] : [...result.forms.items];
+    for (const form of forms) this.normalizedTerms.push(form);
+    this.normalizedGoal = result;
+    const pinned = this.normalizedTerms;
+    const pin = (expr: number) => {
+      pinned.push(expr);
+      return expr;
+    };
+    const normalizedHard: number[] = [];
+    const purify = (term: number) => {
+      const fresh = pin(manager.mkFreshConst("obj", manager.sorts[term]));
+      normalizedHard.push(
+        pin(manager.mkApp(OP_GE, [fresh, term], SORT_BOOL)),
+        pin(manager.mkApp(OP_LE, [fresh, term], SORT_BOOL)),
+      );
+      result.addConverter(manager.decls[fresh]);
+      return fresh;
+    };
+    const isMulConst = (term: number) => {
+      if (manager.isUninterpretedConst(term) || manager.isNumeral(term)) return true;
+      if (manager.getOp(term) !== OP_MUL || manager.getNumArgs(term) !== 2) return false;
+      const args = manager.getArgs(term);
+      return (
+        (manager.isNumeral(args[0]) && manager.isUninterpretedConst(args[1])) ||
+        (manager.isNumeral(args[1]) && manager.isUninterpretedConst(args[0]))
+      );
+    };
+    this.normalized = [...this.objectives];
+    for (const form of forms) {
+      const index = manager.kinds[form] === KIND_APP ? decls.indexOf(manager.decls[form]) : -1;
+      if (index === -1) {
+        normalizedHard.push(form);
+        continue;
+      }
+      const term = manager.getArg(form, 0);
+      const purified =
+        manager.getOp(term) === OP_ADD
+          ? pin(
+              manager.mkApp(
+                OP_ADD,
+                manager.getArgs(term).map((arg) => (isMulConst(arg) ? arg : purify(arg))),
+                manager.sorts[term],
+              ),
+            )
+          : manager.getOp(term) === OP_ITE || !isMulConst(term)
+            ? purify(term)
+            : term;
+      this.normalized[index] = { term: purified, isMax: this.objectives[index].isMax };
+    }
+    result.forms.reset();
+    return normalizedHard;
+  }
+
+  private execute(hard: readonly number[], options: OptOptions) {
     this.reasonUnknown = "";
     this.lower = this.objectives.map(() => MINUS_INFINITY);
     this.upper = this.objectives.map(() => PLUS_INFINITY);
@@ -263,6 +352,9 @@ export class OptContext {
   }
 
   release() {
+    this.normalizedGoal = null;
+    this.normalizedTerms.reset();
+    this.normalized = [];
     for (const model of this.boxModels) model.decRef();
     this.boxModels = [];
     this.boxIndex = -1;
