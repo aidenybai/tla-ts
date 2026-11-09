@@ -1191,7 +1191,23 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
   if (global?.kind === "Value") return compileConstant(program, global.value);
   if (global?.kind === "Definition") {
     const definition = global.definition;
-    if (definition.kind !== "Operator" || definition.params.length > 0) return unsupported();
+    // A function definition is the function its constructor builds.
+    if (definition.kind === "Function") {
+      return inline(program, definition, () =>
+        compileValue(
+          program,
+          {
+            kind: "FunctionConstruction",
+            bounds: definition.bounds,
+            body: definition.body,
+            location: definition.location,
+            isRecursive: definition.isSelfReferential,
+          },
+          { ...frame, scope: new Map() },
+        ),
+      );
+    }
+    if (definition.params.length > 0) return unsupported();
     if (isConstantLevel(definition, program.environment)) {
       return compileConstant(program, evaluateConstant(program, definition.body));
     }
@@ -1396,21 +1412,54 @@ const compileKeys = (target: Compiled): Compiled | undefined => {
 const compileBounds = (program: Program, bounds: Bound[], frame: Frame, isFirstFastest = false) => {
   const loops: { name: string; element: Type; header: (name: string) => string }[] = [];
   const scope = bounds.reduce<TierScope>((current, bound) => {
-    if (bound.pattern.kind !== "Name") return unsupported();
     const loop = compileBound(
       program,
       bound.set,
       isFirstFastest ? frame : { ...frame, scope: current },
     );
     const name = getName(program, "q");
-    loops.push({ name, element: loop.element, header: loop.header });
-    return bindCode(current, bound.pattern.name, loop.element, name);
+    const pattern = bound.pattern;
+    if (pattern.kind === "Name") {
+      loops.push({ name, element: loop.element, header: loop.header });
+      return bindCode(current, pattern.name, loop.element, name);
+    }
+    // TLC fails to bind a tuple pattern to a value that isn't a tuple of its length.
+    const element = createVar();
+    unify(loop.element, { kind: "Seq", element });
+    loops.push({
+      name,
+      element: loop.element,
+      header: (loopName) =>
+        `${loop.header(loopName)} if ((${readSequence(program, loop.element, loopName)}).length === ${pattern.names.length} || H.deopt())`,
+    });
+    return bindPattern(program, current, pattern.names, element, loop.element, name);
   }, frame.scope);
   // A later conjunct can still refine the type of a bound, so its loop is chosen at emit.
   const getHeaders = () =>
     (isFirstFastest ? loops.toReversed() : loops).map((loop) => loop.header(loop.name)).join(" ");
   return { scope, loops, getHeaders };
 };
+
+const bindPattern = (
+  program: Program,
+  scope: TierScope,
+  names: string[],
+  element: Type,
+  tuple: Type,
+  code: string,
+) =>
+  names.reduce(
+    (inner, name, index) =>
+      withBinding(inner, name, {
+        kind: "Code",
+        compiled: {
+          type: element,
+          emit: () => `(${readSequence(program, tuple, code)})[${index}]`,
+        },
+        source: undefined,
+      }),
+    scope,
+  );
 
 const compileQuantifier = (
   program: Program,
@@ -2756,25 +2805,34 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     case "FunctionConstruction": {
       if (expression.bounds.length !== 1 || expression.isRecursive) return unsupported();
       const bound = expression.bounds[0];
-      if (bound.pattern.kind !== "Name") return unsupported();
+      const pattern = bound.pattern;
       if (!isConstantExpression(program, bound.set, frame.scope)) {
-        return compileSequenceConstruction(
-          program,
-          bound.pattern.name,
-          bound.set,
-          expression.body,
-          frame,
-        );
+        return pattern.kind === "Name"
+          ? compileSequenceConstruction(program, pattern.name, bound.set, expression.body, frame)
+          : unsupported();
       }
       const domain = getElements(evaluateConstant(program, bound.set));
       if (domain.length === 0) return unsupported();
       const name = getName(program, "f");
       const range: Type = createVar();
       const type = createFnType(domain, range, program.plains);
+      const element = createVar();
+      if (pattern.kind === "Tuple") {
+        const isTuple = (key: Value) =>
+          typeof key === "object" &&
+          key.kind === "Function" &&
+          key.functionClass === "tuple" &&
+          key.domain.length === pattern.names.length;
+        if (!domain.every(isTuple)) return unsupported();
+        unify(type.key, { kind: "Seq", element });
+      }
       const body = expectType(
         compileValue(program, expression.body, {
           ...frame,
-          scope: bindCode(frame.scope, bound.pattern.name, type.key, name),
+          scope:
+            pattern.kind === "Name"
+              ? bindCode(frame.scope, pattern.name, type.key, name)
+              : bindPattern(program, frame.scope, pattern.names, element, type.key, name),
         }),
         range,
       );
