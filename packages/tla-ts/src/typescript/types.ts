@@ -6,6 +6,7 @@ import {
   getSymbol,
   getUndefined,
   isHeapClass,
+  isFunctionObject,
   isHeapFunction,
   translateString,
   type Unknown,
@@ -86,7 +87,8 @@ const isPlainObject = (type: ts.Type, context: Context) => {
   if (
     declaration !== undefined &&
     ((ts.isClassLike(declaration) && isHeapClass(declaration, context)) ||
-      isHeapFunction(declaration, context))
+      isHeapFunction(declaration, context) ||
+      isFunctionObject(declaration, context))
   ) {
     return true;
   }

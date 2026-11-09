@@ -23,6 +23,7 @@ import {
   getTopLevelDeclaration,
   getUndefined,
   isHeapClass,
+  isFunctionObject,
   getObjectMethod,
   isPrivateMember,
   getPrivateMember,
@@ -1235,6 +1236,7 @@ const translateNode = (
     (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     isHeapFunction(node, context) ||
+    isFunctionObject(node, context) ||
     getNewClass(node, context) !== undefined ||
     isNewObject(node, context);
   if (isHeapObject) {

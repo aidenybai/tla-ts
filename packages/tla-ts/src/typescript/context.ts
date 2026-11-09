@@ -449,6 +449,20 @@ export const getParameters = (node: ts.SignatureDeclaration) =>
     (parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this",
   );
 
+// A function that a parameter's or a pattern's default makes each time it runs, which a script
+// can't call, only read, as its binding names it.
+export const isFunctionObject = (
+  node: ts.Node,
+  context: Context,
+): node is ts.ArrowFunction | ts.FunctionExpression =>
+  context.heap !== undefined &&
+  (ts.isArrowFunction(node) ||
+    (ts.isFunctionExpression(node) && node.asteriskToken === undefined)) &&
+  (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
+  (ts.isBindingElement(node.parent) || ts.isParameter(node.parent)) &&
+  node.parent.initializer === node &&
+  ts.isIdentifier(node.parent.name);
+
 export type HeapFunction = ts.FunctionDeclaration | ts.FunctionExpression;
 
 export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;

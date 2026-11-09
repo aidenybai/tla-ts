@@ -15,6 +15,7 @@ import {
   isPlainAccessor,
   isPrivateMember,
   isStatic,
+  isFunctionObject,
   isHeapClass,
   isHeapFunction,
   isOnce,
@@ -307,6 +308,27 @@ export const translateObject = (
   }, identifier("EmptyObject"));
 };
 
+// A function's or a class's name: its own, or that of the binding its definition initializes.
+const getFunctionName = (node: HeapClass | ts.ArrowFunction) => {
+  const named = node.parent;
+  return (
+    (ts.isArrowFunction(node) ? undefined : node.name?.text) ??
+    ((ts.isVariableDeclaration(named) || ts.isBindingElement(named) || ts.isParameter(named)) &&
+    ts.isIdentifier(named.name)
+      ? named.name.text
+      : "")
+  );
+};
+
+// A function's length: its parameters before the first with a default or the rest parameter. A
+// parameter that only TypeScript marks optional still counts.
+const getFunctionLength = (parameters: readonly ts.ParameterDeclaration[]) => {
+  const index = parameters.findIndex(
+    (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
+  );
+  return index === -1 ? parameters.length : index;
+};
+
 // The heap after a node from getAllocated adds the object it makes.
 // The constructor object and the prototype that a class makes, prototype first, so the
 // constructor object is the last on the heap.
@@ -343,17 +365,6 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
             [true, false, true],
           );
     }, object);
-  const parameters = ts.isClassLike(node)
-    ? (node.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
-    : getParameters(node);
-  // A parameter that only TypeScript marks optional still counts toward the length.
-  const length = parameters.findIndex(
-    (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
-  );
-  const named = ts.isClassExpression(node) || ts.isFunctionExpression(node) ? node.parent : node;
-  const name =
-    node.name?.text ??
-    (ts.isVariableDeclaration(named) && ts.isIdentifier(named.name) ? named.name.text : "");
   const prototype = defineMethods(
     define(identifier("EmptyObject"), string("constructor"), getRef(2), [true, false, true]),
     false,
@@ -371,11 +382,17 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
             context,
           ),
           string("length"),
-          number(length === -1 ? parameters.length : length),
+          number(
+            getFunctionLength(
+              ts.isClassLike(node)
+                ? (node.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
+                : getParameters(node),
+            ),
+          ),
           [false, false, true],
         ),
         string("name"),
-        string(name),
+        string(getFunctionName(node)),
         [false, false, true],
       ),
       string("prototype"),
@@ -472,6 +489,26 @@ export const translateHasPrivate = (
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
+  if (isFunctionObject(node, context)) {
+    return ts.isArrowFunction(node)
+      ? useJavaScript(
+          "Allocate",
+          [
+            heap,
+            useJavaScript(
+              "ArrowObject",
+              [
+                translateBuiltInValue("Function.prototype", node, context),
+                string(getFunctionName(node)),
+                number(getFunctionLength(getParameters(node))),
+              ],
+              context,
+            ),
+          ],
+          context,
+        )
+      : translateClass(node, heap, scope, context);
+  }
   if (ts.isClassLike(node) || isHeapFunction(node, context)) {
     return translateClass(node, heap, scope, context);
   }
@@ -611,7 +648,9 @@ export const isNewObject = (node: ts.Node, context: Context) => {
 // which may stop the run.
 export const getAllocated = (node: ts.Node, context: Context, isSometimes = false): ts.Node[] => {
   if (context.heap === undefined) return [];
-  if (isHeapFunction(node, context)) return isSometimes ? [] : [node];
+  if (isHeapFunction(node, context) || isFunctionObject(node, context)) {
+    return isSometimes ? [] : [node];
+  }
   if (ts.isFunctionLike(node)) return [];
   if (ts.isClassLike(node)) return isHeapClass(node, context) && !isSometimes ? [node] : [];
   if (ts.isOptionalChain(node)) return [];

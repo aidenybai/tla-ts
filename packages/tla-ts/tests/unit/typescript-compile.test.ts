@@ -1147,6 +1147,15 @@ describe("errors", () => {
     ).toThrow("spec.ts:4:1 Unsupported statement");
   });
 
+  it("names the functions that a parameter's defaults make", async () => {
+    const result = await check(
+      compile(
+        `let names = "";\nlet lengths = 0;\nfunction f([arrow = () => {}, fn = function (a: number, b = 1) {}] = []) {\n  names = arrow.name + " " + fn.name;\n  lengths = arrow.length * 10 + fn.length;\n  if (typeof arrow !== "function" || Object.getOwnPropertyNames(arrow).length !== 2) throw new Error("missed");\n}\nf();\nif (names !== "arrow fn" || lengths !== 1) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

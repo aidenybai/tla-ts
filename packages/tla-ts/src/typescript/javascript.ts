@@ -240,7 +240,8 @@ LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE
 
 EmptyObject ==
   [keys |-> <<>>, values |-> <<>>, attributes |-> <<>>, extensible |-> TRUE,
-   prototype |-> ObjectPrototype, isCallable |-> FALSE, isOpaque |-> FALSE, privates |-> <<>>]
+   prototype |-> ObjectPrototype, isCallable |-> FALSE, isConstructor |-> FALSE, isOpaque |-> FALSE,
+   privates |-> <<>>]
 
 \\* A heap holds the objects a script makes, and the built-in objects it has changed, by key.
 EmptyHeap == [objects |-> <<>>, changed |-> <<>>]
@@ -272,9 +273,9 @@ Update(heap, ref, object) ==
   THEN [heap EXCEPT !.objects[ref[Ref]] = object]
   ELSE [heap EXCEPT !.changed = (BuiltInKey(ref) :> object) @@ @]
 
-\\* Whether new can call a value. A class is the only function that a script's heap holds.
+\\* Whether new can call a value.
 IsConstructor(heap, value) ==
-  CASE IsHeap(value) -> heap.objects[value[Ref]].isCallable
+  CASE IsHeap(value) -> heap.objects[value[Ref]].isConstructor
     [] IsObject(value) /\\ BuiltInKey(value) \\in DOMAIN BuiltIns ->
          BuiltIns[BuiltInKey(value)].isConstructor
     [] TypeOf(value) # "function" -> FALSE
@@ -336,7 +337,13 @@ DefineField(heap, ref, key, value) ==
 
 \\* The object of a class's constructor, which inherits from Function.prototype.
 ClassObject(functionPrototype) ==
-  [EmptyObject EXCEPT !.isCallable = TRUE, !.prototype = functionPrototype]
+  [EmptyObject EXCEPT !.isCallable = TRUE, !.isConstructor = TRUE, !.prototype = functionPrototype]
+
+\\* An arrow function, which has no prototype and can't construct.
+ArrowObject(functionPrototype, name, length) ==
+  Define(Define([ClassObject(functionPrototype) EXCEPT !.isConstructor = FALSE],
+                "length", length, FALSE, FALSE, TRUE),
+         "name", name, FALSE, FALSE, TRUE)
 
 \\* Whether one string of digits is below another of the same length.
 RECURSIVE DigitsBelow(_, _)
@@ -802,8 +809,8 @@ ArrayObject(prototype, elements) ==
                        IF key = "length"
                        THEN [Writable EXCEPT !.enumerable = FALSE, !.configurable = FALSE]
                        ELSE Writable],
-      extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isOpaque |-> FALSE,
-      privates |-> <<>>, isArray |-> TRUE]
+      extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
+      isOpaque |-> FALSE, privates |-> <<>>, isArray |-> TRUE]
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==
