@@ -139,9 +139,6 @@ const describeNode = (expression: Expression) =>
 const isCompleteState = (state: (Value | undefined)[]): state is Value[] =>
   state.every((value) => value !== undefined);
 
-const toStateRecord = (state: Value[], environment: Environment) =>
-  createRecord(environment.variables.map((name, index): [string, Value] => [name, state[index]]));
-
 const getMentionedLevel = (
   expression: Expression,
   environment: Environment,
@@ -210,7 +207,15 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
       }
       if (!context.state) return createTuple([createRecord([])]);
       return createTuple(
-        runtime.getBehavior(state).map((step) => toStateRecord(step, context.environment)),
+        runtime.getBehavior(state).map((step) => {
+          const fields = context.environment.variables.map((name, index): [string, Value] => [
+            name,
+            step[index],
+          ]);
+          // A simulated behavior's states also record their actions.
+          const action = runtime.getSimulationValue?.("action", step);
+          return createRecord(action === undefined ? fields : [["_action", action], ...fields]);
+        }),
       );
     }),
     defineStateOperator(
