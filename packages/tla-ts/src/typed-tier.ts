@@ -157,6 +157,8 @@ export interface TypedCheck {
   isDeadlockChecked: boolean;
   symmetry: ImageTable[] | undefined;
   view: Expression | undefined;
+  // The variables in the order TLC compares states in.
+  variableOrder: number[];
 }
 
 export interface TypedResult {
@@ -3965,6 +3967,45 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     const writer = imageWrites[index] ?? writers[index];
     return `{ const b = n - W.start - m; ${writer} if (c === 0) { c = H.compareBytes(d, W.start + m + b, n, d, W.start + b); if (c > 0) continue images; } }`;
   });
+  // TLC evaluates the view of the smallest image of a state, which it finds comparing the variables
+  // in its order.
+  const smallest = program.variableTypes.map(() => getName(program, "u"));
+  const viewWriters = keyOrder.map((index) =>
+    getWriter(codec, program.variableTypes[index], smallest[index]),
+  );
+  const imageComparisons = check.variableOrder.map((index) => {
+    const type = program.variableTypes[index];
+    const permuted = getName(program, "q");
+    const comparison = getCompareCode(program, type, permuted, smallest[index]);
+    return {
+      permuted,
+      code: `const ${permuted} = ${getPermuteCode(program, images, type, `v${index}`) ?? `v${index}`}; if (c === 0) { c = ${comparison}; if (c > 0) continue images; }`,
+    };
+  });
+  const viewKeyCode = `let ${smallest.map((name, index) => `${name} = v${index}`).join(", ")};
+      images: for (let G = 0; G < A.length; G++) {
+        const P = A[G];
+        let c = 0;
+        ${imageComparisons.map((comparison) => comparison.code).join(" ")}
+        if (c < 0) { ${check.variableOrder.map((index, position) => `${smallest[index]} = ${imageComparisons[position].permuted};`).join(" ")} }
+      }
+      ${viewWriters.join(" ")}`;
+  const symmetricKeyCode = `Z.fill(0);
+      ${signatures.join(" ")}
+      let F = 0;
+      for (let G = 1; G < Q.length; G++) if (H.compareSignatures(Z, Q[G], Q[F]) < 0) F = G;
+      if (F === 0) { ${keyWriters.join(" ")} }
+      let m = n - W.start;
+      images: for (let G = 0; G < A.length; G++) {
+        if (H.compareSignatures(Z, Q[G + 1], Q[F]) !== 0) continue;
+        const P = A[G];
+        let c = m === 0 && F > 0 ? -1 : 0;
+        n = W.start + m;
+        if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }
+        ${imageWriters.join(" ")}
+        if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; chosen = G; }
+      }
+      n = W.start + m;`;
   const nextCode = next();
   const invariantCodes = invariants.map(predicate);
   const constraintCodes = constraints.map(predicate);
@@ -4019,23 +4060,8 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       if (arena.size + ${RESERVED_BYTES} > arena.data.length) H.addPage(arena);
       d = arena.data;
       n = arena.size;
-      Z.fill(0);
-      ${signatures.join(" ")}
-      let F = 0;
       let chosen = -1;
-      for (let G = 1; G < Q.length; G++) if (H.compareSignatures(Z, Q[G], Q[F]) < 0) F = G;
-      if (F === 0) { ${keyWriters.join(" ")} }
-      let m = n - W.start;
-      images: for (let G = 0; G < A.length; G++) {
-        if (H.compareSignatures(Z, Q[G + 1], Q[F]) !== 0) continue;
-        const P = A[G];
-        let c = m === 0 && F > 0 ? -1 : 0;
-        n = W.start + m;
-        if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }
-        ${imageWriters.join(" ")}
-        if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; chosen = G; }
-      }
-      n = W.start + m;
+      ${check.view && images.length > 0 ? viewKeyCode : symmetricKeyCode}
       while ((n & 3) !== 0) d[n++] = 0;
       arena.size = n;
       return chosen;
@@ -4170,9 +4196,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     check.scope,
   );
   const images = check.symmetry ?? [];
-  // TLC evaluates the view of the smallest state under symmetry, which compares the variables the
-  // view drops.
-  if (images.length > 0 && check.view) return unsupported();
   images.forEach((table) => table.forEach((image) => image && getAtom(program.plains, image)));
   const compiled = compileSpec(program, check);
   const keys = createArena();

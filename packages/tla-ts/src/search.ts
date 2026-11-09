@@ -590,6 +590,7 @@ interface Search {
         actionProperties: ActionProperty[];
         symmetry: ImageTable[] | undefined;
         view: Expression | undefined;
+        variableOrder: number[];
       }
     | undefined;
   // With -continue, TLC goes on to the successors of a state that violates an invariant, whose
@@ -896,6 +897,7 @@ export const createSearch = (
             actionProperties: properties.actionProperties,
             symmetry: symmetryGroup?.images,
             view: view?.expression,
+            variableOrder: getTlcOrder(),
           };
     },
     getTlcOrder,
