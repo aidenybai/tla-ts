@@ -120,6 +120,10 @@ export const simulate = (options: SimulationOptions): number => {
   const nextActions = getNextActions(config, environment, specification.instanceActions);
   const worker = { traceCount: 0, currentTrace: 0 };
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
+  runtime.getBehavior = (state) => {
+    const node = nodes.get(state);
+    return node ? getTrace(node).map((step) => step.state) : [state];
+  };
   runtime.getSimulationValue = (key, state) => {
     const node = state && nodes.get(state);
     switch (key) {

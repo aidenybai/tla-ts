@@ -2044,6 +2044,7 @@ const describeNonSetMembership = (element: Value, value: Value) => {
 interface TracedCallStack {
   expressions: unknown[];
   isFrozen: boolean;
+  sources: WeakMap<ObjectValue, unknown>;
   fingerprint?: unknown;
 }
 
@@ -2078,6 +2079,11 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
     return computeLikeTlc(left, right, error);
   }
 };
+
+export const isFingerprintedSince = (depth: number) =>
+  (setTrace.sets ?? [])
+    .slice(depth)
+    .some((set) => typeof set === "object" && setTrace.callStack?.sources.has(set) === true);
 
 export const isElementOf = (element: Value, set: Value): boolean => {
   const sets = setTrace.sets;

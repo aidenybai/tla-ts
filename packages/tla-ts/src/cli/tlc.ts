@@ -415,7 +415,11 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
             },
     "postcondition-violation": {
       code: violation.postcondition?.code ?? MESSAGE_CODE.general,
-      text: violation.message ?? `Postcondition ${name} is false.`,
+      text: formatInnerMessage(
+        violation.postcondition?.code ?? MESSAGE_CODE.general,
+        violation.message ?? `Postcondition ${name} is false.`,
+        printer.isTool,
+      ),
     },
   }[status];
   // A safety property's counterexample ends where it breaks, and a liveness one loops back.
@@ -442,8 +446,8 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
       isCounterExample ? COUNTER_EXAMPLE : undefined,
       isCounterExample && !isRebuiltFirst,
     );
-    printTraceOutput(printer, violation.traceOutput);
   }
+  printTraceOutput(printer, violation.traceOutput);
   if (isLasso) {
     const label = violation.loopLabel;
     if (loopStart === violation.trace.length - 1)

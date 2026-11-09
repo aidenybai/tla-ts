@@ -430,6 +430,16 @@ export const TLC_RUNTIME_STRINGS = [
   "levelmean",
   "levelvariance",
   "bfs",
+  "beginLine",
+  "beginColumn",
+  "endLine",
+  "endColumn",
+  "module",
+  "name",
+  "location",
+  "context",
+  "parameters",
+  "_action",
 ];
 
 export const SANY_NODE_NAMES = [

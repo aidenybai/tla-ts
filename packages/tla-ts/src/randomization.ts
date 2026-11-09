@@ -1,9 +1,5 @@
-import {
-  createJavaOverrideError,
-  createModuleArgumentError,
-  defineStateOperator,
-  getValue,
-} from "./builtins";
+import { createModuleArgumentError, defineOperator, getValue, overrideWithJava } from "./builtins";
+import { TlaEvaluationError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc/random";
@@ -11,7 +7,7 @@ import {
   createSet,
   createTuple,
   getCardinality,
-  isEmptySet,
+  isTlcEnumerable,
   isEnumerable,
   isFiniteSet,
   isOverriddenSet,
@@ -90,7 +86,7 @@ const parseJavaDouble = (text: string) => {
 
 // TLC's Java class names the operator RandomSubsetSetProbability in its errors.
 export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
-  defineStateOperator("RandomSubsetSet", 3, (args) => {
+  defineOperator("RandomSubsetSet", 3, (args) => {
     const name = "RandomSubsetSetProbability";
     const picks = getCount(getValue(args, 0, name), "first", name);
     const text = getValue(args, 1, name);
@@ -128,32 +124,33 @@ export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
   });
 
 export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[] => [
-  defineStateOperator("RandomSubset", 2, (args) => {
-    const count = getValue(args, 0, "RandomSubset");
-    if (typeof count !== "number") {
-      throw createModuleArgumentError("first", "RandomSubset", "nonnegative integer", count);
-    }
-    if (count < 0) {
-      throw createJavaOverrideError(RANDOM_SUBSET_SIGNATURE, String(count));
-    }
-    const set = getValue(args, 1, "RandomSubset");
-    if (!isSetValue(set) || (!isEmptySet(set) && !isEnumerable(set))) {
-      throw createModuleArgumentError("second", "RandomSubset", "a finite set", set);
-    }
-    const factors = getEnumeratedFactors(set, runtime.version);
-    if (factors) {
-      const size = factors.reduce<number>(
-        (total, factor) => total * toFiniteSet(factor).elements.length,
-        1,
-      );
-      if (size > SET_BOUND) {
-        throw createJavaOverrideError(RANDOM_SUBSET_SIGNATURE, SET_BOUND_MESSAGE);
+  overrideWithJava(
+    defineOperator("RandomSubset", 2, (args) => {
+      const count = getValue(args, 0, "RandomSubset");
+      if (typeof count !== "number") {
+        throw createModuleArgumentError("first", "RandomSubset", "nonnegative integer", count);
       }
-    }
-    return createSet(getRandomSubset(count, set, runtime.getRandom(), runtime.version));
-  }),
-  defineStateOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
-  defineStateOperator("TestRandomSetOfSubsets", 3, (args) =>
+      if (count < 0) throw new TlaEvaluationError(String(count));
+      const set = getValue(args, 1, "RandomSubset");
+      if (!isTlcEnumerable(set) || !isFiniteSet(set)) {
+        throw createModuleArgumentError("second", "RandomSubset", "a finite set", set);
+      }
+      const factors = getEnumeratedFactors(set, runtime.version);
+      if (factors) {
+        const size = factors.reduce<number>(
+          (total, factor) => total * toFiniteSet(factor).elements.length,
+          1,
+        );
+        if (size > SET_BOUND) {
+          throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+        }
+      }
+      return createSet(getRandomSubset(count, set, runtime.getRandom(), runtime.version));
+    }),
+    RANDOM_SUBSET_SIGNATURE,
+  ),
+  defineOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
+  defineOperator("TestRandomSetOfSubsets", 3, (args) =>
     createTuple(
       Array.from(
         { length: 5 },

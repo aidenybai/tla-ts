@@ -27,6 +27,7 @@ import { createTlcOperators } from "./tlc/tlc-operators";
 import { TLC_JAVA_METHODS } from "./tlc/jar-data";
 import {
   addBoundedElement,
+  ANY_SET,
   createUnsortedCopy,
   forEachElement,
   isBeyondSetBound,
@@ -588,6 +589,7 @@ export const getJavaOverrides = (
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
+  if (name === "AnySet") return [defineConstant("ANY", ANY_SET)];
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
   const operators = getStandardModule(name, print, runtime, files, builtins)?.operators;
@@ -637,7 +639,7 @@ export const getStandardModule = (
     case "TLCExt":
       return {
         extends: [],
-        operators: withJavaMethods("TLCExt", createTlcExtOperators(print, runtime)),
+        operators: withJavaMethods("TLCExt", createTlcExtOperators(runtime)),
       };
     default:
       return undefined;

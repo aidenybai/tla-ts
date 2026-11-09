@@ -1,5 +1,4 @@
 import {
-  defineHigherOrderOperator,
   defineLazyOperator,
   defineOperator,
   defineStateOperator,
@@ -24,6 +23,7 @@ import {
   type Environment,
 } from "../evaluate";
 import { getChildren, isLocallyResolved, type Definition, type Expression } from "../ast";
+import { ACTION_LEVEL, CONSTANT_LEVEL, VARIABLE_LEVEL } from "../levels";
 import {
   getNamedRegisters,
   getPossibleCounts,
@@ -37,14 +37,10 @@ import {
   createSet,
   createTuple,
   formatValue,
-  getDomain,
   getFingerprintError,
   getSequenceElements,
   getValueKey,
-  isEqualLikeTlc,
-  isFunctionValue,
   toFiniteSet,
-  valuesEqual,
   type Value,
 } from "../values";
 
@@ -63,6 +59,18 @@ export const createActionRecord = (action: string | undefined) =>
     ],
   ]);
 
+// TLC's CounterExample is its own class, so ToTrace refuses a record that only looks like one.
+const counterExamples = new WeakSet<Value & object>();
+
+const createCounterExampleRecord = (action: Value[], states: Value[]) => {
+  const counterExample = createRecord([
+    ["action", createSet(action)],
+    ["state", createSet(states)],
+  ]);
+  counterExamples.add(counterExample);
+  return counterExample;
+};
+
 export const createCounterExample = (
   stateRecords: Record<string, Value>[],
   actions: Value[],
@@ -77,10 +85,7 @@ export const createCounterExample = (
   const closing = loop
     ? [createTuple([states[states.length - 1], loop.action, states[loop.start]])]
     : [];
-  return createRecord([
-    ["action", createSet([...steps, ...closing])],
-    ["state", createSet(states)],
-  ]);
+  return createCounterExampleRecord([...steps, ...closing], states);
 };
 
 const getRegister = (runtime: CheckerRuntime, key: Value) => {
@@ -134,36 +139,32 @@ const describeNode = (expression: Expression) =>
 const isCompleteState = (state: (Value | undefined)[]): state is Value[] =>
   state.every((value) => value !== undefined);
 
-const toStateRecord = (state: Value[], environment: Environment) =>
-  createRecord(environment.variables.map((name, index): [string, Value] => [name, state[index]]));
-
-const mentionsVariables = (
+const getMentionedLevel = (
   expression: Expression,
   environment: Environment,
   visited: Set<Definition>,
-): boolean => {
+): number => {
+  if (expression.kind === "Prime" || expression.kind === "Unchanged") return ACTION_LEVEL;
   const name =
     expression.kind === "Identifier"
       ? expression.name
       : expression.kind === "Apply"
         ? expression.operator
         : undefined;
-  if (expression.kind === "Prime" || expression.kind === "Unchanged") return true;
-  if (name !== undefined && !isLocallyResolved(expression)) {
-    if (environment.variableIndex.has(name)) return true;
-    const definition = getDefinition(name, environment);
-    if (definition && !visited.has(definition)) {
-      visited.add(definition);
-      if (mentionsVariables(definition.body, environment, visited)) return true;
-    }
+  const isGlobal = name !== undefined && !isLocallyResolved(expression);
+  if (isGlobal && environment.variableIndex.has(name)) return VARIABLE_LEVEL;
+  const levels = getChildren(expression).map((child) =>
+    getMentionedLevel(child, environment, visited),
+  );
+  const definition = isGlobal ? getDefinition(name, environment) : undefined;
+  if (definition && !visited.has(definition)) {
+    visited.add(definition);
+    levels.push(getMentionedLevel(definition.body, environment, visited));
   }
-  return getChildren(expression).some((child) => mentionsVariables(child, environment, visited));
+  return Math.max(CONSTANT_LEVEL, ...levels);
 };
 
-export const createTlcExtOperators = (
-  print: (text: string) => void,
-  runtime: CheckerRuntime,
-): Builtin[] => {
+export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
   const globalCaches = new Map<Expression, Map<string, Value>>();
   const stateCaches = new WeakMap<(Value | undefined)[], Map<Expression, Map<string, Value>>>();
   const getStateCaches = (state: (Value | undefined)[]) => {
@@ -172,17 +173,6 @@ export const createTlcExtOperators = (
     return caches;
   };
   return [
-    defineOperator("AssertEq", 2, (args) => {
-      const left = getValue(args, 0, "AssertEq");
-      const right = getValue(args, 1, "AssertEq");
-      const isEqual = isEqualLikeTlc(left, right);
-      if (!isEqual) {
-        print(formatValue("Assertion failed", true));
-        print(formatValue(left, true));
-        print(formatValue(right, true));
-      }
-      return isEqual;
-    }),
     defineLazyOperator("AssertError", 2, (args) => {
       const message = getOperator(args, 0, "AssertError").expression;
       if (message && message.kind !== "String") {
@@ -205,21 +195,6 @@ export const createTlcExtOperators = (
       const key = getValue(args, 0, "TLCGetOrDefault");
       return getRegister(runtime, key) ?? getValue(args, 1, "TLCGetOrDefault");
     }),
-    {
-      ...defineHigherOrderOperator("TLCGetAndSet", 4, (args) => {
-        const key = getValue(args, 0, "TLCGetAndSet");
-        const previous = getRegister(runtime, key) ?? getValue(args, 3, "TLCGetAndSet");
-        const update = getOperator(args, 1, "TLCGetAndSet");
-        setTlcValue(
-          runtime,
-          print,
-          key,
-          update.call([previous, getValue(args, 2, "TLCGetAndSet")]),
-        );
-        return previous;
-      }),
-      isStateLevel: true,
-    },
     defineStateOperator("Trace", 0, (_, context) => {
       const variables = context?.environment.variables ?? [];
       // TLC evaluates an assumption in an empty state, which assigns none of the variables.
@@ -232,25 +207,25 @@ export const createTlcExtOperators = (
       }
       if (!context.state) return createTuple([createRecord([])]);
       return createTuple(
-        runtime.getBehavior(state).map((step) => toStateRecord(step, context.environment)),
+        runtime.getBehavior(state).map((step) => {
+          const fields = context.environment.variables.map((name, index): [string, Value] => [
+            name,
+            step[index],
+          ]);
+          // A simulated behavior's states also record their actions.
+          const action = runtime.getSimulationValue?.("action", step);
+          return createRecord(action === undefined ? fields : [["_action", action], ...fields]);
+        }),
       );
     }),
     defineStateOperator(
       "CounterExample",
       0,
-      () =>
-        runtime.counterExample ??
-        createRecord([
-          ["action", createSet([])],
-          ["state", createSet([])],
-        ]),
+      () => runtime.counterExample ?? createCounterExampleRecord([], []),
     ),
     defineOperator("ToTrace", 1, (args) => {
       const counterExample = getValue(args, 0, "ToTrace");
-      if (
-        !isFunctionValue(counterExample) ||
-        !valuesEqual(getDomain(counterExample), createSet(["action", "state"]))
-      ) {
+      if (typeof counterExample !== "object" || !counterExamples.has(counterExample)) {
         throw new TlaModuleError(
           `The argument of ToTrace should be a CounterExample, but instead it is:\n${formatValue(counterExample)}`,
         );
@@ -300,7 +275,14 @@ export const createTlcExtOperators = (
       const closure = getValueKey(getThunk(args, 1, "TLCCache")());
       const source = expression.expression;
       if (!source || !context) return expression.call([]);
-      const isStateLevel = mentionsVariables(source, context.environment, new Set());
+      const level = getMentionedLevel(source, context.environment, new Set());
+      if (level === ACTION_LEVEL) return expression.call([]);
+      const isStateLevel = level === VARIABLE_LEVEL;
+      // TLC's model checker keeps no cache in a state, so its TLA+ definition evaluates it again.
+      if (isStateLevel && context.state && runtime.getSimulationValue === undefined) {
+        expression.call([]);
+        return expression.call([]);
+      }
       const caches = isStateLevel && context.state ? getStateCaches(context.state) : globalCaches;
       const cache = caches.get(source) ?? new Map<string, Value>();
       caches.set(source, cache);
@@ -340,7 +322,9 @@ export const createTlcExtOperators = (
           `The argument of TLCEvalDefinition should be a a zero-arity definition, but instead it is:\n${name}(${parameters.join(", ")})`,
         );
       }
-      return evaluate({ kind: "Identifier", name, location: definition.location }, context);
+      return definition.kind === "Operator"
+        ? evaluate(definition.body, context)
+        : evaluate({ kind: "Identifier", name, location: definition.location }, context);
     }),
   ];
 };

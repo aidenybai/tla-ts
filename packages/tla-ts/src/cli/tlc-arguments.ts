@@ -1,3 +1,4 @@
+import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 
 export interface TlcArguments {
@@ -32,8 +33,73 @@ export interface TlcArgumentsError {
   isUncaught?: boolean;
 }
 
+interface MessageCodes {
+  tlc: number[];
+  sany: number[];
+}
+
 const FINGERPRINT_POLYNOMIALS = 131;
 const MAXIMUM_INT = 2147483647n;
+
+const TLC_MESSAGE_CODES = [
+  [-123456, -123456],
+  [-1, 0],
+  [1000, 1003],
+  [1005, 1005],
+  [1101, 1102],
+  [2000, 2001],
+  [2100, 2149],
+  [2154, 2274],
+  [2279, 2287],
+  [2300, 2301],
+  [2400, 2405],
+  [2501, 2502],
+  [2772, 2780],
+  [3000, 3002],
+  [3100, 3114],
+  [4000, 4002],
+  [5001, 5007],
+  [7000, 7010],
+  [20000, 20000],
+];
+
+const SANY_ERROR_CODES = [
+  [4003, 4005],
+  [4200, 4206],
+  [4220, 4224],
+  [4240, 4247],
+  [4260, 4262],
+  [4270, 4275],
+  [4290, 4294],
+  [4310, 4315],
+  [4330, 4337],
+  [4350, 4357],
+];
+
+const SANY_WARNING_CODES = new Map([
+  [4800, "EXTENDED_MODULES_SYMBOL_UNIFICATION_AMBIGUITY"],
+  [4801, "INSTANCED_MODULES_SYMBOL_UNIFICATION_AMBIGUITY"],
+  [4802, "RECORD_CONSTRUCTOR_FIELD_NAME_CLASH"],
+  [4803, "PLUSCAL_ALGORITHM_AND_TRANSLATION_CHANGED_SINCE_LAST_TRANSLATION"],
+  [4804, "PLUSCAL_ALGORITHM_CHANGED_SINCE_LAST_TRANSLATION"],
+  [4805, "PLUSCAL_TRANSLATION_CHANGED_SINCE_LAST_TRANSLATION"],
+]);
+
+const isInRanges = (ranges: number[][], code: number) =>
+  ranges.some((range) => code >= range[0] && code <= range[1]);
+
+// String#split drops the empty strings at the end.
+const splitLikeJava = (text: string) => {
+  if (text === "") return [text];
+  const parts = text.split(",");
+  while (parts.at(-1) === "") parts.pop();
+  return parts;
+};
+
+const getOverlap = (suppressed: number[], errors: number[]) =>
+  [...new Set(suppressed.filter((code) => errors.includes(code)))].sort(
+    (left, right) => left - right,
+  );
 
 const parseJavaInteger = (text: string, bits: 32 | 64) => {
   if (!/^[+-]?\d+$/.test(text)) return undefined;
@@ -101,6 +167,8 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
     isTool: parsed.isTool,
     isUncaught: true,
   });
+  const suppressedCodes: MessageCodes = { tlc: [], sany: [] };
+  const errorCodes: MessageCodes = { tlc: [], sany: [] };
   const peek = () => args[cursor.index];
   const take = () => args[cursor.index++];
   const readInteger = (bits: 32 | 64, missing: string, malformed: string) => {
@@ -148,8 +216,26 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       continue;
     }
     if (flag === "-suppressMessages" || flag === "-messagesAsErrors") {
-      if (take() === undefined) {
+      const text = take();
+      if (text === undefined) {
         return reject(`Error: ${flag} requires a comma-separated list of message codes.`);
+      }
+      const codes = flag === "-suppressMessages" ? suppressedCodes : errorCodes;
+      for (const item of splitLikeJava(text)) {
+        const trimmed = item.replace(/^[^!-\uffff]+|[^!-\uffff]+$/g, "");
+        const parsedCode = parseJavaInteger(trimmed, 32);
+        if (parsedCode === undefined) return reject(`Error: For input string: "${trimmed}"`);
+        const code = Number(parsedCode);
+        if (isInRanges(TLC_MESSAGE_CODES, code)) {
+          codes.tlc.push(code);
+        } else if (SANY_WARNING_CODES.has(code) || isInRanges(SANY_ERROR_CODES, code)) {
+          if (codes === suppressedCodes && !SANY_WARNING_CODES.has(code)) {
+            return reject(`Error: code ${code} is an error and cannot be suppressed.`);
+          }
+          codes.sany.push(code);
+        } else {
+          return reject(`Error: unknown message code: ${code}`);
+        }
       }
       continue;
     }
@@ -157,13 +243,17 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       if (take() === undefined) return getMissing();
       continue;
     }
-    if (flag === "-teSpecOutDir" || flag === "-userFile") {
-      if (take() === undefined) {
-        return reject(
-          flag === "-userFile"
-            ? "Error: need to specify the full qualified file."
-            : "Error: expected a path for -teSpecOutDir option.",
-        );
+    if (flag === "-teSpecOutDir") {
+      if (take() === undefined) return reject("Error: expected a path for -teSpecOutDir option.");
+      continue;
+    }
+    if (flag === "-userFile") {
+      const path = take();
+      if (path === undefined) return reject("Error: need to specify the full qualified file.");
+      try {
+        closeSync(openSync(path, "w"));
+      } catch {
+        return reject("Error: Failed to create user output log file.");
       }
       continue;
     }
@@ -218,6 +308,11 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
     }
     if (flag === "-dump") {
       const format = peek();
+      if (format?.startsWith("class,")) {
+        return reject(
+          `Trying to instantiate a custom IStateWriter implementation ${format.replaceAll("class,", "")}.`,
+        );
+      }
       // Like TLC, -dump takes a format only when it starts with dot and a file follows.
       const arity = format?.startsWith("dot") && cursor.index + 1 < args.length ? 2 : 1;
       parsed.dump = args.slice(cursor.index, cursor.index + arity);
@@ -416,6 +511,23 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
     }
     if (flag.startsWith("-")) return reject(`Error: unrecognized option: ${flag}`);
     parsed.specs.push(flag);
+  }
+  if (!parsed.isWarningEnabled && suppressedCodes.tlc.length + suppressedCodes.sany.length > 0) {
+    return reject(
+      "Error: -nowarning already suppresses all warnings, making -suppressMessages redundant. Remove -nowarning to suppress only the specified messages, or remove -suppressMessages to suppress all warnings.",
+    );
+  }
+  const tlcOverlap = getOverlap(suppressedCodes.tlc, errorCodes.tlc);
+  const overlap =
+    tlcOverlap.length > 0
+      ? tlcOverlap.map(String)
+      : getOverlap(suppressedCodes.sany, errorCodes.sany).map(
+          (code) => SANY_WARNING_CODES.get(code) ?? String(code),
+        );
+  if (overlap.length > 0) {
+    return reject(
+      `Error: The following codes were set to both -suppressMessages and -messagesAsErrors: [${overlap.join(", ")}]`,
+    );
   }
   return parsed;
 };

@@ -141,10 +141,13 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
   return definition;
 };
 
+const isLiteralDefinition = (definition: Definition) =>
+  definition.body.kind === "Number" || definition.body.kind === "String";
+
 // TLC keeps a literal number or string, and a definition that fails to evaluate, as an operator.
 const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
-  if (!isConstantLevel(definition, environment)) return undefined;
-  if (definition.body.kind === "Number" || definition.body.kind === "String") return undefined;
+  if (!isConstantLevel(definition, environment) || isLiteralDefinition(definition))
+    return undefined;
   try {
     return evaluate(createIdentifier(name), getContext(environment, undefined, undefined));
   } catch (error) {
@@ -731,13 +734,9 @@ const trackPossible = (items: NamedExpression[], runtime: CheckerRuntime, contex
     runtime.possibleCounts.set(item.name, isWitnessed ? count + 1 : count);
   });
 
-const getConstantFailure = (
-  expression: Expression,
-  environment: Environment,
-  description: string,
-) => {
+const getConstantFailure = (check: (context: Context) => boolean, environment: Environment) => {
   try {
-    return holds(expression, getContext(environment, undefined, undefined), description)
+    return check(getContext(environment, undefined, undefined))
       ? undefined
       : { message: undefined };
   } catch (error) {
@@ -751,7 +750,10 @@ export const findAssumptionViolation = (
   environment: Environment,
 ): Omit<Violation, "loopStart"> | undefined => {
   for (const assumption of assumptions.filter((candidate) => !candidate.isAxiom)) {
-    const failure = getConstantFailure(assumption.expression, environment, "an assumption");
+    const failure = getConstantFailure(
+      (context) => holds(assumption.expression, context, "an assumption"),
+      environment,
+    );
     if (failure) {
       return { name: describeRange(assumption.expression), trace: [], message: failure.message };
     }
@@ -1113,24 +1115,35 @@ export const createSearch = (
     findUnwitnessedPossible,
     findPostconditionViolation: (isAfterViolation = false) => {
       // TLC replaces a startup definition by its value, and rejects it as a postcondition first.
-      const constant = config.postconditions.find((name) => {
-        const definition = getDefinition(name, environment);
-        return definition !== undefined && getStartupValue(definition, environment) !== undefined;
-      });
-      if (constant !== undefined) {
+      const rejection = config.postconditions
+        .map((name) => {
+          const definition = getDefinition(name, environment);
+          if (!definition) {
+            return `The post condition ${name} specified in the configuration file\nis not defined in the specification.`;
+          }
+          const isConstant =
+            !isLiteralDefinition(definition) &&
+            getStartupValue(definition, environment) !== undefined;
+          return isConstant ? `The post condition ${name} cannot be a constant.` : undefined;
+        })
+        .find((message) => message !== undefined);
+      if (rejection !== undefined) {
         if (isAfterViolation) return undefined;
-        throw setExitCode(
-          new TlaEvaluationError(`The post condition ${constant} cannot be a constant.`),
-          EXIT_STATUS.configParseError,
-        );
+        throw setExitCode(new TlaEvaluationError(rejection), EXIT_STATUS.configParseError);
       }
       const unwitnessed = findUnwitnessedPossible();
       if (unwitnessed) return unwitnessed;
       for (const name of config.postconditions) {
-        const failure = getConstantFailure(createIdentifier(name), environment, "a postcondition");
+        const failure = getConstantFailure(
+          (context) => holdsLikeTlc(createIdentifier(name), context),
+          environment,
+        );
         if (!failure) continue;
+        const body = getDefinition(name, environment)?.body;
         const range = getBodyRange(name, environment);
-        const location = range ? ` at ${formatRange(range)}` : "";
+        const location = range
+          ? ` at ${body?.kind === "Number" ? describeNode(body) : formatRange(range)}`
+          : "";
         return failure.message === undefined
           ? {
               name,
