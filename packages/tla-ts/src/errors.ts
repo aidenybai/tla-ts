@@ -12,8 +12,10 @@ export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeExc
 export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
 
 // V8's RangeError for a stack overflow, which TLC raises as a Java StackOverflowError.
+// V8 reports a regular expression that runs out of stack as a syntax error.
 export const isStackOverflow = (error: unknown) =>
-  error instanceof RangeError && error.message === "Maximum call stack size exceeded";
+  (error instanceof RangeError && error.message === "Maximum call stack size exceeded") ||
+  (error instanceof SyntaxError && error.message.endsWith(": Stack overflow"));
 
 export class TlaError extends Error {
   constructor(message: string, cause?: unknown) {
