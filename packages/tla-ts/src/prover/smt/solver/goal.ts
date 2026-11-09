@@ -18,9 +18,17 @@ export const PRECISION_NAMES = ["precise", "under", "over", "under-over"];
 const getPrecisionUnion = (first: number, second: number) =>
   first === PRECISE ? second : second === PRECISE || first === second ? first : UNDER_OVER;
 
-export interface ConverterEntry {
+export interface Definition {
   decl: number;
   def: number;
+}
+
+interface HiddenDecl {
+  decl: number;
+}
+
+interface Definitions {
+  definitions: Definition[];
 }
 
 interface ModelConversion {
@@ -32,7 +40,7 @@ export class Goal {
   isInconsistent = false;
   depth = 0;
   precision = PRECISE;
-  converters: (ConverterEntry | ModelConversion)[] = [];
+  converters: (HiddenDecl | Definitions | ModelConversion)[] = [];
   model: ProtoModel | undefined;
   isProofsEnabled = false;
   isCoresEnabled = false;
@@ -74,10 +82,17 @@ export class Goal {
     this.precision = getPrecisionUnion(this.precision, precision);
   }
 
-  addConverter(decl: number, def = -1) {
+  addConverter(decl: number) {
     this.manager.incDeclRef(decl);
-    if (def !== -1) this.manager.incRef(def);
-    this.converters = [...this.converters, { decl, def }];
+    this.converters = [...this.converters, { decl }];
+  }
+
+  addDefinitions(definitions: Definition[]) {
+    for (const definition of definitions) {
+      this.manager.incDeclRef(definition.decl);
+      this.manager.incRef(definition.def);
+    }
+    this.converters = [...this.converters, { definitions }];
   }
 
   addModelConversion(convert: (model: ProtoModel) => ProtoModel) {

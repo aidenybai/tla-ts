@@ -10,16 +10,18 @@ import { type AstManager, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
-import type { Goal } from "./goal";
+import type { Definition, Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Der } from "./der";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { propagateValues } from "./propagate-values";
+import { ModelEvaluator } from "./model-evaluator";
 import { ProtoModel } from "./proto-model";
 import { compileProbe, formatProbeValue, type Probe } from "./probes";
 import { applyQeLite } from "./qe-lite";
 import { simplifyGoal } from "./quant-tactics";
+import { SolveEqs } from "./solve-eqs";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
@@ -84,7 +86,7 @@ const UINT_MAX = 4294967295;
 const REWRITER_DESCRS = getDescrs("rewriter", [
   ["ite_extra_rules", PARAM_BOOL, true],
   ["flat", PARAM_BOOL, true],
-  ["flat_and_or", PARAM_BOOL, true],
+  ["flat_and_or", PARAM_BOOL, true, true],
   ["sort_disjunctions", PARAM_BOOL, true],
   ["elim_and", PARAM_BOOL, false, true],
   ["elim_ite", PARAM_BOOL, true],
@@ -153,6 +155,7 @@ const getUint = (params: TacticParams, name: string, defaultValue: number) => {
 export const getRewriterOptions = (manager: AstManager, params: TacticParams): RewriterOptions => ({
   ...TACTIC_REWRITER_OPTIONS,
   isEliminatingAnd: getBool(params, "elim_and", false),
+  isFlatAndOr: getBool(params, "flat_and_or", true),
   isPullingCheapIte: getBool(params, "pull_cheap_ite", false),
   isKeepingDistinct: !getBool(params, "blast_distinct", false),
   blastDistinctThreshold: getUint(params, "blast_distinct_threshold", UINT_MAX),
@@ -370,6 +373,32 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         }),
     },
   ],
+  [
+    "solve-eqs",
+    {
+      // Z3 never counts the occurrences that solve_eqs_max_occs bounds, so the bound has no effect.
+      descrs: getDescrs("", [
+        ["solve_eqs_max_occs", PARAM_UINT, UINT_MAX, true],
+        ["theory_solver", PARAM_BOOL, true, true],
+        ["ite_solver", PARAM_BOOL, true, true],
+        ["context_solve", PARAM_BOOL, false, true],
+        ["eliminate_mod", PARAM_BOOL, true, true],
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) => {
+          checkParams(REWRITER_DESCRS, params);
+          const solver = new SolveEqs(environment.manager, goal, {
+            isTheorySolver: getBool(params, "theory_solver", true),
+            isIteSolver: getBool(params, "ite_solver", true),
+            isContextSolve: getBool(params, "context_solve", true),
+            isEliminatingMod: getBool(params, "eliminate_mod", true),
+            rewriter: getRewriterOptions(environment.manager, params),
+          });
+          solver.reduce();
+          solver.release();
+        }),
+    },
+  ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
@@ -419,7 +448,7 @@ const UNPORTED_TACTICS = new Set(
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "purify-arith qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args reduce-args2 reduce-bv-size " +
-    "sat sat-preprocess sls-smt smtfd solve-eqs solver-subsumption special-relations " +
+    "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce tseitin-cnf tseitin-cnf-core ufbv-rewriter"
   ).split(" "),
 );
@@ -852,10 +881,40 @@ interface TacticCheck {
   model: ProtoModel | undefined;
 }
 
+// A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
+const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
+  const manager = model.manager;
+  const universe: number[] = [];
+  let evaluator = new ModelEvaluator(manager, model);
+  evaluator.setModelCompletion(true);
+  for (let index = definitions.length - 1; index >= 0; index--) {
+    const definition = definitions[index];
+    const value = evaluator.rewrite(definition.def);
+    const old = model.constInterps.get(definition.decl);
+    if (old !== value) model.registerConst(definition.decl, value);
+    const sort = manager.sorts[value];
+    if (
+      manager.isUninterpretedSort(sort) &&
+      !model.getUninterpretedSorts().includes(sort) &&
+      !universe.includes(value)
+    )
+      universe.push(value);
+    manager.decRef(value);
+    if (old !== undefined && old !== value) {
+      evaluator.release();
+      evaluator = new ModelEvaluator(manager, model);
+      evaluator.setModelCompletion(true);
+    }
+  }
+  evaluator.release();
+  for (const value of universe) model.registerValue(value);
+  return model;
+};
+
 const convertModel = (goal: Goal, model: ProtoModel) =>
   goal.converters.reduceRight((converted, entry) => {
     if ("convert" in entry) return entry.convert(converted);
-    if (entry.def !== -1) throw new SmtUnsupportedError("the definitions of model converters");
+    if ("definitions" in entry) return applyDefinitions(entry.definitions, converted);
     converted.unregisterDecl(entry.decl);
     return converted;
   }, model);
