@@ -1344,7 +1344,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     options.dump === undefined &&
     config.view === undefined &&
     !hasPostconditions &&
-    !search.isImpure()
+    // The interpreter evaluates again what the tier evaluated before it fell back.
+    !search.isImpure("repeated")
       ? search.getTypedChecks()
       : undefined;
   const typed =

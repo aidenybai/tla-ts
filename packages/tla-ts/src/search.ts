@@ -574,7 +574,8 @@ interface Search {
   // Whether a state's fingerprint state takes work to find and is the same each time.
   isFingerprintStateReusable: boolean;
   // Whether what the search evaluates, or a definition TLC computes as it starts, can show.
-  isImpure: () => boolean;
+  // An effect that is "repeated" looks the same when the search evaluates it again.
+  isImpure: (effect?: "any" | "repeated") => boolean;
   // TLC drops a constraint that is a true constant formula.
   isConstrained: boolean;
   // Undefined when a check needs the interpreter.
@@ -847,7 +848,7 @@ export const createSearch = (
       view === undefined
         ? symmetryGroup !== undefined
         : !isExpressionImpure([view.expression], environment),
-    isImpure: () => {
+    isImpure: (effect = "any") => {
       const named = [...invariants, ...constraints, ...actionConstraints];
       const isScoped =
         spec.scope !== undefined ||
@@ -855,11 +856,11 @@ export const createSearch = (
         actionProperties.some((property) => property.scope !== undefined);
       const definitions = [...environment.facts.ids.keys()];
       return isScoped
-        ? definitions.some((definition) => isImpureDefinition(definition, environment))
+        ? definitions.some((definition) => isImpureDefinition(definition, environment, effect))
         : definitions.some(
             (definition) =>
               isConstantLevel(definition, environment) &&
-              isImpureDefinition(definition, environment),
+              isImpureDefinition(definition, environment, effect),
           ) ||
             isExpressionImpure(
               [
@@ -869,6 +870,7 @@ export const createSearch = (
                 ...actionProperties.flatMap((property) => [property.action, property.subscript]),
               ],
               environment,
+              effect,
             );
     },
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,

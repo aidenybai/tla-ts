@@ -1619,6 +1619,11 @@ const compileBuiltin = (
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
     return operator === "\\in" ? test : { type: BOOL, emit: () => `!(${test.emit()})` };
   }
+  // TLC fails when the condition of an Assert is false, and only then evaluates its message.
+  if (operator === "Assert" && args.length === 2) {
+    const condition = expectType(compileValue(program, args[0], frame), BOOL);
+    return { type: BOOL, emit: () => `((${condition.emit()}) || H.deopt())` };
+  }
   if (operator === "SelectSeq" && args.length === 2) {
     const sequence = compileValue(program, args[0], frame);
     const element: Type = createVar();

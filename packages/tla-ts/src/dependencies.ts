@@ -326,14 +326,17 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
   return row;
 };
 
+const EFFECT_FLAGS = { any: IMPURE, repeated: REPEATED_EFFECT, streamed: STREAMED };
+
 // Whether evaluating the expressions can show, through the definitions they call.
-export const isExpressionImpure = (expressions: Expression[], environment: Environment) =>
-  (getExpressionsRow(expressions, environment)[0] & IMPURE) !== 0;
+export const isExpressionImpure = (
+  expressions: Expression[],
+  environment: Environment,
+  effect: keyof typeof EFFECT_FLAGS = "any",
+) => (getExpressionsRow(expressions, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
 
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
   (getRow(definition, environment)[0] & NONCONSTANT) === 0;
-
-const EFFECT_FLAGS = { any: IMPURE, repeated: REPEATED_EFFECT, streamed: STREAMED };
 
 export const isImpureDefinition = (
   definition: Definition,
