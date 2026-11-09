@@ -71,7 +71,7 @@ import {
 } from "./heap";
 import { isBuiltInObject } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { getReceiver, translateIf, translateSwitch, translateThrow } from "./functions";
+import { getReceiver, mayThrow, translateIf, translateSwitch, translateThrow } from "./functions";
 import {
   bindPattern,
   type Bound,
@@ -783,6 +783,18 @@ const bindCall = (
         ),
     );
   if (taken !== undefined) return taken;
+  const defaulted = runCertainDefault(
+    parameters.map((parameter) => parameter.name),
+    parameters.flatMap((parameter, position) =>
+      getCertainDefaults(parameter.name, argumentNodes.at(position), parameter.initializer),
+    ),
+    [...argumentNodes, ...parameters.flatMap((parameter) => parameter.initializer ?? [])],
+    path,
+    context,
+    frame,
+    (after) => bindCall(node, callee, argumentNodes, receiver, after, context, frame, continueWith),
+  );
+  if (defaulted !== undefined) return defaulted;
   const defaults = parameters
     .flatMap((parameter) => getAllocated(parameter, context))
     .filter((allocation) => !path.scope.allocated.has(allocation));
@@ -1166,43 +1178,31 @@ const takeFromGenerator = (
   );
   const count = restAt === -1 ? elements.length : Infinity;
   const take = (receiver: Expression, generators: FunctionNode[], current: Path) => {
-    const getSymbols = (node: ts.Node) =>
-      findNodes(node, ts.isIdentifier).flatMap((name) => getSymbol(name, context.checker) ?? []);
-    const reads = (node: ts.Node, symbols: ReadonlySet<ts.Symbol>) =>
-      getSymbols(node).some((symbol) => symbols.has(symbol));
-    const targets = new Set(getSymbols(pattern));
-    const changed = new Set(
-      generators.flatMap((generator) => getChanged(generator, current, context)),
-    );
-    const isHeapChanged = context.heap !== undefined && changed.has(context.heap);
-    const readsHeap = (node: ts.Node) =>
-      findNodes(
-        node,
-        (inner): inner is ts.Node =>
-          ts.isPropertyAccessExpression(inner) ||
-          ts.isElementAccessExpression(inner) ||
-          inner.kind === ts.SyntaxKind.ThisKeyword,
-      ).length > 0;
-    const initializers = findNodes(pattern, ts.isBindingElement).flatMap(
-      (element) => element.initializer ?? [],
-    );
+    const targets = new Set(getSymbols(pattern, context));
     const defaults = findNodes(
       pattern,
       (inner): inner is ts.BinaryExpression =>
         ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken,
     ).map((assignment) => assignment.right);
-    const evaluated = [...initializers, ...defaults, ...others.filter((other) => other !== source)];
     if (
       generators.some(
-        (generator) => generator.body !== undefined && reads(generator.body, targets),
-      ) ||
-      evaluated.some((node) => reads(node, changed) || (isHeapChanged && readsHeap(node)))
+        (generator) =>
+          generator.body !== undefined &&
+          getSymbols(generator.body, context).some((symbol) => targets.has(symbol)),
+      )
     ) {
       throw new TlaTypeScriptError(
         "tla-ts can't interleave this pattern with a generator",
         pattern,
       );
     }
+    rejectEarlyRun(
+      pattern,
+      generators,
+      [...getInitializers(pattern), ...defaults, ...others.filter((other) => other !== source)],
+      current,
+      context,
+    );
     const step = (inner: Path, values: Expression[]): Formula =>
       values.length === count
         ? resumeGenerator(pattern, receiver, "return", undefined, inner, context, frame, (after) =>
@@ -1240,6 +1240,158 @@ const takeFromGenerator = (
     (exact.length > 0 ? exact : generators).map((suspension) => suspension.generator),
     path,
   );
+};
+
+// Rejects running nodes before expressions that JavaScript evaluates first, where those expressions
+// read what the nodes change.
+const rejectEarlyRun = (
+  node: ts.Node,
+  run: readonly ts.Node[],
+  evaluated: readonly ts.Node[],
+  path: Path,
+  context: Context,
+) => {
+  const changed = new Set(run.flatMap((inner) => getChanged(inner, path, context)));
+  const isHeapChanged = context.heap !== undefined && changed.has(context.heap);
+  const readsHeap = (inner: ts.Node) =>
+    findNodes(
+      inner,
+      (found): found is ts.Node =>
+        ts.isPropertyAccessExpression(found) ||
+        ts.isElementAccessExpression(found) ||
+        found.kind === ts.SyntaxKind.ThisKeyword,
+    ).length > 0;
+  if (
+    evaluated.some(
+      (inner) =>
+        getSymbols(inner, context).some((symbol) => changed.has(symbol)) ||
+        (isHeapChanged && readsHeap(inner)),
+    )
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't run this before what reads what it changes", node);
+  }
+};
+
+const getSymbols = (node: ts.Node, context: Context) =>
+  findNodes(node, ts.isIdentifier).flatMap((name) => getSymbol(name, context.checker) ?? []);
+
+const getInitializers = (node: ts.Node) =>
+  findNodes(node, ts.isBindingElement).flatMap((element) => element.initializer ?? []);
+
+// Runs the first of the defaults that bindings certainly evaluate whose call only statements can
+// run, as its own statement before the bindings, which take its value from the path's results.
+// The call must not read what the bindings bind, and the other expressions that the bindings
+// evaluate must not read what it changes.
+const runCertainDefault = (
+  names: readonly ts.BindingName[],
+  certain: readonly ts.Expression[],
+  evaluated: readonly ts.Expression[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+) => {
+  const pending = certain
+    .map(getCast)
+    .filter(
+      (initializer): initializer is ts.CallExpression =>
+        ts.isCallExpression(initializer) &&
+        !path.scope.results.has(initializer) &&
+        (isStatementCall(initializer, path, context) ||
+          (path.scope.isCatching && mayThrow(initializer, context))),
+    );
+  const first = pending.at(0);
+  if (first === undefined) return undefined;
+  const bound = new Set(
+    names
+      .flatMap((name) => [
+        name,
+        ...findNodes(name, ts.isBindingElement).map((element) => element.name),
+      ])
+      .flatMap((name) => (ts.isIdentifier(name) ? getSymbols(name, context) : [])),
+  );
+  if (getSymbols(first, context).some((symbol) => bound.has(symbol))) {
+    throw new TlaTypeScriptError("tla-ts can't run this default before what it binds", first);
+  }
+  rejectEarlyRun(
+    first,
+    [first],
+    [...evaluated, ...names.flatMap(getInitializers)].filter(
+      (node) => !pending.some((call) => call === getCast(node)),
+    ),
+    path,
+    context,
+  );
+  return translateCallStatement(first, path, context, frame, (after, value) =>
+    continueWith({
+      ...after,
+      scope: {
+        ...after.scope,
+        results: new Map([...after.scope.results, [first, value ?? getUndefined(context)]]),
+      },
+    }),
+  );
+};
+
+// The defaults that binding a name to a value certainly evaluates, in order: its own where the
+// value is undefined, and, where the value is a literal, those of the elements and properties
+// that the literal leaves undefined.
+const getCertainDefaults = (
+  name: ts.BindingName,
+  value: ts.Expression | undefined,
+  initializer: ts.Expression | undefined,
+): ts.Expression[] => {
+  if (value === undefined || isUndefinedLiteral(value)) {
+    return initializer === undefined
+      ? []
+      : [initializer, ...getCertainDefaults(name, initializer, undefined)];
+  }
+  const literal = getCast(value);
+  if (ts.isArrayBindingPattern(name) && ts.isArrayLiteralExpression(literal)) {
+    const spreadAt = literal.elements.findIndex(ts.isSpreadElement);
+    return name.elements
+      .slice(0, spreadAt === -1 ? undefined : spreadAt)
+      .flatMap((element, position) => {
+        if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) return [];
+        const source = literal.elements.at(position);
+        return getCertainDefaults(
+          element.name,
+          source === undefined || ts.isOmittedExpression(source) ? undefined : source,
+          element.initializer,
+        );
+      });
+  }
+  if (
+    ts.isObjectBindingPattern(name) &&
+    ts.isObjectLiteralExpression(literal) &&
+    literal.properties.every(
+      (property) =>
+        (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+        ts.isIdentifier(property.name) &&
+        property.name.text !== "__proto__",
+    )
+  ) {
+    const restAt = name.elements.findIndex((element) => element.dotDotDotToken !== undefined);
+    return name.elements.slice(0, restAt === -1 ? undefined : restAt).flatMap((element) => {
+      const key = element.propertyName ?? element.name;
+      if (!ts.isIdentifier(key) || Object.hasOwn(Object.prototype, key.text)) return [];
+      const property = literal.properties.findLast(
+        (candidate) =>
+          candidate.name !== undefined &&
+          ts.isIdentifier(candidate.name) &&
+          candidate.name.text === key.text,
+      );
+      if (property === undefined)
+        return getCertainDefaults(element.name, undefined, element.initializer);
+      if (ts.isPropertyAssignment(property)) {
+        return getCertainDefaults(element.name, property.initializer, element.initializer);
+      }
+      return ts.isShorthandPropertyAssignment(property)
+        ? getCertainDefaults(element.name, property.name, element.initializer)
+        : [];
+    });
+  }
+  return [];
 };
 
 // The nodes in a tree, its root included, that a test picks.
@@ -2241,6 +2393,16 @@ const translateDeclarations = (
     );
     if (taken !== undefined) return taken;
   }
+  const defaulted = runCertainDefault(
+    [declaration.name],
+    getCertainDefaults(declaration.name, initializer, undefined),
+    initializer === undefined ? [] : [initializer],
+    path,
+    context,
+    frame,
+    (after) => translateDeclarations(declarations, after, context, frame, continueWith),
+  );
+  if (defaulted !== undefined) return defaulted;
   return allocate(initializer, path, context, (allocated) => {
     const constructor = initializer && getConstructorRun(initializer, context);
     if (constructor !== undefined && initializer !== undefined && ts.isNewExpression(initializer)) {

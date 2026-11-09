@@ -1263,6 +1263,20 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs the defaults that a call or a declaration certainly evaluates", async () => {
+    const result = await check(
+      compile(
+        `let count = 0;\nlet ran = 0;\nconst next = (): number => {\n  count += 1;\n  return count;\n};\nconst fail = (): number => {\n  throw new Error("default");\n};\nlet total = 0;\nfunction pair([first = next(), second = next()]: number[] = []) {\n  total = first * 10 + second;\n}\npair([]);\nconst [third = next()] = [undefined];\nconst run = (value: number = fail()) => {\n  ran += value;\n};\nlet caught = 0;\ntry {\n  run();\n} catch {\n  caught += 1;\n}\nif (total !== 12 || third !== 3 || caught !== 1 || ran !== 0) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(
+        `let count = 0;\nconst bump = (value: number): number => {\n  count += value;\n  return count;\n};\nfunction pair([first = 1, second = bump(first)]: number[] = []) {}\npair([]);`,
+      ),
+    ).toThrow("tla-ts can't run this default before what it binds");
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

@@ -75,7 +75,11 @@ export const readsState = (
   );
 };
 
-const mayThrow = (node: ts.Node, context: Context, visited = new Set<ts.Node>()): boolean => {
+export const mayThrow = (
+  node: ts.Node,
+  context: Context,
+  visited = new Set<ts.Node>(),
+): boolean => {
   if (ts.isThrowStatement(node)) return true;
   if (ts.isCallExpression(node)) {
     const callee = getCallee(node.expression, context);
