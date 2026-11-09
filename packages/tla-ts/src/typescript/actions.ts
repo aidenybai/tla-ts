@@ -2135,13 +2135,17 @@ const translateExpressionStatement = (
     );
     if (taken !== undefined) return taken;
   }
+  const assignedCall =
+    ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ? skipCasts(expression.right)
+      : undefined;
   if (
     ts.isBinaryExpression(expression) &&
-    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    ts.isCallExpression(expression.right) &&
-    isStatementResult(expression.right, path, context)
+    assignedCall !== undefined &&
+    ts.isCallExpression(assignedCall) &&
+    isStatementResult(assignedCall, path, context)
   ) {
-    const right = expression.right;
+    const right = assignedCall;
     return translateCallStatement(right, path, context, frame, (after, value) =>
       continueWith(
         assignPattern(expression.left, right, value ?? getUndefined(context), after, context),
@@ -2547,12 +2551,13 @@ const translateDeclarations = (
           ),
       );
     }
+    const called = initializer && skipCasts(initializer);
     if (
-      initializer !== undefined &&
-      ts.isCallExpression(initializer) &&
-      isStatementResult(initializer, allocated, context)
+      called !== undefined &&
+      ts.isCallExpression(called) &&
+      isStatementResult(called, allocated, context)
     ) {
-      return translateCallStatement(initializer, allocated, context, frame, (after, value) =>
+      return translateCallStatement(called, allocated, context, frame, (after, value) =>
         bindDeclaration(
           declarations,
           value ?? getUndefined(context),

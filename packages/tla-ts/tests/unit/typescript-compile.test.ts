@@ -1526,6 +1526,20 @@ describe("errors", () => {
     expect(fraction.failure?.message).toContain("tla-ts can't represent the fraction 7 / 2");
   });
 
+  it("runs a parenthesized call that makes an object as a statement", async () => {
+    const result = await checkModel(`
+      const held = (function (first: number) {
+        return arguments;
+      }(4));
+      let other: unknown = undefined;
+      other = (function (second: number) {
+        return arguments;
+      }(5));
+      if (held[0] !== 4 || (other as IArguments)[0] !== 5) throw new Error("missed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
