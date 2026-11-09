@@ -72,7 +72,14 @@ import {
 } from "./heap";
 import { isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { getReceiver, mayThrow, translateIf, translateSwitch, translateThrow } from "./functions";
+import {
+  getReceiver,
+  mayThrow,
+  shareArguments,
+  translateIf,
+  translateSwitch,
+  translateThrow,
+} from "./functions";
 import {
   bindPattern,
   type Bound,
@@ -835,20 +842,25 @@ const bindCall = (
       !callbacks.some((entry) => entry[0] === getSymbol(parameter.name, context.checker))
     );
   };
-  const bound = bindValues(
-    parameters.filter((_, position) => isValue(position)),
+  const values = shareArguments(
     argumentNodes
       .filter((_, position) => isValue(position))
       .map((argument) => translateExpression(argument, path.scope, context)),
+    context,
+  );
+  const evaluateArguments = (rest: Formula) => values.evaluate(rest, leaf(boolean(false)));
+  const bound = bindValues(
+    parameters.filter((_, position) => isValue(position)),
+    values.shared,
     path.scope,
     context,
   );
+  const heapSymbol = context.heap;
   const scope = {
     ...bound.scope,
     functions: new Map([...bound.scope.functions, ...callbacks]),
     receiver,
   };
-  const heapSymbol = context.heap;
   const body = callee.body;
   const isArgumentsNamed =
     body !== undefined &&
@@ -857,7 +869,7 @@ const bindCall = (
       (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
     ).length > 0;
   if (!isArgumentsNamed || heapSymbol === undefined) {
-    return continueWith({ definitions: bound.definitions, scope }, path);
+    return evaluateArguments(continueWith({ definitions: bound.definitions, scope }, path));
   }
   if (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError("Unsupported arguments object", node);
@@ -867,27 +879,33 @@ const bindCall = (
   const made = useJavaScript(
     "ArgumentsObject",
     [
-      tuple(argumentNodes.map((argument) => translateExpression(argument, path.scope, context))),
+      tuple(values.shared),
       translateBuiltInValue("get Function.prototype.arguments", node, context),
     ],
     context,
   );
-  return continueWith(
-    {
-      definitions: [
-        ...bound.definitions,
-        define(heap, [], useJavaScript("Allocate", [getHeap(scope, node, context), made], context)),
-      ],
-      scope: {
-        ...scope,
-        bindings: new Map([...scope.bindings, [heapSymbol, identifier(heap)]]),
-        allocated: new Map([
-          ...scope.allocated,
-          [body, useJavaScript("Allocated", [identifier(heap)], context)],
-        ]),
+  return evaluateArguments(
+    continueWith(
+      {
+        definitions: [
+          ...bound.definitions,
+          define(
+            heap,
+            [],
+            useJavaScript("Allocate", [getHeap(scope, node, context), made], context),
+          ),
+        ],
+        scope: {
+          ...scope,
+          bindings: new Map([...scope.bindings, [heapSymbol, identifier(heap)]]),
+          allocated: new Map([
+            ...scope.allocated,
+            [body, useJavaScript("Allocated", [identifier(heap)], context)],
+          ]),
+        },
       },
-    },
-    path,
+      path,
+    ),
   );
 };
 

@@ -1540,6 +1540,36 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("evaluates a call's arguments though the callee doesn't read them", async () => {
+    const getSource = (call: string) => `
+      const holder: { [key: string]: unknown } = Object.defineProperty({}, "poisoned", {
+        get: function () {
+          throw new Error("poison");
+        },
+      });
+      function ignore(first: unknown) {
+        return 1;
+      }
+      const skip = (first: unknown) => 1;
+      let isCaught = false;
+      try {
+        ${call};
+      } catch {
+        isCaught = true;
+      }
+      if (!isCaught) throw new Error("missed");
+    `;
+    for (const call of [
+      "ignore(holder.poisoned)",
+      "const result = ignore(holder.poisoned) + 1",
+      "const result = skip(holder.poisoned) + 1",
+    ]) {
+      expect((await checkModel(getSource(call))).failure?.message).toContain(
+        "tla-ts can't call getters",
+      );
+    }
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

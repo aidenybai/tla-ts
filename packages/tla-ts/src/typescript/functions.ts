@@ -33,6 +33,7 @@ import {
   apply,
   boolean,
   call,
+  define,
   defineAt,
   getLocation,
   identifier,
@@ -147,6 +148,25 @@ export const getReceiver = (scope: Scope, context: Context, called?: CalledMetho
     ? scope.receiver
     : { value: translateObjectValue(called.receiver, scope, context), method: called.method };
 
+// In a script with objects, a call evaluates its arguments before its body, though the body may
+// not read them, so that an argument tla-ts can't evaluate stops the check. The call reads the
+// arguments by the names that this shares them under.
+export const shareArguments = (values: Expression[], context: Context) => {
+  const names =
+    context.heap === undefined ? [] : values.map(() => context.names.getFresh("argument"));
+  const shared = context.heap === undefined ? values : names.map((name) => identifier(name));
+  return {
+    shared,
+    evaluate: (rest: Formula, otherwise: Formula) =>
+      names.length === 0
+        ? rest
+        : letIn(
+            names.map((name, position) => define(name, [], values[position])),
+            ifThenElse(apply("=", [tuple(shared), tuple(shared)]), rest, otherwise),
+          ),
+  };
+};
+
 const inlineCall = (
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
@@ -155,18 +175,22 @@ const inlineCall = (
   called?: CalledMethod,
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
-  const bound = bindValues(
-    callee.parameters,
+  const values = shareArguments(
     argumentNodes.map((argument) => translateExpression(argument, scope, context)),
-    scope,
     context,
   );
+  const bound = bindValues(callee.parameters, values.shared, scope, context);
   const value = translateBody(
     callee.body,
     { ...bound.scope, receiver: getReceiver(scope, context, called) },
     context,
   );
-  return render(letIn(bound.definitions, forceHeap(scope, bound.scope, leaf(value), context)));
+  return render(
+    values.evaluate(
+      letIn(bound.definitions, forceHeap(scope, bound.scope, leaf(value), context)),
+      leaf(getUndefined(context)),
+    ),
+  );
 };
 
 // Evaluates the heap that binding patterns gives, which reads the properties that object patterns
@@ -216,14 +240,25 @@ export const translateHelperCall = (
     if (initializer === undefined) throw new TlaTypeScriptError("Give this a body", declaration);
     return translateExpression(initializer, scope, context);
   }
-  const values = definition.parameters.map((parameter, index) => {
+  const values = shareArguments(
+    argumentNodes.flatMap((argument, index) =>
+      (definition.parameters.at(index)?.arity ?? 0) > 0
+        ? []
+        : [translateExpression(argument, scope, context)],
+    ),
+    context,
+  );
+  const shared = [...values.shared];
+  const operands = definition.parameters.map((parameter, index) => {
     const argument = argumentNodes.at(index);
     if (argument === undefined) return getUndefined(context);
     return parameter.arity > 0
       ? translateOperatorArgument(argument, scope, context)
-      : translateExpression(argument, scope, context);
+      : (shared.shift() ?? getUndefined(context));
   });
-  return call(definition.name, values);
+  return render(
+    values.evaluate(leaf(call(definition.name, operands)), leaf(getUndefined(context))),
+  );
 };
 
 // A call to a function declared inside another, or to a method a caller resolves, which is
