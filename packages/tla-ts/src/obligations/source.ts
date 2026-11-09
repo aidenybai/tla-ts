@@ -694,11 +694,13 @@ export const createSource = (
 
   const convertInstance = (instance: Instance): InstanceDefinition => ({
     location: getRangeLocus(instance.definitionRange ?? instance.instanceRange),
+    instanceLocation: getRangeLocus(instance.instanceRange),
     args: instance.params.map((param) => param.name),
     module: instance.module,
     substitutions: instance.substitutions.map((substitution) => ({
       name: getCanonicalName(substitution.name),
       expression: convertExpression(substitution.expression, false),
+      location: getRangeLocus(substitution.nameRange),
     })),
   });
 
