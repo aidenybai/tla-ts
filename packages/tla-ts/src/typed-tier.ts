@@ -4256,6 +4256,7 @@ interface CompiledSpec {
   // Writes the key of a state, and returns the image whose encoding it is, or -1 for the state's own.
   writeKey: (state: Plain[], arena: Arena) => number;
   decodeKey: (data: Uint8Array, start: number) => Plain[];
+  writeRest: (state: Plain[], arena: Arena) => void;
   // Applies to a state the inverse of an image.
   invert: (state: Plain[], image: number) => Plain[];
 }
@@ -4330,6 +4331,10 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
         .map((_, index) => index)
         .sort((left, right) => getKeyCost(left) - getKeyCost(right));
   const keyWriters = keyOrder.map((index) => writers[index]);
+  // The variables a view leaves out follow its key, from the image the key took.
+  const restOrder = check.view
+    ? program.variableTypes.map((_, index) => index).filter((index) => !keyOrder.includes(index))
+    : [];
   const sites = { count: 0 };
   const signatures = program.variableTypes.map((type, index) =>
     getSignatureCode(program, sites, type, `v${index}`),
@@ -4353,12 +4358,17 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       code: `const ${permuted} = ${getPermuteCode(program, images, type, `v${index}`) ?? `v${index}`}; if (c === 0) { c = ${comparison}; if (c > 0) continue images; }`,
     };
   });
-  const viewKeyCode = `let ${smallest.map((name, index) => `${name} = v${index}`).join(", ")};
+  const restWriters = restOrder.map((index) =>
+    images.length > 0
+      ? getWriter(codec, program.variableTypes[index], smallest[index])
+      : writers[index],
+  );
+  const viewKeyCode = `${smallest.map((name, index) => `${name} = v${index};`).join(" ")}
       images: for (let G = 0; G < A.length; G++) {
         const P = A[G];
         let c = 0;
         ${imageComparisons.map((comparison) => comparison.code).join(" ")}
-        if (c < 0) { ${check.variableOrder.map((index, position) => `${smallest[index]} = ${imageComparisons[position].permuted};`).join(" ")} }
+        if (c < 0) { ${check.variableOrder.map((index, position) => `${smallest[index]} = ${imageComparisons[position].permuted};`).join(" ")} chosen = G; }
       }
       ${viewWriters.join(" ")}`;
   const symmetricKeyCode = `Z.fill(0);
@@ -4399,6 +4409,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       ranks[id] = rank;
     });
   const source = `let d, n, i, t, W, Y, E = [];
+  let ${smallest.join(", ")};
   const X = new Int32Array(${program.variableTypes.length + 1});
   const T = new Int32Array(Q.length);
   const rv = (first) => { let zigzag = first & 127; let shift = 7; let byte; do { byte = d[i++]; zigzag |= (byte & 127) << shift; shift += 7; } while (byte >= 128); return (zigzag >>> 1) ^ -(zigzag & 1); };
@@ -4448,7 +4459,16 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       i = start;
       const state = new Array(${program.variableTypes.length});
       ${keyOrder.map((index) => `state[${index}] = ${readers[index]};`).join(" ")}
+      ${restOrder.length > 0 ? `i = (i + 3) & ~3; ${restOrder.map((index) => `state[${index}] = ${readers[index]};`).join(" ")}` : ""}
       return state;
+    },
+    writeRest: (state, arena) => {
+      ${unpack}
+      d = arena.data;
+      n = arena.size;
+      ${restWriters.join(" ")}
+      while ((n & 3) !== 0) d[n++] = 0;
+      arena.size = n;
     },
     invert: (state, image) => {
       ${unpack}
@@ -4582,10 +4602,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   // The state each state was found from, to rebuild the path to a deadlock.
   const parents = { data: new Int32Array(check.isDeadlockChecked ? 1 << 16 : 0), size: 0 };
   const expanding: { state: Plain[]; index: number } = { state: [], index: -1 };
-  // A view keys a state by part of it, so the state TLC explores is stored apart.
-  const states = check.view === undefined ? keys : createArena();
   const isEncoded = images.length === 0 && check.view === undefined;
-  const isImaged = images.length > 0 && check.view === undefined;
+  const isImaged = images.length > 0;
   // Under symmetry TLC explores the first state of an orbit it finds, which is the inverse of the
   // image that keys it.
   const chosenImages = { data: new Int32Array(isImaged ? 1 << 16 : 0), size: 0 };
@@ -4657,8 +4675,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     const isNew = addEncoded();
     if (!isNew) return false;
     if (isImaged) pushWord(chosenImages, image);
-    if (states !== keys) compiled.encode(state, states);
-    pushWord(starts, (states.pages.length - 1) * PAGE_SIZE + states.start);
+    if (check.view !== undefined) compiled.writeRest(state, keys);
+    pushWord(starts, (keys.pages.length - 1) * PAGE_SIZE + keys.start);
     if (check.isDeadlockChecked) pushWord(parents, expanding.index);
     checkInvariants(state);
     return true;
@@ -4686,11 +4704,11 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   };
   const getState = (index: number) => {
     const start = starts.data[index];
-    const page = states.pages[start >>> PAGE_BITS];
+    const page = keys.pages[start >>> PAGE_BITS];
     const offset = start & (PAGE_SIZE - 1);
+    if (isEncoded) return compiled.decode(page, offset);
+    const key = compiled.decodeKey(page, offset);
     const image = isImaged ? chosenImages.data[index] : -1;
-    const key = isImaged ? compiled.decodeKey(page, offset) : undefined;
-    if (key === undefined) return compiled.decode(page, offset);
     return image === -1 ? key : compiled.invert(key, image);
   };
   const getResult = (deadlock: TypedDeadlock | undefined, queued: number): TypedResult => ({
