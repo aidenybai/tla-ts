@@ -1014,7 +1014,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
       const binding: Binding = { kind: "Value", value: global.value };
       return () => binding;
     }
-    if (global === undefined) {
+    if (global === undefined && !environment.callStack) {
       return (context) => {
         const binding = lookupScope(context.scope, argument.name);
         return binding?.kind === "Value" || binding?.kind === "Thunk"
