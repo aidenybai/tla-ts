@@ -19,6 +19,7 @@ import { runFpa2Bv } from "./fpa2bv-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
+import { occf } from "./occf";
 import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
@@ -562,6 +563,13 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
+  [
+    "occf",
+    {
+      descrs: new Map(),
+      build: (environment) => inPlace((goal) => occf(environment.manager, goal)),
+    },
+  ],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
   [
@@ -606,7 +614,7 @@ const UNPORTED_TACTICS = new Set(
     "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
     "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
-    "max-bv-sharing nla2bv nlqsat nlsat nra occf pb-preprocess pb2bv pqffd " +
+    "max-bv-sharing nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args reduce-args2 reduce-bv-size " +
