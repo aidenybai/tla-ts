@@ -315,19 +315,38 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
   );
 };
 
+interface StringOrder {
+  ranks: Record<string, number>;
+  size: number;
+  // A parallel search's workers rank the strings they create in different orders, so the search
+  // notes the first string it orders against another string ranked from this rank on.
+  searchRank: number | undefined;
+  unorderedString: string | undefined;
+}
+
 // TLC orders strings and model value names by when it first interned the text, so every
 // check sets the order of its spec's strings before it builds any value.
-const stringOrder: { ranks: Record<string, number>; size: number } = {
+const stringOrder: StringOrder = {
   ranks: Object.create(null),
   size: 0,
+  searchRank: undefined,
+  unorderedString: undefined,
 };
 
 export const setStringOrder = (texts: Iterable<string>) => {
   stringOrder.ranks = Object.create(null);
   stringOrder.size = 0;
+  stringOrder.searchRank = undefined;
+  stringOrder.unorderedString = undefined;
   modelValues.clear();
   for (const text of texts) rankString(text);
 };
+
+export const freezeStringOrder = () => {
+  stringOrder.searchRank = stringOrder.size;
+};
+
+export const getUnorderedString = () => stringOrder.unorderedString;
 
 // TLC 1.7.4 prints an empty function that isn't a tuple with a space between its brackets, and
 // looks a key up in a function differently, so every check also sets the version its values follow.
@@ -342,11 +361,6 @@ export const rankString = (text: string) => {
   return text;
 };
 
-export const getRankedStringCount = () => stringOrder.size;
-
-export const getRankedString = (rank: number) =>
-  Object.keys(stringOrder.ranks).find((text) => stringOrder.ranks[text] === rank);
-
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
 const compareStrings = (left: string, right: string) => {
@@ -354,6 +368,14 @@ const compareStrings = (left: string, right: string) => {
   const ranks = stringOrder.ranks;
   const leftRank = ranks[left];
   const rightRank = ranks[right];
+  const searchRank = stringOrder.searchRank;
+  if (
+    searchRank !== undefined &&
+    (leftRank === undefined || leftRank >= searchRank) &&
+    (rightRank === undefined || rightRank >= searchRank)
+  ) {
+    stringOrder.unorderedString ??= left;
+  }
   if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
   if (leftRank !== undefined) return -1;
   if (rightRank !== undefined) return 1;

@@ -75,7 +75,7 @@ result.violation?.trace;
 | `loadModule` | Returns the source of an imported module    |
 | `workers`    | The number of worker threads. Defaults to 1 |
 
-A check with several workers starts over on one worker when the search creates a string, such as with `\o` or `ToString`. TLC orders strings by when it first sees them, and workers share that order only for strings that exist before the search. The CLI prints a warning when this happens, and `check` passes `onProgress` a `sequential-fallback` event.
+A check with several workers starts over on one worker when it orders two strings that the search created, such as with `\o` or `ToString`. This happens when both strings go into one set or one function's domain. TLC orders strings by when it first sees them, and workers share that order only for strings that exist before the search. The CLI prints a warning when this happens, and `check` passes `onProgress` a `sequential-fallback` event.
 
 ### `prove`
 
