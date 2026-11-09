@@ -3578,7 +3578,11 @@ interface CompiledSpec {
   constraints: ((state: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
   decode: (data: Uint8Array, start: number) => Plain[];
-  writeKey: (state: Plain[], arena: Arena) => void;
+  // Writes the key of a state, and returns the image whose encoding it is, or -1 for the state's own.
+  writeKey: (state: Plain[], arena: Arena) => number;
+  decodeKey: (data: Uint8Array, start: number) => Plain[];
+  // Applies to a state the inverse of an image.
+  invert: (state: Plain[], image: number) => Plain[];
 }
 
 const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
@@ -3634,6 +3638,9 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const images = check.symmetry ?? [];
   const imageWrites = program.variableTypes.map((type, index) =>
     getImageWriter(program, codec, images, type, `v${index}`),
+  );
+  const inversions = program.variableTypes.map(
+    (type, index) => getPermuteCode(program, images, type, `v${index}`) ?? `v${index}`,
   );
   // Any order of the variables keys an orbit, and one that compares cheap variables a permutation
   // moves first leaves most images after a few bytes.
@@ -3711,6 +3718,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       Z.fill(0);
       ${signatures.join(" ")}
       let F = 0;
+      let chosen = -1;
       for (let G = 1; G < Q.length; G++) if (H.compareSignatures(Z, Q[G], Q[F]) < 0) F = G;
       if (F === 0) { ${keyWriters.join(" ")} }
       let m = n - W.start;
@@ -3721,11 +3729,25 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
         n = W.start + m;
         if (n + ${RESERVED_BYTES} > d.length) { W.size = n; H.addPage(W); d = W.data; n = W.size; }
         ${imageWriters.join(" ")}
-        if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; }
+        if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; chosen = G; }
       }
       n = W.start + m;
       while ((n & 3) !== 0) d[n++] = 0;
       arena.size = n;
+      return chosen;
+    },
+    decodeKey: (data, start) => {
+      d = data;
+      i = start;
+      const state = new Array(${program.variableTypes.length});
+      ${keyOrder.map((index) => `state[${index}] = ${readers[index]};`).join(" ")}
+      return state;
+    },
+    invert: (state, image) => {
+      ${unpack}
+      const G = I[image];
+      const P = A[G];
+      return [${inversions.join(", ")}];
     },
   };`;
   const atoms = images.map((table) =>
@@ -3743,7 +3765,11 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     moved,
     ...atoms.map((table) => moved.map((atom) => table.findIndex((image) => image === atom))),
   ];
-  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "H", source)(
+  const inverses = Int32Array.from(atoms, (table) => {
+    const inverse = atoms.findIndex((other) => table.every((image, atom) => other[image] === atom));
+    return inverse === -1 ? unsupported() : inverse;
+  });
+  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "I", "H", source)(
     program.constants,
     program.constantSets,
     program.bitmaps,
@@ -3753,6 +3779,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     atoms,
     preimages,
     new Int32Array(program.plains.values.length),
+    inverses,
     HELPERS,
   );
 };
@@ -3841,12 +3868,11 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const images = check.symmetry ?? [];
   images.forEach((table) => table.forEach((image) => image && getAtom(program.plains, image)));
   const compiled = compileSpec(program, check);
-  const arena = createArena();
+  const keys = createArena();
   const starts = { data: new Int32Array(1 << 16), size: 0 };
-  // Under symmetry the table holds the key of each state apart from the state TLC explores.
-  const keys = images.length === 0 ? arena : createArena();
-  const encodeKey = (state: Plain[]) =>
-    images.length === 0 ? compiled.encode(state, keys) : compiled.writeKey(state, keys);
+  // Under symmetry TLC explores the first state of an orbit it finds, which is the inverse of the
+  // image that keys it.
+  const chosenImages = { data: new Int32Array(images.length === 0 ? 0 : 1 << 16), size: 0 };
   const table: StateTable = { slots: new Int32Array(1 << 18), mask: (1 << 17) - 1 };
   const statistics = { generated: 0, distinct: 0, depth: 0 };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
@@ -3910,11 +3936,12 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       checkInvariants(state);
       return false;
     }
-    encodeKey(state);
+    if (images.length === 0) compiled.encode(state, keys);
+    const image = images.length === 0 ? -1 : compiled.writeKey(state, keys);
     const isNew = addEncoded();
     if (!isNew) return false;
-    if (keys !== arena) compiled.encode(state, arena);
-    pushWord(starts, (arena.pages.length - 1) * PAGE_SIZE + arena.start);
+    if (images.length > 0) pushWord(chosenImages, image);
+    pushWord(starts, (keys.pages.length - 1) * PAGE_SIZE + keys.start);
     checkInvariants(state);
     return true;
   };
@@ -3946,7 +3973,16 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       level.end = statistics.distinct;
     }
     const start = starts.data[index];
-    const state = compiled.decode(arena.pages[start >>> PAGE_BITS], start & (PAGE_SIZE - 1));
+    const page = keys.pages[start >>> PAGE_BITS];
+    const offset = start & (PAGE_SIZE - 1);
+    const image = images.length === 0 ? -1 : chosenImages.data[index];
+    const key = images.length === 0 ? undefined : compiled.decodeKey(page, offset);
+    const state =
+      key === undefined
+        ? compiled.decode(page, offset)
+        : image === -1
+          ? key
+          : compiled.invert(key, image);
     expanding.state = state;
     expansion.successors = 0;
     expansion.newStates = 0;
