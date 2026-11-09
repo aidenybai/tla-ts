@@ -72,6 +72,7 @@ export interface RewriterOptions {
   readonly isRewritingPatterns: boolean;
   readonly isPullingCheapIte?: boolean;
   readonly isKeepingDistinct?: boolean;
+  readonly blastDistinctThreshold?: number;
   readonly bv?: BvRewriterOptions;
   readonly isFlatAndOr?: boolean;
   readonly localCtxLimit?: number;
@@ -919,7 +920,11 @@ export class Rewriter extends RewriterTpl {
     );
     if (isAllDifferent) return manager.trueExpr;
     if (manager.sorts[args[0]] === SORT_BOOL) return manager.falseExpr;
-    if (this.options.isKeepingDistinct === true) return -1;
+    if (
+      this.options.isKeepingDistinct === true ||
+      args.length >= (this.options.blastDistinctThreshold ?? Infinity)
+    )
+      return -1;
     const pairs: number[] = [];
     for (let left = 0; left < args.length; left++)
       for (let right = left + 1; right < args.length; right++)

@@ -18,11 +18,19 @@ import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { propagateValues } from "./propagate-values";
 import { ProtoModel } from "./proto-model";
 import { compileProbe, formatProbeValue, type Probe } from "./probes";
+import { applyQeLite } from "./qe-lite";
 import { simplifyGoal } from "./quant-tactics";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
-import { isSymbol, type SExpr, type SmtList, type SmtToken } from "./smtlib-parser";
+import { LOGIC_TACTICS } from "./logic-tactics";
+import {
+  createCommandReader,
+  isSymbol,
+  type SExpr,
+  type SmtList,
+  type SmtToken,
+} from "./smtlib-parser";
 import { solveGoal } from "./solver";
 
 const PARAM_BOOL = 0;
@@ -83,11 +91,11 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["local_ctx", PARAM_BOOL, false, true],
   ["local_ctx_limit", PARAM_UINT, UINT_MAX, true],
   ["blast_distinct", PARAM_BOOL, false, true],
-  ["blast_distinct_threshold", PARAM_UINT, UINT_MAX],
+  ["blast_distinct_threshold", PARAM_UINT, UINT_MAX, true],
   ["som", PARAM_BOOL, false, true],
   ["som_blowup", PARAM_UINT, 10],
   ["hoist_mul", PARAM_BOOL, false],
-  ["hoist_ite", PARAM_BOOL, false],
+  ["hoist_ite", PARAM_BOOL, false, true],
   ["algebraic_number_evaluator", PARAM_BOOL, true, true],
   ["mul_to_power", PARAM_BOOL, false],
   ["expand_power", PARAM_BOOL, false, true],
@@ -147,6 +155,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   isEliminatingAnd: getBool(params, "elim_and", false),
   isPullingCheapIte: getBool(params, "pull_cheap_ite", false),
   isKeepingDistinct: !getBool(params, "blast_distinct", false),
+  blastDistinctThreshold: getUint(params, "blast_distinct_threshold", UINT_MAX),
   localCtxLimit: getBool(params, "local_ctx", false)
     ? getUint(params, "local_ctx_limit", UINT_MAX)
     : undefined,
@@ -158,6 +167,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
     isAnumSimp: getBool(params, "algebraic_number_evaluator", true),
     isExpandPower: getBool(params, "expand_power", false),
     isExpandTan: getBool(params, "expand_tan", false),
+    isHoistIte: getBool(params, "hoist_ite", false),
     maxDegree: getUint(params, "max_degree", 64),
   },
   bv: {
@@ -345,6 +355,21 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
+  [
+    "qe-light",
+    {
+      descrs: new Map(),
+      build: (environment) =>
+        inPlace((goal) => {
+          if (!goal.isProofsEnabled) applyQeLite(environment.manager, goal);
+          else {
+            goal.elimTrue();
+            goal.elimRedundancies();
+          }
+          goal.depth++;
+        }),
+    },
+  ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
@@ -384,20 +409,18 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "ackermannize_bv add-bounds aig auflia auflira aufnira bit-blast blast-term-ite bv " +
-    "bv_bound_chk bv-divrem-bounds bv-slice bv1-blast bvarray2uf card2bv cofactor-term-ite " +
-    "collect-statistics ctx-solver-simplify default degree-shift demodulator diff-neq " +
-    "distribute-forall dom-simplify dt2bv elim-predicates elim-small-bv elim-term-ite " +
-    "elim-uncnstr elim-uncnstr2 eq2bv euf-completion factor ff-sat ff-simplify ff-solve " +
-    "ff-unique ff2bv fix-dl-var fm fold-unfold fpa2bv horn horn-simplify injectivity lia " +
-    "lia2card lia2pb lira lra macro-finder max-bv-sharing nla2bv nlqsat nlsat " +
-    "normalize-bounds nra occf pb-preprocess pb2bv pqffd propagate-bv-bounds " +
-    "propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt purify-arith qe qe_rec " +
-    "qe-light qe2 qfaufbv qfauflia qfbv qfbv-sls qffd qffp qffpbv qffplra qfidl qflia qflra " +
-    "qfnia qfnra qfnra-nlsat qfuf qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args " +
-    "reduce-args2 reduce-bv-size sat sat-preprocess sls-smt smtfd solve-eqs " +
-    "solver-subsumption special-relations split-clause subpaving symmetry-reduce tseitin-cnf " +
-    "tseitin-cnf-core ufbv ufbv-rewriter uflra ufnia"
+    "ackermannize_bv add-bounds aig bit-blast blast-term-ite bv_bound_chk bv-divrem-bounds " +
+    "bv-slice bv1-blast bvarray2uf card2bv cofactor-term-ite collect-statistics " +
+    "ctx-solver-simplify degree-shift demodulator diff-neq distribute-forall dom-simplify " +
+    "dt2bv elim-predicates elim-small-bv elim-term-ite elim-uncnstr elim-uncnstr2 eq2bv " +
+    "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fix-dl-var fm " +
+    "fold-unfold fpa2bv horn horn-simplify injectivity lia2card lia2pb macro-finder " +
+    "max-bv-sharing nla2bv nlqsat nlsat normalize-bounds nra occf pb-preprocess pb2bv pqffd " +
+    "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
+    "purify-arith qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
+    "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args reduce-args2 reduce-bv-size " +
+    "sat sat-preprocess sls-smt smtfd solve-eqs solver-subsumption special-relations " +
+    "split-clause subpaving symmetry-reduce tseitin-cnf tseitin-cnf-core ufbv-rewriter"
   ).split(" "),
 );
 
@@ -419,10 +442,40 @@ const findParam = (descrs: ParamDescrs, name: string) => {
     : undefined;
 };
 
+const parseParamValue = (kind: number, value: SExpr) =>
+  kind === PARAM_BOOL
+    ? isSymbol(value, "true") || (isSymbol(value, "false") ? false : undefined)
+    : kind === PARAM_UINT
+      ? isUnsigned(value)
+        ? Number(value.text)
+        : undefined
+      : isSymbol(value)
+        ? value.text
+        : undefined;
+
+const getUntypedParamValue = (value: SExpr) =>
+  value.kind === "list"
+    ? undefined
+    : value.kind === "numeral"
+      ? Number(value.text)
+      : value.text === "true" || (value.text === "false" ? false : value.text);
+
+const isUnportedParam = (descr: ParamDescr, value: TacticParam) =>
+  !descr.isPorted && value !== descr.defaultValue;
+
+const checkParams = (descrs: ParamDescrs, params: TacticParams) => {
+  for (const [name, value] of params) {
+    const descr = descrs.get(name);
+    if (descr !== undefined && isUnportedParam(descr, value))
+      throw new SmtUnsupportedError(`the parameter ${name} of the tactic`);
+  }
+};
+
 const getParams = (
   builder: TacticBuilder,
   items: SExpr[],
   end: SmtToken,
+  isInternal: boolean,
 ): Map<string, TacticParam> => {
   const params = new Map<string, TacticParam>();
   for (let index = 2; index < items.length; index += 2) {
@@ -433,6 +486,15 @@ const getParams = (
     if (value === undefined)
       throw new SmtParseError("invalid using-params combinator, parameter value expected", end);
     const found = findParam(builder.descrs, getParamName(keyword.text));
+    if (isInternal) {
+      const parsed =
+        found === undefined
+          ? getUntypedParamValue(value)
+          : parseParamValue(found.descr.kind, value);
+      if (parsed === undefined) throw new SmtParseError("invalid parameter value", end);
+      params.set(found?.name ?? getParamName(keyword.text), parsed);
+      continue;
+    }
     if (found === undefined) {
       if (!builder.isRejectingUnknown)
         throw new SmtUnsupportedError(`the parameter ${keyword.text} of the tactic`);
@@ -441,16 +503,7 @@ const getParams = (
         end,
       );
     }
-    const parsed =
-      found.descr.kind === PARAM_BOOL
-        ? isSymbol(value, "true") || (isSymbol(value, "false") ? false : undefined)
-        : found.descr.kind === PARAM_UINT
-          ? isUnsigned(value)
-            ? Number(value.text)
-            : undefined
-          : isSymbol(value)
-            ? value.text
-            : undefined;
+    const parsed = parseParamValue(found.descr.kind, value);
     if (parsed === undefined)
       throw new SmtParseError(
         found.descr.kind === PARAM_BOOL
@@ -460,7 +513,7 @@ const getParams = (
             : "invalid parameter value, symbol expected",
         end,
       );
-    if (!found.descr.isPorted && parsed !== found.descr.defaultValue)
+    if (isUnportedParam(found.descr, parsed))
       throw new SmtUnsupportedError(`the parameter ${found.name} of the tactic`);
     params.set(found.name, parsed);
   }
@@ -546,10 +599,11 @@ const checkHasArgument = (list: SmtList, combinator: string, end: SmtToken) => {
     );
 };
 
-export const compileTactic = (
+const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
   end: SmtToken,
+  isInternal: boolean,
 ): TacticBuilder => {
   if (sexpr.kind !== "list") {
     if (!isSymbol(sexpr)) throw new SmtParseError("invalid tactic, unexpected input", end);
@@ -558,9 +612,29 @@ export const compileTactic = (
       return {
         descrs: named.descrs,
         isRejectingUnknown: named.isRejectingUnknown ?? true,
-        build: (params) => named.build(environment, params),
+        build: (params) => {
+          const tactic = named.build(environment, params);
+          if (!isInternal) return tactic;
+          return (goal) => {
+            checkParams(named.descrs, params);
+            return tactic(goal);
+          };
+        },
       };
-    if (UNPORTED_TACTICS.has(sexpr.text)) throw new SmtUnsupportedError(`the tactic ${sexpr.text}`);
+    const strategy = LOGIC_TACTICS.get(sexpr.text);
+    if (strategy !== undefined)
+      return compile(environment, createCommandReader(strategy).read() as SmtList, end, true);
+    if (UNPORTED_TACTICS.has(sexpr.text)) {
+      const error = new SmtUnsupportedError(`the tactic ${sexpr.text}`);
+      if (!isInternal) throw error;
+      return {
+        descrs: new Map(),
+        isRejectingUnknown: false,
+        build: () => () => {
+          throw error;
+        },
+      };
+    }
     throw new SmtParseError(`invalid tactic, unknown tactic ${sexpr.text}`, end);
   }
   const head = sexpr.items[0];
@@ -568,7 +642,7 @@ export const compileTactic = (
   if (!isSymbol(head)) throw new SmtParseError("invalid tactic, symbol expected", end);
   const compileChildren = (combinator: string) => {
     checkHasArgument(sexpr, combinator, end);
-    return sexpr.items.slice(1).map((child) => compileTactic(environment, child, end));
+    return sexpr.items.slice(1).map((child) => compile(environment, child, end, isInternal));
   };
   switch (head.text) {
     case "then":
@@ -590,12 +664,84 @@ export const compileTactic = (
         build: (params) => runOrElse(children.map((child) => child.build(params))),
       };
     }
+    // Z3 runs these children in threads, and running them in order is one schedule it may pick.
     case "par":
-    case "par-or":
-    case "par-then": {
-      const children = compileChildren(head.text === "par-then" ? "par-then" : "par-or");
+    case "par-or": {
+      const children = compileChildren("par-or");
       if (children.length === 1) return children[0];
-      throw new SmtUnsupportedError(`the combinator ${head.text}`);
+      return {
+        ...mergeDescrs(children),
+        build: (params) => runOrElse(children.map((child) => child.build(params))),
+      };
+    }
+    case "par-then": {
+      const children = compileChildren("par-then");
+      if (children.length === 1) return children[0];
+      return {
+        ...mergeDescrs(children),
+        build: (params) =>
+          children
+            .map((child) => child.build(params))
+            .reduceRight((second, first) => (goal) => {
+              if (goal.isProofsEnabled)
+                throw new SmtTacticError("par_and_then does not support proof production");
+              return runAndThen(first, second)(goal);
+            }),
+      };
+    }
+    // The timeout is not ported, so the child runs to the end.
+    case "try-for": {
+      if (sexpr.items.length !== 3)
+        throw new SmtParseError("invalid try-for combinator, two arguments expected", end);
+      if (!isUnsigned(sexpr.items[2]))
+        throw new SmtParseError(
+          "invalid try-for combinator, second argument must be an unsigned integer",
+          end,
+        );
+      return compile(environment, sexpr.items[1], end, isInternal);
+    }
+    case "fail-if-branching": {
+      if (sexpr.items.length !== 3 && sexpr.items.length !== 2)
+        throw new SmtParseError(
+          "invalid fail-if-branching combinator, one or two arguments expected",
+          end,
+        );
+      const bound = sexpr.items[2];
+      if (bound !== undefined && !isUnsigned(bound))
+        throw new SmtParseError(
+          "invalid fail-if-branching combinator, second argument must be an unsigned integer",
+          end,
+        );
+      const child = compile(environment, sexpr.items[1], end, isInternal);
+      const threshold = bound === undefined ? 1 : Number(bound.text);
+      return {
+        ...mergeDescrs([child]),
+        build: (params) => {
+          const tactic = child.build(params);
+          return (goal) => {
+            const goals = tactic(goal);
+            if (goals.length > threshold) throw new SmtTacticError("failed-if-branching tactical");
+            return goals;
+          };
+        },
+      };
+    }
+    case "if-no-proofs":
+    case "if-no-unsat-cores":
+    case "if-no-models": {
+      if (sexpr.items.length !== 2)
+        throw new SmtParseError(`invalid ${head.text} combinator, one argument expected`, end);
+      const child = compile(environment, sexpr.items[1], end, isInternal);
+      const isSkipping = (goal: Goal) =>
+        head.text === "if-no-models" ||
+        (head.text === "if-no-proofs" ? goal.isProofsEnabled : goal.isCoresEnabled);
+      return {
+        ...mergeDescrs([child]),
+        build: (params) => {
+          const tactic = child.build(params);
+          return (goal) => (isSkipping(goal) ? [goal] : tactic(goal));
+        },
+      };
     }
     case "repeat": {
       if (sexpr.items.length !== 3 && sexpr.items.length !== 2)
@@ -606,7 +752,7 @@ export const compileTactic = (
           "invalid repeat combinator, second argument must be an unsigned integer",
           end,
         );
-      const child = compileTactic(environment, sexpr.items[1], end);
+      const child = compile(environment, sexpr.items[1], end, isInternal);
       const maxDepth = bound === undefined ? UINT_MAX : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -617,9 +763,9 @@ export const compileTactic = (
     case "using-params":
     case "with": {
       checkHasArgument(sexpr, "using-params", end);
-      const child = compileTactic(environment, sexpr.items[1], end);
+      const child = compile(environment, sexpr.items[1], end, isInternal);
       if (sexpr.items.length === 2) return child;
-      const own = getParams(child, sexpr.items, end);
+      const own = getParams(child, sexpr.items, end, isInternal);
       return {
         ...mergeDescrs([child]),
         build: (params) => child.build(new Map([...params, ...own])),
@@ -628,7 +774,7 @@ export const compileTactic = (
     case "skip-if-failed": {
       if (sexpr.items.length !== 2)
         throw new SmtParseError("invalid skip-if-failed combinator, one argument expected", end);
-      const child = compileTactic(environment, sexpr.items[1], end);
+      const child = compile(environment, sexpr.items[1], end, isInternal);
       return {
         ...mergeDescrs([child]),
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
@@ -640,7 +786,9 @@ export const compileTactic = (
       if (sexpr.items.length !== 4)
         throw new SmtParseError("invalid if/conditional combinator, three arguments expected", end);
       const probe = compileProbe(sexpr.items[1], end);
-      const children = sexpr.items.slice(2).map((child) => compileTactic(environment, child, end));
+      const children = sexpr.items
+        .slice(2)
+        .map((child) => compile(environment, child, end, isInternal));
       return {
         ...mergeDescrs(children),
         build: (params) => runCond(probe, children[0].build(params), children[1].build(params)),
@@ -650,7 +798,7 @@ export const compileTactic = (
       if (sexpr.items.length !== 3)
         throw new SmtParseError("invalid when combinator, two arguments expected", end);
       const probe = compileProbe(sexpr.items[1], end);
-      const child = compileTactic(environment, sexpr.items[2], end);
+      const child = compile(environment, sexpr.items[2], end, isInternal);
       return {
         ...mergeDescrs([child]),
         build: (params) => runCond(probe, child.build(params), (goal) => [goal]),
@@ -691,16 +839,13 @@ export const compileTactic = (
         build: () => pieces.reduceRight((second, first) => runAndThen(first, second)),
       };
     }
-    case "try-for":
-    case "fail-if-branching":
-    case "if-no-proofs":
-    case "if-no-models":
-    case "if-no-unsat-cores":
-      throw new SmtUnsupportedError(`the combinator ${head.text}`);
     default:
       throw new SmtParseError(`invalid tactic, unknown tactic combinator ${head.text}`, end);
   }
 };
+
+export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr, end: SmtToken) =>
+  compile(environment, sexpr, end, false);
 
 interface TacticCheck {
   status: number;

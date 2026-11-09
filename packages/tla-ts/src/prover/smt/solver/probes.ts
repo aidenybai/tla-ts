@@ -125,7 +125,7 @@ const isNonQfbvEq = (manager: AstManager, expr: number) =>
   (manager.getFamily(expr) === FAMILY_BV &&
     ![OP_BV_NUM, OP_EXTRACT, OP_CONCAT].includes(manager.getOp(expr)));
 
-const isNonQffp = (manager: AstManager, expr: number) => {
+const mkNonQffp = (isLra: boolean) => (manager: AstManager, expr: number) => {
   if (!isApp(manager, expr)) return true;
   const sort = manager.sorts[expr];
   if (
@@ -138,8 +138,8 @@ const isNonQffp = (manager: AstManager, expr: number) => {
     return true;
   const family = manager.getFamily(expr);
   if (family === FAMILY_BASIC || family === FAMILY_FPA || family === FAMILY_BV) return false;
-  if (manager.isUninterpretedConst(expr)) return false;
-  return !(sort === SORT_REAL && manager.isNumeral(expr));
+  if ((isLra && family === FAMILY_ARITH) || manager.isUninterpretedConst(expr)) return false;
+  return isLra ? sort !== SORT_REAL : !(sort === SORT_REAL && manager.isNumeral(expr));
 };
 
 const LINEAR_OPS = [OP_LE, OP_GE, OP_LT, OP_GT, OP_ADD, OP_NUM];
@@ -416,14 +416,13 @@ const NAMED_PROBES = new Map<string, Probe>([
   ["is-lra", mkNiraProbe(false, true, true, true)],
   ["is-lira", mkNiraProbe(true, true, true, true)],
   ["is-qfufnra", isQfufnra],
-  ["is-qffp", mkTest(isNonQffp)],
-  ["is-qffpbv", mkTest(isNonQffp)],
+  ["is-qffp", mkTest(mkNonQffp(false))],
+  ["is-qffpbv", mkTest(mkNonQffp(false))],
+  ["is-qffplra", mkTest(mkNonQffp(true))],
 ]);
 
 const UNPORTED_PROBES = new Set(
-  "memory arith-max-deg arith-avg-deg arith-max-bw arith-avg-bw is-qffplra ackr-bound-probe".split(
-    " ",
-  ),
+  "memory arith-max-deg arith-avg-deg arith-max-bw arith-avg-bw ackr-bound-probe".split(" "),
 );
 
 const BINARY_PROBES = new Map<string, (first: number, second: number) => number>([

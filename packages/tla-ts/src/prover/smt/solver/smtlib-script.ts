@@ -114,7 +114,11 @@ const SIMPLIFY_PARAMETERS = new Set([
   "expand_tan",
 ]);
 
-const SIMPLIFY_UINT_PARAMETERS = new Set(["max_degree", "local_ctx_limit"]);
+const SIMPLIFY_UINT_PARAMETERS = new Set([
+  "max_degree",
+  "local_ctx_limit",
+  "blast_distinct_threshold",
+]);
 
 const PARAMETER_DEFAULTS = new Map([
   ["auto_config", "true"],

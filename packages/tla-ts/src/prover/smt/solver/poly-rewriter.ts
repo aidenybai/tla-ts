@@ -1,5 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/poly_rewriter.h, poly_rewriter_def.h), MIT license, see
 // z3-license.txt.
+import { SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
   KIND_APP,
@@ -9,6 +10,7 @@ import {
   OP_GE,
   OP_GT,
   OP_IDIV,
+  OP_ITE,
   OP_IS_INT,
   OP_LE,
   OP_LT,
@@ -54,6 +56,7 @@ export interface ArithRewriterOptions {
   readonly isExpandPower: boolean;
   readonly isExpandTan: boolean;
   readonly maxDegree: number;
+  readonly isHoistIte?: boolean;
 }
 
 const ARITH_OPS: ReadonlySet<number> = new Set([
@@ -224,6 +227,17 @@ export class PolyRewriter {
   // The rewrites return undefined when they do not apply, like BR_FAILED.
   mkAdd(args: number[]): number | undefined {
     if (args.length < 2) return undefined;
+    const manager = this.manager;
+    if (
+      this.options.isHoistIte === true &&
+      args.some(
+        (arg) =>
+          manager.getOp(arg) === OP_ITE ||
+          (this.isAdd(arg) &&
+            manager.getArgs(arg).some((inner) => manager.getOp(inner) === OP_ITE)),
+      )
+    )
+      throw new SmtUnsupportedError("hoisting an if-then-else out of a sum");
     this.currSort = this.manager.sorts[args[0]];
     if (!args.some((arg) => this.isAdd(arg))) return this.mkNflatAdd(args);
     const flat: number[] = [];
