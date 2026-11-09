@@ -115,6 +115,7 @@ const SIMPLIFY_PARAMETERS = new Set([
   "algebraic_number_evaluator",
   "expand_power",
   "expand_tan",
+  "sort_store",
 ]);
 
 const SIMPLIFY_UINT_PARAMETERS = new Set([

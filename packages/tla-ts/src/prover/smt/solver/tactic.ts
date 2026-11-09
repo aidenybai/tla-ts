@@ -164,6 +164,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   ...TACTIC_REWRITER_OPTIONS,
   isEliminatingAnd: getBool(params, "elim_and", false),
   isFlatAndOr: getBool(params, "flat_and_or", true),
+  isSortingStore: getBool(params, "sort_store", false),
   isPullingCheapIte: getBool(params, "pull_cheap_ite", false),
   isKeepingDistinct: !getBool(params, "blast_distinct", false),
   blastDistinctThreshold: getUint(params, "blast_distinct_threshold", UINT_MAX),
