@@ -3,6 +3,7 @@ description: An undefined POSTCONDITION name is refused after the state space is
 ref: tlc2/tool/AbstractChecker.java#checkPostCondition
 features:
   - TLCExt
+  - tlc-bug
 outcome: tlc-error
 config: |
   INIT Init

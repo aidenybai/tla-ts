@@ -1,6 +1,8 @@
 (*---
 description: A POSTCONDITION name that is constant is only looked up after the initial states, where TLC reports the error as an unexpected exception with exit 255 rather than a config error with exit 151.
 ref: tlc2/tool/impl/Spec.java#getPostConditionSpecs
+features:
+  - tlc-bug
 outcome: tlc-error
 config: |
   INIT Init
