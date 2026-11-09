@@ -99,6 +99,7 @@ const BOOLEAN_PRINT_OPTIONS = new Map<string, PrintOptionOf<boolean>>([
 
 const SIMPLIFY_PARAMETERS = new Set([
   "elim_and",
+  "local_ctx",
   "pull_cheap_ite",
   "blast_distinct",
   "som",
@@ -113,7 +114,7 @@ const SIMPLIFY_PARAMETERS = new Set([
   "expand_tan",
 ]);
 
-const SIMPLIFY_UINT_PARAMETERS = new Set(["max_degree"]);
+const SIMPLIFY_UINT_PARAMETERS = new Set(["max_degree", "local_ctx_limit"]);
 
 const PARAMETER_DEFAULTS = new Map([
   ["auto_config", "true"],

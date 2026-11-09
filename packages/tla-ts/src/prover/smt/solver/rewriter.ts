@@ -74,6 +74,7 @@ export interface RewriterOptions {
   readonly isKeepingDistinct?: boolean;
   readonly bv?: BvRewriterOptions;
   readonly isFlatAndOr?: boolean;
+  readonly localCtxLimit?: number;
 }
 
 export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
@@ -105,6 +106,7 @@ export class Rewriter extends RewriterTpl {
   // try_ite_value writes the result of reduce_app, which is the m_r of the rewriter that applies
   // this one, as it goes: the first write releases what m_r held.
   releaseResult = () => this.setLastResult(-1);
+  private localCtxCost = 0;
 
   constructor(
     manager: AstManager,
@@ -525,6 +527,14 @@ export class Rewriter extends RewriterTpl {
       if (literals.add(arg)) return manager.trueExpr;
     }
     const result = literals.list;
+    const limit = this.options.localCtxLimit;
+    if (result.length > 1 && limit !== undefined && this.localCtxCost <= limit) {
+      const simplified = manager.withTemporaries(() => this.simplifyLocalCtx([...result]));
+      if (simplified !== -1) {
+        manager.releaseLater(simplified);
+        return simplified;
+      }
+    }
     const isOutOfOrder = result.some(
       (arg, index) => index > 0 && isAstLess(manager, arg, result[index - 1]),
     );
@@ -532,6 +542,141 @@ export class Rewriter extends RewriterTpl {
     if (isNested || result.length !== flatArgs.length || isOutOfOrder)
       sortByKey(result, (arg) => manager.ids[arg]);
     return manager.mkOr(result);
+  }
+
+  private simplifyNestedNotOr(args: number[], negatives: Set<number>, positives: Set<number>) {
+    const manager = this.manager;
+    this.localCtxCost += args.length;
+    const kept: number[] = [];
+    let isSimplified = false;
+    for (const arg of args) {
+      if (negatives.has(arg)) return manager.falseExpr;
+      if (positives.has(arg)) {
+        isSimplified = true;
+        continue;
+      }
+      if (manager.isNot(arg)) {
+        const atom = manager.getArg(arg, 0);
+        if (negatives.has(atom)) {
+          isSimplified = true;
+          continue;
+        }
+        if (positives.has(atom)) return manager.falseExpr;
+      }
+      kept.push(arg);
+    }
+    if (!isSimplified) return -1;
+    if (kept.length === 0) return manager.trueExpr;
+    return kept.length === 1 ? this.mkNot(kept[0]) : manager.mkNot(manager.mkOr(kept));
+  }
+
+  private simplifyLiteral(arg: number, negatives: Set<number>, positives: Set<number>) {
+    const manager = this.manager;
+    const isNegated = manager.isNot(arg);
+    const atom = isNegated ? manager.getArg(arg, 0) : arg;
+    if (negatives.has(atom)) return isNegated ? manager.falseExpr : manager.trueExpr;
+    if (positives.has(atom)) return isNegated ? manager.trueExpr : manager.falseExpr;
+    return arg;
+  }
+
+  private mkNestedIte(condition: number, thenExpr: number, elseExpr: number) {
+    const manager = this.manager;
+    if (manager.isTrue(condition)) return thenExpr;
+    if (manager.isFalse(condition)) return elseExpr;
+    if (thenExpr === elseExpr) return thenExpr;
+    if (manager.sorts[thenExpr] === SORT_BOOL) {
+      if (manager.isTrue(thenExpr))
+        return manager.isFalse(elseExpr) ? condition : manager.mkOr([condition, elseExpr]);
+      if (manager.isFalse(thenExpr))
+        return manager.isTrue(elseExpr)
+          ? this.mkNot(condition)
+          : manager.mkNot(manager.mkOr([condition, this.mkNot(elseExpr)]));
+      if (manager.isTrue(elseExpr)) return manager.mkOr([this.mkNot(condition), thenExpr]);
+      if (manager.isFalse(elseExpr) || condition === elseExpr)
+        return manager.mkNot(manager.mkOr([this.mkNot(condition), this.mkNot(thenExpr)]));
+      if (condition === thenExpr) return manager.mkOr([condition, elseExpr]);
+      if (
+        (manager.isNot(thenExpr) && manager.getArg(thenExpr, 0) === elseExpr) ||
+        (manager.isNot(elseExpr) && manager.getArg(elseExpr, 0) === thenExpr)
+      )
+        return this.mkEq(condition, thenExpr);
+    }
+    return manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], manager.sorts[thenExpr]);
+  }
+
+  private simplifyNestedEqIte(form: number, negatives: Set<number>, positives: Set<number>) {
+    const manager = this.manager;
+    this.localCtxCost += 3;
+    const isNegated = manager.isNot(form);
+    const atom = isNegated ? manager.getArg(form, 0) : form;
+    const op = manager.getOp(atom);
+    if (op !== OP_EQ && op !== OP_ITE) return -1;
+    const args = manager.getArgs(atom);
+    const simplified = args.map((arg) => this.simplifyLiteral(arg, negatives, positives));
+    if (simplified.every((arg, index) => arg === args[index])) return -1;
+    const result =
+      op === OP_EQ
+        ? this.mkEq(simplified[0], simplified[1])
+        : this.mkNestedIte(simplified[0], simplified[1], simplified[2]);
+    return isNegated ? this.mkNot(result) : result;
+  }
+
+  // Each disjunct is simplified with the others assumed false, forward and then backward, until a
+  // backward pass changes nothing.
+  private simplifyLocalCtx(initialArgs: number[]) {
+    const manager = this.manager;
+    let args = initialArgs;
+    let isSimplified = false;
+    let isModified = false;
+    let isForward = true;
+    for (;;) {
+      const negatives = new Set<number>();
+      const positives = new Set<number>();
+      const kept: number[] = [];
+      const push = (arg: number) => {
+        const isNegated = manager.isNot(arg);
+        const marks = isNegated ? negatives : positives;
+        const atom = isNegated ? manager.getArg(arg, 0) : arg;
+        if (marks.has(atom)) return;
+        marks.add(atom);
+        kept.push(arg);
+      };
+      this.localCtxCost += 2 * args.length;
+      const order = isForward ? args : [...args].reverse();
+      for (const original of order) {
+        let arg = original;
+        if (manager.isNot(arg) && manager.getOp(manager.getArg(arg, 0)) === OP_OR) {
+          const nested = this.simplifyNestedNotOr(
+            manager.getArgs(manager.getArg(arg, 0)),
+            negatives,
+            positives,
+          );
+          if (nested !== -1) {
+            isModified = true;
+            isSimplified = true;
+            arg = nested;
+          }
+        }
+        const nested = this.simplifyNestedEqIte(arg, negatives, positives);
+        if (nested !== -1) {
+          isModified = true;
+          isSimplified = true;
+          arg = nested;
+        }
+        if (manager.isFalse(arg)) continue;
+        if (manager.isTrue(arg)) return arg;
+        if (this.options.isFlatAndOr !== false && manager.getOp(arg) === OP_OR)
+          for (const inner of manager.getArgs(arg)) push(inner);
+        else push(arg);
+      }
+      if (!isForward) {
+        if (!isModified) return isSimplified ? manager.mkOr(args) : -1;
+        kept.reverse();
+        isModified = false;
+      }
+      isForward = !isForward;
+      args = kept;
+    }
   }
 
   private mkAndCore(args: number[]): number | Rewrite {

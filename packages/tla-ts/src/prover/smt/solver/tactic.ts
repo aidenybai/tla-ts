@@ -80,8 +80,8 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["sort_disjunctions", PARAM_BOOL, true],
   ["elim_and", PARAM_BOOL, false, true],
   ["elim_ite", PARAM_BOOL, true],
-  ["local_ctx", PARAM_BOOL, false],
-  ["local_ctx_limit", PARAM_UINT, UINT_MAX],
+  ["local_ctx", PARAM_BOOL, false, true],
+  ["local_ctx_limit", PARAM_UINT, UINT_MAX, true],
   ["blast_distinct", PARAM_BOOL, false, true],
   ["blast_distinct_threshold", PARAM_UINT, UINT_MAX],
   ["som", PARAM_BOOL, false, true],
@@ -147,6 +147,9 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   isEliminatingAnd: getBool(params, "elim_and", false),
   isPullingCheapIte: getBool(params, "pull_cheap_ite", false),
   isKeepingDistinct: !getBool(params, "blast_distinct", false),
+  localCtxLimit: getBool(params, "local_ctx", false)
+    ? getUint(params, "local_ctx_limit", UINT_MAX)
+    : undefined,
   arith: {
     isSom: getBool(params, "som", false),
     isSortSums: getBool(params, "sort_sums", false),
