@@ -489,6 +489,24 @@ export const translateHasPrivate = (
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
+  if (isFunctionObject(node, context) && node.asteriskToken !== undefined) {
+    return useJavaScript(
+      "Allocate",
+      [
+        useJavaScript("Allocate", [heap, identifier("GeneratorPrototypeObject")], context),
+        useJavaScript(
+          "GeneratorFunctionObject",
+          [
+            string(getFunctionName(node)),
+            number(getFunctionLength(getParameters(node))),
+            useJavaScript("NextRef", [heap, number(1)], context),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   if (isFunctionObject(node, context)) {
     return ts.isArrowFunction(node)
       ? useJavaScript(

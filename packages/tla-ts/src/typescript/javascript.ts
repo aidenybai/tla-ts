@@ -350,6 +350,15 @@ ArrowObject(functionPrototype, name, length) ==
                 "length", length, FALSE, FALSE, TRUE),
          "name", name, FALSE, FALSE, TRUE)
 
+\\* A generator function, which can't construct, and its prototype object, which the generator
+\\* objects it makes inherit from. tla-ts can't read the properties of the built-in objects they
+\\* inherit from.
+GeneratorFunctionObject(name, length, prototype) ==
+  Define(ArrowObject(Ref :> "GeneratorFunction.prototype", name, length),
+         "prototype", prototype, TRUE, FALSE, FALSE)
+
+GeneratorPrototypeObject == [EmptyObject EXCEPT !.prototype = Ref :> "GeneratorFunction.prototype.prototype"]
+
 \\* Whether one string of digits is below another of the same length.
 RECURSIVE DigitsBelow(_, _)
 DigitsBelow(left, right) ==

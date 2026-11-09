@@ -456,8 +456,7 @@ export const isFunctionObject = (
   context: Context,
 ): node is ts.ArrowFunction | ts.FunctionExpression =>
   context.heap !== undefined &&
-  (ts.isArrowFunction(node) ||
-    (ts.isFunctionExpression(node) && node.asteriskToken === undefined)) &&
+  (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
   (ts.isBindingElement(node.parent) || ts.isParameter(node.parent)) &&
   node.parent.initializer === node &&

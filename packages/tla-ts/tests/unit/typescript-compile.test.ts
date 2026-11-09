@@ -1245,6 +1245,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("names the generator functions that a parameter's defaults make", async () => {
+    const result = await check(
+      compile(
+        `let names = "";\nfunction f([gen = function* () {}, named = function* inner(a: number) {}] = []) {\n  names = gen.name + " " + named.name + " " + named.length;\n  if (typeof gen !== "function" || Object.getOwnPropertyNames(gen).join() !== "length,name,prototype") throw new Error("missed");\n}\nf();\nif (names !== "gen inner 1") throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
