@@ -1,6 +1,8 @@
 (*---
 description: A _format field that isn't a string makes printing the trace throw a ClassCastException, reported after the violation message, while the exit stays the violation's.
 ref: tlc2/value/impl/RecordValue.java#toString
+features:
+  - tlc-bug
 outcome: safety-violation
 config: |
   INIT Init
