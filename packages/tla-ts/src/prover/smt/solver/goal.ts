@@ -34,6 +34,8 @@ export class Goal {
   precision = PRECISE;
   converters: (ConverterEntry | ModelConversion)[] = [];
   model: ProtoModel | undefined;
+  isProofsEnabled = false;
+  isCoresEnabled = false;
 
   constructor(readonly manager: AstManager) {
     this.forms = new RefVector(manager);
@@ -53,6 +55,8 @@ export class Goal {
     this.isInconsistent = source.isInconsistent;
     this.precision = getPrecisionUnion(source.precision, this.precision);
     this.converters = source.converters;
+    this.isProofsEnabled = source.isProofsEnabled;
+    this.isCoresEnabled = source.isCoresEnabled;
   }
 
   reset() {

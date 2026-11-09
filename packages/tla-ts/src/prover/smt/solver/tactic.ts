@@ -6,24 +6,7 @@ import {
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import {
-  type AstManager,
-  FAMILY_ARITH,
-  FAMILY_BASIC,
-  KIND_APP,
-  KIND_QUANTIFIER,
-  OP_ADD,
-  OP_GE,
-  OP_GT,
-  OP_LE,
-  OP_LT,
-  OP_MUL,
-  OP_NUM,
-  OP_TO_REAL,
-  SORT_BOOL,
-  SORT_INT,
-  SORT_REAL,
-} from "./ast";
+import { type AstManager, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
@@ -34,6 +17,7 @@ import { runFpa2Bv } from "./fpa2bv-tactic";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { propagateValues } from "./propagate-values";
 import { ProtoModel } from "./proto-model";
+import { compileProbe, formatProbeValue, type Probe } from "./probes";
 import { simplifyGoal } from "./quant-tactics";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
@@ -65,10 +49,6 @@ export interface TacticEnvironment {
   manager: AstManager;
   isMbqi: boolean;
   write: (text: string, isDiagnostic: boolean) => void;
-}
-
-interface Probe {
-  (goal: Goal): number;
 }
 
 interface TacticBuilder {
@@ -551,168 +531,6 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
   };
   return (goal: Goal) => run(0, goal);
 };
-
-const forEachExpr = (goal: Goal, visit: (expr: number) => void) => {
-  const manager = goal.manager;
-  const visited = new Set<number>();
-  const todo = [...goal.forms.items].reverse();
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
-    if (visited.has(expr)) continue;
-    visited.add(expr);
-    visit(expr);
-    if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
-    else if (manager.kinds[expr] === KIND_QUANTIFIER) {
-      const data = manager.getQuantifier(expr);
-      todo.push(data.body, ...data.patterns);
-    }
-  }
-};
-
-const countExprs = (goal: Goal, isCounted: (expr: number) => boolean) => {
-  let count = 0;
-  forEachExpr(goal, (expr) => {
-    if (isCounted(expr)) count++;
-  });
-  return count;
-};
-
-const isConst = (manager: AstManager, expr: number) =>
-  manager.kinds[expr] === KIND_APP && manager.getNumArgs(expr) === 0 && !manager.isValue(expr);
-
-const isArithSort = (sort: number) => sort === SORT_INT || sort === SORT_REAL;
-
-const mkLiraProbe =
-  (isInt: boolean, isReal: boolean): Probe =>
-  (goal) => {
-    const manager = goal.manager;
-    return countExprs(goal, (expr) => {
-      if (manager.kinds[expr] !== KIND_APP) return true;
-      const sort = manager.sorts[expr];
-      if (sort !== SORT_BOOL && !(isInt && sort === SORT_INT) && !(isReal && sort === SORT_REAL))
-        return true;
-      const family = manager.getFamily(expr);
-      if (family === FAMILY_BASIC) return false;
-      if (family !== FAMILY_ARITH) return !manager.isUninterpretedConst(expr);
-      const op = manager.getOp(expr);
-      if ([OP_LE, OP_GE, OP_LT, OP_GT, OP_ADD, OP_NUM].includes(op)) return false;
-      if (op === OP_MUL)
-        return manager.getNumArgs(expr) !== 2 || manager.getOp(manager.getArg(expr, 0)) !== OP_NUM;
-      return op !== OP_TO_REAL || !isReal;
-    }) === 0
-      ? 1
-      : 0;
-  };
-
-const NAMED_PROBES = new Map<string, Probe>([
-  ["depth", (goal) => goal.depth],
-  ["size", (goal) => goal.forms.size],
-  ["num-exprs", (goal) => countExprs(goal, () => true)],
-  [
-    "num-consts",
-    (goal) =>
-      countExprs(
-        goal,
-        (expr) => isConst(goal.manager, expr) && goal.manager.sorts[expr] !== SORT_BOOL,
-      ),
-  ],
-  [
-    "num-bool-consts",
-    (goal) =>
-      countExprs(
-        goal,
-        (expr) => isConst(goal.manager, expr) && goal.manager.sorts[expr] === SORT_BOOL,
-      ),
-  ],
-  [
-    "num-arith-consts",
-    (goal) =>
-      countExprs(
-        goal,
-        (expr) => isConst(goal.manager, expr) && isArithSort(goal.manager.sorts[expr]),
-      ),
-  ],
-  ["is-qflia", mkLiraProbe(true, false)],
-  ["is-qflra", mkLiraProbe(false, true)],
-  ["is-qflira", mkLiraProbe(true, true)],
-]);
-
-const UNPORTED_PROBES = new Set(
-  (
-    "memory num-bv-consts produce-proofs produce-model produce-unsat-cores has-quantifiers " +
-    "has-patterns is-propositional is-qfbv is-qfaufbv is-qfbv-eq is-quasi-pb arith-max-deg " +
-    "arith-avg-deg arith-max-bw arith-avg-bw is-qfauflia is-ilp is-qfnia is-qfnra is-nia is-nra " +
-    "is-nira is-lia is-lra is-lira is-qfufnra is-pb is-qffp is-qffpbv is-unbounded is-qffplra"
-  ).split(" "),
-);
-
-const BINARY_PROBES = new Map<string, (first: number, second: number) => number>([
-  ["=", (first, second) => Number(first === second)],
-  ["<=", (first, second) => Number(first <= second)],
-  [">=", (first, second) => Number(first >= second)],
-  ["<", (first, second) => Number(first < second)],
-  [">", (first, second) => Number(first > second)],
-  ["=>", (first, second) => Number(first === 0 || second !== 0)],
-  ["implies", (first, second) => Number(first === 0 || second !== 0)],
-  ["-", (first, second) => first - second],
-  ["/", (first, second) => first / second],
-]);
-
-const NARY_PROBES = new Map<string, (first: number, second: number) => number>([
-  ["and", (first, second) => Number(first !== 0 && second !== 0)],
-  ["or", (first, second) => Number(first !== 0 || second !== 0)],
-  ["+", (first, second) => first + second],
-  ["*", (first, second) => first * second],
-]);
-
-const compileProbe = (sexpr: SExpr, end: SmtToken): Probe => {
-  if (sexpr.kind === "numeral") {
-    const value = Number(sexpr.text);
-    if (value > 2 ** 31 - 1)
-      throw new SmtParseError(
-        "invalid probe, constant is too big to fit in a fixed size integer",
-        end,
-      );
-    return () => value;
-  }
-  if (sexpr.kind !== "list") {
-    if (!isSymbol(sexpr)) throw new SmtParseError("invalid probe, unexpected input", end);
-    const named = NAMED_PROBES.get(sexpr.text);
-    if (named !== undefined) return named;
-    if (UNPORTED_PROBES.has(sexpr.text)) throw new SmtUnsupportedError(`the probe ${sexpr.text}`);
-    throw new SmtParseError(`invalid probe, unknown builtin probe ${sexpr.text}`, end);
-  }
-  const head = sexpr.items[0];
-  if (head === undefined) throw new SmtParseError("invalid probe, arguments expected", end);
-  if (!isSymbol(head)) throw new SmtParseError("invalid probe, symbol expected", end);
-  const children = sexpr.items.slice(1);
-  if (head.text === "not") {
-    if (children.length !== 1)
-      throw new SmtParseError("invalid probe expression, one argument expected", end);
-    const child = compileProbe(children[0], end);
-    return (goal) => Number(child(goal) === 0);
-  }
-  const binary = BINARY_PROBES.get(head.text);
-  if (binary !== undefined) {
-    if (children.length !== 2)
-      throw new SmtParseError("invalid probe expression, two arguments expected", end);
-    const first = compileProbe(children[0], end);
-    const second = compileProbe(children[1], end);
-    return (goal) => binary(first(goal), second(goal));
-  }
-  const nary = NARY_PROBES.get(head.text);
-  if (nary === undefined)
-    throw new SmtParseError(`invalid probe, unknown probe expression ${head.text}`, end);
-  if (children.length === 0)
-    throw new SmtParseError("invalid probe, at least one argument expected", end);
-  const probes = children.map((child) => compileProbe(child, end));
-  return (goal) => probes.map((probe) => probe(goal)).reduce(nary);
-};
-
-const formatProbeValue = (value: number) =>
-  Number.isInteger(value) && Math.abs(value) < 1e6
-    ? String(value)
-    : String(Number(value.toPrecision(6)));
 
 const runCond = (probe: Probe, onTrue: Tactic, onFalse: Tactic) => (goal: Goal) =>
   probe(goal) === 0 ? onFalse(goal) : onTrue(goal);

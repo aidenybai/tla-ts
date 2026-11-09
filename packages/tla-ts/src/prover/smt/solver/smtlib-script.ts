@@ -260,7 +260,18 @@ interface ScriptState {
   objectives: number[];
   scopes: Scope[];
   check: CheckResult | undefined;
+  isProofsEnabled: boolean | undefined;
 }
+
+// Z3 fixes the proof mode at the first command that needs terms.
+const MANAGERLESS_COMMANDS = new Set([
+  "set-option",
+  "set-info",
+  "set-logic",
+  "get-option",
+  "get-info",
+  "echo",
+]);
 
 export const runSmtlibScript = (
   text: string,
@@ -272,6 +283,7 @@ export const runSmtlibScript = (
     isPrintingSuccess: false,
     isProducingModels: true,
     isProducingUnsatCores: false,
+    isProducingProofs: false,
     isExitingOnError: false,
     isDiagnosticOnStdout: false,
     parameters: new Map<string, string>(),
@@ -294,6 +306,7 @@ export const runSmtlibScript = (
       objectives: [],
       scopes: [],
       check: undefined,
+      isProofsEnabled: undefined,
     };
   };
   const script = { state: createState() };
@@ -385,6 +398,8 @@ export const runSmtlibScript = (
     compileTactic({ manager: script.state.manager, isMbqi: settings.isMbqi, write }, sexpr, end);
   const getGoal = () => {
     const goal = new Goal(script.state.manager);
+    goal.isProofsEnabled = settings.isProducingProofs || script.state.isProofsEnabled === true;
+    goal.isCoresEnabled = settings.isProducingUnsatCores;
     for (const assertion of script.state.assertions) goal.assert(assertion);
     return goal;
   };
@@ -693,6 +708,7 @@ export const runSmtlibScript = (
       const isTrue = isSymbol(value, "true");
       if (keyword === ":produce-models") settings.isProducingModels = isTrue;
       if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
+      if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
       if (keyword === ":diagnostic-output-channel")
         settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
       if (keyword === ":int-real-coercions" && !isTrue)
@@ -784,6 +800,8 @@ export const runSmtlibScript = (
       ? (declaration: SmtList) => script.state.reader.declareCommand(declaration)
       : runCommand[head.text];
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
+    if (!MANAGERLESS_COMMANDS.has(head.text))
+      script.state.isProofsEnabled ??= settings.parameters.get("proof") === "true";
     command(list);
     if (settings.isPrintingSuccess && SILENT_COMMANDS.has(head.text)) print("success");
   };
