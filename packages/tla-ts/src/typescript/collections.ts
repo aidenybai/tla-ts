@@ -48,6 +48,7 @@ import {
   isNumberLike,
   type Kind,
   translateUnknown,
+  isTypeReference,
 } from "./types";
 
 interface Unordered {
@@ -1319,6 +1320,72 @@ export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, co
   );
 };
 
+// The kinds of the keys that a new Set or Map holds, which TLC compares, so that they must agree:
+// TLC stops where it compares a number with a string. Model values, such as undefined, null, and
+// symbols, compare with any value. Where the Set or Map's type doesn't tell, this reads the keys
+// that the script gives the variable that holds it.
+const getKeyKinds = (node: ts.NewExpression, context: Context) => {
+  const checker = context.checker;
+  const getKinds = (type: ts.Type) => {
+    const names = getTypeNames(type, checker);
+    return (
+      names &&
+      names
+        .filter((name) => !["undefined", "null", "symbol"].includes(name))
+        .map((name) => (name === "function" ? "object" : name))
+    );
+  };
+  const type = checker.getTypeAtLocation(node);
+  const keyType = isTypeReference(type) ? checker.getTypeArguments(type).at(0) : undefined;
+  const declared = keyType && getKinds(keyType);
+  if (declared !== undefined) return new Set(declared);
+  const holder = node.parent;
+  const name = ts.isVariableDeclaration(holder)
+    ? holder.name
+    : ts.isBinaryExpression(holder) && holder.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ? holder.left
+      : undefined;
+  const symbol = name && ts.isIdentifier(name) ? getSymbol(name, checker) : undefined;
+  const isEntries = node.expression.getText() === "Map";
+  const given = node.arguments?.at(0);
+  const initial =
+    given === undefined
+      ? []
+      : ts.isArrayLiteralExpression(given)
+        ? given.elements.map((element) =>
+            isEntries && ts.isArrayLiteralExpression(element) ? element.elements.at(0) : element,
+          )
+        : [undefined];
+  const getUses = (current: ts.Node): (ts.Expression | undefined)[] => {
+    const access = current.parent;
+    const call = access?.parent;
+    const isKeyCall =
+      ts.isIdentifier(current) &&
+      getSymbol(current, checker) === symbol &&
+      ts.isPropertyAccessExpression(access) &&
+      access.expression === current &&
+      KEY_METHODS.has(access.name.text) &&
+      ts.isCallExpression(call) &&
+      call.expression === access;
+    const nested: (ts.Expression | undefined)[] = [];
+    ts.forEachChild(current, (child) => {
+      nested.push(...getUses(child));
+    });
+    return isKeyCall && ts.isCallExpression(call) ? [call.arguments.at(0), ...nested] : nested;
+  };
+  // A Set or Map that no variable holds has only the keys it starts with.
+  const keys = [...initial, ...(symbol === undefined ? [] : getUses(node.getSourceFile()))];
+  const kinds = keys.map((key) =>
+    key === undefined || ts.isSpreadElement(key)
+      ? undefined
+      : getKinds(checker.getTypeAtLocation(key)),
+  );
+  return kinds.every((kind) => kind !== undefined) ? new Set(kinds.flat()) : undefined;
+};
+
+// The methods of a Set or a Map that take a key.
+const KEY_METHODS = new Set(["add", "has", "delete", "set", "get"]);
+
 export const translateNew = (node: ts.NewExpression, scope: Scope, context: Context) => {
   const constructor = node.expression.getText();
   const argument = node.arguments?.[0];
@@ -1336,6 +1403,15 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
       tuple([]),
       apply("Assert", [boolean(false), string("TLA+ sequences can't have holes")]),
     );
+  }
+  if (constructor === "Set" || constructor === "Map") {
+    const kinds = getKeyKinds(node, context);
+    if (kinds === undefined || kinds.size > 1) {
+      throw new TlaTypeScriptError(
+        `Give a ${constructor} keys of one kind, as TLC can't compare a number with a string`,
+        node,
+      );
+    }
   }
   if (constructor === "Set") {
     if (argument === undefined) return set([]);

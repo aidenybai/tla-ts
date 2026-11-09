@@ -48,7 +48,7 @@ interface Infinite {
 }
 
 // The checker only gives type arguments of type references, which the public API can't detect.
-const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
+export const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
   (type.flags & ts.TypeFlags.Object) !== 0 &&
   ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0;
 
