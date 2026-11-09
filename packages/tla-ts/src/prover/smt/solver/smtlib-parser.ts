@@ -2373,6 +2373,7 @@ export const createSmtlibReader = (
   return {
     declareCommand,
     parseTerm,
+    parseSort: (sexpr: SExpr) => parseSort(sexpr, ""),
     parseFormula,
     parseAssertion,
     getLogicError: logicChecker.checkExpr,

@@ -51,10 +51,13 @@ import { OptContext } from "./opt-context";
 import { isInNraFragment } from "./opt-nlsat";
 import { isSupportedLogic } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
+import { isAstLess } from "./ast-lt";
+import { InvVarShifter } from "./rewriter-tpl";
+import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
 import type { Context } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { printModel } from "./model-printer";
-import { FuncInterp, ProtoModel } from "./proto-model";
+import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
   checkSatUsing,
@@ -574,6 +577,38 @@ export const runSmtlibScript = (
     for (const name of state.names.splice(size)) if (name !== -1) state.manager.decRef(name);
     state.assertionTexts.length = size;
   };
+  const instantiate = (list: SmtList, isNested: boolean) => {
+    const state = script.state;
+    const manager = state.manager;
+    const outer = state.reader.parseTerm(list.items[1] ?? list.end);
+    if (manager.kinds[outer] !== KIND_QUANTIFIER)
+      throw new SmtParseError("invalid command, quantifier expected.", list.end);
+    const quantifier = isNested ? manager.getQuantifier(outer).body : outer;
+    if (manager.kinds[quantifier] !== KIND_QUANTIFIER)
+      throw new SmtParseError("invalid command, nested quantifier expected", list.end);
+    const terms = list.items[2];
+    if (terms?.kind !== "list")
+      throw new SmtParseError("invalid command, '(' expected", terms ?? list.end);
+    const args = terms.items.map((item) => state.reader.parseTerm(item));
+    const sorts = manager.getQuantifier(quantifier).sorts;
+    if (args.length !== sorts.length)
+      throw new SmtParseError(
+        "invalid command, mismatch between the number of quantified variables and the number of arguments.",
+        list.end,
+      );
+    for (let index = args.length - 1; index >= 0; index--)
+      if (manager.sorts[args[index]] !== sorts[index])
+        throw new SmtParseError(`invalid command, sort mismatch at position ${index}`, list.end);
+    const subst = new VarSubst(manager, true);
+    const substituted = subst.apply(manager.getQuantifier(quantifier).body, args);
+    subst.release();
+    const shifter = new InvVarShifter(manager);
+    const result = shifter.shift(substituted, args.length);
+    shifter.release();
+    display(result);
+    manager.decRef(result);
+    manager.decRef(substituted);
+  };
   const runCommand: Record<string, (list: SmtList) => void> = {
     assert: (list) => {
       const state = script.state;
@@ -920,6 +955,41 @@ export const runSmtlibScript = (
       print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
     },
     display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),
+    "dbg-lt": (list) => {
+      const state = script.state;
+      const first = state.reader.parseTerm(list.items[1] ?? list.end);
+      const second = state.reader.parseTerm(list.items[2] ?? list.end);
+      print(String(isAstLess(state.manager, first, second)));
+    },
+    "dbg-some-value": (list) => {
+      const state = script.state;
+      display(
+        getManagerSomeValue(state.manager, state.reader.parseSort(list.items[1] ?? list.end)),
+      );
+    },
+    "dbg-used-vars": (list) => {
+      const manager = script.state.manager;
+      const term = script.state.reader.parseTerm(list.items[1] ?? list.end);
+      const body =
+        manager.kinds[term] === KIND_QUANTIFIER ? manager.getQuantifier(term).body : term;
+      const sorts = getFreeVarSorts(manager, body, manager.freeVarBounds[body]);
+      const lines = sorts.map(
+        (sort, index) =>
+          `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(formatSort(manager, sort), settings.printOptions)})`,
+      );
+      print(`(vars${lines.join("")})`);
+    },
+    "dbg-elim-unused-vars": (list) => {
+      const manager = script.state.manager;
+      const term = script.state.reader.parseTerm(list.items[1] ?? list.end);
+      if (manager.kinds[term] !== KIND_QUANTIFIER) {
+        write(format(term), false);
+        return;
+      }
+      display(elimUnusedVars(manager, term));
+    },
+    "dbg-instantiate": (list) => instantiate(list, false),
+    "dbg-instantiate-nested": (list) => instantiate(list, true),
     echo: (list) => {
       const message = list.items[1];
       if (message?.kind !== "string")
