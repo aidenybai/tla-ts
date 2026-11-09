@@ -64,6 +64,8 @@ interface OptType {
 interface SeqType {
   kind: "Seq";
   element: Type;
+  // The sparse function a sequence becomes when it meets one in the sparse pass.
+  target?: MapType;
 }
 
 // A record of several shapes starts with the position of its shape.
@@ -253,9 +255,12 @@ const createVar = (): VarType => ({ kind: "Var", target: undefined });
 
 const createBool = (): BoolType => ({ kind: "Bool", target: undefined });
 
+// Whether the search compiles in its sparse pass, where a sequence that meets a sparse function
+// becomes one.
+const typing = { isSparse: false };
+
 const resolveType = (type: Type): Type => {
   if (
-    type.kind === "Seq" ||
     type.kind === "Map" ||
     type.kind === "Set" ||
     type.kind === "Lambda" ||
@@ -400,6 +405,12 @@ const unify = (left: Type, right: Type): void => {
     return unify(leftType.values.element, rightType.range);
   }
   const kinds = [leftType.kind, rightType.kind];
+  if (leftType.kind === "Map" && rightType.kind === "Seq") return unify(rightType, leftType);
+  if (leftType.kind === "Seq" && rightType.kind === "Map" && typing.isSparse) {
+    leftType.target = rightType;
+    unify(rightType.keys.element, createInt());
+    return unify(rightType.values.element, leftType.element);
+  }
   if (kinds.includes("Seq") && (kinds.includes("Map") || kinds.includes("Rec"))) throw SPARSE;
   if ([leftType, rightType].some((type) => type.kind === "Int" && type.isSequenceKey)) throw SPARSE;
   if (leftType.kind !== rightType.kind) return unsupported();
@@ -1268,13 +1279,16 @@ const compileBound = (
     );
     const range = compileValue(program, setExpression.range, frame);
     const element = getSetElement(range);
+    const type: SeqType = { kind: "Seq", element };
     return {
-      element: { kind: "Seq", element },
+      element: type,
       header: (name) => {
         const elements = isMask(range.type, program.plains)
           ? `H.bits(${range.emit()})`
           : range.emit();
-        return `for (const ${name} of H.sequences(${elements}, ${low.emit()}, ${high.emit()}))`;
+        const sequences = `H.sequences(${elements}, ${low.emit()}, ${high.emit()})`;
+        const items = getName(program, "s");
+        return `for (const ${name} of ${getMap(type) ? `Array.from(${sequences}, (${items}) => ${writeSequence(program, type, items)})` : sequences})`;
       },
     };
   }
@@ -1425,7 +1439,7 @@ const compileMembership = (
     return {
       type: createBool(),
       emit: () =>
-        `((${sequence}, ${first}, ${last}) => (${last} < ${first} ? ${sequence}.length === 0 : ${first} === 1 && ${sequence}.length === ${last}) && ${sequence}.every((${name}) => ${inner.emit()}))(${element.emit()}, ${low.emit()}, ${high.emit()})`,
+        `((${sequence}, ${first}, ${last}) => (${last} < ${first} ? ${sequence}.length === 0 : ${first} === 1 && ${sequence}.length === ${last}) && ${sequence}.every((${name}) => ${inner.emit()}))(${readSequence(program, element.type, element.emit())}, ${low.emit()}, ${high.emit()})`,
     };
   }
   if (setExpression.kind === "FunctionSet") {
@@ -1574,7 +1588,8 @@ const compileMembership = (
       );
       return {
         type: createBool(),
-        emit: () => `${element.emit()}.every((${name}) => ${test.emit()})`,
+        emit: () =>
+          `${readSequence(program, element.type, element.emit())}.every((${name}) => ${test.emit()})`,
       };
     }
     if (isBuiltin && operator === "DOMAIN") {
@@ -1591,7 +1606,7 @@ const compileMembership = (
         return {
           type: createBool(),
           emit: () =>
-            `((${name}) => ${name} >= 1 && ${name} <= (${target.emit()}).length)(${index.emit()})`,
+            `((${name}) => ${name} >= 1 && ${name} <= (${readSequence(program, target.type, target.emit())}).length)(${index.emit()})`,
         };
       }
       expectRecord(type);
@@ -1788,6 +1803,20 @@ const getLookupCode = (program: Program, map: MapType, code: string, key: string
     ? `H.lookupMask(${code}, ${key})`
     : `H.lookup(${getComparerCode(program, map.keys.element)}, ${code}, ${key})`;
 
+// A sequence that became a sparse function is read as its values at 1..n, and built as the function
+// on 1..n.
+const readSequence = (program: Program, type: Type, code: string) => {
+  const map = getMap(type);
+  if (!map) return code;
+  return `H.toSequence${isMask(map.keys, program.plains) ? "Mask" : ""}(${code})`;
+};
+
+const writeSequence = (program: Program, type: Type, code: string) => {
+  const map = getMap(type);
+  if (!map) return code;
+  return `H.fromSequence${isMask(map.keys, program.plains) ? "Mask" : ""}(${code})`;
+};
+
 const getFindCode = (program: Program, map: MapType, keys: string, key: string) =>
   isMask(map.keys, program.plains)
     ? `H.findMaskKey(${keys}, ${key})`
@@ -1846,7 +1875,12 @@ const compileApplication = (
     unify(argument.type, createInt());
     return {
       type: type.element,
-      emit: () => `H.at(${functionCode.emit()}, (${argument.emit()}) - 1)`,
+      emit: () => {
+        const map = getMap(type);
+        return map
+          ? getLookupCode(program, map, functionCode.emit(), argument.emit())
+          : `H.at(${functionCode.emit()}, (${argument.emit()}) - 1)`;
+      },
     };
   }
   const map = expectMap(type);
@@ -1942,7 +1976,15 @@ const compileExcept = (
       }
       unify(argument.type, createInt());
       if (resolved.kind === "Seq") {
-        steps.push(() => ({ index: `(${argument.emit()}) - 1`, isSparse: false }));
+        steps.push((container) => {
+          const map = getMap(type);
+          return map
+            ? {
+                index: getFindCode(program, map, `${container}[0]`, argument.emit()),
+                isSparse: true,
+              }
+            : { index: `(${argument.emit()}) - 1`, isSparse: false };
+        });
         return resolved.element;
       }
       return unsupported();
@@ -2125,7 +2167,12 @@ const compileBuiltin = (
     );
     return {
       type: sequence.type,
-      emit: () => `(${sequence.emit()}).filter((${name}) => ${test.emit()})`,
+      emit: () =>
+        writeSequence(
+          program,
+          sequence.type,
+          `(${readSequence(program, sequence.type, sequence.emit())}).filter((${name}) => ${test.emit()})`,
+        ),
     };
   }
   if (operator === "SortSeq" && args.length === 2) {
@@ -2148,7 +2195,12 @@ const compileBuiltin = (
     );
     return {
       type: sequence.type,
-      emit: () => `H.sortSeq(${sequence.emit()}, (${left}, ${right}) => ${isBefore.emit()})`,
+      emit: () =>
+        writeSequence(
+          program,
+          sequence.type,
+          `H.sortSeq(${readSequence(program, sequence.type, sequence.emit())}, (${left}, ${right}) => ${isBefore.emit()})`,
+        ),
     };
   }
   const values = args.map((arg) => compileValue(program, arg, frame));
@@ -2159,7 +2211,12 @@ const compileBuiltin = (
     const last = expectInt(end);
     return {
       type: sequence.type,
-      emit: () => `H.subSeq(${sequence.emit()}, ${first.emit()}, ${last.emit()})`,
+      emit: () =>
+        writeSequence(
+          program,
+          sequence.type,
+          `H.subSeq(${readSequence(program, sequence.type, sequence.emit())}, ${first.emit()}, ${last.emit()})`,
+        ),
     };
   }
   if (values.length === 2) {
@@ -2173,7 +2230,7 @@ const compileBuiltin = (
       if (leftKind === "Seq" && rightKind === "Rec") {
         return binary(left, right, createBool(), (leftCode, rightCode) => {
           const count = getFieldCountCode(program, right.type, rightCode);
-          return `${isEqual ? "" : "!"}((${leftCode}).length !== ${count} ? false : H.deopt())`;
+          return `${isEqual ? "" : "!"}((${readSequence(program, left.type, leftCode)}).length !== ${count} ? false : H.deopt())`;
         });
       }
       if (leftKind === "Rec" && rightKind === "Seq") {
@@ -2182,7 +2239,7 @@ const compileBuiltin = (
           right,
           createBool(),
           (leftCode, rightCode) =>
-            `(${leftCode}, ${isEqual ? "" : "!"}((${rightCode}).length === 0 ? false : H.deopt()))`,
+            `(${leftCode}, ${isEqual ? "" : "!"}((${readSequence(program, right.type, rightCode)}).length === 0 ? false : H.deopt()))`,
         );
       }
       unify(left.type, right.type);
@@ -2278,21 +2335,23 @@ const compileBuiltin = (
     }
     if (operator === "Append") {
       unify(left.type, { kind: "Seq", element: right.type });
-      return binary(
-        left,
-        right,
-        left.type,
-        (leftCode, rightCode) => `H.append(${leftCode}, ${rightCode})`,
+      return binary(left, right, left.type, (leftCode, rightCode) =>
+        writeSequence(
+          program,
+          left.type,
+          `H.append(${readSequence(program, left.type, leftCode)}, ${rightCode})`,
+        ),
       );
     }
     if (operator === "\\o" || operator === "\\circ") {
       unify(left.type, { kind: "Seq", element: createVar() });
       unify(right.type, left.type);
-      return binary(
-        left,
-        right,
-        left.type,
-        (leftCode, rightCode) => `(${leftCode}).concat(${rightCode})`,
+      return binary(left, right, left.type, (leftCode, rightCode) =>
+        writeSequence(
+          program,
+          left.type,
+          `(${readSequence(program, left.type, leftCode)}).concat(${readSequence(program, right.type, rightCode)})`,
+        ),
       );
     }
   }
@@ -2309,15 +2368,29 @@ const compileBuiltin = (
     const sequence: Type = createVar();
     if (operator === "Len") {
       unify(operand.type, { kind: "Seq", element: sequence });
-      return { type: createInt(), emit: () => `(${operand.emit()}).length` };
+      return {
+        type: createInt(),
+        emit: () => `(${readSequence(program, operand.type, operand.emit())}).length`,
+      };
     }
     if (operator === "Head") {
       unify(operand.type, { kind: "Seq", element: sequence });
-      return { type: sequence, emit: () => `H.at(${operand.emit()}, 0)` };
+      return {
+        type: sequence,
+        emit: () => `H.at(${readSequence(program, operand.type, operand.emit())}, 0)`,
+      };
     }
     if (operator === "Tail") {
       unify(operand.type, { kind: "Seq", element: sequence });
-      return { type: operand.type, emit: () => `H.tail(${operand.emit()})` };
+      return {
+        type: operand.type,
+        emit: () =>
+          writeSequence(
+            program,
+            operand.type,
+            `H.tail(${readSequence(program, operand.type, operand.emit())})`,
+          ),
+      };
     }
     if (operator === "UNION") {
       const set = getSetElement(operand);
@@ -2367,11 +2440,22 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         expression.args.length === 1
       ) {
         const element: Type = createVar();
+        const inner: SeqType = { kind: "Seq", element };
         const sequences = expectType(compileValue(program, expression.args[0], frame), {
           kind: "Seq",
-          element: { kind: "Seq", element },
+          element: inner,
         });
-        return { type: { kind: "Seq", element }, emit: () => `(${sequences.emit()}).flat()` };
+        const type: SeqType = { kind: "Seq", element };
+        const items = getName(program, "s");
+        return {
+          type,
+          emit: () =>
+            writeSequence(
+              program,
+              type,
+              `(${readSequence(program, sequences.type, sequences.emit())}).flatMap((${items}) => ${readSequence(program, inner, items)})`,
+            ),
+        };
       }
       return inline(program, definition, () =>
         compileValue(program, definition.body, { ...frame, scope: expansion.scope }),
@@ -2556,12 +2640,17 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       const elements = expression.elements.map((inner) =>
         expectType(compileValue(program, inner, frame), element),
       );
+      const type: SeqType = { kind: "Seq", element };
       return {
-        type: { kind: "Seq", element },
+        type,
         emit: () =>
-          elements.length === 0
-            ? "H.EMPTY"
-            : `[${elements.map((inner) => inner.emit()).join(", ")}]`,
+          writeSequence(
+            program,
+            type,
+            elements.length === 0
+              ? "H.EMPTY"
+              : `[${elements.map((inner) => inner.emit()).join(", ")}]`,
+          ),
       };
     }
     case "Record": {
@@ -2724,7 +2813,10 @@ const compileSequenceConstruction = (
     if (set.operator === "DOMAIN") {
       const sequence = compileValue(program, set.args[0], frame);
       if (resolveType(sequence.type).kind !== "Seq") return undefined;
-      return { type: createInt(), emit: () => `(${sequence.emit()}).length` };
+      return {
+        type: createInt(),
+        emit: () => `(${readSequence(program, sequence.type, sequence.emit())}).length`,
+      };
     }
     const [low, high] = set.args;
     if (
@@ -2749,10 +2841,15 @@ const compileSequenceConstruction = (
     element,
   );
   const items = getName(program, "a");
+  const type: SeqType = { kind: "Seq", element };
   return {
-    type: { kind: "Seq", element },
+    type,
     emit: () =>
-      `((${items}) => { for (let ${index} = 1; ${index} <= ${items}.length; ${index}++) ${items}[${index} - 1] = ${body.emit()}; return ${items}; })(new Array(${length.emit()}))`,
+      writeSequence(
+        program,
+        type,
+        `((${items}) => { for (let ${index} = 1; ${index} <= ${items}.length; ${index}++) ${items}[${index} - 1] = ${body.emit()}; return ${items}; })(new Array(${length.emit()}))`,
+      ),
   };
 };
 
@@ -3538,6 +3635,13 @@ const HELPERS = {
   },
   findKey,
   findMaskKey,
+  // TLC takes a function for a sequence when its domain is 1..n.
+  toSequence: (map: Plain[][]) =>
+    map[0].every((key, index) => key === index + 1) ? map[1] : deopt(),
+  toSequenceMask: (map: [number, Plain[]]) =>
+    map[0] === HELPERS.range(1, map[1].length) ? map[1] : deopt(),
+  fromSequence: (values: Plain[]) => [values.map((_, index) => index + 1), values],
+  fromSequenceMask: (values: Plain[]) => [HELPERS.range(1, values.length), values],
   lookup: (compare: Comparer, map: Plain[][], key: Plain) => {
     const index = findKey(compare, map[0], key);
     return index === -1 ? deopt() : map[1][index];
@@ -4271,6 +4375,7 @@ export const runTypedSearch = (
 };
 
 const search = (environment: Environment, check: TypedCheck, plains: Plains): TypedResult => {
+  typing.isSparse = plains.isSparse;
   const program: Program = {
     environment,
     plains,
