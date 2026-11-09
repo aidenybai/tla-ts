@@ -325,7 +325,7 @@ export const getNumeralValue = (text: string) =>
     ? parseInt(text.slice(2), NUMBER_BASES.get(text[1].toLowerCase()))
     : Number(text);
 
-const MODULE_HEADER = /-{4,}[ \t]*MODULE\b/;
+const MODULE_HEADER = /-{4,} *MODULE\b/;
 
 const CODE_TAB = 9;
 const CODE_NEWLINE = 10;
@@ -571,13 +571,8 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
     }
     if (code === CODE_DASH && source.startsWith("----", cursor.index)) {
       const length = skipWhile(source, cursor.index, (next) => next === "-") - cursor.index;
-      if (
-        source
-          .slice(cursor.index + length)
-          .trimStart()
-          .startsWith("MODULE")
-      )
-        cursor.moduleDepth++;
+      const keyword = skipWhile(source, cursor.index + length, (next) => next === " ");
+      if (source.startsWith("MODULE", keyword)) cursor.moduleDepth++;
       pushToken("Separator", "----", length);
       continue;
     }
