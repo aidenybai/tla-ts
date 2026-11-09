@@ -1402,6 +1402,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes the functions that a for-of pattern's defaults make on each iteration", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nlet count = 0;\nlet first: unknown = undefined;\nlet isSame = false;\nfor (var [made = () => 1, named = function inner() {}] of [[], []]) {\n  if (made.name !== "made" || named.name !== "inner") throw new Error("name");\n  if (count === 0) first = made;\n  else isSame = first === made;\n  count += 1;\n}\nif (count !== 2 || isSame) throw new Error("after");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

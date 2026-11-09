@@ -2648,6 +2648,7 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     }
     const isHeapChanged =
       getArgumentsOwner(node, context.checker) !== undefined ||
+      getAllocated(node, context).includes(node) ||
       (ts.isBindingElement(node) && context.heapArrays.has(node)) ||
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||
@@ -2898,11 +2899,20 @@ const translateIterations = (
       throw new TlaTypeScriptError("Declare one element of a for-of", declared);
     }
     rejectCatchRedeclaration(declared.declarations[0]);
-    const bound = bindPattern(declared.declarations[0].name, element, current.scope, context);
-    return letIn(
-      bound.definitions,
-      translateStatements([loop.statement], { ...current, scope: bound.scope }, context, bodyFrame),
-    );
+    const name = declared.declarations[0].name;
+    // Each iteration makes the objects that the pattern's defaults make.
+    return allocateAll(getAllocated(name, context), current, context, (allocated) => {
+      const bound = bindPattern(name, element, allocated.scope, context);
+      return letIn(
+        bound.definitions,
+        translateStatements(
+          [loop.statement],
+          { ...allocated, scope: bound.scope },
+          context,
+          bodyFrame,
+        ),
+      );
+    });
   };
   const inner = {
     ...bindValues(
