@@ -1254,6 +1254,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the constructor of an error that a script's class makes", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nclass TestError extends Error {}\nclass OtherError extends Error {}\nlet matched = 0;\ntry {\n  throw new TestError("failed");\n} catch (error) {\n  if (typeof error === "object" && error !== null && error.constructor === TestError) matched += 1;\n  if (typeof error === "object" && error !== null && error.constructor === OtherError) matched += 10;\n}\nif (matched !== 1) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

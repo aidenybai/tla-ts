@@ -461,12 +461,16 @@ LOCAL IsError(value) ==
   SubSeq(ToString(value), 1, 1) = "[" /\\ DOMAIN value = {"constructor", "message", "name"}
 
 \\* An error inherits its other properties from its constructor's prototype. The message of an error
-\\* that JavaScript throws differs between engines, and tla-ts gives it none.
+\\* that JavaScript throws differs between engines, and tla-ts gives it none. A script can't read or
+\\* change the prototype of an error class that isn't an object tla-ts holds, so its constructor
+\\* property is still the class.
 RECURSIVE Get(_, _, _)
 Get(heap, ref, key) ==
   IF ~IsRef(ref) /\\ IsError(ref)
   THEN CASE key = "message" /\\ ref.message # "" -> ref.message
          [] key = "message" -> Assert(FALSE, "tla-ts can't read the message of this error")
+         [] key = "constructor" /\\ ~IsHeap(ref.constructor) /\\ ~IsBuiltIn(ref.constructor) ->
+              ref.constructor
          [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
   ELSE LET object == Lookup(heap, ref)
        IN CASE key \\in DOMAIN object.values -> Value(object, key)
