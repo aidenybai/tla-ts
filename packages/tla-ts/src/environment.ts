@@ -1146,7 +1146,9 @@ export const createEnvironment = (
     const definition = definitions.get(key);
     return definition?.kind === "Operator"
       ? definition.params.length
-      : (linkedRoot.constants.find((constant) => constant.name === key)?.arity ?? 0);
+      : (linkedRoot.constants.find((constant) => constant.name === key)?.arity ??
+          builtins.get(key)?.arity ??
+          0);
   };
   const constants = new Map<string, Value>();
   const operatorKeys = new Set<string>();
