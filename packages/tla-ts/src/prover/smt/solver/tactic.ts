@@ -1036,6 +1036,11 @@ const compile = (
 export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr, end: SmtToken) =>
   compile(environment, sexpr, end, false);
 
+export const compileInternalTactic = (environment: TacticEnvironment, text: string) => {
+  const list = createCommandReader(text).read() as SmtList;
+  return compile(environment, list, list.end, true).build(new Map());
+};
+
 interface TacticCheck {
   status: number;
   model: ProtoModel | undefined;
@@ -1075,7 +1080,7 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
   return model;
 };
 
-const convertModel = (goal: Goal, model: ProtoModel) =>
+export const convertModel = (goal: Goal, model: ProtoModel) =>
   goal.converters.reduceRight((converted, entry) => {
     if ("convert" in entry) return entry.convert(converted);
     if ("definitions" in entry) return applyDefinitions(entry.definitions, converted);
