@@ -885,8 +885,12 @@ export const createEnvironment = (
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const constants = [...parsed.constants];
-    const variables = parsed.variables.map((variable) => variable.name);
-    const variableLocations = parsed.variables.map((variable) => variable.location);
+    const declaredVariables = parsed.variables.filter(
+      (variable, index) =>
+        parsed.variables.findIndex((other) => other.name === variable.name) === index,
+    );
+    const variables = declaredVariables.map((variable) => variable.name);
+    const variableLocations = declaredVariables.map((variable) => variable.location);
     parsed.extends.forEach((name) => {
       const nested = scope.modules.get(name);
       const standardSymbols = nested ? undefined : getStandardSymbols(name);
