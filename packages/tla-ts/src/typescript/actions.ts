@@ -9,6 +9,7 @@ import {
   removeLast,
 } from "./collections";
 import {
+  getObjectGetter,
   type HeapFunction,
   type Context,
   type FunctionNode,
@@ -75,6 +76,7 @@ import {
   type Scope,
 } from "./scope";
 import {
+  set,
   apply,
   boolean,
   call,
@@ -92,6 +94,7 @@ import {
   unchanged,
 } from "./tla";
 import {
+  isBooleanLike,
   rejectAnyReceiver,
   getField,
   getKind,
@@ -143,6 +146,12 @@ const COMPOUND_OPERATORS = new Map([
   [ts.SyntaxKind.PlusEqualsToken, "+"],
   [ts.SyntaxKind.MinusEqualsToken, "-"],
   [ts.SyntaxKind.AsteriskEqualsToken, "*"],
+]);
+
+const LOGICAL_OPERATORS = new Set([
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
 ]);
 
 const INCREMENT_OPERATORS = new Map<ts.SyntaxKind, string>([
@@ -450,6 +459,32 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     const functions = new Map(after.scope.functions);
     functions.delete(symbol);
     return { ...after, scope: { ...after.scope, functions } };
+  }
+  if (LOGICAL_OPERATORS.has(kind)) {
+    if (!ts.isIdentifier(expression.left)) {
+      throw new TlaTypeScriptError(
+        `${expression.operatorToken.getText()} assigns only to variables`,
+        expression,
+      );
+    }
+    const right = expression.right;
+    const left = expression.left;
+    return assign(left, path, context, (current) => {
+      const isTruthy = isBooleanLike(left, context)
+        ? current
+        : useJavaScript("ToBoolean", [current], context);
+      const assigned = translateExpression(right, path.scope, context);
+      context.prelude.add("Null");
+      return kind === ts.SyntaxKind.QuestionQuestionEqualsToken
+        ? ifExpression(
+            apply("\\in", [current, set([getUndefined(context), identifier("Null")])]),
+            assigned,
+            current,
+          )
+        : kind === ts.SyntaxKind.BarBarEqualsToken
+          ? ifExpression(isTruthy, current, assigned)
+          : ifExpression(isTruthy, assigned, current);
+    });
   }
   const isConcatenated =
     kind === ts.SyntaxKind.PlusEqualsToken && getKind(expression.left, context) === "string";
@@ -1896,11 +1931,23 @@ const translateTry = (
   );
 };
 
+// A callee like f or assert.sameValue, whose evaluation reads no getter.
+const isPlainCallee = (node: ts.Expression, context: Context): boolean =>
+  ts.isIdentifier(node) ||
+  (ts.isPropertyAccessExpression(node) &&
+    !ts.isPrivateIdentifier(node.name) &&
+    getObjectGetter(node, context) === undefined &&
+    !(getSymbol(node.name, context.checker)?.declarations ?? []).some(
+      ts.isGetAccessorDeclaration,
+    ) &&
+    isPlainCallee(node.expression, context));
+
 // The assignment that a statement evaluates first, inside an expression, which can run as a
 // statement before it, since nothing the statement evaluates before it sees the change.
 const getLeadingAssignment = (
   node: ts.Expression,
   results: ReadonlyMap<ts.Expression, Expression>,
+  context: Context,
 ): ts.BinaryExpression | undefined => {
   if (results.has(node)) return undefined;
   if (
@@ -1911,27 +1958,36 @@ const getLeadingAssignment = (
     ts.isPropertyAccessExpression(node) ||
     ts.isElementAccessExpression(node)
   ) {
-    return getLeadingAssignment(node.expression, results);
+    return getLeadingAssignment(node.expression, results, context);
   }
-  if (ts.isConditionalExpression(node)) return getLeadingAssignment(node.condition, results);
+  if (ts.isConditionalExpression(node))
+    return getLeadingAssignment(node.condition, results, context);
+  // A call evaluates its callee first, which reading a getter could make see the change.
+  if (ts.isCallExpression(node)) {
+    const first = node.arguments.at(0);
+    return first !== undefined && isPlainCallee(node.expression, context)
+      ? getLeadingAssignment(first, results, context)
+      : undefined;
+  }
   if (!ts.isBinaryExpression(node)) return undefined;
   const kind = node.operatorToken.kind;
   if (kind !== ts.SyntaxKind.EqualsToken) {
-    return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment
-      ? undefined
-      : getLeadingAssignment(node.left, results);
+    const isAssignment =
+      kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+    if (!isAssignment) return getLeadingAssignment(node.left, results, context);
+    return ts.isIdentifier(node.left) ? node : undefined;
   }
   const isPattern =
     ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
   return ts.isIdentifier(node.left) || isPattern
-    ? (getLeadingAssignment(node.right, results) ?? node)
+    ? (getLeadingAssignment(node.right, results, context) ?? node)
     : undefined;
 };
 
-const getHoistedAssignment = (statement: ts.Statement, path: Path) => {
+const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Context) => {
   const results = path.scope.results;
   if (ts.isExpressionStatement(statement)) {
-    const hoisted = getLeadingAssignment(statement.expression, results);
+    const hoisted = getLeadingAssignment(statement.expression, results, context);
     return hoisted === skipCasts(statement.expression) ? undefined : hoisted;
   }
   const evaluated = ts.isVariableStatement(statement)
@@ -1941,7 +1997,7 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path) => {
       : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
         ? statement.expression
         : undefined;
-  return evaluated === undefined ? undefined : getLeadingAssignment(evaluated, results);
+  return evaluated === undefined ? undefined : getLeadingAssignment(evaluated, results, context);
 };
 
 const translateStatements = (
@@ -1961,7 +2017,7 @@ const translateStatements = (
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
-  const hoisted = getHoistedAssignment(statement, path);
+  const hoisted = getHoistedAssignment(statement, path, context);
   if (hoisted !== undefined) {
     const target = ts.isIdentifier(hoisted.left)
       ? getSymbol(hoisted.left, context.checker)
