@@ -22,6 +22,7 @@ export interface TlcArguments {
   isTraceSpecForced: boolean;
   isTraceSpecDisabled: boolean;
   isTraceBinaryDisabled: boolean;
+  isDiffTrace: boolean;
   isUsage: boolean;
 }
 
@@ -133,12 +134,15 @@ const createDefaults = (): TlcArguments => ({
   isTraceSpecForced: false,
   isTraceSpecDisabled: false,
   isTraceBinaryDisabled: false,
+  isDiffTrace: false,
   isUsage: false,
 });
 
 const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
   "-modelcheck": () => {},
-  "-difftrace": () => {},
+  "-difftrace": (parsed) => {
+    parsed.isDiffTrace = true;
+  },
   "-deadlock": (parsed) => {
     parsed.isDeadlockChecked = false;
   },
