@@ -7,12 +7,7 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import {
-  TlaEvaluationError,
-  TlaIllegalStateError,
-  TlaIncompleteSuccessorError,
-  TlaUnsupportedOperationError,
-} from "./errors";
+import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -1038,11 +1033,6 @@ const compileAction = (
       }));
       const other = expression.other ? getChildRunner(expression.other) : undefined;
       return (run, scope, partial, action, isFixed, onComplete) => {
-        if (run.generator) {
-          throw new TlaUnsupportedOperationError(
-            "Probabilistic evaluation of next-state relation not implemented for CASE yet.",
-          );
-        }
         const context = getContext(run, scope, partial);
         const arm = arms.find((candidate) => {
           const value = evaluate(candidate.condition, context);

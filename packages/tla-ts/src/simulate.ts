@@ -6,8 +6,6 @@ import {
   TlaModuleError,
   TlaStackOverflowError,
   TlaUnsupportedError,
-  TlaUnsupportedOperationError,
-  getUnexpectedException,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "./errors";
@@ -617,9 +615,5 @@ const toEvaluationError = (error: unknown) => {
   return error;
 };
 
-const getUnexpectedPrefix = (error: TlaEvaluationError) => {
-  if (error instanceof TlaUnsupportedOperationError) {
-    return getUnexpectedException("java.lang.UnsupportedOperationException");
-  }
-  return isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;
-};
+const getUnexpectedPrefix = (error: TlaEvaluationError) =>
+  isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;

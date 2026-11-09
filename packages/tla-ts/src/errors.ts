@@ -203,13 +203,6 @@ export class TlaNullPointerError extends TlaEvaluationError {
   }
 }
 
-export class TlaUnsupportedOperationError extends TlaEvaluationError {
-  constructor(message: string) {
-    super(message);
-    this.name = "TlaEvaluationError";
-  }
-}
-
 export class TlaIllegalStateError extends TlaEvaluationError {
   state: (Value | undefined)[];
 
