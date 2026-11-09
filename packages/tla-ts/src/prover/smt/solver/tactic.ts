@@ -26,6 +26,7 @@ import { SolveEqs } from "./solve-eqs";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
+import { lia2card } from "./lia2card";
 import { LOGIC_TACTICS } from "./logic-tactics";
 import {
   createCommandReader,
@@ -413,6 +414,21 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       },
     },
   ],
+  [
+    "lia2card",
+    {
+      descrs: getDescrs("", [["compile_equality", PARAM_BOOL, true]]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          lia2card(
+            environment.manager,
+            goal,
+            getUint(params, "lia2card.max_range", 100),
+            getUint(params, "lia2card.max_ite_nesting", 4),
+          ),
+        ),
+    },
+  ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
@@ -457,7 +473,7 @@ const UNPORTED_TACTICS = new Set(
     "ctx-solver-simplify degree-shift demodulator diff-neq distribute-forall dom-simplify " +
     "dt2bv elim-predicates elim-small-bv elim-term-ite elim-uncnstr2 eq2bv " +
     "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fix-dl-var fm " +
-    "fold-unfold fpa2bv horn horn-simplify injectivity lia2card lia2pb macro-finder " +
+    "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
     "max-bv-sharing nla2bv nlqsat nlsat normalize-bounds nra occf pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "purify-arith qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
