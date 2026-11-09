@@ -18,6 +18,7 @@ import { Der } from "./der";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
+import { factor } from "./factor";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
 import { occf } from "./occf";
@@ -577,6 +578,21 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
+  [
+    "factor",
+    {
+      descrs: getDescrs("", [
+        ["split_factors", PARAM_BOOL, true, true],
+        ["max_search_size", PARAM_UINT, UINT_MAX],
+        ["max_prime", PARAM_UINT, UINT_MAX],
+        ["num_primes", PARAM_UINT, 4],
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          factor(environment.manager, goal, getBool(params, "split_factors", true)),
+        ),
+    },
+  ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   [
     "occf",
@@ -627,7 +643,7 @@ const UNPORTED_TACTICS = new Set(
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
     "degree-shift demodulator diff-neq distribute-forall dom-simplify " +
     "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
-    "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
+    "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
     "max-bv-sharing nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +

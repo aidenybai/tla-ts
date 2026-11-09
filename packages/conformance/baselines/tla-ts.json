@@ -11,8 +11,6 @@
   "tlapm/backends/z3/z3test/old-regressions/smt2/nlbool.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/old-regressions/smt2/t220.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/old-regressions/smt2/t241.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/old-regressions/smt2/t246.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/old-regressions/smt2/t248.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/old-regressions/smt2/t258.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5420.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5429.smt2": "text-mismatch",
