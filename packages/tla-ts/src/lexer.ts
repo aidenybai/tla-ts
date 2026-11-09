@@ -549,8 +549,8 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       continue;
     }
     if (code === CODE_BACKSLASH && source.charCodeAt(cursor.index + 1) === CODE_STAR) {
-      const lineEnd = source.indexOf("\n", cursor.index);
-      advanceOver((lineEnd === -1 ? source.length : lineEnd) - cursor.index);
+      const lineEnd = skipWhile(source, cursor.index, (next) => next !== "\n" && next !== "\r");
+      advanceOver(lineEnd - cursor.index);
       continue;
     }
     if (code === CODE_OPEN_PAREN && source.charCodeAt(cursor.index + 1) === CODE_STAR) {
