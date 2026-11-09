@@ -3,17 +3,18 @@
 // contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { gconvRule, paramsConv, premsConv } from "./conv";
+import { fconvRule, gconvRule, paramsConv, premsConv } from "./conv";
 import { hasMetaPrems } from "./logic";
 import { addSimps, emptySimpset } from "./raw-simplifier";
 import { rewriteCterm, simpleProver } from "./rewriter";
 import { emptySeq, singleSeq } from "./seq";
 import type { Limits } from "./interrupt";
 import type { GoalTactic } from "./tactical";
+import type { Term } from "./term";
 import { reflexive, type Thm } from "./thm";
 
 // The atomize rules apply newest first, as Object_Logic keeps them.
-export const atomizePremsTac = (limits: Limits, rules: readonly Thm[]): GoalTactic => {
+const atomizePrems = (limits: Limits, rules: readonly Thm[]) => {
   const empty = { limits, simpset: emptySimpset, bounds: 0 };
   const context = { ...empty, simpset: addSimps(empty, rules) };
   const atomize = paramsConv(
@@ -21,11 +22,17 @@ export const atomizePremsTac = (limits: Limits, rules: readonly Thm[]): GoalTact
       rewriteCterm({ simprem: true, useprem: false, mutsimp: false }, simpleProver, context, term),
     ),
   );
+  return (term: Term) => (hasMetaPrems(term) ? atomize(term) : reflexive(term));
+};
+
+export const flatRule = (limits: Limits, rules: readonly Thm[], rule: Thm) =>
+  fconvRule(premsConv(atomizePrems(limits, rules)), rule);
+
+export const atomizePremsTac = (limits: Limits, rules: readonly Thm[]): GoalTactic => {
+  const atomize = atomizePrems(limits, rules);
   return (index) => (state) => {
     try {
-      return singleSeq(
-        gconvRule((term) => (hasMetaPrems(term) ? atomize(term) : reflexive(term)), index, state),
-      );
+      return singleSeq(gconvRule(atomize, index, state));
     } catch (error) {
       // CONVERSION fails on THM, CTERM, TERM and TYPE.
       if (
