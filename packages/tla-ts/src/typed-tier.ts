@@ -3877,8 +3877,26 @@ const HELPERS = {
   divide: (left: number, right: number) =>
     right !== 0 ? checkInteger(Math.floor(left / right)) : deopt(),
   normalize: (compare: Comparer, items: Plain[]) => {
-    items.sort(compare);
-    return items.filter((item, index) => index === 0 || compare(items[index - 1], item) !== 0);
+    if (items.length > MAXIMUM_INSERTION_SORT) {
+      items.sort(compare);
+      return items.filter((item, index) => index === 0 || compare(items[index - 1], item) !== 0);
+    }
+    let size = 0;
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      let position = size;
+      let comparison = 1;
+      for (; position > 0; position--) {
+        comparison = compare(item, items[position - 1]);
+        if (comparison >= 0) break;
+      }
+      if (comparison === 0) continue;
+      for (let moved = size; moved > position; moved--) items[moved] = items[moved - 1];
+      items[position] = item;
+      size++;
+    }
+    items.length = size;
+    return items;
   },
   findKey,
   findScannedKey,
