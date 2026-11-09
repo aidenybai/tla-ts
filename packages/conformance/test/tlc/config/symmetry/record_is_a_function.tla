@@ -1,6 +1,8 @@
 (*---
 description: A record isn't a FcnRcdValue, so it fails the function records check.
 ref: tlc2/tool/impl/Tool.java#getSymmetryPerms
+features:
+  - tlc-bug
 outcome: tlc-error
 config: |
   INIT Init

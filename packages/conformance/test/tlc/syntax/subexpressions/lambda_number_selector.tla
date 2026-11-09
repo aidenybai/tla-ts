@@ -1,7 +1,7 @@
 (*---
 description: A number selector cannot enter a LAMBDA.
 ref: "tla2sany/semantic/Generator.java#selectorToNode"
-features: [subexpressions]
+features: [subexpressions, tlc-bug]
 outcome: parse-error
 ---*)
 ---- MODULE lambda_number_selector ----

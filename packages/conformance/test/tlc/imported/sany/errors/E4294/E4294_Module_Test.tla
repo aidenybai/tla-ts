@@ -3,6 +3,7 @@ description: SANY reports E4294. Ported from SANY's error corpus.
 source: tlatools/org.lamport.tlatools/test/tla2sany/semantic/error_corpus/E4294_Module_Test.tla
 features:
   - sany-errors
+  - tlc-bug
 outcome: parse-error
 ---*)
 Nested module declarations cannot occur in between the declaration of a
