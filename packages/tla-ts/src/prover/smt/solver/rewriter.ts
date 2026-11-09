@@ -312,6 +312,34 @@ export class Rewriter extends RewriterTpl {
         : reduced.expr;
   }
 
+  // bool_rewriter::mk_app, for a Boolean operator: an equality is not passed to the theories.
+  mkBoolApp(decl: number, args: number[], sort: number) {
+    const op = this.manager.funcDecls[decl].op;
+    const reduced =
+      op === OP_EQ
+        ? this.mkEqCore(args[0], args[1])
+        : op === OP_DISTINCT
+          ? this.mkDistinct(args)
+          : op === OP_AND
+            ? this.mkAndCore(args)
+            : op === OP_OR
+              ? this.mkOr(args)
+              : op === OP_NOT
+                ? this.mkNot(args[0])
+                : op === OP_ITE
+                  ? this.mkIte(args[0], args[1], args[2])
+                  : op === OP_IMPLIES
+                    ? this.mkOr([this.mkNot(args[0]), args[1]])
+                    : op === OP_XOR
+                      ? this.mkEq(this.mkNot(args[0]), args[1])
+                      : undefined;
+    return reduced === undefined || reduced === -1
+      ? this.manager.mkApp(decl, args, sort)
+      : typeof reduced === "number"
+        ? reduced
+        : reduced.expr;
+  }
+
   mkAppCore(decl: number, args: number[], sort: number): number {
     const reduced = this.reduceAppTop(decl, args, sort);
     return reduced === -1

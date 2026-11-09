@@ -11,14 +11,20 @@ const USED = 2;
 export const getIdentityHash = (key: number) => key;
 
 export class ObjMap<V> {
-  private capacity = INITIAL_CAPACITY;
-  private states = new Uint8Array(INITIAL_CAPACITY);
+  private capacity: number;
+  private states: Uint8Array;
   private slotKeys: number[] = [];
   private values: V[] = [];
   private numDeleted = 0;
   size = 0;
 
-  constructor(private getHash: (key: number) => number) {}
+  constructor(
+    private getHash: (key: number) => number,
+    initialCapacity = INITIAL_CAPACITY,
+  ) {
+    this.capacity = initialCapacity;
+    this.states = new Uint8Array(initialCapacity);
+  }
 
   private findSlot(key: number) {
     const mask = this.capacity - 1;
@@ -136,8 +142,8 @@ export class ObjMap<V> {
 export class ObjHashtable {
   private map: ObjMap<true>;
 
-  constructor(getHash: (key: number) => number) {
-    this.map = new ObjMap(getHash);
+  constructor(getHash: (key: number) => number, initialCapacity = INITIAL_CAPACITY) {
+    this.map = new ObjMap(getHash, initialCapacity);
   }
 
   get size() {

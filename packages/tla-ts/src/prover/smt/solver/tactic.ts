@@ -18,6 +18,7 @@ import { Der } from "./der";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
+import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
 import { domSimplify } from "./dom-simplify";
 import { factor } from "./factor";
@@ -618,6 +619,16 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "ufbv-rewriter",
+    {
+      descrs: getDescrs("", [
+        ["max_memory", PARAM_UINT, UINT_MAX, true],
+        ["produce_models", PARAM_BOOL, false, true],
+      ]),
+      build: (environment) => inPlace((goal) => rewriteUfbv(environment.manager, goal)),
+    },
+  ],
+  [
     "reduce-args",
     {
       descrs: new Map(),
@@ -699,7 +710,7 @@ const UNPORTED_TACTICS = new Set(
     "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat recover-01 reduce-args2 reduce-bv-size " +
     "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
-    "split-clause subpaving symmetry-reduce ufbv-rewriter"
+    "split-clause subpaving symmetry-reduce"
   ).split(" "),
 );
 

@@ -564,6 +564,15 @@ interface SignatureDecl {
   refCount: number;
 }
 
+const hasOwnDeclHash = (family: number) =>
+  family === FAMILY_USER ||
+  family === FAMILY_BV ||
+  family === FAMILY_ARRAY ||
+  family === FAMILY_DATATYPE ||
+  family === FAMILY_FPA ||
+  family === FAMILY_CHAR ||
+  family === FAMILY_SEQ;
+
 export class AstManager {
   // The tables of the expressions are typed arrays indexed by expression, which the collector does
   // not scan. They have room for more expressions than numNodes and double when full, which
@@ -1767,6 +1776,17 @@ export class AstManager {
     return this.declHashes[decl];
   }
 
+  // The hash of Z3's declaration of an application, which for a builtin depends on the sorts.
+  getAppDeclHash(app: number) {
+    const decl = this.decls[app];
+    const funcDecl = this.funcDecls[decl];
+    if (hasOwnDeclHash(funcDecl.family)) return this.declHashes[decl];
+    const args = this.getArgs(app);
+    return funcDecl.op === OP_PATTERN
+      ? this.getPatternHash(args, this.sorts[app])
+      : this.builtinHashes[this.getBuiltinSlot(funcDecl.op, args, this.sorts[app])];
+  }
+
   mkFuncDecl(name: SmtSymbol, domain: number[], range: number, isSkolem = false) {
     this.declHashes[this.funcDecls.length] = this.getFuncDeclHash(
       name,
@@ -1918,14 +1938,7 @@ export class AstManager {
     }
     const nodeArgs = start > 0 ? this.argBuffer : args;
     // The slot comes first, since finding it may replace builtinHashes with one twice the size.
-    const hasOwnHash =
-      funcDecl.family === FAMILY_USER ||
-      funcDecl.family === FAMILY_BV ||
-      funcDecl.family === FAMILY_ARRAY ||
-      funcDecl.family === FAMILY_DATATYPE ||
-      funcDecl.family === FAMILY_FPA ||
-      funcDecl.family === FAMILY_CHAR ||
-      funcDecl.family === FAMILY_SEQ;
+    const hasOwnHash = hasOwnDeclHash(funcDecl.family);
     const builtinSlot =
       hasOwnHash || funcDecl.op === OP_PATTERN
         ? -1
