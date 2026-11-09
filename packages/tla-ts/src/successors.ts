@@ -57,9 +57,9 @@ import {
 import {
   formatValue,
   getStreamedElements,
+  isEqualLikeTlc,
   isFunctionValue,
   isTlcEnumerable,
-  valuesEqual,
   type Value,
 } from "./values";
 
@@ -441,7 +441,7 @@ const compileConjunction = (
         if (assigned === undefined) {
           current = assign(current, conjunct.index, value);
           context = undefined;
-        } else if (!valuesEqual(assigned, value)) {
+        } else if (!isEqualLikeTlc(assigned, value)) {
           return;
         }
         continue;
@@ -455,7 +455,7 @@ const compileConjunction = (
           if (assigned === undefined) {
             unchanged ??= current.slice();
             unchanged[variable.index] = state[variable.index];
-          } else if (!valuesEqual(assigned, state[variable.index])) {
+          } else if (!isEqualLikeTlc(assigned, state[variable.index])) {
             warnChangedUnchanged(run.environment, variable.index, variable.expression);
             return;
           }

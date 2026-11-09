@@ -21,7 +21,13 @@ import {
   type State,
   toUnspecifiedSubscriptError,
 } from "../evaluate";
-import { getStreamedElements, isTlcEnumerable, setTrace, valuesEqual, type Value } from "../values";
+import {
+  getStreamedElements,
+  isEqualLikeTlc,
+  isTlcEnumerable,
+  setTrace,
+  type Value,
+} from "../values";
 import { MESSAGE_CODE } from "./messages";
 
 // Replays a failed computation as TLC's CallStackTool does, walking the predicates in the order
@@ -189,7 +195,7 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
         : error;
     }
   })();
-  return !valuesEqual(before, after);
+  return !isEqualLikeTlc(before, after);
 };
 
 const proceedAssigned = (replay: Replay, items: ActionItem | undefined, partial: Value[]): void => {
@@ -314,7 +320,7 @@ const proceedWithValue = (
     proceed(replay, items, assign(partial, index, value));
     return;
   }
-  if (valuesEqual(assigned, value)) proceed(replay, items, partial);
+  if (isEqualLikeTlc(assigned, value)) proceed(replay, items, partial);
 };
 
 const createItem = (
@@ -563,7 +569,7 @@ const visitUnchanged = (
       const value = replay.current?.[index];
       if (value === undefined) return;
       const assigned = partial[index];
-      if (assigned !== undefined && !valuesEqual(assigned, value)) {
+      if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
         warnChangedUnchanged(replay.environment, index, expression);
         return;
       }
@@ -605,7 +611,7 @@ const visitUnchanged = (
       next: undefined,
     });
     const after = evaluate(expression, { environment, scope, state: partial, next: undefined });
-    if (valuesEqual(before, after)) proceed(replay, items, partial);
+    if (isEqualLikeTlc(before, after)) proceed(replay, items, partial);
   });
 
 const createReplay = (
