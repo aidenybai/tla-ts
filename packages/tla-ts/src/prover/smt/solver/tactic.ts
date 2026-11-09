@@ -17,6 +17,7 @@ import { Der } from "./der";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
+import { normalizeBounds } from "./normalize-bounds";
 import { propagateValues } from "./propagate-values";
 import { ModelEvaluator } from "./model-evaluator";
 import { ProtoModel } from "./proto-model";
@@ -445,6 +446,25 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         }),
     },
   ],
+  [
+    "normalize-bounds",
+    {
+      descrs: getDescrs("", [
+        ["produce_models", PARAM_BOOL, false, true],
+        ["norm_int_only", PARAM_BOOL, true, true],
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) => {
+          checkParams(REWRITER_DESCRS, params);
+          normalizeBounds(
+            environment.manager,
+            goal,
+            getRewriterOptions(environment.manager, params),
+            getBool(params, "norm_int_only", true),
+          );
+        }),
+    },
+  ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
@@ -490,7 +510,7 @@ const UNPORTED_TACTICS = new Set(
     "dt2bv elim-predicates elim-small-bv elim-term-ite elim-uncnstr2 eq2bv " +
     "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fix-dl-var fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
-    "max-bv-sharing nla2bv nlqsat nlsat normalize-bounds nra occf pb-preprocess pb2bv pqffd " +
+    "max-bv-sharing nla2bv nlqsat nlsat nra occf pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "purify-arith qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args reduce-args2 reduce-bv-size " +
