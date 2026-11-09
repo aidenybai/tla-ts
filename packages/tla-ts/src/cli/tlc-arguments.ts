@@ -11,10 +11,12 @@ export interface TlcArguments {
   dump: string[] | undefined;
   fingerprintIndex: number;
   metadir: string | undefined;
+  isRecovering: boolean;
   mode: "model-check" | "simulate" | "generate";
   dfidDepth: number | undefined;
   traceDepth: number;
   traceCount: bigint | undefined;
+  scheduler: "random" | "rl" | "rlaction";
   isTool: boolean;
   isContinued: boolean;
   isDeadlockChecked: boolean;
@@ -27,6 +29,12 @@ export interface TlcArguments {
   errorCodes: number[];
   userFile: string | undefined;
   isUsage: boolean;
+  invariants: RuntimeInvariant[];
+}
+
+export interface RuntimeInvariant {
+  modules: string[];
+  expression: string;
 }
 
 // TLC prints a command line error as -tool asks only if -tool came first. An argument TLC reads
@@ -126,10 +134,12 @@ const createDefaults = (): TlcArguments => ({
   dump: undefined,
   fingerprintIndex: 0,
   metadir: undefined,
+  isRecovering: false,
   mode: "model-check",
   dfidDepth: undefined,
   traceDepth: 100,
   traceCount: undefined,
+  scheduler: "random",
   isTool: false,
   isContinued: false,
   isDeadlockChecked: true,
@@ -142,6 +152,7 @@ const createDefaults = (): TlcArguments => ({
   errorCodes: [],
   userFile: undefined,
   isUsage: false,
+  invariants: [],
 });
 
 const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
@@ -207,6 +218,11 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       }
       cursor.index++;
       const hasFile = options.split(",").some((option) => option.startsWith("file="));
+      parsed.scheduler = options.split(",").includes("sched=rl")
+        ? "rl"
+        : options.split(",").includes("sched=rlaction")
+          ? "rlaction"
+          : "random";
       for (const option of options.split(",").filter((item) => item.startsWith("num="))) {
         const count = option.replace("num=", "");
         parsed.traceCount = parseJavaInteger(count, 64);
@@ -250,7 +266,14 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       continue;
     }
     if (flag === "-inv") {
-      if (take() === undefined) return getMissing();
+      const expression = take();
+      if (expression === undefined) return getMissing();
+      parsed.invariants.push({
+        modules: [
+          ...new Set([...expression.matchAll(/INSTANCE\s+(\w+)/g)].map((match) => match[1])),
+        ],
+        expression,
+      });
       continue;
     }
     if (flag === "-teSpecOutDir") {
@@ -274,6 +297,10 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       if (parseJavaInteger(text, 32) === undefined) {
         return reject(`Error: An integer for -invlevel required. But encountered ${text}`);
       }
+      parsed.invariants.push({
+        modules: ["TLC", "Naturals"],
+        expression: `LET _T == INSTANCE TLC _N == INSTANCE Naturals IN _N!<(_T!TLCGet("level"), ${text})`,
+      });
       continue;
     }
     if (flag === "-debugger") {
@@ -447,6 +474,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         );
       }
       if (flag === "-metadir") parsed.metadir = directory;
+      if (flag === "-recover") parsed.isRecovering = true;
       continue;
     }
     if (flag === "-workers") {

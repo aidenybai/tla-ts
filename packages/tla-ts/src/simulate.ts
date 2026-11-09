@@ -1,4 +1,4 @@
-import type { CheckOptions, Postcondition, TraceStep, Violation } from "./check";
+import type { CheckOptions, TraceStep, Violation } from "./check";
 import {
   isStackOverflow,
   TlaEvaluationError,
@@ -40,6 +40,7 @@ export interface SimulationOptions extends CheckOptions {
   traceCount: bigint | undefined;
   aril: bigint;
   isGenerating: boolean;
+  scheduler: "random" | "rl" | "rlaction";
   onSimulation: (output: SimulationOutput) => void;
 }
 
@@ -83,6 +84,10 @@ const FATAL_CODES = new Set<number>([
 ]);
 
 const INFINITE_DEPTH = 2147483647;
+
+const RL_ALPHA = 0.3;
+const RL_GAMMA = 0.7;
+const RL_REWARD = -10;
 
 const isSameState = (left: Value[], right: Value[]) =>
   left.every((value, index) => isSameValue(value, right[index]));
@@ -144,7 +149,7 @@ export const simulate = (options: SimulationOptions): number => {
           ["aril", "0"],
           ["worker", 1],
           ["install", "unknown"],
-          ["sched", "random"],
+          ["sched", options.scheduler],
         ]);
       case "stats": {
         const actions = new Map<string, number>();
@@ -178,6 +183,17 @@ export const simulate = (options: SimulationOptions): number => {
   if (!search) {
     throw new TlaUnsupportedError("tla-ts can't simulate a specification without variables");
   }
+  const reportPostcondition = (isAfterViolation: boolean) => {
+    const postcondition = search.findPostconditionViolation(isAfterViolation);
+    if (!postcondition) return undefined;
+    if (postcondition.counts !== undefined) (options.onPrint ?? console.log)(postcondition.counts);
+    message(
+      postcondition.code,
+      postcondition.message,
+      formatInnerMessage(postcondition.code, postcondition.message, true),
+    );
+    return postcondition;
+  };
   const temporalProperties = search.properties.liveness;
   const createTemporalChecker = (successors: number[][], states: Value[][]) =>
     withLivenessExitCode(() =>
@@ -302,17 +318,13 @@ export const simulate = (options: SimulationOptions): number => {
           `Invariant ${violated.name} is violated by the initial state:\n${formatState(alias)}`,
         );
         runtime.counterExample = getCounterExample([node]);
-        const postcondition = search.findPostconditionViolation(true);
-        if (postcondition) {
-          message(
-            postcondition.code,
-            postcondition.message,
-            formatInnerMessage(postcondition.code, postcondition.message, true),
-          );
-        }
+        reportPostcondition(true);
         return EXIT_STATUS.safetyViolation;
       }
-      if (search.satisfiesConstraints(state)) initialStates.push(node);
+      if (search.satisfiesConstraints(state)) {
+        search.trackStatePossible(state);
+        initialStates.push(node);
+      }
     } catch (error) {
       return reportInitialException(error, state);
     }
@@ -444,12 +456,11 @@ export const simulate = (options: SimulationOptions): number => {
             };
             return true;
           }
-          if (
-            search.satisfiesConstraints(node.state, current.state) &&
-            search.satisfiesActionConstraints(current.state, node.state)
-          ) {
-            successors.push(node);
-          }
+          if (!search.satisfiesConstraints(node.state, current.state)) return false;
+          search.trackStatePossible(node.state);
+          if (!search.satisfiesActionConstraints(current.state, node.state)) return false;
+          search.trackActionPossible(current.state, node.state);
+          successors.push(node);
           return false;
         },
         action.scope,
@@ -473,11 +484,59 @@ export const simulate = (options: SimulationOptions): number => {
     return { successors, error: failure.error };
   };
   const current = { node: initialStates[0] };
+  const qualities = nextActions.map(() => new Map<bigint | SpecAction, number>());
+  const getQualityKey = (node: TraceNode) =>
+    options.scheduler === "rlaction" ? node.action : runtime.getFingerprint(node.state);
+  const getRewardOf = (node: TraceNode) =>
+    search.getReward(node.predecessor?.state, node.state, RL_REWARD);
+  const getNextActionIndex = (node: TraceNode) => {
+    if (options.scheduler === "random") {
+      return Math.floor(workerRandom.nextDouble() * nextActions.length);
+    }
+    const key = getQualityKey(node);
+    qualities.forEach((quality) => {
+      if (!quality.has(key)) quality.set(key, 0);
+    });
+    const weights = qualities.map((quality) => Math.exp(quality.get(key) ?? 0));
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    const ranked = weights
+      .map((weight, index) => ({ index, weight: weight / total }))
+      .sort((left, right) => right.weight - left.weight);
+    const random = workerRandom.nextDouble();
+    const cumulative = { weight: 0 };
+    const chosen = ranked.find((item, position) => {
+      cumulative.weight = position === 0 ? item.weight : cumulative.weight + item.weight;
+      return cumulative.weight >= random;
+    });
+    return (chosen ?? ranked[ranked.length - 1]).index;
+  };
+  const markDisabled = (index: number, node: TraceNode) => {
+    if (options.scheduler === "random") return;
+    // TLC's rlaction scheduler stores the reward, then overwrites it as the rl scheduler does.
+    if (options.scheduler === "rlaction") getRewardOf(node);
+    qualities[index].set(getQualityKey(node), -Number.MAX_VALUE);
+  };
+  const learnTrace = (last: TraceNode) => {
+    for (let node = last; node.predecessor; node = node.predecessor) {
+      const key = getQualityKey(node);
+      const maxQuality = qualities.reduce(
+        (max, quality) => Math.max(max, quality.get(key) ?? -Number.MAX_VALUE),
+        -Number.MAX_VALUE,
+      );
+      const quality = qualities[nextActions.indexOf(node.action)];
+      const predecessorKey = getQualityKey(node.predecessor);
+      quality.set(
+        predecessorKey,
+        (1 - RL_ALPHA) * (quality.get(predecessorKey) ?? 0) +
+          RL_ALPHA * (getRewardOf(node) + RL_GAMMA * maxQuality),
+      );
+    }
+  };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
     current.node = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
     for (let depth = 0; depth < traceDepth; depth++) {
       if (runtime.isStopped) return "stopped";
-      const choice = { index: Math.floor(workerRandom.nextDouble() * nextActions.length) };
+      const choice = { index: getNextActionIndex(current.node) };
       const prime = nextPrime(workerRandom);
       const found: { successors: TraceNode[] } = { successors: [] };
       for (let attempt = 0; attempt < nextActions.length; attempt++) {
@@ -485,6 +544,7 @@ export const simulate = (options: SimulationOptions): number => {
         if (result.error) return result.error;
         found.successors = result.successors;
         if (found.successors.length > 0) break;
+        markDisabled(choice.index, current.node);
         choice.index = (choice.index + prime) % nextActions.length;
       }
       if (found.successors.length === 0) {
@@ -510,6 +570,7 @@ export const simulate = (options: SimulationOptions): number => {
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
     statistics.levelM2 += delta * (length - statistics.levelMean);
+    if (options.scheduler === "rl") learnTrace(current.node);
     return undefined;
   };
   const toException = (error: unknown, node: TraceNode): WorkerError => {
@@ -590,16 +651,7 @@ export const simulate = (options: SimulationOptions): number => {
   const last = reported[reported.length - 1];
   const errorStatus = last ? getMessageExitStatus(last.code) : EXIT_STATUS.success;
   if (last) runtime.counterExample = getCounterExample(getTrace(last.node));
-  const postcondition: Postcondition | undefined = search.findPostconditionViolation(
-    last !== undefined,
-  );
-  if (postcondition) {
-    message(
-      postcondition.code,
-      postcondition.message,
-      formatInnerMessage(postcondition.code, postcondition.message, true),
-    );
-  }
+  const postcondition = reportPostcondition(last !== undefined);
   const postconditionStatus = postcondition
     ? getMessageExitStatus(postcondition.code)
     : EXIT_STATUS.success;

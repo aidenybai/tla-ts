@@ -179,6 +179,7 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2165, "Choose can only deal with numbers up to %1%", false],
   [2169, "The %1% argument of %2% should be a %3%, but instead it is:\n%4%", true],
   [2170, "Argument mismatch in operator application.", false],
+  [2171, "Parsing or semantic analysis failed.%1%", false],
   [2176, "Applying %1% to the following value,\nwhich is not %2%:\n%3%", true],
   [
     2177,
@@ -353,6 +354,7 @@ const INNER_MESSAGE_PREFIXES = new Map([
   [1000, "\n: "],
   [2105, "failed.\n"],
   [2154, "but it produced the following error:\n"],
+  [2171, "Parsing or semantic analysis failed."],
   [2213, ":\n"],
   [2281, " - specifically: "],
   [2405, "failed.\n"],

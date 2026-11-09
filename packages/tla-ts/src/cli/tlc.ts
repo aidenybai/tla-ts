@@ -42,7 +42,7 @@ import {
 } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { check } from "../parallel";
-import { parseModule } from "../parser";
+import { extractModule, parseModule } from "../parser";
 import { simulate, type SimulationOutput, type SimulationStatistics } from "../simulate";
 import type { StateDump } from "../state-graph";
 import {
@@ -51,7 +51,11 @@ import {
   getOptimisticProbability,
   getOutDegreeSummary,
 } from "../tlc/summary";
-import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
+import {
+  getSanyStandardModules,
+  SANY_174_STANDARD_MODULES,
+  SANY_STANDARD_MODULES,
+} from "../sany/modules";
 import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
 import { getTlcFingerprint } from "../tlc/fingerprint";
 import type { TlcVersion } from "../tlc/version";
@@ -67,6 +71,7 @@ import {
 } from "../tlc/messages";
 import { formatState } from "../values";
 import { USAGE } from "./options";
+import { addRuntimeInvariants } from "./runtime-invariants";
 import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
 import {
   createModuleLoader,
@@ -728,7 +733,7 @@ const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
   printer.print(
     MESSAGE_CODE.simulating,
     MESSAGE_LEVEL.none,
-    `Running Random Simulation with seed ${args.seed} with ${workers}).`,
+    `Running ${args.scheduler === "rl" ? "RL" : "Random"} Simulation with seed ${args.seed} with ${workers}).`,
   );
 };
 
@@ -907,14 +912,18 @@ const checkSpec = async (
       describeFile: createFileDescriber(specPath, directories, java, args.metadir, version),
       version,
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
-      rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
+      rootExtendees: [
+        ...(isRecorded ? ["_TLCTrace"] : []),
+        ...args.invariants.flatMap((invariant) => invariant.modules),
+      ],
       suppressedCodes: args.suppressedCodes,
       errorCodes: args.errorCodes,
       onPrint: (text) => process.stdout.write(text),
       onPrintError: (text) => process.stderr.write(text),
     },
   );
-  if (sany.isFailed) {
+  const specification = sany.specification;
+  if (sany.isFailed || specification === undefined) {
     printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     printParsingFailed();
     printFinished();
@@ -930,6 +939,15 @@ const checkSpec = async (
       );
     }
     const userFile = args.userFile;
+    const standardModules = getSanyStandardModules(version);
+    const invariants = addRuntimeInvariants(
+      source,
+      specification.root,
+      args.invariants,
+      (name) => loadModule(name) ?? standardModules.get(name) ?? extractModule(source, name),
+      version,
+    );
+    config.invariants.push(...invariants.names);
     const options: CheckOptions = {
       workers,
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
@@ -943,7 +961,7 @@ const checkSpec = async (
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
-      source,
+      source: invariants.source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
       loadModule,
@@ -968,6 +986,7 @@ const checkSpec = async (
         traceCount: args.traceCount,
         aril: args.aril,
         isGenerating: args.mode === "generate",
+        scheduler: args.scheduler,
         onSimulation: (output) => printSimulation(printer, output),
       });
       printFinished();
@@ -1027,6 +1046,10 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
   if (unsupportedFormat) {
     console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
+    return 1;
+  }
+  if (parsed.isRecovering) {
+    console.error("Error: tla-ts can't recover a model check from a checkpoint.");
     return 1;
   }
   if (parsed.fingerprintIndex !== 0) {
