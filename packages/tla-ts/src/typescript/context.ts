@@ -451,6 +451,115 @@ const isReturning = (node: ts.Node): boolean =>
 
 // A function that a script makes once and calls with new, which it makes into objects on the heap
 // as it does a heap class: a constructor object, and the prototype that its instances inherit.
+// Whether a function assigns a property or a variable it doesn't declare, itself or through the
+// functions it calls.
+export const changesState = (
+  callee: ts.Node,
+  node: ts.Node,
+  context: Context,
+  visited: Set<ts.Node>,
+): boolean => {
+  const target =
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ? node.left
+      : (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+          (node.operator === ts.SyntaxKind.PlusPlusToken ||
+            node.operator === ts.SyntaxKind.MinusMinusToken)
+        ? node.operand
+        : ts.isDeleteExpression(node)
+          ? node.expression
+          : undefined;
+  const declaration =
+    target !== undefined && ts.isIdentifier(skipCasts(target))
+      ? context.checker.getSymbolAtLocation(skipCasts(target))?.valueDeclaration
+      : undefined;
+  if (
+    target !== undefined &&
+    (declaration === undefined ||
+      declaration.getSourceFile() !== callee.getSourceFile() ||
+      declaration.pos < callee.pos ||
+      declaration.end > callee.end)
+  ) {
+    return true;
+  }
+  if (ts.isCallExpression(node)) {
+    const called =
+      getCallee(node.expression, context) ?? getCalledMethod(node.expression, context)?.method;
+    if (called !== undefined && !visited.has(called)) {
+      visited.add(called);
+      if (changesState(called, called, context, visited)) return true;
+    }
+  }
+  return (
+    ts.forEachChild(node, (child) => changesState(callee, child, context, visited) || undefined) ??
+    false
+  );
+};
+
+const accessorFunctions = new WeakMap<ts.SourceFile, Map<string, HeapFunction[]>>();
+
+// The functions that a script writes as the get or the set of a property descriptor, which a read
+// or a write of a property that tla-ts can't resolve may run.
+const getAccessorFunctions = (node: ts.Node, field: "get" | "set", context: Context) => {
+  const file = node.getSourceFile();
+  const known = accessorFunctions.get(file);
+  if (known !== undefined) return known.get(field) ?? [];
+  const found = new Map<string, HeapFunction[]>([
+    ["get", []],
+    ["set", []],
+  ]);
+  const visit = (child: ts.Node) => {
+    const list =
+      ts.isPropertyAssignment(child) &&
+      (ts.isIdentifier(child.name) || ts.isStringLiteral(child.name))
+        ? found.get(child.name.text)
+        : undefined;
+    const accessor =
+      list === undefined || !ts.isPropertyAssignment(child)
+        ? undefined
+        : getCallee(child.initializer, context);
+    if (
+      list !== undefined &&
+      accessor !== undefined &&
+      (ts.isFunctionDeclaration(accessor) || ts.isFunctionExpression(accessor)) &&
+      getParameters(accessor).every((parameter) => parameter.dotDotDotToken === undefined) &&
+      !list.includes(accessor)
+    ) {
+      list.push(accessor);
+    }
+    ts.forEachChild(child, visit);
+  };
+  visit(file);
+  accessorFunctions.set(file, found);
+  return found.get(field) ?? [];
+};
+
+// A setter takes one argument, so a function that declares more parameters would hold undefined
+// in ones its types say it can't.
+export const getSetters = (node: ts.Node, context: Context) =>
+  getAccessorFunctions(node, "set", context).filter((setter) => getParameters(setter).length <= 1);
+
+// Whether a node makes a function or an object, which only a statement can.
+const isMaking = (node: ts.Node): boolean =>
+  ts.isFunctionLike(node) ||
+  ts.isClassLike(node) ||
+  ts.isObjectLiteralExpression(node) ||
+  ts.isNewExpression(node) ||
+  (ts.forEachChild(node, (child) => isMaking(child) || undefined) ?? false);
+
+// The getters that a read can run as an expression, which take no argument, change nothing, and
+// make no function or object.
+export const getGetters = (node: ts.Node, context: Context) =>
+  getAccessorFunctions(node, "get", context).filter(
+    (getter) =>
+      getParameters(getter).length === 0 &&
+      getter.body !== undefined &&
+      !isMaking(getter.body) &&
+      !changesState(getter, getter.body, context, new Set([getter])),
+  );
+
 export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFunction => {
   if (context.heap === undefined) return false;
   if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;

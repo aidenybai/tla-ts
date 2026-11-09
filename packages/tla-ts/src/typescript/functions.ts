@@ -7,16 +7,19 @@ import {
   type FunctionNode,
   getCallee,
   getFunction,
+  getGetters,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
   type HelperDeclaration,
   isInlined,
+  share,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
-import { translateObjectValue } from "./heap";
+import { translateFunctionValue, translateObjectValue } from "./heap";
+import { useJavaScript } from "./javascript";
 import {
   type Bound,
   bindNames,
@@ -33,6 +36,7 @@ import {
   defineAt,
   getLocation,
   identifier,
+  ifExpression,
   junction,
   lambda,
   locate,
@@ -250,6 +254,52 @@ export const translateGetterCall = (
   const value = inlineCall(called.method, [], scope, context, called);
   context.inProgress.delete(called.method);
   return value;
+};
+
+// A read of a property that tla-ts can't resolve, which runs the getter it finds there of those
+// that the script defines and that change nothing.
+export const translateFoundGetter = (
+  node: ts.Expression,
+  heap: Expression,
+  object: Expression,
+  key: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const getters = getGetters(node, context).filter(
+    (getter) => !context.inProgress.has(getter) && !(scope.isCatching && mayThrow(getter, context)),
+  );
+  if (getters.length === 0) return useJavaScript("Get", [heap, object, key], context);
+  return share(heap, "heap", context, (sharedHeap) =>
+    share(object, "object", context, (sharedObject) =>
+      share(key, "key", context, (sharedKey) =>
+        getters.reduceRight(
+          (rest, getter) => {
+            if (getter.body === undefined) return rest;
+            context.inProgress.add(getter);
+            const value = translateBody(
+              getter.body,
+              { ...scope, receiver: { value: sharedObject, method: getter } },
+              context,
+            );
+            context.inProgress.delete(getter);
+            return ifExpression(
+              junction("And", [
+                useJavaScript("IsRef", [sharedObject], context),
+                apply("=", [
+                  useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context),
+                  translateFunctionValue(getter, context),
+                ]),
+              ]),
+              value,
+              rest,
+            );
+          },
+          useJavaScript("Get", [sharedHeap, sharedObject, sharedKey], context),
+        ),
+      ),
+    ),
+  );
 };
 
 // A function body that computes a value, as a TLA+ expression.

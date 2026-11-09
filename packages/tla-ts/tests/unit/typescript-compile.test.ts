@@ -426,6 +426,26 @@ describe("top-level statements", () => {
     ).toThrow("Give this value a type to use its properties");
   });
 
+  it("stop the check at a setter it can't call, before what follows", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      const holder: { [key: string]: unknown } = {};
+      Object.defineProperty(holder, "single", {
+        set: function (value: unknown) {
+          count = 2;
+        },
+      });
+      Object.defineProperty(holder, "pair", {
+        set: function (first: unknown, second?: unknown) {
+          count = 1;
+        },
+      });
+      holder.pair = 1;
+      if (count !== 1) throw new Error("the setter didn't run");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call setters");
+  });
+
   it("stop the check at a getter it can't call, though nothing reads what it gives", async () => {
     const result = await checkModel(`
       const holder: { [key: string]: unknown } = {};

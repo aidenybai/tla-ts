@@ -26,6 +26,8 @@ import {
   getPrivateKey,
   getParameters,
   getRunConstructor,
+  getSetters,
+  changesState,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
@@ -56,6 +58,7 @@ import {
   translateHasPrivate,
   translateHoldsMethod,
   translateObjectChange,
+  translateFunctionValue,
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
@@ -1260,13 +1263,47 @@ const translateExpressionStatement = (
       ? expression.operand
       : undefined;
   const write = written === undefined ? undefined : getHeapWrite(written, path, context);
-  return write === undefined
-    ? continueWith(assigned)
-    : ifThenElse(
-        useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
-        continueWith(assigned),
-        throwTypeError(path, expression, context, frame),
-      );
+  if (write === undefined) return continueWith(assigned);
+  const translateWrite = (next: (path: Path) => Formula) =>
+    ifThenElse(
+      useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
+      shareHeap(assigned, context, next),
+      throwTypeError(path, expression, context, frame),
+    );
+  // A write to a property whose setter tla-ts can't resolve runs the setter it finds there.
+  const setters = getSetters(expression, context).filter((setter) => !frame.inlining.has(setter));
+  if (
+    !ts.isBinaryExpression(expression) ||
+    expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    setters.length === 0
+  ) {
+    return translateWrite(continueWith);
+  }
+  const right = expression.right;
+  return translateJoined(expression, path, context, continueWith, (next) =>
+    setters.reduceRight(
+      (rest, setter) =>
+        ifThenElse(
+          apply("=", [
+            useJavaScript("SetterOf", [write.heap, write.ref, write.key], context),
+            translateFunctionValue(setter, context),
+          ]),
+          inlineBody(
+            expression,
+            setter,
+            [right],
+            { value: write.ref, method: setter },
+            path,
+            context,
+            frame,
+            next,
+            false,
+          ),
+          rest,
+        ),
+      translateWrite(next),
+    ),
+  );
 };
 
 const isCatchParameter = (node: ts.Node, name: string): boolean => {
@@ -1323,53 +1360,6 @@ const isHeapCall = (
   const callee =
     (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
-};
-
-// Whether a function assigns a property or a variable it doesn't declare, itself or through the
-// functions it calls.
-const changesState = (
-  callee: ts.Node,
-  node: ts.Node,
-  context: Context,
-  visited: Set<ts.Node>,
-): boolean => {
-  const target =
-    ts.isBinaryExpression(node) &&
-    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      ? node.left
-      : (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-          (node.operator === ts.SyntaxKind.PlusPlusToken ||
-            node.operator === ts.SyntaxKind.MinusMinusToken)
-        ? node.operand
-        : ts.isDeleteExpression(node)
-          ? node.expression
-          : undefined;
-  const declaration =
-    target !== undefined && ts.isIdentifier(skipCasts(target))
-      ? context.checker.getSymbolAtLocation(skipCasts(target))?.valueDeclaration
-      : undefined;
-  if (
-    target !== undefined &&
-    (declaration === undefined ||
-      declaration.getSourceFile() !== callee.getSourceFile() ||
-      declaration.pos < callee.pos ||
-      declaration.end > callee.end)
-  ) {
-    return true;
-  }
-  if (ts.isCallExpression(node)) {
-    const called =
-      getCallee(node.expression, context) ?? getCalledMethod(node.expression, context)?.method;
-    if (called !== undefined && !visited.has(called)) {
-      visited.add(called);
-      if (changesState(called, called, context, visited)) return true;
-    }
-  }
-  return (
-    ts.forEachChild(node, (child) => changesState(callee, child, context, visited) || undefined) ??
-    false
-  );
 };
 
 // A call to a function or a method that changes state, which inlines as statements that give its
@@ -1632,11 +1622,16 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
         }
       });
     }
-    const setter = getAssignedSetter(node, context);
-    if (setter !== undefined && !visited.has(setter)) {
+    const setters =
+      written !== undefined &&
+      (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written))
+        ? [getAssignedSetter(node, context) ?? [], getSetters(node, context)].flat()
+        : [];
+    setters.forEach((setter) => {
+      if (visited.has(setter)) return;
       visited.add(setter);
       visit(setter);
-    }
+    });
     ts.forEachChild(node, visit);
   };
   visit(loop);

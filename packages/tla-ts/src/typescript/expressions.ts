@@ -41,6 +41,7 @@ import {
 } from "./exceptions";
 import {
   getDefinition,
+  translateFoundGetter,
   translateGetterCall,
   translateHelperCall,
   translateLocalCall,
@@ -878,9 +879,12 @@ const translatePropertyAccess = (
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
   if (getKind(receiver, context) === "object" || isHeapBuiltIn(receiver, scope, context)) {
-    return useJavaScript(
-      "Get",
-      [getHeap(scope, node, context), translateObjectValue(receiver, scope, context), string(name)],
+    return translateFoundGetter(
+      node,
+      getHeap(scope, node, context),
+      translateObjectValue(receiver, scope, context),
+      string(name),
+      scope,
       context,
     );
   }
@@ -914,13 +918,12 @@ const translateElementAccess = (
   if (getterRead !== undefined) return getterRead;
   const kind = getKind(node.expression, context);
   if (kind === "object" || isHeapBuiltIn(node.expression, scope, context)) {
-    return useJavaScript(
-      "Get",
-      [
-        getHeap(scope, node, context),
-        translateObjectValue(node.expression, scope, context),
-        translatePropertyKey(node.argumentExpression, scope, context),
-      ],
+    return translateFoundGetter(
+      node,
+      getHeap(scope, node, context),
+      translateObjectValue(node.expression, scope, context),
+      translatePropertyKey(node.argumentExpression, scope, context),
+      scope,
       context,
     );
   }

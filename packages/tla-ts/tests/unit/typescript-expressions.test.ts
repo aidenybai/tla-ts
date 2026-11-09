@@ -544,6 +544,48 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const bumped = bump(2);`,
     ],
     [
+      "[before, after, twice, base]",
+      `const holder: { [key: string]: unknown } = { base: 4 };
+      let data: unknown = "first";
+      const getData = function () {
+        return data;
+      };
+      Object.defineProperty(holder, "data", { get: getData, configurable: true });
+      Object.defineProperty(holder, "twice", {
+        get: function (this: { base: number }) {
+          return this.base * 2;
+        },
+      });
+      const read = (target: { [key: string]: unknown }, key: string) => target[key];
+      const before = read(holder, "data");
+      data = "second";
+      const after = read(holder, "data");
+      const twice = read(holder, "twice");
+      const base = read(holder, "base");`,
+    ],
+    [
+      "[seen, logged.last, plain]",
+      `const holder: { [key: string]: unknown } = {};
+      let seen: unknown = 0;
+      const logged: { last?: unknown } = {};
+      const setSeen = function (value: unknown) {
+        seen = value;
+      };
+      Object.defineProperty(holder, "seen", { set: setSeen });
+      Object.defineProperty(holder, "logged", {
+        set: function (value: unknown) {
+          logged.last = value;
+        },
+      });
+      const write = (target: { [key: string]: unknown }, key: string, value: unknown) => {
+        target[key] = value;
+      };
+      write(holder, "seen", 7);
+      write(holder, "logged", "kept");
+      write(holder, "plain", 3);
+      const plain = holder.plain;`,
+    ],
+    [
       "[unset, flag, zero, empty, kept, held, shown]",
       `const box = {};
       let unset: unknown = undefined;
