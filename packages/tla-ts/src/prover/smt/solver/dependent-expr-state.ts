@@ -21,8 +21,7 @@ export class DependentExprState {
     return form;
   }
 
-  // indices: the formulas of the goal when the simplifier starts, until it is inconsistent or
-  // canceled. Each step counts a step of the resource limit.
+  // Each step counts a step of the resource limit.
   forEachIndex(visit: (index: number) => void) {
     const goal = this.goal;
     const end = goal.forms.size;

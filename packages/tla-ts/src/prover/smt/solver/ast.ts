@@ -1776,7 +1776,6 @@ export class AstManager {
     return this.declHashes[decl];
   }
 
-  // The hash of Z3's declaration of an application, which for a builtin depends on the sorts.
   getAppDeclHash(app: number) {
     const decl = this.decls[app];
     const funcDecl = this.funcDecls[decl];

@@ -22,7 +22,6 @@ export interface PolynomialResult {
   denominator: bigint;
 }
 
-// mkVar gives the variable of a term that is not a polynomial operation.
 export const toPolynomial = (
   manager: AstManager,
   pm: PolynomialManager,
@@ -87,7 +86,6 @@ export const toPolynomial = (
   return convert(term);
 };
 
-// default_expr2polynomial: each term that is not a polynomial operation becomes a fresh variable.
 export class Expr2Polynomial {
   private termToVar = new Map<number, number>();
   private varToTerm: RefVector;

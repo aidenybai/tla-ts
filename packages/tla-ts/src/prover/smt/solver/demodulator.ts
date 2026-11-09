@@ -72,7 +72,6 @@ const getOffsetKey = (node: ExprOffset) => node.expr * 2 + node.offset;
 const isUninterp = (manager: AstManager, expr: number) =>
   manager.kinds[expr] === KIND_APP && manager.funcDecls[manager.decls[expr]].family === FAMILY_USER;
 
-// for_each_expr: each subterm once, with the patterns of a quantifier.
 const forEachSubterm = (manager: AstManager, expr: number, visit: (term: number) => void) => {
   const visited = new Set<number>();
   const todo = [expr];
@@ -295,7 +294,6 @@ class Substitution {
   }
 }
 
-// demodulator_match_subst: matches the left side of a rule against the arguments of a term.
 class MatchSubstitution {
   readonly subst: Substitution;
   private cache = new Set<string>();
