@@ -175,14 +175,33 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   return isFunctionPrototype || isHeapType(type, node, context) ? "object" : "other";
 };
 
+const getMembers = (node: ts.Node, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  return type.isUnion() ? type.types : [type];
+};
+
+const isGeneratorMember = (type: ts.Type) => type.getSymbol()?.name === "Generator";
+
 export const isGeneratorType = (node: ts.Node, context: Context) =>
-  context.checker.getTypeAtLocation(node).getSymbol()?.name === "Generator";
+  getMembers(node, context).every(isGeneratorMember);
+
+// A variable that a declaration without a type or a value gives a type that follows what it's
+// assigned.
+const isAutoTyped = (node: ts.Identifier, context: Context) => {
+  const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.type === undefined &&
+    declaration.initializer === undefined
+  );
+};
 
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
 // call of its methods, or into a comparison. Elsewhere, such as an array pattern, a spread, or a
 // function's parameter, code would iterate it in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
-  if (!isGeneratorType(node, context)) return;
+  if (!getMembers(node, context).some(isGeneratorMember)) return;
   const outer = ts.findAncestor(node.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor));
   const isHeld =
     outer !== undefined &&
@@ -192,13 +211,13 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
       (ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         ts.isIdentifier(outer.left) &&
-        isGeneratorType(outer.left, context)) ||
+        (isGeneratorType(outer.left, context) || isAutoTyped(outer.left, context))) ||
       (ts.isBinaryExpression(outer) &&
         [
           ts.SyntaxKind.EqualsEqualsEqualsToken,
           ts.SyntaxKind.ExclamationEqualsEqualsToken,
         ].includes(outer.operatorToken.kind)) ||
-      ts.isPropertyAccessExpression(outer) ||
+      (ts.isPropertyAccessExpression(outer) && isGeneratorType(node, context)) ||
       ts.isExpressionStatement(outer));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };

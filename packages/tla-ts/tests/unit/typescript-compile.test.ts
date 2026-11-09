@@ -1186,6 +1186,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("resumes generators that an untyped variable holds", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nfunction* numbers() {\n  yield 1;\n}\nfunction* words() {\n  yield "a";\n}\nlet iter;\niter = numbers();\nconst first = iter.next();\niter = words();\nconst second = iter.next();\nconst third = iter.next();\nif (first.value !== 1 || second.value !== "a" || third.done !== true) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("reads strings through their search, slice, and trim methods", async () => {
     const result = await check(
       compile(

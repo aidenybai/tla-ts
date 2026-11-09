@@ -1478,7 +1478,7 @@ const isSameExpression = (left: Expression, right: Expression) => {
 const isGeneratorStep = (node: ts.CallExpression, context: Context): node is MethodCall =>
   isMethodCall(node) &&
   ["next", "return", "throw"].includes(node.expression.name.text) &&
-  context.checker.getTypeAtLocation(node.expression.expression).getSymbol()?.name === "Generator";
+  isGeneratorType(node.expression.expression, context);
 
 // The generator that a call makes a generator object of, with the method it calls, if any.
 const getCreatedGenerator = (node: ts.CallExpression, path: Path, context: Context) => {
