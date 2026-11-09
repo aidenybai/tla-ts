@@ -19,6 +19,7 @@ import {
   getFunction,
   getFunctionValue,
   getNewClass,
+  getArgumentsOwner,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
@@ -910,6 +911,10 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   }
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
   if (binding !== undefined) return binding;
+  // A call holds the arguments object it makes under the body of the function it calls.
+  const argumentsBody = getArgumentsOwner(node, context.checker)?.body;
+  const argumentsObject = argumentsBody && scope.allocated.get(argumentsBody);
+  if (argumentsObject !== undefined) return argumentsObject;
   if (symbol !== undefined && symbol === scope.previous) {
     return formatRecord(
       context.checker

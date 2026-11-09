@@ -76,6 +76,7 @@ const LIBRARY_OBJECTS = new Set([
   "PropertyDescriptorMap",
   "IteratorYieldResult",
   "IteratorReturnResult",
+  "IArguments",
 ]);
 
 // An object type, or the object type, which any object may have.

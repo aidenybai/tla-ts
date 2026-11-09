@@ -203,10 +203,11 @@ const getBuiltInValue = (name: string, node: ts.Node, context: Context) => {
 };
 
 // A built-in that the compiler names itself: Function.prototype, which the constructor object of a
-// class inherits from, Array.prototype, which an array that the heap holds inherits from, or Array,
-// which the methods that make arrays expect as the constructor of the array they copy.
+// class inherits from, Array.prototype, which an array that the heap holds inherits from, Array,
+// which the methods that make arrays expect as the constructor of the array they copy, or
+// %ThrowTypeError%, the callee of an arguments object, which Node records as a getter's path.
 export const translateBuiltInValue = (
-  name: "Function.prototype" | "Array.prototype" | "Array",
+  name: "Function.prototype" | "Array.prototype" | "Array" | "get Function.prototype.arguments",
   node: ts.Node,
   context: Context,
 ) => {

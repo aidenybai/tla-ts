@@ -91,6 +91,30 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
 export const hasObjectLiteral = (node: ts.Node): boolean =>
   ts.isObjectLiteralExpression(node) || (ts.forEachChild(node, hasObjectLiteral) ?? false);
 
+// The function whose arguments object a reference to arguments names. tla-ts follows only a
+// reference that no arrow function holds, since an arrow function names the arguments of the
+// function around it, which a later call may have replaced.
+export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
+  if (!ts.isIdentifier(node) || node.text !== "arguments") return undefined;
+  const symbol = checker.getSymbolAtLocation(node);
+  const owner = ts.findAncestor(
+    node.parent,
+    (ancestor): ancestor is FunctionNode =>
+      ts.isFunctionDeclaration(ancestor) ||
+      ts.isFunctionExpression(ancestor) ||
+      ts.isArrowFunction(ancestor) ||
+      ts.isMethodDeclaration(ancestor) ||
+      ts.isConstructorDeclaration(ancestor) ||
+      ts.isAccessor(ancestor),
+  );
+  return symbol === undefined ||
+    symbol.declarations !== undefined ||
+    owner === undefined ||
+    ts.isArrowFunction(owner)
+    ? undefined
+    : owner;
+};
+
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
   const symbol =
     ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node

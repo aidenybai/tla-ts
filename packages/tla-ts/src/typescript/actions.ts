@@ -33,6 +33,7 @@ import {
   getRunConstructor,
   getSetters,
   changesState,
+  getArgumentsOwner,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
@@ -69,7 +70,7 @@ import {
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
-import { isBuiltInObject } from "./intrinsics";
+import { isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { getReceiver, mayThrow, translateIf, translateSwitch, translateThrow } from "./functions";
 import {
@@ -842,13 +843,48 @@ const bindCall = (
     path.scope,
     context,
   );
+  const scope = {
+    ...bound.scope,
+    functions: new Map([...bound.scope.functions, ...callbacks]),
+    receiver,
+  };
+  const heapSymbol = context.heap;
+  const body = callee.body;
+  const isArgumentsNamed =
+    body !== undefined &&
+    findNodes(
+      body,
+      (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
+    ).length > 0;
+  if (!isArgumentsNamed || heapSymbol === undefined) {
+    return continueWith({ definitions: bound.definitions, scope }, path);
+  }
+  if (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement)) {
+    throw new TlaTypeScriptError("Unsupported arguments object", node);
+  }
+  // The arguments object of the call, which the scope holds under the body that names it.
+  const heap = context.names.getFresh("heap");
+  const made = useJavaScript(
+    "ArgumentsObject",
+    [
+      tuple(argumentNodes.map((argument) => translateExpression(argument, path.scope, context))),
+      translateBuiltInValue("get Function.prototype.arguments", node, context),
+    ],
+    context,
+  );
   return continueWith(
     {
-      definitions: bound.definitions,
+      definitions: [
+        ...bound.definitions,
+        define(heap, [], useJavaScript("Allocate", [getHeap(scope, node, context), made], context)),
+      ],
       scope: {
-        ...bound.scope,
-        functions: new Map([...bound.scope.functions, ...callbacks]),
-        receiver,
+        ...scope,
+        bindings: new Map([...scope.bindings, [heapSymbol, identifier(heap)]]),
+        allocated: new Map([
+          ...scope.allocated,
+          [body, useJavaScript("Allocated", [identifier(heap)], context)],
+        ]),
       },
     },
     path,
@@ -2611,6 +2647,7 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       getWrittenSymbols(written, context).forEach((symbol) => changed.add(symbol));
     }
     const isHeapChanged =
+      getArgumentsOwner(node, context.checker) !== undefined ||
       (ts.isBindingElement(node) && context.heapArrays.has(node)) ||
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||

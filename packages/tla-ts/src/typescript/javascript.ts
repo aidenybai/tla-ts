@@ -968,6 +968,7 @@ TagOf(heap, ref) ==
 \\* The kind that Object.prototype.toString gives an object without a Symbol.toStringTag.
 LOCAL ClassOf(heap, ref) ==
   CASE IsHeap(ref) /\\ IsArrayObject(Lookup(heap, ref)) -> "Array"
+    [] IsHeap(ref) /\\ "isArguments" \\in DOMAIN Lookup(heap, ref) -> "Arguments"
     [] IsHeap(ref) -> IF Lookup(heap, ref).isCallable THEN "Function" ELSE "Object"
     [] BuiltInKey(ref) = "Array.prototype" -> "Array"
     [] Lookup(heap, ref).isCallable -> "Function"
@@ -1017,6 +1018,23 @@ ArrayObject(prototype, elements) ==
                        ELSE Writable],
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, isArray |-> TRUE]
+
+\\* The arguments object of a call in strict mode, which holds the values the call gives under their
+\\* indices, its length, and a callee that throws.
+ArgumentsObject(elements, thrower) ==
+  LET indices == {ToString(position - 1) : position \\in DOMAIN elements}
+      callee == [writable |-> FALSE, enumerable |-> FALSE, configurable |-> FALSE, kind |-> "accessor"]
+  IN [keys |-> [position \\in DOMAIN elements |-> ToString(position - 1)] \\o <<"length", "callee">>,
+      values |-> [key \\in indices \\cup {"length", "callee"} |->
+                   CASE key = "length" -> Len(elements)
+                     [] key = "callee" -> [get |-> thrower, set |-> thrower]
+                     [] OTHER -> elements[ToIndex(key) + 1]],
+      attributes |-> [key \\in indices \\cup {"length", "callee"} |->
+                       CASE key = "length" -> [Writable EXCEPT !.enumerable = FALSE]
+                         [] key = "callee" -> callee
+                         [] OTHER -> Writable],
+      extensible |-> TRUE, prototype |-> ObjectPrototype, isCallable |-> FALSE,
+      isConstructor |-> FALSE, isOpaque |-> FALSE, privates |-> <<>>, isArguments |-> TRUE]
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==
