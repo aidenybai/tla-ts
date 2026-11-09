@@ -490,7 +490,6 @@
   "tlc/imported/tlc/tool/Github687specATest/Github687spec": "message-mismatch",
   "tlc/imported/tlc/tool/Github687specDTest/Github687spec": "message-mismatch",
   "tlc/imported/tlc/tool/PrintTraceExceptionTest/PrintTraceException": "message-mismatch",
-  "tlc/imported/tlc/tool/TLCGetLevelTest/TLCGetLevel": "exit-mismatch",
   "tlc/modules/assume_theorem/assume_non_boolean": "text-mismatch",
   "tlc/modules/extends/constant_and_variable_same_class_warns": "exit-mismatch",
   "tlc/modules/instance/named_assumption_loses_substitution": "exit-mismatch",

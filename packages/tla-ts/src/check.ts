@@ -734,7 +734,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
     const actions = getSpecNextActions();
     const expanding = { ...current };
-    Object.assign(current, { index, isExpanding: true, candidate: undefined });
+    Object.assign(current, {
+      index,
+      isExpanding: true,
+      candidate: undefined,
+      rebuilt: { state: previous, level: depths[index] },
+    });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
     const action = actions.find((item) =>
@@ -827,7 +832,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         steps.push({ state: previous, action: "Stuttering" });
         continue;
       }
+      // TLC rebuilds each state at its level, which TLCGet reads.
+      const rebuilt = current.rebuilt;
+      current.rebuilt = { state: previous, level: depths[path[position - 1]] };
       const successor = findSuccessorWithFingerprint(previous, path[position]);
+      current.rebuilt = rebuilt;
       if (!successor) throw new TlaEvaluationError(nextFailure);
       steps.push(successor);
     }
@@ -1050,6 +1059,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     candidate: undefined as Value[] | undefined,
     candidateLevel: 0,
     livenessSource: -1,
+    rebuilt: undefined as { state: Value[]; level: number } | undefined,
   };
   const getPath = (index: number): Value[][] =>
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
@@ -1072,6 +1082,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
       return explored === -1 ? 0 : depths[explored];
     }
+    const rebuilt = current.rebuilt;
+    if (rebuilt) return state === rebuilt.state ? rebuilt.level : rebuilt.level + 1;
     if (source !== -1) return state === states[source] ? depths[source] : depths[source] + 1;
     if (state === current.candidate) return current.candidateLevel;
     if (current.index === -1) return 0;
