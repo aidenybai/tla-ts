@@ -354,7 +354,7 @@ const printCheckProgress = (
       return;
     case "sequential-fallback":
       process.stderr.write(
-        `Warning: the search created the string ${JSON.stringify(progress.string)}, so tla-ts checks the model again with one worker. Workers agree on the order of strings only when the strings exist before the search.\n`,
+        `Warning: the search ordered the string ${JSON.stringify(progress.string)} against another string it created, so tla-ts checks the model again with one worker. Workers don't agree on the order of strings the search creates.\n`,
       );
       return;
     case "warning":

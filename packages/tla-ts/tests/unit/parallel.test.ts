@@ -88,20 +88,32 @@ describe("check with workers matches TLC", () => {
     expect(printed).toEqual(['"start"']);
   });
 
-  it("reports the string the search creates as it checks again on the calling thread", async () => {
+  it("reports the string the search orders as it checks again on the calling thread", async () => {
     const tlaTs = await loadPackage();
-    const created: string[] = [];
+    const ordered: string[] = [];
     const result = await tlaTs.check({
-      source:
-        '---- MODULE M ----\nEXTENDS Sequences\nVARIABLE x\nInit == x = "a"\nNext == x\' = IF x = "a" THEN "a" \\o "b" ELSE x\n====',
-      config: "INIT Init\nNEXT Next",
+      source: readFileSync(join(FIXTURES, "strings", "RuntimeStrings.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "strings", "RuntimeStrings.cfg"), "utf8"),
       workers: 2,
       onProgress: (progress) => {
-        if (progress.kind === "sequential-fallback") created.push(progress.string);
+        if (progress.kind === "sequential-fallback") ordered.push(progress.string);
       },
     });
-    expect(result.distinctStates).toBe(2);
-    expect(created).toEqual(["ab"]);
+    expect(getCounts(result)).toEqual([115, 97, 6]);
+    expect(ordered).toHaveLength(1);
+  });
+
+  it("keeps its workers when the search creates strings it never orders", async () => {
+    const tlaTs = await loadPackage();
+    const progressKinds = new Set<string>();
+    const result = await tlaTs.check({
+      source: readFileSync(join(FIXTURES, "strings", "RuntimeTags.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "strings", "RuntimeTags.cfg"), "utf8"),
+      workers: 2,
+      onProgress: (progress) => progressKinds.add(progress.kind),
+    });
+    expect(getCounts(result)).toEqual([841, 441, 41]);
+    expect(progressKinds.has("sequential-fallback")).toBe(false);
   });
 
   it("prints values as the version of TLC it matches does", async () => {
