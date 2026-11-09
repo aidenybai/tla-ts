@@ -1570,6 +1570,18 @@ describe("errors", () => {
     }
   });
 
+  it("binds a rest parameter to the arguments after the others", async () => {
+    const result = await checkModel(`
+      let total = 0;
+      function add(first: number, ...others: number[]) {
+        total = first + others.length + (others[1] ?? 0);
+      }
+      add(1, 5, 7);
+      if (total !== 10) throw new Error("missed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

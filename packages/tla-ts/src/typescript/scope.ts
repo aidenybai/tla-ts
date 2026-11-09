@@ -11,7 +11,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
-import { apply, define, identifier, ifExpression, number, set, string } from "./tla";
+import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
 import { getHeap } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
@@ -308,10 +308,11 @@ export const bindValues = (
 ) =>
   parameters.reduce<Bound>(
     (current, parameter, position) => {
-      if (parameter.dotDotDotToken !== undefined) {
-        throw new TlaTypeScriptError("Rest parameters aren't supported", parameter);
-      }
-      const value = values.at(position);
+      // A rest parameter takes the values that the parameters before it don't.
+      const value =
+        parameter.dotDotDotToken === undefined
+          ? values.at(position)
+          : tuple(values.slice(position));
       const initializer = parameter.initializer;
       const getDefault = () =>
         initializer === undefined
