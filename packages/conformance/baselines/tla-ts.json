@@ -251,7 +251,6 @@
   "tlapm/obligations/subexpr/down_forbidden": "text-mismatch",
   "tlapm/obligations/take/take_different_domain": "text-mismatch",
   "tlapm/obligations/use_hide/module_use_suppressed": "text-mismatch",
-  "tlapm/proofs/enabled/expand_enabled_declared_action": "exit-mismatch",
   "tlapm/proofs/isabelle/all_isa_third_tactic": "exit-mismatch",
   "tlapm/proofs/isabelle/isa_with_set_extensionality": "exit-mismatch",
   "tlapm/proofs/methods/smtt_zero_seconds": "exit-mismatch",
