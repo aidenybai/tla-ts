@@ -523,6 +523,27 @@ const CASES: Record<string, (string | [string, string])[]> = {
       })();`,
     ],
     [
+      "[stored, bumped, count]",
+      `class Holder {
+        #stored: unknown;
+        #read() {
+          return this.#stored;
+        }
+        store(value: unknown) {
+          this.#stored = value;
+          return this.#read();
+        }
+      }
+      let count = 0;
+      const bump = (step: number) => {
+        count += step;
+        return count * 10;
+      };
+      const holder = new Holder();
+      const stored = holder.store("kept");
+      const bumped = bump(2);`,
+    ],
+    [
       "[unset, flag, zero, empty, kept, held, shown]",
       `const box = {};
       let unset: unknown = undefined;

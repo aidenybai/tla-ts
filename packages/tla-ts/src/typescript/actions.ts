@@ -1325,9 +1325,71 @@ const isHeapCall = (
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
 };
 
+// Whether a function assigns a property or a variable it doesn't declare, itself or through the
+// functions it calls.
+const changesState = (
+  callee: ts.Node,
+  node: ts.Node,
+  context: Context,
+  visited: Set<ts.Node>,
+): boolean => {
+  const target =
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ? node.left
+      : (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+          (node.operator === ts.SyntaxKind.PlusPlusToken ||
+            node.operator === ts.SyntaxKind.MinusMinusToken)
+        ? node.operand
+        : ts.isDeleteExpression(node)
+          ? node.expression
+          : undefined;
+  const declaration =
+    target !== undefined && ts.isIdentifier(skipCasts(target))
+      ? context.checker.getSymbolAtLocation(skipCasts(target))?.valueDeclaration
+      : undefined;
+  if (
+    target !== undefined &&
+    (declaration === undefined ||
+      declaration.getSourceFile() !== callee.getSourceFile() ||
+      declaration.pos < callee.pos ||
+      declaration.end > callee.end)
+  ) {
+    return true;
+  }
+  if (ts.isCallExpression(node)) {
+    const called =
+      getCallee(node.expression, context) ?? getCalledMethod(node.expression, context)?.method;
+    if (called !== undefined && !visited.has(called)) {
+      visited.add(called);
+      if (changesState(called, called, context, visited)) return true;
+    }
+  }
+  return (
+    ts.forEachChild(node, (child) => changesState(callee, child, context, visited) || undefined) ??
+    false
+  );
+};
+
+// A call to a function or a method that changes state, which inlines as statements that give its
+// result.
+const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
+  const symbol = getSymbol(node.expression, context.checker);
+  const callee =
+    (symbol && path.scope.functions.get(symbol)) ??
+    getCallee(node.expression, context) ??
+    getCalledMethod(node.expression, context)?.method;
+  return (
+    callee?.body !== undefined && changesState(callee, callee.body, context, new Set([callee]))
+  );
+};
+
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
-  isHeapCall(node, path, context) || getLoopCall(node, path, context) !== undefined;
+  isHeapCall(node, path, context) ||
+  getLoopCall(node, path, context) !== undefined ||
+  isStateCall(node, path, context);
 
 // The expression that parentheses and casts wrap.
 const getCast = (node: ts.Expression): ts.Expression =>
@@ -1343,8 +1405,7 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
   const callee =
     (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   return (
-    isHeapCall(node, path, context) ||
-    getLoopCall(node, path, context) !== undefined ||
+    isStatementResult(node, path, context) ||
     (callee?.body !== undefined && ts.forEachChild(callee.body, hasTry) === true)
   );
 };
