@@ -1298,17 +1298,24 @@ const compileKeys = (target: Compiled): Compiled | undefined => {
   return map && { type: map.keys, emit: () => `(${target.emit()})[0]` };
 };
 
-const compileBounds = (program: Program, bounds: Bound[], frame: Frame) => {
+// TLC enumerates the bounds of an action's \E with the first varying fastest, each in the scope
+// outside them.
+const compileBounds = (program: Program, bounds: Bound[], frame: Frame, isFirstFastest = false) => {
   const loops: { name: string; element: Type; header: (name: string) => string }[] = [];
   const scope = bounds.reduce<TierScope>((current, bound) => {
     if (bound.pattern.kind !== "Name") return unsupported();
-    const loop = compileBound(program, bound.set, { ...frame, scope: current });
+    const loop = compileBound(
+      program,
+      bound.set,
+      isFirstFastest ? frame : { ...frame, scope: current },
+    );
     const name = getName(program, "q");
     loops.push({ name, element: loop.element, header: loop.header });
     return bindCode(current, bound.pattern.name, loop.element, name);
   }, frame.scope);
   // A later conjunct can still refine the type of a bound, so its loop is chosen at emit.
-  const getHeaders = () => loops.map((loop) => loop.header(loop.name)).join(" ");
+  const getHeaders = () =>
+    (isFirstFastest ? loops.toReversed() : loops).map((loop) => loop.header(loop.name)).join(" ");
   return { scope, loops, getHeaders };
 };
 
@@ -2922,7 +2929,7 @@ const compileStep = (
       return () => branches.map((branch) => `{ ${branch()} }`).join(" ");
     }
     case "Exists": {
-      const bounds = compileBounds(program, expression.bounds, frame);
+      const bounds = compileBounds(program, expression.bounds, frame, true);
       const body = continueWith(bounds.scope, [expression.body]);
       return () => `${bounds.getHeaders()} { ${body()} }`;
     }
