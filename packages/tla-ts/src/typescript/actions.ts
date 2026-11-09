@@ -2318,6 +2318,21 @@ export const translateScript = (
   );
   const scope = createStateScope(context);
   if (context.heap !== undefined) context.prelude.add("JavaScript");
+  // A script's vars hold undefined until their declarations run.
+  const hoisted = [...context.variables.keys()].filter((symbol) => {
+    const declaration = symbol.valueDeclaration;
+    return (
+      isLast &&
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isVariableDeclarationList(declaration.parent) &&
+      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+    );
+  });
+  const bindings = new Map([
+    ...scope.bindings,
+    ...hoisted.map((symbol): [ts.Symbol, Expression] => [symbol, getUndefined(context)]),
+  ]);
   return translateStatements(
     statements,
     {
@@ -2325,8 +2340,8 @@ export const translateScript = (
         ...scope,
         bindings:
           context.heap === undefined
-            ? scope.bindings
-            : new Map([...scope.bindings, [context.heap, identifier("EmptyHeap")]]),
+            ? bindings
+            : new Map([...bindings, [context.heap, identifier("EmptyHeap")]]),
         uninitialized: new Set(declared),
       },
       mutable: new Set(context.variables.keys()),

@@ -1104,6 +1104,15 @@ describe("errors", () => {
     ).toThrow("spec.ts:2:1 Unsupported statement");
   });
 
+  it("reads a script's var as undefined before its declaration runs", async () => {
+    const result = await check(
+      compile(
+        `const read = () => later;\nconst early = read();\nvar later: unknown = 1;\nif (early !== undefined || later !== 1) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("rejects unknown tags", () => {
     expect(() =>
       compile(`let count = 0;\n/** @fiar */\nexport const step = () => { count++; };`),
