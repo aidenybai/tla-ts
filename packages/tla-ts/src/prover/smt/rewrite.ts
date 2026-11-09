@@ -1,7 +1,7 @@
 // encode/n_rewrite.ml, type/t_synth.ml and encode/n_standardize.ml: a TLA+ expression as an SMT-LIB
 // term over Idv.
 
-import { TlaUnsupportedError } from "../../errors";
+import { TlaProverError, TlaUnsupportedError } from "../../errors";
 import { normalizeApply, shiftExpr } from "../../obligations/substitution";
 import { type Bound, type Builtin, type Expr, type Sequent } from "../../obligations/expression";
 import { createContext, type Identifier } from "./context";
@@ -79,6 +79,21 @@ interface NestedContext {
   mode: Mode;
   wrappers: ((body: string) => string)[];
 }
+
+const UNSUPPORTED_OPERANDS = new Set<Builtin>([
+  "Prime",
+  "StrongPrime",
+  "Leadsto",
+  "ENABLED",
+  "UNCHANGED",
+  "Cdot",
+  "Actplus",
+  "BoxTrue",
+  "BoxFalse",
+  "Diamond",
+  "Divides",
+  "Irregular",
+]);
 
 export const createEncoder = (session: EncodingSession) => {
   const flattener = createFlattener();
@@ -372,7 +387,12 @@ export const createEncoder = (session: EncodingSession) => {
       }
       default: {
         const symbol = BUILTIN_SYMBOLS[builtin];
-        if (symbol === undefined) throw new TlaUnsupportedError(`the operator ${builtin}`);
+        if (symbol === undefined)
+          throw new TlaProverError(
+            UNSUPPORTED_OPERANDS.has(builtin)
+              ? `Type.Synthesize: Unsupported builtin ${builtin.startsWith("Box") ? "Box" : builtin}`
+              : "Type.Synthesize: Unexpected left operand",
+          );
         return idv(call(symbol, idvs()));
       }
     }
@@ -390,6 +410,8 @@ export const createEncoder = (session: EncodingSession) => {
         if (args.length > 0) throw new TlaUnsupportedError(`an applied ${binding.kind}`);
         return idv(binding.symbol);
       case "operator":
+        if (args.length === 0 && binding.arity > 0)
+          throw new TlaProverError("Type.Synthesize: Impossible operator conversion");
         if (args.length !== binding.arity)
           throw new TlaUnsupportedError("an operator applied to the wrong number of arguments");
         return idv(
@@ -604,8 +626,13 @@ export const createEncoder = (session: EncodingSession) => {
             return idv(NAT_SET);
           case "Int":
             return idv(INT_SET);
+          case "Real":
+          case "Infinity":
+            throw new TlaProverError(
+              `Encode.Standardize: Unexpected builtin '${expression.builtin}'`,
+            );
           default:
-            throw new TlaUnsupportedError(`the operator ${expression.builtin}`);
+            throw new TlaProverError("Type.Synthesize: Unexpected builtin");
         }
       case "Apply": {
         const operator = expression.operator;
@@ -723,7 +750,10 @@ export const createEncoder = (session: EncodingSession) => {
       case "Tquant":
       case "Tsub":
       case "Fair":
-        throw new TlaUnsupportedError("a temporal formula");
+        throw new TlaProverError("Backend.Smtlib: Unsupported expression");
+      case "Lambda":
+      case "Bang":
+        throw new TlaProverError(`Type.Synthesize: Unexpected ${expression.kind} constructor`);
       default:
         throw new TlaUnsupportedError(`the expression ${expression.kind}`);
     }
