@@ -167,6 +167,35 @@ const isDescriptor = (type: ts.Type | undefined) =>
 const isKeyType = (type: ts.Type) =>
   (type.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike)) !== 0;
 
+// The loosest type that a binding pattern reads: an element may be missing, and each name may
+// hold any value.
+const getPatternType = (name: ts.BindingName): string | undefined => {
+  if (ts.isIdentifier(name)) return "unknown";
+  if (ts.isArrayBindingPattern(name)) {
+    const elements = name.elements.map((element) => {
+      if (ts.isOmittedExpression(element)) return "unknown?";
+      const type = getPatternType(element.name);
+      if (type === undefined) return undefined;
+      return element.dotDotDotToken === undefined ? `${type}?` : `...${type}[]`;
+    });
+    if (elements.some((element) => element === undefined)) return undefined;
+    return elements.every((element) => element === "unknown?" || element === "...unknown[]")
+      ? "unknown[]"
+      : `[${elements.join(", ")}]`;
+  }
+  const properties = name.elements.map((element) => {
+    const key = element.propertyName ?? element.name;
+    const type = getPatternType(element.name);
+    if (element.dotDotDotToken !== undefined || type === undefined) return undefined;
+    return ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)
+      ? `${key.getText()}?: ${type}`
+      : undefined;
+  });
+  return properties.some((property) => property === undefined)
+    ? undefined
+    : `{ ${properties.join("; ")} }`;
+};
+
 const loosen = () => {
   const program = service.getProgram();
   const sourceFile = program?.getSourceFile(PROGRAM_PATH);
@@ -232,6 +261,25 @@ const loosen = () => {
       const token = ts.isVariableDeclaration(declared) ? undefined : declared.questionToken;
       const end = token === undefined ? declared.name.getEnd() : token.getEnd();
       edits.set(end, isRest ? ": unknown[]" : ": unknown");
+    }
+    // A parameter that destructures takes any value its pattern can read.
+    const destructured =
+      diagnostic.code === 7031
+        ? ts.findAncestor(
+            node,
+            (ancestor) => ts.isParameter(ancestor) || ts.isFunctionLike(ancestor),
+          )
+        : undefined;
+    const patternType =
+      destructured !== undefined && ts.isParameter(destructured) && destructured.type === undefined
+        ? getPatternType(destructured.name)
+        : undefined;
+    if (destructured !== undefined && ts.isParameter(destructured) && patternType !== undefined) {
+      const token = destructured.questionToken;
+      edits.set(
+        token === undefined ? destructured.name.getEnd() : token.getEnd(),
+        `: ${destructured.dotDotDotToken === undefined ? patternType : `${patternType}[]`}`,
+      );
     }
     // A function that reads this may be a constructor, whose instance gets any property.
     const receiving =
