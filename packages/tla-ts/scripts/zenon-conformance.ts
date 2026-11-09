@@ -110,8 +110,8 @@ const results = runs.map((run) => {
   const reference = runReference(path);
   if (reference !== undefined && reference.isProved !== isProved)
     console.log(`binary  ${reference.isProved ? "miss" : "surplus"}      ${name}`);
-  // The node counts match only where both searches stop by themselves: tla-ts bounds its memory
-  // by nodes rather than by Zenon's heap.
+  // The node counts match only where both searches stop by themselves: tla-ts models Zenon's heap
+  // rather than measuring it.
   const isCounted =
     reference?.nodesSearched !== undefined &&
     zenon.failure !== "time limit" &&
