@@ -175,7 +175,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   return isFunctionPrototype || isHeapType(type, node, context) ? "object" : "other";
 };
 
-const isGeneratorType = (node: ts.Node, context: Context) =>
+export const isGeneratorType = (node: ts.Node, context: Context) =>
   context.checker.getTypeAtLocation(node).getSymbol()?.name === "Generator";
 
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a

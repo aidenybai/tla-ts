@@ -1163,6 +1163,20 @@ describe("errors", () => {
     expect(failed.failure?.message).toContain("second");
   });
 
+  it("destructures arrays from a generator", async () => {
+    const result = await check(
+      compile(
+        `const o = {};\nlet first = 0;\nlet second = 0;\nconst read = (): number => first * 10 + second;\nfunction* g() {\n  first += 1;\n  yield 1;\n  second += 1;\n  yield 2;\n}\nconst [a] = g();\nif (a !== 1 || read() !== 10) throw new Error("close");\nfirst = 0;\nsecond = 0;\nconst [b, c, d, e = 7] = g();\nif (b !== 1 || c !== 2 || d !== undefined || e !== 7 || read() !== 11) throw new Error("drain");\nlet x = 0;\nconst iter = g();\nconst [y, ...rest] = iter;\n[x] = g();\nif (y !== 1 || x !== 1 || rest.length !== 1 || rest[0] !== 2) throw new Error("rest");\nlet calls = 0;\nconst f = ([p, q]: Iterable<number>) => {\n  calls += p as number;\n};\nf(g());\nif (calls !== 1) throw new Error("param");\nconst [] = g();`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(
+        `const object = {};\nfunction* g() {\n  yield 1;\n}\nconst iter = g();\nconst values = [iter];`,
+      ),
+    ).toThrow("tla-ts can't follow a generator here");
+  });
+
   it("reads strings through their search, slice, and trim methods", async () => {
     const result = await check(
       compile(

@@ -113,6 +113,7 @@ import {
   getPathStep,
   isHeapType,
   isNumberLike,
+  isGeneratorType,
   rejectGeneratorUse,
 } from "./types";
 
@@ -129,6 +130,7 @@ interface Path {
 
 interface Suspension {
   ref: Expression;
+  generator: FunctionNode;
   // Runs the rest of the body from the path of the call that resumes it, or undefined once the
   // generator completes.
   resume: ((path: Path) => Formula) | undefined;
@@ -570,6 +572,7 @@ const translateCallStatement = (
     first !== undefined &&
     ts.isCallExpression(first) &&
     !path.scope.results.has(first) &&
+    !isGeneratorType(first, context) &&
     isStatementCall(first, path, context)
   ) {
     return translateCallStatement(first, path, context, frame, (after, value) =>
@@ -740,6 +743,46 @@ const bindCall = (
     throw new TlaTypeScriptError("Functions that change state can't call themselves", node);
   }
   const parameters = getParameters(callee);
+  // A parameter's array pattern takes its values from a generator before the body runs.
+  const destructured = parameters.flatMap((parameter, position) => {
+    const argument = argumentNodes.at(position);
+    const source =
+      argument === undefined || isUndefinedLiteral(argument) ? parameter.initializer : argument;
+    return ts.isArrayBindingPattern(parameter.name) &&
+      source !== undefined &&
+      !path.scope.results.has(source) &&
+      isGeneratorType(source, context)
+      ? [{ pattern: parameter.name, source }]
+      : [];
+  })[0];
+  const taken =
+    destructured &&
+    takeFromGenerator(
+      destructured.pattern,
+      destructured.source,
+      argumentNodes,
+      path,
+      context,
+      frame,
+      (after, values) =>
+        bindCall(
+          node,
+          callee,
+          argumentNodes,
+          receiver,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [destructured.source, values]]),
+            },
+          },
+          context,
+          frame,
+          continueWith,
+        ),
+    );
+  if (taken !== undefined) return taken;
   const defaults = parameters
     .flatMap((parameter) => getAllocated(parameter, context))
     .filter((allocation) => !path.scope.allocated.has(allocation));
@@ -862,7 +905,10 @@ const makeGenerator = (
         isAssigned: current.isAssigned,
         generators: new Map([
           ...current.generators,
-          [name, { ref, resume, isStarted: true, isInTry: current.scope.isCatching }],
+          [
+            name,
+            { ref, generator: callee, resume, isStarted: true, isInTry: current.scope.isCatching },
+          ],
         ]),
         scope: {
           ...callerPath.scope,
@@ -914,6 +960,7 @@ const makeGenerator = (
     const start = { ...inner, scope: bound.scope };
     const suspension: Suspension = {
       ref,
+      generator: callee,
       resume: (resumer) =>
         translateStatements(getBody(callee), enter(resumer, start), context, bodyFrame),
       isStarted: false,
@@ -1095,6 +1142,121 @@ const translateGeneratorCall = (
         ),
       );
 };
+
+// The values that an array pattern takes from a generator object, through its next: one for each
+// element, or every one for a rest element, after which a pattern without one closes a generator
+// that isn't done. The source makes the generator object or names a variable that holds one, or
+// else this gives undefined. The pattern binds the values once the generator has run, so the
+// generator must not read what the pattern binds, and the pattern's defaults, like the other
+// expressions that evaluate before the pattern, must not read what the generator changes.
+const takeFromGenerator = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
+  source: ts.Expression,
+  others: readonly ts.Expression[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, values: Expression) => Formula,
+): Formula | undefined => {
+  const elements: readonly ts.Node[] = pattern.elements;
+  const restAt = elements.findIndex(
+    (element) =>
+      ts.isSpreadElement(element) ||
+      (ts.isBindingElement(element) && element.dotDotDotToken !== undefined),
+  );
+  const count = restAt === -1 ? elements.length : Infinity;
+  const take = (receiver: Expression, generators: FunctionNode[], current: Path) => {
+    const getSymbols = (node: ts.Node) =>
+      findNodes(node, ts.isIdentifier).flatMap((name) => getSymbol(name, context.checker) ?? []);
+    const reads = (node: ts.Node, symbols: ReadonlySet<ts.Symbol>) =>
+      getSymbols(node).some((symbol) => symbols.has(symbol));
+    const targets = new Set(getSymbols(pattern));
+    const changed = new Set(
+      generators.flatMap((generator) => getChanged(generator, current, context)),
+    );
+    const isHeapChanged = context.heap !== undefined && changed.has(context.heap);
+    const readsHeap = (node: ts.Node) =>
+      findNodes(
+        node,
+        (inner): inner is ts.Node =>
+          ts.isPropertyAccessExpression(inner) ||
+          ts.isElementAccessExpression(inner) ||
+          inner.kind === ts.SyntaxKind.ThisKeyword,
+      ).length > 0;
+    const initializers = findNodes(pattern, ts.isBindingElement).flatMap(
+      (element) => element.initializer ?? [],
+    );
+    const defaults = findNodes(
+      pattern,
+      (inner): inner is ts.BinaryExpression =>
+        ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken,
+    ).map((assignment) => assignment.right);
+    const evaluated = [...initializers, ...defaults, ...others.filter((other) => other !== source)];
+    if (
+      generators.some(
+        (generator) => generator.body !== undefined && reads(generator.body, targets),
+      ) ||
+      evaluated.some((node) => reads(node, changed) || (isHeapChanged && readsHeap(node)))
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't interleave this pattern with a generator",
+        pattern,
+      );
+    }
+    const step = (inner: Path, values: Expression[]): Formula =>
+      values.length === count
+        ? resumeGenerator(pattern, receiver, "return", undefined, inner, context, frame, (after) =>
+            continueWith(after, tuple(values)),
+          )
+        : resumeGenerator(
+            pattern,
+            receiver,
+            "next",
+            undefined,
+            inner,
+            context,
+            frame,
+            (after, value, isDone) =>
+              isDone
+                ? continueWith(after, tuple(values))
+                : step(after, [...values, value ?? getUndefined(context)]),
+          );
+    return step(current, []);
+  };
+  const node = getCast(source);
+  const created = ts.isCallExpression(node) ? getCreatedGenerator(node, path, context) : undefined;
+  if (created !== undefined && ts.isCallExpression(node)) {
+    return translateGeneratorCall(node, created, path, context, frame, (after, ref) =>
+      take(ref ?? getUndefined(context), [created.generator], after),
+    );
+  }
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const held = symbol && path.scope.bindings.get(symbol);
+  if (held === undefined) return undefined;
+  const generators = [...path.generators.values()];
+  const exact = generators.filter((suspension) => isSameExpression(suspension.ref, held));
+  return take(
+    held,
+    (exact.length > 0 ? exact : generators).map((suspension) => suspension.generator),
+    path,
+  );
+};
+
+// The nodes in a tree, its root included, that a test picks.
+const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
+  const found: T[] = [];
+  const visit = (node: ts.Node) => {
+    if (test(node)) found.push(node);
+    ts.forEachChild(node, (child) => {
+      visit(child);
+    });
+  };
+  visit(root);
+  return found;
+};
+
+const isUndefinedLiteral = (node: ts.Expression) =>
+  ts.isIdentifier(node) && node.text === "undefined";
 
 const isSameExpression = (left: Expression, right: Expression) => {
   const withoutLocations = (key: string, value: unknown) =>
@@ -1695,6 +1857,24 @@ const translateExpressionStatement = (
   if (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isArrayLiteralExpression(expression.left) &&
+    isGeneratorType(expression.right, context)
+  ) {
+    const left = expression.left;
+    const taken = takeFromGenerator(
+      left,
+      expression.right,
+      [],
+      path,
+      context,
+      frame,
+      (after, values) => continueWith(assignPattern(left, undefined, values, after, context)),
+    );
+    if (taken !== undefined) return taken;
+  }
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isCallExpression(expression.right) &&
     isStatementResult(expression.right, path, context)
   ) {
@@ -2044,6 +2224,22 @@ const translateDeclarations = (
         bindDeclaration(declarations, ref, after, context, frame, continueWith),
       );
     });
+  }
+  if (
+    initializer !== undefined &&
+    ts.isArrayBindingPattern(declaration.name) &&
+    isGeneratorType(initializer, context)
+  ) {
+    const taken = takeFromGenerator(
+      declaration.name,
+      initializer,
+      [],
+      path,
+      context,
+      frame,
+      (after, values) => bindDeclaration(declarations, values, after, context, frame, continueWith),
+    );
+    if (taken !== undefined) return taken;
   }
   return allocate(initializer, path, context, (allocated) => {
     const constructor = initializer && getConstructorRun(initializer, context);
