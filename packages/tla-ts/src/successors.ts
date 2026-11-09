@@ -7,7 +7,12 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
+import {
+  TlaEvaluationError,
+  TlaIllegalStateError,
+  TlaIncompleteSuccessorError,
+  TlaUncodedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -27,6 +32,7 @@ import {
   getContextElements,
   getEntryEvaluator,
   getReevaluatedDefinitions,
+  getStartupValue,
   lookupScope,
   mapBoundSets,
   resolveApplyOperator,
@@ -39,6 +45,7 @@ import {
   type State,
 } from "./evaluate";
 import { mapChildren } from "./instances";
+import { CORE_OPERATORS } from "./standard-modules";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
   getEnabledFailure,
@@ -141,9 +148,20 @@ const getIfConditionMessage = (run: Run, value: Value, expression: Expression) =
 const holds = (run: Run, expression: Expression, context: Context) =>
   holdsValue(run, expression, evaluate(expression, context));
 
+const CORE_OPERATOR_NAMES = new Set(CORE_OPERATORS.map((operator) => operator.name));
+
+// TLC's initial states evaluate a built-in operator for its value, and report it in a plain message.
+const isBuiltInOperation = (expression: Expression) =>
+  expression.kind === "Apply"
+    ? CORE_OPERATOR_NAMES.has(expression.operator)
+    : expression.kind !== "Identifier" && !LITERAL_KINDS.has(expression.kind);
+
 const holdsValue = (run: Run, expression: Expression, value: Value, isWalked = true) => {
   if (typeof value === "boolean") return value;
-  throw createRunError(run, getNonBooleanMessage(run, value, expression, isWalked));
+  const message = getNonBooleanMessage(run, value, expression, isWalked);
+  throw run.isInit && isWalked && isBuiltInOperation(expression)
+    ? new TlaUncodedError(message)
+    : createRunError(run, message);
 };
 
 const evaluateCached = (
@@ -679,7 +697,8 @@ const compileIdentifier = (
       );
       return;
     }
-    if (binding || !definition) {
+    // TLC computed a constant definition at startup, so it looks up its value.
+    if (binding || !definition || getStartupValue(definition, environment) !== undefined) {
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }

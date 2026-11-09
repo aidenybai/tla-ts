@@ -6,6 +6,7 @@ import {
   TlaModuleError,
   TlaSetBoundError,
   TlaStackOverflowError,
+  TlaUncodedError,
   TlaWarningAsError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
@@ -448,6 +449,7 @@ const formatErrorMessage = (error: TlaEvaluationError, isTool: boolean): string 
   const headed = headedErrors.get(error);
   if (headed) return `${headed.headline}\n${formatErrorMessage(headed.inner, isTool)}`;
   const message = error.message;
+  if (error instanceof TlaUncodedError) return message;
   const prefix = UNEXPECTED_EXCEPTION_PREFIXES.find((start) => message.startsWith(start)) ?? "";
   return `${prefix}${formatNestedMessage(message.slice(prefix.length), isTool)}`;
 };
