@@ -85,6 +85,18 @@ const KEYWORDS_174 = new Set([...SHARED_KEYWORDS, ...TYPE_KEYWORDS]);
 
 const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")", "!"];
 
+const getCommentLength = (text: string) => {
+  const cursor = { index: 0, depth: 0 };
+  do {
+    if (cursor.index >= text.length) return undefined;
+    const pair = text.slice(cursor.index, cursor.index + 2);
+    const step = pair === "(*" ? 1 : pair === "*)" ? -1 : 0;
+    cursor.depth += step;
+    cursor.index += step === 0 ? 1 : 2;
+  } while (cursor.depth > 0);
+  return cursor.index;
+};
+
 // A lexical error ends the tokens, and TLC reports it only when it reads that far.
 const tokenizeConfig = (source: string) => {
   const tokens: ConfigToken[] = [];
@@ -125,13 +137,13 @@ const tokenizeConfig = (source: string) => {
       continue;
     }
     if (rest.startsWith("(*")) {
-      const end = rest.indexOf("*)");
-      if (end === -1) {
+      const length = getCommentLength(rest);
+      if (length === undefined) {
         skip(rest);
         addEndOfInputError("");
         return tokens;
       }
-      skip(rest.slice(0, end + 2));
+      skip(rest.slice(0, length));
       continue;
     }
     const line = cursor.line;
