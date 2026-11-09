@@ -1,7 +1,14 @@
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "../errors";
+import {
+  getErrorExitCode,
+  TlaConfigError,
+  TlaError,
+  TlaEvaluationError,
+  TlaWarningAsError,
+} from "../errors";
+import { getMessageExitStatus } from "../exit-codes";
 import { SANY_174_STANDARD_MODULES } from "../sany/modules";
 import type { TlcVersion } from "../tlc/version";
 import {
@@ -45,10 +52,18 @@ export const printMissingFile = (userDirectory: string, fileName: string, direct
 export const getStandardModulesUrl = (jar: string) =>
   `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;
 
+export const getTopLevelExitCode = (error: TlaError) =>
+  error instanceof TlaWarningAsError ? getMessageExitStatus(error.code) : getErrorExitCode(error);
+
 export const printError = (error: TlaError, printer: MessagePrinter) => {
   if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
     const coded = getCodedMessage(error.message);
-    const code = coded && !coded.isEvalException ? coded.code : MESSAGE_CODE.general;
+    const code =
+      error instanceof TlaWarningAsError
+        ? error.code
+        : coded && !coded.isEvalException
+          ? coded.code
+          : MESSAGE_CODE.general;
     return printer.print(
       code,
       MESSAGE_LEVEL.error,
@@ -67,7 +82,7 @@ export const reportErrors = async (
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     printError(error, printer);
-    return getErrorExitCode(error);
+    return getTopLevelExitCode(error);
   }
 };
 

@@ -159,6 +159,9 @@ const getConstantValue = (name: string, definition: Definition, environment: Env
 
 // TLC takes for an operator only a definition it hasn't replaced with its value.
 export const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
+  if (environment.constants.has(name)) {
+    throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
+  }
   const definition = getConfigOperator(kind, name, environment);
   if (getConstantValue(name, definition, environment) !== undefined) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
@@ -200,12 +203,7 @@ export const reportStartup = (
   onProgress: CheckOptions["onProgress"],
 ) => {
   const environment = specification.environment;
-  const warned = new Set<string>();
-  environment.runtime.warn = (code, text) => {
-    if (warned.has(text)) return;
-    warned.add(text);
-    onProgress?.({ kind: "warning", code, text });
-  };
+  environment.runtime.warn = (code, text) => onProgress?.({ kind: "warning", code, text });
   onProgress?.({ kind: "parsed" });
   // TLC loads the classes of the modules before it computes the constant definitions.
   specification.javaOverrides.forEach((override) =>
@@ -308,13 +306,19 @@ const getSpecification = (
   const initConjuncts: ScopedExpression[] = [];
   const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
-  const definition = getConfigOperator("name", config.specification, environment);
-  const value = getConstantValue(config.specification, definition, environment);
+  const value = environment.constants.has(config.specification)
+    ? environment.constants.get(config.specification)
+    : getConstantValue(
+        config.specification,
+        getConfigOperator("name", config.specification, environment),
+        environment,
+      );
   if (value !== undefined) {
     throw new TlaConfigError(
       `The value of ${config.specification} is equal to ${formatValue(value)}`,
     );
   }
+  const definition = getConfigOperator("name", config.specification, environment);
   // TLC tags a temporal formula as part of a property it reached through the property's name.
   const property = config.properties.length === 1 ? config.properties[0] : undefined;
   const untagged = { isFound: false };
@@ -883,7 +887,7 @@ export const createSearch = (
     config.symmetry === undefined
       ? undefined
       : getSymmetryGroup(config.symmetry, environment, config.substitutions);
-  if (config.view !== undefined) getConfigOperator("view function", config.view, environment);
+  if (config.view !== undefined) getConfigDefinition("view function", config.view, environment);
   const view =
     config.view === undefined
       ? undefined

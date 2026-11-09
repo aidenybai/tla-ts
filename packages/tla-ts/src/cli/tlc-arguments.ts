@@ -22,6 +22,10 @@ export interface TlcArguments {
   isTraceSpecForced: boolean;
   isTraceSpecDisabled: boolean;
   isTraceBinaryDisabled: boolean;
+  isDiffTrace: boolean;
+  suppressedCodes: number[];
+  errorCodes: number[];
+  userFile: string | undefined;
   isUsage: boolean;
 }
 
@@ -133,12 +137,18 @@ const createDefaults = (): TlcArguments => ({
   isTraceSpecForced: false,
   isTraceSpecDisabled: false,
   isTraceBinaryDisabled: false,
+  isDiffTrace: false,
+  suppressedCodes: [],
+  errorCodes: [],
+  userFile: undefined,
   isUsage: false,
 });
 
 const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
   "-modelcheck": () => {},
-  "-difftrace": () => {},
+  "-difftrace": (parsed) => {
+    parsed.isDiffTrace = true;
+  },
   "-deadlock": (parsed) => {
     parsed.isDeadlockChecked = false;
   },
@@ -255,6 +265,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       } catch {
         return reject("Error: Failed to create user output log file.");
       }
+      parsed.userFile = path;
       continue;
     }
     if (flag === "-invlevel") {
@@ -492,6 +503,11 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
           `Error: An positive integer or a fraction for fpset memory size/percentage required. But encountered ${text}`,
         );
       }
+      if (size > 1) {
+        process.stdout.write(
+          "Using -fpmem with an abolute memory value has been deprecated. Please allocate memory for the TLC process via the JVM mechanisms and use -fpmem to set the fraction to be used for fingerprint storage.\n",
+        );
+      }
       continue;
     }
     if (flag === "-fpbits") {
@@ -529,5 +545,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       `Error: The following codes were set to both -suppressMessages and -messagesAsErrors: [${overlap.join(", ")}]`,
     );
   }
+  parsed.suppressedCodes = [...suppressedCodes.tlc, ...suppressedCodes.sany];
+  parsed.errorCodes = [...errorCodes.tlc, ...errorCodes.sany];
   return parsed;
 };

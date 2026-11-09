@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -31,7 +32,6 @@ import type {
 import { parseConfig } from "../config";
 import { checkDepthFirst, type DepthFirstOutput } from "../dfid";
 import {
-  getErrorExitCode,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
@@ -74,6 +74,7 @@ import {
   getInputPaths,
   getToolsJar,
   getStandardModulesUrl,
+  getTopLevelExitCode,
   printError,
   printMissingFile,
   printMissingFile174,
@@ -152,22 +153,31 @@ const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefin
     );
   });
 
+interface TlcPrinter extends MessagePrinter {
+  isDiffTrace: boolean;
+}
+
+const BEHAVIOR = {
+  code: MESSAGE_CODE.behaviorUpToThisPoint,
+  text: "The behavior up to this point is:",
+};
+
+// TLC's -difftrace prints in full the last state of a behavior it rebuilds from the state graph.
 const printTrace = (
-  printer: MessagePrinter,
+  printer: TlcPrinter,
   trace: TraceStep[],
-  heading: { code: number; text: string } = {
-    code: MESSAGE_CODE.behaviorUpToThisPoint,
-    text: "The behavior up to this point is:",
-  },
+  heading: { code: number; text: string } = BEHAVIOR,
   isRebuiltAfterHeading = false,
+  isLastDiffed = heading !== BEHAVIOR,
 ) => {
   if (trace.length > 0) printer.print(heading.code, MESSAGE_LEVEL.error, heading.text);
   trace.forEach((step, index) => {
     if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
+    const isDiffed = printer.isDiffTrace && index > 0 && (isLastDiffed || index < trace.length - 1);
     printer.print(
       MESSAGE_CODE.statePrint2,
       MESSAGE_LEVEL.state,
-      `${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state)}`,
+      `${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
     );
   });
 };
@@ -253,7 +263,7 @@ const printProgress = (
 const getClassPath = (directory: string, module: string) => join(directory, `${module}.class`);
 
 const printCheckProgress = (
-  printer: MessagePrinter,
+  printer: TlcPrinter,
   progress: CheckProgress,
   timing: Timing,
   directory: string,
@@ -373,7 +383,7 @@ const printLivenessEnd = (printer: MessagePrinter, timing: Timing) => {
 };
 
 // Returns whether TLC goes on to print the statistics of the search.
-const printViolation = (status: CheckStatus, violation: Violation, printer: MessagePrinter) => {
+const printViolation = (status: CheckStatus, violation: Violation, printer: TlcPrinter) => {
   const print = printer.print;
   const name = violation.name;
   const loopStart = violation.loopStart;
@@ -501,7 +511,7 @@ const printSuccess = (printer: MessagePrinter, optimistic: number, actual: numbe
     ].join("\n"),
   );
 
-const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutput) => {
+const printDepthFirst = (printer: TlcPrinter, output: DepthFirstOutput) => {
   switch (output.kind) {
     case "message":
       printer.print(
@@ -516,7 +526,7 @@ const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutput) => {
           ? printer.print(
               MESSAGE_CODE.statePrint2,
               MESSAGE_LEVEL.state,
-              `${index + 1}: \n${formatState(state)}`,
+              `${index + 1}: \n${formatState(state, printer.isDiffTrace ? output.states[index - 1] : undefined)}`,
             )
           : printer.print(
               MESSAGE_CODE.statePrint1,
@@ -533,7 +543,7 @@ const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutput) => {
   }
 };
 
-const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timing) => {
+const printResult = (result: CheckResult, printer: TlcPrinter, timing: Timing) => {
   const print = printer.print;
   if (result.failure) {
     const failure = result.failure;
@@ -722,7 +732,7 @@ const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
   );
 };
 
-const printSimulation = (printer: MessagePrinter, output: SimulationOutput) => {
+const printSimulation = (printer: TlcPrinter, output: SimulationOutput) => {
   const print = printer.print;
   switch (output.kind) {
     case "message":
@@ -735,7 +745,7 @@ const printSimulation = (printer: MessagePrinter, output: SimulationOutput) => {
     case "behavior": {
       const last = output.trace[output.trace.length - 1];
       if (!output.isLastStateOnly) {
-        printTrace(printer, output.trace);
+        printTrace(printer, output.trace, BEHAVIOR, false, true);
         return;
       }
       print(MESSAGE_CODE.errorState, MESSAGE_LEVEL.none, "The error state is:\n");
@@ -794,7 +804,7 @@ const checkSpec = async (
   args: TlcArguments,
   dump: StateDump | undefined,
   java: JavaProperties,
-  printer: MessagePrinter,
+  printer: TlcPrinter,
 ) => {
   const workers = args.workers;
   const livenessCheck = args.livenessCheck;
@@ -835,7 +845,7 @@ const checkSpec = async (
       printError(error, printer);
     }
     printFinished();
-    return getErrorExitCode(error);
+    return getTopLevelExitCode(error);
   };
   // TLC reads the configuration file before it parses the spec, and prints how long it ran even
   // when it can't read it.
@@ -898,6 +908,8 @@ const checkSpec = async (
       version,
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
       rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
+      suppressedCodes: args.suppressedCodes,
+      errorCodes: args.errorCodes,
       onPrint: (text) => process.stdout.write(text),
       onPrintError: (text) => process.stderr.write(text),
     },
@@ -917,6 +929,7 @@ const checkSpec = async (
         undefined,
       );
     }
+    const userFile = args.userFile;
     const options: CheckOptions = {
       workers,
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
@@ -929,6 +942,7 @@ const checkSpec = async (
       isWarningEnabled: args.isWarningEnabled,
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
+      onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
       source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
@@ -1083,7 +1097,16 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     // TLC checks one spec, so tla-ts names each of several it checks.
     if (paths.length > 1)
       console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
-    const printer = createMessagePrinter(parsed.isTool, parsed.isWarningEnabled, version);
+    const printer = {
+      ...createMessagePrinter(
+        parsed.isTool,
+        parsed.isWarningEnabled,
+        version,
+        parsed.suppressedCodes,
+        parsed.errorCodes,
+      ),
+      isDiffTrace: parsed.isDiffTrace,
+    };
     exitCodes.push(await reportErrors(() => checkSpec(path, parsed, dump, java, printer), printer));
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;

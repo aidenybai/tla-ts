@@ -22,6 +22,7 @@ import {
   toUnspecifiedSubscriptError,
 } from "../evaluate";
 import { getStreamedElements, isTlcEnumerable, setTrace, valuesEqual, type Value } from "../values";
+import { MESSAGE_CODE } from "./messages";
 
 // Replays a failed computation as TLC's CallStackTool does, walking the predicates in the order
 // and nesting of Tool.getInitStates and getNextStates, so it records the nodes TLC records.
@@ -539,6 +540,16 @@ const visitApplication = (
   visitValue(replay, evaluate(expression, context), items, partial);
 };
 
+export const warnChangedUnchanged = (
+  environment: Environment,
+  index: number,
+  expression: Expression,
+) =>
+  environment.runtime.warn(
+    MESSAGE_CODE.unchangedVariableChanged,
+    `The variable ${environment.variables[index]} was changed while it is specified as UNCHANGED at\n${describeRange(expression)}`,
+  );
+
 const visitUnchanged = (
   replay: Replay,
   expression: Expression,
@@ -550,7 +561,13 @@ const visitUnchanged = (
     const index = getVariable(replay, expression, scope);
     if (index !== undefined) {
       const value = replay.current?.[index];
-      if (value !== undefined) proceedWithValue(replay, items, partial, index, value);
+      if (value === undefined) return;
+      const assigned = partial[index];
+      if (assigned !== undefined && !valuesEqual(assigned, value)) {
+        warnChangedUnchanged(replay.environment, index, expression);
+        return;
+      }
+      proceedWithValue(replay, items, partial, index, value);
       return;
     }
     if (expression.kind === "Tuple") {

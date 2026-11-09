@@ -2976,9 +2976,21 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
   }
 };
 
-export const formatState = (state: Record<string, Value>) => {
+// TLC counts a value it can't compare with the previous one as changed.
+const isUnchanged = (previous: Value | undefined, value: Value) => {
+  if (previous === undefined) return false;
+  try {
+    return valuesEqual(previous, value);
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return false;
+    throw error;
+  }
+};
+
+export const formatState = (state: Record<string, Value>, previous?: Record<string, Value>) => {
   const entries = Object.entries(state);
   return entries
+    .filter(([name, value]) => !previous || !isUnchanged(previous[name], value))
     .map(
       ([name, value]) =>
         `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}\n`,

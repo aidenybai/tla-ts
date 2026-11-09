@@ -8,6 +8,7 @@ export interface CheckerRuntime {
   getBehavior: (state: Value[]) => Value[][];
   getSpecification: () => Value;
   counterExample: Value | undefined;
+  deferred: ((next: Value[]) => void) | undefined;
   setLivenessSource: (index: number | undefined) => void;
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
@@ -17,7 +18,6 @@ export interface CheckerRuntime {
     | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: (() => void) | undefined;
-  // TLC prints each distinct warning once.
   warn: (code: number, text: string) => void;
   // TLC's -nowarning turns the warnings off, and with them the shortcut that evaluates the rest
   // of an action once it assigns every variable, since that shortcut skips a warning.
@@ -56,6 +56,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getBehavior: () => [],
     getSpecification: () => createRecord([]),
     counterExample: undefined,
+    deferred: undefined,
     isSeen: () => false,
     setLivenessSource: () => {},
     getCurrentState: () => undefined,
