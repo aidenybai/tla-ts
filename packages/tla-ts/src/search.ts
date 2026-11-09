@@ -63,6 +63,7 @@ import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
   formatValue,
+  getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
   setStringOrder,
@@ -672,17 +673,12 @@ interface Search {
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
 
-const toAliasRecord = (value: Value, fieldOrder: string[]) => {
+// TLC prints the alias's record in the order it was written, unless it sorted the record.
+const toAliasRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
-  const record = toFiniteFunction(value);
-  if (!record.domain.every((key) => typeof key === "string")) return undefined;
-  const entries = record.domain.map((key, index): [string, Value] => [
-    String(key),
-    record.range[index],
-  ]);
-  return Object.fromEntries(
-    entries.sort((left, right) => fieldOrder.indexOf(left[0]) - fieldOrder.indexOf(right[0])),
-  );
+  const pairs = getWrittenPairs(toFiniteFunction(value));
+  if (!pairs.every((pair) => typeof pair[0] === "string")) return undefined;
+  return Object.fromEntries(pairs.map((pair) => [String(pair[0]), pair[1]]));
 };
 
 export const getIncompleteSuccessorMessage = (
@@ -989,10 +985,9 @@ export const createSearch = (
     toRecord,
     evaluateAlias: (alias, state, next, isTool) => {
       try {
-        const body = getConfigDefinition("alias", alias, environment).body;
+        getConfigDefinition("alias", alias, environment);
         const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
-        const fieldOrder = body.kind === "Record" ? body.fields.map((field) => field.name) : [];
-        return toAliasRecord(value, fieldOrder) ?? toRecord(state);
+        return toAliasRecord(value) ?? toRecord(state);
       } catch (error) {
         if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
         return { ...toRecord(state), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
