@@ -697,8 +697,13 @@ const compileIdentifier = (
       );
       return;
     }
-    // TLC computed a constant definition at startup, so it looks up its value.
-    if (binding || !definition || getStartupValue(definition, environment) !== undefined) {
+    // TLC computed a constant definition at startup, so it looks up its value. It walks the body
+    // of the configured INIT or NEXT, which isn't a reference in the source and has no range.
+    if (
+      binding ||
+      !definition ||
+      (expression.location.range && getStartupValue(definition, environment) !== undefined)
+    ) {
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
