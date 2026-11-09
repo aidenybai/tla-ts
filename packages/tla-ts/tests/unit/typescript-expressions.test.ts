@@ -492,6 +492,23 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const list = [5, 6];`,
     ],
     [
+      "[list.every(readFlag, flagged), list.some(isUndefined), count, Array.prototype.every.call(holder, readFlag, flagged)]",
+      `const flagged: { [key: string]: unknown } = { flag: true, step: 2 };
+      let count = 0;
+      function readFlag(this: { [key: string]: unknown }, value: number) {
+        return this.flag === true && value > 0;
+      }
+      function isUndefined(this: unknown) {
+        return this === undefined;
+      }
+      function bump(this: { [key: string]: unknown }, value: number) {
+        count = count + (this.step as number) + value;
+      }
+      const list = [1, 2];
+      list.forEach(bump, flagged);
+      const holder: { [key: string]: unknown } = { 0: 3, length: 1 };`,
+    ],
+    [
       "[shape.sides, Shape.prototype.sides]",
       `const box = {};
       function Shape() {}

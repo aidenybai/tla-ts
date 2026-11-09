@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
   checkElement,
+  getCallbackReceiver,
   getUpdatedValue,
   HOLE_SKIPPING_METHODS,
   MUTATING_METHODS,
@@ -705,6 +706,7 @@ interface LoopCall {
   // The array, or the array-like object that Array.prototype's method calls back for.
   receiver: ts.Expression;
   callback: FunctionNode;
+  argument: ts.Expression;
   initial: ts.Expression | undefined;
   isArrayLike: boolean;
 }
@@ -729,12 +731,13 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
   }
   const argument = callbackArguments.at(0);
   const callback = argument && getCallback(argument, path, context);
-  return callback?.body !== undefined &&
+  return argument !== undefined &&
+    callback?.body !== undefined &&
     (ts.isArrowFunction(callback) ||
       ts.isFunctionExpression(callback) ||
       ts.isFunctionDeclaration(callback)) &&
     getChanged(callback, path, context).length > 0
-    ? { method, receiver, callback, initial: callbackArguments.at(1), isArrayLike }
+    ? { method, receiver, callback, argument, initial: callbackArguments.at(1), isArrayLike }
     : undefined;
 };
 
@@ -770,7 +773,8 @@ const translateLoopCall = (
   const isReversed = method === "reduceRight" || method.startsWith("findLast");
   const isReduce = method.startsWith("reduce");
   // The array parameter holds a sequence, which only a parameter typed as an array can read.
-  const arrayName = callback.parameters.at(isReduce ? 3 : 2)?.name;
+  const callbackParameters = getParameters(callback);
+  const arrayName = callbackParameters.at(isReduce ? 3 : 2)?.name;
   if (
     arrayName !== undefined &&
     ts.isIdentifier(arrayName) &&
@@ -857,13 +861,13 @@ const translateLoopCall = (
     loop.isArrayLike
       ? checkElement(
           value,
-          callback.parameters[at],
+          callbackParameters[at],
           getHeap(inner.scope, receiver, context),
           context,
         )
       : value;
   const bound = bindValues(
-    callback.parameters,
+    callbackParameters,
     [
       ...(isReduce ? [getChecked(kept, 0)] : []),
       getChecked(element, isReduce ? 1 : 0),
@@ -918,7 +922,7 @@ const translateLoopCall = (
                 ...inner,
                 scope: {
                   ...bound.scope,
-                  receiver: ts.isArrowFunction(callback) ? inner.scope.receiver : undefined,
+                  receiver: getCallbackReceiver(loop.argument, callback, inner.scope, context),
                 },
               },
               context,

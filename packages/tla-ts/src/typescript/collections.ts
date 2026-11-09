@@ -1,7 +1,9 @@
 import ts from "@typescript/typescript6";
 import {
   type Context,
+  type FunctionNode,
   getCallee,
+  getParameters,
   getSymbol,
   getUndefined,
   isMethodCall,
@@ -14,7 +16,7 @@ import { translateExpression } from "./expressions";
 import { translateBody } from "./functions";
 import { getHeap } from "./heap";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
-import { bindNames, bindPatternInline, type Scope } from "./scope";
+import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
 import {
   apply,
   boolean,
@@ -56,16 +58,71 @@ interface Update {
   (current: Expression, values: Expression[], context: Context): Expression;
 }
 
+const THIS_ARGUMENT_METHODS = new Set([
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+  "forEach",
+  "from",
+  "map",
+  "some",
+]);
+
+// What this names in a function that a method calls back: the argument after the callback where
+// the method takes one, else undefined. An arrow function keeps the this around it.
+export const getCallbackReceiver = (
+  argument: ts.Expression,
+  callee: FunctionNode,
+  scope: Scope,
+  context: Context,
+): Receiver | undefined => {
+  const call = argument.parent;
+  if (
+    (!ts.isFunctionDeclaration(callee) && !ts.isFunctionExpression(callee)) ||
+    !ts.isCallExpression(call) ||
+    !ts.isPropertyAccessExpression(call.expression)
+  ) {
+    return scope.receiver;
+  }
+  const accessed = call.expression;
+  const method =
+    accessed.name.text === "call" && ts.isPropertyAccessExpression(accessed.expression)
+      ? accessed.expression.name.text
+      : accessed.name.text;
+  const thisArgument = THIS_ARGUMENT_METHODS.has(method)
+    ? call.arguments[call.arguments.indexOf(argument) + 1]
+    : undefined;
+  return {
+    value:
+      thisArgument === undefined
+        ? getUndefined(context)
+        : translateExpression(thisArgument, scope, context),
+    method: callee,
+  };
+};
+
 const getCallback = (callback: ts.Expression, context: Context) => {
   const callee = getCallee(callback, context);
   if (callee?.body === undefined) throw new TlaTypeScriptError("Pass a function here", callback);
-  const unbound = callee.parameters.find(
+  const parameters = getParameters(callee);
+  const unbound = parameters.find(
     (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
   );
   if (unbound !== undefined) {
     throw new TlaTypeScriptError("A callback's parameters can't have defaults or rest", unbound);
   }
-  return { parameters: callee.parameters, body: callee.body };
+  return {
+    parameters,
+    body: callee.body,
+    scope: (scope: Scope): Scope => ({
+      ...scope,
+      receiver: getCallbackReceiver(callback, callee, scope, context),
+    }),
+  };
 };
 
 const translateCallback = (callback: ts.Expression, scope: Scope, context: Context) =>
@@ -90,8 +147,10 @@ const rejectIndex = (callback: ts.Expression, message: string, context: Context)
 };
 
 // Binds a callback's element parameter to a fresh variable, which a quantifier then binds.
-const bindElement = (callback: ts.Expression, scope: Scope, context: Context): Element => {
-  const parameter = getCallback(callback, context).parameters[0];
+const bindElement = (callback: ts.Expression, outer: Scope, context: Context): Element => {
+  const found = getCallback(callback, context);
+  const scope = found.scope(outer);
+  const parameter = found.parameters[0];
   if (parameter === undefined) return { variable: context.names.getFresh("element"), scope };
   if (!ts.isIdentifier(parameter.name)) {
     const variable = context.names.getFresh("element");
@@ -145,7 +204,8 @@ const bindIndexed = (
   context: Context,
   extra: { accumulator?: Expression; owner?: Expression; indices?: Expression } = {},
 ) => {
-  const parameters = getCallback(callback, context).parameters;
+  const found = getCallback(callback, context);
+  const parameters = found.parameters;
   const offset = extra.accumulator === undefined ? 0 : 1;
   const getChecked = (value: Expression, at: number) =>
     extra.owner === undefined
@@ -175,7 +235,7 @@ const bindIndexed = (
     return value === undefined
       ? current
       : bindPatternInline(parameter.name, value, current, context);
-  }, scope);
+  }, found.scope(scope));
 };
 
 const getDomain = (value: Expression) => apply("DOMAIN", [value]);
