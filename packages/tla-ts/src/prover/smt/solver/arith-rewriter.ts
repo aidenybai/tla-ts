@@ -1323,6 +1323,17 @@ export class ArithRewriter extends PolyRewriter {
         );
       }
     }
+    if (manager.getOp(left) === OP_ITE && manager.getRefCount(left) === 1) {
+      const thenAtom = this.mkAtom(manager.getArg(left, 1), right, kind);
+      return this.reduce(
+        manager.mkApp(
+          OP_ITE,
+          [manager.getArg(left, 0), thenAtom, this.mkAtom(manager.getArg(left, 2), right, kind)],
+          SORT_BOOL,
+        ),
+        2,
+      );
+    }
     const isToIntRight = manager.getOp(right) === OP_TO_INT && manager.isNumeral(left);
     const toIntArg =
       manager.getOp(isToIntRight ? right : left) === OP_TO_INT

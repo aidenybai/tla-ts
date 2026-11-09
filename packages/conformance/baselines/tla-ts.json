@@ -166,8 +166,6 @@
   "tlapm/backends/z3/z3test/regressions/smt2/string-concat.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/string-ops.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/string11.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/t112.smt2": "text-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/t113.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/t114.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/t190.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/t191.smt2": "text-mismatch",
