@@ -3684,11 +3684,27 @@ const HELPERS = {
     }
     return set;
   },
+  // Sorts the keys of an image in place, and its values alongside, which may be the map's own.
   sortMap: (compare: Comparer, keys: Plain[], values: Plain[]) => {
-    const order = keys
-      .map((_, index) => index)
-      .sort((left, right) => compare(keys[left], keys[right]));
-    return [order.map((index) => keys[index]), order.map((index) => values[index])];
+    if (keys.length > MAXIMUM_INSERTION_SORT) {
+      const order = keys
+        .map((_, index) => index)
+        .sort((left, right) => compare(keys[left], keys[right]));
+      return [order.map((index) => keys[index]), order.map((index) => values[index])];
+    }
+    const sorted = values.slice();
+    for (let index = 1; index < keys.length; index++) {
+      const key = keys[index];
+      const value = sorted[index];
+      let position = index;
+      for (; position > 0 && compare(key, keys[position - 1]) < 0; position--) {
+        keys[position] = keys[position - 1];
+        sorted[position] = sorted[position - 1];
+      }
+      keys[position] = key;
+      sorted[position] = value;
+    }
+    return [keys, sorted];
   },
   sortSeq: (sequence: Plain[], isBefore: (left: Plain, right: Plain) => boolean) => {
     const sorted = sequence.slice();
