@@ -1,6 +1,8 @@
 (*---
 description: A tuple isn't a FcnRcdValue either, so it fails the same check.
 ref: tlc2/tool/impl/Tool.java#getSymmetryPerms
+features:
+  - tlc-bug
 outcome: tlc-error
 config: |
   INIT Init
