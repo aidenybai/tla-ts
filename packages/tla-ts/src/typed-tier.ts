@@ -4319,11 +4319,16 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const symmetricKeyCode = `Z.fill(0);
       ${signatures.join(" ")}
       let F = 0;
-      for (let G = 1; G < Q.length; G++) if (H.compareSignatures(Z, Q[G], Q[F]) < 0) F = G;
+      let ties = 0;
+      for (let G = 1; G < Q.length; G++) {
+        const c = H.compareSignatures(Z, Q[G], Q[F]);
+        if (c < 0) { F = G; ties = 0; }
+        if (c <= 0) T[ties++] = G - 1;
+      }
       if (F === 0) { ${keyWriters.join(" ")} }
       let m = n - W.start;
-      images: for (let G = 0; G < A.length; G++) {
-        if (H.compareSignatures(Z, Q[G + 1], Q[F]) !== 0) continue;
+      images: for (let tie = 0; tie < ties; tie++) {
+        const G = T[tie];
         const P = A[G];
         let c = m === 0 && F > 0 ? -1 : 0;
         n = W.start + m;
@@ -4350,6 +4355,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     });
   const source = `let d, n, i, t, W, Y, E = [];
   const X = new Int32Array(${program.variableTypes.length + 1});
+  const T = new Int32Array(Q.length);
   const rv = (first) => { let zigzag = first & 127; let shift = 7; let byte; do { byte = d[i++]; zigzag |= (byte & 127) << shift; shift += 7; } while (byte >= 128); return (zigzag >>> 1) ^ -(zigzag & 1); };
   ${codec.functions.join("\n")}
   ${program.comparers.functions.join("\n")}
