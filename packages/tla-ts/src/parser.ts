@@ -736,7 +736,12 @@ const parse = (
       return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
     }
     if (isAt("<<") || isAt("(") || isAt("{") || isAt("[") || isTlapmAtom) {
-      return { subscript: parsePrimary(), lastArgs: [] };
+      const start = cursor.index;
+      const subscript = parsePrimary();
+      return {
+        subscript: subscript.location.range ? subscript : withRange(subscript, start),
+        lastArgs: [],
+      };
     }
     throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
   };
