@@ -75,6 +75,7 @@ describe("typed tier matches TLC", () => {
     ["AsymmetricViews", 11],
     ["SubSeqPrefixes", 1149],
     ["SingletonSets", 29],
+    ["MappedDuplicates", 22],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([
