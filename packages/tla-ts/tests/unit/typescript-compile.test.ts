@@ -1197,6 +1197,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("tests numbers through the global isNaN and isFinite", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nconst values: number[] = [1, NaN, -Infinity];\nif (isNaN(values[0]) || !isNaN(values[1]) || !isFinite(values[0]) || isFinite(values[2])) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("names the functions that a parameter's defaults make", async () => {
     const result = await check(
       compile(

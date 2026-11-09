@@ -5,7 +5,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import type { Scope } from "./scope";
 import { getKind } from "./types";
-import { apply, boolean, ifExpression, number, string } from "./tla";
+import { apply, boolean, identifier, ifExpression, number, string } from "./tla";
 
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, FiniteSets, TLC
@@ -1244,7 +1244,15 @@ export const isComparable = (left: ts.Expression, right: ts.Expression, context:
     context.checker,
   );
 
-const CONVERSIONS = new Set(["Boolean", "String", "Number", "parseInt", "parseFloat"]);
+const CONVERSIONS = new Set([
+  "Boolean",
+  "String",
+  "Number",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+]);
 
 const PARSERS = new Map<string, (text: string) => number>([
   ["parseInt", (text) => Number.parseInt(text)],
@@ -1275,7 +1283,8 @@ export const translateToNumber = (
   throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
 };
 
-// A call to Boolean, String, Number, parseInt, or parseFloat, or undefined for any other call.
+// A call to Boolean, String, Number, parseInt, parseFloat, isNaN, or isFinite, or undefined for any
+// other call.
 export const translateConversion = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const callee = node.expression;
   const declarations = getSymbol(callee, context.checker)?.declarations ?? [];
@@ -1298,6 +1307,13 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
   }
   if (node.arguments.length > 1) throw unsupported;
   if (name === "Number") return translateToNumber(argument, node, scope, context);
+  if (name === "isNaN") {
+    context.prelude.add("JavaScript");
+    return apply("=", [translateToNumber(argument, node, scope, context), identifier("NaN")]);
+  }
+  if (name === "isFinite") {
+    return useJavaScript("IsFinite", [translateToNumber(argument, node, scope, context)], context);
+  }
   const parse = PARSERS.get(name);
   if (parse !== undefined && ts.isStringLiteral(argument)) {
     return getInteger(parse(argument.text), node);
