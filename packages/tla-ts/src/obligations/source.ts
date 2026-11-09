@@ -217,12 +217,14 @@ export const createSource = (
     bounds.map((bound, index) => {
       if (bound.pattern.kind === "Tuple")
         throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
+      const range = bound.pattern.ranges?.[0];
       return {
         name: bound.pattern.name,
         level: "Constant",
         domain: isDitto(bounds, index)
           ? { kind: "Ditto" }
           : { kind: "Domain", expression: convertExpression(bound.set, isExcept) },
+        ...(range && { location: getRangeLocus(range) }),
       };
     });
 

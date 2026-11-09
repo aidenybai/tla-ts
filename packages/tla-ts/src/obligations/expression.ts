@@ -141,6 +141,7 @@ export interface Bound {
   name: string;
   level: Level;
   domain: BoundDomain;
+  location?: Locus;
 }
 
 export type Selector =

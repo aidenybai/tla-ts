@@ -551,6 +551,7 @@ export const createSimplifier = (counter: Counter) => {
                 kind: "Apply",
                 operator: { kind: "Internal", builtin: "Subseteq" },
                 args: [goalDomain.expression, domain.expression],
+                location: bound.location,
               } satisfies Expr,
               ...sideFacts,
             ]

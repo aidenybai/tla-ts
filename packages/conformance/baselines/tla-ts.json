@@ -236,7 +236,6 @@
   "tlapm/imported/zenon/test/test21.znn": "text-mismatch",
   "tlapm/imported/zenon/test/test73.znn": "text-mismatch",
   "tlapm/obligations/printing/integer_literals": "exit-mismatch",
-  "tlapm/obligations/take/take_different_domain": "text-mismatch",
   "tlapm/obligations/use_hide/module_use_suppressed": "text-mismatch",
   "tlapm/smoke/parse_error": "text-mismatch",
   "tlc/checker/alias/difftrace_with_alias_changes": "text-mismatch",
