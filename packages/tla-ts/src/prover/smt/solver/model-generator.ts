@@ -106,5 +106,6 @@ export const mkModel = (context: Context): GeneratedModel => {
     const args = Array.from({ length: node.numArgs }, (_, index) => getValue(node.getArg(index)));
     if (interp.getEntry(args) === undefined) interp.insertNewEntry(args, getValue(node));
   }
+  for (const theory of context.theories) theory.finalizeModel();
   return { model, root2value };
 };

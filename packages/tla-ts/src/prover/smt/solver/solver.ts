@@ -23,7 +23,10 @@ export const solveGoal = (manager: AstManager, forms: number[], isMbqi: boolean)
   for (const form of forms) asserted.assertExpr(form);
   context.setupContext();
   context.internalizeAssertions(asserted);
-  const result = context.search();
+  const theoryAssumptions: number[] = [];
+  context.addTheoryAssumptions(theoryAssumptions);
+  const result =
+    theoryAssumptions.length === 0 ? context.search() : context.checkResearching(asserted, []);
   manager.limit.release();
   return { result, context };
 };
@@ -50,8 +53,7 @@ export const solveAssuming = (
   for (const assertion of assertions) asserted.assertExpr(assertion);
   context.setupContext();
   context.internalizeAssertions(asserted);
-  context.initAssumptions(assumptions, asserted);
-  const result = context.mkUnsatCore(context.search());
+  const result = context.checkResearching(asserted, assumptions);
   manager.limit.release();
   return { result, context };
 };

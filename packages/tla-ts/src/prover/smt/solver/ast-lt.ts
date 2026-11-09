@@ -2,9 +2,11 @@
 import {
   FAMILY_ARRAY,
   FAMILY_BV,
+  FAMILY_CHAR,
   FAMILY_DATATYPE,
   FAMILY_FPA,
   FAMILY_MODEL_VALUE,
+  FAMILY_SEQ,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -14,6 +16,7 @@ import {
   OP_DT_ACCESSOR,
   OP_DT_CONSTRUCTOR,
   OP_DT_RECOGNISER,
+  OP_SEQ_SKOLEM,
   OP_FPA_NUM,
   OP_ITE,
   OP_NUM,
@@ -36,6 +39,7 @@ interface DeclKey {
 const PARAM_INT = 0;
 const PARAM_AST = 1;
 const PARAM_SYMBOL = 2;
+const PARAM_ZSTRING = 3;
 const PARAM_RATIONAL = 3;
 const PARAM_EXTERNAL = 6;
 
@@ -61,6 +65,14 @@ const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
     return typeof second === "number" ? compareValues(first, second) : -1;
   if (typeof second === "number") return 1;
   return first < second ? -1 : 1;
+};
+
+const getSeqParameters = (manager: AstManager, expr: number) => {
+  const decl = manager.funcDecls[manager.decls[expr]];
+  const chars = manager.getString(expr);
+  if (chars !== undefined) return [PARAM_ZSTRING, String.fromCodePoint(...chars)];
+  const numbers = decl.parameters.flatMap((parameter) => [PARAM_INT, parameter]);
+  return decl.op === OP_SEQ_SKOLEM ? [PARAM_SYMBOL, decl.name, ...numbers] : numbers;
 };
 
 const getDatatypeParameters = (manager: AstManager, decl: number) => {
@@ -135,6 +147,13 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
       domain: decl.domain,
       range,
     };
+  if (decl.family === FAMILY_SEQ || decl.family === FAMILY_CHAR)
+    return {
+      name: decl.name,
+      parameters: getSeqParameters(manager, expr),
+      domain: decl.domain,
+      range,
+    };
   const builtin = manager.getBuiltinSignature(decl.op, manager.getArgs(expr));
   return { name: builtin.name, parameters: [], domain: builtin.domain, range };
 };
@@ -174,7 +193,9 @@ const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
     decl.family === FAMILY_BV ||
     decl.family === FAMILY_ARRAY ||
     decl.family === FAMILY_DATATYPE ||
-    decl.family === FAMILY_FPA
+    decl.family === FAMILY_FPA ||
+    decl.family === FAMILY_SEQ ||
+    decl.family === FAMILY_CHAR
   )
     return true;
   const index = decl.op === OP_ITE ? 1 : 0;

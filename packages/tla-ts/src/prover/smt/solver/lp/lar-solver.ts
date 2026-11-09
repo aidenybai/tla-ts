@@ -115,6 +115,18 @@ export class LarSolver {
     return this.localIsInt[column];
   }
 
+  getLowerBoundOf(column: number) {
+    return column < this.columns.length && this.columns[column].lowerWitness !== null
+      ? this.core.lowerBounds[column]
+      : undefined;
+  }
+
+  getUpperBoundOf(column: number) {
+    return column < this.columns.length && this.columns[column].upperWitness !== null
+      ? this.core.upperBounds[column]
+      : undefined;
+  }
+
   isBase(column: number) {
     return this.core.isBase(column);
   }

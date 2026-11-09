@@ -553,6 +553,12 @@ export abstract class Internalizer {
     this.setBoolVarFlag(boolVar, BV_THEORY, true);
   }
 
+  forcePhase(literal: Literal) {
+    const boolVar = getVar(literal);
+    this.setBoolVarFlag(boolVar, BV_PHASE_AVAILABLE, true);
+    this.setBoolVarFlag(boolVar, BV_PHASE, !isNegated(literal));
+  }
+
   setTrueFirstFlag(boolVar: BoolVar) {
     this.trailInts.push(boolVar);
     this.trailKinds.push(UNDO_TRUE_FIRST);

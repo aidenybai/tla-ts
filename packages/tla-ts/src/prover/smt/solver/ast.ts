@@ -27,6 +27,8 @@ export const FAMILY_BV = 5;
 export const FAMILY_ARRAY = 6;
 export const FAMILY_DATATYPE = 7;
 export const FAMILY_FPA = 8;
+export const FAMILY_CHAR = 9;
+export const FAMILY_SEQ = 10;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -218,6 +220,84 @@ export const OP_FPA_TO_IEEE_BV = FPA_OP_BASE + 46;
 export const OP_FPA_TO_IEEE_BV_I = FPA_OP_BASE + 47;
 export const OP_FPA_BVWRAP = FPA_OP_BASE + 48;
 export const OP_FPA_BV2RM = FPA_OP_BASE + 49;
+const SEQ_OP_BASE = 500;
+export const OP_SEQ_UNIT = SEQ_OP_BASE;
+export const OP_SEQ_EMPTY = SEQ_OP_BASE + 1;
+export const OP_SEQ_CONCAT = SEQ_OP_BASE + 2;
+export const OP_SEQ_PREFIX = SEQ_OP_BASE + 3;
+export const OP_SEQ_SUFFIX = SEQ_OP_BASE + 4;
+export const OP_SEQ_CONTAINS = SEQ_OP_BASE + 5;
+export const OP_SEQ_EXTRACT = SEQ_OP_BASE + 6;
+export const OP_SEQ_REPLACE = SEQ_OP_BASE + 7;
+export const OP_SEQ_AT = SEQ_OP_BASE + 8;
+export const OP_SEQ_NTH = SEQ_OP_BASE + 9;
+export const OP_SEQ_NTH_I = SEQ_OP_BASE + 10;
+export const OP_SEQ_NTH_U = SEQ_OP_BASE + 11;
+export const OP_SEQ_LENGTH = SEQ_OP_BASE + 12;
+export const OP_SEQ_INDEX = SEQ_OP_BASE + 13;
+export const OP_SEQ_LAST_INDEX = SEQ_OP_BASE + 14;
+export const OP_SEQ_TO_RE = SEQ_OP_BASE + 15;
+export const OP_SEQ_IN_RE = SEQ_OP_BASE + 16;
+export const OP_SEQ_REPLACE_RE_ALL = SEQ_OP_BASE + 17;
+export const OP_SEQ_REPLACE_RE = SEQ_OP_BASE + 18;
+export const OP_SEQ_REPLACE_ALL = SEQ_OP_BASE + 19;
+export const OP_SEQ_MAP = SEQ_OP_BASE + 20;
+export const OP_SEQ_MAPI = SEQ_OP_BASE + 21;
+export const OP_SEQ_FOLDL = SEQ_OP_BASE + 22;
+export const OP_SEQ_FOLDLI = SEQ_OP_BASE + 23;
+export const OP_SEQ_POWER = SEQ_OP_BASE + 24;
+export const OP_RE_PLUS = SEQ_OP_BASE + 25;
+export const OP_RE_STAR = SEQ_OP_BASE + 26;
+export const OP_RE_OPTION = SEQ_OP_BASE + 27;
+export const OP_RE_RANGE = SEQ_OP_BASE + 28;
+export const OP_RE_CONCAT = SEQ_OP_BASE + 29;
+export const OP_RE_UNION = SEQ_OP_BASE + 30;
+export const OP_RE_DIFF = SEQ_OP_BASE + 31;
+export const OP_RE_INTERSECT = SEQ_OP_BASE + 32;
+export const OP_RE_XOR = SEQ_OP_BASE + 33;
+export const OP_RE_LOOP = SEQ_OP_BASE + 34;
+export const OP_RE_POWER = SEQ_OP_BASE + 35;
+export const OP_RE_COMPLEMENT = SEQ_OP_BASE + 36;
+export const OP_RE_EMPTY_SET = SEQ_OP_BASE + 37;
+export const OP_RE_FULL_SEQ_SET = SEQ_OP_BASE + 38;
+export const OP_RE_FULL_CHAR_SET = SEQ_OP_BASE + 39;
+export const OP_RE_OF_PRED = SEQ_OP_BASE + 40;
+export const OP_RE_REVERSE = SEQ_OP_BASE + 41;
+export const OP_RE_DERIVATIVE = SEQ_OP_BASE + 42;
+export const OP_STRING_CONST = SEQ_OP_BASE + 43;
+export const OP_STRING_ITOS = SEQ_OP_BASE + 44;
+export const OP_STRING_STOI = SEQ_OP_BASE + 45;
+export const OP_STRING_UBVTOS = SEQ_OP_BASE + 46;
+export const OP_STRING_SBVTOS = SEQ_OP_BASE + 47;
+export const OP_STRING_LT = SEQ_OP_BASE + 48;
+export const OP_STRING_LE = SEQ_OP_BASE + 49;
+export const OP_STRING_IS_DIGIT = SEQ_OP_BASE + 50;
+export const OP_STRING_TO_CODE = SEQ_OP_BASE + 51;
+export const OP_STRING_FROM_CODE = SEQ_OP_BASE + 52;
+export const OP_INTERNAL_STRING_FROM_CHAR = SEQ_OP_BASE + 53;
+export const OP_INTERNAL_STRING_STRREPL = SEQ_OP_BASE + 54;
+export const OP_INTERNAL_STRING_CONCAT = SEQ_OP_BASE + 55;
+export const OP_INTERNAL_STRING_LENGTH = SEQ_OP_BASE + 56;
+export const OP_INTERNAL_STRING_STRCTN = SEQ_OP_BASE + 57;
+export const OP_INTERNAL_STRING_PREFIX = SEQ_OP_BASE + 58;
+export const OP_INTERNAL_STRING_SUFFIX = SEQ_OP_BASE + 59;
+export const OP_INTERNAL_STRING_IN_REGEXP = SEQ_OP_BASE + 60;
+export const OP_INTERNAL_STRING_TO_REGEXP = SEQ_OP_BASE + 61;
+export const OP_INTERNAL_STRING_CHARAT = SEQ_OP_BASE + 62;
+export const OP_INTERNAL_STRING_SUBSTR = SEQ_OP_BASE + 63;
+export const OP_INTERNAL_STRING_STRIDOF = SEQ_OP_BASE + 64;
+export const OP_INTERNAL_STRING_POWER = SEQ_OP_BASE + 65;
+export const OP_INTERNAL_REGEXP_EMPTY = SEQ_OP_BASE + 66;
+export const OP_INTERNAL_REGEXP_FULL_CHAR = SEQ_OP_BASE + 67;
+export const OP_RE_IS_NULLABLE = SEQ_OP_BASE + 68;
+export const OP_SEQ_SKOLEM = SEQ_OP_BASE + 69;
+const CHAR_OP_BASE = 600;
+export const OP_CHAR_CONST = CHAR_OP_BASE;
+export const OP_CHAR_LE = CHAR_OP_BASE + 1;
+export const OP_CHAR_TO_INT = CHAR_OP_BASE + 2;
+export const OP_CHAR_TO_BV = CHAR_OP_BASE + 3;
+export const OP_CHAR_FROM_BV = CHAR_OP_BASE + 4;
+export const OP_CHAR_IS_DIGIT = CHAR_OP_BASE + 5;
 
 // The number of elements of a sort, with -1 for an infinite sort and -2 for a very big one.
 export const SORT_SIZE_INFINITE = -1n;
@@ -323,7 +403,11 @@ const Z3_BV_FAMILY = 7;
 const Z3_ARRAY_FAMILY = 8;
 const Z3_DATATYPE_FAMILY = 9;
 const Z3_RECFUN_FAMILY = 10;
+const Z3_CHAR_FAMILY = 12;
+const Z3_SEQ_FAMILY = 13;
 const Z3_FPA_FAMILY = 14;
+const Z3_SEQ_SORT = 0;
+const Z3_RE_SORT = 1;
 const Z3_FLOATING_POINT_SORT = 0;
 const Z3_ROUNDING_MODE_SORT = 1;
 const Z3_NULL = 0xffffffff;
@@ -533,6 +617,13 @@ export class AstManager {
   private fpaDecls = new Map<string, number>();
   private fpValues: Mpf[] = [];
   private fpValueIds = new Map<string, number>();
+  private charSort = -1;
+  private stringSort = -1;
+  private reglanSort = -1;
+  private seqSorts = new Map<string, number>();
+  private seqDecls = new Map<string, number>();
+  private stringValues: number[][] = [];
+  private stringValueIds = new Map<string, number>();
   private sortHashes = [
     combineHash(getSymbolHash("Bool"), getInfoHash(Z3_BASIC_FAMILY, 0, [])),
     combineHash(getSymbolHash("Int"), getInfoHash(Z3_ARITH_FAMILY, 1, [])),
@@ -587,6 +678,8 @@ export class AstManager {
   readonly piExpr: number;
   readonly eulerExpr: number;
   isHiDiv0 = true;
+  isSeqUsed = false;
+  isReUsed = false;
 
   constructor(readonly limit: ResourceLimit) {
     for (const builtin of BUILTIN_DECLS)
@@ -1059,6 +1152,190 @@ export class AstManager {
 
   getFpValue(id: number): Readonly<Mpf> {
     return this.fpValues[id];
+  }
+
+  private addSort(name: string, family: number, parameters: number[], hash: number) {
+    this.sortHashes.push(hash);
+    this.sortNames.push(name);
+    this.sortFamilies.push(family);
+    this.sortWidths.push(0);
+    this.sortSbits.push(0);
+    this.sortParameters.push(parameters);
+    this.sortSizes.push(SORT_SIZE_INFINITE);
+    return this.sortNames.length - 1;
+  }
+
+  // Z3 makes the Char, String and RegLan sorts at startup, so they take no small id.
+  mkCharSort() {
+    if (this.charSort === -1)
+      this.charSort = this.addSort(
+        "Unicode",
+        FAMILY_CHAR,
+        [],
+        combineHash(getSymbolHash("Unicode"), getInfoHash(Z3_CHAR_FAMILY, 0, [])),
+      );
+    return this.charSort;
+  }
+
+  // String keeps its element out of its parameters, since it prints as a plain name.
+  mkStringSort() {
+    if (this.stringSort !== -1) return this.stringSort;
+    const charHash = this.sortHashes[this.mkCharSort()];
+    this.stringSort = this.addSort(
+      "String",
+      FAMILY_SEQ,
+      [],
+      combineHash(getSymbolHash("String"), getInfoHash(Z3_SEQ_FAMILY, Z3_SEQ_SORT, [charHash])),
+    );
+    return this.stringSort;
+  }
+
+  mkSeqSort(element: number) {
+    if (element === this.mkCharSort()) return this.mkStringSort();
+    const key = `s${element}`;
+    const existing = this.seqSorts.get(key);
+    if (existing !== undefined) return existing;
+    const sort = this.addSort(
+      "Seq",
+      FAMILY_SEQ,
+      [element],
+      combineHash(
+        getSymbolHash("Seq"),
+        getInfoHash(Z3_SEQ_FAMILY, Z3_SEQ_SORT, [this.sortHashes[element]]),
+      ),
+    );
+    this.mkSmallId();
+    this.seqSorts.set(key, sort);
+    return sort;
+  }
+
+  mkReSort(seq: number) {
+    const isReglan = seq === this.mkStringSort();
+    if (isReglan && this.reglanSort !== -1) return this.reglanSort;
+    const key = `r${seq}`;
+    const existing = this.seqSorts.get(key);
+    if (existing !== undefined) return existing;
+    const sort = this.addSort(
+      "RegEx",
+      FAMILY_SEQ,
+      [seq],
+      combineHash(
+        getSymbolHash("RegEx"),
+        getInfoHash(Z3_SEQ_FAMILY, Z3_RE_SORT, [this.sortHashes[seq]]),
+      ),
+    );
+    if (isReglan) this.reglanSort = sort;
+    else {
+      this.mkSmallId();
+      this.seqSorts.set(key, sort);
+    }
+    return sort;
+  }
+
+  isCharSort(sort: number) {
+    return sort === this.charSort;
+  }
+
+  isStringSort(sort: number) {
+    return sort === this.stringSort;
+  }
+
+  isSeqSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_SEQ && this.sortNames[sort] !== "RegEx";
+  }
+
+  isReSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_SEQ && this.sortNames[sort] === "RegEx";
+  }
+
+  getSeqElementSort(sort: number) {
+    return sort === this.stringSort ? this.charSort : this.sortParameters[sort][0];
+  }
+
+  getReSeqSort(sort: number) {
+    return this.sortParameters[sort][0];
+  }
+
+  mkSeqDecl(
+    op: number,
+    name: string,
+    parameters: number[],
+    parameterHashes: number[],
+    domain: number[],
+    range: number,
+  ) {
+    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const existing = this.seqDecls.get(key);
+    if (existing !== undefined) return existing;
+    const isChar = op >= CHAR_OP_BASE;
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(
+        isChar ? Z3_CHAR_FAMILY : Z3_SEQ_FAMILY,
+        op - (isChar ? CHAR_OP_BASE : SEQ_OP_BASE),
+        parameterHashes,
+      ),
+    );
+    this.funcDecls.push({
+      name,
+      family: isChar ? FAMILY_CHAR : FAMILY_SEQ,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.seqDecls.set(key, decl);
+    return decl;
+  }
+
+  mkStringValueId(chars: readonly number[]) {
+    const key = chars.join(",");
+    const existing = this.stringValueIds.get(key);
+    if (existing !== undefined) return existing;
+    this.stringValues.push([...chars]);
+    this.stringValueIds.set(key, this.stringValues.length - 1);
+    return this.stringValues.length - 1;
+  }
+
+  getStringHash(id: number) {
+    return bytesHash(new Uint8Array(Uint32Array.from(this.stringValues[id]).buffer), 23);
+  }
+
+  getSortHash(sort: number) {
+    return this.sortHashes[sort];
+  }
+
+  mkString(chars: readonly number[]) {
+    const id = this.mkStringValueId(chars);
+    const sort = this.mkStringSort();
+    const decl = this.mkSeqDecl(
+      OP_STRING_CONST,
+      "String",
+      [id],
+      [this.getStringHash(id)],
+      [],
+      sort,
+    );
+    return this.mkApp(decl, [], sort);
+  }
+
+  getString(expr: number): readonly number[] | undefined {
+    if (this.getOp(expr) !== OP_STRING_CONST) return undefined;
+    return this.stringValues[this.funcDecls[this.decls[expr]].parameters[0]];
+  }
+
+  mkChar(code: number) {
+    const sort = this.mkCharSort();
+    return this.mkApp(this.mkSeqDecl(OP_CHAR_CONST, "Char", [code], [code], [], sort), [], sort);
+  }
+
+  getChar(expr: number) {
+    return this.getOp(expr) === OP_CHAR_CONST ? this.funcDecls[this.decls[expr]].parameters[0] : -1;
   }
 
   mkArraySort(parameters: number[]) {
@@ -1613,7 +1890,9 @@ export class AstManager {
       funcDecl.family === FAMILY_BV ||
       funcDecl.family === FAMILY_ARRAY ||
       funcDecl.family === FAMILY_DATATYPE ||
-      funcDecl.family === FAMILY_FPA;
+      funcDecl.family === FAMILY_FPA ||
+      funcDecl.family === FAMILY_CHAR ||
+      funcDecl.family === FAMILY_SEQ;
     const builtinSlot =
       hasOwnHash || funcDecl.op === OP_PATTERN
         ? -1
@@ -1923,6 +2202,7 @@ export class AstManager {
       op === OP_FALSE ||
       op === OP_MODEL_VALUE ||
       op === OP_BV_NUM ||
+      op === OP_CHAR_CONST ||
       (op >= OP_FPA_RM_NEAREST_TIES_TO_EVEN && op <= OP_FPA_RM_TOWARD_ZERO) ||
       (op === OP_CONST_ARRAY && this.isUniqueValue(this.getArg(expr, 0))) ||
       (op === OP_DT_CONSTRUCTOR &&
@@ -1950,14 +2230,43 @@ export class AstManager {
       return this.mapArgs(current, (arg) => this.isValue(arg)).every((isValue) => isValue);
     if (this.getOp(current) >= OP_FPA_NUM && this.getOp(current) <= OP_FPA_MINUS_ZERO) return true;
     if (this.getOp(current) === OP_ALGEBRAIC_NUM) return true;
+    if (this.getFamily(current) === FAMILY_SEQ) return this.isSeqValue(current);
     return current === expr && this.isUniqueValue(expr);
+  }
+
+  private isSeqValue(expr: number) {
+    const todo = [expr];
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
+      const op = this.getOp(current);
+      if (op === OP_SEQ_EMPTY || op === OP_STRING_CONST) continue;
+      if (op === OP_SEQ_UNIT && this.isValue(this.getArg(current, 0))) continue;
+      if (op !== OP_SEQ_CONCAT || !this.everyArg(current, (arg) => this.isApp(arg))) return false;
+      this.pushArgs(current, todo);
+    }
+    return true;
+  }
+
+  private areSeqsDistinct(first: number, second: number): boolean {
+    const firstOp = this.getOp(first);
+    const secondOp = this.getOp(second);
+    if (first === second) return false;
+    if (firstOp === OP_STRING_CONST && secondOp === OP_STRING_CONST) return true;
+    if (firstOp === OP_SEQ_UNIT && secondOp === OP_SEQ_UNIT)
+      return this.areDistinct(this.getArg(first, 0), this.getArg(second, 0));
+    return (
+      (firstOp === OP_SEQ_EMPTY && secondOp === OP_SEQ_UNIT) ||
+      (firstOp === OP_SEQ_UNIT && secondOp === OP_SEQ_EMPTY)
+    );
   }
 
   // are_distinct: the plugin of the first term's family, or of the second's for a user term, tells
   // two terms apart. Every plugin separates distinct unique values, and arith also separates b from
   // (+ b k) and (+ k b) for a nonzero numeral k.
-  areDistinct(first: number, second: number) {
+  areDistinct(first: number, second: number): boolean {
     if (this.kinds[first] !== KIND_APP || this.kinds[second] !== KIND_APP) return false;
+    const pluginFamily =
+      this.getFamily(first) === FAMILY_USER ? this.getFamily(second) : this.getFamily(first);
+    if (pluginFamily === FAMILY_SEQ) return this.areSeqsDistinct(first, second);
     if (first !== second && this.isUniqueValue(first) && this.isUniqueValue(second)) return true;
     const family = this.funcDecls[this.decls[first]].family;
     if (family === FAMILY_DATATYPE) {

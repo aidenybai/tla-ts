@@ -3,7 +3,7 @@ import { shrink } from "./array";
 import type { AstManager } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
-import type { BoolVar } from "./literal";
+import { type BoolVar, FALSE_LITERAL, type Literal, negate, TRUE_LITERAL } from "./literal";
 import type { ProtoModel } from "./proto-model";
 
 export const FC_DONE = 0;
@@ -57,6 +57,33 @@ export abstract class Theory {
   }
 
   init() {}
+
+  protected mkEqLiteral(first: number, second: number, isGateContext: boolean): Literal {
+    if (first === second) return TRUE_LITERAL;
+    if (this.manager.areDistinct(first, second)) return FALSE_LITERAL;
+    const eq = this.context.mkEqAtom(first, second);
+    this.context.internalize(eq, isGateContext);
+    return this.context.getLiteral(eq);
+  }
+
+  protected mkLiteralOf(input: number): Literal {
+    const manager = this.manager;
+    const isNot = manager.isNot(input);
+    const expr = isNot ? manager.getArg(input, 0) : input;
+    if (!this.context.isEInternalized(expr)) this.context.internalize(expr, false);
+    const literal = this.context.getLiteral(expr);
+    this.context.markLiteralAsRelevant(literal);
+    return isNot ? negate(literal) : literal;
+  }
+
+  protected ensureEnodeOf(expr: number): Enode {
+    const context = this.context;
+    if (!context.isEInternalized(expr)) context.internalize(expr, false);
+    if (!this.manager.isBool(expr)) context.internalizeTerm(expr);
+    const node = context.getEnode(expr)!;
+    context.markAsRelevant(expr);
+    return node;
+  }
 
   abstract internalizeAtom(atom: number, isGateContext: boolean): boolean;
 
@@ -123,6 +150,14 @@ export abstract class Theory {
   }
 
   initModel(_model: ProtoModel) {}
+
+  finalizeModel() {}
+
+  addTheoryAssumptions(_assumptions: number[]) {}
+
+  shouldResearch(_unsatCore: readonly number[]) {
+    return false;
+  }
 
   // undefined stands for a fresh value of the sort.
   mkValue(_node: Enode): number | DependentValue | undefined {
