@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -928,6 +929,7 @@ const checkSpec = async (
         undefined,
       );
     }
+    const userFile = args.userFile;
     const options: CheckOptions = {
       workers,
       livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
@@ -940,6 +942,7 @@ const checkSpec = async (
       isWarningEnabled: args.isWarningEnabled,
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
+      onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
       source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),

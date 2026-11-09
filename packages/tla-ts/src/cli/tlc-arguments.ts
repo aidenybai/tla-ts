@@ -25,6 +25,7 @@ export interface TlcArguments {
   isDiffTrace: boolean;
   suppressedCodes: number[];
   errorCodes: number[];
+  userFile: string | undefined;
   isUsage: boolean;
 }
 
@@ -139,6 +140,7 @@ const createDefaults = (): TlcArguments => ({
   isDiffTrace: false,
   suppressedCodes: [],
   errorCodes: [],
+  userFile: undefined,
   isUsage: false,
 });
 
@@ -263,6 +265,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       } catch {
         return reject("Error: Failed to create user output log file.");
       }
+      parsed.userFile = path;
       continue;
     }
     if (flag === "-invlevel") {
