@@ -219,11 +219,12 @@ export const reportStartup = (
   });
 };
 
+// TLC reads the invariant's level from SANY, which doesn't see the configuration's substitutions.
 const getInvariants = (names: string[], environment: Environment) => {
   const analyzer = createLevelAnalyzer({
     constants: new Set(environment.constants.keys()),
     variables: new Set(environment.variables),
-    getDefinition: (name) => getDefinition(name, environment),
+    getDefinition: (name) => environment.definitions.get(name),
   });
   return names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
