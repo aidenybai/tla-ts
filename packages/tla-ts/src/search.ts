@@ -30,6 +30,7 @@ import {
   evaluateStartupDefinitions,
   getStartupValue,
   expectBoolean,
+  expectBooleanBody,
   formatRange,
   getDefinition,
   type Context,
@@ -751,7 +752,8 @@ export const findAssumptionViolation = (
 ): Omit<Violation, "loopStart"> | undefined => {
   for (const assumption of assumptions.filter((candidate) => !candidate.isAxiom)) {
     const failure = getConstantFailure(
-      (context) => holds(assumption.expression, context, "an assumption"),
+      (context) =>
+        expectBooleanBody(evaluate(assumption.expression, context), assumption.expression),
       environment,
     );
     if (failure) {
