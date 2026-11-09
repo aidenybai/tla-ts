@@ -126,9 +126,7 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
         .getChildren()
         .reduce(
           (count, child) => count + getSymbolCalls(child),
-          ts.isCallExpression(node) &&
-            ts.isIdentifier(node.expression) &&
-            node.expression.text === "Symbol"
+          ts.isCallExpression(node) && ["Symbol", "Symbol.for"].includes(node.expression.getText())
             ? 1
             : 0,
         );

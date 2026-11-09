@@ -1668,6 +1668,18 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives the registry's symbol for a key", async () => {
+    const result = await checkModel(`
+      const registered: symbol = Symbol.for("key");
+      const again: symbol = Symbol.for("key");
+      const fresh: symbol = Symbol("key");
+      if (again !== registered || fresh === registered) throw new Error("for");
+      if (Symbol.keyFor(registered) !== "key") throw new Error("keyFor");
+      if (Symbol.keyFor(Symbol.iterator) !== undefined) throw new Error("unregistered");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a script uses a well-known symbol as a key", async () => {
     const result = await checkModel(`
       const object: { [key: symbol]: number } = {};

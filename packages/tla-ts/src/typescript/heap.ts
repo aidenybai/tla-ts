@@ -572,18 +572,9 @@ export const translateHasPrivate = (
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
   if (ts.isCallExpression(node) && isSymbolCall(node, context)) {
-    const description = node.arguments.at(0);
-    if (description !== undefined && ts.isSpreadElement(description)) {
-      throw new TlaTypeScriptError("Pass Symbol a description, not a spread", description);
-    }
     return useJavaScript(
-      "NewSymbol",
-      [
-        heap,
-        description === undefined
-          ? getUndefined(context)
-          : translateExpression(description, scope, context),
-      ],
+      isSymbolFor(node, context) ? "RegisterSymbol" : "NewSymbol",
+      [heap, translateSymbolArgument(node, scope, context)],
       context,
     );
   }
@@ -769,7 +760,42 @@ export const isCreation = (node: ts.Node, context: Context) => {
 
 // A call of Symbol, which changes the heap as an allocation does, to record the symbol it makes.
 export const isSymbolCall = (node: ts.Node, context: Context) =>
-  ts.isCallExpression(node) && getBuiltIn(node.expression, context) === "Symbol";
+  ts.isCallExpression(node) &&
+  (getBuiltIn(node.expression, context) === "Symbol" || isSymbolFor(node, context));
+
+// Symbol.for(key), which makes a symbol only where the registry holds none for the key.
+const isSymbolFor = (node: ts.CallExpression, context: Context) =>
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.name.text === "for" &&
+  getBuiltIn(node.expression.expression, context) === "Symbol";
+
+// The description that Symbol or the key that Symbol.for takes.
+const translateSymbolArgument = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const argument = node.arguments.at(0);
+  if (argument !== undefined && ts.isSpreadElement(argument)) {
+    throw new TlaTypeScriptError("Pass Symbol a description, not a spread", argument);
+  }
+  return argument === undefined
+    ? getUndefined(context)
+    : translateExpression(argument, scope, context);
+};
+
+// What an allocation gives once the heap it makes is the one that heap names.
+export const translateAllocatedValue = (
+  node: ts.Node,
+  heap: Expression,
+  scope: Scope,
+  context: Context,
+) =>
+  ts.isCallExpression(node) && isSymbolCall(node, context)
+    ? isSymbolFor(node, context)
+      ? useJavaScript(
+          "RegisteredSymbol",
+          [heap, translateSymbolArgument(node, scope, context)],
+          context,
+        )
+      : useJavaScript("NewestSymbol", [heap], context)
+    : useJavaScript("Allocated", [heap], context);
 
 export const isAllocation = (node: ts.Node, context: Context) =>
   (ts.isCallExpression(node) &&

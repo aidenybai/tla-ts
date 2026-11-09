@@ -63,6 +63,7 @@ import {
   translatePropertyKey,
 } from "./heap";
 import {
+  getBuiltIn,
   isBuiltInObject,
   translateBuiltInObject,
   translateIntrinsic,
@@ -424,6 +425,20 @@ const translateCall = (
   context: Context,
   isDefined: boolean,
 ) => {
+  const keyFor = node.expression;
+  if (
+    ts.isPropertyAccessExpression(keyFor) &&
+    keyFor.name.text === "keyFor" &&
+    getBuiltIn(keyFor.expression, context) === "Symbol" &&
+    node.arguments.length === 1 &&
+    !ts.isSpreadElement(node.arguments[0])
+  ) {
+    return useJavaScript(
+      "SymbolKeyFor",
+      [getHeap(scope, node, context), translateExpression(node.arguments[0], scope, context)],
+      context,
+    );
+  }
   if (isSymbolCall(node, context)) {
     const made = scope.allocated.get(node);
     if (made === undefined) {

@@ -292,7 +292,7 @@ EmptyObject ==
    privates |-> <<>>]
 
 \\* A heap holds the objects a script makes, and the built-in objects it has changed, by key.
-EmptyHeap == [objects |-> <<>>, changed |-> <<>>, symbols |-> <<>>]
+EmptyHeap == [objects |-> <<>>, changed |-> <<>>, symbols |-> <<>>, registry |-> <<>>]
 
 Allocate(heap, object) == [heap EXCEPT !.objects = Append(@, object)]
 
@@ -815,6 +815,23 @@ SymbolDescription(heap, symbol) ==
   IN IF position <= Len(WellKnownSymbols)
      THEN "Symbol." \\o WellKnownSymbols[position]
      ELSE heap.symbols[position - Len(WellKnownSymbols)]
+
+\\* The heap after Symbol.for(key), which makes a symbol for the key where the registry holds none.
+RegisterSymbol(heap, key) ==
+  LET text == StringOf(key)
+      made == NewSymbol(heap, text)
+  IN IF text \\in DOMAIN heap.registry
+     THEN heap
+     ELSE [made EXCEPT !.registry = (text :> NewestSymbol(made)) @@ @]
+
+RegisteredSymbol(heap, key) == heap.registry[StringOf(key)]
+
+SymbolKeyFor(heap, symbol) ==
+  LET keys == {key \\in DOMAIN heap.registry : heap.registry[key] = symbol}
+  IN CASE ~IsSymbol(symbol) ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of Symbol.keyFor on a value that isn't a symbol")
+       [] keys = {} -> Undefined
+       [] OTHER -> CHOOSE key \\in keys : TRUE
 
 \\* What String(symbol) and symbol.toString() give.
 SymbolString(heap, symbol) ==
