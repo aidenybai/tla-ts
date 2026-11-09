@@ -1208,6 +1208,7 @@ export const createEnvironment = (
       ]),
     ),
   );
+  [...substitutions.keys()].forEach((key) => constants.delete(key));
   const checkSubstitutionTarget = (name: string, target: string, arity: number | undefined) => {
     const targetKey = getRootKey(target);
     const definition = definitions.get(targetKey);
