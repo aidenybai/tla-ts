@@ -36,13 +36,10 @@ import {
   createSet,
   createTuple,
   formatValue,
-  getDomain,
   getFingerprintError,
   getSequenceElements,
   getValueKey,
-  isFunctionValue,
   toFiniteSet,
-  valuesEqual,
   type Value,
 } from "../values";
 
@@ -61,6 +58,18 @@ export const createActionRecord = (action: string | undefined) =>
     ],
   ]);
 
+// TLC's CounterExample is its own class, so ToTrace refuses a record that only looks like one.
+const counterExamples = new WeakSet<Value & object>();
+
+const createCounterExampleRecord = (action: Value[], states: Value[]) => {
+  const counterExample = createRecord([
+    ["action", createSet(action)],
+    ["state", createSet(states)],
+  ]);
+  counterExamples.add(counterExample);
+  return counterExample;
+};
+
 export const createCounterExample = (
   stateRecords: Record<string, Value>[],
   actions: Value[],
@@ -75,10 +84,7 @@ export const createCounterExample = (
   const closing = loop
     ? [createTuple([states[states.length - 1], loop.action, states[loop.start]])]
     : [];
-  return createRecord([
-    ["action", createSet([...steps, ...closing])],
-    ["state", createSet(states)],
-  ]);
+  return createCounterExampleRecord([...steps, ...closing], states);
 };
 
 const getRegister = (runtime: CheckerRuntime, key: Value) => {
@@ -207,19 +213,11 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
     defineStateOperator(
       "CounterExample",
       0,
-      () =>
-        runtime.counterExample ??
-        createRecord([
-          ["action", createSet([])],
-          ["state", createSet([])],
-        ]),
+      () => runtime.counterExample ?? createCounterExampleRecord([], []),
     ),
     defineOperator("ToTrace", 1, (args) => {
       const counterExample = getValue(args, 0, "ToTrace");
-      if (
-        !isFunctionValue(counterExample) ||
-        !valuesEqual(getDomain(counterExample), createSet(["action", "state"]))
-      ) {
+      if (typeof counterExample !== "object" || !counterExamples.has(counterExample)) {
         throw new TlaModuleError(
           `The argument of ToTrace should be a CounterExample, but instead it is:\n${formatValue(counterExample)}`,
         );
