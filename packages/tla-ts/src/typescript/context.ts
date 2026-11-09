@@ -37,6 +37,9 @@ export interface Context {
   hasSpecialNumbers: boolean;
   // The array literals that a script uses as objects, which its heap holds.
   heapArrays: Set<ts.ArrayLiteralExpression>;
+  // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
+  // past its end.
+  hasInheritedElements: boolean;
 }
 
 export interface Unknown {
@@ -82,6 +85,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   constantFunctions: new Map(),
   hasSpecialNumbers: false,
   heapArrays: new Set(),
+  hasInheritedElements: false,
 });
 
 export const hasObjectLiteral = (node: ts.Node): boolean =>
@@ -746,13 +750,14 @@ export const share = (
   return letExpression([define(name, [], value)], use(identifier(name)));
 };
 
-export const getElement = (sequence: Expression, position: Expression, context: Context) =>
+export const getElement = (
+  sequence: Expression,
+  position: Expression,
+  context: Context,
+  missing = getUndefined(context),
+) =>
   share(sequence, "sequence", context, (shared) =>
     share(position, "position", context, (at) =>
-      ifExpression(
-        apply("\\in", [at, apply("DOMAIN", [shared])]),
-        index(shared, [at]),
-        getUndefined(context),
-      ),
+      ifExpression(apply("\\in", [at, apply("DOMAIN", [shared])]), index(shared, [at]), missing),
     ),
   );

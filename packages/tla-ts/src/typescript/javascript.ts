@@ -875,9 +875,13 @@ LOCAL IsObjectArgument(value) ==
          Assert(FALSE, "tla-ts can't use " \\o ToString(value) \\o " as an object here")
     [] OTHER -> FALSE
 
-\\* Arrays and the other values that tla-ts keeps outside the heap never read a built-in's accessors.
+\\* The values that tla-ts keeps outside the heap never read a built-in's accessors, but for an
+\\* array, which reads Array.prototype past its end.
 LOCAL CanDefineOn(ref, descriptor) ==
-  Assert(IsHeap(ref) \\/ ~descriptor.isAccessor, "tla-ts can't define accessors on built-in objects")
+  Assert(\\/ IsHeap(ref)
+         \\/ ~descriptor.isAccessor
+         \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"},
+         "tla-ts can't define accessors on built-in objects")
 
 DefineProperty(heap, ref, key, descriptor) ==
   LET converted == ToDescriptor(heap, descriptor)

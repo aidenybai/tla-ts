@@ -101,6 +101,19 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = usesSpecialNumbers(sourceFile);
     context.heapArrays = findHeapArrays(sourceFile, context);
+    const prototypes = new Set(["Array.prototype", "Object.prototype"]);
+    const changesPrototype = (node: ts.Node): boolean =>
+      (ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.expression.getText() === "Object" &&
+        node.expression.name.text.startsWith("define") &&
+        prototypes.has(node.arguments.at(0)?.getText() ?? "")) ||
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left)) &&
+        prototypes.has(node.left.expression.getText())) ||
+      (ts.forEachChild(node, changesPrototype) ?? false);
+    context.hasInheritedElements = changesPrototype(sourceFile);
   }
   const model = readModel(sourceFile, context);
   rejectSharing(program.sourceFile, context);

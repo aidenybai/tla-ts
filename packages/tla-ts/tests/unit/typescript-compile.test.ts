@@ -967,6 +967,15 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't use <<>> as an object here");
   });
 
+  it("reads an array past its end from Array.prototype", async () => {
+    const result = await check(
+      compile(
+        `Object.defineProperty(Array.prototype, "1", { get: () => 7, configurable: true });\nconst values: number[] = [5];\nif (values[1] !== 7 || !(1 in values) || values[2] !== undefined) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("rejects an array in the heap where it's read as a value", () => {
     expect(() =>
       compile(

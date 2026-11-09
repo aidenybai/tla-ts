@@ -58,7 +58,12 @@ import {
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
-import { isBuiltInObject, translateBuiltInObject, translateIntrinsic } from "./intrinsics";
+import {
+  isBuiltInObject,
+  translateBuiltInObject,
+  translateIntrinsic,
+  translatePrototype,
+} from "./intrinsics";
 import {
   getTypeNames,
   isComparable,
@@ -779,7 +784,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     // a Map or a Set has properties, not its keys.
     if (container === "sequence" && isNumberLike(node.left, context)) {
       const length = apply("Len", [translate(node.right)]);
-      return context.hasSpecialNumbers
+      const isOwn = context.hasSpecialNumbers
         ? apply("\\in", [
             useJavaScript("ElementPosition", [translate(node.left)], context),
             apply("..", [number(1), length]),
@@ -788,6 +793,20 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
             translate(node.left),
             apply("..", [number(0), apply("-", [length, number(1)])]),
           ]);
+      return context.hasInheritedElements
+        ? junction("Or", [
+            isOwn,
+            useJavaScript(
+              "Has",
+              [
+                getHeap(scope, node, context),
+                translatePrototype("Array.prototype", node, context),
+                translatePropertyKey(node.left, scope, context),
+              ],
+              context,
+            ),
+          ])
+        : isOwn;
     }
     if (container !== "other") {
       throw new TlaTypeScriptError("Unsupported operator: in", node.operatorToken);
@@ -1045,8 +1064,32 @@ const translateElementAccess = (
   rejectAnyReceiver(node.expression, context);
   const value = translateExpression(node.expression, scope, context);
   const key = translateKey(node, scope, context);
-  if (kind === "sequence" && !isDefined) return getElement(value, key, context);
+  // An array reads an element past its end from its prototypes.
+  if (kind === "sequence" && !isDefined) {
+    return context.hasInheritedElements
+      ? getElement(
+          value,
+          key,
+          context,
+          useJavaScript(
+            "Get",
+            [
+              getHeap(scope, node, context),
+              translatePrototype("Array.prototype", node, context),
+              translatePropertyKey(node.argumentExpression, scope, context),
+            ],
+            context,
+          ),
+        )
+      : getElement(value, key, context);
+  }
   if (kind !== "string") return index(value, [key]);
+  if (context.hasInheritedElements && !isDefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read a string past its end where a script changes Object.prototype",
+      node,
+    );
+  }
   return share(value, "string", context, (text) =>
     share(key, "position", context, (position) => {
       const character = apply("SubSeq", [text, position, position]);
