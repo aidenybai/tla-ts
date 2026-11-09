@@ -932,8 +932,6 @@ export class AstManager {
           this.freeAlgebraicIds.push(this.getAlgebraicId(node));
         if (smallId !== -1) worklist.push(-1 - smallId);
       }
-      // The children: the arguments of an application, and the body, the patterns and the
-      // no-patterns of a quantifier.
       if (this.kinds[node] !== KIND_QUANTIFIER) {
         const end = this.argStarts[node + 1];
         for (let index = this.argStarts[node]; index < end; index++)
@@ -963,8 +961,6 @@ export class AstManager {
     this.ids[expr] = this.freeIds.pop() ?? this.nextId++;
     this.numLive++;
     this.refCounts[expr] = 0;
-    // The children: the arguments of an application, and the body, the patterns and the
-    // no-patterns of a quantifier.
     if (this.kinds[expr] !== KIND_QUANTIFIER) {
       const end = this.argStarts[expr + 1];
       for (let index = this.argStarts[expr]; index < end; index++)
