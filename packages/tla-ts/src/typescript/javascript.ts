@@ -879,8 +879,8 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
     ? node.expression.expression
     : node.expression;
   const isProperty =
-    (ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)) &&
-    getKind(read.expression, context) === "object";
+    kind === "object" ||
+    (ts.isElementAccessExpression(read) && (kind === "sequence" || kind === "string"));
   if (known?.length === 1 && !isProperty) return string(known[0]);
   if (context.modelValues.size > 0) {
     throw new TlaTypeScriptError("typeof can't tell a @symmetric value from a function", node);
@@ -995,6 +995,11 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     }
     if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
     if (isEmpty) return string(kind);
+  // An element of an array or a string may also lie past the end.
+  const kind =
+    ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)
+      ? getKind(read.expression, context)
+      : undefined;
     if (names === undefined) return useJavaScript("StringOf", [value], context);
   }
   throw unsupported;
