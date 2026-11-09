@@ -1552,6 +1552,9 @@ const compileMembership = (
       const type = resolveType(target.type);
       const name = getName(program, "e");
       if (type.kind === "Seq") {
+        // A sequence's domain holds only integers, so a function whose domain holds another value
+        // maps keys.
+        if (!["Var", "Int", "Mix"].includes(resolveType(element.type).kind)) throw SPARSE;
         const index = expectInt(element);
         return {
           type: createBool(),
