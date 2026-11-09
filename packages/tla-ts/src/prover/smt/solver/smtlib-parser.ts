@@ -90,6 +90,14 @@ import {
   mkFpaAppOf,
 } from "./fpa-decl-plugin";
 import { ObjMap } from "./hashtable";
+import {
+  CHAR_OP_NAMES,
+  getSeqSignature,
+  mkSeqAppOf,
+  parseZstring,
+  SEQ_OP_NAMES,
+  SEQ_SORT_NAMES,
+} from "./seq-decl-plugin";
 import { Rational } from "./rational";
 import { replaceFreeVars } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
@@ -272,7 +280,6 @@ const THEORY_SORTS = new Set([
   "StringSequence",
   "RegEx",
   "RegLan",
-  "Char",
   "Unicode",
   "FloatingPoint",
   "RoundingMode",
@@ -525,7 +532,11 @@ const BUILTIN_NAMES = new Set([
   ...LOGIC_FREE_ALIASES.keys(),
   ...TRANSCENDENTALS,
   ...THEORY_OPERATORS,
+  ...SEQ_OP_NAMES.keys(),
+  ...CHAR_OP_NAMES.keys(),
 ]);
+
+const SEQ_LOGICS = new Set(["QF_BVRE", "QF_S", "QF_SLIA", "QF_SNIA", "ALL", "HO_ALL"]);
 
 const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 
@@ -738,6 +749,7 @@ export const createSmtlibReader = (
   const hasArrays = isArrayLogic(logic);
   const hasFpa = logic === undefined || logic === "ALL" || logic.includes("FP");
   const hasArrayExtensions = logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic);
+  const hasSeq = logic === undefined || SEQ_LOGICS.has(logic);
 
   const getFirstFunc = (name: string) => funcs.get(name)?.[0];
 
@@ -871,6 +883,19 @@ export const createSmtlibReader = (
       return manager.mkArraySort(head.text === "Set" ? [parameters[0], SORT_BOOL] : parameters);
     }
     const decl = sortDecls.get(head.text);
+    if (decl === undefined && hasSeq && (head.text === "Seq" || head.text === "RegEx")) {
+      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
+      if (parameters.length !== 1)
+        throw new SmtParseError(
+          head.text === "Seq"
+            ? "Invalid sequence sort, expecting one parameter"
+            : "Invalid regex sort, expecting one parameter",
+          sexpr.end,
+        );
+      return head.text === "Seq"
+        ? manager.mkSeqSort(parameters[0])
+        : manager.mkReSort(parameters[0]);
+    }
     if (decl === undefined && hasFpa && FPA_SORT_NAMES.has(head.text)) {
       const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
       if (head.text === "FloatingPoint") return mkFloatSort([], sexpr);
@@ -932,6 +957,17 @@ export const createSmtlibReader = (
     }
     const bound = bindings.get(sexpr.text);
     if (bound !== undefined) return bound;
+    if (hasSeq && (SEQ_SORT_NAMES.has(sexpr.text) || sexpr.text === "Unicode")) {
+      if (sexpr.text === "String" || sexpr.text === "StringSequence") return manager.mkStringSort();
+      if (sexpr.text === "RegLan") return manager.mkReSort(manager.mkStringSort());
+      if (sexpr.text === "Unicode") return manager.mkCharSort();
+      throw new SmtParseError(
+        sexpr.text === "Seq"
+          ? "Invalid sequence sort, expecting one parameter"
+          : "Invalid regex sort, expecting one parameter",
+        sexpr,
+      );
+    }
     if (hasFpa && FPA_SORT_NAMES.has(sexpr.text)) {
       if (sexpr.text === "RoundingMode") return manager.mkRmSort();
       const bits = FPA_SORT_NAMES.get(sexpr.text);
@@ -1220,6 +1256,27 @@ export const createSmtlibReader = (
     return mkApp(OP_AND, pairs, at);
   };
 
+  const isSeqOpName = (name: string) =>
+    hasSeq && (SEQ_OP_NAMES.has(name) || CHAR_OP_NAMES.has(name));
+
+  const mkSeqTerm = (
+    name: string,
+    args: number[],
+    indices: number[],
+    at: SExpr,
+    range?: number,
+  ) => {
+    const signature = getSeqSignature(
+      manager,
+      SEQ_OP_NAMES.get(name) ?? CHAR_OP_NAMES.get(name) ?? -1,
+      indices,
+      args.map((arg) => manager.sorts[arg]),
+      range,
+    );
+    if (typeof signature === "string") throw new SmtParseError(signature, at);
+    return mkSeqAppOf(manager, signature, args);
+  };
+
   const parseUpolynomial = (sexpr: SExpr): bigint[] => {
     if (sexpr.kind === "numeral") return UPOLYNOMIALS.set([BigInt(sexpr.text)]);
     if (sexpr.kind === "decimal") {
@@ -1319,6 +1376,17 @@ export const createSmtlibReader = (
   const parseBvNumeral = (list: SmtList) => {
     const name = list.items[1];
     const indices = list.items.slice(2);
+    if (
+      isSymbol(name) &&
+      isSeqOpName(name.text) &&
+      indices.every((index) => index.kind === "numeral")
+    )
+      return mkSeqTerm(
+        name.text,
+        [],
+        indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        list.end,
+      );
     if (
       isSymbol(name) &&
       isFpaOpName(name.text) &&
@@ -1569,7 +1637,9 @@ export const createSmtlibReader = (
     if (indices.length > 0)
       return isFpaOpName(name)
         ? mkFpaTerm(name, args, indices, at)
-        : mkBvApp(name, args, indices, at);
+        : isSeqOpName(name)
+          ? mkSeqTerm(name, args, indices, at)
+          : mkBvApp(name, args, indices, at);
     const macro = macros.get(name);
     if (macro !== undefined) {
       const coerced = args.map((arg, index) => coerce(arg, macro.domain[index]));
@@ -1583,6 +1653,7 @@ export const createSmtlibReader = (
     const decls = funcs.get(name);
     const declared = decls === undefined ? undefined : mkDeclaredApp(name, decls, args, range, at);
     if (declared !== undefined) return declared;
+    if (isSeqOpName(name)) return mkSeqTerm(name, args, indices, at, range);
     if (range !== undefined)
       throw new SmtParseError(getUnknownConstantMessage(name, args, range), at);
     if (isBvOpName(name)) return mkBvApp(name, args, indices, at);
@@ -1659,7 +1730,7 @@ export const createSmtlibReader = (
         digits.length * (isBinary ? 1 : 4),
       );
     }
-    if (sexpr.kind === "string") throw new SmtUnsupportedError("string literals");
+    if (sexpr.kind === "string") return manager.mkString(parseZstring(sexpr.text));
     if (sexpr.kind === "symbol") {
       if (sexpr.text === "true") return manager.trueExpr;
       if (sexpr.text === "false") return manager.falseExpr;
@@ -1785,7 +1856,7 @@ export const createSmtlibReader = (
         if (
           !isSymbol(head.items[0], "_") ||
           !isSymbol(name) ||
-          !(isBvOpName(name.text) || isFpaOpName(name.text)) ||
+          !(isBvOpName(name.text) || isFpaOpName(name.text) || isSeqOpName(name.text)) ||
           !indices.every((index) => index.kind === "numeral")
         )
           throw new SmtUnsupportedError("indexed and qualified identifiers");

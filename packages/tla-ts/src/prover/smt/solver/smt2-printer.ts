@@ -3,7 +3,11 @@
 import {
   type AstManager,
   FAMILY_BV,
+  FAMILY_CHAR,
   FAMILY_FPA,
+  FAMILY_SEQ,
+  OP_SEQ_CONCAT,
+  OP_SEQ_EMPTY,
   OP_ARRAY_EXT,
   OP_FPA_NUM,
   OP_ARRAY_MAP,
@@ -27,6 +31,7 @@ import {
 import { isAssociativeBvOp } from "./bv-decl-plugin";
 import { getFpNumeral } from "./fpa-decl-plugin";
 import { biasExp, isInf, isNan, isZero, type Mpf } from "./mpf";
+import { formatZstring } from "./seq-decl-plugin";
 
 interface TextFormat {
   kind: "text";
@@ -98,7 +103,7 @@ export interface PrintEnvironment {
 export const LINE_BREAK: LineBreakFormat = { kind: "line-break" };
 const SMALL_INDENT = 2;
 const MAX_INDENT = 16;
-const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL]);
+const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL, OP_SEQ_CONCAT]);
 
 export const mkText = (text: string): TextFormat => ({ kind: "text", text });
 export const mkIndent = (amount: number, child: Format): IndentFormat => ({
@@ -309,7 +314,8 @@ const formatFpNumeral = (options: PrintOptions, value: Mpf) => {
 const getDeclName = (manager: AstManager, decl: number) => {
   const funcDecl = manager.funcDecls[decl];
   const name = getQuotedName(funcDecl.name);
-  if (funcDecl.op === OP_CONST_ARRAY) return `(as ${name} ${getSortText(manager, funcDecl.range)})`;
+  if (funcDecl.op === OP_CONST_ARRAY || funcDecl.op === OP_SEQ_EMPTY)
+    return `(as ${name} ${getSortText(manager, funcDecl.range)})`;
   if (
     funcDecl.op === OP_ARRAY_MAP ||
     funcDecl.op === OP_AS_ARRAY ||
@@ -319,7 +325,9 @@ const getDeclName = (manager: AstManager, decl: number) => {
     return `(_ ${name} ${getQuotedName(manager.funcDecls[funcDecl.parameters[0]].name)})`;
   return (funcDecl.family === FAMILY_BV ||
     (funcDecl.family === FAMILY_FPA && funcDecl.op !== OP_FPA_NUM) ||
-    funcDecl.op === OP_ARRAY_EXT) &&
+    funcDecl.op === OP_ARRAY_EXT ||
+    funcDecl.family === FAMILY_CHAR ||
+    funcDecl.family === FAMILY_SEQ) &&
     funcDecl.parameters.length > 0
     ? `(_ ${name} ${funcDecl.parameters.join(" ")})`
     : name;
@@ -430,6 +438,8 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
     if (manager.getOp(expr) === OP_NUM) return formatNumeral(manager, options, expr);
     if (manager.isAlgebraicNumeral(expr)) return formatAlgebraicNumeral(manager, options, expr);
     if (manager.isBvNumeral(expr)) return formatBvNumeral(manager, options, expr);
+    const chars = manager.getString(expr);
+    if (chars !== undefined) return mkText(formatZstring(chars));
     const fpValue = getFpNumeral(manager, expr);
     return fpValue === undefined
       ? formatDeclName(manager.decls[expr])

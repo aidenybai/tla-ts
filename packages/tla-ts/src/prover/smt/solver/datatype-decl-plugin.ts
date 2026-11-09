@@ -136,6 +136,8 @@ export const substituteSort = (
   if (parameters.length === 0) return sort;
   const substituted = parameters.map((parameter) => substituteSort(manager, parameter, from, to));
   if (manager.isArraySort(sort)) return manager.mkArraySort(substituted);
+  if (manager.isSeqSort(sort)) return manager.mkSeqSort(substituted[0]);
+  if (manager.isReSort(sort)) return manager.mkReSort(substituted[0]);
   const name = manager.sortNames[sort];
   if (!manager.isDatatypeSort(sort)) return manager.mkUninterpretedSort(name, substituted);
   const result = manager.mkDatatypeSort(name, substituted);
