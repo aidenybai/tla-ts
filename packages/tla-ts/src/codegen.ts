@@ -174,9 +174,10 @@ const generateQuantifier = (
     locals: new Map(frame.locals),
   };
   const lists = expression.bounds.map(() => createLocal(generator));
-  const declarations = expression.bounds.map(
-    (bound, index) =>
-      `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, bodyFrame)}, ${addReference(generator, bound.set)}, ${JSON.stringify(generator.environment.runtime.version)});`,
+  const declarations = expression.bounds.map((bound, index) =>
+    index > 0 && expression.bounds[index - 1].set === bound.set
+      ? `const ${lists[index]} = ${lists[index - 1]};`
+      : `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, bodyFrame)}, ${addReference(generator, bound.set)}, ${JSON.stringify(generator.environment.runtime.version)});`,
   );
   const elements = expression.bounds.map((bound) => {
     const local = createLocal(generator);

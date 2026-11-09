@@ -543,13 +543,18 @@ const someElement = (
   return false;
 };
 
+// The names of one bound, as in \A x, y \in S, share its set, which TLC evaluates once.
+export const mapBoundSets = <Result>(bounds: Bound[], map: (set: Expression) => Result) =>
+  bounds.reduce<Result[]>((results, bound, index) => {
+    results.push(
+      index > 0 && bounds[index - 1].set === bound.set ? results[index - 1] : map(bound.set),
+    );
+    return results;
+  }, []);
+
 export const getBoundElements = (bounds: Bound[], context: Context) =>
-  bounds.map((bound) =>
-    getQuantifierElements(
-      evaluate(bound.set, context),
-      bound.set,
-      context.environment.runtime.version,
-    ),
+  mapBoundSets(bounds, (set) =>
+    getQuantifierElements(evaluate(set, context), set, context.environment.runtime.version),
   );
 
 export const forEachBoundElement = (
@@ -574,7 +579,7 @@ export const forEachBinding = (
 ) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
 const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
-  const sets = bounds.map((bound) => evaluate(bound.set, context));
+  const sets = mapBoundSets(bounds, (set) => evaluate(set, context));
   return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
 };
 
@@ -1557,10 +1562,13 @@ const compileQuantifier = (
   const bounds = expression.bounds;
   if (bounds.every((item) => item.pattern.kind === "Name")) {
     const names = bounds.map((item) => (item.pattern.kind === "Name" ? item.pattern.name : ""));
-    const sets = bounds.map((item) => getEvaluator(item.set, environment));
     return (context) => {
-      const lists = sets.map((set, index) =>
-        getQuantifierElements(set(context), bounds[index].set, environment.runtime.version),
+      const lists = mapBoundSets(bounds, (set) =>
+        getQuantifierElements(
+          getEvaluator(set, environment)(context),
+          set,
+          environment.runtime.version,
+        ),
       );
       const visit = (index: number, scope: Scope | undefined): boolean => {
         if (index < 0) {
@@ -1628,12 +1636,8 @@ const compileFunctionConstruction = (
       return markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
-    const sets = bounds.map((item) =>
-      getNormalizedElements(
-        evaluate(item.set, context),
-        item.set,
-        context.environment.runtime.version,
-      ),
+    const sets = mapBoundSets(bounds, (set) =>
+      getNormalizedElements(evaluate(set, context), set, context.environment.runtime.version),
     );
     forEachBoundElement(bounds, sets, context.scope, (scope) => {
       const key =
