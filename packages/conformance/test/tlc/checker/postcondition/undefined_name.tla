@@ -1,6 +1,8 @@
 (*---
 description: A POSTCONDITION naming an undefined operator is only resolved after the run, so it fails as an unexpected exception.
 ref: tlc2/tool/impl/SpecProcessor.java#processConfigInvariants
+features:
+  - tlc-bug
 outcome: tlc-error
 config: |
   INIT Init
