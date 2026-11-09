@@ -542,12 +542,13 @@ export const runSmtlibScript = (
       if (list.items[1] === undefined)
         throw new SmtParseError("apply needs a tactic argument", list.end);
       const tactic = getTactic(list.items[1], list.end).build(params);
-      for (const name of ["print_model_converter", "print_dependencies"])
-        if (params.get(name) === true) throw new SmtUnsupportedError(`the parameter :${name}`);
+      if (params.get("print_dependencies") === true)
+        throw new SmtUnsupportedError("the parameter :print_dependencies");
       state.manager.limit.restart(Date.now() + options.timeLimitMs);
+      const input = getGoal();
       const goals = (() => {
         try {
-          return applyTactic(tactic, getGoal());
+          return applyTactic(tactic, input);
         } catch (error) {
           if (!(error instanceof SmtTacticError)) throw error;
           print(`(error "tactic failed: ${error.message}")`);
@@ -573,6 +574,11 @@ export const runSmtlibScript = (
             ")",
           ].join("\n"),
         );
+      if (
+        params.get("print_model_converter") === true &&
+        input.converters.some((entry) => !("definitions" in entry) || entry.definitions.length > 0)
+      )
+        throw new SmtUnsupportedError("printing a model converter");
       if (params.get("print_benchmark") !== true) return;
       const assertions =
         goals.length === 1

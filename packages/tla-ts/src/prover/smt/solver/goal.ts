@@ -18,6 +18,7 @@ export const PRECISION_NAMES = ["precise", "under", "over", "under-over"];
 const getPrecisionUnion = (first: number, second: number) =>
   first === PRECISE ? second : second === PRECISE || first === second ? first : UNDER_OVER;
 
+// A definition of -1 hides the declaration.
 export interface Definition {
   decl: number;
   def: number;
@@ -90,7 +91,7 @@ export class Goal {
   addDefinitions(definitions: Definition[]) {
     for (const definition of definitions) {
       this.manager.incDeclRef(definition.decl);
-      this.manager.incRef(definition.def);
+      if (definition.def !== -1) this.manager.incRef(definition.def);
     }
     this.converters = [...this.converters, { definitions }];
   }

@@ -28,7 +28,7 @@ import { ModelEvaluator } from "./model-evaluator";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
-const getManagerSomeValue = (manager: AstManager, sort: number): number => {
+export const getManagerSomeValue = (manager: AstManager, sort: number): number => {
   if (sort === SORT_BOOL) return manager.falseExpr;
   if (manager.isRmSort(sort)) return mkRmNumeral(manager, MPF_ROUND_TOWARD_ZERO);
   if (manager.isFpSort(sort))

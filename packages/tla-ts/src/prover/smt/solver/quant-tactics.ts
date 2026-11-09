@@ -1,12 +1,14 @@
 // Ported from Z3 (src/tactic/smtlogics/quant_tactics.cpp, src/tactic/core/simplify_tactic.cpp), MIT
-// license, see z3-license.txt. elim-uncnstr's elimination and the simplifier's local_ctx option are
-// not ported, as they change almost none of tlapm's obligations.
-import { type AstManager, KIND_APP, KIND_QUANTIFIER } from "./ast";
+// license, see z3-license.txt. This strategy skips elim-uncnstr's elimination and the simplifier's
+// local_ctx option, as they change almost none of tlapm's obligations.
+import type { AstManager } from "./ast";
 import { ctxSimplify } from "./ctx-simplify";
+import { collectUnconstrained, disableQuantified } from "./elim-uncnstr";
 import { Goal } from "./goal";
 import { propagateValues } from "./propagate-values";
 import { applyQeLite } from "./qe-lite";
 import { Rewriter, type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
+import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 
 export const simplifyGoal = (manager: AstManager, goal: Goal, options: RewriterOptions) => {
@@ -26,32 +28,12 @@ export const simplifyGoal = (manager: AstManager, goal: Goal, options: RewriterO
   rewriter.release();
 };
 
-const hasUnconstrainedConst = (manager: AstManager, goal: Goal) => {
-  const visited = new Set<number>();
-  const consts: number[] = [];
-  const repeated = new Set<number>();
-  const todo = [...goal.forms.items];
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
-    const isConst = manager.isUninterpretedConst(expr);
-    if (visited.has(expr)) {
-      if (isConst) repeated.add(expr);
-      continue;
-    }
-    visited.add(expr);
-    if (isConst) consts.push(expr);
-    else if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
-    else if (manager.kinds[expr] === KIND_QUANTIFIER) todo.push(manager.getQuantifier(expr).body);
-  }
-  return consts.some((expr) => !repeated.has(expr));
-};
-
 // elim_uncnstr_tactic::run without the elimination. Its rewriter still runs over the formulas when
 // some constant is unconstrained, and counts its steps. The rewriter starts as if the formulas had
 // changed, so it makes a second round.
 const elimUncnstr = (manager: AstManager, goal: Goal) => {
-  const isRewriting = hasUnconstrainedConst(manager, goal);
-  pinQuantifierBodies(manager, goal);
+  const isRewriting = collectUnconstrained(manager, goal).size > 0;
+  disableQuantified(manager, goal, new RefVector(manager));
   if (!isRewriting) return;
   const rewriter = new RewriterTpl(manager);
   for (let round = 0; round < 2; round++) {
@@ -59,35 +41,6 @@ const elimUncnstr = (manager: AstManager, goal: Goal) => {
     rewriter.reset();
   }
   rewriter.release();
-};
-
-// elim_uncnstr_tactic::disable_quantified: the tactic holds the body of each quantifier until it is
-// destroyed after the search.
-const pinQuantifierBodies = (manager: AstManager, goal: Goal) => {
-  const visited = new Set<number>();
-  const disabled = new Set<number>();
-  const disable = (body: number) => {
-    if (disabled.has(body)) return;
-    manager.incRef(body);
-    const todo = [body];
-    while (todo.length > 0) {
-      const expr = todo.pop() as number;
-      if (disabled.has(expr)) continue;
-      disabled.add(expr);
-      if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
-    }
-  };
-  const todo = [...goal.forms.items];
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
-    if (visited.has(expr)) continue;
-    visited.add(expr);
-    if (manager.kinds[expr] === KIND_QUANTIFIER) {
-      const body = manager.getQuantifier(expr).body;
-      disable(body);
-      todo.push(body);
-    } else if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
-  }
 };
 
 export const applyUfniaTactic = (manager: AstManager, assertions: number[]) => {
