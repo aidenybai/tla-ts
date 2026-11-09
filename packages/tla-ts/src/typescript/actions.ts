@@ -128,6 +128,11 @@ interface Path {
   generators: ReadonlyMap<string, Suspension>;
 }
 
+interface KnownDefault {
+  initializer: ts.Expression;
+  isRun: boolean;
+}
+
 interface Suspension {
   ref: Expression;
   generator: FunctionNode;
@@ -747,7 +752,9 @@ const bindCall = (
   const destructured = parameters.flatMap((parameter, position) => {
     const argument = argumentNodes.at(position);
     const source =
-      argument === undefined || isUndefinedLiteral(argument) ? parameter.initializer : argument;
+      argument === undefined || isUndefinedLiteral(argument, context)
+        ? parameter.initializer
+        : argument;
     return ts.isArrayBindingPattern(parameter.name) &&
       source !== undefined &&
       !path.scope.results.has(source) &&
@@ -786,7 +793,7 @@ const bindCall = (
   const defaulted = runCertainDefault(
     parameters.map((parameter) => parameter.name),
     parameters.flatMap((parameter, position) =>
-      getCertainDefaults(parameter.name, argumentNodes.at(position), parameter.initializer),
+      getKnownDefaults(parameter.name, argumentNodes.at(position), parameter.initializer, context),
     ),
     [...argumentNodes, ...parameters.flatMap((parameter) => parameter.initializer ?? [])],
     path,
@@ -1281,18 +1288,29 @@ const getInitializers = (node: ts.Node) =>
 // Runs the first of the defaults that bindings certainly evaluate whose call only statements can
 // run, as its own statement before the bindings, which take its value from the path's results.
 // The call must not read what the bindings bind, and the other expressions that the bindings
-// evaluate must not read what it changes.
+// evaluate must not read what it changes. The defaults that the bindings certainly skip take
+// undefined from the path's results, as nothing evaluates them.
 const runCertainDefault = (
   names: readonly ts.BindingName[],
-  certain: readonly ts.Expression[],
+  known: readonly KnownDefault[],
   evaluated: readonly ts.Expression[],
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ) => {
-  const pending = certain
-    .map(getCast)
+  const skipped = known
+    .filter((entry) => !entry.isRun && !path.scope.results.has(entry.initializer))
+    .map((entry): [ts.Expression, Expression] => [entry.initializer, getUndefined(context)]);
+  if (skipped.length > 0) {
+    return continueWith({
+      ...path,
+      scope: { ...path.scope, results: new Map([...path.scope.results, ...skipped]) },
+    });
+  }
+  const pending = known
+    .filter((entry) => entry.isRun)
+    .map((entry) => getCast(entry.initializer))
     .filter(
       (initializer): initializer is ts.CallExpression =>
         ts.isCallExpression(initializer) &&
@@ -1344,20 +1362,45 @@ const runCertainDefault = (
   return taken || translateCallStatement(first, path, context, frame, withResult);
 };
 
-// The defaults that binding a name to a value certainly evaluates, in order: its own where the
-// value is undefined, and, where the value is a literal, those of the elements and properties
-// that the literal leaves undefined.
-const getCertainDefaults = (
+// The defaults that binding a name to a value certainly evaluates or skips, in order: its own,
+// where the value is undefined or a literal that isn't, and, where the value is a literal, those
+// of the elements and properties of the literal.
+const getKnownDefaults = (
   name: ts.BindingName,
   value: ts.Expression | undefined,
   initializer: ts.Expression | undefined,
-): ts.Expression[] => {
-  if (value === undefined || isUndefinedLiteral(value)) {
+  context: Context,
+): KnownDefault[] => {
+  if (value === undefined || isUndefinedLiteral(value, context)) {
     return initializer === undefined
       ? []
-      : [initializer, ...getCertainDefaults(name, initializer, undefined)];
+      : [{ initializer, isRun: true }, ...getKnownDefaults(name, initializer, undefined, context)];
   }
   const literal = getCast(value);
+  const own =
+    initializer !== undefined && isDefinedLiteral(literal) ? [{ initializer, isRun: false }] : [];
+  return [...own, ...getLiteralDefaults(name, literal, context)];
+};
+
+// A literal that is never undefined.
+const isDefinedLiteral = (node: ts.Expression) =>
+  ts.isLiteralExpression(node) ||
+  ts.isArrayLiteralExpression(node) ||
+  ts.isObjectLiteralExpression(node) ||
+  ts.isFunctionExpression(node) ||
+  ts.isArrowFunction(node) ||
+  ts.isClassExpression(node) ||
+  [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+    node.kind,
+  ) ||
+  (ts.isPrefixUnaryExpression(node) && ts.isNumericLiteral(node.operand));
+
+// The defaults of the elements or the properties that a pattern takes from a literal.
+const getLiteralDefaults = (
+  name: ts.BindingName,
+  literal: ts.Expression,
+  context: Context,
+): KnownDefault[] => {
   if (ts.isArrayBindingPattern(name) && ts.isArrayLiteralExpression(literal)) {
     const spreadAt = literal.elements.findIndex(ts.isSpreadElement);
     return name.elements
@@ -1365,10 +1408,11 @@ const getCertainDefaults = (
       .flatMap((element, position) => {
         if (ts.isOmittedExpression(element) || element.dotDotDotToken !== undefined) return [];
         const source = literal.elements.at(position);
-        return getCertainDefaults(
+        return getKnownDefaults(
           element.name,
           source === undefined || ts.isOmittedExpression(source) ? undefined : source,
           element.initializer,
+          context,
         );
       });
   }
@@ -1393,12 +1437,12 @@ const getCertainDefaults = (
           candidate.name.text === key.text,
       );
       if (property === undefined)
-        return getCertainDefaults(element.name, undefined, element.initializer);
+        return getKnownDefaults(element.name, undefined, element.initializer, context);
       if (ts.isPropertyAssignment(property)) {
-        return getCertainDefaults(element.name, property.initializer, element.initializer);
+        return getKnownDefaults(element.name, property.initializer, element.initializer, context);
       }
       return ts.isShorthandPropertyAssignment(property)
-        ? getCertainDefaults(element.name, property.name, element.initializer)
+        ? getKnownDefaults(element.name, property.name, element.initializer, context)
         : [];
     });
   }
@@ -1418,8 +1462,11 @@ const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => no
   return found;
 };
 
-const isUndefinedLiteral = (node: ts.Expression) =>
-  ts.isIdentifier(node) && node.text === "undefined";
+// The global undefined, which a local variable could shadow.
+const isUndefinedLiteral = (node: ts.Expression, context: Context) =>
+  ts.isIdentifier(node) &&
+  node.text === "undefined" &&
+  (context.checker.getTypeAtLocation(node).flags & ts.TypeFlags.Undefined) !== 0;
 
 const isSameExpression = (left: Expression, right: Expression) => {
   const withoutLocations = (key: string, value: unknown) =>
@@ -2406,7 +2453,7 @@ const translateDeclarations = (
   }
   const defaulted = runCertainDefault(
     [declaration.name],
-    getCertainDefaults(declaration.name, initializer, undefined),
+    getKnownDefaults(declaration.name, initializer, undefined, context),
     initializer === undefined ? [] : [initializer],
     path,
     context,

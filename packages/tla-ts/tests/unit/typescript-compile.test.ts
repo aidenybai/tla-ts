@@ -1286,6 +1286,15 @@ describe("errors", () => {
     ).toThrow("tla-ts can't run this default before what it binds");
   });
 
+  it("skips the defaults that a literal certainly gives a value", async () => {
+    const result = await check(
+      compile(
+        `let count = 0;\nconst counter = (): number => {\n  count += 1;\n  return count;\n};\nlet total = 0;\nfunction pick([first = counter(), second = counter()]: number[] = [5, 0]) {\n  total = first + second;\n}\npick();\nconst { size = counter() } = { size: 3 };\nif (total !== 5 || size !== 3 || count !== 0) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
