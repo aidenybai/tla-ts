@@ -246,8 +246,16 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
       }
       return createModelValue(name);
     }),
-    // TLC runs the deferred expression only in simulation, when it extends a behavior.
-    defineLazyOperator("TLCDefer", 1, () => true),
+    // Only simulation runs the deferred expression, for the successor it chooses.
+    defineLazyOperator("TLCDefer", 1, (args, context) => {
+      const expression = getOperator(args, 0, "TLCDefer").expression;
+      if (context && expression) {
+        runtime.deferred = (next) => {
+          evaluate(expression, { ...context, next });
+        };
+      }
+      return true;
+    }),
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     defineLazyOperator("PickSuccessor", 1, (args, context) => {
       // Outside an action, TLC's successor is an empty state, which assigns none of the variables.

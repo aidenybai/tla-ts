@@ -65,6 +65,7 @@ interface TraceNode {
   action: SpecAction;
   predecessor: TraceNode | undefined;
   level: number;
+  deferred?: (next: Value[]) => void;
 }
 
 interface WorkerError {
@@ -201,7 +202,7 @@ export const simulate = (options: SimulationOptions): number => {
   if (assumptionStatus !== undefined) return assumptionStatus;
   const initAction = initActions[initActions.length - 1];
   const toNode = (state: Value[], action: SpecAction, predecessor: TraceNode | undefined) => {
-    const node = { state, action, predecessor, level: (predecessor?.level ?? 0) + 1 };
+    const node: TraceNode = { state, action, predecessor, level: (predecessor?.level ?? 0) + 1 };
     nodes.set(state, node);
     return node;
   };
@@ -406,6 +407,7 @@ export const simulate = (options: SimulationOptions): number => {
   const getSuccessors = (current: TraceNode, action: SpecAction) => {
     const successors: TraceNode[] = [];
     const failure: { error: WorkerError | undefined } = { error: undefined };
+    runtime.deferred = undefined;
     try {
       forEachSuccessor(
         action.expression,
@@ -413,6 +415,8 @@ export const simulate = (options: SimulationOptions): number => {
         environment,
         (successor) => {
           const node = toNode(successor.state, action, current);
+          node.deferred = runtime.deferred;
+          runtime.deferred = undefined;
           statistics.generatedStates++;
           try {
             const violated = search.findViolatedInvariant(node.state, current.state);
@@ -493,6 +497,7 @@ export const simulate = (options: SimulationOptions): number => {
       }
       current.node =
         found.successors[Math.floor(workerRandom.nextDouble() * found.successors.length)];
+      current.node.deferred?.(current.node.state);
     }
     if (runtime.isStopped) return "stopped";
     const violation = findTemporalViolation(current.node);

@@ -8,6 +8,7 @@ export interface CheckerRuntime {
   getBehavior: (state: Value[]) => Value[][];
   getSpecification: () => Value;
   counterExample: Value | undefined;
+  deferred: ((next: Value[]) => void) | undefined;
   setLivenessSource: (index: number | undefined) => void;
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
@@ -55,6 +56,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getBehavior: () => [],
     getSpecification: () => createRecord([]),
     counterExample: undefined,
+    deferred: undefined,
     isSeen: () => false,
     setLivenessSource: () => {},
     getCurrentState: () => undefined,
