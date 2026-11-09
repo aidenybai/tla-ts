@@ -20,13 +20,14 @@ import { runFpa2Bv } from "./fpa2bv-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
 import { domSimplify } from "./dom-simplify";
 import { factor } from "./factor";
+import { findGoalMacros } from "./macro-finder";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
 import { occf } from "./occf";
 import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
-import { ProtoModel } from "./proto-model";
+import { FuncInterp, ProtoModel } from "./proto-model";
 import { compileProbe, formatProbeValue, type Probe } from "./probes";
 import { applyQeLite } from "./qe-lite";
 import { simplifyGoal } from "./quant-tactics";
@@ -596,6 +597,18 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   [
+    "macro-finder",
+    {
+      descrs: getDescrs("", [
+        ["max_memory", PARAM_UINT, UINT_MAX, true],
+        ["produce_models", PARAM_BOOL, false, true],
+        ["produce_proofs", PARAM_BOOL, false, true],
+        ["elim_and", PARAM_BOOL, false, true],
+      ]),
+      build: (environment) => inPlace((goal) => findGoalMacros(environment.manager, goal)),
+    },
+  ],
+  [
     "dom-simplify",
     {
       descrs: new Map(),
@@ -652,7 +665,7 @@ const UNPORTED_TACTICS = new Set(
     "degree-shift demodulator diff-neq distribute-forall " +
     "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
-    "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
+    "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
     "max-bv-sharing nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
@@ -1108,6 +1121,23 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
       continue;
     }
     const value = evaluator.rewrite(definition.def);
+    const arity = manager.funcDecls[definition.decl].domain.length;
+    if (arity > 0) {
+      const oldInterp = model.funcInterps.get(definition.decl);
+      const isChanged = oldInterp?.elseExpr !== value;
+      if (isChanged) {
+        const interp = new FuncInterp(manager, arity);
+        interp.setElse(value);
+        model.registerFunc(definition.decl, interp);
+      }
+      manager.decRef(value);
+      if (oldInterp !== undefined && isChanged) {
+        evaluator.release();
+        evaluator = new ModelEvaluator(manager, model);
+        evaluator.setModelCompletion(true);
+      }
+      continue;
+    }
     const old = model.constInterps.get(definition.decl);
     if (old !== value) model.registerConst(definition.decl, value);
     const sort = manager.sorts[value];

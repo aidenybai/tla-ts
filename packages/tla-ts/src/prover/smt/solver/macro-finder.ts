@@ -1,6 +1,6 @@
 // Ported from Z3 (src/ast/macros/macro_finder.cpp, src/ast/macros/macro_manager.cpp,
-// src/ast/macros/macro_util.cpp, src/ast/func_decl_dependencies.cpp), MIT license, see
-// z3-license.txt.
+// src/ast/macros/macro_util.cpp, src/ast/func_decl_dependencies.cpp,
+// src/tactic/ufbv/macro_finder_tactic.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_USER,
   KIND_APP,
@@ -17,6 +17,7 @@ import {
   type AstManager,
 } from "./ast";
 import { isAppOf } from "./ast-util";
+import type { Goal } from "./goal";
 import { isMacroHead, normalizeMacroDef, setElseInterp } from "./model-macro-solver";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
@@ -170,37 +171,60 @@ export class MacroManager {
     }
   }
 
+  release() {
+    for (const quantifier of this.macros) this.manager.decRef(quantifier);
+  }
+
   registerInterpretations(model: ProtoModel) {
-    const manager = this.manager;
-    for (const [index, decl] of this.decls.entries())
-      manager.withTemporaries(
-        () => {
-          const headDef = getHeadDef(manager, this.macros[index], decl);
-          setElseInterp(
-            manager,
-            model,
-            decl,
-            normalizeMacroDef(manager, headDef.head, headDef.def),
-          );
-          manager.decRef(headDef.def);
-        },
-        () => [],
-      );
+    for (const [index, decl] of this.decls.entries()) {
+      const def = this.getInterpretation(index);
+      setElseInterp(this.manager, model, decl, def);
+      this.manager.decRef(def);
+    }
   }
 
   find(formulas: number[]) {
     this.unsafe.clear();
+    const current = this.expandRounds(formulas, Infinity);
+    for (const [index, decl] of this.decls.entries())
+      if (this.unsafe.has(decl)) current.push(this.macros[index]);
+    this.unsafe.clear();
+    return current;
+  }
+
+  // The tactic stops after one round per formula, and keeps unsafe macros out of the result.
+  findInGoal(formulas: number[]) {
+    return this.expandRounds(formulas, formulas.length);
+  }
+
+  // The definitions come with a reference, which the caller releases.
+  getInterpretations() {
+    return this.decls.map((decl, index) => ({ decl, def: this.getInterpretation(index) }));
+  }
+
+  private getInterpretation(index: number) {
+    const manager = this.manager;
+    return manager.withTemporaries(
+      () => {
+        const headDef = getHeadDef(manager, this.macros[index], this.decls[index]);
+        const def = normalizeMacroDef(manager, headDef.head, headDef.def);
+        manager.incRef(def);
+        manager.decRef(headDef.def);
+        return def;
+      },
+      () => [],
+    );
+  }
+
+  private expandRounds(formulas: number[], maxRounds: number) {
     let current = new RefVector(this.manager);
     let isFound = this.expandFormulas(formulas, current);
-    while (isFound) {
+    for (let round = 0; isFound && round < maxRounds; round++) {
       const next = new RefVector(this.manager);
       isFound = this.expandFormulas(current.items, next);
       current.reset();
       current = next;
     }
-    for (const [index, decl] of this.decls.entries())
-      if (this.unsafe.has(decl)) current.push(this.macros[index]);
-    this.unsafe.clear();
     return current;
   }
 
@@ -436,3 +460,17 @@ export class MacroManager {
     return true;
   }
 }
+
+export const findGoalMacros = (manager: AstManager, goal: Goal) => {
+  if (manager.recFunBodies.size > 0) return;
+  const macros = new MacroManager(manager);
+  const forms = macros.findInGoal([...goal.forms.items]);
+  goal.reset();
+  for (const form of forms.items) goal.assert(form);
+  forms.reset();
+  const definitions = macros.getInterpretations();
+  goal.addDefinitions(definitions);
+  for (const definition of definitions) manager.decRef(definition.def);
+  macros.release();
+  goal.depth++;
+};
