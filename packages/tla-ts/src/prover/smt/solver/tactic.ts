@@ -6,7 +6,7 @@ import {
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import { type AstManager, SORT_BOOL } from "./ast";
+import { type AstManager, KIND_APP, OP_ITE, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { card2bv } from "./card2bv";
 import { Context } from "./context";
@@ -20,6 +20,7 @@ import { elimUncnstr } from "./elim-uncnstr";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
 import { propagateValues } from "./propagate-values";
+import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { ProtoModel } from "./proto-model";
 import { compileProbe, formatProbeValue, type Probe } from "./probes";
@@ -374,6 +375,50 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
   [
+    "purify-arith",
+    {
+      descrs: new Map([
+        ...REWRITER_DESCRS,
+        ...getDescrs("", [
+          ["complete", PARAM_BOOL, true, true],
+          ["elim_root_objects", PARAM_BOOL, true],
+          ["elim_inverses", PARAM_BOOL, true],
+        ]),
+      ]),
+      build: (environment, params) => {
+        const manager = environment.manager;
+        const snf = runNnf(manager, new Map());
+        return (goal) => {
+          snf(goal);
+          simplifyGoal(manager, goal, getRewriterOptions(manager, params));
+          purifyArith(manager, goal);
+          simplifyGoal(manager, goal, getRewriterOptions(manager, params));
+          return [goal];
+        };
+      },
+    },
+  ],
+  [
+    "elim-term-ite",
+    {
+      descrs: getDescrs("", [["max_memory", PARAM_UINT, UINT_MAX, true]]),
+      build: (environment) =>
+        inPlace((goal) => {
+          const manager = environment.manager;
+          const seen = new Set<number>();
+          const todo = [...goal.forms.items];
+          for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
+            if (seen.has(expr) || manager.kinds[expr] !== KIND_APP) continue;
+            seen.add(expr);
+            if (manager.getOp(expr) === OP_ITE && manager.sorts[expr] !== SORT_BOOL)
+              throw new SmtUnsupportedError("elim-term-ite on a goal it changes");
+            manager.pushArgs(expr, todo);
+          }
+          goal.depth++;
+        }),
+    },
+  ],
+  [
     "tseitin-cnf-core",
     {
       descrs: TSEITIN_DESCRS,
@@ -556,12 +601,12 @@ const UNPORTED_TACTICS = new Set(
     "ackermannize_bv add-bounds aig bit-blast blast-term-ite bv_bound_chk bv-divrem-bounds " +
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
     "ctx-solver-simplify degree-shift demodulator diff-neq distribute-forall dom-simplify " +
-    "dt2bv elim-predicates elim-small-bv elim-term-ite elim-uncnstr2 eq2bv " +
+    "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
     "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
     "max-bv-sharing nla2bv nlqsat nlsat nra occf pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
-    "purify-arith qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
+    "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args reduce-args2 reduce-bv-size " +
     "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce ufbv-rewriter"
