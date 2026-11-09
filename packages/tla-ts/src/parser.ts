@@ -1282,6 +1282,26 @@ const parse = (
     if (token.kind === "Operator" && isBullet(token)) {
       return parseJunctionList();
     }
+    if (isTlapm && INFIX_OPERATORS.has(token.text) && isAt("(", 1)) {
+      const start = cursor.index;
+      const nonfix = withBracketLayout(() => {
+        advance();
+        advance();
+        const left = parseExpression();
+        if (!accept(",")) return undefined;
+        const right = parseExpression();
+        expect(")");
+        const apply: Expression = {
+          kind: "Apply",
+          operator: token.text,
+          args: [left, right],
+          location,
+        };
+        return withRange(apply, start);
+      });
+      if (nonfix !== undefined) return nonfix;
+      cursor.index = start;
+    }
     if (token.kind === "Operator" || token.kind === "Keyword") {
       switch (token.text) {
         case "~":

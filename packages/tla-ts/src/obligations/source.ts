@@ -312,9 +312,18 @@ export const createSource = (
         const args = expression.args.map(recurse);
         const operator = lookupOperator(expression.operator);
         if (operator.fixity !== "Nonfix") {
+          const operatorLocus = getPointLocus(expression.location, 1);
+          const first = args[0]?.location;
+          const isNonfix =
+            args.length === 2 &&
+            first !== undefined &&
+            (operatorLocus.startLine < first.startLine ||
+              (operatorLocus.startLine === first.startLine &&
+                operatorLocus.startColumn < first.startColumn));
+          const operands = getOperatorLocus(args, operator.fixity);
           return at(
             { kind: "Apply", operator: convertOperator(expression.operator, undefined), args },
-            { location: getOperatorLocus(args, operator.fixity) },
+            { location: isNonfix ? mergeLoci(operatorLocus, operands) : operands },
           );
         }
         return convertName(expression.operator, args, location, expression.argumentCounts);
