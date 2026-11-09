@@ -733,7 +733,7 @@ const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
   printer.print(
     MESSAGE_CODE.simulating,
     MESSAGE_LEVEL.none,
-    `Running Random Simulation with seed ${args.seed} with ${workers}).`,
+    `Running ${args.scheduler === "rl" ? "RL" : "Random"} Simulation with seed ${args.seed} with ${workers}).`,
   );
 };
 
@@ -986,6 +986,7 @@ const checkSpec = async (
         traceCount: args.traceCount,
         aril: args.aril,
         isGenerating: args.mode === "generate",
+        scheduler: args.scheduler,
         onSimulation: (output) => printSimulation(printer, output),
       });
       printFinished();

@@ -16,6 +16,7 @@ export interface TlcArguments {
   dfidDepth: number | undefined;
   traceDepth: number;
   traceCount: bigint | undefined;
+  scheduler: "random" | "rl" | "rlaction";
   isTool: boolean;
   isContinued: boolean;
   isDeadlockChecked: boolean;
@@ -138,6 +139,7 @@ const createDefaults = (): TlcArguments => ({
   dfidDepth: undefined,
   traceDepth: 100,
   traceCount: undefined,
+  scheduler: "random",
   isTool: false,
   isContinued: false,
   isDeadlockChecked: true,
@@ -216,6 +218,11 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       }
       cursor.index++;
       const hasFile = options.split(",").some((option) => option.startsWith("file="));
+      parsed.scheduler = options.split(",").includes("sched=rl")
+        ? "rl"
+        : options.split(",").includes("sched=rlaction")
+          ? "rlaction"
+          : "random";
       for (const option of options.split(",").filter((item) => item.startsWith("num="))) {
         const count = option.replace("num=", "");
         parsed.traceCount = parseJavaInteger(count, 64);

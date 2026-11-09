@@ -663,6 +663,7 @@ interface Search {
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
   findUnwitnessedPossible: () => Postcondition | undefined;
+  getReward: (state: Value[] | undefined, next: Value[], fallback: number) => number;
   // After a counterexample, TLC skips the postconditions when one of them is constant.
   findPostconditionViolation: () => Postcondition | undefined;
 }
@@ -715,14 +716,17 @@ const holdsLikeTlc = (
   return value;
 };
 
-const getExpectedBoolean = (expression: Expression, environment: Environment) => {
+const getExpectedValue = (kind: string, expression: Expression, environment: Environment) => {
   const definition =
     expression.kind === "Identifier" ? getDefinition(expression.name, environment) : undefined;
   const body = definition?.kind === "Operator" ? definition.body : expression;
   const range = definition?.kind === "Operator" ? definition.bodyRange : undefined;
   const location = range && body.kind !== "Number" ? formatRange(range) : describeNode(body);
-  return `TLC expected a boolean value, but did not find one. ${location}`;
+  return `TLC expected a ${kind} value, but did not find one. ${location}`;
 };
+
+const getExpectedBoolean = (expression: Expression, environment: Environment) =>
+  getExpectedValue("boolean", expression, environment);
 
 // TLC evaluates the whole predicate, which fails at a non-boolean conjunct as the conjunction does.
 const holdsAsConjunct = (check: StateCheck, context: Context) =>
@@ -1121,6 +1125,15 @@ export const createSearch = (
         : (state, next) =>
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
     findUnwitnessedPossible,
+    getReward: (state, next, fallback) => {
+      if (config.rlReward === undefined) return fallback;
+      const expression = createIdentifier(config.rlReward);
+      const value = evaluate(expression, getContext(environment, state, next));
+      if (typeof value !== "number") {
+        throw new TlaEvaluationError(getExpectedValue("integer", expression, environment));
+      }
+      return value;
+    },
     findPostconditionViolation: () => {
       const unwitnessed = findUnwitnessedPossible();
       if (unwitnessed) return unwitnessed;
