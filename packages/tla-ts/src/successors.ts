@@ -1311,7 +1311,6 @@ export const forEachSuccessor = (
   return run.successors;
 };
 
-// Whether the action leaves a variable of a successor unassigned, which TLC reports for it.
 export const hasIncompleteSuccessor = (
   expression: Expression,
   state: Value[],
