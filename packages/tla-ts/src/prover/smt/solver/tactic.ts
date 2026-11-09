@@ -14,6 +14,7 @@ import { ctxSimplify } from "./ctx-simplify";
 import type { Definition, Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Der } from "./der";
+import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
@@ -465,6 +466,16 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         }),
     },
   ],
+  [
+    "fix-dl-var",
+    {
+      descrs: REWRITER_DESCRS,
+      build: (environment, params) =>
+        inPlace((goal) =>
+          fixDlVar(environment.manager, goal, getRewriterOptions(environment.manager, params)),
+        ),
+    },
+  ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
@@ -508,7 +519,7 @@ const UNPORTED_TACTICS = new Set(
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
     "ctx-solver-simplify degree-shift demodulator diff-neq distribute-forall dom-simplify " +
     "dt2bv elim-predicates elim-small-bv elim-term-ite elim-uncnstr2 eq2bv " +
-    "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fix-dl-var fm " +
+    "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb macro-finder " +
     "max-bv-sharing nla2bv nlqsat nlsat nra occf pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
