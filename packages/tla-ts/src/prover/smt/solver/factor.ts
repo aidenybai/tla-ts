@@ -15,7 +15,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { forEachIndex, runSimplifier } from "./dependent-expr-state";
+import { runSimplifier } from "./dependent-expr-state";
 import { Expr2Polynomial } from "./expr2polynomial";
 import type { Goal } from "./goal";
 import { getLcm, Rational } from "./rational";
@@ -130,14 +130,23 @@ class FactorRewriter extends RewriterTpl {
 }
 
 export const factor = (manager: AstManager, goal: Goal, isSplittingFactors: boolean) =>
-  runSimplifier(goal, false, () => {
+  runSimplifier(goal, false, (state) => {
     const rewriter = new FactorRewriter(manager, isSplittingFactors);
-    forEachIndex(manager, goal, (index) => {
-      const form = goal.forms.items[index];
-      const rewritten = rewriter.rewrite(form);
-      if (rewritten !== form) goal.update(index, rewritten);
-      manager.decRef(rewritten);
-    });
-    rewriter.expr2poly.release();
-    rewriter.release();
+    return {
+      reduce: () => {
+        let rewritten = -1;
+        state.forEachIndex((index) => {
+          const form = state.get(index);
+          const next = rewriter.rewrite(form);
+          if (rewritten !== -1) manager.decRef(rewritten);
+          rewritten = next;
+          if (rewritten !== form) goal.update(index, rewritten);
+        });
+        if (rewritten !== -1) manager.decRef(rewritten);
+      },
+      release: () => {
+        rewriter.expr2poly.release();
+        rewriter.release();
+      },
+    };
   });

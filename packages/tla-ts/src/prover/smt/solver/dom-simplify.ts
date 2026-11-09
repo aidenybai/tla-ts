@@ -2,7 +2,7 @@
 // src/ast/expr_substitution.cpp), MIT license, see z3-license.txt.
 import { type AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR } from "./ast";
 import { mkNot } from "./ast-util";
-import { forEachIndex, runSimplifier } from "./dependent-expr-state";
+import { type DependentExprState, runSimplifier } from "./dependent-expr-state";
 import type { Goal } from "./goal";
 import { ObjMap } from "./hashtable";
 import { RefVector } from "./ref-vector";
@@ -193,6 +193,7 @@ class ExprSubstitutionSimplifier {
     this.manager.incRef(source);
     this.manager.incRef(def);
     this.subst.set(source, def);
+    this.manager.incRef(source);
     this.scopedTrail.push(source);
   }
 
@@ -236,12 +237,13 @@ class ExprSubstitutionSimplifier {
     if (numScopes === 0) return;
     const newSize = this.trailLimits.length - numScopes;
     const oldSize = this.trailLimits[newSize];
-    for (const source of this.scopedTrail.splice(oldSize)) {
-      const def = this.subst.get(source) as number;
+    const sources = this.scopedTrail.splice(oldSize);
+    for (const source of sources) {
+      this.manager.decRef(this.subst.get(source) as number);
       this.subst.delete(source);
       this.manager.decRef(source);
-      this.manager.decRef(def);
     }
+    for (const source of sources) this.manager.decRef(source);
     this.trailLimits.length = newSize;
   }
 
@@ -255,10 +257,12 @@ class ExprSubstitutionSimplifier {
   }
 }
 
+// Each simplify method returns its result with a reference, which the caller releases.
 class DominatorSimplifier {
   private simplifier: ExprSubstitutionSimplifier;
   private dominators: ExprDominators;
   private trail: RefVector;
+  private args: RefVector;
   private results = new Map<number, number>();
   private subexprCache = new Map<string, boolean>();
   private depth = 0;
@@ -266,20 +270,23 @@ class DominatorSimplifier {
 
   constructor(
     private manager: AstManager,
-    private goal: Goal,
+    private state: DependentExprState,
   ) {
     this.simplifier = new ExprSubstitutionSimplifier(manager);
     this.dominators = new ExprDominators(manager);
     this.trail = new RefVector(manager);
+    this.args = new RefVector(manager);
   }
 
-  private pin(expr: number) {
-    this.trail.push(expr);
+  private own(expr: number) {
+    this.manager.incRef(expr);
     return expr;
   }
 
-  private getCached(expr: number) {
-    return this.results.get(expr) ?? expr;
+  private find(expr: number) {
+    const found = this.own(this.simplifier.find(expr));
+    this.manager.decRef(expr);
+    return found;
   }
 
   private cache(expr: number, result: number) {
@@ -305,7 +312,11 @@ class DominatorSimplifier {
   }
 
   private simplifyArg(expr: number) {
-    return this.simplifier.find(this.getCached(expr));
+    return this.find(this.own(this.results.get(expr) ?? expr));
+  }
+
+  private simplifyChild(child: number) {
+    this.manager.decRef(this.simplifyRec(child));
   }
 
   private simplifyIte(ite: number) {
@@ -321,54 +332,66 @@ class DominatorSimplifier {
     else {
       for (const child of this.dominators.getTree(ite))
         if (this.isSubexpr(child, thenExpr) && !this.isSubexpr(child, elseExpr))
-          this.simplifyRec(child);
+          this.simplifyChild(child);
       this.localPop(this.simplifier.scopeLevel - oldLevel);
       const newThen = this.simplifyArg(thenExpr);
       this.results.clear();
-      if (!this.simplifier.assertExpr(newCondition, true)) return newThen;
+      if (!this.simplifier.assertExpr(newCondition, true)) {
+        manager.decRef(newCondition);
+        return newThen;
+      }
       for (const child of this.dominators.getTree(ite))
         if (this.isSubexpr(child, elseExpr) && !this.isSubexpr(child, thenExpr))
-          this.simplifyRec(child);
+          this.simplifyChild(child);
       this.localPop(this.simplifier.scopeLevel - oldLevel);
       const newElse = this.simplifyArg(elseExpr);
-      if (condition === newCondition && thenExpr === newThen && elseExpr === newElse) result = ite;
-      else if (newThen === newElse) result = newThen;
-      else
-        result = this.pin(
-          manager.mkApp(OP_ITE, [newCondition, newThen, newElse], manager.sorts[newThen]),
-        );
+      result = this.own(
+        condition === newCondition && thenExpr === newThen && elseExpr === newElse
+          ? ite
+          : newThen === newElse
+            ? newThen
+            : manager.mkApp(OP_ITE, [newCondition, newThen, newElse], manager.sorts[newThen]),
+      );
+      manager.decRef(newElse);
+      manager.decRef(newThen);
     }
     this.results.clear();
+    manager.decRef(newCondition);
     return result;
   }
 
   private simplifyAndOr(isAnd: boolean, expr: number) {
     const manager = this.manager;
     const oldLevel = this.simplifier.scopeLevel;
-    const args = manager.getArgs(expr);
+    const exprArgs = manager.getArgs(expr);
     const isSubexprArg = (child: number, except: number) =>
       this.isSubexpr(child, except) &&
-      args.every((arg) => arg === except || !this.isSubexpr(child, arg));
-    const results: number[] = [];
-    const simplifyArgAt = (arg: number) => {
+      exprArgs.every((arg) => arg === except || !this.isSubexpr(child, arg));
+    let last = -1;
+    const args = new RefVector(manager);
+    for (const arg of this.isForward ? exprArgs : exprArgs.toReversed()) {
       for (const child of this.dominators.getTree(arg))
-        if (isSubexprArg(child, arg)) this.simplifyRec(child);
-      const result = this.simplifyArg(arg);
-      results.push(result);
-      if (this.simplifier.assertExpr(result, !isAnd)) return undefined;
-      this.localPop(this.simplifier.scopeLevel - oldLevel);
-      this.results.clear();
-      return isAnd ? manager.falseExpr : manager.trueExpr;
-    };
-    const order = this.isForward ? args : args.toReversed();
-    for (const arg of order) {
-      const decided = simplifyArgAt(arg);
-      if (decided !== undefined) return decided;
+        if (isSubexprArg(child, arg)) this.simplifyChild(child);
+      const simplified = this.simplifyArg(arg);
+      if (last !== -1) manager.decRef(last);
+      last = simplified;
+      args.push(simplified);
+      if (!this.simplifier.assertExpr(simplified, !isAnd)) {
+        this.localPop(this.simplifier.scopeLevel - oldLevel);
+        const decided = this.own(isAnd ? manager.falseExpr : manager.trueExpr);
+        manager.decRef(last);
+        this.results.clear();
+        args.reset();
+        return decided;
+      }
     }
-    if (!this.isForward) results.reverse();
+    if (!this.isForward) args.items.reverse();
     this.localPop(this.simplifier.scopeLevel - oldLevel);
     this.results.clear();
-    return this.pin(isAnd ? manager.mkAnd(results) : manager.mkOr(results));
+    const result = this.own(isAnd ? manager.mkAnd(args.items) : manager.mkOr(args.items));
+    args.reset();
+    if (last !== -1) manager.decRef(last);
+    return result;
   }
 
   private simplifyNot(expr: number) {
@@ -376,32 +399,44 @@ class DominatorSimplifier {
     const result = this.simplifyRec(this.manager.getArg(expr, 0));
     this.localPop(this.simplifier.scopeLevel - oldLevel);
     this.results.clear();
-    return this.pin(mkNot(this.manager, result));
+    const negated = this.own(mkNot(this.manager, result));
+    this.manager.decRef(result);
+    return negated;
   }
 
   private simplifyRec(original: number): number {
     const manager = this.manager;
     const expr = this.results.get(original) ?? original;
     this.depth++;
-    let result: number;
     const op = manager.getOp(expr);
-    if (this.depth > MAX_DEPTH) result = expr;
+    let result: number;
+    if (this.depth > MAX_DEPTH) result = this.own(expr);
     else if (op === OP_ITE) result = this.simplifyIte(expr);
     else if (op === OP_AND) result = this.simplifyAndOr(true, expr);
     else if (op === OP_OR) result = this.simplifyAndOr(false, expr);
     else if (op === OP_NOT) result = this.simplifyNot(expr);
     else {
       for (const child of this.dominators.getTree(expr))
-        if (child !== expr) this.simplifyRec(child);
-      const args =
-        manager.kinds[expr] === KIND_APP
-          ? manager.mapArgs(expr, (arg) => (manager.isBool(arg) ? arg : this.simplifyArg(arg)))
-          : [];
-      result = args.every((arg, index) => arg === manager.getArg(expr, index))
-        ? expr
-        : this.pin(manager.mkApp(manager.decls[expr], args, manager.sorts[expr]));
+        if (child !== expr) this.simplifyChild(child);
+      if (manager.kinds[expr] === KIND_APP) {
+        this.args.reset();
+        for (const arg of manager.getArgs(expr)) {
+          if (manager.isBool(arg)) this.args.push(arg);
+          else {
+            const simplified = this.simplifyArg(arg);
+            this.args.push(simplified);
+            manager.decRef(simplified);
+          }
+        }
+        const args = this.args.items;
+        result = this.own(
+          args.every((arg, index) => arg === manager.getArg(expr, index))
+            ? expr
+            : manager.mkApp(manager.decls[expr], args, manager.sorts[expr]),
+        );
+      } else result = this.own(expr);
     }
-    result = this.simplifier.find(result);
+    result = this.find(result);
     this.cache(original, result);
     this.depth--;
     this.subexprCache.clear();
@@ -410,34 +445,43 @@ class DominatorSimplifier {
 
   private init() {
     const manager = this.manager;
-    const args: number[] = [];
-    forEachIndex(manager, this.goal, (index) => args.push(this.goal.forms.items[index]));
-    const fml = manager.mkAnd(args);
-    manager.incRef(fml);
+    const state = this.state;
+    const args = new RefVector(manager);
+    state.forEachIndex((index) => {
+      state.get(index);
+      args.push(state.get(index));
+    });
+    const fml = this.own(manager.mkAnd(args.items));
     this.results.clear();
     this.trail.reset();
     const isCompiled = this.dominators.compile(fml);
     manager.decRef(fml);
+    args.reset();
     return isCompiled;
   }
 
   private simplifyAt(index: number) {
     const manager = this.manager;
-    const form = this.goal.forms.items[index];
+    const goal = this.state.goal;
+    const form = this.state.get(index);
     let result = this.simplifyRec(form);
     if (
       !manager.isTrue(result) &&
       !manager.isFalse(result) &&
       !this.simplifier.assertExpr(result, false)
-    )
-      result = manager.falseExpr;
-    this.goal.update(index, result);
+    ) {
+      manager.decRef(result);
+      result = this.own(manager.falseExpr);
+    }
+    goal.update(index, result);
+    manager.decRef(result);
     return result !== form;
   }
 
   reduce() {
-    const goal = this.goal;
+    const goal = this.state.goal;
     this.trail.reset();
+    this.args.reset();
     this.results.clear();
     this.dominators.reset();
     this.depth = 0;
@@ -460,13 +504,10 @@ class DominatorSimplifier {
   release() {
     this.simplifier.release();
     this.dominators.reset();
+    this.args.reset();
     this.trail.reset();
   }
 }
 
 export const domSimplify = (manager: AstManager, goal: Goal) =>
-  runSimplifier(goal, true, () => {
-    const simplifier = new DominatorSimplifier(manager, goal);
-    simplifier.reduce();
-    simplifier.release();
-  });
+  runSimplifier(goal, false, (state) => new DominatorSimplifier(manager, state));
