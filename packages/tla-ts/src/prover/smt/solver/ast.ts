@@ -82,6 +82,7 @@ export const OP_LOG = 46;
 export const OP_PI = 47;
 export const OP_E = 48;
 export const OP_ALGEBRAIC_NUM = 49;
+export const OP_REM = 50;
 export const OP_UNINTERPRETED = 60;
 const OP_MODEL_VALUE = 61;
 
@@ -392,6 +393,7 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["pi", FAMILY_ARITH, OP_PI, SORT_REAL],
   ["euler", FAMILY_ARITH, OP_E, SORT_REAL],
   ["RootObject", FAMILY_ARITH, OP_ALGEBRAIC_NUM, SORT_REAL],
+  ["rem", FAMILY_ARITH, OP_REM, SORT_INT],
 ];
 
 // Z3's family ids and decl kinds, which its AST hashes include.
@@ -435,6 +437,7 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_MUL, ["*", 9, 2]],
   [OP_IDIV, ["div", 11, 2]],
   [OP_MOD, ["mod", 16, 2]],
+  [OP_REM, ["rem", 15, 2]],
   [OP_ABS, ["abs", 21, 1]],
   [OP_PATTERN, ["pattern", 0, -1]],
   [OP_DIV, ["/", 10, 2]],
@@ -486,6 +489,7 @@ const Z3_SMALL_IDS = new Map([
   [OP_SUB, 37],
   [OP_MUL, 38],
   [OP_IDIV, 39],
+  [OP_REM, 40],
   [OP_MOD, 41],
   [OP_UMINUS, 42],
   [OP_ABS, 50],

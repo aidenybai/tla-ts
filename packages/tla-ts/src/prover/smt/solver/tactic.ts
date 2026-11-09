@@ -180,6 +180,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
     isExpandPower: getBool(params, "expand_power", false),
     isExpandTan: getBool(params, "expand_tan", false),
     isHoistIte: getBool(params, "hoist_ite", false),
+    isElimRem: getBool(params, "elim_rem", false),
     maxDegree: getUint(params, "max_degree", 64),
   },
   bv: {

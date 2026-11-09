@@ -28,6 +28,7 @@ import {
   OP_LE,
   OP_LT,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_NOT,
   OP_OR,
@@ -227,6 +228,7 @@ const BUILTIN_OPS = new Map<string, number>([
   ["/", OP_DIV],
   ["div", OP_IDIV],
   ["mod", OP_MOD],
+  ["rem", OP_REM],
   ["abs", OP_ABS],
   ["to_real", OP_TO_REAL],
   ["to_int", OP_TO_INT],
@@ -419,6 +421,7 @@ const ARITIES = new Map<number, [number, number]>([
     OP_XOR,
     OP_IDIV,
     OP_MOD,
+    OP_REM,
     OP_DIV,
     OP_LE,
     OP_GE,
@@ -439,6 +442,7 @@ const RANGES = new Map<number, number>([
   [OP_TO_INT, SORT_INT],
   [OP_IDIV, SORT_INT],
   [OP_MOD, SORT_INT],
+  [OP_REM, SORT_INT],
   ...[
     OP_EQ,
     OP_DISTINCT,
@@ -501,7 +505,7 @@ const BINARY_BOOL_REFS = new Map([
 ]);
 
 const REAL_RANGE_OPS = new Set([OP_DIV, OP_TO_REAL]);
-const INT_RANGE_OPS = new Set([OP_IDIV, OP_MOD, OP_TO_INT]);
+const INT_RANGE_OPS = new Set([OP_IDIV, OP_MOD, OP_REM, OP_TO_INT]);
 const DOMAIN_RANGE_OPS = new Set([OP_ADD, OP_SUB, OP_MUL, OP_ABS]);
 
 // mk_func_decl of a builtin ignores the range of the reference and gives its own.
@@ -1014,7 +1018,7 @@ export const createSmtlibReader = (
     if (op === OP_EQ || op === OP_DISTINCT) return getJoin(args);
     if (COERCING_OPS.has(op)) return getJoin(args) === SORT_REAL ? SORT_REAL : SORT_INT;
     if (op === OP_ABS || op === OP_TO_REAL || op === OP_TO_INT) return manager.sorts[args[0]];
-    if (op === OP_IDIV || op === OP_MOD) return SORT_INT;
+    if (op === OP_IDIV || op === OP_MOD || op === OP_REM) return SORT_INT;
     if (op === OP_DIV || op === OP_IS_INT || REAL_FUNCTION_OPS.has(op)) return SORT_REAL;
     return SORT_BOOL;
   };
@@ -1693,7 +1697,7 @@ export const createSmtlibReader = (
     if (isTranscendental && args.length === 0 && builtin === "pi") return manager.piExpr;
     if (isTranscendental && args.length === 0 && builtin === "euler") return manager.eulerExpr;
     const transcendentalOp = isTranscendental ? TRANSCENDENTAL_OPS.get(builtin) : undefined;
-    if (builtin === "rem" || (isTranscendental && transcendentalOp === undefined))
+    if (isTranscendental && transcendentalOp === undefined)
       throw new SmtUnsupportedError(`the operator ${name}`);
     const chainable = CHAINABLE_OPS.get(builtin);
     const arithOp =

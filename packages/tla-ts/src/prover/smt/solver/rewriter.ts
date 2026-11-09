@@ -51,6 +51,7 @@ import {
   OP_LE,
   OP_LT,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_NOT,
   OP_OR,
@@ -499,6 +500,8 @@ export class Rewriter extends RewriterTpl {
         return this.arith.mkIdiv(args[0], args[1]) ?? -1;
       case OP_MOD:
         return this.arith.mkMod(args[0], args[1]) ?? -1;
+      case OP_REM:
+        return this.arith.mkRem(args[0], args[1]) ?? -1;
       case OP_ABS:
         return this.arith.mkAbs(args[0]);
       case OP_DIV:

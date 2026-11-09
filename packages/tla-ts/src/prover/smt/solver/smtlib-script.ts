@@ -119,6 +119,7 @@ const SIMPLIFY_PARAMETERS = new Set([
   "expand_power",
   "expand_tan",
   "sort_store",
+  "elim_rem",
 ]);
 
 const SIMPLIFY_UINT_PARAMETERS = new Set([

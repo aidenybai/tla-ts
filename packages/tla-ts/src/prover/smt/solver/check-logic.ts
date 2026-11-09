@@ -25,6 +25,7 @@ import {
   OP_LE,
   OP_LT,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_NUM,
   OP_SUB,
@@ -223,7 +224,7 @@ export const createLogicChecker = (manager: AstManager, logic: string | undefine
     if (op === OP_MUL && !flags.isNonlinear && args.filter((arg) => !isNumeral(arg)).length > 1)
       return NONLINEAR;
     if (
-      (op === OP_DIV || op === OP_IDIV || op === OP_MOD) &&
+      (op === OP_DIV || op === OP_IDIV || op === OP_REM || op === OP_MOD) &&
       (args.length !== 2 || (!flags.isNonlinear && !isNumeral(args[1])))
     )
       return NONLINEAR;

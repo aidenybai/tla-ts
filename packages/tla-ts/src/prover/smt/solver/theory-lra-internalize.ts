@@ -12,6 +12,7 @@ import {
   OP_MUL,
   OP_NUM,
   OP_POWER,
+  OP_REM,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
@@ -156,7 +157,9 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     const op = manager.getOp(expr);
     const zero = manager.mkNumeral(0n);
     const dividend =
-      op === OP_MOD ? manager.mkApp(OP_MOD, [manager.getArg(expr, 0), zero], SORT_INT) : expr;
+      op === OP_MOD || op === OP_REM
+        ? manager.mkApp(op, [manager.getArg(expr, 0), zero], SORT_INT)
+        : expr;
     const byZero =
       op === OP_DIV
         ? manager.mkApp(OP_DIV0, manager.getArgs(expr), SORT_REAL)
@@ -402,6 +405,8 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
               context.internalize(quotient, false);
               nla.divisions.addDivisibility(this.registerDivision(quotient, term));
             }
+          } else if (op === OP_REM) {
+            if (!this.isNonzeroNumeral(manager.getArg(term, 1))) this.foundUnderspecified(term);
           } else if (op === OP_IDIV0 || op === OP_MOD0) {
             for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
               const arg = manager.getArg(term, argIndex);

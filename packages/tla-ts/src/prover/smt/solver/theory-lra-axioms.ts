@@ -12,6 +12,7 @@ import {
   OP_MUL,
   OP_POWER,
   OP_POWER0,
+  OP_REM,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
@@ -134,6 +135,7 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     else if (op === OP_TO_INT) this.mkToIntAxiom(expr);
     else if (op === OP_IS_INT) this.mkIsIntAxiom(expr);
     else if (op === OP_MOD) this.mkIdivModAxioms(manager.getArg(expr, 0), manager.getArg(expr, 1));
+    else if (op === OP_REM) this.mkRemAxiom(manager.getArg(expr, 0), manager.getArg(expr, 1));
     else if (op === OP_POWER) this.mkPowerAxiom(expr);
   }
 
@@ -258,6 +260,19 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
       // simple_relevancy_eh marks the consequent without propagating.
       () => context.relevancy.markAsRelevant(consequent),
     );
+  }
+
+  private mkRemAxiom(dividend: number, divisor: number) {
+    const manager = this.manager;
+    const zero = manager.mkNumeral(0n);
+    const remainder = manager.mkApp(OP_REM, [dividend, divisor], SORT_INT);
+    const mod = manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT);
+    const negatedMod = manager.mkApp(OP_UMINUS, [mod], SORT_INT);
+    const isNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
+    const isPositiveCase = this.mkEq(remainder, mod);
+    const isNegativeCase = this.mkEq(remainder, negatedMod);
+    this.mkAxiom([negate(isNonnegative), isPositiveCase]);
+    this.mkAxiom([isNonnegative, isNegativeCase]);
   }
 
   private mkDivAxiom(dividend: number, divisor: number) {
