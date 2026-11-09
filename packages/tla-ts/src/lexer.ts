@@ -325,7 +325,7 @@ export const getNumeralValue = (text: string) =>
     ? parseInt(text.slice(2), NUMBER_BASES.get(text[1].toLowerCase()))
     : Number(text);
 
-const MODULE_HEADER = /-{4,}[ \t]*MODULE\b/;
+const MODULE_HEADER = /-{4,} *MODULE\b/;
 
 const CODE_TAB = 9;
 const CODE_NEWLINE = 10;
@@ -549,8 +549,8 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       continue;
     }
     if (code === CODE_BACKSLASH && source.charCodeAt(cursor.index + 1) === CODE_STAR) {
-      const lineEnd = source.indexOf("\n", cursor.index);
-      advanceOver((lineEnd === -1 ? source.length : lineEnd) - cursor.index);
+      const lineEnd = skipWhile(source, cursor.index, (next) => next !== "\n" && next !== "\r");
+      advanceOver(lineEnd - cursor.index);
       continue;
     }
     if (code === CODE_OPEN_PAREN && source.charCodeAt(cursor.index + 1) === CODE_STAR) {
@@ -571,13 +571,8 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
     }
     if (code === CODE_DASH && source.startsWith("----", cursor.index)) {
       const length = skipWhile(source, cursor.index, (next) => next === "-") - cursor.index;
-      if (
-        source
-          .slice(cursor.index + length)
-          .trimStart()
-          .startsWith("MODULE")
-      )
-        cursor.moduleDepth++;
+      const keyword = skipWhile(source, cursor.index + length, (next) => next === " ");
+      if (source.startsWith("MODULE", keyword)) cursor.moduleDepth++;
       pushToken("Separator", "----", length);
       continue;
     }

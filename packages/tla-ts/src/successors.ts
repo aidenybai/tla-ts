@@ -28,6 +28,7 @@ import {
   getEntryEvaluator,
   getReevaluatedDefinitions,
   lookupScope,
+  mapBoundSets,
   resolveApplyOperator,
   resolveGlobalOperator,
   toUnspecifiedSubscriptError,
@@ -863,15 +864,15 @@ const compileRandomExists = (
   return (run, scope, partial, action, isFixed, onComplete) => {
     const context = getContext(run, scope, partial);
     const version = environment.runtime.version;
-    const orders = expression.bounds.map((bound) => {
-      const set = evaluate(bound.set, context);
-      return getRandomSubset(
-        getContextElements(set, bound.set, version).length,
-        set,
-        environment.runtime.getRandom(),
-        version,
-      );
-    });
+    const orders = mapBoundSets(expression.bounds, (set) => evaluate(set, context)).map(
+      (set, index) =>
+        getRandomSubset(
+          getContextElements(set, expression.bounds[index].set, version).length,
+          set,
+          environment.runtime.getRandom(),
+          version,
+        ),
+    );
     const visit = (position: number, boundScope: Scope | undefined): boolean => {
       if (position < 0) {
         body(run, boundScope, partial, action, isFixed, onComplete);
@@ -934,12 +935,8 @@ const compileAction = (
         const rest = compileConjunction(hoisted.rest, environment, isInit);
         return (run, scope, partial, action, isFixed, onComplete) => {
           const context = getContext(run, scope, partial);
-          const sets = expression.bounds.map((innerBound) =>
-            getContextElements(
-              evaluate(innerBound.set, context),
-              innerBound.set,
-              environment.runtime.version,
-            ),
+          const sets = mapBoundSets(expression.bounds, (set) =>
+            getContextElements(evaluate(set, context), set, environment.runtime.version),
           );
           if (sets.some((elements) => elements.length === 0)) return;
           const visit = (index: number, boundScope: Scope | undefined): void => {

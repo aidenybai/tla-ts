@@ -331,7 +331,6 @@ export const createEnvironment = (
   runtime.isTool = options.isTool ?? false;
   runtime.version = options.version ?? "master";
   const linkedModules = new Map<string, LinkedModule>();
-  const nestedModules = new Map<string, LinkedModule>();
   // From the time its level checks run.
   const checkedModules = new Map<string, LinkedModule>();
   const linkOrder: LinkedModule[] = [];
@@ -885,8 +884,12 @@ export const createEnvironment = (
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const constants = [...parsed.constants];
-    const variables = parsed.variables.map((variable) => variable.name);
-    const variableLocations = parsed.variables.map((variable) => variable.location);
+    const declaredVariables = parsed.variables.filter(
+      (variable, index) =>
+        parsed.variables.findIndex((other) => other.name === variable.name) === index,
+    );
+    const variables = declaredVariables.map((variable) => variable.name);
+    const variableLocations = declaredVariables.map((variable) => variable.location);
     parsed.extends.forEach((name) => {
       const nested = scope.modules.get(name);
       const standardSymbols = nested ? undefined : getStandardSymbols(name);
@@ -1015,7 +1018,6 @@ export const createEnvironment = (
       });
       if (redefinition) report.errors.push(redefinition);
       if (!existing) modules.set(nested.name, linked);
-      if (!nestedModules.has(nested.name)) nestedModules.set(nested.name, linked);
     };
     [
       ...parsed.instances.map((instance) => ({
@@ -1123,17 +1125,30 @@ export const createEnvironment = (
   const declaredConstants = linkedRoot.constants.map((constant) => constant.name);
   const variables = linkedRoot.variables;
 
-  const getScopedKeys = (item: { name: string; module?: string }) => {
-    if (item.module === undefined) return [item.name, getRootKey(item.name)];
-    if (item.module === root.name || declaredConstants.includes(item.name)) return [];
-    const linked = linkedModules.get(item.module) ?? nestedModules.get(item.module);
-    return [linked?.visible.get(item.name)?.key ?? item.name];
+  const moduleSymbols = new Map([
+    ...standardExports,
+    ...[...linkedModules].map(([name, linked]): [string, Symbols] => [name, linked.visible]),
+    [root.name, linkedRoot.visible],
+  ]);
+  const getScopedSymbol = (item: { name: string; module?: string }) => {
+    const symbol = moduleSymbols.get(item.module ?? "")?.get(item.name);
+    return symbol?.kind === "Definition" ? symbol : undefined;
   };
+  const getSubstitutedKeys = (item: { name: string; module?: string }) => {
+    if (item.module === undefined) return [item.name, getRootKey(item.name)];
+    const symbol = getScopedSymbol(item);
+    return symbol ? [symbol.key] : [];
+  };
+  // TLC ignores a scoped value for a definition of the root module, though not a scoped override.
+  const getScopedKeys = (item: { name: string; module?: string }) =>
+    item.module === root.name ? [] : getSubstitutedKeys(item);
   const getKeyArity = (key: string) => {
     const definition = definitions.get(key);
     return definition?.kind === "Operator"
       ? definition.params.length
-      : (linkedRoot.constants.find((constant) => constant.name === key)?.arity ?? 0);
+      : (linkedRoot.constants.find((constant) => constant.name === key)?.arity ??
+          builtins.get(key)?.arity ??
+          0);
   };
   const constants = new Map<string, Value>();
   const operatorKeys = new Set<string>();
@@ -1182,20 +1197,38 @@ export const createEnvironment = (
   });
   tables.forEach((table) =>
     getScopedKeys(table).forEach((key) =>
-      setOperator(
-        key,
-        createOperatorTable(table.name, getKeyArity(key) || table.rows[0][0].length, table.rows),
-      ),
+      setOperator(key, createOperatorTable(table.name, getKeyArity(key), table.rows)),
     ),
   );
   const substitutions = new Map(
     config.substitutions.flatMap((substitution) =>
-      getScopedKeys(substitution).map((key): [string, string] => [
+      getSubstitutedKeys(substitution).map((key): [string, string] => [
         key,
         getRootKey(substitution.target),
       ]),
     ),
   );
+  [...substitutions.keys()].forEach((key) => constants.delete(key));
+  const checkSubstitutionTarget = (name: string, target: string, arity: number | undefined) => {
+    const targetKey = getRootKey(target);
+    const definition = definitions.get(targetKey);
+    const isDefined =
+      definition !== undefined ||
+      builtins.has(targetKey) ||
+      constants.has(targetKey) ||
+      declaredConstants.includes(target) ||
+      variables.includes(target);
+    if (!isDefined) {
+      throw new TlaConfigError(
+        `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
+      );
+    }
+    if (definition?.kind === "Operator" && definition.params.length !== arity) {
+      throw new TlaConfigError(
+        `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
+      );
+    }
+  };
   config.substitutions
     .filter((substitution) => substitution.module === undefined)
     .forEach((substitution) => {
@@ -1211,30 +1244,44 @@ export const createEnvironment = (
           `In the configuration file, the identifier ${target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
         );
       }
-      const targetKey = getRootKey(target);
-      const definition = definitions.get(targetKey);
-      const isDefined =
-        definition !== undefined ||
-        builtins.has(targetKey) ||
-        constants.has(targetKey) ||
-        declaredConstants.includes(target) ||
-        variables.includes(target);
-      if (!isDefined) {
-        throw new TlaConfigError(
-          `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
-        );
-      }
-      if (
-        definition?.kind === "Operator" &&
-        definition.params.length !==
-          (linkedRoot.constants.find((constant) => constant.name === name)?.arity ??
-            linkedRoot.visible.get(name)?.arity)
-      ) {
-        throw new TlaConfigError(
-          `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
-        );
-      }
+      checkSubstitutionTarget(
+        name,
+        target,
+        linkedRoot.constants.find((constant) => constant.name === name)?.arity ??
+          linkedRoot.visible.get(name)?.arity,
+      );
     });
+  // TLC replaces only the definitions of a named module, with definitions of the root module.
+  const scopedSubstitutions = config.substitutions.filter(
+    (substitution) => substitution.module !== undefined,
+  );
+  [...moduleSymbols.keys()].forEach((name) => {
+    const inModule = scopedSubstitutions.filter((substitution) => substitution.module === name);
+    inModule.forEach((substitution) => {
+      const symbol = getScopedSymbol(substitution);
+      if (!symbol) return;
+      if (inModule.some((other) => other.name === substitution.target)) {
+        throw new TlaConfigError(
+          `In the configuration file, the identifier ${substitution.target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
+        );
+      }
+      checkSubstitutionTarget(substitution.name, substitution.target, symbol.arity);
+    });
+    const missing = inModule.find((substitution) => !getScopedSymbol(substitution));
+    if (missing) {
+      throw new TlaConfigError(
+        `In the configuration file, the identifier ${missing.name} does not appear in the specification.`,
+      );
+    }
+  });
+  const unknownModule = scopedSubstitutions.find(
+    (substitution) => !moduleSymbols.has(substitution.module ?? ""),
+  );
+  if (unknownModule) {
+    throw new TlaConfigError(
+      `In the configuration file, the module name ${unknownModule.module} is not a module in the specification.`,
+    );
+  }
   // TLC sets a module-scoped entry on the definition's body, which every instance shares.
   const scopedKeys = new Set(
     [...config.constants, ...config.substitutions]

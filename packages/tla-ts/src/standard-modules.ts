@@ -11,6 +11,7 @@ import {
   getBoolean,
   getOperator,
   getSet,
+  getThunk,
   getJavaSignature,
   getJavaInteger,
   getValue,
@@ -130,6 +131,19 @@ const combineReducible = (
   return createEnumeratedSet(union);
 };
 
+const defineShortCircuit = (
+  name: string,
+  compute: (left: boolean, right: () => boolean) => boolean,
+): Builtin => {
+  const getArgument = (args: BuiltinArgument[], index: number) =>
+    getBoolean([getThunk(args, index, name)()], 0, name);
+  return {
+    ...defineOperator(name, 2, (args) => compute(getArgument(args, 0), () => getArgument(args, 1))),
+    evaluateBinary: undefined,
+    isLazy: true,
+  };
+};
+
 export const CORE_OPERATORS: Builtin[] = [
   defineConstant("TRUE", true),
   defineConstant("FALSE", false),
@@ -139,9 +153,9 @@ export const CORE_OPERATORS: Builtin[] = [
   defineBinary("#", (left, right) => !isEqualLikeTlc(left, right)),
   defineOperator("~", 1, (args) => !getBoolean(args, 0, "~")),
   defineOperator("<=>", 2, (args) => getBoolean(args, 0, "<=>") === getBoolean(args, 1, "<=>")),
-  defineOperator("/\\", 2, (args) => getBoolean(args, 0, "/\\") && getBoolean(args, 1, "/\\")),
-  defineOperator("\\/", 2, (args) => getBoolean(args, 0, "\\/") || getBoolean(args, 1, "\\/")),
-  defineOperator("=>", 2, (args) => !getBoolean(args, 0, "=>") || getBoolean(args, 1, "=>")),
+  defineShortCircuit("/\\", (left, right) => left && right()),
+  defineShortCircuit("\\/", (left, right) => left || right()),
+  defineShortCircuit("=>", (left, right) => !left || right()),
   defineOperator("\\in", 2, (args) =>
     isElementOf(getValue(args, 0, "\\in"), getValue(args, 1, "\\in")),
   ),

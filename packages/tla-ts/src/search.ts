@@ -30,6 +30,7 @@ import {
   evaluateStartupDefinitions,
   getStartupValue,
   expectBoolean,
+  expectBooleanBody,
   formatRange,
   getDefinition,
   type Context,
@@ -146,6 +147,7 @@ const isLiteralDefinition = (definition: Definition) =>
 
 // TLC keeps a literal number or string, and a definition that fails to evaluate, as an operator.
 const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
+  if (environment.constants.has(name)) return environment.constants.get(name);
   if (!isConstantLevel(definition, environment) || isLiteralDefinition(definition))
     return undefined;
   try {
@@ -755,7 +757,8 @@ export const findAssumptionViolation = (
 ): Omit<Violation, "loopStart"> | undefined => {
   for (const assumption of assumptions.filter((candidate) => !candidate.isAxiom)) {
     const failure = getConstantFailure(
-      (context) => holds(assumption.expression, context, "an assumption"),
+      (context) =>
+        expectBooleanBody(evaluate(assumption.expression, context), assumption.expression),
       environment,
     );
     if (failure) {

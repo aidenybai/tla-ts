@@ -543,13 +543,18 @@ const someElement = (
   return false;
 };
 
+// The names of one bound, as in \A x, y \in S, share its set, which TLC evaluates once.
+export const mapBoundSets = <Result>(bounds: Bound[], map: (set: Expression) => Result) =>
+  bounds.reduce<Result[]>((results, bound, index) => {
+    results.push(
+      index > 0 && bounds[index - 1].set === bound.set ? results[index - 1] : map(bound.set),
+    );
+    return results;
+  }, []);
+
 export const getBoundElements = (bounds: Bound[], context: Context) =>
-  bounds.map((bound) =>
-    getQuantifierElements(
-      evaluate(bound.set, context),
-      bound.set,
-      context.environment.runtime.version,
-    ),
+  mapBoundSets(bounds, (set) =>
+    getQuantifierElements(evaluate(set, context), set, context.environment.runtime.version),
   );
 
 export const forEachBoundElement = (
@@ -574,7 +579,7 @@ export const forEachBinding = (
 ) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
 const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
-  const sets = bounds.map((bound) => evaluate(bound.set, context));
+  const sets = mapBoundSets(bounds, (set) => evaluate(set, context));
   return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
 };
 
@@ -738,7 +743,10 @@ const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
   location: definition.location,
 });
 
-const createRecursiveFunction = (definition: FunctionDefinition, context: Context) => {
+const createRecursiveFunction = (
+  definition: FunctionDefinition,
+  context: Context,
+): RebindableLazyFunction => {
   const domain = getBoundsDomain(definition.bounds, context);
   const functionValue = createLazyFunction(
     domain,
@@ -763,7 +771,14 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
     body: definition.body,
     scope: bindValue(undefined, definition.name, functionValue),
   });
-  return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
+  const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
+    rebind: (tracing: Environment) => {
+      const rebound = createRecursiveFunction(definition, { ...context, environment: tracing });
+      rebound.enumerated = functionValue.enumerated;
+      return rebound;
+    },
+  });
+  return definition.bounds.length === 1 ? markLambdaFunction(rebindable) : rebindable;
 };
 
 // TLC computes a constant definition eagerly, so a function over a reducible set is a FcnRcdValue.
@@ -842,11 +857,33 @@ export const evaluateStartupDefinitions = (definitions: Definition[], environmen
     }
   });
 
+// TLC reuses a cached value while each variable the cached state assigns keeps its value.
+const isStateWithin = (state: State | undefined, cached: State | undefined) => {
+  if (cached === undefined || state === cached) return true;
+  try {
+    return cached.every(
+      (value, index) =>
+        value === undefined || (state?.[index] !== undefined && valuesEqual(state[index], value)),
+    );
+  } catch (error) {
+    if (error instanceof TlaEvaluationError) return false;
+    throw error;
+  }
+};
+
 const forceThunk = (thunk: Thunk, context: Context) => {
-  const isSameState = thunk.state === context.state && thunk.next === context.next;
-  if (isSameState && thunk.cache !== undefined) return thunk.cache;
+  const cache = thunk.cache;
+  const isCached =
+    cache !== undefined &&
+    isStateWithin(context.state, thunk.state) &&
+    isStateWithin(context.next, thunk.next);
+  if (isCached) return cache;
   const value = evaluate(thunk.expression, withScope(context, thunk.scope));
-  if (isSameState && (!thunk.isStreamed || isSettledValue(value))) thunk.cache = value;
+  if (!thunk.isStreamed || isSettledValue(value)) {
+    thunk.cache = value;
+    thunk.state = context.state;
+    thunk.next = context.next;
+  }
   return value;
 };
 
@@ -914,6 +951,12 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
 };
 
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
+  if (operator.kind === "Builtin" && operator.isLazy) {
+    return operator.evaluate(
+      args.map((value) => ({ kind: "Operator", name: "argument", arity: 0, call: () => value })),
+      context,
+    );
+  }
   if (operator.kind === "Builtin") return operator.evaluate(args, context);
   if (operator.kind === "Operator") return operator.call(args);
   const scope = operator.params.reduce<Scope | undefined>(
@@ -998,7 +1041,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
       const binding: Binding = { kind: "Value", value: global.value };
       return () => binding;
     }
-    if (global === undefined) {
+    if (global === undefined && !environment.callStack) {
       return (context) => {
         const binding = lookupScope(context.scope, argument.name);
         return binding?.kind === "Value" || binding?.kind === "Thunk"
@@ -1158,8 +1201,14 @@ interface RebindableFilteredSet extends FilteredSetValue {
   rebind: (environment: Environment) => Value;
 }
 
-const isRebindableFilteredSet = (value: Value): value is RebindableFilteredSet =>
-  typeof value === "object" && value.kind === "FilteredSet" && "rebind" in value;
+interface RebindableLazyFunction extends LazyFunctionValue {
+  rebind: (environment: Environment) => Value;
+}
+
+const isRebindable = (value: Value): value is RebindableFilteredSet | RebindableLazyFunction =>
+  typeof value === "object" &&
+  (value.kind === "FilteredSet" || value.kind === "LazyFunction") &&
+  "rebind" in value;
 
 // TLC's CallStackTool rebinds the lazy values it returns, so their later evaluation records too.
 const traceEvaluator =
@@ -1179,7 +1228,7 @@ const traceEvaluator =
     setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
-      const value = isRebindableFilteredSet(computed) ? computed.rebind(environment) : computed;
+      const value = isRebindable(computed) ? computed.rebind(environment) : computed;
       callStack.values.set(expression, value);
       if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
         callStack.sources.set(value, expression);
@@ -1513,10 +1562,13 @@ const compileQuantifier = (
   const bounds = expression.bounds;
   if (bounds.every((item) => item.pattern.kind === "Name")) {
     const names = bounds.map((item) => (item.pattern.kind === "Name" ? item.pattern.name : ""));
-    const sets = bounds.map((item) => getEvaluator(item.set, environment));
     return (context) => {
-      const lists = sets.map((set, index) =>
-        getQuantifierElements(set(context), bounds[index].set, environment.runtime.version),
+      const lists = mapBoundSets(bounds, (set) =>
+        getQuantifierElements(
+          getEvaluator(set, environment)(context),
+          set,
+          environment.runtime.version,
+        ),
       );
       const visit = (index: number, scope: Scope | undefined): boolean => {
         if (index < 0) {
@@ -1584,12 +1636,8 @@ const compileFunctionConstruction = (
       return markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
-    const sets = bounds.map((item) =>
-      getNormalizedElements(
-        evaluate(item.set, context),
-        item.set,
-        context.environment.runtime.version,
-      ),
+    const sets = mapBoundSets(bounds, (set) =>
+      getNormalizedElements(evaluate(set, context), set, context.environment.runtime.version),
     );
     forEachBoundElement(bounds, sets, context.scope, (scope) => {
       const key =
