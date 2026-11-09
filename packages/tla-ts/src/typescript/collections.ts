@@ -1018,6 +1018,31 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
+  // valueOf on a value whose type doesn't tell what it is, such as this in a callback, which may
+  // be a primitive or a wrapper object.
+  if (
+    context.heap !== undefined &&
+    node.expression.name.text === "valueOf" &&
+    node.arguments.length === 0 &&
+    (kind === "object" || kind === "other") &&
+    !isNumberLike(receiver, context) &&
+    !isBooleanLike(receiver, context) &&
+    !WRAPPERS.has(context.checker.getTypeAtLocation(receiver).getSymbol()?.name ?? "")
+  ) {
+    return useJavaScript(
+      "ValueOf",
+      [
+        getHeap(scope, node, context),
+        translateExpression(receiver, scope, context),
+        tuple(
+          (["Boolean.prototype", "Number.prototype", "String.prototype"] as const).map(
+            (prototype) => translateBuiltInValue(prototype, node, context),
+          ),
+        ),
+      ],
+      context,
+    );
+  }
   const primitiveCall = getPrimitiveCall(node, kind, context);
   const primitiveMethod = primitiveCall?.methods.get(primitiveCall.method);
   const isTyped =
@@ -1099,11 +1124,13 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
       method: node.expression.name.text,
       owner: undefined,
       methodArguments: node.arguments,
-      wrapper:
-        wrapper === "String" || wrapper === "Number" || wrapper === "Boolean" ? wrapper : undefined,
+      wrapper: wrapper !== undefined && WRAPPERS.has(wrapper) ? wrapper : undefined,
     }
   );
 };
+
+// The types of the objects that wrap a primitive.
+const WRAPPERS = new Set(["Boolean", "Number", "String"]);
 
 interface PrimitiveMethod {
   operator: string;

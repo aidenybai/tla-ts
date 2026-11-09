@@ -761,6 +761,28 @@ WrappedPrimitive(heap, ref, kind, method) ==
 
 PrimitiveOf(value) == value
 
+\\* What valueOf gives for a primitive whose prototype, one of Boolean.prototype, Number.prototype,
+\\* or String.prototype, still holds the built-in valueOf, for a wrapper object, or for an object
+\\* that reads Object.prototype.valueOf.
+ValueOf(heap, value, prototypes) ==
+  LET position == CASE TypeOf(value) = "boolean" -> 1
+                    [] TypeOf(value) = "number" -> 2
+                    [] TypeOf(value) = "string" -> 3
+                    [] OTHER -> 0
+      kinds == <<"Boolean", "Number", "String">>
+      method == IF position = 0 THEN Undefined ELSE Get(heap, prototypes[position], "valueOf")
+  IN CASE position # 0 /\\ IsRef(method) /\\ ~IsHeap(method) /\\
+            method[Ref] = kinds[position] \\o ".prototype.valueOf" -> value
+       [] IsHeap(value) /\\ "primitive" \\in DOMAIN Lookup(heap, value) ->
+            WrappedPrimitive(heap, value, kinds[CASE TypeOf(Lookup(heap, value).primitive) = "boolean" -> 1
+                                                 [] TypeOf(Lookup(heap, value).primitive) = "number" -> 2
+                                                 [] OTHER -> 3], "valueOf")
+       [] /\\ IsHeap(value)
+          /\\ IsRef(Get(heap, value, "valueOf"))
+          /\\ ~IsHeap(Get(heap, value, "valueOf"))
+          /\\ Get(heap, value, "valueOf")[Ref] = "Object.prototype.valueOf" -> value
+       [] OTHER -> Assert(FALSE, "tla-ts can't call valueOf on " \\o ToString(value))
+
 BooleanToString(value) == IF value THEN "true" ELSE "false"
 
 \\* The boolean that Boolean.prototype.method.call reads from the value that it calls the method on.

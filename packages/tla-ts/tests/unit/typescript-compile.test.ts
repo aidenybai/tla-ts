@@ -1478,6 +1478,36 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls valueOf on a value whose type doesn't tell what it is", async () => {
+    expect(
+      (
+        await check(
+          compile(
+            `const object = {};\nlet seen: unknown = undefined;\n[1].forEach(function (this: { [key: string]: unknown }) {\n  seen = this.valueOf();\n}, false);\nif (seen !== false) throw new Error("diff");`,
+          ),
+        )
+      ).failure,
+    ).toBeUndefined();
+    expect(
+      (
+        await check(
+          compile(
+            `const object: { [key: string]: unknown } = {};\nconst result = object.valueOf();\nif (result !== object) throw new Error("diff");`,
+          ),
+        )
+      ).failure,
+    ).toBeUndefined();
+    expect(
+      (
+        await check(
+          compile(
+            `const object = {};\nObject.defineProperty(Boolean.prototype, "valueOf", { value: () => 9 });\nlet seen: unknown = undefined;\n[1].forEach(function (this: { [key: string]: unknown }) {\n  seen = this.valueOf();\n}, false);\nif (seen !== 9) throw new Error("diff");`,
+          ),
+        )
+      ).failure?.message,
+    ).toContain("tla-ts can't call valueOf");
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
