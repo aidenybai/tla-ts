@@ -219,7 +219,7 @@
   "tlapm/errors/parse/new_step": "text-mismatch",
   "tlapm/errors/parse/step_without_formula": "text-mismatch",
   "tlapm/errors/parse/unbalanced_parenthesis": "text-mismatch",
-  "tlapm/imported/fast/basic/cvc3_false_test": "message-mismatch",
+  "tlapm/imported/fast/basic/cvc3_false_test": "text-mismatch",
   "tlapm/imported/fast/language/WFTRUE_test": "exit-mismatch",
   "tlapm/imported/isabelle/examples/Allocator.thy": "message-mismatch",
   "tlapm/imported/isabelle/tests/Tests.thy": "message-mismatch",
