@@ -173,9 +173,18 @@ export interface TypedCheck {
 export interface TypedResult {
   generatedStates: number;
   distinctStates: number;
+  queuedStates: number;
   depth: number;
   initialStates: { generated: number; distinct: number };
   outDegrees: number[];
+  deadlock: TypedDeadlock | undefined;
+}
+
+// The path from an initial state to a state without successors, which the interpreter rebuilds
+// to report the deadlock.
+export interface TypedDeadlock {
+  length: number;
+  isPathState: (position: number, state: Value[]) => boolean;
 }
 
 const UNSUPPORTED = { reason: "unsupported" };
@@ -4282,6 +4291,9 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const compiled = compileSpec(program, check);
   const keys = createArena();
   const starts = { data: new Int32Array(1 << 16), size: 0 };
+  // The state each state was found from, to rebuild the path to a deadlock.
+  const parents = { data: new Int32Array(check.isDeadlockChecked ? 1 << 16 : 0), size: 0 };
+  const expanding: { state: Plain[]; index: number } = { state: [], index: -1 };
   // A view keys a state by part of it, so the state TLC explores is stored apart.
   const states = check.view === undefined ? keys : createArena();
   const isEncoded = images.length === 0 && check.view === undefined;
@@ -4359,6 +4371,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     if (isImaged) pushWord(chosenImages, image);
     if (states !== keys) compiled.encode(state, states);
     pushWord(starts, (states.pages.length - 1) * PAGE_SIZE + states.start);
+    if (check.isDeadlockChecked) pushWord(parents, expanding.index);
     checkInvariants(state);
     return true;
   };
@@ -4373,7 +4386,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
   const level = { depth: 1, end: statistics.distinct };
   const expansion = { successors: 0, newStates: 0 };
-  const expanding: { state: Plain[] } = { state: [] };
   const onSuccessor = (successor: Plain[]) => {
     for (const property of compiled.actionProperties) {
       if (!property(expanding.state, successor)) deopt();
@@ -4384,34 +4396,53 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       statistics.depth = Math.max(statistics.depth, level.depth + 1);
     }
   };
-  for (let index = 0; index < statistics.distinct; index++) {
-    if (index === level.end) {
-      level.depth++;
-      level.end = statistics.distinct;
-    }
+  const getState = (index: number) => {
     const start = starts.data[index];
     const page = states.pages[start >>> PAGE_BITS];
     const offset = start & (PAGE_SIZE - 1);
     const image = isImaged ? chosenImages.data[index] : -1;
     const key = isImaged ? compiled.decodeKey(page, offset) : undefined;
-    const state =
-      key === undefined
-        ? compiled.decode(page, offset)
-        : image === -1
-          ? key
-          : compiled.invert(key, image);
-    expanding.state = state;
-    expansion.successors = 0;
-    expansion.newStates = 0;
-    compiled.next(state, onSuccessor);
-    if (expansion.successors === 0 && check.isDeadlockChecked) deopt();
-    outDegrees[Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1)]++;
-  }
-  return {
+    if (key === undefined) return compiled.decode(page, offset);
+    return image === -1 ? key : compiled.invert(key, image);
+  };
+  const getResult = (deadlock: TypedDeadlock | undefined, queued: number): TypedResult => ({
     generatedStates: statistics.generated,
     distinctStates: statistics.distinct,
+    queuedStates: queued,
     depth: statistics.depth,
     initialStates,
     outDegrees,
-  };
+    deadlock,
+  });
+  for (let index = 0; index < statistics.distinct; index++) {
+    if (index === level.end) {
+      level.depth++;
+      level.end = statistics.distinct;
+    }
+    const state = getState(index);
+    expanding.state = state;
+    expanding.index = index;
+    expansion.successors = 0;
+    expansion.newStates = 0;
+    compiled.next(state, onSuccessor);
+    if (expansion.successors === 0 && check.isDeadlockChecked) {
+      const path: Plain[][] = [];
+      for (let position = index; position !== -1; position = parents.data[position]) {
+        path.unshift(getState(position));
+      }
+      const types = program.variableTypes;
+      return getResult(
+        {
+          length: path.length,
+          isPathState: (position, values) =>
+            values.every((value, variable) =>
+              isSame(toPlain(value, types[variable], program.plains), path[position][variable]),
+            ),
+        },
+        statistics.distinct - index - 1,
+      );
+    }
+    outDegrees[Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1)]++;
+  }
+  return getResult(undefined, 0);
 };

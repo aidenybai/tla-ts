@@ -1350,7 +1350,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const typed =
     typedChecks &&
     runTypedSearch(environment, { ...typedChecks, isDeadlockChecked: config.checkDeadlock });
-  if (typed) {
+  if (typed && !typed.deadlock) {
     options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
     return {
       status: "success",
@@ -1723,6 +1723,54 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     periodic.time += performance.now() - now;
     return lasso;
   };
+  // The tier found a state without successors. The interpreter rebuilds the tier's path to it and
+  // reports the deadlock from it, as it would after its own search.
+  const deadlock = typed?.deadlock;
+  const initialIndex = deadlock
+    ? Array.from({ length: store.getCount() }, (_, index) => index).find((index) =>
+        deadlock.isPathState(0, store.getState(index)),
+      )
+    : undefined;
+  if (typed && deadlock && initialIndex !== undefined) {
+    const steps: { successor: Successor; action: SpecAction | undefined }[] = [];
+    const getLastState = () => steps.at(-1)?.successor.state ?? store.getState(initialIndex);
+    for (
+      let position = 1;
+      position === steps.length + 1 && position < deadlock.length;
+      position++
+    ) {
+      forEachActionSuccessor(getLastState(), (successor, action) => {
+        if (!deadlock.isPathState(position, successor.state)) return false;
+        steps.push({ successor, action });
+        return true;
+      });
+    }
+    const isDeadlocked =
+      steps.length === deadlock.length - 1 &&
+      forEachActionSuccessor(getLastState(), () => true) === 0;
+    if (isDeadlocked) {
+      const parent = { index: initialIndex };
+      for (const step of steps) {
+        visitSuccessor(parent.index, step.successor, [], undefined, step.action);
+        parent.index = store.getCount() - 1;
+      }
+      runtime.generatedStates = typed.generatedStates;
+      runtime.distinctStates = typed.distinctStates;
+      runtime.queueSize = typed.queuedStates;
+      runtime.diameter = typed.depth;
+      statistics.depth = typed.depth;
+      outDegrees.splice(0, outDegrees.length, ...typed.outDegrees);
+      expansion.newStates = 0;
+      Object.assign(current, {
+        index: parent.index,
+        state: store.getState(parent.index),
+        candidate: undefined,
+        isExpanding: true,
+      });
+      const result = expandState(parent.index, []);
+      if (result) return result;
+    }
+  }
   for (let index = 0; index < store.getCount() && !runtime.isStopped; index++) {
     current.index = index;
     current.state = liveness ? readStoredState(index) : store.getState(index);
