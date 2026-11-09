@@ -256,7 +256,7 @@ export const getBvSignature = (
                 ? { name: "bvcomp", domain: [sort, sort], range: manager.mkBvSort(1) }
                 : undefined;
   if (fixed !== undefined) {
-    if (argSorts.length !== fixed.domain.length && !(binary?.[1] === true && argSorts.length > 2))
+    if (argSorts.length !== fixed.domain.length && binary?.[1] !== true)
       return "declared arity mismatches supplied arity";
     if (argSorts.some((argSort) => argSort !== sort))
       return "declared sorts do not match supplied sorts";

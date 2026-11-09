@@ -1,6 +1,7 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
 // license, see z3-license.txt.
 import { ArrayRewriter } from "./array-rewriter";
+import { mkRecFunApp } from "./recfun-rewriter";
 import { mkDatatypeAppCore, mkDatatypeEqCore } from "./datatype-rewriter";
 import { ArithRewriter, KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { type BvRewriterOptions, BvRewriter, DEFAULT_BV_OPTIONS } from "./bv-rewriter";
@@ -51,6 +52,7 @@ import {
   OP_LE,
   OP_LT,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_NOT,
   OP_OR,
@@ -80,6 +82,7 @@ export interface RewriterOptions {
   readonly isFlatAndOr?: boolean;
   readonly localCtxLimit?: number;
   readonly isCoalescingChars?: boolean;
+  readonly isSortingStore?: boolean;
 }
 
 export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
@@ -129,7 +132,7 @@ export class Rewriter extends RewriterTpl {
         return typeof result === "number" ? result : result.expr;
       },
     });
-    this.array = new ArrayRewriter(manager);
+    this.array = new ArrayRewriter(manager, options.isSortingStore);
     this.seq = new SeqRewriter(manager, options.isCoalescingChars ?? true);
     this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
     this.der = new Der(manager);
@@ -208,6 +211,7 @@ export class Rewriter extends RewriterTpl {
     // An uninterpreted application only reduces by pull_ite, which needs two arguments.
     if (
       manager.funcDecls[decl].op === OP_UNINTERPRETED &&
+      !manager.recFunBodies.has(decl) &&
       (args.length !== 2 || this.options.isPullingCheapIte !== true)
     )
       return -1;
@@ -443,6 +447,7 @@ export class Rewriter extends RewriterTpl {
     if (funcDecl.family === FAMILY_FPA) return mkFpaAppCore(manager, decl, args) ?? -1;
     if (funcDecl.family === FAMILY_SEQ || funcDecl.family === FAMILY_CHAR)
       return this.seq.mkAppCore(decl, args) ?? -1;
+    if (manager.recFunBodies.has(decl)) return mkRecFunApp(manager, decl, args) ?? -1;
     const op = funcDecl.op;
     switch (op) {
       case OP_AND:
@@ -498,6 +503,8 @@ export class Rewriter extends RewriterTpl {
         return this.arith.mkIdiv(args[0], args[1]) ?? -1;
       case OP_MOD:
         return this.arith.mkMod(args[0], args[1]) ?? -1;
+      case OP_REM:
+        return this.arith.mkRem(args[0], args[1]) ?? -1;
       case OP_ABS:
         return this.arith.mkAbs(args[0]);
       case OP_DIV:

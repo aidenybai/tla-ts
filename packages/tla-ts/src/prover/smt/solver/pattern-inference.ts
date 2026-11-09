@@ -9,6 +9,7 @@ import {
   OP_FALSE,
   OP_IDIV,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_TRUE,
 } from "./ast";
@@ -94,7 +95,7 @@ export class PatternInference {
           const decl = manager.funcDecls[manager.decls[expr]];
           const isArithCandidate =
             !this.isNestedArithOnly &&
-            (decl.op === OP_IDIV || decl.op === OP_MOD || decl.op === OP_MUL);
+            (decl.op === OP_IDIV || decl.op === OP_MOD || decl.op === OP_REM || decl.op === OP_MUL);
           if (
             freeVars.size > 0 &&
             boundVars.size === 0 &&

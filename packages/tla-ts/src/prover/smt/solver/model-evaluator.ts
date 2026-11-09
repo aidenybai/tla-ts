@@ -19,6 +19,7 @@ import {
   OP_LE,
   OP_MOD,
   OP_MOD0,
+  OP_REM,
   OP_SELECT,
   OP_STORE,
   SORT_BOOL,
@@ -36,6 +37,7 @@ const BY_ZERO_OPS = new Map([
   [OP_DIV, OP_DIV0],
   [OP_IDIV, OP_IDIV0],
   [OP_MOD, OP_MOD0],
+  [OP_REM, OP_MOD0],
 ]);
 
 export class ModelEvaluator extends RewriterTpl {

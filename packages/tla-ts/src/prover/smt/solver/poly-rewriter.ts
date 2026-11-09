@@ -15,6 +15,7 @@ import {
   OP_LE,
   OP_LT,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_NUM,
   OP_SUB,
@@ -57,6 +58,7 @@ export interface ArithRewriterOptions {
   readonly isExpandTan: boolean;
   readonly maxDegree: number;
   readonly isHoistIte?: boolean;
+  readonly isElimRem?: boolean;
 }
 
 const ARITH_OPS: ReadonlySet<number> = new Set([
@@ -67,6 +69,7 @@ const ARITH_OPS: ReadonlySet<number> = new Set([
   OP_MUL,
   OP_IDIV,
   OP_MOD,
+  OP_REM,
   OP_ABS,
   OP_LE,
   OP_GE,

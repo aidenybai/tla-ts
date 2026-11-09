@@ -14,6 +14,7 @@ import {
   SORT_SIZE_VERY_BIG,
   SORT_BOOL,
 } from "./ast";
+import { isAstLess } from "./ast-lt";
 import type { Rewrite } from "./rewriter-tpl";
 
 const L_TRUE = 1;
@@ -22,7 +23,10 @@ const L_UNDEF = 0;
 const MAX_SQUASH_ROUNDS = 10;
 
 export class ArrayRewriter {
-  constructor(private manager: AstManager) {}
+  constructor(
+    private manager: AstManager,
+    private isSortingStore = false,
+  ) {}
 
   private isOp(expr: number, op: number) {
     return this.manager.getOp(expr) === op;
@@ -58,6 +62,13 @@ export class ArrayRewriter {
       if (comparison === L_TRUE)
         return this.mkApp(OP_STORE, [manager.getArg(array, 0), ...args.slice(1)]);
       if (comparison === L_FALSE) {
+        if (this.isSortingStore && this.isLexLess(indices, manager.getArgs(array).slice(1))) {
+          const nested = this.mkApp(OP_STORE, [manager.getArg(array, 0), ...args.slice(1)]);
+          return {
+            expr: this.mkApp(OP_STORE, [nested, ...manager.getArgs(array).slice(1)]),
+            depth: 2,
+          };
+        }
         const squashed = this.squashStore(args);
         if (squashed !== undefined) return { expr: squashed, depth: 2 };
       }
@@ -67,6 +78,11 @@ export class ArrayRewriter {
     if (this.isOp(value, OP_SELECT) && this.compareArgs(args.length - 1, value, 0, args) === L_TRUE)
       return array;
     return undefined;
+  }
+
+  private isLexLess(first: number[], second: number[]) {
+    const index = first.findIndex((arg, position) => arg !== second[position]);
+    return index !== -1 && isAstLess(this.manager, first[index], second[index]);
   }
 
   private squashStore(args: number[]) {

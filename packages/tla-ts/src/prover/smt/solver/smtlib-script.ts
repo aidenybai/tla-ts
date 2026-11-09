@@ -49,11 +49,15 @@ import {
 } from "./smtlib-parser";
 import { OptContext } from "./opt-context";
 import { isInNraFragment } from "./opt-nlsat";
+import { isSupportedLogic } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
+import { isAstLess } from "./ast-lt";
+import { InvVarShifter } from "./rewriter-tpl";
+import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
 import type { Context } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { printModel } from "./model-printer";
-import { FuncInterp, ProtoModel } from "./proto-model";
+import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
   checkSatUsing,
@@ -69,7 +73,6 @@ const SILENT_COMMANDS = new Set([
   "pop",
   "reset",
   "reset-assertions",
-  "set-logic",
   "set-option",
   "set-info",
   "minimize",
@@ -115,6 +118,8 @@ const SIMPLIFY_PARAMETERS = new Set([
   "algebraic_number_evaluator",
   "expand_power",
   "expand_tan",
+  "sort_store",
+  "elim_rem",
 ]);
 
 const SIMPLIFY_UINT_PARAMETERS = new Set([
@@ -218,13 +223,14 @@ const getCommandParams = (items: SExpr[], isBooleans: ReadonlyMap<string, boolea
   return params;
 };
 
-const getScopeCount = (list: SmtList, command: string) => {
+// Z3's parse_opt_unsigned names the push command for pop as well.
+const getScopeCount = (list: SmtList) => {
   const argument = list.items[1];
   if (argument === undefined) return 1;
   if (argument.kind !== "numeral")
-    throw new SmtParseError(`invalid ${command} command, integer expected`, argument);
+    throw new SmtParseError("invalid push command, integer expected", argument);
   if (argument.text.startsWith("-"))
-    throw new SmtParseError(`invalid ${command} command, value is negative.`, list.end);
+    throw new SmtParseError("invalid push command, value is negative.", argument);
   return Number(argument.text);
 };
 
@@ -280,9 +286,11 @@ interface ScriptObjective {
 
 interface ScriptState {
   manager: AstManager;
+  logic: string | undefined;
   reader: SmtlibReader;
   assertions: number[];
   names: number[];
+  assertionTexts: string[];
   objectives: ScriptObjective[];
   optimizer: OptContext | undefined;
   scopes: Scope[];
@@ -305,7 +313,7 @@ const MANAGERLESS_COMMANDS = new Set([
 export const runSmtlibScript = (
   text: string,
   options: DecideOptions,
-  print: (line: string) => void,
+  print: (line: string, isDiagnostic?: boolean) => void,
 ) => {
   const commands = createCommandReader(text);
   const settings = {
@@ -314,6 +322,7 @@ export const runSmtlibScript = (
     isProducingUnsatCores: false,
     isProducingProofs: false,
     isExitingOnError: false,
+    isInteractive: false,
     isDiagnosticOnStdout: false,
     parameters: new Map<string, string>(),
     isMbqi: true,
@@ -330,9 +339,11 @@ export const runSmtlibScript = (
     manager.isHiDiv0 = settings.isHiDiv0;
     return {
       manager,
+      logic: undefined,
       reader: createSmtlibReader(manager, undefined, settings.parserOptions),
       assertions: [],
       names: [],
+      assertionTexts: [],
       objectives: [],
       optimizer: undefined,
       scopes: [],
@@ -525,11 +536,11 @@ export const runSmtlibScript = (
     script.state.check = undefined;
   };
   let pendingText = "";
+  const printDiagnostic = (line: string) => print(line, !settings.isDiagnosticOnStdout);
   const write = (text: string, isDiagnostic: boolean) => {
-    if (isDiagnostic && !settings.isDiagnosticOnStdout) return;
     const lines = (pendingText + text).split("\n");
     pendingText = lines.pop() ?? "";
-    for (const line of lines) print(line);
+    for (const line of lines) (isDiagnostic ? printDiagnostic : print)(line);
   };
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
     compileTactic(
@@ -565,12 +576,54 @@ export const runSmtlibScript = (
     const state = script.state;
     for (const assertion of state.assertions.splice(size)) state.manager.decRef(assertion);
     for (const name of state.names.splice(size)) if (name !== -1) state.manager.decRef(name);
+    state.assertionTexts.length = size;
+  };
+  const instantiate = (list: SmtList, isNested: boolean) => {
+    const state = script.state;
+    const manager = state.manager;
+    const outer = state.reader.parseTerm(list.items[1] ?? list.end);
+    if (manager.kinds[outer] !== KIND_QUANTIFIER)
+      throw new SmtParseError("invalid command, quantifier expected.", list.end);
+    const quantifier = isNested ? manager.getQuantifier(outer).body : outer;
+    if (manager.kinds[quantifier] !== KIND_QUANTIFIER)
+      throw new SmtParseError("invalid command, nested quantifier expected", list.end);
+    const terms = list.items[2];
+    if (terms?.kind !== "list")
+      throw new SmtParseError("invalid command, '(' expected", terms ?? list.end);
+    const args = terms.items.map((item) => state.reader.parseTerm(item));
+    const sorts = manager.getQuantifier(quantifier).sorts;
+    if (args.length !== sorts.length)
+      throw new SmtParseError(
+        "invalid command, mismatch between the number of quantified variables and the number of arguments.",
+        list.end,
+      );
+    for (let index = args.length - 1; index >= 0; index--)
+      if (manager.sorts[args[index]] !== sorts[index])
+        throw new SmtParseError(`invalid command, sort mismatch at position ${index}`, list.end);
+    const subst = new VarSubst(manager, true);
+    const substituted = subst.apply(manager.getQuantifier(quantifier).body, args);
+    subst.release();
+    const shifter = new InvVarShifter(manager);
+    const result = shifter.shift(substituted, args.length);
+    shifter.release();
+    display(result);
+    manager.decRef(result);
+    manager.decRef(substituted);
   };
   const runCommand: Record<string, (list: SmtList) => void> = {
     assert: (list) => {
       const state = script.state;
-      const assertion = state.reader.parseAssertion(list.items[1] ?? list.end);
+      const term = list.items[1] ?? list.end;
+      const assertion = state.reader.parseAssertion(term);
+      const logicError = state.reader.getLogicError(assertion.formula);
+      if (logicError !== undefined) {
+        state.manager.decRef(assertion.formula);
+        throw new SmtParseError(logicError, list.end);
+      }
       state.assertions.push(assertion.formula);
+      state.assertionTexts.push(
+        text.slice(term.offset, (term.kind === "list" ? term.end : term).endOffset).trim(),
+      );
       if (state.hasChecked) state.isIncremental = true;
       resetOptimizer();
       if (!settings.isProducingUnsatCores || assertion.name === undefined) state.names.push(-1);
@@ -634,7 +687,7 @@ export const runSmtlibScript = (
     push: (list) => {
       const state = script.state;
       clearCheck();
-      for (let index = getScopeCount(list, "push"); index > 0; index--) {
+      for (let index = getScopeCount(list); index > 0; index--) {
         state.scopes.push({
           assertions: state.assertions.length,
           objectives: state.objectives.length,
@@ -645,7 +698,7 @@ export const runSmtlibScript = (
     },
     pop: (list) => {
       const state = script.state;
-      const count = getScopeCount(list, "pop");
+      const count = getScopeCount(list);
       if (count > state.scopes.length)
         throw new SmtParseError(
           "invalid pop command, argument is greater than the current stack depth",
@@ -666,7 +719,6 @@ export const runSmtlibScript = (
       clearCheck();
       resetOptimizer();
       script.state = createState();
-      settings.isPrintingSuccess = false;
     },
     "reset-assertions": () => {
       const state = script.state;
@@ -814,6 +866,14 @@ export const runSmtlibScript = (
       print([...lines, "(check-sat)"].join("\n"));
       for (const assertion of assertions) manager.decRef(assertion);
     },
+    "get-assertions": (list) => {
+      if (!settings.isInteractive)
+        throw new SmtParseError(
+          "command is only available in interactive mode, use command (set-option :interactive-mode true)",
+          list.end,
+        );
+      print(`(${script.state.assertionTexts.join("\n ")})`);
+    },
     "get-unsat-core": (list) => {
       if (!settings.isProducingUnsatCores)
         throw new SmtParseError(
@@ -896,6 +956,41 @@ export const runSmtlibScript = (
       print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
     },
     display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),
+    "dbg-lt": (list) => {
+      const state = script.state;
+      const first = state.reader.parseTerm(list.items[1] ?? list.end);
+      const second = state.reader.parseTerm(list.items[2] ?? list.end);
+      print(String(isAstLess(state.manager, first, second)));
+    },
+    "dbg-some-value": (list) => {
+      const state = script.state;
+      display(
+        getManagerSomeValue(state.manager, state.reader.parseSort(list.items[1] ?? list.end)),
+      );
+    },
+    "dbg-used-vars": (list) => {
+      const manager = script.state.manager;
+      const term = script.state.reader.parseTerm(list.items[1] ?? list.end);
+      const body =
+        manager.kinds[term] === KIND_QUANTIFIER ? manager.getQuantifier(term).body : term;
+      const sorts = getFreeVarSorts(manager, body, manager.freeVarBounds[body]);
+      const lines = sorts.map(
+        (sort, index) =>
+          `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(formatSort(manager, sort), settings.printOptions)})`,
+      );
+      print(`(vars${lines.join("")})`);
+    },
+    "dbg-elim-unused-vars": (list) => {
+      const manager = script.state.manager;
+      const term = script.state.reader.parseTerm(list.items[1] ?? list.end);
+      if (manager.kinds[term] !== KIND_QUANTIFIER) {
+        write(format(term), false);
+        return;
+      }
+      display(elimUnusedVars(manager, term));
+    },
+    "dbg-instantiate": (list) => instantiate(list, false),
+    "dbg-instantiate-nested": (list) => instantiate(list, true),
     echo: (list) => {
       const message = list.items[1];
       if (message?.kind !== "string")
@@ -911,6 +1006,7 @@ export const runSmtlibScript = (
       if (keyword === ":produce-models") settings.isProducingModels = isTrue;
       if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
       if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
+      if (keyword === ":interactive-mode") settings.isInteractive = isTrue;
       if (keyword === ":diagnostic-output-channel")
         settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
       if (keyword === ":int-real-coercions" && !isTrue)
@@ -931,6 +1027,8 @@ export const runSmtlibScript = (
       )
         settings.parameters.set(getParameterName(keyword), value.text);
       if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
+      if (!BUILTIN_OPTIONS.has(keyword) && settings.parameters.get("smtlib2_compliant") === "true")
+        settings.isPrintingSuccess = true;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
       if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
       if (optionName === ":rlimit" && value?.kind === "numeral")
@@ -994,14 +1092,24 @@ export const runSmtlibScript = (
       );
     },
     "set-logic": (list) => {
+      const state = script.state;
       const logic = list.items[1];
       if (!isSymbol(logic))
         throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
-      script.state.reader = createSmtlibReader(
-        script.state.manager,
-        logic.text,
-        settings.parserOptions,
-      );
+      if (state.logic !== undefined)
+        throw new SmtParseError("the logic has already been set", list.end);
+      if (state.assertions.length > 0)
+        throw new SmtParseError("logic must be set before initialization", list.end);
+      if (!isSupportedLogic(logic.text)) {
+        print("unsupported");
+        printDiagnostic(
+          `; ignoring unsupported logic ${logic.text} line: ${list.line} position: ${list.column}`,
+        );
+        return;
+      }
+      state.logic = logic.text;
+      state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
+      if (settings.isPrintingSuccess) print("success");
     },
     "set-info": () => {},
   };

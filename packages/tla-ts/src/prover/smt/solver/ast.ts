@@ -82,6 +82,7 @@ export const OP_LOG = 46;
 export const OP_PI = 47;
 export const OP_E = 48;
 export const OP_ALGEBRAIC_NUM = 49;
+export const OP_REM = 50;
 export const OP_UNINTERPRETED = 60;
 const OP_MODEL_VALUE = 61;
 
@@ -392,6 +393,7 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["pi", FAMILY_ARITH, OP_PI, SORT_REAL],
   ["euler", FAMILY_ARITH, OP_E, SORT_REAL],
   ["RootObject", FAMILY_ARITH, OP_ALGEBRAIC_NUM, SORT_REAL],
+  ["rem", FAMILY_ARITH, OP_REM, SORT_INT],
 ];
 
 // Z3's family ids and decl kinds, which its AST hashes include.
@@ -435,6 +437,7 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_MUL, ["*", 9, 2]],
   [OP_IDIV, ["div", 11, 2]],
   [OP_MOD, ["mod", 16, 2]],
+  [OP_REM, ["rem", 15, 2]],
   [OP_ABS, ["abs", 21, 1]],
   [OP_PATTERN, ["pattern", 0, -1]],
   [OP_DIV, ["/", 10, 2]],
@@ -486,6 +489,7 @@ const Z3_SMALL_IDS = new Map([
   [OP_SUB, 37],
   [OP_MUL, 38],
   [OP_IDIV, 39],
+  [OP_REM, 40],
   [OP_MOD, 41],
   [OP_UMINUS, 42],
   [OP_ABS, 50],
@@ -655,6 +659,8 @@ export class AstManager {
   // A deleted declaration keeps its small id here, in case an application of it is created again.
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
+  // -1 until the body is parsed.
+  readonly recFunBodies = new Map<number, number>();
   private deletedDecls = new Set<number>();
   private freshId = 0;
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
@@ -760,6 +766,34 @@ export class AstManager {
     this.declRefCounts[decl] = 1;
     this.mkSmallId();
     this.macros.set(decl, expr);
+  }
+
+  mkRecFuncDecl(name: string, domain: number[], range: number) {
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_RECFUN_FAMILY, 0, [0]),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_USER,
+      op: OP_UNINTERPRETED,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters: [],
+    });
+    this.declRefCounts[decl] = 1;
+    this.recFunBodies.set(decl, -1);
+    return decl;
+  }
+
+  setRecFunBody(decl: number, body: number) {
+    this.incRef(body);
+    this.recFunBodies.set(decl, body);
   }
 
   // The signature of a builtin declaration that Z3 makes on first use, or null for a declaration

@@ -253,6 +253,31 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
+  mkRem(left: number, right: number) {
+    const manager = this.manager;
+    this.currSort = SORT_INT;
+    const dividend = manager.getNumeral(left);
+    const divisor = manager.getNumeral(right);
+    if (dividend !== undefined && divisor !== undefined && divisor !== 0n) {
+      const remainder = getEuclideanMod(dividend, divisor);
+      return manager.mkNumeral(divisor < 0n ? -remainder : remainder);
+    }
+    if (divisor === 1n) return manager.mkNumeral(0n);
+    if (divisor !== undefined && divisor !== 0n) {
+      if (this.isAdd(left) || this.isMul(left)) return undefined;
+      return divisor < 0n
+        ? this.reduce(manager.mkApp(OP_UMINUS, [this.mkModApp(left, right)], SORT_INT), 2)
+        : this.reduce(this.mkModApp(left, right), 1);
+    }
+    if (!this.options.isElimRem) return undefined;
+    const mod = this.mkModApp(left, right);
+    const isNonnegative = manager.mkApp(OP_GE, [right, manager.mkNumeral(0n)], SORT_BOOL);
+    return this.reduce(
+      this.mkIntIte(isNonnegative, mod, manager.mkApp(OP_UMINUS, [mod], SORT_INT)),
+      3,
+    );
+  }
+
   mkMod(left: number, right: number) {
     const manager = this.manager;
     this.currSort = SORT_INT;
@@ -1297,6 +1322,17 @@ export class ArithRewriter extends PolyRewriter {
           2,
         );
       }
+    }
+    if (manager.getOp(left) === OP_ITE && manager.getRefCount(left) === 1) {
+      const thenAtom = this.mkAtom(manager.getArg(left, 1), right, kind);
+      return this.reduce(
+        manager.mkApp(
+          OP_ITE,
+          [manager.getArg(left, 0), thenAtom, this.mkAtom(manager.getArg(left, 2), right, kind)],
+          SORT_BOOL,
+        ),
+        2,
+      );
     }
     const isToIntRight = manager.getOp(right) === OP_TO_INT && manager.isNumeral(left);
     const toIntArg =
