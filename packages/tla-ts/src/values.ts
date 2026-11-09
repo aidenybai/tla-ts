@@ -2217,13 +2217,21 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
           `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`,
         );
       }
-    case "Union":
+    case "Union": {
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(
           `Attempted to check if:\n ${formatValue(element)}\nis an element of the non-enumerable set:\n ${formatUnion(set)}`,
         );
       }
-      return toFiniteSet(set.base).elements.some((inner) => isElementOf(element, inner));
+      const sets = toFiniteSet(set.base).elements;
+      // TLC sorts the sets to enumerate them, and comparing two sets normalizes both.
+      if (sets.length > 1) {
+        sets.forEach((inner) => {
+          if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
+        });
+      }
+      return sets.some((inner) => isElementOf(element, inner));
+    }
     case "SetOperation":
       if (set.operator === "\\cup")
         return isElementOf(element, set.left) || isElementOf(element, set.right);
