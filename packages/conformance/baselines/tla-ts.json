@@ -238,7 +238,6 @@
   "tlapm/obligations/instances/missing_parameter_rejected": "text-mismatch",
   "tlapm/obligations/instances/substitute_non_parameter_rejected": "message-mismatch",
   "tlapm/obligations/printing/integer_literals": "exit-mismatch",
-  "tlapm/obligations/subexpr/down_forbidden": "text-mismatch",
   "tlapm/obligations/take/take_different_domain": "text-mismatch",
   "tlapm/obligations/use_hide/module_use_suppressed": "text-mismatch",
   "tlapm/smoke/parse_error": "text-mismatch",

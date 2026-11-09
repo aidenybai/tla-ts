@@ -21,6 +21,8 @@ import {
   type Param,
   type Selector,
 } from "./expression";
+import { renderDoc } from "./format";
+import { printExpression } from "./printer";
 
 interface Resolution {
   params: Param[];
@@ -490,6 +492,7 @@ const resolveLetOperator = (
 
 const resolveSelectors = (
   onWarning: Warn,
+  hyps: Hyp[],
   isLabel: boolean,
   state: Resolution,
   selectors: Selector[],
@@ -536,6 +539,22 @@ const resolveSelectors = (
         }
         if (isLabel) return { params: [], definitions: [], expression, rest, isLabel: false };
         onWarning(getErrorSetting(expression.location, "!: is forbidden for this expression.\n"));
+        const scope = [
+          ...hyps,
+          ...state.definitions.map((definition): Hyp => ({
+            kind: "Defn",
+            definition,
+            whereDefined: "User",
+            visibility: "Visible",
+            isLocal: true,
+          })),
+        ];
+        onWarning(
+          getErrorNote(
+            expression.location,
+            `!: is forbidden for this expression:\n${renderDoc(printExpression(scope, expression))}`,
+          ),
+        );
         throw new TlaProofError("!: is forbidden for this expression.\n", {
           failure: "Expr.Deref.deref: !:",
         });
@@ -569,6 +588,7 @@ const resolveSelectors = (
   })();
   return resolveSelectors(
     onWarning,
+    hyps,
     next.isLabel,
     {
       params: [...state.params, ...next.params],
@@ -592,12 +612,14 @@ const getInitialResolution = (onWarning: Warn, operator: Expr, args: Expr[]): Re
 
 export const resolveSubexpression = (
   onWarning: Warn,
+  hyps: Hyp[],
   operator: Expr,
   args: Expr[],
   selectors: Selector[],
 ) => {
   const result = resolveSelectors(
     onWarning,
+    hyps,
     true,
     getInitialResolution(onWarning, operator, args),
     selectors,
