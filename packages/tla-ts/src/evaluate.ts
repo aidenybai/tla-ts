@@ -1206,6 +1206,22 @@ const isRebindable = (value: Value): value is RebindableFilteredSet | Rebindable
   (value.kind === "FilteredSet" || value.kind === "LazyFunction") &&
   "rebind" in value;
 
+const toNextContext = (context: Context): Context => ({
+  environment: context.environment,
+  scope: context.scope,
+  state: context.next,
+  next: undefined,
+  isKeepLazy: context.isKeepLazy,
+});
+
+// TLC evaluates the expression in the current state first.
+const compileUnchanged =
+  (evaluator: Evaluator): Evaluator =>
+  (context) => {
+    const current = evaluator(context);
+    return valuesEqual(current, evaluator(toNextContext(context)));
+  };
+
 // TLC's CallStackTool rebinds the lazy values it returns, so their later evaluation records too.
 const traceEvaluator =
   (
@@ -1989,24 +2005,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
-      return (context) =>
-        inner({
-          environment: context.environment,
-          scope: context.scope,
-          state: context.next,
-          next: undefined,
-          isKeepLazy: context.isKeepLazy,
-        });
+      return (context) => inner(toNextContext(context));
     }
-    case "Unchanged": {
-      const primed = getChildEvaluator({
-        kind: "Prime",
-        expression: expression.expression,
-        location: expression.location,
-      });
-      const current = getChildEvaluator(expression.expression);
-      return (context) => valuesEqual(primed(context), current(context));
-    }
+    case "Unchanged":
+      return compileUnchanged(getChildEvaluator(expression.expression));
     case "If": {
       const condition = getChildEvaluator(expression.condition);
       const consequent = getChildEvaluator(expression.consequent);
@@ -2134,11 +2136,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "BoxAction":
     case "AngleAction": {
       const action = getChildEvaluator(expression.action);
-      const unchanged = getChildEvaluator({
-        kind: "Unchanged",
-        expression: expression.subscript,
-        location: expression.location,
-      });
+      const unchanged = compileUnchanged(getChildEvaluator(expression.subscript));
       const isBox = expression.kind === "BoxAction";
       return (context) =>
         isBox
