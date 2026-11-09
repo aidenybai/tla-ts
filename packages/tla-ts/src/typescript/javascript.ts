@@ -468,6 +468,12 @@ ForInKeys(heap, ref) ==
 
 OwnPropertyNames(heap, ref) == OwnKeys(Lookup(heap, ref))
 
+\\* tla-ts doesn't record the properties of the built-in objects that well-known symbols key.
+OwnPropertySymbols(heap, ref) ==
+  IF IsHeap(ref)
+  THEN SelectSeq(Lookup(heap, ref).keys, IsSymbol)
+  ELSE Assert(FALSE, "tla-ts can't list the symbol keys of a built-in object")
+
 RECURSIVE PutAll(_, _, _)
 PutAll(object, values, keys) ==
   IF keys = <<>>

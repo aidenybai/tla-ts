@@ -523,6 +523,13 @@ const translateCall = (
     }
     // A number or a boolean converts to an object with no own properties.
     if (isNumberLike(argument, context) || isBooleanLike(argument, context)) return tuple([]);
+    // An array or a string that isn't on the heap has no properties that symbols key.
+    if (
+      method === "getOwnPropertySymbols" &&
+      ["sequence", "string"].includes(getKind(argument, context))
+    ) {
+      return tuple([]);
+    }
     if (getKind(argument, context) === "sequence" && method !== "getOwnPropertyNames") {
       return share(
         translateExpression(argument, scope, context),
@@ -988,6 +995,7 @@ const translateGetterRead = (
 
 const OWN_KEYS = new Map([
   ["getOwnPropertyNames", "OwnPropertyNames"],
+  ["getOwnPropertySymbols", "OwnPropertySymbols"],
   ["keys", "ObjectKeys"],
   ["values", "ObjectValues"],
   ["entries", "ObjectEntries"],

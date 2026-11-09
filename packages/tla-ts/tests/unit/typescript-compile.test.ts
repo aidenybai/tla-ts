@@ -1660,6 +1660,8 @@ describe("errors", () => {
       object[first] = 2;
       if (object[first] !== 2 || object[second] !== undefined) throw new Error("keys");
       if (Object.keys(object).length !== 1) throw new Error("string keys");
+      const symbols = Object.getOwnPropertySymbols(object);
+      if (symbols.length !== 1 || symbols[0] !== first) throw new Error("symbol keys");
       const copy: { [key: symbol]: number } = { ...object };
       if (copy[first] !== 2) throw new Error("spread");
     `);
