@@ -202,6 +202,7 @@ export const forEachElement = (
 };
 export const MINIMUM_INTEGER = -2147483648;
 const MAXIMUM_ENUMERATED_SUBSET_BASE = 30;
+const MAXIMUM_BUILT_SUBSET_BASE = 20;
 
 export const isSetValue = (value: Value) =>
   typeof value === "object" &&
@@ -1471,7 +1472,7 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
     return undefined;
   }
   const base = toFiniteSet(value.base).elements;
-  if (base.length <= MAXIMUM_ENUMERATED_SUBSET_BASE) return undefined;
+  if (base.length <= MAXIMUM_BUILT_SUBSET_BASE) return undefined;
   const cursor = { index: -1, indices: [0] };
   const getSubset = (index: number) => {
     if (index <= cursor.index) cursor.index = -1;
