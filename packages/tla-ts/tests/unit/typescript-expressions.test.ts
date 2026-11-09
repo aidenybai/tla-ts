@@ -486,6 +486,12 @@ const CASES: Record<string, (string | [string, string])[]> = {
       }`,
     ],
     [
+      "[Object.keys(keyed).join(), Object.entries(keyed)[0][0], Object.entries(keyed)[0][1], Object.values(keyed).length === 3, Object.keys(list).join(), Object.entries(list)[1][0]]",
+      `const keyed: { [key: string]: unknown } = { x: 1, y: 2, 2: "two" };
+      Object.defineProperty(keyed, "hidden", { value: 3, enumerable: false });
+      const list = [5, 6];`,
+    ],
+    [
       "[shape.sides, Shape.prototype.sides]",
       `const box = {};
       function Shape() {}

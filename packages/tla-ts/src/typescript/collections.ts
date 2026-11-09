@@ -230,10 +230,9 @@ const translateUnordered = (
   const method = node.expression.name.text;
   if (ts.isIdentifier(receiver) && receiver.text === "Object") {
     const argument = node.arguments[0];
-    const record =
-      getKind(argument, context) === "object"
-        ? useJavaScript("Enumerable", [getHeap(scope, node, context), translate(argument)], context)
-        : translate(argument);
+    const kind = getKind(argument, context);
+    if (context.heap !== undefined && (kind === "object" || kind === "sequence")) return undefined;
+    const record = translate(argument);
     if (method === "keys") return { set: getDomain(record), isMapped: false };
     if (method === "values") return getValues(record, context);
     if (method === "entries") return getEntries(record, context);

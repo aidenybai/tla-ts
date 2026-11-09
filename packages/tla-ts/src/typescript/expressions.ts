@@ -71,6 +71,7 @@ import {
   apply,
   boolean,
   bound,
+  functionOf,
   choose,
   except,
   getLocation,
@@ -423,19 +424,33 @@ const translateCall = (
     }
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
   }
-  if (
-    global === "Object" &&
-    method === "getOwnPropertyNames" &&
-    node.arguments.length === 1 &&
-    context.heap !== undefined &&
-    (getKind(node.arguments[0], context) === "object" ||
-      isBuiltInObject(node.arguments[0], context))
-  ) {
-    return useJavaScript(
-      "OwnPropertyNames",
-      [getHeap(scope, node, context), translateObjectValue(node.arguments[0], scope, context)],
-      context,
-    );
+  const ownKeys = global === "Object" ? OWN_KEYS.get(method) : undefined;
+  if (ownKeys !== undefined && node.arguments.length === 1 && context.heap !== undefined) {
+    const argument = node.arguments[0];
+    if (getKind(argument, context) === "object" || isBuiltInObject(argument, context)) {
+      return useJavaScript(
+        ownKeys,
+        [getHeap(scope, node, context), translateObjectValue(argument, scope, context)],
+        context,
+      );
+    }
+    if (getKind(argument, context) === "sequence" && method !== "getOwnPropertyNames") {
+      return share(
+        translateExpression(argument, scope, context),
+        "elements",
+        context,
+        (elements) => {
+          const position = context.names.getFresh("position");
+          const key = apply("ToString", [apply("-", [identifier(position), number(1)])]);
+          return method === "values"
+            ? elements
+            : functionOf(
+                [bound(position, apply("..", [number(1), apply("Len", [elements])]))],
+                method === "keys" ? key : tuple([key, index(elements, [identifier(position)])]),
+              );
+        },
+      );
+    }
   }
   const test = OBJECT_TESTS.get(method);
   // Only freeze, seal, and preventExtensions on a script's objects, or on the built-in objects a
@@ -798,6 +813,13 @@ const translateGetterRead = (
     useJavaScript("Get", [heap, value, string(key)], context),
   );
 };
+
+const OWN_KEYS = new Map([
+  ["getOwnPropertyNames", "OwnPropertyNames"],
+  ["keys", "ObjectKeys"],
+  ["values", "ObjectValues"],
+  ["entries", "ObjectEntries"],
+]);
 
 const PRIVATE_TYPE_ERROR =
   "tla-ts can't throw the TypeError of using a private name an object lacks";

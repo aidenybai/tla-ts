@@ -199,11 +199,6 @@ ForInKeys(heap, ref) ==
 
 OwnPropertyNames(heap, ref) == OwnKeys(Lookup(heap, ref))
 
-Enumerable(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN [key \\in {other \\in DOMAIN object.values : object.attributes[other].enumerable}
-        |-> Value(object, key)]
-
 RECURSIVE PutAll(_, _, _)
 PutAll(object, values, keys) ==
   IF keys = <<>>
@@ -263,6 +258,15 @@ Get(heap, ref, key) ==
        IN CASE key \\in DOMAIN object.values -> Value(object, key)
             [] object.prototype = Null -> Undefined
             [] OTHER -> Get(heap, object.prototype, key)
+
+ObjectKeys(heap, ref) == EnumerableKeys(Lookup(heap, ref))
+
+ObjectValues(heap, ref) ==
+  LET keys == ObjectKeys(heap, ref) IN [position \\in DOMAIN keys |-> Get(heap, ref, keys[position])]
+
+ObjectEntries(heap, ref) ==
+  LET keys == ObjectKeys(heap, ref)
+  IN  [position \\in DOMAIN keys |-> <<keys[position], Get(heap, ref, keys[position])>>]
 
 LOCAL IsDigitText(text) ==
   \\A position \\in 1..Len(text) : SubSeq(text, position, position) \\in Digits \\ {"-"}
