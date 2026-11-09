@@ -288,6 +288,8 @@ interface ScriptState {
   scopes: Scope[];
   check: CheckResult | undefined;
   isProofsEnabled: boolean | undefined;
+  isIncremental: boolean;
+  hasChecked: boolean;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -335,6 +337,8 @@ export const runSmtlibScript = (
       scopes: [],
       check: undefined,
       isProofsEnabled: undefined,
+      isIncremental: false,
+      hasChecked: false,
     };
   };
   const script = { state: createState() };
@@ -454,15 +458,27 @@ export const runSmtlibScript = (
       const manager = state.manager;
       const names = state.names.filter((name) => name !== -1);
       const isNamed = names.length > 0;
-      const solved =
-        isNamed || extra.length > 0
+      const isAssuming = isNamed || extra.length > 0;
+      if (isAssuming) state.isIncremental = true;
+      if (!isOptimizing) state.hasChecked = true;
+      const kernel =
+        isAssuming || (state.isIncremental && !isOptimizing)
           ? solveAssuming(
               manager,
               getNamedAssertions(),
               isNamed ? [...names, ...extra] : extra,
               settings.isMbqi,
             )
-          : solveAssertions(manager, state.assertions, settings.isMbqi);
+          : undefined;
+      // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
+      const solved =
+        kernel === undefined ||
+        (!isAssuming &&
+          kernel.result === L_UNDEF &&
+          !state.assertions.some((assertion) => manager.hasQuantifierFlags[assertion]) &&
+          manager.limit.inc())
+          ? solveAssertions(manager, state.assertions, settings.isMbqi)
+          : kernel;
       state.check = {
         status: solved.result,
         context: solved.context,
@@ -540,6 +556,7 @@ export const runSmtlibScript = (
       const state = script.state;
       const assertion = state.reader.parseAssertion(list.items[1] ?? list.end);
       state.assertions.push(assertion.formula);
+      if (state.hasChecked) state.isIncremental = true;
       resetOptimizer();
       if (!settings.isProducingUnsatCores || assertion.name === undefined) state.names.push(-1);
       else {
@@ -608,6 +625,7 @@ export const runSmtlibScript = (
           objectives: state.objectives.length,
         });
         state.reader.push();
+        state.isIncremental = true;
       }
     },
     pop: (list) => {
@@ -620,6 +638,7 @@ export const runSmtlibScript = (
         );
       clearCheck();
       if (count === 0) return;
+      state.isIncremental = true;
       const scope = state.scopes[state.scopes.length - count];
       for (let index = 0; index < count; index++) state.reader.pop();
       restoreAssertions(scope.assertions);
@@ -642,6 +661,8 @@ export const runSmtlibScript = (
       for (const objective of state.objectives) state.manager.decRef(objective.term);
       state.objectives = [];
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0 }));
+      state.isIncremental = state.scopes.length > 0;
+      state.hasChecked = false;
     },
     simplify: (list) => {
       const manager = script.state.manager;
