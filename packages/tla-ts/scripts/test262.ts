@@ -110,6 +110,9 @@ const IMPLICIT_ANY_ERRORS = new Set([
   7050,
 ]);
 
+// TypeScript's errors for a value that may be null or undefined.
+const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 18047, 18048, 18049]);
+
 const PROGRAM_PATH = "/test262.ts";
 
 const file = { text: "", version: 0 };
@@ -212,12 +215,33 @@ const loosen = () => {
   service.getSemanticDiagnostics(PROGRAM_PATH).forEach((diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     const parent = node.parent;
+    // A value that may be null or undefined, which the test reads as Node does.
+    const nullable = NULLABLE_ERRORS.has(diagnostic.code)
+      ? ts.findAncestor(
+          node,
+          (ancestor) =>
+            ancestor.getStart() === diagnostic.start &&
+            ancestor.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+        )
+      : undefined;
+    // An assertion that TypeScript still flags can't help, so it isn't repeated. One after an
+    // operand such as void 0 would apply to 0 alone, so that operand is put in parentheses.
     if (
-      diagnostic.code === 18048 &&
-      ts.isIdentifier(node) &&
-      isDescriptor(checker.getNonNullableType(checker.getTypeAtLocation(node)))
+      nullable !== undefined &&
+      ts.isExpression(nullable) &&
+      nullable.kind !== ts.SyntaxKind.SuperKeyword &&
+      !ts.isNonNullExpression(nullable) &&
+      !ts.isNonNullExpression(nullable.parent)
     ) {
-      edits.set(node.getEnd(), "!");
+      const isOperand =
+        ts.isIdentifier(nullable) ||
+        nullable.kind === ts.SyntaxKind.ThisKeyword ||
+        ts.isPropertyAccessExpression(nullable) ||
+        ts.isElementAccessExpression(nullable) ||
+        ts.isCallExpression(nullable) ||
+        ts.isParenthesizedExpression(nullable);
+      if (!isOperand) edits.set(nullable.getStart(), "(");
+      edits.set(nullable.getEnd(), isOperand ? "!" : ")!");
     }
     // A variable that holds an object literal may get properties that the literal lacks.
     const accessed =
