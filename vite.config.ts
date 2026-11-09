@@ -27,6 +27,14 @@ export default defineConfig({
       eqeqeq: "warn",
       "no-console": "off",
     },
+    overrides: [
+      {
+        // TypeScript that tla-ts checks declares a variable without a value to start it at every
+        // value of its type, and compares sets and records by value.
+        files: ["packages/tla-ts/tests/fixtures/typescript/**/*.ts"],
+        rules: { "no-unassigned-vars": "off", "no-constant-binary-expression": "off" },
+      },
+    ],
     ignorePatterns: ["node_modules", "dist", "coverage", "pnpm-lock.yaml"],
   },
 });
