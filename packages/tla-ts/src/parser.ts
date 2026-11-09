@@ -1812,9 +1812,12 @@ const parse = (
   };
 
   const parseNewSymbol = (): NewSymbol => {
-    const start = cursor.index;
-    const location = getLocation(peek());
+    const newStart = cursor.index;
+    const newLocation = getLocation(peek());
     const isNew = accept("NEW");
+    // tlapm locates a declaration without its NEW.
+    const start = isTlapm ? cursor.index : newStart;
+    const location = isTlapm ? getLocation(peek()) : newLocation;
     const level = peek().kind === "Keyword" ? NEW_SYMBOL_LEVELS.get(peek().text) : undefined;
     if (!isNew && level === undefined) {
       throw createUnexpected(`Expected a declaration but found ${describeToken(peek())}`);
