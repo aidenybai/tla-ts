@@ -1411,6 +1411,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the properties of a built-in function that a Function holds", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nconst held: Function = Array;\nconst named = held.name;\nconst length = held.length;\nif (named !== "Array" || length !== 1) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

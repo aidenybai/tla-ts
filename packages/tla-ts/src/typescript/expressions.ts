@@ -1037,7 +1037,16 @@ const translatePropertyAccess = (
   const name = node.name.text;
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
-  if (getKind(receiver, context) === "object" || isHeapBuiltIn(receiver, scope, context)) {
+  // A value of type Function, such as an object's constructor, may be a built-in function, which
+  // only the heap knows the properties of.
+  const isFunctionType =
+    context.heap !== undefined &&
+    context.checker.getTypeAtLocation(receiver).getSymbol()?.name === "Function";
+  if (
+    getKind(receiver, context) === "object" ||
+    isFunctionType ||
+    isHeapBuiltIn(receiver, scope, context)
+  ) {
     return translateFoundGetter(
       node,
       getHeap(scope, node, context),
