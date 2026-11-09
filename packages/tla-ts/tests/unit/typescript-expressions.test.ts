@@ -509,6 +509,16 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const holder: { [key: string]: unknown } = { 0: 3, length: 1 };`,
     ],
     [
+      "[found, fallback, kept]",
+      `const source: { [key: string]: unknown } = { found: 4, kept: null };
+      let found: unknown = 0;
+      let fallback: unknown = 0;
+      let kept: unknown = 0;
+      ({ found } = source);
+      ({ fallback = 5 } = source);
+      ({ kept = 6 } = source);`,
+    ],
+    [
       "[shape.sides, Shape.prototype.sides]",
       `const box = {};
       function Shape() {}

@@ -364,16 +364,22 @@ const assignPattern = (
       const key = property.name.text;
       if (isPattern(defaulted.target)) rejectNestedPattern(property, current.scope);
       return assignPattern(
+      const part = isHeapType(
+        context.checker.getNonNullableType(context.checker.getTypeAtLocation(target)),
+        target,
+        context,
+      )
+        ? useJavaScript(
+            "Get",
+            [getHeap(current.scope, property, context), value, string(key)],
+            context,
+          )
+        : defaulted.initializer === undefined
+          ? getField(value, key)
+          : getOptionalField(value, key, context);
         defaulted.target,
         undefined,
-        defaulted.initializer === undefined
-          ? getField(value, key)
-          : getDefaulted(
-              getOptionalField(value, key, context),
-              defaulted.initializer,
-              current.scope,
-              context,
-            ),
+        getDefaulted(part, defaulted.initializer, current.scope, context),
         current,
         context,
       );
