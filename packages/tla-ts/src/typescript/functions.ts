@@ -41,6 +41,7 @@ import {
   lambda,
   locate,
   string,
+  tuple,
 } from "./tla";
 import { isBuiltInObject } from "./intrinsics";
 import { hasHeapType, translateUnknown } from "./types";
@@ -318,6 +319,11 @@ export const translateFoundGetter = (
 };
 
 // A function body that computes a value, as a TLA+ expression.
+// The definitions that a declaration list binds, with the values it gives them.
+interface DeclaredValues extends Bound {
+  values: Expression[];
+}
+
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
   return render(translatePure(body.statements, scope, context, () => leaf(getUndefined(context))));
@@ -336,7 +342,7 @@ const translatePure = (
     return translatePure(statement.statements, scope, context, continueWith);
   }
   if (ts.isVariableStatement(statement)) {
-    const bound = statement.declarationList.declarations.reduce<Bound>(
+    const bound = statement.declarationList.declarations.reduce<DeclaredValues>(
       (current, declaration) => {
         const initializer = declaration.initializer;
         if (isInlined(initializer, context)) return current;
@@ -345,13 +351,25 @@ const translatePure = (
             ? getUndefined(context)
             : translateExpression(initializer, current.scope, context);
         const added = bindPattern(declaration.name, value, current.scope, context);
-        return { definitions: [...current.definitions, ...added.definitions], scope: added.scope };
+        return {
+          definitions: [...current.definitions, ...added.definitions],
+          scope: added.scope,
+          values: [...current.values, value],
+        };
       },
-      { definitions: [], scope },
+      { definitions: [], scope, values: [] },
     );
+    // Each value runs though nothing reads it, so that a getter it reads stops the check.
+    const forced = context.heap === undefined ? [] : bound.values;
     return letIn(
       bound.definitions,
-      forceHeap(scope, bound.scope, continueWith(bound.scope), context),
+      forced.length === 0
+        ? forceHeap(scope, bound.scope, continueWith(bound.scope), context)
+        : ifThenElse(
+            apply("=", [tuple(forced), tuple(forced)]),
+            forceHeap(scope, bound.scope, continueWith(bound.scope), context),
+            leaf(getUndefined(context)),
+          ),
     );
   }
   if (ts.isIfStatement(statement)) {

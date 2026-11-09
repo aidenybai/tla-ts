@@ -2614,15 +2614,21 @@ const bindDeclaration = (
     : undefined;
   const isLet = (declaration.parent.flags & ts.NodeFlags.Const) === 0;
   const mutable = isLet && symbol !== undefined ? new Set([...path.mutable, symbol]) : path.mutable;
+  const rest = translateDeclarations(
+    declarations.slice(1),
+    { ...path, scope: initialize(bound.scope, declaration, context), mutable },
+    context,
+    frame,
+    continueWith,
+  );
+  // A declaration's value runs though nothing reads it, so that a getter it reads, which tla-ts
+  // can't call, stops the check.
+  const named = (symbol && bound.scope.bindings.get(symbol)) ?? value;
   return letIn(
     bound.definitions,
-    translateDeclarations(
-      declarations.slice(1),
-      { ...path, scope: initialize(bound.scope, declaration, context), mutable },
-      context,
-      frame,
-      continueWith,
-    ),
+    context.heap === undefined
+      ? rest
+      : ifThenElse(apply("=", [named, named]), rest, leaf(boolean(false))),
   );
 };
 
