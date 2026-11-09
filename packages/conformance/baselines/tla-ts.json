@@ -248,7 +248,6 @@
   "tlapm/obligations/subexpr/down_forbidden": "text-mismatch",
   "tlapm/obligations/take/take_different_domain": "text-mismatch",
   "tlapm/obligations/use_hide/module_use_suppressed": "text-mismatch",
-  "tlapm/proofs/methods/smtt_zero_seconds": "exit-mismatch",
   "tlapm/smoke/parse_error": "text-mismatch",
   "tlc/checker/alias/difftrace_with_alias_changes": "text-mismatch",
   "tlc/checker/alias/error_constant": "message-mismatch",
