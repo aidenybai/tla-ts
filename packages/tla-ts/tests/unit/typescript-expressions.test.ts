@@ -519,6 +519,23 @@ const CASES: Record<string, (string | [string, string])[]> = {
       ({ kept = 6 } = source);`,
     ],
     [
+      "[x, flag, y + z, a + b, assigned === pair, declared]",
+      `const box = {};
+      let x = 0;
+      let y = 0;
+      let z = 0;
+      let flag = "none";
+      if ((x = 1) !== 1) flag = "bad";
+      else flag = "good";
+      y = z = 5;
+      let a = 0;
+      let b = 0;
+      const pair = [7, 8];
+      let assigned: number[] = [];
+      assigned = [a, b] = pair;
+      const declared = (z = 9) + 1;`,
+    ],
+    [
       "[shape.sides, Shape.prototype.sides]",
       `const box = {};
       function Shape() {}

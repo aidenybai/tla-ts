@@ -435,7 +435,7 @@ export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;
 
 const heapFunctions = new WeakMap<ts.Node, boolean>();
 
-const skipCasts = (node: ts.Expression): ts.Expression =>
+export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
   ts.isAsExpression(node) ||
   ts.isTypeAssertionExpression(node)

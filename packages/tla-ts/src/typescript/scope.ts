@@ -25,9 +25,9 @@ export interface Scope {
   isCatching: boolean;
   uninitialized: ReadonlySet<ts.Symbol>;
   allocated: ReadonlyMap<ts.Node, Expression>;
-  // The results of the calls that only statements can run, which ran before the statement that
-  // holds them.
-  results: ReadonlyMap<ts.CallExpression, Expression>;
+  // The results of the calls that only statements can run, and of assignments inside
+  // expressions, which ran before the statement that holds them.
+  results: ReadonlyMap<ts.Expression, Expression>;
   // The object that this names in the method that a call through it inlines.
   receiver?: Receiver;
 }

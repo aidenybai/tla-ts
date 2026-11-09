@@ -19,6 +19,7 @@ import {
   getElement,
   getFunction,
   getNewClass,
+  skipCasts,
   isPrivateMember,
   getPrivateMember,
   getPrivateKey,
@@ -363,7 +364,6 @@ const assignPattern = (
         : getDefaultedTarget(property.initializer);
       const key = property.name.text;
       if (isPattern(defaulted.target)) rejectNestedPattern(property, current.scope);
-      return assignPattern(
       const part = isHeapType(
         context.checker.getNonNullableType(context.checker.getTypeAtLocation(target)),
         target,
@@ -377,6 +377,7 @@ const assignPattern = (
         : defaulted.initializer === undefined
           ? getField(value, key)
           : getOptionalField(value, key, context);
+      return assignPattern(
         defaulted.target,
         undefined,
         getDefaulted(part, defaulted.initializer, current.scope, context),
@@ -1895,6 +1896,54 @@ const translateTry = (
   );
 };
 
+// The assignment that a statement evaluates first, inside an expression, which can run as a
+// statement before it, since nothing the statement evaluates before it sees the change.
+const getLeadingAssignment = (
+  node: ts.Expression,
+  results: ReadonlyMap<ts.Expression, Expression>,
+): ts.BinaryExpression | undefined => {
+  if (results.has(node)) return undefined;
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isTypeOfExpression(node) ||
+    ts.isPropertyAccessExpression(node) ||
+    ts.isElementAccessExpression(node)
+  ) {
+    return getLeadingAssignment(node.expression, results);
+  }
+  if (ts.isConditionalExpression(node)) return getLeadingAssignment(node.condition, results);
+  if (!ts.isBinaryExpression(node)) return undefined;
+  const kind = node.operatorToken.kind;
+  if (kind !== ts.SyntaxKind.EqualsToken) {
+    return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment
+      ? undefined
+      : getLeadingAssignment(node.left, results);
+  }
+  const isPattern =
+    ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
+  return ts.isIdentifier(node.left) || isPattern
+    ? (getLeadingAssignment(node.right, results) ?? node)
+    : undefined;
+};
+
+const getHoistedAssignment = (statement: ts.Statement, path: Path) => {
+  const results = path.scope.results;
+  if (ts.isExpressionStatement(statement)) {
+    const hoisted = getLeadingAssignment(statement.expression, results);
+    return hoisted === skipCasts(statement.expression) ? undefined : hoisted;
+  }
+  const evaluated = ts.isVariableStatement(statement)
+    ? statement.declarationList.declarations[0]?.initializer
+    : ts.isIfStatement(statement)
+      ? statement.expression
+      : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
+        ? statement.expression
+        : undefined;
+  return evaluated === undefined ? undefined : getLeadingAssignment(evaluated, results);
+};
+
 const translateStatements = (
   statements: readonly ts.Statement[],
   path: Path,
@@ -1912,6 +1961,27 @@ const translateStatements = (
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
+  const hoisted = getHoistedAssignment(statement, path);
+  if (hoisted !== undefined) {
+    const target = ts.isIdentifier(hoisted.left)
+      ? getSymbol(hoisted.left, context.checker)
+      : undefined;
+    const value =
+      target === undefined ? translateExpression(hoisted.right, path.scope, context) : undefined;
+    return translateExpressionStatement(hoisted, path, context, frame, (after) => {
+      const result = value ?? (target === undefined ? undefined : after.scope.bindings.get(target));
+      if (result === undefined) throw new TlaTypeScriptError("Unsupported assignment", hoisted);
+      return translateStatements(
+        statements,
+        {
+          ...after,
+          scope: { ...after.scope, results: new Map([...after.scope.results, [hoisted, result]]) },
+        },
+        context,
+        frame,
+      );
+    });
+  }
   if (
     (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) ||
     (ts.isFunctionDeclaration(statement) && isHeapFunction(statement, context))

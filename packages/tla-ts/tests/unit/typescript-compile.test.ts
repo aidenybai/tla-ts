@@ -406,6 +406,15 @@ describe("top-level statements", () => {
     );
   });
 
+  it("reject an assignment inside an expression that reads its variable first", () => {
+    expect(() =>
+      compile(`
+        let x = 0;
+        let same = x !== (x = 1);
+      `),
+    ).toThrow("Unsupported operator: =");
+  });
+
   it("reject properties of a value of type any in a script with objects", () => {
     expect(() =>
       compile(`

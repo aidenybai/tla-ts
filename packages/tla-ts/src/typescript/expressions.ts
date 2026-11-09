@@ -996,6 +996,8 @@ const translateNode = (
   if (ts.isNonNullExpression(node)) {
     return translateExpression(node.expression, scope, context, true);
   }
+  const result = scope.results.get(node);
+  if (result !== undefined) return result;
   const isReceived =
     node.kind === ts.SyntaxKind.ThisKeyword &&
     ts.findAncestor(
@@ -1053,9 +1055,7 @@ const translateNode = (
   if (ts.isElementAccessExpression(node)) {
     return translateElementAccess(node, scope, context, isDefined);
   }
-  if (ts.isCallExpression(node)) {
-    return scope.results.get(node) ?? translateCall(node, scope, context, isDefined);
-  }
+  if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
   const functionValue = getFunctionValue(node, context);
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
