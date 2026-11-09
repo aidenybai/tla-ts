@@ -44,6 +44,7 @@ import {
   isBooleanType,
   isEvery,
   isHeapArray,
+  isBooleanLike,
   isNumberLike,
   type Kind,
   translateUnknown,
@@ -1080,15 +1081,17 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
       wrapper: undefined,
     };
   }
-  // A String or Number object, whose primitive the method reads.
+  // A String, Number, or Boolean object, whose primitive the method reads.
   const wrapper =
     kind === "object" ? context.checker.getTypeAtLocation(receiver).getSymbol()?.name : undefined;
   const methods =
     kind === "string" || wrapper === "String"
-      ? STRING_METHODS
+      ? new Map([...STRING_METHODS, ...STRING_VALUE_METHODS])
       : isNumberLike(receiver, context) || wrapper === "Number"
         ? NUMBER_METHODS
-        : undefined;
+        : isBooleanLike(receiver, context) || wrapper === "Boolean"
+          ? BOOLEAN_METHODS
+          : undefined;
   return (
     methods && {
       methods,
@@ -1096,7 +1099,8 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
       method: node.expression.name.text,
       owner: undefined,
       methodArguments: node.arguments,
-      wrapper: wrapper === "String" || wrapper === "Number" ? wrapper : undefined,
+      wrapper:
+        wrapper === "String" || wrapper === "Number" || wrapper === "Boolean" ? wrapper : undefined,
     }
   );
 };
@@ -1123,8 +1127,21 @@ const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["trimEnd", { operator: "StringTrim", parameters: [], trimmed: [false, true] }],
 ]);
 
+// The methods that give a string itself, which only a string or a String object has, so that
+// String.prototype.method.call doesn't convert another value.
+const STRING_VALUE_METHODS = new Map<string, PrimitiveMethod>([
+  ["toString", { operator: "PrimitiveOf", parameters: [] }],
+  ["valueOf", { operator: "PrimitiveOf", parameters: [] }],
+]);
+
 const NUMBER_METHODS = new Map<string, PrimitiveMethod>([
   ["toString", { operator: "NumberToString", parameters: ["number"] }],
+  ["valueOf", { operator: "PrimitiveOf", parameters: [] }],
+]);
+
+const BOOLEAN_METHODS = new Map<string, PrimitiveMethod>([
+  ["toString", { operator: "BooleanToString", parameters: [] }],
+  ["valueOf", { operator: "PrimitiveOf", parameters: [] }],
 ]);
 
 // The prototypes whose methods a script may call on another value, with the operator that
@@ -1132,6 +1149,7 @@ const NUMBER_METHODS = new Map<string, PrimitiveMethod>([
 const PRIMITIVE_PROTOTYPES = new Map([
   ["String.prototype", { methods: STRING_METHODS, converter: "ThisString" }],
   ["Number.prototype", { methods: NUMBER_METHODS, converter: "ThisNumber" }],
+  ["Boolean.prototype", { methods: BOOLEAN_METHODS, converter: "ThisBoolean" }],
 ]);
 
 const ARRAY_LIKE_METHODS = new Set([

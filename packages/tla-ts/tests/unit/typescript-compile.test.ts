@@ -1464,6 +1464,20 @@ describe("errors", () => {
     expect(shadowed.failure?.message).toContain("tla-ts can't call this method");
   });
 
+  it("gives the primitive of a wrapper object or a primitive prototype through valueOf and toString", async () => {
+    const result = await checkModel(`
+      const flag = new Boolean(1);
+      const isSet = flag.valueOf();
+      const shown = flag.toString();
+      const zero = Number.prototype.toString();
+      const empty = String.prototype.valueOf();
+      if (isSet !== true || shown !== "true" || zero !== "0" || empty !== "") {
+        throw new Error("missed");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

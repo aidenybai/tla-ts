@@ -739,17 +739,35 @@ ThisString(value) ==
   THEN Assert(FALSE, "tla-ts can't throw the TypeError of a string method on undefined or null")
   ELSE StringOf(value)
 
-\\* The primitive that a String or Number object holds, for a call of a method that it reads from
-\\* its prototype, which must still hold the built-in method.
+\\* The primitive that a String, Number, or Boolean object holds, for a call of a method that it
+\\* reads from its prototype, which must still hold the built-in method. The prototype itself holds
+\\* "", 0, or false.
 WrappedPrimitive(heap, ref, kind, method) ==
-  IF /\\ IsHeap(ref)
-     /\\ "primitive" \\in DOMAIN Lookup(heap, ref)
-     /\\ TypeOf(Lookup(heap, ref).primitive) = IF kind = "String" THEN "string" ELSE "number"
-     /\\ IsRef(Get(heap, ref, method))
-     /\\ ~IsHeap(Get(heap, ref, method))
-     /\\ Get(heap, ref, method)[Ref] = kind \\o ".prototype." \\o method
-  THEN Lookup(heap, ref).primitive
-  ELSE Assert(FALSE, "tla-ts can't call this method on " \\o ToString(ref))
+  LET isPrototype == IsRef(ref) /\\ ~IsHeap(ref) /\\ ref[Ref] = kind \\o ".prototype"
+      isWrapper ==
+        /\\ IsHeap(ref)
+        /\\ "primitive" \\in DOMAIN Lookup(heap, ref)
+        /\\ TypeOf(Lookup(heap, ref).primitive) =
+             CASE kind = "String" -> "string" [] kind = "Number" -> "number" [] OTHER -> "boolean"
+  IN IF /\\ isPrototype \\/ isWrapper
+        /\\ IsRef(Get(heap, ref, method))
+        /\\ ~IsHeap(Get(heap, ref, method))
+        /\\ Get(heap, ref, method)[Ref] = kind \\o ".prototype." \\o method
+     THEN CASE isWrapper -> Lookup(heap, ref).primitive
+            [] kind = "String" -> ""
+            [] kind = "Number" -> 0
+            [] OTHER -> FALSE
+     ELSE Assert(FALSE, "tla-ts can't call this method on " \\o ToString(ref))
+
+PrimitiveOf(value) == value
+
+BooleanToString(value) == IF value THEN "true" ELSE "false"
+
+\\* The boolean that Boolean.prototype.method.call reads from the value that it calls the method on.
+ThisBoolean(value) ==
+  IF TypeOf(value) = "boolean"
+  THEN value
+  ELSE Assert(FALSE, "tla-ts can't call a Boolean.prototype method on a value that isn't a boolean")
 
 \\* The number that Number.prototype.method.call reads from the value that it calls the method on.
 ThisNumber(value) ==
