@@ -288,7 +288,8 @@ export const createExpressions = () => {
   // expressions are equal exactly when their kind, symbol and children are, so they're found by
   // those before their hash is computed.
   const binders = new Map<number, BinderExpr[]>();
-  const interned = new Map<number, Expr[]>();
+  // Most keys have one expression, which the table holds without a list.
+  const interned = new Map<number, Expr | Expr[]>();
   // Numbers for the symbols, so an expression hashes by its symbol and children without strings.
   const symbolIds = new Map<string, number>();
   let nextId = FALSE.id + 1;
@@ -345,18 +346,22 @@ export const createExpressions = () => {
   ): Result => {
     let key = getSymbolId(symbol);
     for (const arg of args) key = Math.imul(key, 0x01000193) ^ arg.id;
-    const bucket = interned.get(key);
-    const existing = bucket?.find(
-      (inner): inner is Result =>
-        inner.kind === kind &&
-        inner.symbol === symbol &&
-        inner.args.length === args.length &&
-        inner.args.every((child, index) => child === args[index]),
-    );
+    const entry = interned.get(key);
+    const isMatch = (inner: Expr): inner is Result =>
+      inner.kind === kind &&
+      inner.symbol === symbol &&
+      inner.args.length === args.length &&
+      inner.args.every((child, index) => child === args[index]);
+    const existing = Array.isArray(entry)
+      ? entry.find(isMatch)
+      : entry !== undefined && isMatch(entry)
+        ? entry
+        : undefined;
     if (existing !== undefined) return existing;
     const result = build();
-    if (bucket === undefined) interned.set(key, [result]);
-    else bucket.push(result);
+    if (entry === undefined) interned.set(key, result);
+    else if (Array.isArray(entry)) entry.push(result);
+    else interned.set(key, [entry, result]);
     createdCount++;
     return result;
   };
