@@ -578,6 +578,12 @@ export const createEnvironment = (
     });
     const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
     params.forEach((param) => instanceParams.add(param));
+    const substitutionRange = instance.definitionRange
+      ? {
+          ...instance.definitionRange,
+          start: { line: instance.location.line, column: instance.location.column },
+        }
+      : instance.instanceRange;
     const instantiation = createInstantiation({
       params,
       substitutions: new Map(
@@ -599,6 +605,13 @@ export const createEnvironment = (
         return key;
       },
       createName,
+      ...(declarations.length > 0 && {
+        frame: {
+          kind: "Identifier",
+          name: instance.name ?? instance.module,
+          location: { ...substitutionRange.start, range: substitutionRange },
+        },
+      }),
     });
     return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
       const copy =

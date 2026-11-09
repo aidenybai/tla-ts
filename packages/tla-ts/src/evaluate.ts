@@ -29,7 +29,7 @@ import {
   isNonconstant,
   type DefinitionFacts,
 } from "./dependencies";
-import { contextualApplications } from "./instances";
+import { contextualApplications, substitutionFrames } from "./instances";
 import { prettyPrint } from "./pretty-print";
 import { isEnabled } from "./successors";
 import {
@@ -1312,14 +1312,35 @@ export const createTracingEnvironment = (environment: Environment): Environment 
   },
 });
 
+// A replay that walks into the expression has recorded its frames already.
+const traceFrames =
+  (
+    expression: Expression,
+    frames: Expression[],
+    evaluator: Evaluator,
+    callStack: CallStack,
+  ): Evaluator =>
+  (context) => {
+    if (callStack.expressions.at(-1) === expression) return evaluator(context);
+    callStack.expressions.push(...frames);
+    try {
+      return evaluator(context);
+    } finally {
+      if (!callStack.isFrozen) callStack.expressions.length -= frames.length;
+    }
+  };
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
   const compiled = compile(expression, environment);
   const callStack = environment.callStack;
-  const evaluator = callStack
+  const frames = callStack && substitutionFrames.get(expression);
+  const traced = callStack
     ? traceEvaluator(expression, compiled, environment, callStack)
     : compiled;
+  const evaluator =
+    callStack && frames ? traceFrames(expression, frames, traced, callStack) : traced;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };

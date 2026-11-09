@@ -7,6 +7,7 @@ import {
   type SourceRange,
 } from "./ast";
 import type { ModelConfig } from "./config";
+import { substitutionFrames, withSubstitutionFrames } from "./instances";
 import type { InstanceAction } from "./environment";
 import { formatRange, TlaError } from "./errors";
 import {
@@ -42,6 +43,12 @@ interface SpecDescription {
   impliedInits: SpecAction[];
   impliedActions: SpecAction[];
   impliedTemporals: SpecAction[];
+}
+
+interface NextItem {
+  expression: Expression;
+  scope: Scope | undefined;
+  frames: Expression[];
 }
 
 const UNNAMED_ACTION = "UnnamedAction";
@@ -178,9 +185,11 @@ const getInstanceActions = (
   const callAction = (): SpecAction[] => [
     { name: instanceAction.name, location: expression.location, parameters: [], expression, scope },
   ];
-  if (!called || args.length === 0) {
-    return [{ ...instanceAction, parameters: [], expression, scope }];
+  // TLC's action is the SubstInNode the instance puts around the operator's body.
+  if (called && args.length === 0) {
+    return [{ ...instanceAction, parameters: [], expression: called.body, scope: called.scope }];
   }
+  if (!called) return [{ ...instanceAction, parameters: [], expression, scope }];
   if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
     return callAction();
   }
@@ -294,10 +303,14 @@ const describeSpecification = (
   scope: Scope | undefined,
   environment: Environment,
   description: SpecDescription,
-  next: { expression: Expression; scope: Scope | undefined }[],
+  next: NextItem[],
+  frames: Expression[] = [],
 ): void => {
-  const recurse = (inner: Expression, innerScope: Scope | undefined) =>
-    describeSpecification(inner, innerScope, environment, description, next);
+  const recurse = (inner: Expression, innerScope: Scope | undefined, innerFrames = frames) =>
+    describeSpecification(inner, innerScope, environment, description, next, innerFrames);
+  // TLC wraps each conjunct it takes from an instance in the instance's SubstInNode.
+  const createConjunct = (name: string, conjunct: Expression) =>
+    createAction(name, withSubstitutionFrames(conjunct, frames));
   if (expression.kind === "Let") {
     recurse(
       expression.body,
@@ -312,18 +325,22 @@ const describeSpecification = (
   }
   const called = resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
+  const calledFrames = called
+    ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
+    : frames;
   if (called && called.params.length === 0) {
     if (getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL) {
-      description.inits.push(createAction(called.name, called.body));
+      description.inits.push(createConjunct(called.name, called.body));
       return;
     }
-    recurse(called.body, called.scope);
+    recurse(called.body, called.scope, calledFrames);
     return;
   }
   if (called && expression.kind === "Apply" && called.params.length === expression.args.length) {
     recurse(
       called.body,
       bindOperatorArguments(called, expression.args, getConstantContext(environment, scope)),
+      calledFrames,
     );
     return;
   }
@@ -333,16 +350,16 @@ const describeSpecification = (
   }
   if (expression.kind === "Always") {
     if (expression.expression.kind === "BoxAction") {
-      next.push({ expression: expression.expression.action, scope });
+      next.push({ expression: expression.expression.action, scope, frames });
       return;
     }
-    description.temporals.push(createAction(UNNAMED_ACTION, expression));
+    description.temporals.push(createConjunct(UNNAMED_ACTION, expression));
     return;
   }
   const level = getLevel(expression, scope, environment);
-  if (level <= VARIABLE_LEVEL) description.inits.push(createAction(UNNAMED_ACTION, expression));
+  if (level <= VARIABLE_LEVEL) description.inits.push(createConjunct(UNNAMED_ACTION, expression));
   else if (level === TEMPORAL_LEVEL) {
-    description.temporals.push(createAction(UNNAMED_ACTION, expression));
+    description.temporals.push(createConjunct(UNNAMED_ACTION, expression));
   }
 };
 
@@ -435,7 +452,7 @@ const getSpecDescription = (
     impliedActions: [],
     impliedTemporals: [],
   };
-  const next: { expression: Expression; scope: Scope | undefined }[] = [];
+  const next: NextItem[] = [];
   const specification =
     config.specification === undefined
       ? undefined
@@ -444,7 +461,18 @@ const getSpecDescription = (
     describeSpecification(specification.body, undefined, environment, description, next);
     next.forEach((item) =>
       description.actions.push(
-        ...getActions(item.expression, item.scope, undefined, environment, instanceActions),
+        // TLC takes an instance's SubstInNode as one action, located at the instance.
+        ...(item.frames.length > 0
+          ? [
+              {
+                name: UNNAMED_ACTION,
+                location: item.frames[0].location,
+                parameters: [],
+                expression: withSubstitutionFrames(item.expression, item.frames),
+                scope: item.scope,
+              },
+            ]
+          : getActions(item.expression, item.scope, undefined, environment, instanceActions)),
       ),
     );
   }
