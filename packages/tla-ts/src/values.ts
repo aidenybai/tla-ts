@@ -2440,6 +2440,14 @@ const checkBoundArguments = (
   });
 };
 
+// TLC checks that a FcnLambdaValue's domain holds the argument, and searches only the FcnRcdValue
+// it converts the lambda to when it fingerprints it.
+const isOutsideLambdaDomain = (functionValue: FunctionValue, argument: Value) =>
+  functionValue.lambdaDomain !== undefined &&
+  functionValue.hash === 0 &&
+  functionValue.fingerprint === 0 &&
+  !isElementOf(argument, functionValue.lambdaDomain);
+
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
@@ -2469,6 +2477,9 @@ export const applyFunction = (
     );
   }
   const describe = describeMissing ?? describeMissingArgument;
+  if (isOutsideLambdaDomain(functionValue, argument)) {
+    throw new TlaEvaluationError(describe(functionValue, argument));
+  }
   const position = findKeyIndexLikeTlc(functionValue, argument, describe);
   if (position === -1) throw new TlaEvaluationError(describe(functionValue, argument));
   return functionValue.range[position];
@@ -2505,7 +2516,7 @@ export const updateFunction = (
   const isLazy =
     typeof functionValue === "object" &&
     functionValue.kind === "LazyFunction" &&
-    (isKeptLazy || !isEnumerable(functionValue.domain));
+    (isKeptLazy || functionValue.enumerated === undefined);
   if (isLazy) {
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
@@ -2526,6 +2537,7 @@ export const updateFunction = (
     );
   }
   const finite = toFiniteFunction(functionValue);
+  if (isOutsideLambdaDomain(finite, argument)) return finite;
   const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
   if (position === -1) return finite;
   const range = [...finite.range];
