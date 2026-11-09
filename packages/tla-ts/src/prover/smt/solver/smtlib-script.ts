@@ -317,6 +317,7 @@ export const runSmtlibScript = (
     isDiagnosticOnStdout: false,
     parameters: new Map<string, string>(),
     isMbqi: true,
+    isFindingMacros: false,
     isHiDiv0: true,
     rlimit: 0,
     printOptions: { ...DEFAULT_PRINT_OPTIONS },
@@ -397,7 +398,12 @@ export const runSmtlibScript = (
     });
     state.optimizer ??= new OptContext(
       manager,
-      { manager, isMbqi: settings.isMbqi, write: () => {} },
+      {
+        manager,
+        isMbqi: settings.isMbqi,
+        isFindingMacros: settings.isFindingMacros,
+        write: () => {},
+      },
       objectives,
     );
     const optimizer = state.optimizer;
@@ -467,7 +473,7 @@ export const runSmtlibScript = (
               manager,
               getNamedAssertions(),
               isNamed ? [...names, ...extra] : extra,
-              settings.isMbqi,
+              settings,
             )
           : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
@@ -477,7 +483,7 @@ export const runSmtlibScript = (
           kernel.result === L_UNDEF &&
           !state.assertions.some((assertion) => manager.hasQuantifierFlags[assertion]) &&
           manager.limit.inc())
-          ? solveAssertions(manager, state.assertions, settings.isMbqi)
+          ? solveAssertions(manager, state.assertions, settings)
           : kernel;
       state.check = {
         status: solved.result,
@@ -526,7 +532,16 @@ export const runSmtlibScript = (
     for (const line of lines) print(line);
   };
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
-    compileTactic({ manager: script.state.manager, isMbqi: settings.isMbqi, write }, sexpr, end);
+    compileTactic(
+      {
+        manager: script.state.manager,
+        isMbqi: settings.isMbqi,
+        isFindingMacros: settings.isFindingMacros,
+        write,
+      },
+      sexpr,
+      end,
+    );
   const getGoal = () => {
     const goal = new Goal(script.state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || script.state.isProofsEnabled === true;
@@ -917,6 +932,7 @@ export const runSmtlibScript = (
         settings.parameters.set(getParameterName(keyword), value.text);
       if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
+      if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
       if (optionName === ":rlimit" && value?.kind === "numeral")
         settings.rlimit = Number(value.text);
       if (optionName === ":rewriter.hi_div0") {

@@ -1,6 +1,9 @@
 // Ported from Z3 (src/ast/ast_util.cpp), MIT license, see z3-license.txt.
-import { OP_AND, OP_IMPLIES, OP_NOT, OP_OR, type AstManager } from "./ast";
+import { KIND_APP, OP_AND, OP_IMPLIES, OP_NOT, OP_OR, type AstManager } from "./ast";
 import { RefVector } from "./ref-vector";
+
+export const isAppOf = (manager: AstManager, expr: number, op: number) =>
+  manager.kinds[expr] === KIND_APP && manager.getOp(expr) === op;
 
 export const mkNot = (manager: AstManager, expr: number) =>
   manager.isNot(expr)

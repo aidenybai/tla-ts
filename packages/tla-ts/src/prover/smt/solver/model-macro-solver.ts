@@ -65,7 +65,7 @@ const isLiteral = (manager: AstManager, expr: number) =>
 const getPolyArgs = (manager: AstManager, expr: number) =>
   manager.getOp(expr) === OP_ADD ? manager.getArgs(expr) : [expr];
 
-const isMacroHead = (manager: AstManager, expr: number, numDecls: number) => {
+export const isMacroHead = (manager: AstManager, expr: number, numDecls: number) => {
   if (!isUserApp(manager, expr) || manager.getNumArgs(expr) !== numDecls) return false;
   const seen = new Set<number>();
   for (let argIndex = 0; argIndex < manager.getNumArgs(expr); argIndex++) {
@@ -90,6 +90,20 @@ const isQuasiMacroHead = (manager: AstManager, expr: number, numDecls: number) =
     } else if (manager.isOccurring(manager.decls[expr], arg)) return false;
   }
   return found.size === numDecls;
+};
+
+export const normalizeMacroDef = (manager: AstManager, head: number, expr: number) => {
+  const mapping = new Map<number, number>();
+  for (let index = 0; index < manager.getNumArgs(head); index++)
+    mapping.set(manager.values[manager.getArg(head, index)], index);
+  return [...mapping].every((entry) => entry[0] === entry[1])
+    ? expr
+    : replaceFreeVars(manager, expr, (variable, index, shift) => {
+        const target = mapping.get(index);
+        return target === undefined
+          ? variable
+          : manager.mkVar(target + shift, manager.sorts[variable]);
+      });
 };
 
 const getHintHeadVars = (manager: AstManager, expr: number) => {
@@ -211,20 +225,6 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
     if (cond !== null) manager.decRef(cond);
   };
 
-  const normalize = (head: number, expr: number) => {
-    const mapping = new Map<number, number>();
-    for (let index = 0; index < manager.getNumArgs(head); index++)
-      mapping.set(manager.values[manager.getArg(head, index)], index);
-    return [...mapping].every((entry) => entry[0] === entry[1])
-      ? expr
-      : replaceFreeVars(manager, expr, (variable, index, shift) => {
-          const target = mapping.get(index);
-          return target === undefined
-            ? variable
-            : manager.mkVar(target + shift, manager.sorts[variable]);
-        });
-  };
-
   const insertMacro = (
     head: number,
     def: number,
@@ -233,8 +233,9 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
     isHint: boolean,
   ) =>
     scope(() => {
-      const normDef = normalize(head, def);
-      const normCond = cond !== null ? normalize(head, cond) : isHint ? null : manager.trueExpr;
+      const normDef = normalizeMacroDef(manager, head, def);
+      const normCond =
+        cond !== null ? normalizeMacroDef(manager, head, cond) : isHint ? null : manager.trueExpr;
       manager.incRef(normDef);
       if (normCond !== null) manager.incRef(normCond);
       candidates.push({
@@ -393,7 +394,12 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
   return candidates;
 };
 
-const setElseInterp = (manager: AstManager, model: ProtoModel, decl: number, elseExpr: number) => {
+export const setElseInterp = (
+  manager: AstManager,
+  model: ProtoModel,
+  decl: number,
+  elseExpr: number,
+) => {
   let interp = model.funcInterps.get(decl);
   if (interp === undefined) {
     interp = new FuncInterp(manager, manager.funcDecls[decl].domain.length);

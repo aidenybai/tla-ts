@@ -65,6 +65,7 @@ export interface Tactic {
 export interface TacticEnvironment {
   manager: AstManager;
   isMbqi: boolean;
+  isFindingMacros: boolean;
   write: (text: string, isDiagnostic: boolean) => void;
 }
 
@@ -194,11 +195,10 @@ const SMT_DESCRS = getDescrs("smt", [
 ]);
 
 const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
-  const solved = solveGoal(
-    environment.manager,
-    goal.forms.items,
-    getBool(params, "mbqi", environment.isMbqi),
-  );
+  const solved = solveGoal(environment.manager, goal.forms.items, {
+    isMbqi: getBool(params, "mbqi", environment.isMbqi),
+    isFindingMacros: environment.isFindingMacros,
+  });
   if (solved.result === L_UNDEF) throw new SmtTacticError(solved.context.getLastFailureMessage());
   goal.reset();
   if (solved.result === L_FALSE) goal.assert(environment.manager.falseExpr);

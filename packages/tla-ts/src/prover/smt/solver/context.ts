@@ -37,6 +37,7 @@ import {
 } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
+import type { MacroManager } from "./macro-finder";
 import { mkModel } from "./model-generator";
 import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
@@ -136,6 +137,7 @@ export class Context extends Internalizer {
   private lastSearchFailure: SearchFailure = FAILURE_OK;
   private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
+  macros: MacroManager | undefined;
 
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
@@ -1330,6 +1332,7 @@ export class Context extends Internalizer {
   }
 
   internalizeAssertions(asserted: AssertedFormulas) {
+    this.macros = asserted.macros;
     const formulas = asserted.reduce();
     if (asserted.isInconsistent) {
       this.setConflict("axiom", null);

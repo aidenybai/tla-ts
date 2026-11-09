@@ -10,6 +10,13 @@ import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
 
+export interface KernelParams {
+  isMbqi: boolean;
+  isFindingMacros: boolean;
+}
+
+const DEFAULT_KERNEL_PARAMS: KernelParams = { isMbqi: true, isFindingMacros: false };
+
 interface SmtCheck {
   verdict: Verdict;
   numInstances: number;
@@ -17,9 +24,9 @@ interface SmtCheck {
 
 // The context makes its asserted formulas first, and asserts the formulas. It makes the theories
 // next, before the formulas are reduced.
-export const solveGoal = (manager: AstManager, forms: number[], isMbqi: boolean) => {
-  const asserted = new AssertedFormulas(manager);
-  const context = new Context(manager, { isMbqi, relevancyLevel: 2 });
+export const solveGoal = (manager: AstManager, forms: number[], params: KernelParams) => {
+  const asserted = new AssertedFormulas(manager, params.isFindingMacros);
+  const context = new Context(manager, { isMbqi: params.isMbqi, relevancyLevel: 2 });
   for (const form of forms) asserted.assertExpr(form);
   context.setupContext();
   context.internalizeAssertions(asserted);
@@ -31,13 +38,17 @@ export const solveGoal = (manager: AstManager, forms: number[], isMbqi: boolean)
   return { result, context };
 };
 
-export const solveAssertions = (manager: AstManager, assertions: number[], isMbqi = true) => {
+export const solveAssertions = (
+  manager: AstManager,
+  assertions: number[],
+  params = DEFAULT_KERNEL_PARAMS,
+) => {
   const goal = applyUfniaTactic(manager, assertions);
   if (goal.isInconsistent || goal.forms.size === 0) {
     manager.limit.release();
     return { result: goal.isInconsistent ? L_FALSE : L_TRUE, context: undefined };
   }
-  return solveGoal(manager, goal.forms.items, isMbqi);
+  return solveGoal(manager, goal.forms.items, params);
 };
 
 // combined_solver searches with its incremental smt kernel, without the tactic, once the check has
@@ -46,10 +57,10 @@ export const solveAssuming = (
   manager: AstManager,
   assertions: number[],
   assumptions: number[],
-  isMbqi = true,
+  params = DEFAULT_KERNEL_PARAMS,
 ) => {
-  const asserted = new AssertedFormulas(manager);
-  const context = new Context(manager, { isMbqi, relevancyLevel: 2 });
+  const asserted = new AssertedFormulas(manager, params.isFindingMacros);
+  const context = new Context(manager, { isMbqi: params.isMbqi, relevancyLevel: 2 });
   for (const assertion of assertions) asserted.assertExpr(assertion);
   context.setupContext();
   context.internalizeAssertions(asserted);

@@ -107,5 +107,6 @@ export const mkModel = (context: Context): GeneratedModel => {
     if (interp.getEntry(args) === undefined) interp.insertNewEntry(args, getValue(node));
   }
   for (const theory of context.theories) theory.finalizeModel();
+  context.macros?.registerInterpretations(model);
   return { model, root2value };
 };

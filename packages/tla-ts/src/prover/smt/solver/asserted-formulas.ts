@@ -2,6 +2,7 @@
 import { SmtInvariantError } from "../../../errors";
 import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { mkNot } from "./ast-util";
+import { MacroManager } from "./macro-finder";
 import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
 import { MaxBvSharing } from "./maximize-ac-sharing";
@@ -150,12 +151,17 @@ export class AssertedFormulas {
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
   private hasQuantifiers = false;
+  readonly macros: MacroManager;
   isInconsistent = false;
   private numLazyScopes = 0;
   private scopes: AssertedScope[] = [];
 
-  constructor(private manager: AstManager) {
+  constructor(
+    private manager: AstManager,
+    private isFindingMacros = false,
+  ) {
     this.formulas = new RefVector(manager);
+    this.macros = new MacroManager(manager);
     this.substitution = new Substitution(manager);
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.names = new DefinedNames(manager);
@@ -176,6 +182,7 @@ export class AssertedFormulas {
     this.scopes.pop();
     this.isInconsistent = scope.isInconsistent;
     this.bvSharing.popScope();
+    this.macros.popScope();
     this.names.pop();
     this.substitution.pop();
     this.formulas.shrink(scope.numFormulas);
@@ -188,6 +195,7 @@ export class AssertedFormulas {
       this.substitution.push();
       this.scopes.push({ numFormulas: this.formulas.size, isInconsistent: this.isInconsistent });
       this.names.push();
+      this.macros.pushScope();
       this.bvSharing.pushScope();
     }
   }
@@ -214,6 +222,7 @@ export class AssertedFormulas {
     if (!this.isInconsistent) this.reduceCore();
     if (this.isInconsistent) return [];
     const result = this.formulas.items.slice(this.qhead);
+    if (this.isFindingMacros) this.macros.markForbidden(result);
     for (const formula of result) this.substitution.update(formula);
     this.qhead = this.formulas.size;
     return result;
@@ -221,14 +230,19 @@ export class AssertedFormulas {
 
   // Each step but the last stops the preprocessing when a formula is false.
   private reduceCore() {
+    if (this.macros.hasMacros()) this.findMacros();
     this.setEliminateAnd(false);
     this.propagateValues();
+    if (this.isInconsistent) return;
+    this.findMacros();
     if (this.isInconsistent) return;
     this.isReducePending = true;
     this.nnfCnf();
     if (this.isInconsistent) return;
     this.setEliminateAnd(true);
     this.reduceAsserted();
+    if (this.isInconsistent) return;
+    this.findMacros();
     if (this.isInconsistent) return;
     if (
       this.hasQuantifiers &&
@@ -275,6 +289,14 @@ export class AssertedFormulas {
       return;
     }
     result.push(expr);
+  }
+
+  private findMacros() {
+    if (!this.isFindingMacros || !this.hasQuantifiers) return;
+    this.isReducePending = true;
+    this.swapFormulas(this.macros.find(this.formulas.items.slice(this.qhead)));
+    this.flushCache();
+    this.reduceAsserted();
   }
 
   private flushCache() {
