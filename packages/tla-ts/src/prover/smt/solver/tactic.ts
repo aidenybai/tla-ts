@@ -39,6 +39,7 @@ import {
   type SmtToken,
 } from "./smtlib-parser";
 import { solveGoal } from "./solver";
+import { tseitinCnf } from "./tseitin-cnf";
 
 const PARAM_BOOL = 0;
 const PARAM_UINT = 1;
@@ -279,6 +280,15 @@ const NNF_DESCRS = getDescrs("nnf", [
   ["ignore_labels", PARAM_BOOL, false],
 ]);
 
+const TSEITIN_DESCRS = getDescrs("", [
+  ["max_memory", PARAM_UINT, UINT_MAX, true],
+  ["common_patterns", PARAM_BOOL, true],
+  ["distributivity", PARAM_BOOL, true],
+  ["distributivity_blowup", PARAM_UINT, 32],
+  ["ite_chaing", PARAM_BOOL, true],
+  ["ite_extra", PARAM_BOOL, true],
+]);
+
 const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   const mode = NNF_MODES.get(String(params.get("mode") ?? "skolem"));
   if (mode === undefined) throw new SmtUnsupportedError("an invalid NNF mode");
@@ -363,6 +373,34 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
+  [
+    "tseitin-cnf-core",
+    {
+      descrs: TSEITIN_DESCRS,
+      build: (environment) => inPlace((goal) => tseitinCnf(environment.manager, goal)),
+    },
+  ],
+  [
+    "tseitin-cnf",
+    {
+      descrs: TSEITIN_DESCRS,
+      build: (environment, params) =>
+        inPlace((goal) => {
+          const manager = environment.manager;
+          try {
+            tseitinCnf(manager, goal);
+          } catch (error) {
+            if (!(error instanceof SmtTacticError)) throw error;
+            simplifyGoal(manager, goal, {
+              ...getRewriterOptions(manager, params),
+              isEliminatingAnd: true,
+              isKeepingDistinct: false,
+            });
+            tseitinCnf(manager, goal);
+          }
+        }),
+    },
+  ],
   [
     "qe-light",
     {
@@ -526,7 +564,7 @@ const UNPORTED_TACTICS = new Set(
     "purify-arith qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args reduce-args2 reduce-bv-size " +
     "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
-    "split-clause subpaving symmetry-reduce tseitin-cnf tseitin-cnf-core ufbv-rewriter"
+    "split-clause subpaving symmetry-reduce ufbv-rewriter"
   ).split(" "),
 );
 
