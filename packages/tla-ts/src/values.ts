@@ -2442,7 +2442,8 @@ const findKeyIndexLikeTlc = (
   return computeLikeTlcOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
 };
 
-// TLC indexes past an argument tuple shorter than the bounds and ignores one longer.
+// TLC checks each argument against its bound in turn. It indexes past an argument tuple shorter
+// than the bounds and ignores one longer, where this fails instead.
 const checkBoundArguments = (
   functionValue: LazyFunctionValue,
   tupleLengths: (number | undefined)[],
@@ -2457,16 +2458,13 @@ const checkBoundArguments = (
       describe("argument list", argument, "does not match its formal parameter"),
     );
   }
-  if (
-    elements.length !== tupleLengths.length ||
-    typeof domain !== "object" ||
-    domain.kind !== "ProductSet"
-  ) {
-    throw new TlaEvaluationError(
-      `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
-    );
+  const describeOutside = () =>
+    `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`;
+  if (typeof domain !== "object" || domain.kind !== "ProductSet") {
+    throw new TlaEvaluationError(describeOutside());
   }
   tupleLengths.forEach((tupleLength, index) => {
+    if (index >= elements.length) throw new TlaEvaluationError(describeOutside());
     const element = elements[index];
     const position = `argument number ${index + 1}`;
     if (!isElementOf(element, domain.factors[index])) {
@@ -2486,6 +2484,7 @@ const checkBoundArguments = (
       );
     }
   });
+  if (elements.length > tupleLengths.length) throw new TlaEvaluationError(describeOutside());
 };
 
 // TLC checks that a FcnLambdaValue's domain holds the argument, and searches only the FcnRcdValue
