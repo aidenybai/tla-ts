@@ -73,6 +73,20 @@ interface FnType {
   range: Type;
 }
 
+// A function whose domain changes, as @@ and :> build them. It is its domain, as a set, and the
+// values at the domain's elements in order.
+interface MapType {
+  kind: "Map";
+  keys: SetType;
+  values: SeqType;
+}
+
+// A function with an empty domain, before it shows itself to be a sequence or a sparse function.
+interface EmptyType {
+  kind: "Empty";
+  target: SeqType | MapType | EmptyType | undefined;
+}
+
 interface SetType {
   kind: "Set";
   element: Type;
@@ -96,6 +110,8 @@ type Type =
   | SeqType
   | RecType
   | FnType
+  | MapType
+  | EmptyType
   | SetType
   | VarType
   | LambdaType
@@ -151,6 +167,8 @@ const UNSUPPORTED = { reason: "unsupported" };
 const DEOPT = { reason: "deopt" };
 // A set of integers holds an integer a mask can't, so sets of integers must be arrays.
 const WIDE = { reason: "wide" };
+// A sparse function where a sequence was typed. The search starts again with empty functions open.
+const SPARSE = { reason: "sparse" };
 // A value's type is still unknown where it is applied, and a later disjunct may reveal it, as an
 // action that sends a message reveals its fields to an earlier action that reads them.
 const UNKNOWN = { reason: "unknown" };
@@ -206,6 +224,7 @@ const resolveType = (type: Type): Type => {
   if (
     type.kind === "Bool" ||
     type.kind === "Seq" ||
+    type.kind === "Map" ||
     type.kind === "Set" ||
     type.kind === "Lambda" ||
     type.target === undefined
@@ -225,6 +244,19 @@ const createRecord = (names: string[], fields: Type[]): RecType => ({
   target: undefined,
 });
 
+const createMap = (): MapType => ({
+  kind: "Map",
+  keys: { kind: "Set", element: createVar() },
+  values: { kind: "Seq", element: createVar() },
+});
+
+// A function with an empty domain that is applied, or whose domain is read, is a sparse function.
+const expectMap = (type: Type) => {
+  if (resolveType(type).kind === "Empty") unify(type, createMap());
+  const resolved = resolveType(type);
+  return resolved.kind === "Map" ? resolved : undefined;
+};
+
 const getShapeIndex = (record: RecType, names: string[]) =>
   record.shapes.findIndex(
     (shape) =>
@@ -241,6 +273,19 @@ const unify = (left: Type, right: Type): void => {
     return;
   }
   if (rightType.kind === "Var") {
+    rightType.target = leftType;
+    return;
+  }
+  if (leftType.kind === "Empty" && rightType.kind !== "Empty") return unify(rightType, leftType);
+  if (rightType.kind === "Empty") {
+    if (leftType.kind === "Fn") {
+      const sequence: SeqType = { kind: "Seq", element: createVar() };
+      rightType.target = sequence;
+      return unify(sequence, leftType);
+    }
+    if (leftType.kind !== "Seq" && leftType.kind !== "Map" && leftType.kind !== "Empty") {
+      return unsupported();
+    }
     rightType.target = leftType;
     return;
   }
@@ -280,7 +325,13 @@ const unify = (left: Type, right: Type): void => {
     rightType.target = leftType;
     return unify(leftType.element, rightType.range);
   }
+  const kinds = [leftType.kind, rightType.kind];
+  if (kinds.includes("Seq") && kinds.includes("Map")) throw SPARSE;
   if (leftType.kind !== rightType.kind) return unsupported();
+  if (leftType.kind === "Map" && rightType.kind === "Map") {
+    unify(leftType.keys, rightType.keys);
+    return unify(leftType.values, rightType.values);
+  }
   if (leftType.kind === "Seq" && rightType.kind === "Seq") {
     return unify(leftType.element, rightType.element);
   }
@@ -318,7 +369,13 @@ const closeType = (type: Type): Type => {
     resolved.target = integer;
     return integer;
   }
+  if (resolved.kind === "Empty") {
+    const sequence: SeqType = { kind: "Seq", element: createInt() };
+    resolved.target = sequence;
+    return sequence;
+  }
   if (resolved.kind === "Seq" || resolved.kind === "Set") closeType(resolved.element);
+  if (resolved.kind === "Map") [resolved.keys, resolved.values].forEach(closeType);
   if (resolved.kind === "Fn") closeType(resolved.range);
   if (resolved.kind === "Rec") resolved.fields.forEach((field) => closeType(field));
   return resolved;
@@ -355,6 +412,7 @@ const getValueType = (value: Value, plains: Plains): Type => {
     getElements(value).forEach((inner) => unify(element, getValueType(inner, plains)));
     return { kind: "Set", element };
   }
+  if (value.domain.length === 0 && plains.isSparse) return { kind: "Empty", target: undefined };
   if (value.functionClass === "tuple" || value.domain.length === 0) {
     const element: Type = createVar();
     value.range.forEach((inner) => unify(element, getValueType(inner, plains)));
@@ -427,6 +485,8 @@ interface Plains {
   ids: Map<string | ModelValue, number>;
   values: (string | ModelValue)[];
   isMaskUsed: boolean;
+  // Whether a function with an empty domain may be a sparse function, not only a sequence.
+  isSparse: boolean;
 }
 
 const getAtom = (plains: Plains, value: Value) => {
@@ -486,6 +546,8 @@ const getSize = (value: Value): number => {
   }
 };
 
+const getEmptyMap = (map: MapType, plains: Plains) => [isMask(map.keys, plains) ? 0 : [], []];
+
 const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
   const resolved = resolveType(type);
   if (resolved.kind === "Int") return typeof value === "number" ? value : unsupported();
@@ -512,6 +574,9 @@ const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
     return resolved.shapes.length === 1 ? [atom] : [tag, atom];
   }
   if (typeof value !== "object" || value.kind !== "Function") return unsupported();
+  if (resolved.kind === "Map") {
+    return value.domain.length === 0 ? getEmptyMap(resolved, plains) : unsupported();
+  }
   if (resolved.kind === "Seq") {
     return value.range.map((inner) => toPlain(inner, resolved.element, plains));
   }
@@ -613,6 +678,13 @@ const getComparerCode = (program: Program, type: Type): string => {
       const length =
         resolved.kind === "Fn" ? "" : "if (l.length !== r.length) return l.length - r.length; ";
       return `${length}for (let i = 0; i < l.length; i++) { c = ${getCompareCode(program, element, "l[i]", "r[i]")}; if (c !== 0) return c; } return 0;`;
+    }
+    // TLC orders functions by their domains, which it orders as sets, and then by their values.
+    if (resolved.kind === "Map") {
+      return getChain([
+        { type: resolved.keys, position: 0 },
+        { type: resolved.values, position: 1 },
+      ]);
     }
     if (resolved.kind !== "Rec") return `return ${getCompareCode(program, resolved, "l", "r")};`;
     const offset = resolved.shapes.length === 1 ? 0 : 1;
@@ -1035,6 +1107,8 @@ const compileBound = (
   }
   if (setExpression.kind === "Apply" && setExpression.operator === "DOMAIN") {
     const target = compileValue(program, setExpression.args[0], frame);
+    const keys = compileKeys(target);
+    if (keys) return getSetBound(program, keys);
     const type = resolveType(target.type);
     if (type.kind !== "Seq" && type.kind !== "Fn") return unsupported();
     return {
@@ -1049,16 +1123,22 @@ const compileBound = (
       },
     };
   }
-  const set = compileValue(program, setExpression, frame);
-  const element = getSetElement(set);
-  return {
-    element,
-    header: (name) => {
-      if (!isMask(set.type, program.plains)) return `for (const ${name} of ${set.emit()})`;
-      const mask = getName(program, "m");
-      return `for (let ${mask} = ${set.emit()}, ${name} = 0; ${mask} !== 0; ${mask} >>>= 1, ${name}++) if ((${mask} & 1) !== 0)`;
-    },
-  };
+  return getSetBound(program, compileValue(program, setExpression, frame));
+};
+
+const getSetBound = (program: Program, set: Compiled) => ({
+  element: getSetElement(set),
+  header: (name: string) => {
+    if (!isMask(set.type, program.plains)) return `for (const ${name} of ${set.emit()})`;
+    const mask = getName(program, "m");
+    return `for (let ${mask} = ${set.emit()}, ${name} = 0; ${mask} !== 0; ${mask} >>>= 1, ${name}++) if ((${mask} & 1) !== 0)`;
+  },
+});
+
+// The domain of a sparse function, or undefined for a value of another type.
+const compileKeys = (target: Compiled): Compiled | undefined => {
+  const map = expectMap(target.type);
+  return map && { type: map.keys, emit: () => `(${target.emit()})[0]` };
 };
 
 const compileBounds = (program: Program, bounds: Bound[], frame: Frame) => {
@@ -1266,6 +1346,8 @@ const compileMembership = (
     }
     if (isBuiltin && operator === "DOMAIN") {
       const target = compileValue(program, setExpression.args[0], frame);
+      const keys = compileKeys(target);
+      if (keys) return compileSetMembership(program, element, keys);
       const type = resolveType(target.type);
       const name = getName(program, "e");
       if (type.kind === "Seq") {
@@ -1389,7 +1471,10 @@ const compileMembership = (
     });
     return { type: BOOL, emit: () => `(${getTest()})(${element.emit()})` };
   }
-  const set = compileValue(program, setExpression, frame);
+  return compileSetMembership(program, element, compileValue(program, setExpression, frame));
+};
+
+const compileSetMembership = (program: Program, element: Compiled, set: Compiled): Compiled => {
   unify(set.type, { kind: "Set", element: element.type });
   return {
     type: BOOL,
@@ -1474,6 +1559,17 @@ const compileApplication = (
     return {
       type: type.element,
       emit: () => `H.at(${functionCode.emit()}, (${argument.emit()}) - 1)`,
+    };
+  }
+  const map = expectMap(type);
+  if (map) {
+    unify(argument.type, map.keys.element);
+    return {
+      type: map.values.element,
+      emit: () =>
+        isMask(map.keys, program.plains)
+          ? `H.lookupMask(${functionCode.emit()}, ${argument.emit()})`
+          : `H.lookup(${getComparerCode(program, map.keys.element)}, ${functionCode.emit()}, ${argument.emit()})`,
     };
   }
   if (type.kind === "Var") throw UNKNOWN;
@@ -1619,6 +1715,42 @@ const compileBuiltin = (
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
     return operator === "\\in" ? test : { type: BOOL, emit: () => `!(${test.emit()})` };
   }
+  if (operator === "DOMAIN" && args.length === 1) {
+    const target = compileValue(program, args[0], frame);
+    const keys = compileKeys(target);
+    if (keys) return keys;
+    if (resolveType(target.type).kind !== "Seq") return unsupported();
+    const type: SetType = { kind: "Set", element: createInt() };
+    return {
+      type,
+      emit: () =>
+        `H.${isMask(type, program.plains) ? "range" : "interval"}(1, (${target.emit()}).length)`,
+    };
+  }
+  if (operator === ":>" && args.length === 2) {
+    const key = compileValue(program, args[0], frame);
+    const value = compileValue(program, args[1], frame);
+    const type = createMap();
+    unify(type.keys.element, key.type);
+    unify(type.values.element, value.type);
+    return {
+      type,
+      emit: () =>
+        `[${isMask(type.keys, program.plains) ? `H.bit(${key.emit()})` : `[${key.emit()}]`}, [${value.emit()}]]`,
+    };
+  }
+  // TLC's f @@ g takes the value of f where both are defined.
+  if (operator === "@@" && args.length === 2) {
+    const type = createMap();
+    const [left, right] = args.map((arg) => expectType(compileValue(program, arg, frame), type));
+    return {
+      type,
+      emit: () =>
+        isMask(type.keys, program.plains)
+          ? `H.combineMasks(${left.emit()}, ${right.emit()})`
+          : `H.combine(${getComparerCode(program, type.keys.element)}, ${left.emit()}, ${right.emit()})`,
+    };
+  }
   // TLC fails when the condition of an Assert is false, and only then evaluates its message.
   if (operator === "Assert" && args.length === 2) {
     const condition = expectType(compileValue(program, args[0], frame), BOOL);
@@ -1713,7 +1845,11 @@ const compileBuiltin = (
       );
       if (empty !== -1) {
         const other = values[1 - empty];
-        return { type: BOOL, emit: () => `(${other.emit()}).length ${isEqual ? "===" : "!=="} 0` };
+        return {
+          type: BOOL,
+          emit: () =>
+            `(${other.emit()})${closeType(other.type).kind === "Map" ? "[1]" : ""}.length ${isEqual ? "===" : "!=="} 0`,
+        };
       }
       return binary(left, right, BOOL, (leftCode, rightCode) =>
         isScalar()
@@ -2032,6 +2168,18 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       };
     }
     case "Tuple": {
+      if (expression.elements.length === 0 && program.plains.isSparse) {
+        const type: Type = { kind: "Empty", target: undefined };
+        return {
+          type,
+          emit: () => {
+            const resolved = closeType(type);
+            return resolved.kind === "Map"
+              ? addConstant(program, getEmptyMap(resolved, program.plains))
+              : "H.EMPTY";
+          },
+        };
+      }
       const element: Type = createVar();
       const elements = expression.elements.map((inner) =>
         expectType(compileValue(program, inner, frame), element),
@@ -2179,11 +2327,11 @@ const compileSequenceConstruction = (
   bodyExpression: Expression,
   frame: Frame,
 ): Compiled => {
-  const getLength = (): Compiled => {
-    if (set.kind !== "Apply") return unsupported();
+  const getLength = (): Compiled | undefined => {
+    if (set.kind !== "Apply") return undefined;
     if (set.operator === "DOMAIN") {
       const sequence = compileValue(program, set.args[0], frame);
-      if (resolveType(sequence.type).kind !== "Seq") return unsupported();
+      if (resolveType(sequence.type).kind !== "Seq") return undefined;
       return { type: createInt(), emit: () => `(${sequence.emit()}).length` };
     }
     const [low, high] = set.args;
@@ -2192,12 +2340,13 @@ const compileSequenceConstruction = (
       low.kind !== "Number" ||
       low.value !== 1
     ) {
-      return unsupported();
+      return undefined;
     }
     const end = expectInt(compileValue(program, high, frame));
     return { type: createInt(), emit: () => `Math.max(0, ${end.emit()})` };
   };
   const length = getLength();
+  if (!length) return compileMapConstruction(program, name, set, bodyExpression, frame);
   const element: Type = createVar();
   const index = getName(program, "f");
   const body = expectType(
@@ -2212,6 +2361,37 @@ const compileSequenceConstruction = (
     type: { kind: "Seq", element },
     emit: () =>
       `((${items}) => { for (let ${index} = 1; ${index} <= ${items}.length; ${index}++) ${items}[${index} - 1] = ${body.emit()}; return ${items}; })(new Array(${length.emit()}))`,
+  };
+};
+
+// TLC builds a function on a set that changes as one whose domain is that set.
+const compileMapConstruction = (
+  program: Program,
+  name: string,
+  setExpression: Expression,
+  bodyExpression: Expression,
+  frame: Frame,
+): Compiled => {
+  const set = compileValue(program, setExpression, frame);
+  const type = createMap();
+  unify(set.type, type.keys);
+  const key = getName(program, "k");
+  const body = expectType(
+    compileValue(program, bodyExpression, {
+      ...frame,
+      scope: bindCode(frame.scope, name, type.keys.element, key),
+    }),
+    type.values.element,
+  );
+  const keys = getName(program, "s");
+  const values = getName(program, "v");
+  const mask = getName(program, "m");
+  return {
+    type,
+    emit: () =>
+      isMask(type.keys, program.plains)
+        ? `((${keys}) => { const ${values} = []; for (let ${mask} = ${keys}, ${key} = 0; ${mask} !== 0; ${mask} >>>= 1, ${key}++) if ((${mask} & 1) !== 0) ${values}.push(${body.emit()}); return [${keys}, ${values}]; })(${set.emit()})`
+        : `((${keys}) => [${keys}, ${keys}.map((${key}) => ${body.emit()})])(${set.emit()})`,
   };
 };
 
@@ -2689,6 +2869,7 @@ const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
     return getMixedAtom(plains, plains.values[scalar]);
   }
   const length = readScalar(cursor);
+  if (resolved.kind === "Map") return length === 0 ? getEmptyMap(resolved, plains) : unsupported();
   if (resolved.kind === "Rec") {
     const atoms = Array.from({ length }, () => plains.values[readScalar(cursor)]);
     // A model value is written as 1 and its atom, unlike a record of one field, whose name is a
@@ -2834,6 +3015,12 @@ const HELPERS = {
     }
     return set;
   },
+  sortMap: (compare: Comparer, keys: Plain[], values: Plain[]) => {
+    const order = keys
+      .map((_, index) => index)
+      .sort((left, right) => compare(keys[left], keys[right]));
+    return [order.map((index) => keys[index]), order.map((index) => values[index])];
+  },
   sortSeq: (sequence: Plain[], isBefore: (left: Plain, right: Plain) => boolean) => {
     const sorted = sequence.slice();
     for (let index = 1; index < sorted.length; index++) {
@@ -2928,6 +3115,57 @@ const HELPERS = {
     items.sort(compare);
     return items.filter((item, index) => index === 0 || compare(items[index - 1], item) !== 0);
   },
+  lookup: (compare: Comparer, map: Plain[][], key: Plain) => {
+    const keys = map[0];
+    for (let low = 0, high = keys.length - 1; low <= high;) {
+      const middle = (low + high) >>> 1;
+      const comparison = compare(keys[middle], key);
+      if (comparison === 0) return map[1][middle];
+      if (comparison < 0) low = middle + 1;
+      else high = middle - 1;
+    }
+    return deopt();
+  },
+  lookupMask: (map: [number, Plain[]], key: number) =>
+    key >= 0 && key < MASK_BITS && ((map[0] >>> key) & 1) !== 0
+      ? map[1][countBits(map[0] & ((1 << key) - 1))]
+      : deopt(),
+  combine: (compare: Comparer, left: Plain[][], right: Plain[][]) => {
+    const keys: Plain[] = [];
+    const values: Plain[] = [];
+    let leftIndex = 0;
+    let rightIndex = 0;
+    while (leftIndex < left[0].length || rightIndex < right[0].length) {
+      const comparison =
+        leftIndex === left[0].length
+          ? 1
+          : rightIndex === right[0].length
+            ? -1
+            : compare(left[0][leftIndex], right[0][rightIndex]);
+      if (comparison <= 0) {
+        keys.push(left[0][leftIndex]);
+        values.push(left[1][leftIndex++]);
+        if (comparison === 0) rightIndex++;
+      } else {
+        keys.push(right[0][rightIndex]);
+        values.push(right[1][rightIndex++]);
+      }
+    }
+    return [keys, values];
+  },
+  combineMasks: (left: [number, Plain[]], right: [number, Plain[]]) => {
+    const keys = left[0] | right[0];
+    const values: Plain[] = [];
+    for (let rest = keys; rest !== 0; rest &= rest - 1) {
+      const bit = rest & -rest;
+      values.push(
+        (left[0] & bit) !== 0
+          ? left[1][countBits(left[0] & (bit - 1))]
+          : right[1][countBits(right[0] & (bit - 1))],
+      );
+    }
+    return [keys, values];
+  },
   isMember: (compare: Comparer, items: Plain[], item: Plain) => {
     for (let low = 0, high = items.length - 1; low <= high;) {
       const middle = (low + high) >>> 1;
@@ -2970,7 +3208,7 @@ const MAXIMUM_SCALAR_BYTES = 6;
 
 const hasVariableSize = (type: Type): boolean => {
   const resolved = resolveType(type);
-  if (resolved.kind === "Seq" || resolved.kind === "Set") return true;
+  if (resolved.kind === "Seq" || resolved.kind === "Set" || resolved.kind === "Map") return true;
   if (resolved.kind === "Rec") return [...resolved.fields.values()].some(hasVariableSize);
   return resolved.kind === "Fn" && hasVariableSize(resolved.range);
 };
@@ -2978,7 +3216,7 @@ const hasVariableSize = (type: Type): boolean => {
 const getFixedSize = (type: Type): number => {
   const resolved = resolveType(type);
   if (resolved.kind === "Seq" || resolved.kind === "Set") return 1;
-  if (resolved.kind === "Mix") return 2;
+  if (resolved.kind === "Mix" || resolved.kind === "Map") return 2;
   if (resolved.kind === "Rec") {
     const sizes = resolved.shapes.map((shape) =>
       shape.reduce((sum, name) => sum + getFixedSize(getFieldType(resolved, name)), 0),
@@ -2992,6 +3230,7 @@ const getFixedSize = (type: Type): number => {
 const getParts = (type: Type): Type[] => {
   if (type.kind === "Rec") return type.shapes[0].map((name) => getFieldType(type, name));
   if (type.kind === "Fn") return type.domain.map(() => type.range);
+  if (type.kind === "Map") return [type.keys, type.values];
   return unsupported();
 };
 
@@ -3205,6 +3444,16 @@ const getPermuteCode = (
       const permuted = getPermuteCode(program, images, resolved.range, name) ?? name;
       return `((f) => { const t = D[${base} + G]; const o = new Array(f.length); for (let j = 0; j < f.length; j++) { const ${name} = f[j]; o[t[j]] = ${permuted}; } return o; })(${code})`;
     }
+    case "Map": {
+      const map = getName(program, "m");
+      const values = getPermuteCode(program, images, resolved.values, `${map}[1]`);
+      const keys = getElementCode(
+        resolved.keys.element,
+        (name, inner) => `(${map}[0]).map((${name}) => ${inner})`,
+      );
+      if (keys === undefined) return values && `((${map}) => [${map}[0], ${values}])(${code})`;
+      return `((${map}) => H.sortMap(${getComparerCode(program, resolved.keys.element)}, ${keys}, ${values ?? `${map}[1]`}))(${code})`;
+    }
     default:
       return undefined;
   }
@@ -3293,6 +3542,13 @@ const getSignatureCode = (
       const values = getLoop(resolved.range, fn);
       if (keys.length === 0 && values === undefined) return undefined;
       return `{ const ${fn} = ${code}; ${keys.join(" ")} ${values ?? ""} }`;
+    }
+    case "Map": {
+      const parts = [
+        getSignatureCode(program, sites, resolved.keys, `(${code})[0]`, scale),
+        getSignatureCode(program, sites, resolved.values, `(${code})[1]`, scale),
+      ].filter((part) => part !== undefined);
+      return parts.length === 0 ? undefined : parts.join(" ");
     }
     default:
       return undefined;
@@ -3508,18 +3764,23 @@ export const runTypedSearch = (
   environment: Environment,
   check: TypedCheck,
 ): TypedResult | undefined => {
-  try {
+  const run = (isMaskUsed: boolean, isSparse: boolean): TypedResult => {
     try {
-      return search(environment, check, true);
+      return search(environment, check, { ids: new Map(), values: [], isMaskUsed, isSparse });
     } catch (error) {
-      if (error !== WIDE) throw error;
-      return search(environment, check, false);
+      if (error === WIDE && isMaskUsed) return run(false, isSparse);
+      if (error === SPARSE && !isSparse) return run(isMaskUsed, true);
+      throw error;
     }
+  };
+  try {
+    return run(true, false);
   } catch (error) {
     // The interpreter reports these errors when it reruns the search.
     if (
       error === UNSUPPORTED ||
       error === UNKNOWN ||
+      error === SPARSE ||
       error === DEOPT ||
       error instanceof TlaError ||
       isStackOverflow(error)
@@ -3530,10 +3791,10 @@ export const runTypedSearch = (
   }
 };
 
-const search = (environment: Environment, check: TypedCheck, isMaskUsed: boolean): TypedResult => {
+const search = (environment: Environment, check: TypedCheck, plains: Plains): TypedResult => {
   const program: Program = {
     environment,
-    plains: { ids: new Map(), values: [], isMaskUsed },
+    plains,
     constants: [],
     constantSets: [],
     bitmaps: [],

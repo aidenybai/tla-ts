@@ -44,6 +44,8 @@ describe("typed tier matches TLC", () => {
     ["CaseArms", 13],
     ["LetInit", 88],
     ["AssertHolds", 46],
+    ["SparseLog", 666],
+    ["SparseSymmetry", 109],
     ["FilteredMembership", 280],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
@@ -62,6 +64,7 @@ describe("typed tier matches TLC", () => {
     ["NullableOutside", "invariant-violation", "Low"],
     ["NullableDomain", "error", undefined],
     ["AssertFails", "error", undefined],
+    ["SparseMissing", "error", undefined],
   ])("reports the property %s violates, as TLC does", async (name, status, property) => {
     const result = await checkFixture(name, true);
     expect([result.status, result.violation?.name]).toEqual([status, property]);
