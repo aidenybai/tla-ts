@@ -128,9 +128,10 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
 const isAsync = (node: FunctionNode) =>
   node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
 
-const isPlain = (node: FunctionNode) => node.asteriskToken === undefined && !isAsync(node);
+export const isPlain = (node: FunctionNode) => node.asteriskToken === undefined && !isAsync(node);
 
-const isGenerator = (node: FunctionNode) => node.asteriskToken !== undefined && !isAsync(node);
+export const isGenerator = (node: FunctionNode) =>
+  node.asteriskToken !== undefined && !isAsync(node);
 
 const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
   if (node === undefined) return undefined;
@@ -144,6 +145,11 @@ const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefined => 
 export const getFunction = (node: ts.Node | undefined) => {
   const found = getAnyFunction(node);
   return found !== undefined && isPlain(found) ? found : undefined;
+};
+
+export const getFunctionOrGenerator = (node: ts.Node | undefined) => {
+  const found = getAnyFunction(node);
+  return found !== undefined && !isAsync(found) ? found : undefined;
 };
 
 // A class whose definition and instances run no code, so only its methods matter.

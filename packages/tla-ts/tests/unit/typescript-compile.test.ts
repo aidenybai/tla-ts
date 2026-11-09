@@ -1133,6 +1133,20 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a generator that a variable holds, but not on a call alone", async () => {
+    const result = await check(
+      compile(
+        `let count = 0;\nconst read = () => count;\nvar step: (by: number) => Generator<number>;\nstep = function* (by: number) { count += by; const seen = count; yield seen; };\nconst first = step(5).next();\nif (first.value !== 5 || read() !== 5) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(
+        `let count = 0;\nvar step: () => Generator<number>;\nstep = function* () { count += 1; };\nstep();`,
+      ),
+    ).toThrow("spec.ts:4:1 Unsupported statement");
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

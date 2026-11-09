@@ -20,7 +20,9 @@ import {
   getCalledMethod,
   getCallee,
   getElement,
-  getFunction,
+  getFunctionOrGenerator,
+  isGenerator,
+  isPlain,
   getNewClass,
   skipCasts,
   isPrivateMember,
@@ -460,7 +462,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   if (!ts.isBinaryExpression(expression)) return undefined;
   const kind = expression.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
-    const assigned = getFunction(expression.right);
+    const assigned = getFunctionOrGenerator(expression.right);
     const symbol = ts.isIdentifier(expression.left)
       ? getSymbol(expression.left, context.checker)
       : undefined;
@@ -603,7 +605,7 @@ const translateCallStatement = (
   if (isMethodCall(expression) && called === undefined) {
     const receiver = expression.expression.expression;
     const method = expression.expression.name.text;
-    if (isGeneratorStep(expression, context) && ts.isCallExpression(receiver)) {
+    if (isGeneratorStep(expression, path, context) && ts.isCallExpression(receiver)) {
       return translateCallStatement(receiver, path, context, frame, continueWith, true);
     }
     const isConsole = receiver.getText() === "console";
@@ -633,7 +635,7 @@ const translateCallStatement = (
   const callee =
     called?.method ??
     (isGenerator
-      ? getGenerator(expression.expression, context)
+      ? getGeneratorCallee(expression.expression, path, context)
       : getCallback(expression.expression, path, context));
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
@@ -665,7 +667,16 @@ const translateCallStatement = (
 
 const getCallback = (node: ts.Expression, path: Path, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  return (symbol && path.scope.functions.get(symbol)) ?? getCallee(node, context);
+  const assigned = symbol && path.scope.functions.get(symbol);
+  if (assigned === undefined) return getCallee(node, context);
+  return isPlain(assigned) ? assigned : undefined;
+};
+
+// The generator that a callee names: one that a variable holds, or one declared elsewhere.
+const getGeneratorCallee = (node: ts.Expression, path: Path, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const assigned = symbol && path.scope.functions.get(symbol);
+  return assigned !== undefined && isGenerator(assigned) ? assigned : getGenerator(node, context);
 };
 
 // Runs a function's body as statements, for a call or a new that a statement makes.
@@ -1570,17 +1581,17 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 };
 
 // The first next of a generator that a call makes, which runs the generator's body.
-const isGeneratorStep = (node: ts.CallExpression, context: Context) =>
+const isGeneratorStep = (node: ts.CallExpression, path: Path, context: Context) =>
   isMethodCall(node) &&
   node.expression.name.text === "next" &&
   node.arguments.length === 0 &&
   ts.isCallExpression(node.expression.expression) &&
-  (getGenerator(node.expression.expression.expression, context) ??
+  (getGeneratorCallee(node.expression.expression.expression, path, context) ??
     getCalledMethod(node.expression.expression.expression, context, true)) !== undefined;
 
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
-  isGeneratorStep(node, context) ||
+  isGeneratorStep(node, path, context) ||
   isHeapCall(node, path, context) ||
   getLoopCall(node, path, context) !== undefined ||
   isStateCall(node, path, context);
