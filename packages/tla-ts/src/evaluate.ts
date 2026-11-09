@@ -150,6 +150,8 @@ export interface Environment {
   startupValues: (Value | undefined)[];
   // SANY wraps the body of each of these INSTANCE copies in its substitutions.
   substitutedDefinitions: Set<Definition>;
+  // The parameters a parameterized INSTANCE adds before those of each definition it copies.
+  instanceParams: Set<OperatorParam>;
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;

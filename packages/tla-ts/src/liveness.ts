@@ -264,16 +264,21 @@ export const expandTemporal = (
     const definition = isLocallyResolved(expression)
       ? undefined
       : getDefinition(expression.operator, environment);
+    // An instance's definition that takes only the instance's parameters takes no arguments in
+    // TLC, which expands it even within the instance.
+    const isOwnArgumentFree =
+      operator?.kind === "Closure" &&
+      operator.params.every((param) => environment.instanceParams.has(param));
     const isExpandable =
       operator?.kind === "Closure" &&
       operator.params.length === expression.args.length &&
       !definition?.isRecursive &&
-      !isSubstituted;
+      (!isSubstituted || isOwnArgumentFree);
     if (isExpandable) {
       return expand(
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
-        expression.operator,
+        isSubstituted && definition ? definition.name : expression.operator,
         expanding,
         definition,
       );
