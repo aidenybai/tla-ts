@@ -1,8 +1,9 @@
 (*---
-description: TLCEvalDefinition evaluates the definition's TLA+ body, skipping Java overrides, so Nat is the { } written in Naturals.tla.
+description: TLCEvalDefinition evaluates the definition's TLA+ body, skipping Java overrides, so Nat is the { } written in Naturals.tla. Real TLC bug, as Nat is the set of natural numbers.
 ref: tlc2/module/TLCExt.java#tlcDefByName
 features:
   - TLCExt
+  - tlc-bug
 flags:
   - expression
 outcome: success
