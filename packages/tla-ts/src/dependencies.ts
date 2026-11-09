@@ -133,7 +133,12 @@ const collectLocalFacts = (
       const definition = environment.definitions.get(target);
       const isOverridden = environment.constants.has(name);
       const variableIndex = environment.variableIndex.get(name);
-      if (variableIndex !== undefined || environment.builtins.get(name)?.isStateLevel) {
+      // TLC's level bound takes an instance's definition named like a variable for the variable.
+      if (
+        variableIndex !== undefined ||
+        environment.builtins.get(name)?.isStateLevel ||
+        (definition && environment.variableIndex.has(definition.name))
+      ) {
         row[0] |= NONCONSTANT;
       }
       if (variableIndex !== undefined) {

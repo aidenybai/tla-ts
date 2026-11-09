@@ -1423,7 +1423,7 @@ export const createEnvironment = (
             const definition = definitions.get(linked.visible.get(name)?.key ?? name);
             // TLC doesn't compute the copy of a definition from a module instantiated with
             // substitutions.
-            return definition && !substitutedDefinitions.has(definition) ? [definition] : [];
+            return definition ? [definition] : [];
           },
         ),
       ),
