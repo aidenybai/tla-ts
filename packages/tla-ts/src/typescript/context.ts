@@ -509,6 +509,7 @@ const heapFunctions = new WeakMap<ts.Node, boolean>();
 
 export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
+  ts.isNonNullExpression(node) ||
   ts.isAsExpression(node) ||
   ts.isTypeAssertionExpression(node)
     ? skipCasts(node.expression)
@@ -774,7 +775,7 @@ export const getCalledMethod = (
 // a method of a known class.
 const resolve = (node: ts.Expression, context: Context) =>
   getAnyFunction(skipCasts(node)) ??
-  getAnyFunction(getSymbol(node, context.checker)?.valueDeclaration) ??
+  getAnyFunction(getSymbol(skipCasts(node), context.checker)?.valueDeclaration) ??
   getMethod(node, context);
 
 export const getCallee = (node: ts.Expression, context: Context) => {

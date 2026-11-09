@@ -1597,6 +1597,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls a function through a non-null assertion", async () => {
+    const result = await checkModel(`
+      const probe: (() => number) | undefined = () => 4;
+      const found = probe!();
+      if (found !== 4) throw new Error("missed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
