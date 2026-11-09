@@ -17,6 +17,7 @@ import { forEachInitialState, hasBranches } from "./successors";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
   compareValues,
+  createSet,
   isEnumerable,
   isSameValue,
   toFiniteSet,
@@ -69,7 +70,7 @@ interface FnType {
   kind: "Fn";
   key: Type;
   domain: Value[];
-  target: SeqType | undefined;
+  target: SeqType | MapType | FnType | undefined;
   range: Type;
 }
 
@@ -253,6 +254,12 @@ const createMap = (): MapType => ({
 // A function with an empty domain that is applied, or whose domain is read, is a sparse function.
 const expectMap = (type: Type) => {
   if (resolveType(type).kind === "Empty") unify(type, createMap());
+  return getMap(type);
+};
+
+// A function on a constant domain becomes sparse when it meets a sparse function, which can happen
+// after its code was compiled, so the code chooses at emit.
+const getMap = (type: Type) => {
   const resolved = resolveType(type);
   return resolved.kind === "Map" ? resolved : undefined;
 };
@@ -325,6 +332,12 @@ const unify = (left: Type, right: Type): void => {
     rightType.target = leftType;
     return unify(leftType.element, rightType.range);
   }
+  if (leftType.kind === "Fn" && rightType.kind === "Map") return unify(rightType, leftType);
+  if (leftType.kind === "Map" && rightType.kind === "Fn") {
+    rightType.target = leftType;
+    unify(leftType.keys.element, rightType.key);
+    return unify(leftType.values.element, rightType.range);
+  }
   const kinds = [leftType.kind, rightType.kind];
   if (kinds.includes("Seq") && kinds.includes("Map")) throw SPARSE;
   if (leftType.kind !== rightType.kind) return unsupported();
@@ -345,6 +358,7 @@ const unify = (left: Type, right: Type): void => {
       unify(sequence, leftType);
       return unify(sequence, rightType);
     }
+    rightType.target = leftType;
     unify(leftType.key, rightType.key);
     return unify(leftType.range, rightType.range);
   }
@@ -575,7 +589,10 @@ const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
   }
   if (typeof value !== "object" || value.kind !== "Function") return unsupported();
   if (resolved.kind === "Map") {
-    return value.domain.length === 0 ? getEmptyMap(resolved, plains) : unsupported();
+    return [
+      toPlain(createSet(value.domain), resolved.keys, plains),
+      value.range.map((inner) => toPlain(inner, resolved.values.element, plains)),
+    ];
   }
   if (resolved.kind === "Seq") {
     return value.range.map((inner) => toPlain(inner, resolved.element, plains));
@@ -622,14 +639,14 @@ const compileConstant = (program: Program, value: Value): Compiled => {
   if (type.kind === "Set" && getElements(value).length === 0) {
     return { type, emit: () => (isMask(type, program.plains) ? "0" : "H.EMPTY") };
   }
-  return {
-    type,
-    emit: once(() => {
-      const plain = toPlain(value, type, program.plains);
-      return Array.isArray(plain) ? addConstant(program, plain) : String(plain);
-    }),
-  };
+  return { type, emit: once(() => getPlainCode(program, toPlain(value, type, program.plains))) };
 };
+
+const getPlainCode = (program: Program, plain: Plain) =>
+  Array.isArray(plain) ? addConstant(program, plain) : String(plain);
+
+const getDomainCode = (program: Program, map: MapType, domain: Value[]) =>
+  getPlainCode(program, toPlain(createSet(domain), map.keys, program.plains));
 
 const once = (build: () => string) => {
   const built: string[] = [];
@@ -640,6 +657,23 @@ const once = (build: () => string) => {
 };
 
 type Comparer = (left: Plain, right: Plain) => number;
+
+// The position of a key among the sorted keys of a sparse function, or -1 when it isn't one.
+const findKey = (compare: Comparer, keys: Plain[], key: Plain) => {
+  for (let low = 0, high = keys.length - 1; low <= high;) {
+    const middle = (low + high) >>> 1;
+    const comparison = compare(keys[middle], key);
+    if (comparison === 0) return middle;
+    if (comparison < 0) low = middle + 1;
+    else high = middle - 1;
+  }
+  return -1;
+};
+
+const findMaskKey = (mask: number, key: number) =>
+  key >= 0 && key < MASK_BITS && ((mask >>> key) & 1) !== 0
+    ? countBits(mask & ((1 << key) - 1))
+    : -1;
 
 const countBits = (mask: number) => {
   let count = 0;
@@ -1149,6 +1183,13 @@ const compileBound = (
       element: type.kind === "Seq" ? createInt() : type.key,
       header: (name) => {
         const resolved = resolveType(type);
+        if (resolved.kind === "Map") {
+          return getSetHeader(
+            program,
+            { type: resolved.keys, emit: () => `(${target.emit()})[0]` },
+            name,
+          );
+        }
         if (resolved.kind === "Fn") {
           return `for (const ${name} of (${target.emit()}, ${addConstant(program, getKeys(program, resolved))}))`;
         }
@@ -1160,13 +1201,15 @@ const compileBound = (
   return getSetBound(program, compileValue(program, setExpression, frame));
 };
 
+const getSetHeader = (program: Program, set: Compiled, name: string) => {
+  if (!isMask(set.type, program.plains)) return `for (const ${name} of ${set.emit()})`;
+  const mask = getName(program, "m");
+  return `for (let ${mask} = ${set.emit()}, ${name} = 0; ${mask} !== 0; ${mask} >>>= 1, ${name}++) if ((${mask} & 1) !== 0)`;
+};
+
 const getSetBound = (program: Program, set: Compiled) => ({
   element: getSetElement(set),
-  header: (name: string) => {
-    if (!isMask(set.type, program.plains)) return `for (const ${name} of ${set.emit()})`;
-    const mask = getName(program, "m");
-    return `for (let ${mask} = ${set.emit()}, ${name} = 0; ${mask} !== 0; ${mask} >>>= 1, ${name}++) if ((${mask} & 1) !== 0)`;
-  },
+  header: (name: string) => getSetHeader(program, set, name),
 });
 
 // The domain of a sparse function, or undefined for a value of another type.
@@ -1288,7 +1331,12 @@ const compileMembership = (
     );
     return {
       type: BOOL,
-      emit: () => `${element.emit()}.every((${name}) => ${inner.emit()})`,
+      emit: () => {
+        const map = getMap(element.type);
+        if (!map) return `${element.emit()}.every((${name}) => ${inner.emit()})`;
+        const pair = getName(program, "p");
+        return `((${pair}) => H.same(${pair}[0], ${getDomainCode(program, map, domain)}) && ${pair}[1].every((${name}) => ${inner.emit()}))(${element.emit()})`;
+      },
     };
   }
   const body = getDefinitionBody(program, setExpression, frame);
@@ -1597,6 +1645,16 @@ const hashPlain = (plain: Plain): number => {
   return hash;
 };
 
+const getLookupCode = (program: Program, map: MapType, code: string, key: string) =>
+  isMask(map.keys, program.plains)
+    ? `H.lookupMask(${code}, ${key})`
+    : `H.lookup(${getComparerCode(program, map.keys.element)}, ${code}, ${key})`;
+
+const getFindCode = (program: Program, map: MapType, keys: string, key: string) =>
+  isMask(map.keys, program.plains)
+    ? `H.findMaskKey(${keys}, ${key})`
+    : `H.findKey(${getComparerCode(program, map.keys.element)}, ${keys}, ${key})`;
+
 const compileApplication = (
   program: Program,
   functionCode: Compiled,
@@ -1611,7 +1669,12 @@ const compileApplication = (
     unify(argument.type, type.key);
     return {
       type: type.range,
-      emit: () => `H.at(${functionCode.emit()}, ${getIndexCode(program, type, argument.emit())})`,
+      emit: () => {
+        const map = getMap(type);
+        return map
+          ? getLookupCode(program, map, functionCode.emit(), argument.emit())
+          : `H.at(${functionCode.emit()}, ${getIndexCode(program, type, argument.emit())})`;
+      },
     };
   }
   if (type.kind === "Seq") {
@@ -1626,10 +1689,7 @@ const compileApplication = (
     unify(argument.type, map.keys.element);
     return {
       type: map.values.element,
-      emit: () =>
-        isMask(map.keys, program.plains)
-          ? `H.lookupMask(${functionCode.emit()}, ${argument.emit()})`
-          : `H.lookup(${getComparerCode(program, map.keys.element)}, ${functionCode.emit()}, ${argument.emit()})`,
+      emit: () => getLookupCode(program, map, functionCode.emit(), argument.emit()),
     };
   }
   if (type.kind === "Var") throw UNKNOWN;
@@ -1673,6 +1733,11 @@ const getFunctionExpansion = (
 const getArgument = (args: Expression[], location: SourceLocation): Expression =>
   args.length === 1 ? args[0] : { kind: "Tuple", elements: args, location };
 
+interface Step {
+  index: string;
+  isSparse: boolean;
+}
+
 const compileExcept = (
   program: Program,
   expression: Expression & { kind: "Except" },
@@ -1680,23 +1745,37 @@ const compileExcept = (
 ): Compiled => {
   const base = compileValue(program, expression.function, frame);
   const updates = expression.updates.map((update) => {
-    const steps: ((container: string) => string)[] = [];
+    const steps: ((container: string) => Step)[] = [];
     const leaf = update.path.reduce<Type>((type, step) => {
       const resolved = resolveType(type);
       if (step.kind === "Field") {
         const record = expectRecord(type);
-        steps.push((container) => getFieldIndexCode(program, type, step.name, container));
+        steps.push((container) => ({
+          index: getFieldIndexCode(program, type, step.name, container),
+          isSparse: false,
+        }));
         return getFieldType(record, step.name);
       }
       const argument = compileValue(program, getArgument(step.args, expression.location), frame);
-      if (resolved.kind === "Fn") {
-        unify(argument.type, resolved.key);
-        steps.push(() => getIndexCode(program, resolved, argument.emit()));
-        return resolved.range;
+      if (resolved.kind === "Fn" || resolved.kind === "Map") {
+        unify(argument.type, resolved.kind === "Fn" ? resolved.key : resolved.keys.element);
+        steps.push((container) => {
+          const map = getMap(type);
+          if (map) {
+            return {
+              index: getFindCode(program, map, `${container}[0]`, argument.emit()),
+              isSparse: true,
+            };
+          }
+          return resolved.kind === "Fn"
+            ? { index: getIndexCode(program, resolved, argument.emit()), isSparse: false }
+            : unsupported();
+        });
+        return resolved.kind === "Fn" ? resolved.range : resolved.values.element;
       }
       unify(argument.type, createInt());
       if (resolved.kind === "Seq") {
-        steps.push(() => `(${argument.emit()}) - 1`);
+        steps.push(() => ({ index: `(${argument.emit()}) - 1`, isSparse: false }));
         return resolved.element;
       }
       return unsupported();
@@ -1715,23 +1794,29 @@ const compileExcept = (
     type: base.type,
     emit: () => {
       const result = getName(program, "x");
+      // Each step copies the container it changes, and a sparse function also its values.
       const statements = updates.map((update) => {
-        const containers = update.steps.map((_, depth) =>
-          depth === 0 ? result : getName(program, "c"),
+        const path = update.steps.reduce<{ code: string; target: string | undefined }>(
+          (current, step) => {
+            const container = current.target === undefined ? result : getName(program, "c");
+            const copy =
+              current.target === undefined
+                ? ""
+                : `const ${container} = ${current.target}.slice(); ${current.target} = ${container}; `;
+            const located = step(container);
+            const values = located.isSparse ? getName(program, "v") : container;
+            const copyValues = located.isSparse
+              ? `const ${values} = ${container}[1].slice(); ${container}[1] = ${values}; `
+              : "";
+            const index = getName(program, "i");
+            return {
+              code: `${current.code}${copy}${copyValues}const ${index} = ${located.index}; if (${index} < 0 || ${index} >= ${values}.length) H.deopt(); `,
+              target: `${values}[${index}]`,
+            };
+          },
+          { code: "", target: undefined },
         );
-        const indexes = update.steps.map(() => getName(program, "i"));
-        const path = update.steps.map((step, depth) => {
-          const container = containers[depth];
-          const index = indexes[depth];
-          const copy =
-            depth === 0
-              ? ""
-              : `const ${container} = ${containers[depth - 1]}[${indexes[depth - 1]}].slice(); ${containers[depth - 1]}[${indexes[depth - 1]}] = ${container}; `;
-          return `${copy}const ${index} = ${step(container)}; if (${index} < 0 || ${index} >= ${container}.length) H.deopt();`;
-        });
-        const last = update.steps.length - 1;
-        const target = `${containers[last]}[${indexes[last]}]`;
-        return `{ ${path.join(" ")} const ${update.old} = ${target}; ${target} = ${update.value.emit()}; }`;
+        return `{ ${path.code}const ${update.old} = ${path.target}; ${path.target} = ${update.value.emit()}; }`;
       });
       return `(() => { const ${result} = (${base.emit()}).slice(); ${statements.join(" ")} return ${result}; })()`;
     },
@@ -1779,12 +1864,23 @@ const compileBuiltin = (
     const target = compileValue(program, args[0], frame);
     const keys = compileKeys(target);
     if (keys) return keys;
-    if (resolveType(target.type).kind !== "Seq") return unsupported();
-    const type: SetType = { kind: "Set", element: createInt() };
+    const resolved = resolveType(target.type);
+    if (resolved.kind !== "Seq" && resolved.kind !== "Fn") return unsupported();
+    const type: SetType = {
+      kind: "Set",
+      element: resolved.kind === "Fn" ? resolved.key : createInt(),
+    };
     return {
       type,
-      emit: () =>
-        `H.${isMask(type, program.plains) ? "range" : "interval"}(1, (${target.emit()}).length)`,
+      emit: () => {
+        const current = resolveType(target.type);
+        if (current.kind === "Map") return `(${target.emit()})[0]`;
+        if (current.kind === "Fn") {
+          const domain = toPlain(createSet(current.domain), type, program.plains);
+          return `(${target.emit()}, ${getPlainCode(program, domain)})`;
+        }
+        return `H.${isMask(type, program.plains) ? "range" : "interval"}(1, (${target.emit()}).length)`;
+      },
     };
   }
   if (operator === ":>" && args.length === 2) {
@@ -2345,8 +2441,11 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       );
       return {
         type,
-        emit: () =>
-          `${addConstant(program, getKeys(program, type))}.map((${name}) => ${body.emit()})`,
+        emit: () => {
+          const values = `${addConstant(program, getKeys(program, type))}.map((${name}) => ${body.emit()})`;
+          const map = getMap(type);
+          return map ? `[${getDomainCode(program, map, domain)}, ${values}]` : values;
+        },
       };
     }
     case "Except":
@@ -2914,6 +3013,7 @@ const writeValue = (bytes: Bytes, value: Value, plains: Plains): void => {
     return names.forEach((name) => writeValue(bytes, getField(value, name), plains));
   }
   writeScalar(bytes, items.length);
+  if (value.kind === "Function") value.domain.forEach((inner) => writeValue(bytes, inner, plains));
   items.forEach((inner) => writeValue(bytes, inner, plains));
 };
 
@@ -2944,7 +3044,18 @@ const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
     return getMixedAtom(plains, plains.values[scalar]);
   }
   const length = readScalar(cursor);
-  if (resolved.kind === "Map") return length === 0 ? getEmptyMap(resolved, plains) : unsupported();
+  const readItems = (element: Type) =>
+    Array.from({ length }, () => readPlain(cursor, element, plains));
+  if (resolved.kind === "Map") {
+    const keys = readItems(resolved.keys.element);
+    const values = readItems(resolved.values.element);
+    return [
+      isMask(resolved.keys, plains)
+        ? keys.reduce<number>((mask, key) => mask | HELPERS.bit(Number(key)), 0)
+        : keys,
+      values,
+    ];
+  }
   if (resolved.kind === "Rec") {
     const atoms = Array.from({ length }, () => plains.values[readScalar(cursor)]);
     // A model value is written as 1 and its atom, unlike a record of one field, whose name is a
@@ -2965,15 +3076,15 @@ const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
     }
     return mask;
   }
-  const element =
-    resolved.kind === "Fn"
-      ? resolved.range
-      : resolved.kind === "Seq" || resolved.kind === "Set"
-        ? resolved.element
-        : unsupported();
-  const items: Plain[] = [];
-  for (let index = 0; index < length; index++) items.push(readPlain(cursor, element, plains));
-  return items;
+  if (resolved.kind === "Fn") {
+    readItems(resolved.key);
+    return readItems(resolved.range);
+  }
+  if (resolved.kind === "Seq") {
+    readItems(createInt());
+    return readItems(resolved.element);
+  }
+  return resolved.kind === "Set" ? readItems(resolved.element) : unsupported();
 };
 
 const pushWord = (words: Words, word: number) => {
@@ -3190,21 +3301,16 @@ const HELPERS = {
     items.sort(compare);
     return items.filter((item, index) => index === 0 || compare(items[index - 1], item) !== 0);
   },
+  findKey,
+  findMaskKey,
   lookup: (compare: Comparer, map: Plain[][], key: Plain) => {
-    const keys = map[0];
-    for (let low = 0, high = keys.length - 1; low <= high;) {
-      const middle = (low + high) >>> 1;
-      const comparison = compare(keys[middle], key);
-      if (comparison === 0) return map[1][middle];
-      if (comparison < 0) low = middle + 1;
-      else high = middle - 1;
-    }
-    return deopt();
+    const index = findKey(compare, map[0], key);
+    return index === -1 ? deopt() : map[1][index];
   },
-  lookupMask: (map: [number, Plain[]], key: number) =>
-    key >= 0 && key < MASK_BITS && ((map[0] >>> key) & 1) !== 0
-      ? map[1][countBits(map[0] & ((1 << key) - 1))]
-      : deopt(),
+  lookupMask: (map: [number, Plain[]], key: number) => {
+    const index = findMaskKey(map[0], key);
+    return index === -1 ? deopt() : map[1][index];
+  },
   combine: (compare: Comparer, left: Plain[][], right: Plain[][]) => {
     const keys: Plain[] = [];
     const values: Plain[] = [];
