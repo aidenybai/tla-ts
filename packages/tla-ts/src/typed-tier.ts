@@ -2,6 +2,7 @@
 // search that succeeds, and gives anything else back to the interpreter, which reruns it.
 import {
   getChildren,
+  type ApplyExpression,
   type Bound,
   type Definition,
   type Expression,
@@ -2355,6 +2356,27 @@ const compileBuiltin = (
         ),
     };
   }
+  const isSubSeq = (arg: Expression): arg is ApplyExpression =>
+    arg.kind === "Apply" &&
+    arg.args.length === 3 &&
+    isBuiltin(program, frame, arg.operator, "SubSeq");
+  // Two subsequences are equal when their elements are, which the tier compares where they are.
+  if ((operator === "=" || operator === "#" || operator === "/=") && args.every(isSubSeq)) {
+    const element = createVar();
+    const ranges = args.map((arg) => {
+      const [sequence, start, end] = arg.args.map((inner) => compileValue(program, inner, frame));
+      unify(sequence.type, { kind: "Seq", element });
+      const first = expectInt(start);
+      const last = expectInt(end);
+      return () =>
+        `${readSequence(program, sequence.type, sequence.emit())}, ${first.emit()}, ${last.emit()}`;
+    });
+    return {
+      type: createBool(),
+      emit: () =>
+        `${operator === "=" ? "" : "!"}H.sameSubSeqs(${ranges.map((range) => range()).join(", ")})`,
+    };
+  }
   const values = args.map((arg) => compileValue(program, arg, frame));
   if (operator === "SubSeq" && values.length === 3) {
     const [sequence, start, end] = values;
@@ -3406,6 +3428,12 @@ const isSame = (left: Plain, right: Plain): boolean => {
   return true;
 };
 
+// TLC's SubSeq(s, m, n) is <<>> when m > n, and fails unless m and n are positions of s otherwise.
+const getSubSeqLength = (target: Plain[], start: number, end: number) => {
+  if (start > end) return 0;
+  return start < 1 || start > target.length || end > target.length ? deopt() : end - start + 1;
+};
+
 const checkInteger = (value: number) =>
   value > MAXIMUM_INTEGER || value < MINIMUM_INTEGER ? deopt() : value;
 
@@ -3757,11 +3785,22 @@ const HELPERS = {
   at: (target: Plain[], position: number) =>
     position >= 0 && position < target.length ? target[position] : deopt(),
   tail: (target: Plain[]) => (target.length === 0 ? deopt() : target.slice(1)),
-  subSeq: (target: Plain[], start: number, end: number) => {
-    if (start > end) return [];
-    return start < 1 || start > target.length || end > target.length
-      ? deopt()
-      : target.slice(start - 1, end);
+  subSeq: (target: Plain[], start: number, end: number) =>
+    target.slice(start - 1, start - 1 + getSubSeqLength(target, start, end)),
+  sameSubSeqs: (
+    left: Plain[],
+    leftStart: number,
+    leftEnd: number,
+    right: Plain[],
+    rightStart: number,
+    rightEnd: number,
+  ) => {
+    const length = getSubSeqLength(left, leftStart, leftEnd);
+    if (length !== getSubSeqLength(right, rightStart, rightEnd)) return false;
+    for (let index = 0; index < length; index++) {
+      if (!isSame(left[leftStart - 1 + index], right[rightStart - 1 + index])) return false;
+    }
+    return true;
   },
   append: (target: Plain[], element: Plain) => {
     const copy = target.slice();
