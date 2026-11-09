@@ -1,7 +1,7 @@
 (*---
-description: 'A labeled box is not recognized as a next-state relation, because LabelNode is not an OpApplNode: it becomes a temporal conjunct and no action exists.'
+description: 'A labeled box is not recognized as a next-state relation, because LabelNode is not an OpApplNode: it becomes a temporal conjunct and no action exists. Real TLC bug, as a label does not change the meaning of the formula it names.'
 ref: tlc2/tool/impl/SpecProcessor.java#processConfigSpec
-features: [liveness]
+features: [liveness, tlc-bug]
 outcome: evaluation-failure
 config: |
   SPECIFICATION Spec
