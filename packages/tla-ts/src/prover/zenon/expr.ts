@@ -11,7 +11,9 @@ import { combine, createHasher, toInt63, type Int63, type List } from "./ocaml";
 interface ExprData {
   id: number;
   hash: number;
-  skeleton: Int63;
+  // The skeleton, an OCaml int. Its low 32 bits are kept signed, which V8 stores without a box.
+  skeletonHigh: number;
+  skeletonLow: number;
   freeVars: List<string> | undefined;
   size: number;
   taus: number;
@@ -93,6 +95,11 @@ const SKELETONS = {
 
 const ZERO = toInt63(0);
 
+const getSkeleton = (expression: Expr): Int63 => ({
+  high: expression.skeletonHigh,
+  low: expression.skeletonLow >>> 0,
+});
+
 // Most expressions have no metavariables, and share this list.
 const NO_METAS: Expr[] = [];
 
@@ -138,7 +145,8 @@ const makeConstant = (kind: "true" | "false", id: number, skeleton: Int63): Cons
   args: [],
   id,
   hash: createHasher().hashIntAndStrings(skeleton.high, skeleton.low, undefined),
-  skeleton,
+  skeletonHigh: skeleton.high,
+  skeletonLow: skeleton.low | 0,
   freeVars: undefined,
   size: 1,
   taus: 0,
@@ -350,7 +358,8 @@ export const createExpressions = () => {
     args,
     id: nextId++,
     hash: hasher.hashIntAndStrings(skeleton.high, skeleton.low, freeVars),
-    skeleton,
+    skeletonHigh: skeleton.high,
+    skeletonLow: skeleton.low | 0,
     freeVars,
     size,
     taus,
@@ -440,7 +449,7 @@ export const createExpressions = () => {
         "meta",
         "",
         [quantified],
-        combine(SKELETONS.meta, quantified.skeleton),
+        combine(SKELETONS.meta, getSkeleton(quantified)),
         undefined,
         1,
         0,
@@ -455,7 +464,7 @@ export const createExpressions = () => {
     let taus = 0;
     let metas = NO_METAS;
     for (const arg of args) {
-      skeleton = combine(arg.skeleton, skeleton);
+      skeleton = combine(getSkeleton(arg), skeleton);
       freeVars = unionNames(freeVars, arg.freeVars);
       size += arg.size;
       taus = Math.max(arg.taus, taus);
@@ -484,7 +493,7 @@ export const createExpressions = () => {
         "not",
         "",
         [operand],
-        combine(SKELETONS.not, operand.skeleton),
+        combine(SKELETONS.not, getSkeleton(operand)),
         operand.freeVars,
         operand.size + 1,
         operand.taus,
@@ -500,7 +509,7 @@ export const createExpressions = () => {
         kind,
         "",
         [left, right],
-        combine(SKELETONS[kind], combine(left.skeleton, right.skeleton)),
+        combine(SKELETONS[kind], combine(getSkeleton(left), getSkeleton(right))),
         unionNames(left.freeVars, right.freeVars),
         left.size + right.size + 1,
         Math.max(left.taus, right.taus),
@@ -519,7 +528,7 @@ export const createExpressions = () => {
         kind,
         type,
         [variable, body],
-        combine(SKELETONS[kind], combine(toInt63(hasher.hashString(type)), body.skeleton)),
+        combine(SKELETONS[kind], combine(toInt63(hasher.hashString(type)), getSkeleton(body))),
         removeName(variable.symbol, body.freeVars),
         kind === "tau" || kind === "lam" ? 1 : body.size + 1,
         kind === "tau" ? body.taus + 1 : body.taus,
