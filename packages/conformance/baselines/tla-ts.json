@@ -417,7 +417,6 @@
   "tlc/generated/random/003/random_01576#assume": "exit-mismatch",
   "tlc/generated/random/004/random_02309#assume": "crash",
   "tlc/generated/random/004/random_02420#assume": "exit-mismatch",
-  "tlc/generated/random/006/random_03036#assume": "text-mismatch",
   "tlc/generated/random/006/random_03226#assume": "exit-mismatch",
   "tlc/generated/random/007/random_03504#assume": "text-mismatch",
   "tlc/generated/random/007/random_03717#assume": "exit-mismatch",

@@ -2933,6 +2933,9 @@ export const formatNormalizedCopies = (values: Value[]) => {
       case "Function":
         value.range.forEach(normalize);
         return;
+      case "LazyFunction":
+        normalize(value.enumerated ?? value.domain);
+        return;
       case "SetOperation":
         normalize(value.left);
         normalize(value.right);
