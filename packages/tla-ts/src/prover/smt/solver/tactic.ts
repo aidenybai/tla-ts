@@ -22,6 +22,7 @@ import { distributeForall } from "./distribute-forall";
 import { domSimplify } from "./dom-simplify";
 import { factor } from "./factor";
 import { findGoalMacros } from "./macro-finder";
+import { reduceArgs } from "./reduce-args";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
 import { occf } from "./occf";
@@ -605,6 +606,13 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "reduce-args",
+    {
+      descrs: new Map(),
+      build: (environment) => inPlace((goal) => reduceArgs(environment.manager, goal)),
+    },
+  ],
+  [
     "macro-finder",
     {
       descrs: getDescrs("", [
@@ -677,7 +685,7 @@ const UNPORTED_TACTICS = new Set(
     "max-bv-sharing nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
-    "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args reduce-args2 reduce-bv-size " +
+    "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args2 reduce-bv-size " +
     "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce ufbv-rewriter"
   ).split(" "),

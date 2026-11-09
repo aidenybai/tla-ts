@@ -359,6 +359,7 @@ class RewriterEngine extends SubstCore {
   // and the call is skipped.
   private isSubstituting: boolean;
   private isExpandingMacros: boolean;
+  private isCheckingSteps: boolean;
   // The config's hooks, read once. Many configs share the engine, so a call through config at each
   // site sees all of their classes and goes megamorphic.
   private reduceAppHook: RewriterTpl["reduceApp"];
@@ -373,6 +374,7 @@ class RewriterEngine extends SubstCore {
     super(manager);
     this.isSubstituting = config.getSubst !== RewriterTpl.prototype.getSubst;
     this.isExpandingMacros = config.getMacro !== RewriterTpl.prototype.getMacro;
+    this.isCheckingSteps = config.checkMaxSteps !== RewriterTpl.prototype.checkMaxSteps;
     this.reduceAppHook = config.reduceApp;
     this.isFlatAssocHook = config.isFlatAssoc;
     this.getMacroHook = config.getMacro;
@@ -422,6 +424,7 @@ class RewriterEngine extends SubstCore {
       if (!this.visit(expr, Infinity))
         while (this.numFrames > 0) {
           manager.limit.checkpoint();
+          if (this.isCheckingSteps) this.config.checkMaxSteps();
           const frame = this.frames[this.numFrames - 1];
           const curr = frame.curr;
           if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {
@@ -804,6 +807,9 @@ export class RewriterTpl {
   reduceApp(_decl: number, _args: number[], _sort: number): number | Rewrite {
     return -1;
   }
+
+  // check_max_steps: Z3 asks the config at each step, which may count a step of the resource limit.
+  checkMaxSteps() {}
 
   getMacro(_decl: number) {
     return -1;
