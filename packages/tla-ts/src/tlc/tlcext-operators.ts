@@ -23,6 +23,7 @@ import {
   type Environment,
 } from "../evaluate";
 import { getChildren, isLocallyResolved, type Definition, type Expression } from "../ast";
+import { ACTION_LEVEL, CONSTANT_LEVEL, VARIABLE_LEVEL } from "../levels";
 import {
   getNamedRegisters,
   getPossibleCounts,
@@ -141,27 +142,29 @@ const isCompleteState = (state: (Value | undefined)[]): state is Value[] =>
 const toStateRecord = (state: Value[], environment: Environment) =>
   createRecord(environment.variables.map((name, index): [string, Value] => [name, state[index]]));
 
-const mentionsVariables = (
+const getMentionedLevel = (
   expression: Expression,
   environment: Environment,
   visited: Set<Definition>,
-): boolean => {
+): number => {
+  if (expression.kind === "Prime" || expression.kind === "Unchanged") return ACTION_LEVEL;
   const name =
     expression.kind === "Identifier"
       ? expression.name
       : expression.kind === "Apply"
         ? expression.operator
         : undefined;
-  if (expression.kind === "Prime" || expression.kind === "Unchanged") return true;
-  if (name !== undefined && !isLocallyResolved(expression)) {
-    if (environment.variableIndex.has(name)) return true;
-    const definition = getDefinition(name, environment);
-    if (definition && !visited.has(definition)) {
-      visited.add(definition);
-      if (mentionsVariables(definition.body, environment, visited)) return true;
-    }
+  const isGlobal = name !== undefined && !isLocallyResolved(expression);
+  if (isGlobal && environment.variableIndex.has(name)) return VARIABLE_LEVEL;
+  const levels = getChildren(expression).map((child) =>
+    getMentionedLevel(child, environment, visited),
+  );
+  const definition = isGlobal ? getDefinition(name, environment) : undefined;
+  if (definition && !visited.has(definition)) {
+    visited.add(definition);
+    levels.push(getMentionedLevel(definition.body, environment, visited));
   }
-  return getChildren(expression).some((child) => mentionsVariables(child, environment, visited));
+  return Math.max(CONSTANT_LEVEL, ...levels);
 };
 
 export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
@@ -267,7 +270,14 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
       const closure = getValueKey(getThunk(args, 1, "TLCCache")());
       const source = expression.expression;
       if (!source || !context) return expression.call([]);
-      const isStateLevel = mentionsVariables(source, context.environment, new Set());
+      const level = getMentionedLevel(source, context.environment, new Set());
+      if (level === ACTION_LEVEL) return expression.call([]);
+      const isStateLevel = level === VARIABLE_LEVEL;
+      // TLC's model checker keeps no cache in a state, so its TLA+ definition evaluates it again.
+      if (isStateLevel && context.state && runtime.getSimulationValue === undefined) {
+        expression.call([]);
+        return expression.call([]);
+      }
       const caches = isStateLevel && context.state ? getStateCaches(context.state) : globalCaches;
       const cache = caches.get(source) ?? new Map<string, Value>();
       caches.set(source, cache);
