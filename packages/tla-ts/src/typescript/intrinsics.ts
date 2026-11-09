@@ -247,6 +247,13 @@ const translateBuiltIn = (
 
 const MAX_INTEGER = 2 ** 31 - 1;
 
+const SPECIAL_NUMBER_NAMES = new Map([
+  ["NaN", "NaN"],
+  ["Infinity", "Infinity"],
+  ["-Infinity", "NegativeInfinity"],
+  ["-0", "NegativeZero"],
+]);
+
 // A property's value from BUILT_INS, or undefined for one TLA+ can't represent.
 const translateBuiltInProperty = (value: string, node: ts.Node, context: Context) => {
   const payload = value.slice(1);
@@ -255,6 +262,10 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
   if (value.startsWith("b")) return boolean(payload === "true");
   if (value === "u") return getUndefined(context);
   if (value === "l") return identifier("Null");
+  const special = SPECIAL_NUMBER_NAMES.get(payload);
+  if (value.startsWith("n") && special !== undefined && context.hasSpecialNumbers) {
+    return identifier(special);
+  }
   const parsed = Number(payload);
   return value.startsWith("n") &&
     Number.isInteger(parsed) &&

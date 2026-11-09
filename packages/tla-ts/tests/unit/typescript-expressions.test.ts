@@ -566,6 +566,28 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const counted = Object.is(count, -0);`,
     ],
     [
+      "[least, absolute, floored, truncated, read, missing, sliced, searched, size, hasZero, hasNan, keyed, finite]",
+      `const box = {};
+      let zero = 0;
+      const negative = -zero;
+      const values = [1, 2, 3];
+      const set = new Set([negative, NaN]);
+      const map = new Map([[negative, "zero"]]);
+      const least = Object.is(Math.min(0, negative), -0);
+      const absolute = Math.abs(-Infinity) === Infinity;
+      const floored = Math.floor(1 / negative) === -Infinity;
+      const truncated = Object.is(Math.trunc(-1 / 3), -0);
+      const read = values[negative];
+      const missing = values[NaN];
+      const sliced = values.slice(-Infinity, Infinity).length;
+      const searched = values.lastIndexOf(3, -Infinity);
+      const size = set.size;
+      const hasZero = set.has(0);
+      const hasNan = set.has(NaN);
+      const keyed = map.get(0);
+      const finite = Number.isFinite(negative) && !Number.isFinite(Infinity) && Number.isNaN(NaN);`,
+    ],
+    [
       "[before, after, twice, base]",
       `const holder: { [key: string]: unknown } = { base: 4 };
       let data: unknown = "first";

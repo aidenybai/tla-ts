@@ -163,6 +163,8 @@ const OBJECT_TESTS = new Map([
   ["isFrozen", "IsFrozen"],
 ]);
 
+const NUMBER_TESTS = new Set(["isNaN", "isFinite", "isInteger", "isSafeInteger"]);
+
 const concatenate = (parts: Expression[]) =>
   parts.reduce((left, right) => apply("\\o", [left, right]));
 
@@ -174,7 +176,10 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
   if (!isNumberLike(key, context)) {
     throw new TlaTypeScriptError("Index arrays and strings with numbers", key);
   }
-  const position = translateInteger(key, scope, context);
+  const position = translateExpression(key, scope, context);
+  if (context.hasSpecialNumbers && position.kind !== "Number") {
+    return useJavaScript("ElementPosition", [position], context);
+  }
   return position.kind === "Number"
     ? number(position.value + 1)
     : apply("+", [position, number(1)]);
@@ -317,7 +322,8 @@ const translateObjectLiteral = (
 };
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
-  const translate = (inner: ts.Expression) => translateInteger(inner, scope, context);
+  const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
+  const isSpecial = context.hasSpecialNumbers;
   const argument = node.arguments[0];
   if (method === "pow" && node.arguments.length === 2) {
     return useJavaScript(
@@ -339,11 +345,19 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     }
     const left = translate(division.left);
     const right = translate(division.right);
+    if (isSpecial) {
+      return useJavaScript(
+        method === "floor" ? "FloorDivide" : "TruncDivide",
+        [left, right],
+        context,
+      );
+    }
     if (method === "floor") return apply("\\div", [left, right]);
     context.prelude.add("Quot");
     return apply("Quot", [left, right]);
   }
   if (method === "abs" && node.arguments.length === 1) {
+    if (isSpecial) return useJavaScript("AbsoluteValue", [translate(argument)], context);
     return share(translate(argument), "value", context, (value) =>
       ifExpression(apply("<", [value, number(0)]), apply("-.", [value]), value),
     );
@@ -351,10 +365,11 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   if ((method === "min" || method === "max") && node.arguments.length > 0) {
     const comparison = method === "min" ? "<=" : ">=";
     if (node.arguments.length === 1 && ts.isSpreadElement(argument)) {
-      if (context.hasSpecialNumbers) {
-        throw new TlaTypeScriptError(
-          `Math.${method} of a spread array can't compare NaN or -0`,
-          node,
+      if (isSpecial) {
+        return useJavaScript(
+          method === "min" ? "MinimumOf" : "MaximumOf",
+          [translateSet(argument.expression, scope, context)],
+          context,
         );
       }
       const values = translateSet(argument.expression, scope, context);
@@ -369,6 +384,13 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
           apply(comparison, [identifier(candidate), identifier(other)]),
         ),
       );
+    }
+    if (isSpecial) {
+      return node.arguments
+        .map(translate)
+        .reduce((result, inner) =>
+          useJavaScript(method === "min" ? "Minimum" : "Maximum", [result, inner], context),
+        );
     }
     return node.arguments
       .map(translate)
@@ -437,6 +459,15 @@ const translateCall = (
   const global = ts.isIdentifier(receiver) ? receiver.text : undefined;
   if (global === "Math" && method !== "hasOwnProperty") {
     return translateMath(node, method, scope, context);
+  }
+  // Every number that TLA+ holds, but NaN and the infinities, is a safe integer.
+  if (global === "Number" && NUMBER_TESTS.has(method) && node.arguments.length <= 1) {
+    const argument = node.arguments.at(0);
+    if (argument === undefined) return boolean(false);
+    const value = translateExpression(argument, scope, context);
+    if (method !== "isNaN") return useJavaScript("IsFinite", [value], context);
+    context.prelude.add("JavaScript");
+    return apply("=", [value, identifier("NaN")]);
   }
   if (global === "Array" && method === "isArray" && node.arguments.length === 1) {
     const argument = node.arguments[0];
@@ -599,16 +630,15 @@ const translateCall = (
   return constructed ?? translateMethod(node, scope, context, isDefined);
 };
 
-// A value as a string, as JavaScript converts it in a template or beside a string in +.
-// A number that tla-ts computes with as an integer, which stops the check if it's NaN, Infinity,
-// or -0.
-export const translateInteger = (node: ts.Expression, scope: Scope, context: Context) => {
+// A value that a Set or a Map keeps as a key, where -0 is 0.
+export const translateSetKey = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
-  return context.hasSpecialNumbers && isNumberLike(node, context)
-    ? useJavaScript("IntegerOf", [value], context)
+  return context.hasSpecialNumbers && mayBeNumber(node, context)
+    ? useJavaScript("KeyOf", [value], context)
     : value;
 };
 
+// A value as a string, as JavaScript converts it in a template or beside a string in +.
 export const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
   const flags = context.checker.getTypeAtLocation(node).flags;
@@ -742,10 +772,15 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     // a Map or a Set has properties, not its keys.
     if (container === "sequence" && isNumberLike(node.left, context)) {
       const length = apply("Len", [translate(node.right)]);
-      return apply("\\in", [
-        translateInteger(node.left, scope, context),
-        apply("..", [number(0), apply("-", [length, number(1)])]),
-      ]);
+      return context.hasSpecialNumbers
+        ? apply("\\in", [
+            useJavaScript("ElementPosition", [translate(node.left)], context),
+            apply("..", [number(1), length]),
+          ])
+        : apply("\\in", [
+            translate(node.left),
+            apply("..", [number(0), apply("-", [length, number(1)])]),
+          ]);
     }
     if (container !== "other") {
       throw new TlaTypeScriptError("Unsupported operator: in", node.operatorToken);

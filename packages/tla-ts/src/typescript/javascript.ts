@@ -37,11 +37,8 @@ IsNumber(value) == TypeOf(value) = "number"
 
 LOCAL IsInteger(value) == IsNumber(value) /\\ value \\notin SpecialNumbers
 
-\\* The integer that a number holds, where tla-ts would compute with it as an integer.
-IntegerOf(value) ==
-  IF IsInteger(value)
-  THEN value
-  ELSE Assert(FALSE, "tla-ts can't compute with NaN, Infinity, or -0 here")
+\\* Whether a value is a number other than NaN and the infinities.
+IsFinite(value) == IsInteger(value) \\/ value = NegativeZero
 
 LOCAL IsZero(value) == value = 0 \\/ value = NegativeZero
 
@@ -132,7 +129,73 @@ LessThan(left, right) ==
 
 LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left)
 
-RelativeIndex(index, length) == IF index < 0 THEN length + index ELSE index
+\\* Math.abs.
+AbsoluteValue(value) == IF IsNegative(value) THEN Negate(value) ELSE value
+
+\\* Math.min and Math.max of two numbers, where NaN wins and -0 is less than 0.
+Minimum(left, right) ==
+  CASE left = NaN \\/ right = NaN -> NaN
+    [] IsZero(left) /\\ IsZero(right) -> IF left = NegativeZero THEN left ELSE right
+    [] LessThan(right, left) -> right
+    [] OTHER -> left
+
+Maximum(left, right) ==
+  CASE left = NaN \\/ right = NaN -> NaN
+    [] IsZero(left) /\\ IsZero(right) -> IF left = 0 THEN left ELSE right
+    [] LessThan(left, right) -> right
+    [] OTHER -> left
+
+MinimumOf(values) ==
+  CASE NaN \\in values -> NaN
+    [] values = {} -> Infinity
+    [] OTHER -> CHOOSE value \\in values : \\A other \\in values : Minimum(value, other) = value
+
+MaximumOf(values) ==
+  CASE NaN \\in values -> NaN
+    [] values = {} -> NegativeInfinity
+    [] OTHER -> CHOOSE value \\in values : \\A other \\in values : Maximum(value, other) = value
+
+\\* Math.floor or Math.trunc of left / right.
+LOCAL Quotient(left, right, isFloor) ==
+  LET isNegative == IsNegative(left) # IsNegative(right)
+      signed(magnitude) == IF isNegative THEN Negate(magnitude) ELSE magnitude
+  IN CASE left = NaN \\/ right = NaN -> NaN
+       [] left \\in Infinities /\\ right \\in Infinities -> NaN
+       [] IsZero(left) /\\ IsZero(right) -> NaN
+       [] left \\in Infinities \\/ IsZero(right) -> signed(Infinity)
+       [] right \\in Infinities \\/ IsZero(left) -> signed(0)
+       [] isFloor /\\ isNegative /\\ Absolute(left) % Absolute(right) # 0 ->
+            -(Absolute(left) \\div Absolute(right) + 1)
+       [] OTHER -> signed(Absolute(left) \\div Absolute(right))
+
+FloorDivide(left, right) == Quotient(left, right, TRUE)
+
+TruncDivide(left, right) == Quotient(left, right, FALSE)
+
+\\* The position, counting from 1, of the element that a number reads, or 0 where it isn't an
+\\* index.
+ElementPosition(value) ==
+  CASE value = NegativeZero -> 1
+    [] value \\in SpecialNumbers -> 0
+    [] OTHER -> value + 1
+
+\\* The value that a Set or a Map keeps as a key, where -0 is 0.
+KeyOf(value) == IF value = NegativeZero THEN 0 ELSE value
+
+\\* The length of new Array(length), which throws a RangeError unless length is an array index.
+ArrayLength(value) ==
+  IF value = NegativeZero \\/ (IsInteger(value) /\\ value >= 0)
+  THEN Magnitude(value)
+  ELSE Assert(FALSE, "tla-ts can't throw the RangeError of new Array")
+
+\\* An index after ToIntegerOrInfinity, counting back from length where it's negative. An infinite
+\\* index lands just past either end.
+RelativeIndex(index, length) ==
+  CASE index = NaN \\/ index = NegativeZero -> 0
+    [] index = Infinity -> length
+    [] index = NegativeInfinity -> -1
+    [] index < 0 -> length + index
+    [] OTHER -> index
 
 ClampedIndex(index, length) ==
   LET relative == RelativeIndex(index, length)
@@ -464,13 +527,14 @@ LOCAL ToLengthOfText(text) ==
        [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(text) \\o " to a length")
 
 \\* ToLength of a length property.
-LOCAL ToLength(value) ==
+ToLength(value) ==
   CASE value \\in {Undefined, Null} -> 0
     [] TypeOf(value) = "boolean" -> IF value THEN 1 ELSE 0
     [] value = Infinity -> Assert(FALSE, "tla-ts can't represent this value")
     [] value \\in SpecialNumbers -> 0
     [] TypeOf(value) = "number" -> IF value < 0 THEN 0 ELSE value
     [] TypeOf(value) = "string" -> ToLengthOfText(value)
+    [] value = <<>> -> 0
     [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(value) \\o " to a length")
 
 RECURSIVE KeyCount(_, _)

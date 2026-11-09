@@ -92,7 +92,8 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     const usesSpecialNumbers = (node: ts.Node): boolean =>
-      (ts.isIdentifier(node) && ["NaN", "Infinity"].includes(node.text)) ||
+      (ts.isIdentifier(node) &&
+        ["NaN", "Infinity", "POSITIVE_INFINITY", "NEGATIVE_INFINITY"].includes(node.text)) ||
       (ts.isPrefixUnaryExpression(node) &&
         node.operator === ts.SyntaxKind.MinusToken &&
         ts.isNumericLiteral(node.operand) &&
