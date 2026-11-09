@@ -1197,10 +1197,7 @@ export const createEnvironment = (
   });
   tables.forEach((table) =>
     getScopedKeys(table).forEach((key) =>
-      setOperator(
-        key,
-        createOperatorTable(table.name, getKeyArity(key) || table.rows[0][0].length, table.rows),
-      ),
+      setOperator(key, createOperatorTable(table.name, getKeyArity(key), table.rows)),
     ),
   );
   const substitutions = new Map(
