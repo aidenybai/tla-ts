@@ -1,4 +1,4 @@
-import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
+import { isStackOverflow, TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import { prettyPrint } from "./pretty-print";
 import { isEvalException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
@@ -2857,7 +2857,7 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
   try {
     return toFiniteFunction(value);
   } catch (error) {
-    if (error instanceof TlaEvaluationError) return undefined;
+    if (error instanceof TlaEvaluationError || isStackOverflow(error)) return undefined;
     throw error;
   }
 };
