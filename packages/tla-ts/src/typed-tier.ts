@@ -38,7 +38,7 @@ interface BoolType {
 // class of atoms holds at most one type of model value, and then no strings.
 interface StrType {
   kind: "Str";
-  target: StrType | MixType | undefined;
+  target: StrType | MixType | RecType | undefined;
   modelValueTypes: Set<string>;
   hasString: boolean;
 }
@@ -176,6 +176,10 @@ const addAtom = (type: StrType, plains: Plains, value: Value) => {
   return getAtom(plains, value);
 };
 const createMix = (): MixType => ({ kind: "Mix", target: undefined });
+// TLC finds an untyped model value unequal to and less than any record. A record type that may hold
+// one has a shape whose only field, named by a string no TLA+ string can be, is the model value. A
+// shape of one field orders before records of more fields, and its name before any other name.
+const NULL_FIELD = "\u0000";
 const MAXIMUM_COMPARISONS = 8;
 const ATOM_BASE = 2 ** 32;
 const MAXIMUM_SUBSET_BASE = 20;
@@ -258,6 +262,14 @@ const unify = (left: Type, right: Type): void => {
       if (type.kind === "Str" && (type.hasString || type.modelValueTypes.size > 0)) unsupported();
       if (type !== mix) type.target = mix;
     });
+    return;
+  }
+  if (leftType.kind === "Str" && rightType.kind === "Rec") return unify(rightType, leftType);
+  if (leftType.kind === "Rec" && rightType.kind === "Str") {
+    if (rightType.hasString || rightType.modelValueTypes.size > 0) return unsupported();
+    if (getShapeIndex(leftType, [NULL_FIELD]) === -1) leftType.shapes.push([NULL_FIELD]);
+    if (!leftType.fields.has(NULL_FIELD)) leftType.fields.set(NULL_FIELD, createStr());
+    rightType.target = leftType;
     return;
   }
   if (leftType.kind === "Fn" && rightType.kind === "Seq") return unify(rightType, leftType);
@@ -491,6 +503,12 @@ const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
       0,
     );
   }
+  if (resolved.kind === "Rec" && typeof value === "object" && value.kind === "ModelValue") {
+    const tag = getShapeIndex(resolved, [NULL_FIELD]);
+    if (tag === -1 || value.type !== undefined) return unsupported();
+    const atom = getAtom(plains, value);
+    return resolved.shapes.length === 1 ? [atom] : [tag, atom];
+  }
   if (typeof value !== "object" || value.kind !== "Function") return unsupported();
   if (resolved.kind === "Seq") {
     return value.range.map((inner) => toPlain(inner, resolved.element, plains));
@@ -625,9 +643,10 @@ const getComparerCode = (program: Program, type: Type): string => {
 };
 
 // The shapes of a record whose type isn't known yet come from the values it unifies with. A value
-// that isn't a record fails to unify with it.
+// that isn't a record or a model value fails to unify with it.
 const expectRecord = (type: Type) => {
-  if (resolveType(type).kind === "Var") {
+  const kind = resolveType(type).kind;
+  if (kind === "Var" || kind === "Str") {
     unify(type, { kind: "Rec", shapes: [], fields: new Map(), target: undefined });
   }
   const resolved = resolveType(type);
@@ -1270,7 +1289,11 @@ const compileMembership = (
             ),
           );
           const shape = record.shapes.length > 1 ? `${name}r[0]` : "0";
-          return `((${name}r, ${name}) => ${names}[${shape}].includes(${name}))(${target.emit()}, ${element.emit()})`;
+          const test = `${names}[${shape}].includes(${name})`;
+          // TLC fails to take the domain of a model value.
+          const tag = getShapeIndex(record, [NULL_FIELD]);
+          const guarded = tag === -1 ? test : `${shape} === ${tag} ? H.deopt() : ${test}`;
+          return `((${name}r, ${name}) => ${guarded})(${target.emit()}, ${element.emit()})`;
         },
       };
     }
@@ -1503,9 +1526,9 @@ const compileExcept = (
     const leaf = update.path.reduce<Type>((type, step) => {
       const resolved = resolveType(type);
       if (step.kind === "Field") {
-        if (resolved.kind !== "Rec") return unsupported();
+        const record = expectRecord(type);
         steps.push((container) => getFieldIndexCode(program, type, step.name, container));
-        return getFieldType(resolved, step.name);
+        return getFieldType(record, step.name);
       }
       const argument = compileValue(program, getArgument(step.args, expression.location), frame);
       if (resolved.kind === "Fn") {
@@ -2636,10 +2659,14 @@ const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
   }
   const length = readScalar(cursor);
   if (resolved.kind === "Rec") {
-    const names: string[] = [];
-    for (let index = 0; index < length; index++) {
-      names.push(String(plains.values[readScalar(cursor)]));
+    const atoms = Array.from({ length }, () => plains.values[readScalar(cursor)]);
+    // A model value is written as 1 and its atom, unlike a record of one field, whose name is a
+    // string.
+    const [first] = atoms;
+    if (length === 1 && typeof first === "object" && first.kind === "ModelValue") {
+      return toPlain(first, resolved, plains);
     }
+    const names = atoms.map(String);
     const fields: Plain[] = resolved.shapes.length === 1 ? [] : [getShapeIndex(resolved, names)];
     for (const name of names) fields.push(readPlain(cursor, getFieldType(resolved, name), plains));
     return fields;
