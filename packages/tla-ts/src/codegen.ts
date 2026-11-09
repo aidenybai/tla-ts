@@ -311,6 +311,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       return generateApply(generator, expression, frame);
     case "And":
     case "Or": {
+      // UNCHANGED <<>> is an empty conjunction.
+      if (expression.operands.length === 0) return String(expression.kind === "And");
       const node = addReference(generator, expression);
       const operator = expression.kind === "And" ? " && " : " || ";
       return `(${expression.operands.map((operand, index) => `junct(${generate(operand)}, ${node}, ${index})`).join(operator)})`;
