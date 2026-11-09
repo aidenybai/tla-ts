@@ -267,6 +267,35 @@ const loosen = () => {
         edits.set(declaration.name.getEnd(), ": { [key: string]: unknown }");
       }
     }
+    // Any other object, such as a built-in prototype, may get properties that its type lacks. An
+    // array keeps its type, since tla-ts compiles it to a sequence.
+    const receiver = accessed?.expression;
+    const receiverType = receiver === undefined ? undefined : checker.getTypeAtLocation(receiver);
+    const receiverDeclaration =
+      receiver !== undefined && ts.isIdentifier(receiver)
+        ? checker.getSymbolAtLocation(receiver)?.valueDeclaration
+        : undefined;
+    if (
+      accessed !== undefined &&
+      ts.isPropertyAccessExpression(accessed) &&
+      !ts.isPrivateIdentifier(accessed.name) &&
+      receiver !== undefined &&
+      receiver.kind !== ts.SyntaxKind.SuperKeyword &&
+      !ts.isParenthesizedExpression(receiver) &&
+      receiverType !== undefined &&
+      (receiverType.flags & ts.TypeFlags.Object) !== 0 &&
+      !checker.isArrayType(receiverType) &&
+      !checker.isTupleType(receiverType) &&
+      !(
+        receiverDeclaration !== undefined &&
+        ts.isVariableDeclaration(receiverDeclaration) &&
+        receiverDeclaration.initializer !== undefined &&
+        ts.isObjectLiteralExpression(receiverDeclaration.initializer)
+      )
+    ) {
+      edits.set(receiver.getStart(), "(");
+      edits.set(receiver.getEnd(), " as unknown as { [key: string]: unknown })");
+    }
     // A parameter or variable whose type inferFromUsage can't infer may hold any value.
     const declared =
       (diagnostic.code === 7006 && ts.isParameter(parent)) ||
