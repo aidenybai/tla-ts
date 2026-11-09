@@ -1,6 +1,8 @@
 (*---
 description: -generate doesn't handle CASE in an action and reports the unsupported operation.
 ref: tlc2/tool/impl/Tool.java#getNextStatesAppl
+features:
+  - tlc-bug
 outcome: evaluation-failure
 config: |
   INIT Init
@@ -30,7 +32,7 @@ all:
     The exception was a java.lang.UnsupportedOperationException
     : Probabilistic evaluation of next-state relation not implemented for CASE yet.
     2121:1 The behavior up to this point is:
-    2217:4 1: <Init line 17, col 9 to line 17, col 13 of module case_unsupported>
+    2217:4 1: <Init line 19, col 9 to line 19, col 13 of module case_unsupported>
     x = 0
     2209:0 Progress(1) at <date>: 1 states generated, -1 distinct states found, -1 states left on queue.
     2210:0 The number of states generated: 1
