@@ -314,6 +314,9 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
         );
       }
       const definition = context ? getDefinition(name, context.environment) : undefined;
+      // A definition that TLC overrides with Java has the Java method's value, not its body's.
+      const builtin = definition ? undefined : context?.environment.builtins.get(name);
+      if (builtin?.arity === 0) return builtin.evaluate([], context);
       if (!definition || !context) {
         throw new TlaModuleError(
           `The argument of TLCEvalDefinition should be a name of a definition reachable from the root module, but instead it is:\n${formatValue(name)}`,
