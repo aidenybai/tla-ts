@@ -18,6 +18,7 @@ import { Der } from "./der";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
+import { distributeForall } from "./distribute-forall";
 import { domSimplify } from "./dom-simplify";
 import { factor } from "./factor";
 import { findGoalMacros } from "./macro-finder";
@@ -597,6 +598,13 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   [
+    "distribute-forall",
+    {
+      descrs: new Map(),
+      build: (environment) => inPlace((goal) => distributeForall(environment.manager, goal)),
+    },
+  ],
+  [
     "macro-finder",
     {
       descrs: getDescrs("", [
@@ -662,7 +670,7 @@ const UNPORTED_TACTICS = new Set(
   (
     "ackermannize_bv add-bounds aig bit-blast blast-term-ite bv_bound_chk bv-divrem-bounds " +
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
-    "degree-shift demodulator diff-neq distribute-forall " +
+    "degree-shift demodulator diff-neq " +
     "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
