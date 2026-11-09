@@ -1188,6 +1188,15 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't throw the RangeError of a radix outside 2 to 36");
   });
 
+  it("tells a value's kind through Object.prototype.toString", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nconst list = [1];\nconst made: object = Object.create(Math);\nconst kinds = [Object.prototype.toString.call(object), Object.prototype.toString.call(list), Object.prototype.toString.call(made), Object.prototype.toString.call(Math), Object.prototype.toString.call(Array.prototype), Object.prototype.toString.call(new TypeError("x")), Object.prototype.toString.call(undefined), Object.prototype.toString.call(1)];\nif (kinds.join() !== "[object Object],[object Array],[object Math],[object Math],[object Array],[object Error],[object Undefined],[object Number]") throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("names the functions that a parameter's defaults make", async () => {
     const result = await check(
       compile(

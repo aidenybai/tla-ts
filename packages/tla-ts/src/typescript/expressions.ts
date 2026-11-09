@@ -620,6 +620,23 @@ const translateCall = (
       context,
     );
   }
+  if (calledMethod === "toString" && node.arguments.length <= 1) {
+    const argument = node.arguments.at(0);
+    const kind = argument === undefined ? "other" : getKind(argument, context);
+    return useJavaScript(
+      "ObjectToString",
+      [
+        getHeap(scope, node, context),
+        argument === undefined
+          ? getUndefined(context)
+          : translateExpression(argument, scope, context),
+        string(
+          kind === "sequence" ? "Array" : kind === "set" ? "Set" : kind === "map" ? "Map" : "",
+        ),
+      ],
+      context,
+    );
+  }
   if (global === "Object" && method === "is" && node.arguments.length === 2) {
     if (
       node.arguments.some(

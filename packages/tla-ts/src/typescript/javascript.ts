@@ -912,6 +912,63 @@ LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
 
 IsArray(heap, value) == IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
+\\* The built-in objects that have their own Symbol.toStringTag, by key, with its value.
+LOCAL ToStringTags ==
+  [key \\in {"Math", "JSON", "Reflect", "Atomics", "Symbol.prototype", "BigInt.prototype",
+            "Map.prototype", "Set.prototype", "WeakMap.prototype", "WeakSet.prototype",
+            "WeakRef.prototype", "FinalizationRegistry.prototype", "Promise.prototype",
+            "ArrayBuffer.prototype", "SharedArrayBuffer.prototype", "DataView.prototype"} |->
+     IF key \\in {"Math", "JSON", "Reflect", "Atomics"} THEN key ELSE SubSeq(key, 1, Len(key) - 10)]
+
+\\* The built-in prototypes that have no Symbol.toStringTag of their own.
+LOCAL UntaggedPrototypes ==
+  {"Object.prototype", "Array.prototype", "Boolean.prototype", "Number.prototype",
+   "String.prototype", "Date.prototype", "RegExp.prototype", "Error.prototype",
+   "TypeError.prototype", "RangeError.prototype", "SyntaxError.prototype",
+   "ReferenceError.prototype", "EvalError.prototype", "URIError.prototype",
+   "AggregateError.prototype"}
+
+\\* The Symbol.toStringTag that an object has or inherits, or "" where it has none. A script can't
+\\* define symbol keys, so only built-in objects have one.
+RECURSIVE TagOf(_, _)
+TagOf(heap, ref) ==
+  CASE ref = Null -> ""
+    [] IsHeap(ref) -> TagOf(heap, Prototype(heap, ref))
+    [] \\E key \\in DOMAIN ToStringTags : key = BuiltInKey(ref) -> ToStringTags[BuiltInKey(ref)]
+    [] IsBuiltIn(ref) /\\ (Lookup(heap, ref).isCallable \\/ \\E key \\in UntaggedPrototypes : key = BuiltInKey(ref)) ->
+         TagOf(heap, Prototype(heap, ref))
+    [] OTHER -> Assert(FALSE, "tla-ts can't read the Symbol.toStringTag of " \\o ToString(ref))
+
+\\* The kind that Object.prototype.toString gives an object without a Symbol.toStringTag.
+LOCAL ClassOf(heap, ref) ==
+  CASE IsHeap(ref) /\\ IsArrayObject(Lookup(heap, ref)) -> "Array"
+    [] IsHeap(ref) -> IF Lookup(heap, ref).isCallable THEN "Function" ELSE "Object"
+    [] BuiltInKey(ref) = "Array.prototype" -> "Array"
+    [] Lookup(heap, ref).isCallable -> "Function"
+    [] BuiltInKey(ref) = "Boolean.prototype" -> "Boolean"
+    [] BuiltInKey(ref) = "Number.prototype" -> "Number"
+    [] BuiltInKey(ref) = "String.prototype" -> "String"
+    [] OTHER -> "Object"
+
+LOCAL Tagged(heap, ref, kind) == IF TagOf(heap, ref) = "" THEN kind ELSE TagOf(heap, ref)
+
+\\* Object.prototype.toString, which gives "[object Kind]". A value that isn't on the heap gives the
+\\* kind of object that holds it, such as Array for a sequence.
+ObjectToString(heap, value, kind) ==
+  "[object "
+    \\o (CASE value = Undefined -> "Undefined"
+          [] value = Null -> "Null"
+          [] TypeOf(value) = "number" -> "Number"
+          [] TypeOf(value) = "string" -> "String"
+          [] TypeOf(value) = "boolean" -> "Boolean"
+          [] ~IsRef(value) /\\ IsError(value) ->
+               Tagged(heap, Get(heap, value.constructor, "prototype"), "Error")
+          [] IsHeap(value) \\/ IsBuiltIn(value) -> Tagged(heap, value, ClassOf(heap, value))
+          [] TypeOf(value) = "function" -> "Function"
+          [] kind # "" -> kind
+          [] OTHER -> Assert(FALSE, "tla-ts can't tell the kind of " \\o ToString(value)))
+    \\o "]"
+
 \\* ArraySpeciesCreate, which makes the array that a method returns through the constructor of the
 \\* array that the method copies, where tla-ts follows only Array.
 Species(constructor, array, elements) ==
