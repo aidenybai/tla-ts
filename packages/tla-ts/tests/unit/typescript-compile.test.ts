@@ -1429,6 +1429,25 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls a string's methods on the primitive that a String object wraps", async () => {
+    const result = await checkModel(`
+      const text = new String(" ab");
+      const count = new Number(-123);
+      const found = text.indexOf("b");
+      const trimmed = text.trim();
+      const digits = count.toString(16);
+      if (found !== 2 || trimmed !== "ab" || digits !== "-7b") throw new Error("missed");
+    `);
+    expect(result.failure).toBeUndefined();
+    const shadowed = await checkModel(`
+      const text = new String("ab");
+      Object.defineProperty(text, "indexOf", { value: 1 });
+      const found = text.indexOf("b");
+      if (found !== 1) throw new Error("missed");
+    `);
+    expect(shadowed.failure?.message).toContain("tla-ts can't call this method");
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

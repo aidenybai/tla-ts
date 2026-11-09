@@ -1036,9 +1036,24 @@ export const translateMethod = (
   return useJavaScript(
     primitiveMethod.operator,
     [
-      primitiveCall.converter === undefined
-        ? translateExpression(receiver, scope, context)
-        : useJavaScript(primitiveCall.converter, [translateOptional(primitiveCall.owner)], context),
+      primitiveCall.wrapper !== undefined
+        ? useJavaScript(
+            "WrappedPrimitive",
+            [
+              getHeap(scope, node, context),
+              translateExpression(receiver, scope, context),
+              string(primitiveCall.wrapper),
+              string(primitiveCall.method),
+            ],
+            context,
+          )
+        : primitiveCall.converter === undefined
+          ? translateExpression(receiver, scope, context)
+          : useJavaScript(
+              primitiveCall.converter,
+              [translateOptional(primitiveCall.owner)],
+              context,
+            ),
       ...primitiveMethod.parameters.map((_, position) =>
         translateOptional(primitiveCall.methodArguments[position]),
       ),
@@ -1062,12 +1077,16 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
       method: receiver.name.text,
       owner: node.arguments.at(0),
       methodArguments: node.arguments.slice(1),
+      wrapper: undefined,
     };
   }
+  // A String or Number object, whose primitive the method reads.
+  const wrapper =
+    kind === "object" ? context.checker.getTypeAtLocation(receiver).getSymbol()?.name : undefined;
   const methods =
-    kind === "string"
+    kind === "string" || wrapper === "String"
       ? STRING_METHODS
-      : isNumberLike(receiver, context)
+      : isNumberLike(receiver, context) || wrapper === "Number"
         ? NUMBER_METHODS
         : undefined;
   return (
@@ -1077,6 +1096,7 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
       method: node.expression.name.text,
       owner: undefined,
       methodArguments: node.arguments,
+      wrapper: wrapper === "String" || wrapper === "Number" ? wrapper : undefined,
     }
   );
 };

@@ -739,6 +739,18 @@ ThisString(value) ==
   THEN Assert(FALSE, "tla-ts can't throw the TypeError of a string method on undefined or null")
   ELSE StringOf(value)
 
+\\* The primitive that a String or Number object holds, for a call of a method that it reads from
+\\* its prototype, which must still hold the built-in method.
+WrappedPrimitive(heap, ref, kind, method) ==
+  IF /\\ IsHeap(ref)
+     /\\ "primitive" \\in DOMAIN Lookup(heap, ref)
+     /\\ TypeOf(Lookup(heap, ref).primitive) = IF kind = "String" THEN "string" ELSE "number"
+     /\\ IsRef(Get(heap, ref, method))
+     /\\ ~IsHeap(Get(heap, ref, method))
+     /\\ Get(heap, ref, method)[Ref] = kind \\o ".prototype." \\o method
+  THEN Lookup(heap, ref).primitive
+  ELSE Assert(FALSE, "tla-ts can't call this method on " \\o ToString(ref))
+
 \\* The number that Number.prototype.method.call reads from the value that it calls the method on.
 ThisNumber(value) ==
   IF TypeOf(value) = "number"
