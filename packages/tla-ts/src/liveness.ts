@@ -330,6 +330,19 @@ export const toLiveExpression = (
       return createBoolean(value);
     }
     if (atomLevel === VARIABLE_LEVEL) return { kind: "State", expression, scope };
+    // TLC checks <<A>>_v's subscript before it evaluates A.
+    if (expression.kind === "AngleAction") {
+      return {
+        kind: "Action",
+        expression: expression.action,
+        unchanged: {
+          kind: "Unchanged",
+          expression: expression.subscript,
+          location: expression.location,
+        },
+        scope,
+      };
+    }
     return { kind: "Action", expression, unchanged: undefined, scope };
   };
 
