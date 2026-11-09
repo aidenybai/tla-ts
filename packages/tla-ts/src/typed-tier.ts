@@ -3646,6 +3646,27 @@ const mergeSets = (compare: Comparer, left: Plain[], right: Plain[], kept: Kept)
   return result;
 };
 
+// Where an element goes in a sorted set. Adding or removing one element searches for it, where a
+// merge would compare it with every element.
+const findPosition = (compare: Comparer, set: Plain[], element: Plain) => {
+  let low = 0;
+  for (let high = set.length; low < high;) {
+    const middle = (low + high) >>> 1;
+    if (compare(set[middle], element) < 0) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+
+const addElement = (compare: Comparer, set: Plain[], element: Plain) => {
+  const position = findPosition(compare, set, element);
+  if (position < set.length && compare(set[position], element) === 0) return set;
+  const result = set.slice(0, position);
+  result.push(element);
+  for (let index = position; index < set.length; index++) result.push(set[index]);
+  return result;
+};
+
 const UNION: Kept = { isCommonKept: true, isLeftKept: true, isRightKept: true };
 const INTERSECTION: Kept = { isCommonKept: true, isLeftKept: false, isRightKept: false };
 const DIFFERENCE: Kept = { isCommonKept: false, isLeftKept: true, isRightKept: false };
@@ -3936,12 +3957,22 @@ const HELPERS = {
     }
     return true;
   },
-  union: (compare: Comparer, left: Plain[], right: Plain[]) =>
-    mergeSets(compare, left, right, UNION),
+  union: (compare: Comparer, left: Plain[], right: Plain[]) => {
+    if (right.length === 1) return addElement(compare, left, right[0]);
+    return left.length === 1
+      ? addElement(compare, right, left[0])
+      : mergeSets(compare, left, right, UNION);
+  },
   intersect: (compare: Comparer, left: Plain[], right: Plain[]) =>
     mergeSets(compare, left, right, INTERSECTION),
-  difference: (compare: Comparer, left: Plain[], right: Plain[]) =>
-    mergeSets(compare, left, right, DIFFERENCE),
+  difference: (compare: Comparer, left: Plain[], right: Plain[]) => {
+    if (right.length !== 1) return mergeSets(compare, left, right, DIFFERENCE);
+    const position = findPosition(compare, left, right[0]);
+    if (position === left.length || compare(left[position], right[0]) !== 0) return left;
+    const result = left.slice(0, position);
+    for (let index = position + 1; index < left.length; index++) result.push(left[index]);
+    return result;
+  },
   position: (lookup: Map<number, { key: Plain; position: number }[]>, key: Plain) =>
     lookup.get(hashPlain(key))?.find((entry) => isSame(entry.key, key))?.position ?? -1,
   isIn: (buckets: Map<number, Plain[]>, plain: Plain) =>
