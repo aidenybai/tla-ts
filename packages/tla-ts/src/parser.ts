@@ -692,19 +692,31 @@ const parse = (
   // fairness expression to take as its action.
   const parseSubscript = (): { subscript: Expression; lastArgs: Expression[] } => {
     const token = peek();
+    if (isTlapm && BUILTIN_CONSTANTS.has(token.text)) {
+      const start = cursor.index;
+      advance();
+      const constant: Expression = {
+        kind: "Identifier",
+        name: token.text,
+        location: getLocation(token),
+      };
+      return { subscript: withRange(constant, start), lastArgs: [] };
+    }
+    const isTlapmAtom =
+      isTlapm && (token.kind === "Number" || token.kind === "String" || isAt("@"));
     if (token.kind === "Identifier") {
       const start = cursor.index;
       const names: string[] = [];
       const selectorRanges: SourceRange[] = [];
-      const parseElement = () => {
+      const parseElement = (isApplicable: boolean) => {
         selectorRanges.push(getRange(cursor.index, cursor.index));
         names.push(expectIdentifier());
-        return isAt("(") ? parseArguments() : [];
+        return isApplicable && isAt("(") ? parseArguments() : [];
       };
-      const elementArgs = [parseElement()];
+      const elementArgs = [parseElement(!isTlapm)];
       while (isAt("!") && peek(1).kind === "Identifier") {
         advance();
-        elementArgs.push(parseElement());
+        elementArgs.push(parseElement(true));
       }
       const prefixArgs = elementArgs.slice(0, -1);
       const location = getLocation(token);
@@ -723,7 +735,7 @@ const parse = (
           };
       return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
     }
-    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[")) {
+    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[") || isTlapmAtom) {
       return { subscript: parsePrimary(), lastArgs: [] };
     }
     throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
