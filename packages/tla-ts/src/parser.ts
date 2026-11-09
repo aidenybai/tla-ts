@@ -1263,7 +1263,10 @@ const parse = (
   // prefix operator.
   const parsePrefixOperand = (operator: Token, low: number, high: number) => {
     operators.last = operators.preceding = { low, high };
-    const operand = parseExpression(high + 1);
+    // tlapm applies a postfix operator to the operand, as no prefix operator binds above it.
+    const operand = parseExpression(
+      isTlapm ? Math.min(high + 1, POSTFIX_PRECEDENCE.low) : high + 1,
+    );
     const next = peek();
     const nextHigh = DEFINABLE_POSTFIX_OPERATORS.has(next.text)
       ? POSTFIX_PRECEDENCE.high
