@@ -363,10 +363,14 @@ export const runSmtlibScript = (
       throw new SmtUnsupportedError("nonlinear optimization without nlsat");
     if ((parameters.get("opt.optsmt_engine") ?? "basic") !== "basic")
       throw new SmtUnsupportedError("the option :opt.optsmt_engine");
+    if (parameters.get("opt.pareto_nlsat_reuse") === "false")
+      throw new SmtUnsupportedError("pareto optimization without incremental nlsat");
     return {
       priority: parameters.get("opt.priority") ?? "lex",
       bisectRounds: Number(parameters.get("opt.optsmt_bisect_rounds") ?? 64),
       supremumRlimit: Number(parameters.get("opt.optsmt_nlsat_supremum_rlimit") ?? 100000),
+      isParetoNlsat: parameters.get("opt.pareto_nlsat") !== "false",
+      paretoMaxLemmas: Number(parameters.get("opt.pareto_nlsat_max_lemmas") ?? 128),
     };
   };
   const optimizeNonlinear = (extra: number[]) => {
@@ -396,7 +400,10 @@ export const runSmtlibScript = (
     clearCheck();
     state.manager.limit.push(settings.rlimit);
     try {
-      const status = optimizer.optimize(hard, optOptions);
+      const status = optimizer.optimize(hard, {
+        ...optOptions,
+        hasAssumptions: extra.length > 0 || state.names.some((name) => name !== -1),
+      });
       optimizer.model?.incRef();
       state.check = {
         status,

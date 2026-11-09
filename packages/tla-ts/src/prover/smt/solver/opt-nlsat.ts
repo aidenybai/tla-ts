@@ -209,7 +209,7 @@ export class NlsatOpt {
     const x2t = new Map([[objective, variable]]);
     const a2b = new Map<number, number>();
     try {
-      goal2nlsat(this.manager, goal.forms.items, solver, x2t, a2b);
+      goal2nlsat(this.manager, goal.forms.items, solver, x2t, a2b, null);
     } catch (error) {
       if (!(error instanceof SmtTacticError)) throw error;
       return null;

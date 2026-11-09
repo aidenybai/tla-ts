@@ -21,6 +21,7 @@ import { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { AlgebraicManager, type Anum } from "./nlsat/algebraic";
 import { mkAlgebraicEq, NlsatOpt, type NlsatOptResult } from "./opt-nlsat";
+import { canReuseNlsatSolver, giaPareto, ParetoNlsatSolver } from "./opt-pareto";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -38,6 +39,9 @@ export interface OptOptions {
   priority: string;
   bisectRounds: number;
   supremumRlimit: number;
+  isParetoNlsat: boolean;
+  paretoMaxLemmas: number;
+  hasAssumptions: boolean;
 }
 
 interface ObjectiveValue {
@@ -62,6 +66,7 @@ export class OptContext {
   private upper: ObjectiveValue[] = [];
   private boxModels: ProtoModel[] = [];
   private boxIndex = -1;
+  private pareto: ParetoNlsatSolver | null = null;
   private normalized: OptObjective[] = [];
   private normalizedGoal: Goal | null = null;
   private normalizedTerms: RefVector;
@@ -185,7 +190,62 @@ export class OptContext {
     return L_TRUE;
   }
 
+  private getModelBound(value: number, isLower: boolean) {
+    const manager = this.manager;
+    if (manager.isNumeral(value)) return manager.getRationalValue(value);
+    if (!manager.isAlgebraicNumeral(value)) return null;
+    const scale = Rational.of(10n ** 12n);
+    const interval = this.am.getInterval(manager.getAlgebraicValue(value), 40);
+    return isLower
+      ? interval[0].mul(scale).floor().div(scale)
+      : interval[1].mul(scale).ceil().div(scale);
+  }
+
+  private executePareto() {
+    const pareto = this.pareto;
+    if (pareto === null) throw new SmtUnsupportedError("pareto optimization without a solver");
+    const outcome = giaPareto(this.manager, pareto, this.normalized);
+    if (outcome.status !== L_TRUE || outcome.model === null) {
+      if (outcome.status === L_UNDEF) this.reasonUnknown = pareto.reasonUnknown;
+      pareto.release();
+      this.pareto = null;
+      return outcome.status;
+    }
+    const model = outcome.model;
+    for (const [index, objective] of this.normalized.entries()) {
+      const value = model.eval(objective.term, true);
+      const sides = [objective.isMax, !objective.isMax].map((isLower) => {
+        const bound = this.getModelBound(value, isLower);
+        return bound === null ? null : objective.isMax ? bound : bound.neg();
+      });
+      this.manager.decRef(value);
+      const bracket = (rational: Rational) => ({
+        infinity: Rational.zero,
+        value: rational,
+        epsilon: Rational.zero,
+        exact: null,
+      });
+      if (sides[0] !== null) this.lower[index] = bracket(sides[0]);
+      if (sides[1] !== null) this.upper[index] = bracket(sides[1]);
+    }
+    this.setModel(model);
+    model.decRef();
+    return L_TRUE;
+  }
+
+  private startPareto(hard: readonly number[], options: OptOptions) {
+    if (!options.isParetoNlsat || options.hasAssumptions)
+      throw new SmtUnsupportedError("pareto optimization without nlsat");
+    const terms = [...hard, ...this.normalized.map((objective) => objective.term)];
+    if (!canReuseNlsatSolver(this.manager, terms))
+      throw new SmtUnsupportedError("pareto optimization without incremental nlsat");
+    this.pareto = new ParetoNlsatSolver(this.manager, this.environment, options.paretoMaxLemmas);
+    for (const form of hard) this.pareto.assert(form);
+    return this.executePareto();
+  }
+
   optimize(hard: readonly number[], options: OptOptions) {
+    if (this.pareto !== null) return this.executePareto();
     if (this.boxIndex !== -1) {
       if (this.boxIndex < this.boxModels.length) {
         this.setModel(this.boxModels[this.boxIndex++]);
@@ -274,7 +334,7 @@ export class OptContext {
     this.lower = this.objectives.map(() => MINUS_INFINITY);
     this.upper = this.objectives.map(() => PLUS_INFINITY);
     if (this.objectives.length > 1 && options.priority === "pareto")
-      throw new SmtUnsupportedError("pareto optimization");
+      return this.startPareto(hard, options);
     return this.objectives.length > 1 && options.priority === "box"
       ? this.executeBox(hard, options)
       : this.executeLex(hard, options);
@@ -352,6 +412,8 @@ export class OptContext {
   }
 
   release() {
+    this.pareto?.release();
+    this.pareto = null;
     this.normalizedGoal = null;
     this.normalizedTerms.reset();
     this.normalized = [];

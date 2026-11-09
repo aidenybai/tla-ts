@@ -90,6 +90,7 @@ export class NlsatSolver {
   private maxVar = NULL_VAR;
   private nextTag = 0;
   maxConflicts = Infinity;
+  isReordering = true;
   readonly stats = {
     conflicts: 0,
     restarts: 0,
@@ -685,7 +686,7 @@ export class NlsatSolver {
     }
   }
 
-  private retract(tag: number) {
+  retract(tag: number, maxLemmas = Infinity) {
     this.initSearch();
     const isTagged = (clause: Clause) => {
       const isFound = linearize([clause.assumptions]).includes(tag);
@@ -694,6 +695,9 @@ export class NlsatSolver {
     };
     this.clauses = this.clauses.filter(isTagged);
     this.learned = this.learned.filter(isTagged);
+    if (this.learned.length <= maxLemmas) return;
+    this.learned.sort((first, second) => first.literals.length - second.literals.length);
+    for (const clause of this.learned.splice(maxLemmas)) this.delClause(clause);
   }
 
   // Like Z3, only a falsified clause restores the assignment.
@@ -886,6 +890,7 @@ export class NlsatSolver {
 
   private canReorder() {
     return (
+      this.isReordering &&
       this.maxVar === NULL_VAR &&
       [...this.learned, ...this.clauses].every((clause) =>
         clause.literals.every(

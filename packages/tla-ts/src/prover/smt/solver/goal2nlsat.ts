@@ -81,6 +81,7 @@ export const goal2nlsat = (
   solver: NlsatSolver,
   t2x: Map<number, number>,
   a2b: Map<number, number>,
+  assumption: number | null,
 ) => {
   const pm = solver.pm;
 
@@ -225,7 +226,7 @@ export const goal2nlsat = (
     throw new SmtTacticError("eliminate term-ite before applying nlsat");
   for (const form of forms) {
     const literals = manager.getOp(form) === OP_OR ? manager.getArgs(form) : [form];
-    solver.mkExternalClause(literals.map(processLiteral), null);
+    solver.mkExternalClause(literals.map(processLiteral), assumption);
   }
 };
 
