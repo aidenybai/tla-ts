@@ -397,7 +397,7 @@ const isOverriddenComparison = (left: Value, right: Value) =>
 const createComparisonError = (left: Value, right: Value) =>
   new TlaEvaluationError(
     isOverriddenSet(left)
-      ? `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right, true)}`
+      ? `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right)}`
       : `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
   );
 
@@ -1607,7 +1607,11 @@ const enumerateSet = (
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${formatValue(value.base)}\nis not enumerable`,
         );
       }
-      return toFiniteSet(value.base).elements.filter((element) => value.test(element, false));
+      return toFiniteSet(
+        createEnumeratedSet(
+          getStreamedElements(value.base).filter((element) => value.test(element, false)),
+        ),
+      ).elements;
     case "Union": {
       const elements: Value[] = [];
       getUnionSets(value).forEach((set, index) => {
@@ -1686,17 +1690,42 @@ export const toFiniteSet = (value: Value): SetValue => {
   return set;
 };
 
+// TLC's enumerator of a set sorts the set enumerations it streams, and fails on a set it can't
+// enumerate, before it yields an element, so S \cup T fails on T before it streams S.
+const openStream = (value: Value): void => {
+  if (typeof value !== "object" || isCachedSet(value)) return;
+  switch (value.kind) {
+    case "MixedSet":
+      toFiniteSet(value);
+      return;
+    case "FilteredSet":
+      if (!isTlcEnumerable(value.base)) getStreamedElements(value);
+      return openStream(value.base);
+    case "Union":
+      if (!isEnumeratedSet(value.base) && isTlcEnumerable(value.base)) {
+        return openStream(value.base);
+      }
+      getUnionSets(value)
+        .slice(0, 1)
+        .forEach((set) => openStream(getUnionSet(set, 0, value)));
+      return;
+    case "SetOperation":
+      if (value.operator === "\\" && !isTlcEnumerable(value.left)) getStreamedElements(value);
+      if (value.operator !== "\\cap" || isTlcEnumerable(value.left)) openStream(value.left);
+      else openStream(value.right);
+      if (value.operator === "\\cup") openStream(value.right);
+  }
+};
+
 const listUnionLikeTlc = (union: SetOperationValue) => {
   if (!isTlcEnumerable(union.left) || !isTlcEnumerable(union.right)) {
     throw new TlaEvaluationError(
       `Attempted to enumerate S \\cup T when S:\n${formatValue(union.left)}\nand T:\n${formatValue(union.right)}\nare not both enumerable`,
     );
   }
-  if (isBeyondSetBound(union.left)) {
-    // TLC opens the right set's enumerator before it streams the left set past the bound.
-    getStreamedElements(union.right);
-    throw new TlaSetBoundError(SET_BOUND_MESSAGE);
-  }
+  openStream(union.left);
+  openStream(union.right);
+  if (isBeyondSetBound(union.left)) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
   const left = getStreamedElements(union.left);
   const right = isBeyondSetBound(union.right) ? undefined : getStreamedElements(union.right);
   if (!right || left.length + right.length > SET_BOUND) {
