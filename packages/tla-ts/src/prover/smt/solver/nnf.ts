@@ -91,6 +91,7 @@ export class DefinedNames {
                 names: varSorts.map((_sort, index) => varSorts.length - 1 - index),
                 body: conjunct,
                 patterns: [manager.mkPattern([name])],
+                noPatterns: [],
                 weight: 1,
                 qid: "",
               }),

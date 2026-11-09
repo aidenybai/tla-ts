@@ -195,17 +195,19 @@ abstract class VarShifterCore extends RewriterCore {
       this.numQvars += data.sorts.length;
       this.root = data.body;
     }
-    const children = [data.body, ...data.patterns];
+    const children = [data.body, ...data.patterns, ...data.noPatterns];
     while (frame.childIndex < children.length) {
       const child = children[frame.childIndex];
       frame.childIndex++;
       if (!this.visit(child)) return;
     }
+    // A rewritten no-pattern is not a pattern, so Z3 drops it.
     const result = frame.hasNewChild
       ? manager.mkQuantifier({
           ...data,
           body: this.resultStack[frame.spos],
-          patterns: this.resultStack.slice(frame.spos + 1),
+          patterns: this.resultStack.slice(frame.spos + 1, frame.spos + 1 + data.patterns.length),
+          noPatterns: [],
         })
       : expr;
     this.finish(expr, frame, result);
@@ -739,7 +741,9 @@ class RewriterEngine extends SubstCore {
       this.numQvars += numDecls;
     }
     const isRewritingPatterns = this.config.isRewritingPatterns();
-    const children = isRewritingPatterns ? [data.body, ...data.patterns] : [data.body];
+    const children = isRewritingPatterns
+      ? [data.body, ...data.patterns, ...data.noPatterns]
+      : [data.body];
     while (frame.childIndex < children.length) {
       const child = children[frame.childIndex];
       frame.childIndex++;
@@ -747,12 +751,15 @@ class RewriterEngine extends SubstCore {
     }
     const body = this.resultStack[frame.spos];
     // new_pats: the patterns, which Z3 holds until the quantifier is done.
-    const patterns = isRewritingPatterns ? this.resultStack.slice(frame.spos + 1) : data.patterns;
+    const patterns = isRewritingPatterns
+      ? this.resultStack.slice(frame.spos + 1, frame.spos + 1 + data.patterns.length)
+      : data.patterns;
     for (const pattern of patterns) manager.incRef(pattern);
     const reduced = this.config.reduceQuantifier(expr, body, patterns);
+    const noPatterns = isRewritingPatterns ? [] : data.noPatterns;
     if (reduced === -1)
       this.setLastResult(
-        frame.hasNewChild ? manager.mkQuantifier({ ...data, body, patterns }) : expr,
+        frame.hasNewChild ? manager.mkQuantifier({ ...data, body, patterns, noPatterns }) : expr,
       );
     else {
       this.setLastResult(reduced);
@@ -1087,19 +1094,20 @@ export class BetaReducer extends SubstCore {
       }
       this.numQvars += numDecls;
     }
-    while (this.frameChildIndexes[top] <= data.patterns.length) {
+    const children = [data.body, ...data.patterns, ...data.noPatterns];
+    while (this.frameChildIndexes[top] < children.length) {
       const childIndex = this.frameChildIndexes[top];
       this.frameChildIndexes[top] = childIndex + 1;
-      if (!this.visit(childIndex === 0 ? data.body : data.patterns[childIndex - 1])) return;
+      if (!this.visit(children[childIndex])) return;
     }
     const spos = this.frameStarts[top];
     const body = this.resultStack[spos];
     // new_pats: the patterns, which Z3 holds until the quantifier is done.
-    const patterns = this.resultStack.slice(spos + 1);
+    const patterns = this.resultStack.slice(spos + 1, spos + 1 + data.patterns.length);
     for (const pattern of patterns) manager.incRef(pattern);
     this.setLastResult(
       this.frameFlags[top] & FRAME_NEW_CHILD
-        ? manager.mkQuantifier({ ...data, body, patterns })
+        ? manager.mkQuantifier({ ...data, body, patterns, noPatterns: [] })
         : expr,
     );
     const result = this.lastResult;

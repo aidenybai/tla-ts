@@ -324,7 +324,7 @@ export class ModelEvaluator extends RewriterTpl {
       if (manager.kinds[current] === KIND_APP) manager.pushArgs(current, todo);
       else if (manager.kinds[current] === KIND_QUANTIFIER) {
         const data = manager.getQuantifier(current);
-        todo.push(data.body, ...data.patterns);
+        todo.push(data.body, ...data.patterns, ...data.noPatterns);
       }
     }
     return false;

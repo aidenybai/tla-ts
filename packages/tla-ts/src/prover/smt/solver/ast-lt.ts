@@ -244,6 +244,7 @@ const compareAsts = (manager: AstManager, first: number, second: number): number
       compareValues(firstData.isForall ? 0 : 1, secondData.isForall ? 0 : 1) ||
       compareValues(firstData.sorts.length, secondData.sorts.length) ||
       compareValues(firstData.patterns.length, secondData.patterns.length) ||
+      compareValues(firstData.noPatterns.length, secondData.noPatterns.length) ||
       compareValues(firstData.weight, secondData.weight);
     if (byHeader !== 0) return byHeader;
     for (let index = 0; index < firstData.sorts.length; index++) {
@@ -252,8 +253,10 @@ const compareAsts = (manager: AstManager, first: number, second: number): number
         compareSorts(manager, firstData.sorts[index], secondData.sorts[index]);
       if (byDecl !== 0) return byDecl;
     }
-    for (let index = 0; index < firstData.patterns.length; index++) {
-      const byPattern = compareAsts(manager, firstData.patterns[index], secondData.patterns[index]);
+    const children = [...firstData.patterns, ...firstData.noPatterns];
+    const otherChildren = [...secondData.patterns, ...secondData.noPatterns];
+    for (let index = 0; index < children.length; index++) {
+      const byPattern = compareAsts(manager, children[index], otherChildren[index]);
       if (byPattern !== 0) return byPattern;
     }
     return compareAsts(manager, firstData.body, secondData.body);

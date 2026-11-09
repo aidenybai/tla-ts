@@ -104,19 +104,27 @@ export const replaceFreeVars = (
     const frame = frames[frames.length - 1];
     const current = frame.expr;
     const data = manager.kinds[current] === KIND_QUANTIFIER ? manager.getQuantifier(current) : null;
-    const numChildren = data === null ? manager.getNumArgs(current) : 1 + data.patterns.length;
+    const quantifierChildren =
+      data === null ? [] : [data.body, ...data.patterns, ...data.noPatterns];
+    const numChildren = data === null ? manager.getNumArgs(current) : quantifierChildren.length;
     if (frame.next < numChildren) {
       const index = frame.next++;
       if (data === null) visit(manager.getArg(current, index), frame.shift);
-      else
-        visit(index === 0 ? data.body : data.patterns[index - 1], frame.shift + data.sorts.length);
+      else visit(quantifierChildren[index], frame.shift + data.sorts.length);
       continue;
     }
     const children = results.splice(frame.start);
     const result =
       data === null
         ? manager.mkApp(manager.decls[current], children, manager.sorts[current])
-        : manager.mkQuantifier({ ...data, body: children[0], patterns: children.slice(1) });
+        : children.every((child, index) => child === quantifierChildren[index])
+          ? current
+          : manager.mkQuantifier({
+              ...data,
+              body: children[0],
+              patterns: children.slice(1, 1 + data.patterns.length),
+              noPatterns: [],
+            });
     frames.pop();
     cache.set(current * 64 + frame.shift, result);
     results.push(result);
@@ -151,7 +159,7 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
       }
     else {
       const data = manager.getQuantifier(current);
-      for (const child of [data.body, ...data.patterns]) {
+      for (const child of [data.body, ...data.patterns, ...data.noPatterns]) {
         exprs.push(child);
         deltas.push(delta + data.sorts.length);
       }
@@ -183,7 +191,7 @@ export class UnusedVarsEliminator {
         return kept;
       }
       const usedSorts: (number | undefined)[] = [];
-      for (const term of [data.body, ...data.patterns])
+      for (const term of [data.body, ...data.patterns, ...data.noPatterns])
         getFreeVarSorts(manager, term, manager.freeVarBounds[term]).forEach((sort, index) => {
           if (sort !== undefined) usedSorts[index] = sort;
         });
@@ -218,13 +226,24 @@ export class UnusedVarsEliminator {
         numRemoved === numDecls
           ? []
           : data.patterns.map((pattern) => this.subst.apply(pattern, mapping));
+      const noPatterns =
+        numRemoved === numDecls
+          ? []
+          : data.noPatterns.map((noPattern) => this.subst.apply(noPattern, mapping));
       const result =
         numRemoved === numDecls
           ? body
-          : manager.mkQuantifier({ ...data, sorts: keptSorts, names: keptNames, body, patterns });
+          : manager.mkQuantifier({
+              ...data,
+              sorts: keptSorts,
+              names: keptNames,
+              body,
+              patterns,
+              noPatterns,
+            });
       if (result !== body) {
         manager.incRef(result);
-        for (const pattern of patterns) manager.decRef(pattern);
+        for (const pattern of [...patterns, ...noPatterns]) manager.decRef(pattern);
         manager.decRef(body);
       }
       for (const variable of mapping) if (variable !== -1) manager.decRef(variable);

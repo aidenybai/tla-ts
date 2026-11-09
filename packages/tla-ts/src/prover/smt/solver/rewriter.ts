@@ -241,8 +241,8 @@ export class Rewriter extends RewriterTpl {
     const merged =
       nested !== undefined &&
       nested.isForall === data.isForall &&
-      data.patterns.length === 0 &&
-      nested.patterns.length === 0
+      data.patterns.length + data.noPatterns.length === 0 &&
+      nested.patterns.length + nested.noPatterns.length === 0
         ? manager.mkQuantifier({
             ...data,
             sorts: [...data.sorts, ...nested.sorts],
@@ -251,7 +251,14 @@ export class Rewriter extends RewriterTpl {
             patterns: [],
             weight: Math.min(data.weight, nested.weight),
           })
-        : manager.mkQuantifier({ ...data, body, patterns: this.substitutePatterns(patterns) });
+        : manager.mkQuantifier({
+            ...data,
+            body,
+            patterns: this.substitutePatterns(patterns),
+            noPatterns: data.noPatterns.filter(
+              (noPattern, index) => data.noPatterns.indexOf(noPattern) === index,
+            ),
+          });
     const reduced = this.unusedVarsEliminator.apply(merged);
     manager.releaseLater(reduced);
     if (

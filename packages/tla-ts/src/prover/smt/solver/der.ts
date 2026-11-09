@@ -202,8 +202,11 @@ export class Der {
     manager.incRef(combined);
     const body = this.subst.apply(combined, substMap.items);
     const patterns = data.patterns.map((pattern) => this.subst.apply(pattern, substMap.items));
-    const result = manager.mkQuantifier({ ...data, body, patterns });
-    for (const pattern of patterns) manager.releaseLater(pattern);
+    const noPatterns = data.noPatterns.map((noPattern) =>
+      this.subst.apply(noPattern, substMap.items),
+    );
+    const result = manager.mkQuantifier({ ...data, body, patterns, noPatterns });
+    for (const pattern of [...patterns, ...noPatterns]) manager.releaseLater(pattern);
     manager.releaseLater(body);
     manager.decRef(combined);
     return result;

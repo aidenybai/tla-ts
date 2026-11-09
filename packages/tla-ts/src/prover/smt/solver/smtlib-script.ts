@@ -771,7 +771,7 @@ export const runSmtlibScript = (
           visited.add(expr);
           if (manager.kinds[expr] === KIND_QUANTIFIER) {
             const data = manager.getQuantifier(expr);
-            todo.push(data.body, ...data.patterns);
+            todo.push(data.body, ...data.patterns, ...data.noPatterns);
           } else if (manager.kinds[expr] === KIND_APP) {
             manager.pushArgs(expr, todo);
             const decl = manager.decls[expr];

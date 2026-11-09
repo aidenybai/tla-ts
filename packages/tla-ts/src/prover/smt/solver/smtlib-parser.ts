@@ -1139,8 +1139,16 @@ export const createSmtlibReader = (
       }),
     );
     const patterns: number[] = [];
+    const noPatterns: number[] = [];
     for (const attribute of attributes) {
-      if (attribute.keyword.kind !== "keyword" || attribute.keyword.text !== ":pattern") continue;
+      if (attribute.keyword.kind !== "keyword") continue;
+      if (attribute.keyword.text === ":no-pattern") {
+        const noPattern = parseTerm(attribute.value ?? list.end);
+        manager.incRef(noPattern);
+        noPatterns.push(noPattern);
+        continue;
+      }
+      if (attribute.keyword.text !== ":pattern") continue;
       const pattern = parsePattern(attribute.value ?? list.end, list.end);
       if (pattern === undefined) continue;
       manager.incRef(pattern);
@@ -1175,17 +1183,21 @@ export const createSmtlibReader = (
       numKept++;
     }
     for (const removed of patterns.splice(numKept)) manager.decRef(removed);
+    if (patterns.length > 0 && noPatterns.length > 0)
+      throw new SmtParseError("simultaneous patterns and no-patterns not supported", list.end);
     const quantifier = manager.mkQuantifier({
       isForall,
       sorts: varSorts,
       names: bound.names,
       body,
       patterns,
+      noPatterns,
       weight,
       qid,
       ...(skid === undefined ? {} : { skid }),
     });
     for (const pattern of patterns) manager.decRef(pattern);
+    for (const noPattern of noPatterns) manager.decRef(noPattern);
     for (const boundVar of boundVars) manager.decRef(boundVar);
     return quantifier;
   };

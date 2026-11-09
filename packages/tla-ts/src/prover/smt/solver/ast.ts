@@ -335,6 +335,7 @@ interface QuantifierData {
   names: SmtSymbol[];
   body: number;
   patterns: number[];
+  noPatterns: number[];
   weight: number;
   qid: string;
   skid?: string;
@@ -931,8 +932,8 @@ export class AstManager {
           this.freeAlgebraicIds.push(this.getAlgebraicId(node));
         if (smallId !== -1) worklist.push(-1 - smallId);
       }
-      // The children: the arguments of an application, and the body and then the patterns of a
-      // quantifier.
+      // The children: the arguments of an application, and the body, the patterns and the
+      // no-patterns of a quantifier.
       if (this.kinds[node] !== KIND_QUANTIFIER) {
         const end = this.argStarts[node + 1];
         for (let index = this.argStarts[node]; index < end; index++)
@@ -942,6 +943,7 @@ export class AstManager {
       const data = this.getQuantifier(node);
       this.releaseChild(data.body, worklist);
       for (const pattern of data.patterns) this.releaseChild(pattern, worklist);
+      for (const noPattern of data.noPatterns) this.releaseChild(noPattern, worklist);
     }
   }
 
@@ -961,8 +963,8 @@ export class AstManager {
     this.ids[expr] = this.freeIds.pop() ?? this.nextId++;
     this.numLive++;
     this.refCounts[expr] = 0;
-    // The children: the arguments of an application, and the body and then the patterns of a
-    // quantifier.
+    // The children: the arguments of an application, and the body, the patterns and the
+    // no-patterns of a quantifier.
     if (this.kinds[expr] !== KIND_QUANTIFIER) {
       const end = this.argStarts[expr + 1];
       for (let index = this.argStarts[expr]; index < end; index++)
@@ -971,6 +973,7 @@ export class AstManager {
       const data = this.getQuantifier(expr);
       this.incRef(this.revive(data.body));
       for (const pattern of data.patterns) this.incRef(this.revive(pattern));
+      for (const noPattern of data.noPatterns) this.incRef(this.revive(noPattern));
     }
     if (this.kinds[expr] === KIND_APP) this.holdDecl(expr);
     if (this.temporariesMark === -1) return;
@@ -2066,9 +2069,11 @@ export class AstManager {
   mkQuantifier(data: QuantifierData) {
     if (data.names.length !== data.sorts.length)
       throw new SmtInvariantError("a quantifier needs a name for each variable");
+    // Z3 keeps no-patterns only on a quantifier without patterns.
+    const noPatterns = data.patterns.length > 0 ? [] : data.noPatterns;
     const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
       data.body
-    }:${data.patterns.join(",")}:${data.weight}`;
+    }:${data.patterns.join(",")}:${noPatterns.join(",")}:${data.weight}`;
     const existing = this.table.get(key);
     if (existing !== undefined) {
       // A dead quantifier comes back as the new one Z3 makes, with its skolem id.
@@ -2098,6 +2103,7 @@ export class AstManager {
       sorts: [...data.sorts],
       names: [...data.names],
       patterns: [...data.patterns],
+      noPatterns: [...noPatterns],
     });
     this.registerNode(id);
     return id;

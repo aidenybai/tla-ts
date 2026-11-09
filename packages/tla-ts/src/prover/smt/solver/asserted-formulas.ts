@@ -24,7 +24,7 @@ class PatternInferenceRw extends RewriterTpl {
     const data = manager.getQuantifier(expr);
     if (!data.isForall || data.patterns.length > 0) return -1;
     const quantifier = manager.withTemporaries(() => {
-      const inferred = this.inference.infer(data.sorts.length, body, data.weight);
+      const inferred = this.inference.infer(data.sorts.length, body, data.weight, data.noPatterns);
       const withPatterns = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });
       return inferred.weight === data.weight
         ? withPatterns

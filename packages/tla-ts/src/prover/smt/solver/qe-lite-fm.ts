@@ -194,7 +194,7 @@ export class Fm {
             this.forbiddenSet.add(manager.values[expr]);
         } else if (kind === KIND_QUANTIFIER) {
           const data = manager.getQuantifier(expr);
-          todo.push(data.body, ...data.patterns);
+          todo.push(data.body, ...data.patterns, ...data.noPatterns);
         } else manager.pushArgs(expr, todo);
       }
     }

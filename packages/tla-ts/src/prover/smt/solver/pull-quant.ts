@@ -72,6 +72,7 @@ export class PullQuant extends RewriterTpl {
       names: names.reverse(),
       body: manager.mkApp(decl, adjusted, sort),
       patterns: [],
+      noPatterns: [],
       weight,
       qid,
     });
@@ -110,6 +111,7 @@ export class PullQuant extends RewriterTpl {
       names: [...data.names, ...nested.names],
       body: nested.body,
       patterns: [],
+      noPatterns: [],
       weight: Math.min(data.weight, nested.weight),
       qid: data.qid,
     });

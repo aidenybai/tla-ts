@@ -623,10 +623,11 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
           varNameSet.add(name);
         }
       }
-      if (frame.index < data.patterns.length + 1) {
+      const children = [...data.patterns, ...data.noPatterns];
+      if (frame.index < children.length + 1) {
         const index = frame.index;
         frame.index++;
-        if (index < data.patterns.length) pushFrame(data.patterns[index], false);
+        if (index < children.length) pushFrame(children[index], false);
         else pushFrame(data.body, frame.isUsingAlias);
         return;
       }
@@ -635,6 +636,9 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
         ...formats
           .slice(frame.start, frame.start + data.patterns.length)
           .map((pattern) => mkCompose(mkText(":pattern "), mkIndent(9, pattern))),
+        ...formats
+          .slice(frame.start + data.patterns.length, frame.start + children.length)
+          .map((noPattern) => mkCompose(mkText(":no-pattern "), mkIndent(12, noPattern))),
         ...(data.weight === 1 ? [] : [mkCompose(mkText(":weight "), mkText(String(data.weight)))]),
         ...(data.skid === undefined
           ? []
