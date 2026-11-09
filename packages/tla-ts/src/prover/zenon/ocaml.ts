@@ -80,12 +80,12 @@ export const createHasher = () => {
       stringHashes.set(value, hash);
       return hash;
     },
-    hashIntAndStrings: (high: number, low: number, strings: string[]) => {
+    hashIntAndStrings: (high: number, low: number, strings: List<string> | undefined) => {
       let hash = mixInt(mix(0, PAIR_HEADER), high, low);
       let meaningful = MEANINGFUL_LIMIT - 1;
-      for (const value of strings) {
+      for (let cell = strings; cell !== undefined; cell = cell.tail) {
         if (meaningful === 0) return finalMix(hash);
-        hash = mixString(mix(hash, PAIR_HEADER), value);
+        hash = mixString(mix(hash, PAIR_HEADER), cell.head);
         meaningful--;
       }
       return finalMix(meaningful === 0 ? hash : mixInt(hash, 0, 0));
@@ -97,6 +97,12 @@ const wrapHigh = (value: number) => {
   const wrapped = ((value % TWO_31) + TWO_31) % TWO_31;
   return wrapped >= TWO_30 ? wrapped - TWO_31 : wrapped;
 };
+
+// An OCaml list. A list built from another can share its cells.
+export interface List<Item> {
+  readonly head: Item;
+  readonly tail: List<Item> | undefined;
+}
 
 export interface Int63 {
   high: number;

@@ -6,7 +6,15 @@
 // ?z_h<n> abbreviates a formula that an earlier (is "...") pattern bound.
 
 import { TlaZenonError } from "../../errors";
-import { FALSE, GOAL_NAME, TRUE, type BinderExpr, type Expr, type Expressions } from "./expr";
+import {
+  FALSE,
+  GOAL_NAME,
+  someName,
+  TRUE,
+  type BinderExpr,
+  type Expr,
+  type Expressions,
+} from "./expr";
 import type { Relations } from "./eqrel";
 import { printCaseLemma, printRecordLemma } from "./isar-case";
 import { getLimitFailure, type Limits } from "./limits";
@@ -167,7 +175,7 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
   // Zenon's p_expr: the bound variables are those that a pattern can't abbreviate.
   const printExpr = (env: string[], dict: number, expression: Expr): string => {
     const number = getNumber(expression);
-    if (isBound(dict, number) && !expression.freeVars.some((name) => env.includes(name)))
+    if (isBound(dict, number) && !someName(expression.freeVars, (name) => env.includes(name)))
       return `?z_h${toBase26(number)}`;
     const print = (operand: Expr) => printExpr(env, dict, operand);
     const printList = (operands: Expr[]) => operands.map(print).join(", ");
