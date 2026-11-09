@@ -391,7 +391,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         return (goal) => {
           snf(goal);
           simplifyGoal(manager, goal, getRewriterOptions(manager, params));
-          purifyArith(manager, goal);
+          purifyArith(manager, goal, getBool(params, "complete", true));
           simplifyGoal(manager, goal, getRewriterOptions(manager, params));
           return [goal];
         };

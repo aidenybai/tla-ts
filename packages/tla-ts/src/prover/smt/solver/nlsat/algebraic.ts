@@ -943,6 +943,11 @@ export class AlgebraicManager {
     return anum.value instanceof Rational ? [-anum.value.num, anum.value.den] : [...anum.value.p];
   }
 
+  getIsolatingInterval(anum: Anum): [Rational, Rational] {
+    if (anum.value instanceof Rational) return [anum.value, anum.value];
+    return [anum.value.lower.toRational(), anum.value.upper.toRational()];
+  }
+
   getInterval(anum: Anum, precision: number): [Rational, Rational] {
     if (anum.value instanceof Rational) return [anum.value, anum.value];
     const cell = anum.value;
