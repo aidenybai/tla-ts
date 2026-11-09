@@ -1236,7 +1236,7 @@ const parse = (
             declareRecursive();
             continue;
           }
-          const unit = parseDefinition(false);
+          const unit = parseDefinition(!isTlapm && accept("LOCAL"));
           if (unit.kind === "Instance") instances.push(unit);
           else definitions.push(unit);
         }
