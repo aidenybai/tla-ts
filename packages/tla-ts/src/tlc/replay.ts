@@ -353,6 +353,8 @@ const visitAssignment = (
     return;
   }
   const set: Value = expression.operator === "\\subseteq" ? { kind: "Subset", base: value } : value;
+  // TLC gives the power set the source of its base, so a failure to enumerate it names both.
+  if (typeof set === "object" && set !== value) replay.callStack.sources.set(set, source);
   if (assigned !== undefined) {
     if (evaluate(expression, context) === true) proceed(replay, items, partial);
     return;
