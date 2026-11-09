@@ -96,6 +96,42 @@ const ZERO = toInt63(0);
 // Most expressions have no metavariables, and share this list.
 const NO_METAS: Expr[] = [];
 
+const NO_ARGS: Expr[] = [];
+
+type OperatorKind = MetaExpr["kind"] | NotExpr["kind"] | BinaryExpr["kind"];
+
+const OPERATOR_SEEDS: Record<OperatorKind, number> = {
+  meta: -1,
+  not: -2,
+  and: -3,
+  or: -4,
+  imply: -5,
+  equiv: -6,
+};
+
+const isSameApp = <Result extends VarExpr | AppExpr>(
+  inner: Expr,
+  kind: Result["kind"],
+  symbol: string,
+  args: Expr[],
+): inner is Result => {
+  if (inner.kind !== kind || inner.symbol !== symbol || inner.args.length !== args.length)
+    return false;
+  for (let index = 0; index < args.length; index++)
+    if (inner.args[index] !== args[index]) return false;
+  return true;
+};
+
+const isSameOperator = <Result extends MetaExpr | NotExpr | BinaryExpr>(
+  inner: Expr,
+  kind: Result["kind"],
+  first: Expr,
+  second: Expr | undefined,
+): inner is Result =>
+  inner.kind === kind &&
+  inner.args[0] === first &&
+  (second === undefined || inner.args[1] === second);
+
 const makeConstant = (kind: "true" | "false", id: number, skeleton: Int63): ConstantExpr => ({
   kind,
   symbol: "",
@@ -338,27 +374,50 @@ export const createExpressions = () => {
     return symbolIds.size - 1;
   };
 
-  const intern = <Result extends Expr>(
-    kind: ExprKind,
-    symbol: string,
-    args: Expr[],
-    build: () => Result,
-  ): Result => {
+  // The keys of applications and variables mix their symbol's number with their arguments'. Other
+  // operators have no symbol, so their keys start from their kind's seed.
+  const getAppKey = (symbol: string, args: Expr[]) => {
     let key = getSymbolId(symbol);
     for (const arg of args) key = Math.imul(key, 0x01000193) ^ arg.id;
-    const entry = interned.get(key);
-    const isMatch = (inner: Expr): inner is Result =>
-      inner.kind === kind &&
-      inner.symbol === symbol &&
-      inner.args.length === args.length &&
-      inner.args.every((child, index) => child === args[index]);
-    const existing = Array.isArray(entry)
-      ? entry.find(isMatch)
-      : entry !== undefined && isMatch(entry)
+    return key;
+  };
+
+  const getOperatorKey = (kind: OperatorKind, first: Expr, second: Expr | undefined) => {
+    const key = Math.imul(OPERATOR_SEEDS[kind], 0x01000193) ^ first.id;
+    return second === undefined ? key : Math.imul(key, 0x01000193) ^ second.id;
+  };
+
+  // Finds an expression without allocating, since most expressions built already exist.
+  const findApp = <Result extends VarExpr | AppExpr>(
+    kind: Result["kind"],
+    symbol: string,
+    args: Expr[],
+  ): Result | undefined => {
+    const entry = interned.get(getAppKey(symbol, args));
+    if (!Array.isArray(entry))
+      return entry !== undefined && isSameApp<Result>(entry, kind, symbol, args)
         ? entry
         : undefined;
-    if (existing !== undefined) return existing;
-    const result = build();
+    for (const inner of entry) if (isSameApp<Result>(inner, kind, symbol, args)) return inner;
+    return undefined;
+  };
+
+  const findOperator = <Result extends MetaExpr | NotExpr | BinaryExpr>(
+    kind: Result["kind"],
+    first: Expr,
+    second: Expr | undefined,
+  ): Result | undefined => {
+    const entry = interned.get(getOperatorKey(kind, first, second));
+    if (!Array.isArray(entry))
+      return entry !== undefined && isSameOperator<Result>(entry, kind, first, second)
+        ? entry
+        : undefined;
+    for (const inner of entry) if (isSameOperator<Result>(inner, kind, first, second)) return inner;
+    return undefined;
+  };
+
+  const add = <Result extends Expr>(key: number, result: Result) => {
+    const entry = interned.get(key);
     if (entry === undefined) interned.set(key, result);
     else if (Array.isArray(entry)) entry.push(result);
     else interned.set(key, [entry, result]);
@@ -366,13 +425,17 @@ export const createExpressions = () => {
     return result;
   };
 
-  const evar = (name: string) =>
-    intern("var", name, [], (): VarExpr =>
+  const evar = (name: string): VarExpr =>
+    findApp<VarExpr>("var", name, NO_ARGS) ??
+    add(
+      getAppKey(name, NO_ARGS),
       create("var", name, [], ZERO, { head: name, tail: undefined }, 1, 0, NO_METAS),
     );
 
-  const emeta = (quantified: Expr) =>
-    intern("meta", "", [quantified], (): MetaExpr =>
+  const emeta = (quantified: Expr): MetaExpr =>
+    findOperator<MetaExpr>("meta", quantified, undefined) ??
+    add(
+      getOperatorKey("meta", quantified, undefined),
       create(
         "meta",
         "",
@@ -385,34 +448,38 @@ export const createExpressions = () => {
       ),
     );
 
-  const eapp = (symbol: string, args: Expr[]) =>
-    intern("app", symbol, args, (): AppExpr => {
-      let skeleton = toInt63(hasher.hashString(symbol));
-      let freeVars: List<string> | undefined = undefined;
-      let size = 1;
-      let taus = 0;
-      let metas = NO_METAS;
-      for (const arg of args) {
-        skeleton = combine(arg.skeleton, skeleton);
-        freeVars = unionNames(freeVars, arg.freeVars);
-        size += arg.size;
-        taus = Math.max(arg.taus, taus);
-        metas = union(arg.metas, metas);
-      }
-      return create(
-        "app",
-        symbol,
-        args,
-        combine(SKELETONS.app, skeleton),
-        freeVars,
-        size,
-        taus,
-        metas,
-      );
-    });
+  const createApp = (symbol: string, args: Expr[]) => {
+    let skeleton = toInt63(hasher.hashString(symbol));
+    let freeVars: List<string> | undefined = undefined;
+    let size = 1;
+    let taus = 0;
+    let metas = NO_METAS;
+    for (const arg of args) {
+      skeleton = combine(arg.skeleton, skeleton);
+      freeVars = unionNames(freeVars, arg.freeVars);
+      size += arg.size;
+      taus = Math.max(arg.taus, taus);
+      metas = union(arg.metas, metas);
+    }
+    return create(
+      "app",
+      symbol,
+      args,
+      combine(SKELETONS.app, skeleton),
+      freeVars,
+      size,
+      taus,
+      metas,
+    );
+  };
 
-  const enot = (operand: Expr) =>
-    intern("not", "", [operand], (): NotExpr =>
+  const eapp = (symbol: string, args: Expr[]): AppExpr =>
+    findApp<AppExpr>("app", symbol, args) ?? add(getAppKey(symbol, args), createApp(symbol, args));
+
+  const enot = (operand: Expr): NotExpr =>
+    findOperator<NotExpr>("not", operand, undefined) ??
+    add(
+      getOperatorKey("not", operand, undefined),
       create(
         "not",
         "",
@@ -425,8 +492,10 @@ export const createExpressions = () => {
       ),
     );
 
-  const binary = (kind: "and" | "or" | "imply" | "equiv", left: Expr, right: Expr) =>
-    intern(kind, "", [left, right], (): BinaryExpr =>
+  const binary = (kind: BinaryExpr["kind"], left: Expr, right: Expr): BinaryExpr =>
+    findOperator<BinaryExpr>(kind, left, right) ??
+    add(
+      getOperatorKey(kind, left, right),
       create(
         kind,
         "",
