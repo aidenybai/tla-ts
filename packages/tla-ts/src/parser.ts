@@ -1313,6 +1313,8 @@ const parse = (
             location,
           };
         case "-":
+        case "-.":
+          if (token.text === "-." && !isTlapm) break;
           advance();
           return {
             kind: "Apply",
