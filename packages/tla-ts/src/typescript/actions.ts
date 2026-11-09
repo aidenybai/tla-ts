@@ -2461,6 +2461,16 @@ const translateDeclarations = (
     (after) => translateDeclarations(declarations, after, context, frame, continueWith),
   );
   if (defaulted !== undefined) return defaulted;
+  // A pattern's default makes its objects whether or not the pattern evaluates it, as making an
+  // object that nothing reads can't be seen.
+  const defaults = getAllocated(declaration.name, context).filter(
+    (allocation) => !path.scope.allocated.has(allocation),
+  );
+  if (defaults.length > 0) {
+    return allocateAll(defaults, path, context, (allocated) =>
+      translateDeclarations(declarations, allocated, context, frame, continueWith),
+    );
+  }
   return allocate(initializer, path, context, (allocated) => {
     const constructor = initializer && getConstructorRun(initializer, context);
     if (constructor !== undefined && initializer !== undefined && ts.isNewExpression(initializer)) {

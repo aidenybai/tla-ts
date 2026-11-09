@@ -1313,6 +1313,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("names the functions and classes that a declaration's defaults make", async () => {
+    const result = await check(
+      compile(
+        `const object = {};\nconst [arrow = () => {}, gen = function* () {}, named = class {}] = [];\nif (arrow.name !== "arrow" || gen.name !== "gen" || named.name !== "named") throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

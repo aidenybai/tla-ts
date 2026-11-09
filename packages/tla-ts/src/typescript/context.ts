@@ -399,7 +399,8 @@ export const getFunctionValue = (node: ts.Node, context: Context) => {
       ts.isArrowFunction(found) ||
       (ts.isFunctionDeclaration(found) && found.body !== undefined)) &&
     isOnce(found.parent) &&
-    !isHeapFunction(found, context)
+    !isHeapFunction(found, context) &&
+    !isFunctionObject(found, context)
     ? found
     : undefined;
 };
