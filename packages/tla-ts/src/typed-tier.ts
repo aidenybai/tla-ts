@@ -2000,8 +2000,23 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     case "Apply": {
       const expansion = getExpansion(program, expression, frame);
       if (!expansion) return compileBuiltin(program, expression, frame);
-      return inline(program, expansion.definition, () =>
-        compileValue(program, expansion.definition.body, { ...frame, scope: expansion.scope }),
+      const definition = expansion.definition;
+      // SequencesExt's FlattenSeq returns its argument when that is empty, so one branch has the
+      // type of a sequence of sequences. Either way its value is their concatenation.
+      if (
+        definition.name === "FlattenSeq" &&
+        definition.location.range?.module === "SequencesExt" &&
+        expression.args.length === 1
+      ) {
+        const element: Type = createVar();
+        const sequences = expectType(compileValue(program, expression.args[0], frame), {
+          kind: "Seq",
+          element: { kind: "Seq", element },
+        });
+        return { type: { kind: "Seq", element }, emit: () => `(${sequences.emit()}).flat()` };
+      }
+      return inline(program, definition, () =>
+        compileValue(program, definition.body, { ...frame, scope: expansion.scope }),
       );
     }
     case "And":

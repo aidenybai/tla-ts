@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
@@ -9,6 +9,10 @@ const checkFixture = (name: string, isWarningEnabled: boolean) =>
   check({
     source: readFileSync(join(FIXTURES, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, `${name}.cfg`), "utf8"),
+    loadModule: (module) => {
+      const path = join(FIXTURES, `${module}.tla`);
+      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+    },
     isFingerprintDistanceSkipped: true,
     isWarningEnabled,
   });
@@ -46,6 +50,7 @@ describe("typed tier matches TLC", () => {
     ["AssertHolds", 46],
     ["SparseLog", 666],
     ["SparseSymmetry", 109],
+    ["FlattenChunks", 293],
     ["FilteredMembership", 280],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
