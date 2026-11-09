@@ -1655,6 +1655,31 @@ const getFindCode = (program: Program, map: MapType, keys: string, key: string) 
     ? `H.findMaskKey(${keys}, ${key})`
     : `H.findKey(${getComparerCode(program, map.keys.element)}, ${keys}, ${key})`;
 
+const compileField = (program: Program, record: Compiled, field: string): Compiled => {
+  const type = expectRecord(record.type);
+  return {
+    type: getFieldType(type, field),
+    emit: () => {
+      const code = record.emit();
+      const resolved = resolveType(record.type);
+      if (resolved.kind === "Rec" && resolved.shapes.length === 1) {
+        const position = resolved.shapes[0].indexOf(field);
+        return position === -1 ? "H.deopt()" : `(${code})[${position}]`;
+      }
+      const name = getName(program, "r");
+      return `((${name}) => H.at(${name}, ${getFieldIndexCode(program, record.type, field, name)}))(${code})`;
+    },
+  };
+};
+
+// TLC applies a record to a string as it reads the field of that name.
+const getFieldName = (type: Type, args: Expression[]) => {
+  const [argument] = args;
+  return args.length === 1 && argument.kind === "String" && resolveType(type).kind === "Rec"
+    ? argument.value
+    : undefined;
+};
+
 const compileApplication = (
   program: Program,
   functionCode: Compiled,
@@ -1748,14 +1773,16 @@ const compileExcept = (
     const steps: ((container: string) => Step)[] = [];
     const leaf = update.path.reduce<Type>((type, step) => {
       const resolved = resolveType(type);
-      if (step.kind === "Field") {
+      const field = step.kind === "Field" ? step.name : getFieldName(type, step.args);
+      if (field !== undefined) {
         const record = expectRecord(type);
         steps.push((container) => ({
-          index: getFieldIndexCode(program, type, step.name, container),
+          index: getFieldIndexCode(program, type, field, container),
           isSparse: false,
         }));
-        return getFieldType(record, step.name);
+        return getFieldType(record, field);
       }
+      if (step.kind === "Field") return unsupported();
       const argument = compileValue(program, getArgument(step.args, expression.location), frame);
       if (resolved.kind === "Fn" || resolved.kind === "Map") {
         unify(argument.type, resolved.kind === "Fn" ? resolved.key : resolved.keys.element);
@@ -2383,23 +2410,12 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         },
       };
     }
-    case "FieldAccess": {
-      const record = compileValue(program, expression.record, frame);
-      const type = expectRecord(record.type);
-      return {
-        type: getFieldType(type, expression.field),
-        emit: () => {
-          const code = record.emit();
-          const resolved = resolveType(record.type);
-          if (resolved.kind === "Rec" && resolved.shapes.length === 1) {
-            const position = resolved.shapes[0].indexOf(expression.field);
-            return position === -1 ? "H.deopt()" : `(${code})[${position}]`;
-          }
-          const name = getName(program, "r");
-          return `((${name}) => H.at(${name}, ${getFieldIndexCode(program, record.type, expression.field, name)}))(${code})`;
-        },
-      };
-    }
+    case "FieldAccess":
+      return compileField(
+        program,
+        compileValue(program, expression.record, frame),
+        expression.field,
+      );
     case "FunctionApplication": {
       const expansion = getFunctionExpansion(program, expression, frame);
       if (expansion) {
@@ -2408,9 +2424,12 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         );
         return { type: body.type, emit: () => expansion.apply(body.emit) };
       }
+      const target = compileValue(program, expression.function, frame);
+      const field = getFieldName(target.type, expression.args);
+      if (field !== undefined) return compileField(program, target, field);
       return compileApplication(
         program,
-        compileValue(program, expression.function, frame),
+        target,
         compileValue(program, getArgument(expression.args, expression.location), frame),
       );
     }
