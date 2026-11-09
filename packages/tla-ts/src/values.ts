@@ -234,8 +234,9 @@ export const describeKind = (value: Value) => {
 export const isTlcInteger = (value: number) =>
   Number.isInteger(value) && value <= MAXIMUM_INTEGER && value >= MINIMUM_INTEGER;
 
-// TLC keeps a record, or a string-keyed function @@ builds, in written order until it sorts it
-// to compare or fingerprint it. ToString, Assert, and error messages show that order.
+// TLC keeps a record, or a function @@ builds with a key other than an integer, in written order
+// until it sorts it to compare or fingerprint it. ToString, Assert, and error messages show that
+// order.
 const writtenOrderUse = { isUsed: false };
 
 const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
@@ -245,7 +246,8 @@ const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
 };
 
 export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
-  const keys = functionValue.writtenKeys ?? functionValue.domain;
+  const isSorted = functionValue.hash !== 0 || functionValue.fingerprint !== 0;
+  const keys = (isSorted ? undefined : functionValue.writtenKeys) ?? functionValue.domain;
   return keys.map((key) => [key, functionValue.range[findSortedIndex(functionValue.domain, key)]]);
 };
 
@@ -1275,7 +1277,7 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
   const functionValue = createFunction(pairs);
   const isWrittenSorted =
     functionValue.domain.length !== pairs.length ||
-    pairs.some((pair) => typeof pair[0] !== "string") ||
+    pairs.every((pair) => typeof pair[0] === "number") ||
     pairs.every((pair, index) => pair[0] === functionValue.domain[index]);
   return isWrittenSorted
     ? functionValue
@@ -2217,13 +2219,21 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
           `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`,
         );
       }
-    case "Union":
+    case "Union": {
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(
           `Attempted to check if:\n ${formatValue(element)}\nis an element of the non-enumerable set:\n ${formatUnion(set)}`,
         );
       }
-      return toFiniteSet(set.base).elements.some((inner) => isElementOf(element, inner));
+      const sets = toFiniteSet(set.base).elements;
+      // TLC sorts the sets to enumerate them, and comparing two sets normalizes both.
+      if (sets.length > 1) {
+        sets.forEach((inner) => {
+          if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
+        });
+      }
+      return sets.some((inner) => isElementOf(element, inner));
+    }
     case "SetOperation":
       if (set.operator === "\\cup")
         return isElementOf(element, set.left) || isElementOf(element, set.right);
@@ -2970,19 +2980,17 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       if (functionValue.domain.every((key, index) => key === index + 1)) {
         return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
       }
+      const pairs = isNormalized
+        ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
+        : getWrittenPairs(functionValue);
       // A RecordValue always prints as a record, a FcnRcdValue only if its keys are names.
       if (
         getFunctionClass(value) === "record" ||
         functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))
       ) {
-        const isSorted =
-          isNormalized || functionValue.hash !== 0 || functionValue.fingerprint !== 0;
-        const pairs = isSorted
-          ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
-          : getWrittenPairs(functionValue);
         return `[${pairs.map((pair) => `${String(pair[0])} |-> ${formatRange(pair[1])}`).join(", ")}]`;
       }
-      return `(${functionValue.domain.map((key, index) => `${format(key)} :> ${formatRange(functionValue.range[index])}`).join(" @@ ")})`;
+      return `(${pairs.map((pair) => `${format(pair[0])} :> ${formatRange(pair[1])}`).join(" @@ ")})`;
     }
   }
 };

@@ -150,6 +150,7 @@ export interface Environment {
   startupValues: (Value | undefined)[];
   // SANY wraps the body of each of these INSTANCE copies in its substitutions.
   substitutedDefinitions: Set<Definition>;
+  instanceParams: Set<OperatorParam>;
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
@@ -369,11 +370,6 @@ export const toUnspecifiedSubscriptError = (error: unknown, version: TlcVersion 
         `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${error.variable} occurring in the state formula v.\n`,
       )
     : error;
-
-export const createPrimeOutsideActionError = (expression: Expression) =>
-  new TlaEvaluationError(
-    `A primed expression appears outside an action at ${describeLocation(expression)}`,
-  );
 
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
   for (let current = scope; current; current = current.parent) {
@@ -1972,16 +1968,14 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
-      return (context) => {
-        if (!context.next) throw createPrimeOutsideActionError(expression);
-        return inner({
+      return (context) =>
+        inner({
           environment: context.environment,
           scope: context.scope,
           state: context.next,
           next: undefined,
           isKeepLazy: context.isKeepLazy,
         });
-      };
     }
     case "Unchanged": {
       const primed = getChildEvaluator({

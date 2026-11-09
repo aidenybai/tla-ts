@@ -159,6 +159,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const search = createSearch(
     config,
     environment,
+    specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     report,
   );

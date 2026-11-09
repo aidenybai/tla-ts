@@ -241,17 +241,20 @@ export const createTlcOperators = (
     const sequence = getValue(args, 0, "SortSeq");
     const elements = getSequenceElements(sequence);
     if (!elements) throw createModuleArgumentError("first", "SortSeq", "natural number", sequence);
-    const precedes = getOperator(args, 1, "SortSeq");
-    return createTuple(
-      elements.reduce<Value[]>((sorted, element) => {
-        const position = sorted.findIndex(
-          (existing) => precedes.call([element, existing]) === true,
-        );
-        return position === -1
-          ? [...sorted, element]
-          : [...sorted.slice(0, position), element, ...sorted.slice(position)];
-      }, []),
-    );
+    const operator = getOperator(args, 1, "SortSeq");
+    const precedes = (left: Value, right: Value) => {
+      const result = operator.call([left, right]);
+      if (typeof result === "boolean") return result;
+      throw createModuleArgumentError("second", "SortSeq", "boolean function", result);
+    };
+    // TLC's insertion sort moves each element back past the ones it precedes.
+    const sorted = elements.slice(0, 1);
+    elements.slice(1).forEach((element) => {
+      const position = { index: sorted.length };
+      while (position.index > 0 && precedes(element, sorted[position.index - 1])) position.index--;
+      sorted.splice(position.index, 0, element);
+    });
+    return createTuple(sorted);
   }),
   // TLC reports a failure of TLCGet, its argument's too, as one of TLCGetSet.TLCGetEval.
   runtime.version === "1.7.4"

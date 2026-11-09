@@ -7,7 +7,12 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
+import {
+  TlaEvaluationError,
+  TlaIllegalStateError,
+  TlaIncompleteSuccessorError,
+  TlaUncodedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -27,6 +32,7 @@ import {
   getContextElements,
   getEntryEvaluator,
   getReevaluatedDefinitions,
+  getStartupValue,
   lookupScope,
   mapBoundSets,
   resolveApplyOperator,
@@ -39,6 +45,7 @@ import {
   type State,
 } from "./evaluate";
 import { mapChildren } from "./instances";
+import { CORE_OPERATORS } from "./standard-modules";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
   getEnabledFailure,
@@ -50,9 +57,9 @@ import {
 import {
   formatValue,
   getStreamedElements,
+  isEqualLikeTlc,
   isFunctionValue,
   isTlcEnumerable,
-  valuesEqual,
   type Value,
 } from "./values";
 
@@ -141,9 +148,20 @@ const getIfConditionMessage = (run: Run, value: Value, expression: Expression) =
 const holds = (run: Run, expression: Expression, context: Context) =>
   holdsValue(run, expression, evaluate(expression, context));
 
+const CORE_OPERATOR_NAMES = new Set(CORE_OPERATORS.map((operator) => operator.name));
+
+// TLC's initial states evaluate a built-in operator for its value, and report it in a plain message.
+const isBuiltInOperation = (expression: Expression) =>
+  expression.kind === "Apply"
+    ? CORE_OPERATOR_NAMES.has(expression.operator)
+    : expression.kind !== "Identifier" && !LITERAL_KINDS.has(expression.kind);
+
 const holdsValue = (run: Run, expression: Expression, value: Value, isWalked = true) => {
   if (typeof value === "boolean") return value;
-  throw createRunError(run, getNonBooleanMessage(run, value, expression, isWalked));
+  const message = getNonBooleanMessage(run, value, expression, isWalked);
+  throw run.isInit && isWalked && isBuiltInOperation(expression)
+    ? new TlaUncodedError(message)
+    : createRunError(run, message);
 };
 
 const evaluateCached = (
@@ -423,7 +441,7 @@ const compileConjunction = (
         if (assigned === undefined) {
           current = assign(current, conjunct.index, value);
           context = undefined;
-        } else if (!valuesEqual(assigned, value)) {
+        } else if (!isEqualLikeTlc(assigned, value)) {
           return;
         }
         continue;
@@ -437,7 +455,7 @@ const compileConjunction = (
           if (assigned === undefined) {
             unchanged ??= current.slice();
             unchanged[variable.index] = state[variable.index];
-          } else if (!valuesEqual(assigned, state[variable.index])) {
+          } else if (!isEqualLikeTlc(assigned, state[variable.index])) {
             warnChangedUnchanged(run.environment, variable.index, variable.expression);
             return;
           }
@@ -679,7 +697,13 @@ const compileIdentifier = (
       );
       return;
     }
-    if (binding || !definition) {
+    // TLC computed a constant definition at startup, so it looks up its value. It walks the body
+    // of the configured INIT or NEXT, which isn't a reference in the source and has no range.
+    if (
+      binding ||
+      !definition ||
+      (expression.location.range && getStartupValue(definition, environment) !== undefined)
+    ) {
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
@@ -1074,7 +1098,12 @@ const compileAction = (
       return compileUnchanged(expression.expression, environment);
     case "AngleAction": {
       const body = getChildRunner(expression.action);
-      const unchanged = getUnchangedWrapper(expression.subscript);
+      // TLC compares the whole subscript of <<A>>_v, unlike UNCHANGED's, which it splits.
+      const unchanged: Expression = {
+        kind: "Unchanged",
+        expression: expression.subscript,
+        location: expression.subscript.location,
+      };
       const isUnchanged = (run: Run, scope: Scope | undefined, nextPartial: State) => {
         try {
           return holds(run, unchanged, getContext(run, scope, nextPartial));
@@ -1280,6 +1309,34 @@ export const forEachSuccessor = (
     },
   );
   return run.successors;
+};
+
+export const hasIncompleteSuccessor = (
+  expression: Expression,
+  state: Value[],
+  environment: Environment,
+  scope?: Scope,
+) => {
+  const run: Run = {
+    environment,
+    isInit: false,
+    isEnabled: false,
+    current: state,
+    isStopped: false,
+    generator: undefined,
+    successors: 0,
+  };
+  getRunner(expression, environment, false)(
+    run,
+    scope,
+    getEmptyState(environment),
+    undefined,
+    false,
+    (partial) => {
+      if (!isComplete(partial)) run.isStopped = true;
+    },
+  );
+  return run.isStopped;
 };
 
 export const getSuccessors = (

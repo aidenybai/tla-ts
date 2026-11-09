@@ -23,7 +23,7 @@ export interface LiveEnabled {
 interface LiveAction {
   kind: "Action";
   expression: Expression;
-  unchanged: Expression | undefined;
+  subscript: Expression | undefined;
   scope: Scope | undefined;
   enabled?: LiveEnabled;
 }

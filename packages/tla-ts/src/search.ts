@@ -63,6 +63,7 @@ import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
   formatValue,
+  getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
   setStringOrder,
@@ -219,11 +220,12 @@ export const reportStartup = (
   });
 };
 
+// TLC reads the invariant's level from SANY, which doesn't see the configuration's substitutions.
 const getInvariants = (names: string[], environment: Environment) => {
   const analyzer = createLevelAnalyzer({
     constants: new Set(environment.constants.keys()),
     variables: new Set(environment.variables),
-    getDefinition: (name) => getDefinition(name, environment),
+    getDefinition: (name) => environment.definitions.get(name),
   });
   return names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
@@ -283,6 +285,7 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
 const getSpecification = (
   config: ModelConfig,
   environment: Environment,
+  variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress: CheckOptions["onProgress"],
 ): Specification => {
@@ -327,6 +330,17 @@ const getSpecification = (
   expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
+    const variableIndex =
+      conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
+        ? environment.variableIndex.get(conjunct.name)
+        : undefined;
+    // TLC looks a variable up as it does an operator, and finds its declaration.
+    if (conjunct.kind === "Identifier" && variableIndex !== undefined) {
+      const range = variableLocations[variableIndex].range;
+      throw new TlaConfigError(
+        `The operator ${conjunct.name}, which equals ${range ? formatRange(range) : conjunct.name},\ncannot be used as a spec`,
+      );
+    }
     if (conjunct.kind === "UnboundedQuantifier" && conjunct.isTemporal) {
       throw setExitCode(
         new TlaConfigError(
@@ -365,8 +379,11 @@ const getSpecification = (
       nextActions.push({ expression: conjunct.expression.action, scope: item.scope });
       return;
     }
+    // TLC rejects []S for a state-level S applying an operator, but not for a LET or a label.
     if (
       conjunct.kind === "Always" &&
+      conjunct.expression.kind !== "Let" &&
+      conjunct.expression.kind !== "Label" &&
       getLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
     ) {
       // TLC accepts the spec and fails when it builds the tableau of the temporal formulas.
@@ -668,17 +685,12 @@ interface Search {
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
 
-const toAliasRecord = (value: Value, fieldOrder: string[]) => {
+// TLC prints the alias's record in the order it was written, unless it sorted the record.
+const toAliasRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
-  const record = toFiniteFunction(value);
-  if (!record.domain.every((key) => typeof key === "string")) return undefined;
-  const entries = record.domain.map((key, index): [string, Value] => [
-    String(key),
-    record.range[index],
-  ]);
-  return Object.fromEntries(
-    entries.sort((left, right) => fieldOrder.indexOf(left[0]) - fieldOrder.indexOf(right[0])),
-  );
+  const pairs = getWrittenPairs(toFiniteFunction(value));
+  if (!pairs.every((pair) => typeof pair[0] === "string")) return undefined;
+  return Object.fromEntries(pairs.map((pair) => [String(pair[0]), pair[1]]));
 };
 
 export const getIncompleteSuccessorMessage = (
@@ -806,6 +818,7 @@ export const prepareSearch = (options: CheckOptions) => {
   const search = createSearch(
     config,
     environment,
+    specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     options.onProgress,
   );
@@ -836,11 +849,18 @@ export const reportAssumptionViolation = (
 export const createSearch = (
   config: ModelConfig,
   environment: Environment,
+  variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress?: CheckOptions["onProgress"],
 ): Search | undefined => {
   const configInvariants = getInvariants(config.invariants, environment);
-  const spec = getSpecification(config, environment, getVariableOrder, onProgress);
+  const spec = getSpecification(
+    config,
+    environment,
+    variableLocations,
+    getVariableOrder,
+    onProgress,
+  );
   const properties = getProperties(config, environment, onProgress);
   const live = config.properties[0];
   const liveRange = live && getDefinition(live, environment)?.location.range;
@@ -985,10 +1005,9 @@ export const createSearch = (
     toRecord,
     evaluateAlias: (alias, state, next, isTool) => {
       try {
-        const body = getConfigDefinition("alias", alias, environment).body;
+        getConfigDefinition("alias", alias, environment);
         const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
-        const fieldOrder = body.kind === "Record" ? body.fields.map((field) => field.name) : [];
-        return toAliasRecord(value, fieldOrder) ?? toRecord(state);
+        return toAliasRecord(value) ?? toRecord(state);
       } catch (error) {
         if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
         return { ...toRecord(state), _ALIASEvalError: formatNestedMessage(error.message, isTool) };

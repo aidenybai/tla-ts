@@ -139,6 +139,14 @@ export class TlaStackOverflowError extends TlaEvaluationError {
 export const createStackOverflowError = () =>
   setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
 
+// TLC's plain message that reads like a coded one, as the initial states' for a built-in operator.
+export class TlaUncodedError extends TlaEvaluationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+  }
+}
+
 // TLC reports the partial state, with null for each unassigned variable.
 export class TlaIncompleteSuccessorError extends TlaEvaluationError {
   state: (Value | undefined)[];

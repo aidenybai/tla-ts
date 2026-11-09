@@ -1,7 +1,7 @@
 (*---
-description: 'processConfigSpec has no LabelNode case, so a labeled specification body falls to the level test: temporal level, classified as fairness, leaving no initial predicate.'
+description: 'processConfigSpec has no LabelNode case, so a labeled specification body falls to the level test: temporal level, classified as fairness, leaving no initial predicate. Real TLC bug, as a label does not change the meaning of the formula it names.'
 ref: tlc2/tool/impl/SpecProcessor.java#processConfigSpec
-features: [liveness]
+features: [liveness, tlc-bug]
 outcome: config-error
 config: |
   SPECIFICATION Spec

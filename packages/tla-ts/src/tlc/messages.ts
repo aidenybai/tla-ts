@@ -6,6 +6,7 @@ import {
   TlaModuleError,
   TlaSetBoundError,
   TlaStackOverflowError,
+  TlaUncodedError,
   TlaWarningAsError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
@@ -306,6 +307,8 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [5007, "TLC found an error in the configuration file:\n%1%", false],
   // The general message is a prefix of the others above.
   [5002, "TLC found an error in the configuration file at line %1%\n", false],
+  [2250, "A state predicate was evaluated to a non-boolean value.", false],
+  [2252, "Encountered an action predicate that's not a boolean.", false],
   [2253, "Temporal formula is a tautology (its negation is unsatisfiable).", false],
   [
     2301,
@@ -448,6 +451,7 @@ const formatErrorMessage = (error: TlaEvaluationError, isTool: boolean): string 
   const headed = headedErrors.get(error);
   if (headed) return `${headed.headline}\n${formatErrorMessage(headed.inner, isTool)}`;
   const message = error.message;
+  if (error instanceof TlaUncodedError) return message;
   const prefix = UNEXPECTED_EXCEPTION_PREFIXES.find((start) => message.startsWith(start)) ?? "";
   return `${prefix}${formatNestedMessage(message.slice(prefix.length), isTool)}`;
 };

@@ -736,7 +736,12 @@ const parse = (
       return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
     }
     if (isAt("<<") || isAt("(") || isAt("{") || isAt("[") || isTlapmAtom) {
-      return { subscript: parsePrimary(), lastArgs: [] };
+      const start = cursor.index;
+      const subscript = parsePrimary();
+      return {
+        subscript: subscript.location.range ? subscript : withRange(subscript, start),
+        lastArgs: [],
+      };
     }
     throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
   };
@@ -1236,7 +1241,7 @@ const parse = (
             declareRecursive();
             continue;
           }
-          const unit = parseDefinition(false);
+          const unit = parseDefinition(!isTlapm && accept("LOCAL"));
           if (unit.kind === "Instance") instances.push(unit);
           else definitions.push(unit);
         }

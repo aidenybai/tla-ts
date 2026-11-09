@@ -322,6 +322,7 @@ export const createEnvironment = (
   const parameterized = new Map<string, boolean>();
   const copySources = new Map<string, { source: string; prefix: number }>();
   const substitutedDefinitions = new Set<Definition>();
+  const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
@@ -575,8 +576,10 @@ export const createEnvironment = (
       substitutions,
       location: instance.location,
     });
+    const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
+    params.forEach((param) => instanceParams.add(param));
     const instantiation = createInstantiation({
-      params: instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` })),
+      params,
       substitutions: new Map(
         [...substitutions].map(([name, expression]) => [name, renameLocals(expression, renamed)]),
       ),
@@ -1357,6 +1360,7 @@ export const createEnvironment = (
     facts,
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     substitutedDefinitions,
+    instanceParams,
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),
     definitionEvaluators: new WeakMap(),
@@ -1417,6 +1421,8 @@ export const createEnvironment = (
         getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
           (name) => {
             const definition = definitions.get(linked.visible.get(name)?.key ?? name);
+            // TLC doesn't compute the copy of a definition from a module instantiated with
+            // substitutions.
             return definition ? [definition] : [];
           },
         ),
