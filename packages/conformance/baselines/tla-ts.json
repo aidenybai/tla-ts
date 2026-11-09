@@ -563,8 +563,6 @@
   "tlc/temporal/refinement/parameterized_instance_fails": "text-mismatch",
   "tlc/temporal/refinement/spec_instance_with_parameter_fairness": "exit-mismatch",
   "tlc/temporal/refinement/substitution_of_action_operator_builtin": "message-mismatch",
-  "tlc/temporal/spec_shape/box_of_let_constrains_behaviors": "exit-mismatch",
-  "tlc/temporal/spec_shape/box_of_let_state_predicate": "exit-mismatch",
   "tlc/temporal/spec_shape/labeled_box_conjunct": "exit-mismatch",
   "tlc/temporal/spec_shape/labeled_spec_body": "exit-mismatch",
   "tlc/temporal/spec_shape/op_param_is_box_action": "exit-mismatch"

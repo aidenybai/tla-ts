@@ -366,8 +366,11 @@ const getSpecification = (
       nextActions.push({ expression: conjunct.expression.action, scope: item.scope });
       return;
     }
+    // TLC rejects []S for a state-level S applying an operator, but not for a LET or a label.
     if (
       conjunct.kind === "Always" &&
+      conjunct.expression.kind !== "Let" &&
+      conjunct.expression.kind !== "Label" &&
       getLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
     ) {
       // TLC accepts the spec and fails when it builds the tableau of the temporal formulas.
