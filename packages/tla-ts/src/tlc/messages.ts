@@ -238,6 +238,11 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2241, "The property %1% is not correctly defined.", false],
   [2242, "The arity of the operator %1% is inconsistent in the configuration file.", false],
   [2244, "TLC can't handle real numbers.\n%1%", false],
+  [
+    2245,
+    "In the configuration file, the module name %1% is not a module in the specification.",
+    false,
+  ],
   [2247, "In computing %1%, TLC expected a %2% expression,\nbut instead found %3%.\n%4%", false],
   [2248, "In computing %1%, TLC expected a %2% expression,\nbut didn't find one.\n%3%", false],
   [2260, "In computing ENABLED, TLC encountered a temporal formula (%1%).\n%2%", false],
