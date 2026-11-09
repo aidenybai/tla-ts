@@ -1,7 +1,13 @@
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "../errors";
+import {
+  getErrorExitCode,
+  TlaConfigError,
+  TlaError,
+  TlaEvaluationError,
+  TlaWarningAsError,
+} from "../errors";
 import { SANY_174_STANDARD_MODULES } from "../sany/modules";
 import type { TlcVersion } from "../tlc/version";
 import {
@@ -48,7 +54,12 @@ export const getStandardModulesUrl = (jar: string) =>
 export const printError = (error: TlaError, printer: MessagePrinter) => {
   if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
     const coded = getCodedMessage(error.message);
-    const code = coded && !coded.isEvalException ? coded.code : MESSAGE_CODE.general;
+    const code =
+      error instanceof TlaWarningAsError
+        ? error.code
+        : coded && !coded.isEvalException
+          ? coded.code
+          : MESSAGE_CODE.general;
     return printer.print(
       code,
       MESSAGE_LEVEL.error,

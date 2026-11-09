@@ -186,6 +186,16 @@ export class TlaSetBoundError extends TlaEvaluationError {
   }
 }
 
+export class TlaWarningAsError extends TlaEvaluationError {
+  code: number;
+
+  constructor(code: number, message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+    this.code = code;
+  }
+}
+
 export class TlaNullPointerError extends TlaEvaluationError {
   constructor(message: string) {
     super(message);

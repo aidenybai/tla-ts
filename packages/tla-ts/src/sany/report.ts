@@ -29,6 +29,8 @@ export interface SanyReportOptions {
   isXmlExport?: boolean;
   version?: TlcVersion;
   rootExtendees?: string[];
+  suppressedCodes?: number[];
+  errorCodes?: number[];
   onPrint?: (text: string) => void;
   onPrintError?: (text: string) => void;
 }
@@ -56,6 +58,8 @@ const formatErrors = (messages: SanyMessage[]) => {
     ...warnings.map((warning) => `${formatMessage(warning)}\n\n\n`),
   ].join("");
 };
+
+const RECORD_FIELD_CLASH = 4802;
 
 const UNLINTED_MODULES = new Set([
   "FiniteSets",
@@ -319,7 +323,14 @@ export const getSanyReport = (
   if (specification !== undefined && !isFailed.value && !options.isXmlExport && !isTlc174) {
     const linted = specification.modules.filter((module) => !UNLINTED_MODULES.has(module.name));
     if (describeFile) linted.forEach((module) => log(`Linting of module ${module.name}`));
-    linted.flatMap(lintSanyModule).forEach((warning) => log(`${formatMessage(warning)}\n\n\n`));
+    const warnings = options.suppressedCodes?.includes(RECORD_FIELD_CLASH)
+      ? []
+      : linted.flatMap(lintSanyModule);
+    const prefix = options.errorCodes?.includes(RECORD_FIELD_CLASH)
+      ? "Warning treated as error: "
+      : "";
+    warnings.forEach((warning) => log(`${prefix}${formatMessage(warning)}\n\n\n`));
+    if (prefix && warnings.length > 0) isFailed.value = true;
   }
   return {
     text: lines.join(""),

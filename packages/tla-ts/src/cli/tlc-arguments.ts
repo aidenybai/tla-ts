@@ -23,6 +23,8 @@ export interface TlcArguments {
   isTraceSpecDisabled: boolean;
   isTraceBinaryDisabled: boolean;
   isDiffTrace: boolean;
+  suppressedCodes: number[];
+  errorCodes: number[];
   isUsage: boolean;
 }
 
@@ -135,6 +137,8 @@ const createDefaults = (): TlcArguments => ({
   isTraceSpecDisabled: false,
   isTraceBinaryDisabled: false,
   isDiffTrace: false,
+  suppressedCodes: [],
+  errorCodes: [],
   isUsage: false,
 });
 
@@ -533,5 +537,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       `Error: The following codes were set to both -suppressMessages and -messagesAsErrors: [${overlap.join(", ")}]`,
     );
   }
+  parsed.suppressedCodes = [...suppressedCodes.tlc, ...suppressedCodes.sany];
+  parsed.errorCodes = [...errorCodes.tlc, ...errorCodes.sany];
   return parsed;
 };

@@ -6,10 +6,11 @@ import {
   TlaModuleError,
   TlaSetBoundError,
   TlaStackOverflowError,
+  TlaWarningAsError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "../errors";
-import { setExitCode } from "../exit-codes";
+import { getMessageExitStatus, setExitCode } from "../exit-codes";
 import type { TlcVersion } from "./version";
 
 export const MESSAGE_CODE = {
@@ -110,6 +111,8 @@ export const createMessagePrinter = (
   isTool: boolean,
   isWarningEnabled = true,
   version: TlcVersion = "master",
+  suppressedCodes: number[] = [],
+  errorCodes: number[] = [],
 ): MessagePrinter => {
   const warnings = new Set<string>();
   return {
@@ -117,7 +120,11 @@ export const createMessagePrinter = (
     version,
     print: (code, level, text) => {
       const isWarning = level === MESSAGE_LEVEL.warning;
+      if (isWarning && errorCodes.includes(code)) {
+        throw setExitCode(new TlaWarningAsError(code, text), getMessageExitStatus(code));
+      }
       if (isWarning && !isWarningEnabled) return;
+      if (level !== MESSAGE_LEVEL.error && suppressedCodes.includes(code)) return;
       const hint =
         isWarning && !isTool && warnings.size === 0
           ? "\n(Use the -nowarning option to disable this warning.)"

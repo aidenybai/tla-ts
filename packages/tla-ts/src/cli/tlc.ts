@@ -907,6 +907,8 @@ const checkSpec = async (
       version,
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
       rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
+      suppressedCodes: args.suppressedCodes,
+      errorCodes: args.errorCodes,
       onPrint: (text) => process.stdout.write(text),
       onPrintError: (text) => process.stderr.write(text),
     },
@@ -1093,7 +1095,13 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     if (paths.length > 1)
       console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
     const printer = {
-      ...createMessagePrinter(parsed.isTool, parsed.isWarningEnabled, version),
+      ...createMessagePrinter(
+        parsed.isTool,
+        parsed.isWarningEnabled,
+        version,
+        parsed.suppressedCodes,
+        parsed.errorCodes,
+      ),
       isDiffTrace: parsed.isDiffTrace,
     };
     exitCodes.push(await reportErrors(() => checkSpec(path, parsed, dump, java, printer), printer));
