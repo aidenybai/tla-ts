@@ -1407,20 +1407,32 @@ const compileMembership = (
       emit: () => `((${name}) => ${isInSet.emit()} && ${predicate.emit()})(${element.emit()})`,
     };
   }
-  // TLC tests membership in a union in each of its sets.
-  if (
-    setExpression.kind === "Apply" &&
-    isUnion(program, setExpression, frame) &&
-    isStructural(program, setExpression, frame)
-  ) {
+  // TLC tests membership in a union, or in UNION of a set literal, in each of its sets.
+  const sets =
+    setExpression.kind !== "Apply"
+      ? undefined
+      : isUnion(program, setExpression, frame) &&
+          (isStructural(program, setExpression, frame) ||
+            setExpression.args.some((set) => {
+              if (!isConstantExpression(program, set, frame.scope)) return false;
+              const value = evaluateConstant(program, set);
+              return typeof value === "object" && value.kind === "InfiniteSet";
+            }))
+        ? setExpression.args
+        : setExpression.args.length === 1 &&
+            isBuiltin(program, frame, setExpression.operator, "UNION") &&
+            setExpression.args[0].kind === "SetEnumeration"
+          ? setExpression.args[0].elements
+          : undefined;
+  if (sets) {
     const name = getName(program, "e");
-    const tests = setExpression.args.map((set) =>
+    const tests = sets.map((set) =>
       compileMembership(program, { type: element.type, emit: () => name }, set, frame),
     );
     return {
       type: BOOL,
       emit: () =>
-        `((${name}) => ${tests.map((test) => test.emit()).join(" || ")})(${element.emit()})`,
+        `((${name}) => ${tests.length === 0 ? "false" : tests.map((test) => test.emit()).join(" || ")})(${element.emit()})`,
     };
   }
   // TLC tests membership in a set of records field by field, without enumerating it.
@@ -1545,10 +1557,20 @@ const compileMembership = (
   if (isConstantExpression(program, setExpression, frame.scope)) {
     const value = evaluateConstant(program, setExpression);
     if (typeof value === "object" && value.kind === "InfiniteSet") {
-      const integer = expectInt(element);
-      if (value.name === "Nat") return { type: BOOL, emit: () => `(${integer.emit()}) >= 0` };
-      if (value.name === "Int") return { type: BOOL, emit: () => `((${integer.emit()}), true)` };
-      return unsupported();
+      if (value.name !== "Nat" && value.name !== "Int") return unsupported();
+      unify(element.type, createInt());
+      // TLC's Int and Nat hold no untyped model value.
+      return {
+        type: BOOL,
+        emit: () => {
+          const name = getName(program, "e");
+          const checks = [
+            ...(resolveType(element.type).kind === "Mix" ? [`${name} < ${ATOM_BASE}`] : []),
+            ...(value.name === "Nat" ? [`${name} >= 0`] : []),
+          ];
+          return `((${name}) => ${checks.length === 0 ? "true" : checks.join(" && ")})(${element.emit()})`;
+        },
+      };
     }
     if (typeof value === "object" && value.kind === "Interval") {
       unify(element.type, createInt());
