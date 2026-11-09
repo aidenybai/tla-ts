@@ -8,6 +8,7 @@ import {
 } from "../../../errors";
 import { type AstManager, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
+import { card2bv } from "./card2bv";
 import { Context } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import type { Definition, Goal } from "./goal";
@@ -429,6 +430,21 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
+  [
+    "card2bv",
+    {
+      descrs: getDescrs("", [
+        ["keep_cardinality_constraints", PARAM_BOOL, false, true],
+        ["pb.solver", PARAM_SYMBOL, "solver", true],
+        ["cardinality.encoding", PARAM_SYMBOL, "none", true],
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) => {
+          checkParams(REWRITER_DESCRS, params);
+          card2bv(environment.manager, goal, getRewriterOptions(environment.manager, params));
+        }),
+    },
+  ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
@@ -469,7 +485,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 const UNPORTED_TACTICS = new Set(
   (
     "ackermannize_bv add-bounds aig bit-blast blast-term-ite bv_bound_chk bv-divrem-bounds " +
-    "bv-slice bv1-blast bvarray2uf card2bv cofactor-term-ite collect-statistics " +
+    "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
     "ctx-solver-simplify degree-shift demodulator diff-neq distribute-forall dom-simplify " +
     "dt2bv elim-predicates elim-small-bv elim-term-ite elim-uncnstr2 eq2bv " +
     "euf-completion factor ff-sat ff-simplify ff-solve ff-unique ff2bv fix-dl-var fm " +
