@@ -2435,6 +2435,9 @@ export const applyFunction = (
   describeMissing?: (functionValue: FunctionValue, argument: Value) => string,
 ): Value => {
   if (typeof functionValue === "object" && functionValue.kind === "LazyFunction") {
+    if (functionValue.enumerated) {
+      return applyFunction(functionValue.enumerated, argument, describeMissing);
+    }
     const tupleLengths = functionValue.boundTupleLengths;
     if (tupleLengths !== undefined) {
       checkBoundArguments(functionValue, tupleLengths, argument);
