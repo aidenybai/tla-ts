@@ -15,6 +15,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { translateBody } from "./functions";
 import { getHeap } from "./heap";
+import { isBuiltInObject } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
 import {
@@ -291,7 +292,12 @@ const translateUnordered = (
   if (ts.isIdentifier(receiver) && receiver.text === "Object") {
     const argument = node.arguments[0];
     const kind = getKind(argument, context);
-    if (context.heap !== undefined && (kind === "object" || kind === "sequence")) return undefined;
+    if (
+      isBuiltInObject(argument, context) ||
+      (context.heap !== undefined && (kind === "object" || kind === "sequence"))
+    ) {
+      return undefined;
+    }
     const record = translate(argument);
     if (method === "keys") return { set: getDomain(record), isMapped: false };
     if (method === "values") return getValues(record, context);
