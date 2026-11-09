@@ -165,7 +165,18 @@ const inlineCall = (
     { ...bound.scope, receiver: getReceiver(scope, context, called) },
     context,
   );
-  return render(letIn(bound.definitions, leaf(value)));
+  return render(letIn(bound.definitions, forceHeap(scope, bound.scope, leaf(value), context)));
+};
+
+// Evaluates the heap that binding patterns gives, which reads the properties that object patterns
+// take, before the rest of the function: TLC would otherwise read them only where something reads
+// what the patterns bind, so a getter that tla-ts can't call wouldn't stop the check.
+const forceHeap = (before: Scope, after: Scope, rest: Formula, context: Context) => {
+  const heapSymbol = context.heap;
+  const heap = heapSymbol === undefined ? undefined : after.bindings.get(heapSymbol);
+  return heap === undefined || heapSymbol === undefined || heap === before.bindings.get(heapSymbol)
+    ? rest
+    : ifThenElse(apply("=", [heap, heap]), rest, leaf(getUndefined(context)));
 };
 
 // A function argument to an operator parameter, as a LAMBDA or an operator's name.
@@ -338,7 +349,10 @@ const translatePure = (
       },
       { definitions: [], scope },
     );
-    return letIn(bound.definitions, continueWith(bound.scope));
+    return letIn(
+      bound.definitions,
+      forceHeap(scope, bound.scope, continueWith(bound.scope), context),
+    );
   }
   if (ts.isIfStatement(statement)) {
     return translateIf(

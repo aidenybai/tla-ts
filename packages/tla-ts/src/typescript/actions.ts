@@ -994,7 +994,7 @@ const makeGenerator = (
         name,
         useJavaScript(
           "Allocate",
-          [getHeap(inner.scope, node, context), identifier("GeneratorObject")],
+          [getHeap(bound.scope, node, context), identifier("GeneratorObject")],
           context,
         ),
         continueWith(

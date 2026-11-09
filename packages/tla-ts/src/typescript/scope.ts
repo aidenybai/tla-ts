@@ -11,7 +11,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
-import { apply, define, identifier, ifExpression, number, string } from "./tla";
+import { apply, define, identifier, ifExpression, number, set, string } from "./tla";
 import { getHeap } from "./heap";
 import { useJavaScript } from "./javascript";
 import { getField, getPathStep, getPropertyKey, isHeapType, isSequenceType } from "./types";
@@ -184,7 +184,9 @@ export const bindPatternInline = (
   if (ts.isIdentifier(pattern)) {
     return bindNames(scope, [{ name: value, symbol: getSymbol(pattern, context.checker) }]);
   }
-  return pattern.elements.reduce((current, element, position) => {
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
+  const heapSymbol = context.heap;
+  const bound = pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
     if (!ts.isIdentifier(element.name)) rejectNestedPattern(element, current);
     const initializer = element.initializer;
@@ -217,7 +219,6 @@ export const bindPatternInline = (
         ? undefined
         : getPropertyKey(name);
     if (key === undefined) throw new TlaTypeScriptError("Unsupported key", element);
-    const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
     if (isHeapType(type, pattern, context)) {
       const part = useJavaScript(
         "Get",
@@ -243,6 +244,25 @@ export const bindPatternInline = (
       initializer === undefined ? getField(value, key) : getOptionalField(value, key, context);
     return bindPatternInline(element.name, withDefault(part), current, context);
   }, scope);
+  if (
+    !ts.isObjectBindingPattern(pattern) ||
+    heapSymbol === undefined ||
+    !isHeapType(type, pattern, context)
+  ) {
+    return bound;
+  }
+  const keys = pattern.elements.flatMap((element) => {
+    const name = element.propertyName ?? element.name;
+    const key =
+      ts.isIdentifier(name) || ts.isStringLiteral(name) ? getPropertyKey(name) : undefined;
+    return key === undefined ? [] : [string(key)];
+  });
+  const read = useJavaScript(
+    "ReadKeys",
+    [getHeap(bound, pattern, context), value, set(keys)],
+    context,
+  );
+  return { ...bound, bindings: new Map([...bound.bindings, [heapSymbol, read]]) };
 };
 
 // Binds the names in a declaration to LET definitions.

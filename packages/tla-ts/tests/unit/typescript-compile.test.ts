@@ -460,6 +460,19 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("tla-ts can't call getters");
   });
 
+  it("stop the check at a getter that a parameter pattern reads, though nothing uses it", async () => {
+    const result = await checkModel(`
+      const object = {
+        get poisoned(): number {
+          throw new Error("poisoned");
+        },
+      };
+      const take = ({ poisoned }: { poisoned: number }) => {};
+      take(object);
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call getters");
+  });
+
   it("call a private method that a getter returns", async () => {
     const result = await checkModel(`
       let calls = 0;

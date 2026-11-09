@@ -477,6 +477,14 @@ Get(heap, ref, key) ==
             [] object.prototype = Null -> Undefined
             [] OTHER -> Get(heap, object.prototype, key)
 
+\\* The heap after a pattern reads keys of an object, which TLC would read only where something
+\\* reads what the pattern binds, so that a getter that tla-ts can't call stops the check.
+ReadKeys(heap, ref, keys) ==
+  CASE ref \\in {Undefined, Null} ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of destructuring " \\o ToString(ref))
+    [] \\A key \\in keys : Get(heap, ref, key) = Get(heap, ref, key) -> heap
+    [] OTHER -> heap
+
 \\* TLC builds a function's values only where something reads them. This reads each one, so a getter
 \\* that tla-ts can't call stops the check even where nothing reads what it gives.
 LOCAL Read(values) ==
