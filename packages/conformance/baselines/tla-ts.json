@@ -253,7 +253,6 @@
   "tlc/checker/init/exists_tuple_pattern_mismatch": "text-mismatch",
   "tlc/checker/init/instance_substituted_expression": "text-mismatch",
   "tlc/checker/next/numeral_next": "message-mismatch",
-  "tlc/checker/next/unassigned_disjunct_inline": "text-mismatch",
   "tlc/checker/possible/in_dfid": "exit-mismatch",
   "tlc/checker/postcondition/constant_rejected": "exit-mismatch",
   "tlc/checker/postcondition/primed_is_level_error": "message-mismatch",

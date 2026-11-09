@@ -64,6 +64,7 @@ import {
   forEachSuccessor,
   getInitialStates,
   getSuccessors,
+  hasIncompleteSuccessor,
   type Successor,
 } from "./successors";
 import {
@@ -922,8 +923,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const reportIncompleteSuccessor = (index: number, error: TlaIncompleteSuccessorError) => {
     runtime.generatedStates++;
     const actions = getSpecNextActions();
+    const named =
+      actions.length === 1 ? actions : actions.filter((item) => item.name === error.action);
+    // Inline disjuncts of the next-state relation share its name, so TLC's is the one that failed.
     const action =
-      actions.length === 1 ? actions[0] : actions.find((item) => item.name === error.action);
+      named.length === 1
+        ? named[0]
+        : captureOutput(() =>
+            named.find((item) =>
+              hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
+            ),
+          ).result;
     const message = getIncompleteSuccessorMessage(
       error.variables,
       error.action,
