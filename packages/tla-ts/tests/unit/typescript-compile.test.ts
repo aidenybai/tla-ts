@@ -1508,6 +1508,24 @@ describe("errors", () => {
     ).toContain("tla-ts can't call valueOf");
   });
 
+  it("divides numbers in a script with objects, and stops on a fraction", async () => {
+    const result = await checkModel(`
+      const negative = 1 / -0;
+      const zero = 1 / -Infinity;
+      const quotient = -6 / 3;
+      if (negative !== -Infinity || !Object.is(zero, -0) || quotient !== -2) {
+        throw new Error("missed");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const fraction = await checkModel(`
+      const object = {};
+      const half = 7 / 2;
+      if (half !== 3) throw new Error("missed");
+    `);
+    expect(fraction.failure?.message).toContain("tla-ts can't represent the fraction 7 / 2");
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

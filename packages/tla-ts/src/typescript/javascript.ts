@@ -79,6 +79,23 @@ Multiply(left, right) ==
             LET product == Magnitude(left) * Magnitude(right)
             IN IF product = 0 /\\ isNegative THEN NegativeZero ELSE product
 
+\\* JavaScript's /, where tla-ts represents only a quotient that is an integer, an infinity, NaN,
+\\* or -0.
+Divide(left, right) ==
+  LET isNegative == IsNegative(left) # IsNegative(right)
+      signed(magnitude) == CASE magnitude = 0 /\\ isNegative -> NegativeZero
+                             [] isNegative -> -magnitude
+                             [] OTHER -> magnitude
+  IN CASE left = NaN \\/ right = NaN \\/ (left \\in Infinities /\\ right \\in Infinities) -> NaN
+       [] left \\in Infinities -> IF isNegative THEN NegativeInfinity ELSE Infinity
+       [] right \\in Infinities -> signed(0)
+       [] IsZero(right) /\\ IsZero(left) -> NaN
+       [] IsZero(right) -> IF isNegative THEN NegativeInfinity ELSE Infinity
+       [] Absolute(Magnitude(left)) % Absolute(Magnitude(right)) = 0 ->
+            signed(Absolute(Magnitude(left)) \\div Absolute(Magnitude(right)))
+       [] OTHER -> Assert(FALSE, "tla-ts can't represent the fraction " \\o ToString(left) \\o " / "
+                                 \\o ToString(right))
+
 \\* JavaScript's %, whose result has the sign of the dividend.
 Remainder(left, right) ==
   CASE left = NaN \\/ right = NaN \\/ left \\in Infinities \\/ IsZero(right) -> NaN

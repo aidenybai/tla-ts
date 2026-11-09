@@ -102,6 +102,8 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
         node.operator === ts.SyntaxKind.MinusToken &&
         ts.isNumericLiteral(node.operand) &&
         Number(node.operand.text) === 0) ||
+      // Division may give an infinity or -0.
+      (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = usesSpecialNumbers(sourceFile);
     context.heapArrays = findHeapArrays(sourceFile, context);

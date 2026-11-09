@@ -144,6 +144,7 @@ const ARITHMETIC_OPERATORS = new Set([
   ts.SyntaxKind.AsteriskToken,
   ts.SyntaxKind.AsteriskAsteriskToken,
   ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.SlashToken,
   ...ORDERING_OPERATORS,
 ]);
 
@@ -154,6 +155,7 @@ const NUMBER_OPERATORS = new Map([
   [ts.SyntaxKind.MinusToken, { name: "Subtract", isSwapped: false }],
   [ts.SyntaxKind.AsteriskToken, { name: "Multiply", isSwapped: false }],
   [ts.SyntaxKind.PercentToken, { name: "Remainder", isSwapped: false }],
+  [ts.SyntaxKind.SlashToken, { name: "Divide", isSwapped: false }],
   [ts.SyntaxKind.AsteriskAsteriskToken, { name: "Power", isSwapped: false }],
   [ts.SyntaxKind.LessThanToken, { name: "LessThan", isSwapped: false }],
   [ts.SyntaxKind.LessThanEqualsToken, { name: "LessOrEqual", isSwapped: false }],
