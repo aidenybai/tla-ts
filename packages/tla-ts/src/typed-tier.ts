@@ -1884,6 +1884,21 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         emit: () => `((${condition.emit()}) ? (${consequent.emit()}) : (${alternative.emit()}))`,
       };
     }
+    // TLC takes the first arm whose condition holds, then OTHER, and fails when there is neither.
+    case "Case": {
+      const type: Type = createVar();
+      const arms = expression.arms.map((arm) => ({
+        condition: expectType(compileValue(program, arm.condition, frame), BOOL),
+        body: expectType(compileValue(program, arm.body, frame), type),
+      }));
+      const other =
+        expression.other && expectType(compileValue(program, expression.other, frame), type);
+      return {
+        type,
+        emit: () =>
+          `(${arms.map((arm) => `(${arm.condition.emit()}) ? (${arm.body.emit()}) : `).join("")}${other ? `(${other.emit()})` : "H.deopt()"})`,
+      };
+    }
     case "Let": {
       const names: LazyDefinition[] = [];
       const scope = expression.definitions.reduce<TierScope>((current, definition) => {
@@ -2367,6 +2382,15 @@ const compileStep = (
       const consequent = continueWith(first.scope, [expression.consequent]);
       const alternative = continueWith(first.scope, [expression.alternative]);
       return () => `if (${condition.emit()}) { ${consequent()} } else { ${alternative()} }`;
+    }
+    case "Case": {
+      const arms = expression.arms.map((arm) => ({
+        condition: expectType(compileValue(program, arm.condition, frame), BOOL),
+        body: continueWith(first.scope, [arm.body]),
+      }));
+      const other = expression.other && continueWith(first.scope, [expression.other]);
+      return () =>
+        `${arms.map((arm) => `if (${arm.condition.emit()}) { ${arm.body()} } else `).join("")}{ ${other ? other() : "H.deopt();"} }`;
     }
     case "Let": {
       const names: LazyDefinition[] = [];

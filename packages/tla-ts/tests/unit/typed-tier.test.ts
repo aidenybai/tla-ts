@@ -41,6 +41,7 @@ describe("typed tier matches TLC", () => {
     ["PrimedDefinitions", 129],
     ["IntervalSequences", 110],
     ["NullableRecords", 121],
+    ["CaseArms", 13],
     ["FilteredMembership", 280],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
