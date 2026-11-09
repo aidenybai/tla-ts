@@ -246,7 +246,7 @@ export class MacroManager {
   }
 
   // The result comes with a reference, which the caller releases.
-  private expand(expr: number) {
+  expand(expr: number) {
     const manager = this.manager;
     manager.incRef(expr);
     if (!this.hasMacros()) return expr;
@@ -270,7 +270,7 @@ export class MacroManager {
     return result;
   }
 
-  private insert(decl: number, quantifier: number) {
+  insert(decl: number, quantifier: number) {
     const manager = this.manager;
     if (this.decl2macro.has(decl)) return false;
     const headDef = getHeadDef(manager, quantifier, decl);

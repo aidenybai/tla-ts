@@ -22,6 +22,7 @@ import { distributeForall } from "./distribute-forall";
 import { domSimplify } from "./dom-simplify";
 import { factor } from "./factor";
 import { findGoalMacros } from "./macro-finder";
+import { findQuasiMacros } from "./quasi-macros";
 import { reduceArgs } from "./reduce-args";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
@@ -606,6 +607,17 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "quasi-macros",
+    {
+      descrs: getDescrs("", [
+        ["max_memory", PARAM_UINT, UINT_MAX, true],
+        ["produce_models", PARAM_BOOL, false, true],
+        ["produce_proofs", PARAM_BOOL, false, true],
+      ]),
+      build: (environment) => inPlace((goal) => findQuasiMacros(environment.manager, goal)),
+    },
+  ],
+  [
     "reduce-args",
     {
       descrs: new Map(),
@@ -685,7 +697,7 @@ const UNPORTED_TACTICS = new Set(
     "max-bv-sharing nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
-    "qfufbv qfufbv_ackr qsat quasi-macros recover-01 reduce-args2 reduce-bv-size " +
+    "qfufbv qfufbv_ackr qsat recover-01 reduce-args2 reduce-bv-size " +
     "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce ufbv-rewriter"
   ).split(" "),
