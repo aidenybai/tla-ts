@@ -419,6 +419,11 @@ export const runSmtlibScript = (
       throw new SmtParseError("Objective must be bit-vector, integer or real", list.end);
     state.objectives.push(term);
   };
+  const restoreAssertions = (size: number) => {
+    const state = script.state;
+    for (const assertion of state.assertions.splice(size)) state.manager.decRef(assertion);
+    for (const name of state.names.splice(size)) if (name !== -1) state.manager.decRef(name);
+  };
   const runCommand: Record<string, (list: SmtList) => void> = {
     assert: (list) => {
       const state = script.state;
@@ -500,13 +505,12 @@ export const runSmtlibScript = (
           list.end,
         );
       clearCheck();
-      for (let index = 0; index < count; index++) {
-        const scope = state.scopes.pop();
-        state.assertions.length = scope?.assertions ?? 0;
-        state.names.length = state.assertions.length;
-        state.objectives.length = scope?.objectives ?? 0;
-        state.reader.pop();
-      }
+      if (count === 0) return;
+      const scope = state.scopes[state.scopes.length - count];
+      for (let index = 0; index < count; index++) state.reader.pop();
+      restoreAssertions(scope.assertions);
+      state.objectives.length = scope.objectives;
+      state.scopes.length -= count;
     },
     reset: () => {
       script.state = createState();
@@ -515,8 +519,7 @@ export const runSmtlibScript = (
     "reset-assertions": () => {
       const state = script.state;
       clearCheck();
-      state.assertions = [];
-      state.names = [];
+      restoreAssertions(0);
       state.objectives = [];
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0 }));
     },
