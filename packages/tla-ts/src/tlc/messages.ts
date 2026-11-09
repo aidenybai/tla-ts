@@ -227,6 +227,7 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2233, "The %1% %2% cannot be a constant.", false],
   [2234, "The operator %1% cannot take any argument.", false],
   [2235, "The operator %1% is not defined in the spec.", false],
+  [2236, "The operator %1%, which equals %2%,\ncannot be used as a %3%", false],
   [2237, "The spec is trivially false because %1% is false.", false],
   [2238, "TLC cannot handle subscript %1%", false],
   [2239, "TLC cannot handle this conjunct of the spec:\n%1%", false],
