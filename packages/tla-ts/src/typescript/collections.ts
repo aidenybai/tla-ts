@@ -42,6 +42,7 @@ import {
 import {
   getKind,
   isBooleanType,
+  isEvery,
   isHeapArray,
   isNumberLike,
   type Kind,
@@ -1016,8 +1017,56 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
-  return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
+  const stringMethod =
+    kind === "string" ? STRING_METHODS.get(node.expression.name.text) : undefined;
+  const isTyped =
+    stringMethod !== undefined &&
+    node.arguments.length <= stringMethod.parameters.length &&
+    node.arguments.every((argument, position) =>
+      stringMethod.parameters[position] === "number"
+        ? isNumberLike(argument, context)
+        : isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.StringLike),
+    );
+  if (stringMethod === undefined || !isTyped) {
+    return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
+  }
+  return useJavaScript(
+    stringMethod.operator,
+    [
+      translateExpression(receiver, scope, context),
+      ...stringMethod.parameters.map((_, position) => {
+        const argument = node.arguments[position];
+        return argument === undefined
+          ? getUndefined(context)
+          : translateExpression(argument, scope, context);
+      }),
+      ...(stringMethod.trimmed ?? []).map(boolean),
+    ],
+    context,
+  );
 };
+
+interface StringMethod {
+  operator: string;
+  // The kinds of the arguments, where one that a call omits is undefined.
+  parameters: ("number" | "string")[];
+  trimmed?: [boolean, boolean];
+}
+
+const STRING_METHODS = new Map<string, StringMethod>([
+  ["at", { operator: "StringAt", parameters: ["number"] }],
+  ["charAt", { operator: "CharAt", parameters: ["number"] }],
+  ["slice", { operator: "StringSlice", parameters: ["number", "number"] }],
+  ["substring", { operator: "Substring", parameters: ["number", "number"] }],
+  ["indexOf", { operator: "StringIndexOf", parameters: ["string", "number"] }],
+  ["lastIndexOf", { operator: "StringLastIndexOf", parameters: ["string", "number"] }],
+  ["includes", { operator: "StringIncludes", parameters: ["string", "number"] }],
+  ["startsWith", { operator: "StartsWith", parameters: ["string", "number"] }],
+  ["endsWith", { operator: "EndsWith", parameters: ["string", "number"] }],
+  ["trim", { operator: "StringTrim", parameters: [], trimmed: [true, true] }],
+  ["trimStart", { operator: "StringTrim", parameters: [], trimmed: [true, false] }],
+  ["trimEnd", { operator: "StringTrim", parameters: [], trimmed: [false, true] }],
+]);
 
 const ARRAY_LIKE_METHODS = new Set([
   "at",

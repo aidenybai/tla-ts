@@ -701,6 +701,100 @@ StringOf(value) ==
     [] TypeOf(value) = "number" -> ToString(value)
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
 
+\\* The text that a string method reads, where tla-ts reads only strings.
+LOCAL Text(value) ==
+  IF TypeOf(value) = "string"
+  THEN value
+  ELSE Assert(FALSE, "tla-ts can't call a string method on a value that isn't a string")
+
+\\* ToIntegerOrInfinity of a number or undefined.
+LOCAL IntegerOf(value) == IF value \\in {Undefined, NaN, NegativeZero} THEN 0 ELSE value
+
+\\* An integer or an infinity, clamped to 0..length.
+LOCAL Clamp(value, length) ==
+  CASE value = Infinity -> length
+    [] value = NegativeInfinity -> 0
+    [] value < 0 -> 0
+    [] value > length -> length
+    [] OTHER -> value
+
+LOCAL OccursAt(text, search, index) ==
+  index + Len(search) <= Len(text) /\\ SubSeq(text, index + 1, index + Len(search)) = search
+
+LOCAL Occurrences(text, search) ==
+  {index \\in 0..(Len(text) - Len(search)) : OccursAt(text, search, index)}
+
+StringAt(value, index) ==
+  LET text == Text(value)
+      relative == RelativeIndex(IntegerOf(index), Len(text))
+  IN  IF relative >= 0 /\\ relative < Len(text)
+      THEN SubSeq(text, relative + 1, relative + 1)
+      ELSE Undefined
+
+CharAt(value, index) ==
+  LET text == Text(value)
+      position == IntegerOf(index)
+  IN  IF position \\notin {Infinity, NegativeInfinity} /\\ position >= 0 /\\ position < Len(text)
+      THEN SubSeq(text, position + 1, position + 1)
+      ELSE ""
+
+StringSlice(value, start, end) ==
+  LET text == Text(value)
+  IN  SubSeq(text,
+             ClampedIndex(IntegerOf(start), Len(text)) + 1,
+             IF end = Undefined THEN Len(text) ELSE ClampedIndex(IntegerOf(end), Len(text)))
+
+Substring(value, start, end) ==
+  LET text == Text(value)
+      from == Clamp(IntegerOf(start), Len(text))
+      to == IF end = Undefined THEN Len(text) ELSE Clamp(IntegerOf(end), Len(text))
+  IN  IF from < to THEN SubSeq(text, from + 1, to) ELSE SubSeq(text, to + 1, from)
+
+StringIndexOf(value, search, position) ==
+  LET text == Text(value)
+      found == {index \\in Occurrences(text, Text(search)) :
+                  index >= Clamp(IntegerOf(position), Len(text))}
+  IN  IF found = {} THEN -1 ELSE CHOOSE index \\in found : \\A other \\in found : index <= other
+
+\\* String.prototype.lastIndexOf, which searches from the end where position is NaN.
+StringLastIndexOf(value, search, position) ==
+  LET text == Text(value)
+      start == IF position \\in {Undefined, NaN}
+               THEN Len(text)
+               ELSE Clamp(IntegerOf(position), Len(text))
+      found == {index \\in Occurrences(text, Text(search)) : index <= start}
+  IN  IF found = {} THEN -1 ELSE CHOOSE index \\in found : \\A other \\in found : index >= other
+
+StringIncludes(value, search, position) == StringIndexOf(value, search, position) # -1
+
+StartsWith(value, search, position) ==
+  LET text == Text(value)
+  IN  OccursAt(text, Text(search), Clamp(IntegerOf(position), Len(text)))
+
+EndsWith(value, search, position) ==
+  LET text == Text(value)
+      end == IF position = Undefined THEN Len(text) ELSE Clamp(IntegerOf(position), Len(text))
+  IN  end >= Len(Text(search)) /\\ OccursAt(text, search, end - Len(search))
+
+\\* The characters that trim() removes: WhiteSpace and LineTerminator.
+LOCAL Spaces ==
+  {"\\t", "\\n", "\\r", "\\f", " ", "\u000B", "\u00A0", "\uFEFF", "\u1680", "\u202F", "\u205F", "\u3000", "\u2028", "\u2029"}
+    \\cup {SubSeq("\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A", position, position) : position \\in 1..11}
+
+RECURSIVE TrimStart(_)
+TrimStart(text) ==
+  IF text # "" /\\ SubSeq(text, 1, 1) \\in Spaces THEN TrimStart(SubSeq(text, 2, Len(text))) ELSE text
+
+RECURSIVE TrimEnd(_)
+TrimEnd(text) ==
+  IF text # "" /\\ SubSeq(text, Len(text), Len(text)) \\in Spaces
+  THEN TrimEnd(SubSeq(text, 1, Len(text) - 1))
+  ELSE text
+
+StringTrim(value, isStart, isEnd) ==
+  LET started == IF isStart THEN TrimStart(Text(value)) ELSE Text(value)
+  IN  IF isEnd THEN TrimEnd(started) ELSE started
+
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
     [] TypeOf(value) = "boolean" -> value

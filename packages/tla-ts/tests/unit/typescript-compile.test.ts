@@ -1147,6 +1147,15 @@ describe("errors", () => {
     ).toThrow("spec.ts:4:1 Unsupported statement");
   });
 
+  it("reads strings through their search, slice, and trim methods", async () => {
+    const result = await check(
+      compile(
+        `const text: string = " abcab\\u00A0";\nlet found = 0;\nexport const step = () => {\n  if (text.trim() !== "abcab" || text.charAt(99) !== "" || text.at(-2) !== "b") throw new Error("missed");\n  if (text.slice(-3, -1) !== "ab" || text.substring(4, 1) !== "abc") throw new Error("missed");\n  if (!text.startsWith("b", 2) || !text.endsWith("ab", 6) || text.includes("ba")) throw new Error("missed");\n  found = text.indexOf("b", 3) * 10 + text.lastIndexOf("b", 4);\n};\nexport const invariant = () => found === 0 || found === 52;`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("names the functions that a parameter's defaults make", async () => {
     const result = await check(
       compile(
