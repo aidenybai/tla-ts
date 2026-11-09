@@ -63,7 +63,11 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
   if (ts.isNumericLiteral(node)) return getNumericKey(node);
   const value = translateExpression(node, scope, context);
   if (getKind(node, context) === "string") return value;
-  if (isNumberLike(node, context)) return apply("ToString", [value]);
+  if (isNumberLike(node, context)) {
+    return context.hasSpecialNumbers
+      ? useJavaScript("StringOf", [value], context)
+      : apply("ToString", [value]);
+  }
   throw new TlaTypeScriptError("Use a string or a number as a key", node);
 };
 

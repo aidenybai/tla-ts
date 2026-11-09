@@ -544,6 +544,28 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const bumped = bump(2);`,
     ],
     [
+      "[nanSelf, sameNan, negativeZero, zeroEquals, infinite, lessThan, product, remainder, power, text, found, included, counted]",
+      `const box = {};
+      let zero = 0;
+      const negative = -zero;
+      const nan = NaN;
+      const nanSelf = nan === nan;
+      const sameNan = Object.is(nan, NaN);
+      const negativeZero = Object.is(negative, -0);
+      const zeroEquals = negative === 0;
+      const infinite = Object.is(Infinity - Infinity, NaN);
+      const lessThan = -Infinity < 5 && !(NaN < 1);
+      const product = Object.is(0 * -3, -0);
+      const remainder = Object.is(-4 % 2, -0);
+      const power = Math.pow(-Infinity, 3) === -Infinity;
+      const text = \`\${-Infinity} \${-0} \${NaN} \${String(Infinity)}\`;
+      const found = [NaN, -0].indexOf(0);
+      const included = [NaN].includes(NaN);
+      let count = 1;
+      count *= -0;
+      const counted = Object.is(count, -0);`,
+    ],
+    [
       "[before, after, twice, base]",
       `const holder: { [key: string]: unknown } = { base: 4 };
       let data: unknown = "first";

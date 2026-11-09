@@ -19,7 +19,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
 import { translateFunctionValue, translateObjectValue } from "./heap";
-import { useJavaScript } from "./javascript";
+import { mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
   bindNames,
@@ -425,11 +425,12 @@ export const translateSwitch = (
       last !== undefined && ts.isBreakStatement(last) ? body.slice(0, -1) : body,
     );
     if (group.some(ts.isDefaultClause)) return formula;
-    const conditions = group
-      .filter(ts.isCaseClause)
-      .map((clause) =>
-        apply("=", [subject, translateExpression(clause.expression, scope, context)]),
-      );
+    const conditions = group.filter(ts.isCaseClause).map((clause) => {
+      const value = translateExpression(clause.expression, scope, context);
+      return context.hasSpecialNumbers && mayBeNumber(statement.expression, context)
+        ? useJavaScript("StrictEquals", [subject, value], context)
+        : apply("=", [subject, value]);
+    });
     return ifThenElse(
       conditions.length === 1 ? conditions[0] : junction("Or", conditions),
       formula,

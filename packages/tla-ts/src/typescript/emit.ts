@@ -25,7 +25,7 @@ import {
   temporal,
   tuple,
 } from "./tla";
-import { JAVASCRIPT_MODULE } from "./javascript";
+import { JAVASCRIPT_MODULE, SPECIAL_NUMBERS } from "./javascript";
 
 // The parts of a spec and its config, in the order that the model declares them.
 export interface Sections {
@@ -148,7 +148,10 @@ export const emit = (
     ...context.modelValues.values(),
     ...context.constructors.values(),
   ];
-  const modelValues = [...(isJavaScript ? ["Undefined", "Null", "Ref"] : []), ...constants];
+  const modelValues = [
+    ...(isJavaScript ? ["Undefined", "Null", "Ref", ...SPECIAL_NUMBERS] : []),
+    ...constants,
+  ];
   const heap = context.heap === undefined ? undefined : context.variables.get(context.heap);
   const variables = [
     ...model.variables.map((variable) => variable.name),

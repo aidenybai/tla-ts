@@ -12,7 +12,7 @@ import {
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
-import { translateExpression } from "./expressions";
+import { translateExpression, translateInteger } from "./expressions";
 import { translateBody } from "./functions";
 import { getHeap } from "./heap";
 import { isBuiltInObject } from "./intrinsics";
@@ -298,6 +298,13 @@ const translateUnordered = (
     ) {
       return undefined;
     }
+    // A number or a boolean converts to an object with no own properties.
+    if (
+      isNumberLike(argument, context) ||
+      isBooleanType(context.checker.getTypeAtLocation(argument))
+    ) {
+      return { set: set([]), isMapped: false };
+    }
     const record = translate(argument);
     if (method === "keys") return { set: getDomain(record), isMapped: false };
     if (method === "values") return getValues(record, context);
@@ -419,7 +426,7 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
   const receiver = node.expression.expression;
   const method = node.expression.name.text;
   const getIndices = (length: ts.Expression) =>
-    apply("..", [number(1), translateExpression(length, scope, context)]);
+    apply("..", [number(1), translateInteger(length, scope, context)]);
   const callback = node.arguments[1];
   const options = node.arguments[0];
   if (
@@ -523,10 +530,11 @@ const translateSequenceOperation = (
   const argument = call.arguments[0];
   const getLength = () => apply("Len", [sequence]);
   // An index that counts back from the end when it's negative, as at() and slice() take it.
+  const translateIndex = (inner: ts.Expression) => translateInteger(inner, scope, context);
   const getRelative = (inner: ts.Expression, operator: "RelativeIndex" | "ClampedIndex") =>
     ts.isNumericLiteral(inner)
       ? translate(inner)
-      : useJavaScript(operator, [translate(inner), getLength()], context);
+      : useJavaScript(operator, [translateIndex(inner), getLength()], context);
   const orUndefined = (exists: Expression, value: Expression) => {
     if (isDefined) return value;
     return ifExpression(exists, value, getUndefined(context));
@@ -557,10 +565,17 @@ const translateSequenceOperation = (
       const isComparableElement =
         elementType !== undefined &&
         isComparableType(elementType, checker.getTypeAtLocation(argument), checker);
+      // includes compares by SameValueZero, and indexOf by ===, where NaN differs from itself.
       const getEqual = (position: Expression) =>
-        isComparableElement
-          ? apply("=", [index(sequence, [position]), value])
-          : useJavaScript("SameValue", [index(sequence, [position]), value], context);
+        context.hasSpecialNumbers
+          ? useJavaScript(
+              method === "includes" ? "SameValueZero" : "StrictEquals",
+              [index(sequence, [position]), value],
+              context,
+            )
+          : isComparableElement
+            ? apply("=", [index(sequence, [position]), value])
+            : useJavaScript("SameValue", [index(sequence, [position]), value], context);
       const from = call.arguments[1];
       // An undefined fromIndex is 0, where indexOf starts anyway but lastIndexOf stops.
       const isUndefined =
@@ -574,7 +589,7 @@ const translateSequenceOperation = (
         ? number(0)
         : ts.isNumericLiteral(from)
           ? translate(from)
-          : share(translate(from), "from", context, (shared) =>
+          : share(translateIndex(from), "from", context, (shared) =>
               ifExpression(
                 apply("<", [shared, number(0)]),
                 apply("+", [getLength(), shared]),
@@ -679,7 +694,7 @@ const translateSequenceOperation = (
         const last =
           end === undefined
             ? getLength()
-            : useJavaScript("ClampedIndex", [translate(end), getLength()], context);
+            : useJavaScript("ClampedIndex", [translateIndex(end), getLength()], context);
         const first =
           start.kind === "Number" ? number(start.value + 1) : apply("+", [start, number(1)]);
         return apply("SubSeq", [sequence, first, last]);
@@ -700,7 +715,7 @@ const translateSequenceOperation = (
       () =>
         useJavaScript(
           "SequenceWith",
-          [sequence, translate(argument), translate(call.arguments[1])],
+          [sequence, translateIndex(argument), translate(call.arguments[1])],
           context,
         ),
     ],
@@ -795,7 +810,7 @@ const translateUnorderedMethod = (
   const method = node.expression.name.text;
   const argument = node.arguments[0];
   if (method === "includes" || method === "has") {
-    return apply("\\in", [translateExpression(argument, scope, context), source.set]);
+    return apply("\\in", [translateInteger(argument, scope, context), source.set]);
   }
   if (method !== "every" && method !== "some" && method !== "find") {
     throw new TlaTypeScriptError(`Unsupported method on a set's elements: ${method}`, node);
@@ -837,7 +852,7 @@ const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) =>
     throw new TlaTypeScriptError(`Pass a Set or a Map to ${method}()`, argument);
   }
   const values = translateExpression(node.expression.expression, scope, context);
-  const other = translateExpression(argument, scope, context);
+  const other = translateInteger(argument, scope, context);
   return operation(values, method !== "has" && kind === "map" ? getDomain(other) : other);
 };
 
@@ -852,7 +867,7 @@ const translateMapMethod = (
     throw new TlaTypeScriptError(`Unsupported Map method: ${method}`, node);
   }
   const value = translateExpression(node.expression.expression, scope, context);
-  const key = translateExpression(node.arguments[0], scope, context);
+  const key = translateInteger(node.arguments[0], scope, context);
   if (method === "has") return apply("\\in", [key, getDomain(value)]);
   if (isDefined) return index(value, [key]);
   return share(value, "map", context, (sharedMap) =>
@@ -925,7 +940,7 @@ export const getUpdatedValue = (
   scope: Scope,
   context: Context,
 ) => {
-  const values = node.arguments.map((argument) => translateExpression(argument, scope, context));
+  const values = node.arguments.map((argument) => translateInteger(argument, scope, context));
   return UPDATES.get(kind)?.get(node.expression.name.text)?.(current, values, context);
 };
 
@@ -1069,7 +1084,7 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
   if (constructor === "Set") {
     if (argument === undefined) return set([]);
     if (ts.isArrayLiteralExpression(argument) && !argument.elements.some(ts.isSpreadElement)) {
-      return set(argument.elements.map((element) => translateExpression(element, scope, context)));
+      return set(argument.elements.map((element) => translateInteger(element, scope, context)));
     }
     return translateSet(argument, scope, context);
   }
@@ -1086,7 +1101,7 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
           throw new TlaTypeScriptError("Write each Map entry as [key, value]", entry);
         }
         return apply(":>", [
-          translateExpression(entry.elements[0], scope, context),
+          translateInteger(entry.elements[0], scope, context),
           translateExpression(entry.elements[1], scope, context),
         ]);
       })

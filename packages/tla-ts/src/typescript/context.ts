@@ -33,6 +33,8 @@ export interface Context {
   // The literal that each function a script holds as a value returns, by its model value's name,
   // for the functions that return only a literal.
   constantFunctions: Map<string, Expression>;
+  // Whether a script names NaN, Infinity, or -0, so that its numbers compute as JavaScript's.
+  hasSpecialNumbers: boolean;
 }
 
 export interface Unknown {
@@ -76,6 +78,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   heap: undefined,
   builtIns: new Set(),
   constantFunctions: new Map(),
+  hasSpecialNumbers: false,
 });
 
 export const hasObjectLiteral = (node: ts.Node): boolean =>

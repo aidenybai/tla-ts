@@ -10,20 +10,127 @@ import { apply, boolean, ifExpression, number, string } from "./tla";
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Undefined, Null, Ref, BuiltIns, ConstantFunctions
+CONSTANTS Undefined, Null, Ref, BuiltIns, ConstantFunctions,
+          NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
+
+\\* The numbers that TLA+ integers can't hold.
+SpecialNumbers == {NaN, Infinity, NegativeInfinity, NegativeZero}
+
+LOCAL Infinities == {Infinity, NegativeInfinity}
 
 TypeOf(value) ==
   LET text == ToString(value)
       first == SubSeq(text, 1, 1)
   IN CASE value = Undefined -> "undefined"
        [] value = Null -> "object"
+       [] value \\in SpecialNumbers -> "number"
        [] text \\in {"TRUE", "FALSE"} -> "boolean"
        [] first = "\\"" -> "string"
        [] \\A i \\in 1..Len(text) : SubSeq(text, i, i) \\in Digits -> "number"
        [] first \\in {"[", "<", "{", "("} \\cup Digits -> "object"
        [] OTHER -> "function"
+
+\\* TLC can't tell whether a value that isn't an integer is in Int, so this asks TypeOf.
+IsNumber(value) == TypeOf(value) = "number"
+
+LOCAL IsInteger(value) == IsNumber(value) /\\ value \\notin SpecialNumbers
+
+\\* The integer that a number holds, where tla-ts would compute with it as an integer.
+IntegerOf(value) ==
+  IF IsInteger(value)
+  THEN value
+  ELSE Assert(FALSE, "tla-ts can't compute with NaN, Infinity, or -0 here")
+
+LOCAL IsZero(value) == value = 0 \\/ value = NegativeZero
+
+LOCAL IsNegative(value) ==
+  value = NegativeZero \\/ value = NegativeInfinity \\/ (IsInteger(value) /\\ value < 0)
+
+LOCAL Magnitude(value) == IF value = NegativeZero THEN 0 ELSE value
+
+LOCAL Absolute(value) == IF value < 0 THEN -value ELSE value
+
+Negate(value) ==
+  CASE value = NaN -> NaN
+    [] value = Infinity -> NegativeInfinity
+    [] value = NegativeInfinity -> Infinity
+    [] value = NegativeZero -> 0
+    [] value = 0 -> NegativeZero
+    [] OTHER -> -value
+
+Add(left, right) ==
+  CASE left = NaN \\/ right = NaN -> NaN
+    [] left \\in Infinities /\\ right \\in Infinities -> IF left = right THEN left ELSE NaN
+    [] left \\in Infinities -> left
+    [] right \\in Infinities -> right
+    [] left = NegativeZero -> right
+    [] right = NegativeZero -> left
+    [] OTHER -> left + right
+
+Subtract(left, right) == Add(left, Negate(right))
+
+Multiply(left, right) ==
+  LET isNegative == IsNegative(left) # IsNegative(right)
+  IN CASE left = NaN \\/ right = NaN -> NaN
+       [] left \\in Infinities \\/ right \\in Infinities ->
+            CASE IsZero(left) \\/ IsZero(right) -> NaN
+              [] isNegative -> NegativeInfinity
+              [] OTHER -> Infinity
+       [] OTHER ->
+            LET product == Magnitude(left) * Magnitude(right)
+            IN IF product = 0 /\\ isNegative THEN NegativeZero ELSE product
+
+\\* JavaScript's %, whose result has the sign of the dividend.
+Remainder(left, right) ==
+  CASE left = NaN \\/ right = NaN \\/ left \\in Infinities \\/ IsZero(right) -> NaN
+    [] right \\in Infinities \\/ IsZero(left) -> left
+    [] OTHER ->
+         LET remainder == Absolute(left) % Absolute(right)
+         IN CASE left > 0 -> remainder
+              [] remainder = 0 -> NegativeZero
+              [] OTHER -> -remainder
+
+LOCAL IsOdd(value) == IsInteger(value) /\\ value % 2 = 1
+
+\\* JavaScript's **, as Number::exponentiate defines it.
+Power(base, exponent) ==
+  CASE exponent = NaN -> NaN
+    [] IsZero(exponent) -> 1
+    [] base = NaN -> NaN
+    [] base = Infinity -> IF IsNegative(exponent) THEN 0 ELSE Infinity
+    [] base = NegativeInfinity ->
+         CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeInfinity
+           [] ~IsNegative(exponent) -> Infinity
+           [] IsOdd(-exponent) -> NegativeZero
+           [] OTHER -> 0
+    [] base = 0 -> IF IsNegative(exponent) THEN Infinity ELSE 0
+    [] base = NegativeZero ->
+         CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeZero
+           [] ~IsNegative(exponent) -> 0
+           [] IsOdd(-exponent) -> NegativeInfinity
+           [] OTHER -> Infinity
+    [] exponent \\in Infinities ->
+         CASE Absolute(base) = 1 -> NaN
+           [] (Absolute(base) > 1) = (exponent = Infinity) -> Infinity
+           [] OTHER -> 0
+    [] exponent >= 0 -> base ^ exponent
+    [] Absolute(base) = 1 -> IF IsOdd(-exponent) THEN base ELSE 1
+    [] OTHER -> Assert(FALSE, "tla-ts can't represent this value")
+
+LOCAL Rank(value) ==
+  CASE value = NegativeInfinity -> <<0, 0>>
+    [] value = Infinity -> <<2, 0>>
+    [] OTHER -> <<1, Magnitude(value)>>
+
+LessThan(left, right) ==
+  /\\ left # NaN
+  /\\ right # NaN
+  /\\ \\/ Rank(left)[1] < Rank(right)[1]
+     \\/ Rank(left)[1] = Rank(right)[1] /\\ Rank(left)[2] < Rank(right)[2]
+
+LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left)
 
 RelativeIndex(index, length) == IF index < 0 THEN length + index ELSE index
 
@@ -360,6 +467,8 @@ LOCAL ToLengthOfText(text) ==
 LOCAL ToLength(value) ==
   CASE value \\in {Undefined, Null} -> 0
     [] TypeOf(value) = "boolean" -> IF value THEN 1 ELSE 0
+    [] value = Infinity -> Assert(FALSE, "tla-ts can't represent this value")
+    [] value \\in SpecialNumbers -> 0
     [] TypeOf(value) = "number" -> IF value < 0 THEN 0 ELSE value
     [] TypeOf(value) = "string" -> ToLengthOfText(value)
     [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(value) \\o " to a length")
@@ -469,18 +578,32 @@ SameValue(left, right) ==
             "tla-ts can't compare objects by identity")
   /\\ IF IsRef(left) \\/ IsRef(right) THEN ToString(left) = ToString(right) ELSE left = right
 
+\\* JavaScript's ===, where NaN differs from itself and -0 equals 0.
+StrictEquals(left, right) ==
+  IF IsNumber(left) /\\ IsNumber(right)
+  THEN left # NaN /\\ right # NaN /\\ Magnitude(left) = Magnitude(right)
+  ELSE SameValue(left, right)
+
+\\* What includes and Set compare by, where NaN equals itself and -0 equals 0.
+SameValueZero(left, right) ==
+  IF IsNumber(left) /\\ IsNumber(right)
+  THEN Magnitude(left) = Magnitude(right)
+  ELSE SameValue(left, right)
+
 StringOf(value) ==
   CASE value = Undefined -> "undefined"
     [] value = Null -> "null"
     [] TypeOf(value) = "boolean" -> IF value THEN "true" ELSE "false"
     [] TypeOf(value) = "string" -> value
+    [] value = NegativeInfinity -> "-Infinity"
+    [] value = NegativeZero -> "0"
     [] TypeOf(value) = "number" -> ToString(value)
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
 
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
     [] TypeOf(value) = "boolean" -> value
-    [] TypeOf(value) = "number" -> value # 0
+    [] TypeOf(value) = "number" -> value \\notin {0, NaN, NegativeZero}
     [] TypeOf(value) = "string" -> value # ""
     [] OTHER -> TRUE
 
@@ -643,10 +766,14 @@ IsFrozen(heap, ref) ==
 
 ===============================================================================`;
 
+// The model values that stand for the numbers that TLA+ integers can't hold.
+export const SPECIAL_NUMBERS = ["NaN", "Infinity", "NegativeInfinity", "NegativeZero"];
+
 // The operators that the JavaScript module exports, which a spec that extends it can't redefine.
-export const JAVASCRIPT_OPERATORS: ReadonlySet<string> = new Set(
-  [...JAVASCRIPT_MODULE.matchAll(/^([A-Z]\w*)(?:\(| ==)/gm)].map((match) => match[1]),
-);
+export const JAVASCRIPT_OPERATORS: ReadonlySet<string> = new Set([
+  ...[...JAVASCRIPT_MODULE.matchAll(/^([A-Z]\w*)(?:\(| ==)/gm)].map((match) => match[1]),
+  ...SPECIAL_NUMBERS,
+]);
 
 export const useJavaScript = (operator: string, args: Expression[], context: Context) => {
   context.prelude.add("JavaScript");
@@ -708,6 +835,12 @@ export const isComparableType = (left: ts.Type, right: ts.Type, checker: ts.Type
     names.flatMap((name) => name ?? []).filter((name) => name !== "null" && name !== "undefined"),
   );
   return kinds.size <= 1;
+};
+
+// Whether a value may be a number, which may be NaN or -0 in a script that names them.
+export const mayBeNumber = (node: ts.Expression, context: Context) => {
+  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
+  return names === undefined || names.includes("number");
 };
 
 export const isComparable = (left: ts.Expression, right: ts.Expression, context: Context) =>
@@ -781,13 +914,21 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
   const isEmpty = kind === "undefined" || kind === "null";
   if (name === "Boolean") {
     if (kind === "boolean") return value;
-    if (kind === "number") return apply("#", [value, number(0)]);
+    if (kind === "number") {
+      return context.hasSpecialNumbers
+        ? useJavaScript("ToBoolean", [value], context)
+        : apply("#", [value, number(0)]);
+    }
     if (kind === "string") return apply("#", [value, string("")]);
     if (isEmpty || kind === "object" || kind === "function") return boolean(!isEmpty);
   }
   if (name === "String") {
     if (kind === "string") return value;
-    if (kind === "number") return apply("ToString", [value]);
+    if (kind === "number") {
+      return context.hasSpecialNumbers
+        ? useJavaScript("StringOf", [value], context)
+        : apply("ToString", [value]);
+    }
     if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
     if (isEmpty) return string(kind);
     if (names === undefined) return useJavaScript("StringOf", [value], context);

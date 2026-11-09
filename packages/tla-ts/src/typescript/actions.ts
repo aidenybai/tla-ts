@@ -162,6 +162,19 @@ const INCREMENT_OPERATORS = new Map<ts.SyntaxKind, string>([
   [ts.SyntaxKind.MinusMinusToken, "-"],
 ]);
 
+const NUMBER_OPERATORS = new Map([
+  ["+", "Add"],
+  ["-", "Subtract"],
+  ["*", "Multiply"],
+]);
+
+// An arithmetic operator, which the JavaScript module computes in a script that names NaN,
+// Infinity, or -0.
+const applyArithmetic = (operator: string, operands: Expression[], context: Context) => {
+  const name = context.hasSpecialNumbers ? NUMBER_OPERATORS.get(operator) : undefined;
+  return name === undefined ? apply(operator, operands) : useJavaScript(name, operands, context);
+};
+
 const getPart = (target: Target, step: ExceptPathStep): Target => ({
   ...target,
   update: (getValue) =>
@@ -435,7 +448,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     return operator === undefined
       ? undefined
       : assign(expression.operand, path, context, (current) =>
-          apply(operator, [current, number(1)]),
+          applyArithmetic(operator, [current, number(1)], context),
         );
   }
   if (!ts.isBinaryExpression(expression)) return undefined;
@@ -502,7 +515,11 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   const value = isConcatenated
     ? translateToString(expression.right, path.scope, context)
     : translateExpression(expression.right, path.scope, context);
-  return assign(expression.left, path, context, (current) => apply(operator, [current, value]));
+  return assign(expression.left, path, context, (current) =>
+    isConcatenated
+      ? apply(operator, [current, value])
+      : applyArithmetic(operator, [current, value], context),
+  );
 };
 
 const translateCallStatement = (

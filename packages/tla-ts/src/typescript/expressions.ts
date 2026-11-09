@@ -62,6 +62,7 @@ import { isBuiltInObject, translateBuiltInObject, translateIntrinsic } from "./i
 import {
   getTypeNames,
   isComparable,
+  mayBeNumber,
   translateConversion,
   translateToNumber,
   translateTypeOf,
@@ -137,6 +138,20 @@ const ARITHMETIC_OPERATORS = new Set([
   ...ORDERING_OPERATORS,
 ]);
 
+// The JavaScript module's operators for numbers in a script that names NaN, Infinity, or -0, with
+// whether each takes its operands in reverse.
+const NUMBER_OPERATORS = new Map([
+  [ts.SyntaxKind.PlusToken, { name: "Add", isSwapped: false }],
+  [ts.SyntaxKind.MinusToken, { name: "Subtract", isSwapped: false }],
+  [ts.SyntaxKind.AsteriskToken, { name: "Multiply", isSwapped: false }],
+  [ts.SyntaxKind.PercentToken, { name: "Remainder", isSwapped: false }],
+  [ts.SyntaxKind.AsteriskAsteriskToken, { name: "Power", isSwapped: false }],
+  [ts.SyntaxKind.LessThanToken, { name: "LessThan", isSwapped: false }],
+  [ts.SyntaxKind.LessThanEqualsToken, { name: "LessOrEqual", isSwapped: false }],
+  [ts.SyntaxKind.GreaterThanToken, { name: "LessThan", isSwapped: true }],
+  [ts.SyntaxKind.GreaterThanEqualsToken, { name: "LessOrEqual", isSwapped: true }],
+]);
+
 const LOGICAL_OPERATORS = new Map([
   [ts.SyntaxKind.AmpersandAmpersandToken, "And" as const],
   [ts.SyntaxKind.BarBarToken, "Or" as const],
@@ -159,7 +174,7 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
   if (!isNumberLike(key, context)) {
     throw new TlaTypeScriptError("Index arrays and strings with numbers", key);
   }
-  const position = translateExpression(key, scope, context);
+  const position = translateInteger(key, scope, context);
   return position.kind === "Number"
     ? number(position.value + 1)
     : apply("+", [position, number(1)]);
@@ -302,8 +317,15 @@ const translateObjectLiteral = (
 };
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
-  const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
+  const translate = (inner: ts.Expression) => translateInteger(inner, scope, context);
   const argument = node.arguments[0];
+  if (method === "pow" && node.arguments.length === 2) {
+    return useJavaScript(
+      "Power",
+      node.arguments.map((inner) => translateExpression(inner, scope, context)),
+      context,
+    );
+  }
   if ((method === "floor" || method === "trunc") && node.arguments.length === 1) {
     const division = ts.isParenthesizedExpression(argument) ? argument.expression : argument;
     if (
@@ -329,6 +351,12 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   if ((method === "min" || method === "max") && node.arguments.length > 0) {
     const comparison = method === "min" ? "<=" : ">=";
     if (node.arguments.length === 1 && ts.isSpreadElement(argument)) {
+      if (context.hasSpecialNumbers) {
+        throw new TlaTypeScriptError(
+          `Math.${method} of a spread array can't compare NaN or -0`,
+          node,
+        );
+      }
       const values = translateSet(argument.expression, scope, context);
       const candidate = context.names.getFresh("candidate");
       const other = context.names.getFresh("other");
@@ -435,6 +463,8 @@ const translateCall = (
         context,
       );
     }
+    // A number or a boolean converts to an object with no own properties.
+    if (isNumberLike(argument, context) || isBooleanLike(argument, context)) return tuple([]);
     if (getKind(argument, context) === "sequence" && method !== "getOwnPropertyNames") {
       return share(
         translateExpression(argument, scope, context),
@@ -570,11 +600,24 @@ const translateCall = (
 };
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
+// A number that tla-ts computes with as an integer, which stops the check if it's NaN, Infinity,
+// or -0.
+export const translateInteger = (node: ts.Expression, scope: Scope, context: Context) => {
+  const value = translateExpression(node, scope, context);
+  return context.hasSpecialNumbers && isNumberLike(node, context)
+    ? useJavaScript("IntegerOf", [value], context)
+    : value;
+};
+
 export const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
   const flags = context.checker.getTypeAtLocation(node).flags;
   if (getKind(node, context) === "string") return value;
-  if (isNumberLike(node, context)) return apply("ToString", [value]);
+  if (isNumberLike(node, context)) {
+    return context.hasSpecialNumbers
+      ? useJavaScript("StringOf", [value], context)
+      : apply("ToString", [value]);
+  }
   if (isBooleanLike(node, context)) return ifExpression(value, string("true"), string("false"));
   if (flags & ts.TypeFlags.Null) return string("null");
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
@@ -624,6 +667,15 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   ) {
     throw new TlaTypeScriptError(`${node.operatorToken.getText()} needs numbers`, node);
   }
+  const numberOperator = context.hasSpecialNumbers ? NUMBER_OPERATORS.get(kind) : undefined;
+  if (numberOperator !== undefined) {
+    const operands = [translate(node.left), translate(node.right)];
+    return useJavaScript(
+      numberOperator.name,
+      numberOperator.isSwapped ? operands.toReversed() : operands,
+      context,
+    );
+  }
   if (kind === ts.SyntaxKind.PlusToken)
     return apply("+", [translate(node.left), translate(node.right)]);
   if (kind === ts.SyntaxKind.PercentToken) {
@@ -642,11 +694,22 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     );
   }
   if (kind === ts.SyntaxKind.InstanceOfKeyword) return translateInstanceOf(node, scope, context);
+  const isEquality =
+    kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
   if (
-    (kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-      kind === ts.SyntaxKind.ExclamationEqualsEqualsToken) &&
-    !isComparable(node.left, node.right, context)
+    isEquality &&
+    context.hasSpecialNumbers &&
+    (mayBeNumber(node.left, context) || mayBeNumber(node.right, context))
   ) {
+    const isEqual = useJavaScript(
+      "StrictEquals",
+      [translate(node.left), translate(node.right)],
+      context,
+    );
+    return kind === ts.SyntaxKind.EqualsEqualsEqualsToken ? isEqual : not(isEqual);
+  }
+  if (isEquality && !isComparable(node.left, node.right, context)) {
     const isSame = useJavaScript(
       "SameValue",
       [translate(node.left), translate(node.right)],
@@ -680,7 +743,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     if (container === "sequence" && isNumberLike(node.left, context)) {
       const length = apply("Len", [translate(node.right)]);
       return apply("\\in", [
-        translate(node.left),
+        translateInteger(node.left, scope, context),
         apply("..", [number(0), apply("-", [length, number(1)])]),
       ]);
     }
@@ -744,6 +807,16 @@ const translateDeclared = (
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
+  if (
+    context.hasSpecialNumbers &&
+    (node.text === "NaN" || node.text === "Infinity") &&
+    (getSymbol(node, context.checker)?.declarations ?? []).every(
+      (declaration) => declaration.getSourceFile().isDeclarationFile,
+    )
+  ) {
+    context.prelude.add("JavaScript");
+    return identifier(node.text);
+  }
   rejectBeforeDeclaration(node, scope, context);
   const symbol = getSymbol(node, context.checker);
   const held = symbol === undefined ? undefined : scope.functions.get(symbol);
@@ -1036,10 +1109,16 @@ const translateNode = (
     return not(translateExpression(node.operand, scope, context));
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
-    if (ts.isNumericLiteral(node.operand) && Number(node.operand.text) === 0) {
+    const isLiteral = ts.isNumericLiteral(node.operand);
+    if (isLiteral && Number(node.operand.text) === 0 && !context.hasSpecialNumbers) {
       throw new TlaTypeScriptError("TLA+ integers have no negative zero", node);
     }
-    return apply("-.", [translateExpression(node.operand, scope, context)]);
+    const operand = isNumberLike(node.operand, context)
+      ? translateExpression(node.operand, scope, context)
+      : translateToNumber(node.operand, node, scope, context);
+    return context.hasSpecialNumbers && !(isLiteral && Number(node.operand.text) !== 0)
+      ? useJavaScript("Negate", [operand], context)
+      : apply("-.", [operand]);
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.PlusToken) {
     return translateToNumber(node.operand, node, scope, context);
