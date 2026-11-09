@@ -489,7 +489,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const unwitnessed = search.findUnwitnessedPossible();
     const checked = unwitnessed
       ? { result: undefined, lines: [] }
-      : captureOutput(() => search.findPostconditionViolation(true));
+      : captureOutput(() => search.findPostconditionViolation());
     return { unwitnessed, postcondition: checked.result, lines: checked.lines };
   };
   const reportViolation = (

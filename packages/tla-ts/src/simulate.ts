@@ -302,7 +302,7 @@ export const simulate = (options: SimulationOptions): number => {
           `Invariant ${violated.name} is violated by the initial state:\n${formatState(alias)}`,
         );
         runtime.counterExample = getCounterExample([node]);
-        const postcondition = search.findPostconditionViolation(true);
+        const postcondition = search.findPostconditionViolation();
         if (postcondition) {
           message(
             postcondition.code,
@@ -590,9 +590,7 @@ export const simulate = (options: SimulationOptions): number => {
   const last = reported[reported.length - 1];
   const errorStatus = last ? getMessageExitStatus(last.code) : EXIT_STATUS.success;
   if (last) runtime.counterExample = getCounterExample(getTrace(last.node));
-  const postcondition: Postcondition | undefined = search.findPostconditionViolation(
-    last !== undefined,
-  );
+  const postcondition: Postcondition | undefined = search.findPostconditionViolation();
   if (postcondition) {
     message(
       postcondition.code,

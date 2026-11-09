@@ -664,7 +664,7 @@ interface Search {
   trackActionPossible: (state: Value[], next: Value[]) => void;
   findUnwitnessedPossible: () => Postcondition | undefined;
   // After a counterexample, TLC skips the postconditions when one of them is constant.
-  findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
+  findPostconditionViolation: () => Postcondition | undefined;
 }
 
 const toAliasRecord = (value: Value, fieldOrder: string[]) => {
@@ -884,6 +884,7 @@ export const createSearch = (
   );
   if (config.rlReward !== undefined) getConfigOperator("rlreward", config.rlReward, environment);
   if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
+  config.postconditions.forEach((name) => getConfigDefinition("post condition", name, environment));
   const possible = getPossiblePredicates(config.possible, environment);
   if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
@@ -1120,24 +1121,7 @@ export const createSearch = (
         : (state, next) =>
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
     findUnwitnessedPossible,
-    findPostconditionViolation: (isAfterViolation = false) => {
-      // TLC replaces a startup definition by its value, and rejects it as a postcondition first.
-      const rejection = config.postconditions
-        .map((name) => {
-          const definition = getDefinition(name, environment);
-          if (!definition) {
-            return `The post condition ${name} specified in the configuration file\nis not defined in the specification.`;
-          }
-          const isConstant =
-            !isLiteralDefinition(definition) &&
-            getStartupValue(definition, environment) !== undefined;
-          return isConstant ? `The post condition ${name} cannot be a constant.` : undefined;
-        })
-        .find((message) => message !== undefined);
-      if (rejection !== undefined) {
-        if (isAfterViolation) return undefined;
-        throw setExitCode(new TlaEvaluationError(rejection), EXIT_STATUS.configParseError);
-      }
+    findPostconditionViolation: () => {
       const unwitnessed = findUnwitnessedPossible();
       if (unwitnessed) return unwitnessed;
       for (const name of config.postconditions) {
