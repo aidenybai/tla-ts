@@ -147,6 +147,7 @@ const isLiteralDefinition = (definition: Definition) =>
 
 // TLC keeps a literal number or string, and a definition that fails to evaluate, as an operator.
 const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
+  if (environment.constants.has(name)) return environment.constants.get(name);
   if (!isConstantLevel(definition, environment) || isLiteralDefinition(definition))
     return undefined;
   try {
@@ -160,8 +161,10 @@ const getConstantValue = (name: string, definition: Definition, environment: Env
 
 // TLC takes for an operator only a definition it hasn't replaced with its value.
 export const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
-  const definition = getConfigOperator(kind, name, environment);
-  if (getConstantValue(name, definition, environment) !== undefined) {
+  const definition = environment.constants.has(name)
+    ? undefined
+    : getConfigOperator(kind, name, environment);
+  if (!definition || getConstantValue(name, definition, environment) !== undefined) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
   return definition;
