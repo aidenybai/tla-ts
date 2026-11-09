@@ -924,6 +924,12 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
 };
 
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
+  if (operator.kind === "Builtin" && operator.isLazy) {
+    return operator.evaluate(
+      args.map((value) => ({ kind: "Operator", name: "argument", arity: 0, call: () => value })),
+      context,
+    );
+  }
   if (operator.kind === "Builtin") return operator.evaluate(args, context);
   if (operator.kind === "Operator") return operator.call(args);
   const scope = operator.params.reduce<Scope | undefined>(
