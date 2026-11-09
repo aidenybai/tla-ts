@@ -239,6 +239,7 @@ const MAXIMUM_COMPARISONS = 8;
 const ATOM_BASE = 2 ** 32;
 const MAXIMUM_SUBSET_BASE = 20;
 const MAXIMUM_INSERTION_SORT = 16;
+const MAXIMUM_SCANNED_KEYS = 16;
 const MAXIMUM_SEQUENCES = 1 << 20;
 const MASK_BITS = 31;
 const MAXIMUM_INTEGER = 2147483647;
@@ -762,6 +763,9 @@ const findKey = (compare: Comparer, keys: Plain[], key: Plain) => {
   }
   return -1;
 };
+
+const findScannedKey = (compare: Comparer, keys: Plain[], key: Plain) =>
+  keys.length <= MAXIMUM_SCANNED_KEYS ? keys.indexOf(key) : findKey(compare, keys, key);
 
 const findMaskKey = (mask: number, key: number) =>
   key >= 0 && key < MASK_BITS && ((mask >>> key) & 1) !== 0
@@ -1915,10 +1919,16 @@ const hashPlain = (plain: Plain): number => {
   return hash;
 };
 
-const getLookupCode = (program: Program, map: MapType, code: string, key: string) =>
-  isMask(map.keys, program.plains)
-    ? `H.lookupMask(${code}, ${key})`
-    : `H.lookup(${getComparerCode(program, map.keys.element)}, ${code}, ${key})`;
+// A key of a primitive type is a number or a boolean, which equals another key exactly when it is
+// the same, so a short map finds it by scanning instead of comparing it in order.
+const isPrimitive = (type: Type) =>
+  ["Int", "Mix", "Str", "Bool", "Opt"].includes(resolveType(type).kind);
+
+const getLookupCode = (program: Program, map: MapType, code: string, key: string) => {
+  if (isMask(map.keys, program.plains)) return `H.lookupMask(${code}, ${key})`;
+  const scan = isPrimitive(map.keys.element) ? "Scanned" : "";
+  return `H.lookup${scan}(${getComparerCode(program, map.keys.element)}, ${code}, ${key})`;
+};
 
 // A sequence that became a sparse function is read as its values at 1..n, and built as the function
 // on 1..n.
@@ -1934,10 +1944,11 @@ const writeSequence = (program: Program, type: Type, code: string) => {
   return `H.fromSequence${isMask(map.keys, program.plains) ? "Mask" : ""}(${code})`;
 };
 
-const getFindCode = (program: Program, map: MapType, keys: string, key: string) =>
-  isMask(map.keys, program.plains)
-    ? `H.findMaskKey(${keys}, ${key})`
-    : `H.findKey(${getComparerCode(program, map.keys.element)}, ${keys}, ${key})`;
+const getFindCode = (program: Program, map: MapType, keys: string, key: string) => {
+  if (isMask(map.keys, program.plains)) return `H.findMaskKey(${keys}, ${key})`;
+  const scan = isPrimitive(map.keys.element) ? "Scanned" : "";
+  return `H.find${scan}Key(${getComparerCode(program, map.keys.element)}, ${keys}, ${key})`;
+};
 
 const compileField = (program: Program, record: Compiled, field: string): Compiled => {
   const type = expectRecord(record.type);
@@ -3810,6 +3821,7 @@ const HELPERS = {
     return items.filter((item, index) => index === 0 || compare(items[index - 1], item) !== 0);
   },
   findKey,
+  findScannedKey,
   findMaskKey,
   // TLC takes a function for a sequence when its domain is 1..n.
   toSequence: (map: Plain[][]) =>
@@ -3818,6 +3830,10 @@ const HELPERS = {
     map[0] === HELPERS.range(1, map[1].length) ? map[1] : deopt(),
   fromSequence: (values: Plain[]) => [values.map((_, index) => index + 1), values],
   fromSequenceMask: (values: Plain[]) => [HELPERS.range(1, values.length), values],
+  lookupScanned: (compare: Comparer, map: Plain[][], key: Plain) => {
+    const index = findScannedKey(compare, map[0], key);
+    return index === -1 ? deopt() : map[1][index];
+  },
   lookup: (compare: Comparer, map: Plain[][], key: Plain) => {
     const index = findKey(compare, map[0], key);
     return index === -1 ? deopt() : map[1][index];
