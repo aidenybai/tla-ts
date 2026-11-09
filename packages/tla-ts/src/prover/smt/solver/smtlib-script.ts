@@ -219,13 +219,14 @@ const getCommandParams = (items: SExpr[], isBooleans: ReadonlyMap<string, boolea
   return params;
 };
 
-const getScopeCount = (list: SmtList, command: string) => {
+// Z3's parse_opt_unsigned names the push command for pop as well.
+const getScopeCount = (list: SmtList) => {
   const argument = list.items[1];
   if (argument === undefined) return 1;
   if (argument.kind !== "numeral")
-    throw new SmtParseError(`invalid ${command} command, integer expected`, argument);
+    throw new SmtParseError("invalid push command, integer expected", argument);
   if (argument.text.startsWith("-"))
-    throw new SmtParseError(`invalid ${command} command, value is negative.`, list.end);
+    throw new SmtParseError("invalid push command, value is negative.", argument);
   return Number(argument.text);
 };
 
@@ -285,6 +286,7 @@ interface ScriptState {
   reader: SmtlibReader;
   assertions: number[];
   names: number[];
+  assertionTexts: string[];
   objectives: ScriptObjective[];
   optimizer: OptContext | undefined;
   scopes: Scope[];
@@ -316,6 +318,7 @@ export const runSmtlibScript = (
     isProducingUnsatCores: false,
     isProducingProofs: false,
     isExitingOnError: false,
+    isInteractive: false,
     isDiagnosticOnStdout: false,
     parameters: new Map<string, string>(),
     isMbqi: true,
@@ -336,6 +339,7 @@ export const runSmtlibScript = (
       reader: createSmtlibReader(manager, undefined, settings.parserOptions),
       assertions: [],
       names: [],
+      assertionTexts: [],
       objectives: [],
       optimizer: undefined,
       scopes: [],
@@ -568,17 +572,22 @@ export const runSmtlibScript = (
     const state = script.state;
     for (const assertion of state.assertions.splice(size)) state.manager.decRef(assertion);
     for (const name of state.names.splice(size)) if (name !== -1) state.manager.decRef(name);
+    state.assertionTexts.length = size;
   };
   const runCommand: Record<string, (list: SmtList) => void> = {
     assert: (list) => {
       const state = script.state;
-      const assertion = state.reader.parseAssertion(list.items[1] ?? list.end);
+      const term = list.items[1] ?? list.end;
+      const assertion = state.reader.parseAssertion(term);
       const logicError = state.reader.getLogicError(assertion.formula);
       if (logicError !== undefined) {
         state.manager.decRef(assertion.formula);
         throw new SmtParseError(logicError, list.end);
       }
       state.assertions.push(assertion.formula);
+      state.assertionTexts.push(
+        text.slice(term.offset, (term.kind === "list" ? term.end : term).endOffset).trim(),
+      );
       if (state.hasChecked) state.isIncremental = true;
       resetOptimizer();
       if (!settings.isProducingUnsatCores || assertion.name === undefined) state.names.push(-1);
@@ -642,7 +651,7 @@ export const runSmtlibScript = (
     push: (list) => {
       const state = script.state;
       clearCheck();
-      for (let index = getScopeCount(list, "push"); index > 0; index--) {
+      for (let index = getScopeCount(list); index > 0; index--) {
         state.scopes.push({
           assertions: state.assertions.length,
           objectives: state.objectives.length,
@@ -653,7 +662,7 @@ export const runSmtlibScript = (
     },
     pop: (list) => {
       const state = script.state;
-      const count = getScopeCount(list, "pop");
+      const count = getScopeCount(list);
       if (count > state.scopes.length)
         throw new SmtParseError(
           "invalid pop command, argument is greater than the current stack depth",
@@ -821,6 +830,14 @@ export const runSmtlibScript = (
       print([...lines, "(check-sat)"].join("\n"));
       for (const assertion of assertions) manager.decRef(assertion);
     },
+    "get-assertions": (list) => {
+      if (!settings.isInteractive)
+        throw new SmtParseError(
+          "command is only available in interactive mode, use command (set-option :interactive-mode true)",
+          list.end,
+        );
+      print(`(${script.state.assertionTexts.join("\n ")})`);
+    },
     "get-unsat-core": (list) => {
       if (!settings.isProducingUnsatCores)
         throw new SmtParseError(
@@ -918,6 +935,7 @@ export const runSmtlibScript = (
       if (keyword === ":produce-models") settings.isProducingModels = isTrue;
       if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
       if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
+      if (keyword === ":interactive-mode") settings.isInteractive = isTrue;
       if (keyword === ":diagnostic-output-channel")
         settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
       if (keyword === ":int-real-coercions" && !isTrue)

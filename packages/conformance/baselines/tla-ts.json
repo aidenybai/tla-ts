@@ -181,7 +181,6 @@
   "tlapm/backends/z3/z3test/regressions/smt2/t191.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/t192.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/t219.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/t9.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/trig-bounds.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/trig-intersection.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/trig-quadrants.smt2": "message-mismatch",
