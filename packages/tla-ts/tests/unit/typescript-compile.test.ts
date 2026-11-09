@@ -1172,6 +1172,22 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't throw the TypeError of a string method");
   });
 
+  it("writes numbers in a radix", async () => {
+    const result = await check(
+      compile(
+        `const value: number = -255;\nif (value.toString(16) !== "-ff" || (35).toString(36) !== "z" || Number.prototype.toString.call(value) !== "-255") throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    await expect(
+      check(
+        compile(
+          `const value: number = 1;\nif (value.toString(37) === "") throw new Error("empty");`,
+        ),
+      ),
+    ).rejects.toThrow("tla-ts can't throw the RangeError of a radix outside 2 to 36");
+  });
+
   it("names the functions that a parameter's defaults make", async () => {
     const result = await check(
       compile(

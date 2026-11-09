@@ -713,6 +713,12 @@ ThisString(value) ==
   THEN Assert(FALSE, "tla-ts can't throw the TypeError of a string method on undefined or null")
   ELSE StringOf(value)
 
+\\* The number that Number.prototype.method.call reads from the value that it calls the method on.
+ThisNumber(value) ==
+  IF TypeOf(value) = "number"
+  THEN value
+  ELSE Assert(FALSE, "tla-ts can't call a Number.prototype method on a value that isn't a number")
+
 \\* ToIntegerOrInfinity of a number or undefined.
 LOCAL IntegerOf(value) == IF value \\in {Undefined, NaN, NegativeZero} THEN 0 ELSE value
 
@@ -781,6 +787,23 @@ EndsWith(value, search, position) ==
   LET text == Text(value)
       end == IF position = Undefined THEN Len(text) ELSE Clamp(IntegerOf(position), Len(text))
   IN  end >= Len(Text(search)) /\\ OccursAt(text, search, end - Len(search))
+
+RECURSIVE RadixDigits(_, _)
+RadixDigits(value, radix) ==
+  LET digit == value % radix
+  IN  IF value < radix
+      THEN SubSeq("0123456789abcdefghijklmnopqrstuvwxyz", digit + 1, digit + 1)
+      ELSE RadixDigits(value \\div radix, radix)
+             \\o SubSeq("0123456789abcdefghijklmnopqrstuvwxyz", digit + 1, digit + 1)
+
+\\* Number.prototype.toString, which writes a number in a radix from 2 to 36.
+NumberToString(value, radix) ==
+  LET base == IF radix = Undefined THEN 10 ELSE IntegerOf(radix)
+  IN  CASE ~IsInteger(base) \\/ base < 2 \\/ base > 36 ->
+             Assert(FALSE, "tla-ts can't throw the RangeError of a radix outside 2 to 36")
+        [] ~IsInteger(value) \\/ base = 10 -> StringOf(value)
+        [] value < 0 -> "-" \\o RadixDigits(-value, base)
+        [] OTHER -> RadixDigits(value, base)
 
 \\* The characters that trim() removes: WhiteSpace and LineTerminator.
 LOCAL Spaces ==

@@ -1017,65 +1017,78 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
-  const stringCall = getStringCall(node, kind);
-  const stringMethod = stringCall && STRING_METHODS.get(stringCall.method);
+  const primitiveCall = getPrimitiveCall(node, kind, context);
+  const primitiveMethod = primitiveCall?.methods.get(primitiveCall.method);
   const isTyped =
-    stringCall !== undefined &&
-    stringMethod !== undefined &&
-    stringCall.methodArguments.length <= stringMethod.parameters.length &&
-    stringCall.methodArguments.every((argument, position) =>
-      stringMethod.parameters[position] === "number"
+    primitiveCall !== undefined &&
+    primitiveMethod !== undefined &&
+    primitiveCall.methodArguments.length <= primitiveMethod.parameters.length &&
+    primitiveCall.methodArguments.every((argument, position) =>
+      primitiveMethod.parameters[position] === "number"
         ? isNumberLike(argument, context)
         : isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.StringLike),
     );
-  if (stringCall === undefined || stringMethod === undefined || !isTyped) {
+  if (primitiveCall === undefined || primitiveMethod === undefined || !isTyped) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
   const translateOptional = (argument: ts.Expression | undefined) =>
     argument === undefined ? getUndefined(context) : translateExpression(argument, scope, context);
   return useJavaScript(
-    stringMethod.operator,
+    primitiveMethod.operator,
     [
-      stringCall.isPrototypeCall
-        ? useJavaScript("ThisString", [translateOptional(stringCall.owner)], context)
-        : translateExpression(receiver, scope, context),
-      ...stringMethod.parameters.map((_, position) =>
-        translateOptional(stringCall.methodArguments[position]),
+      primitiveCall.converter === undefined
+        ? translateExpression(receiver, scope, context)
+        : useJavaScript(primitiveCall.converter, [translateOptional(primitiveCall.owner)], context),
+      ...primitiveMethod.parameters.map((_, position) =>
+        translateOptional(primitiveCall.methodArguments[position]),
       ),
-      ...(stringMethod.trimmed ?? []).map(boolean),
+      ...(primitiveMethod.trimmed ?? []).map(boolean),
     ],
     context,
   );
 };
 
-// A method call on a string, or String.prototype.method.call(value, ...arguments).
-const getStringCall = (node: MethodCall, kind: Kind) => {
+// A method call on a string or a number, or String.prototype.method.call(value, ...arguments),
+// which converts the value as the method reads it.
+const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
   const receiver = node.expression.expression;
-  if (
-    node.expression.name.text === "call" &&
-    ts.isPropertyAccessExpression(receiver) &&
-    receiver.expression.getText() === "String.prototype"
-  ) {
+  const prototype =
+    node.expression.name.text === "call" && ts.isPropertyAccessExpression(receiver)
+      ? PRIMITIVE_PROTOTYPES.get(receiver.expression.getText())
+      : undefined;
+  if (prototype !== undefined && ts.isPropertyAccessExpression(receiver)) {
     return {
+      ...prototype,
       method: receiver.name.text,
-      isPrototypeCall: true,
       owner: node.arguments.at(0),
       methodArguments: node.arguments.slice(1),
     };
   }
-  return kind === "string"
-    ? { method: node.expression.name.text, isPrototypeCall: false, methodArguments: node.arguments }
-    : undefined;
+  const methods =
+    kind === "string"
+      ? STRING_METHODS
+      : isNumberLike(receiver, context)
+        ? NUMBER_METHODS
+        : undefined;
+  return (
+    methods && {
+      methods,
+      converter: undefined,
+      method: node.expression.name.text,
+      owner: undefined,
+      methodArguments: node.arguments,
+    }
+  );
 };
 
-interface StringMethod {
+interface PrimitiveMethod {
   operator: string;
   // The kinds of the arguments, where one that a call omits is undefined.
   parameters: ("number" | "string")[];
   trimmed?: [boolean, boolean];
 }
 
-const STRING_METHODS = new Map<string, StringMethod>([
+const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["at", { operator: "StringAt", parameters: ["number"] }],
   ["charAt", { operator: "CharAt", parameters: ["number"] }],
   ["slice", { operator: "StringSlice", parameters: ["number", "number"] }],
@@ -1088,6 +1101,17 @@ const STRING_METHODS = new Map<string, StringMethod>([
   ["trim", { operator: "StringTrim", parameters: [], trimmed: [true, true] }],
   ["trimStart", { operator: "StringTrim", parameters: [], trimmed: [true, false] }],
   ["trimEnd", { operator: "StringTrim", parameters: [], trimmed: [false, true] }],
+]);
+
+const NUMBER_METHODS = new Map<string, PrimitiveMethod>([
+  ["toString", { operator: "NumberToString", parameters: ["number"] }],
+]);
+
+// The prototypes whose methods a script may call on another value, with the operator that
+// converts the value.
+const PRIMITIVE_PROTOTYPES = new Map([
+  ["String.prototype", { methods: STRING_METHODS, converter: "ThisString" }],
+  ["Number.prototype", { methods: NUMBER_METHODS, converter: "ThisNumber" }],
 ]);
 
 const ARRAY_LIKE_METHODS = new Set([
