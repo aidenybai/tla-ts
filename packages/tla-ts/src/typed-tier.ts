@@ -156,6 +156,7 @@ export interface TypedCheck {
   scope: Scope | undefined;
   isDeadlockChecked: boolean;
   symmetry: ImageTable[] | undefined;
+  view: Expression | undefined;
 }
 
 export interface TypedResult {
@@ -2820,7 +2821,7 @@ const compileStep = (
           BOOL,
         );
       }
-      const checks = getUnchangedVariables(program, item.expression.expression, item.scope).map(
+      const checks = getProjectedVariables(program, item.expression.expression, item.scope).map(
         (index) => `H.same(${primed[index]}, v${index})`,
       );
       return { type: BOOL, emit: () => (checks.length === 0 ? "true" : checks.join(" && ")) };
@@ -2966,7 +2967,7 @@ const compileStep = (
       break;
     }
     case "Unchanged": {
-      const indexes = getUnchangedVariables(program, expression.expression, first.scope);
+      const indexes = getProjectedVariables(program, expression.expression, first.scope);
       const assigned = primed.map((code, index) =>
         indexes.includes(index) && code === undefined ? `v${index}` : code,
       );
@@ -3018,13 +3019,13 @@ const compileAssignment = (
   return () => `${loop.header(name)} { ${tail()} }`;
 };
 
-const getUnchangedVariables = (
+const getProjectedVariables = (
   program: Program,
   expression: Expression,
   scope: TierScope,
 ): number[] => {
   if (expression.kind === "Tuple") {
-    return expression.elements.flatMap((element) => getUnchangedVariables(program, element, scope));
+    return expression.elements.flatMap((element) => getProjectedVariables(program, element, scope));
   }
   if (expression.kind !== "Identifier" || scope.has(expression.name)) return unsupported();
   const global = findGlobalName(expression.name, program.environment);
@@ -3034,7 +3035,7 @@ const getUnchangedVariables = (
     global.definition.kind === "Operator" &&
     global.definition.params.length === 0
   ) {
-    return getUnchangedVariables(program, global.definition.body, new Map());
+    return getProjectedVariables(program, global.definition.body, new Map());
   }
   return unsupported();
 };
@@ -3949,9 +3950,12 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       ? Infinity
       : (hasVariableSize(program.variableTypes[index]) ? MAXIMUM_INTEGER : 0) +
         getFixedSize(program.variableTypes[index]);
-  const keyOrder = program.variableTypes
-    .map((_, index) => index)
-    .sort((left, right) => getKeyCost(left) - getKeyCost(right));
+  // A view that is a tuple of variables equals another exactly when those variables do.
+  const keyOrder = check.view
+    ? [...new Set(getProjectedVariables(program, check.view, new Map()))]
+    : program.variableTypes
+        .map((_, index) => index)
+        .sort((left, right) => getKeyCost(left) - getKeyCost(right));
   const keyWriters = keyOrder.map((index) => writers[index]);
   const sites = { count: 0 };
   const signatures = program.variableTypes.map((type, index) =>
@@ -4166,13 +4170,20 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     check.scope,
   );
   const images = check.symmetry ?? [];
+  // TLC evaluates the view of the smallest state under symmetry, which compares the variables the
+  // view drops.
+  if (images.length > 0 && check.view) return unsupported();
   images.forEach((table) => table.forEach((image) => image && getAtom(program.plains, image)));
   const compiled = compileSpec(program, check);
   const keys = createArena();
   const starts = { data: new Int32Array(1 << 16), size: 0 };
+  // A view keys a state by part of it, so the state TLC explores is stored apart.
+  const states = check.view === undefined ? keys : createArena();
+  const isEncoded = images.length === 0 && check.view === undefined;
+  const isImaged = images.length > 0 && check.view === undefined;
   // Under symmetry TLC explores the first state of an orbit it finds, which is the inverse of the
   // image that keys it.
-  const chosenImages = { data: new Int32Array(images.length === 0 ? 0 : 1 << 16), size: 0 };
+  const chosenImages = { data: new Int32Array(isImaged ? 1 << 16 : 0), size: 0 };
   const table: StateTable = { slots: new Int32Array(1 << 18), mask: (1 << 17) - 1 };
   const statistics = { generated: 0, distinct: 0, depth: 0 };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
@@ -4236,12 +4247,13 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       checkInvariants(state);
       return false;
     }
-    if (images.length === 0) compiled.encode(state, keys);
-    const image = images.length === 0 ? -1 : compiled.writeKey(state, keys);
+    if (isEncoded) compiled.encode(state, keys);
+    const image = isEncoded ? -1 : compiled.writeKey(state, keys);
     const isNew = addEncoded();
     if (!isNew) return false;
-    if (images.length > 0) pushWord(chosenImages, image);
-    pushWord(starts, (keys.pages.length - 1) * PAGE_SIZE + keys.start);
+    if (isImaged) pushWord(chosenImages, image);
+    if (states !== keys) compiled.encode(state, states);
+    pushWord(starts, (states.pages.length - 1) * PAGE_SIZE + states.start);
     checkInvariants(state);
     return true;
   };
@@ -4273,10 +4285,10 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       level.end = statistics.distinct;
     }
     const start = starts.data[index];
-    const page = keys.pages[start >>> PAGE_BITS];
+    const page = states.pages[start >>> PAGE_BITS];
     const offset = start & (PAGE_SIZE - 1);
-    const image = images.length === 0 ? -1 : chosenImages.data[index];
-    const key = images.length === 0 ? undefined : compiled.decodeKey(page, offset);
+    const image = isImaged ? chosenImages.data[index] : -1;
+    const key = isImaged ? compiled.decodeKey(page, offset) : undefined;
     const state =
       key === undefined
         ? compiled.decode(page, offset)
