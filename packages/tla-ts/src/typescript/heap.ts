@@ -416,6 +416,81 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
   );
 };
 
+// A class that a default makes, after its methods, each a function that a script can only read,
+// and its prototype.
+const translateClassObject = (node: ts.ClassExpression, heap: Expression, context: Context) => {
+  const methods = node.members.filter(ts.isMethodDeclaration);
+  const getName = (method: ts.MethodDeclaration) =>
+    ts.isIdentifier(method.name) || ts.isStringLiteral(method.name) ? method.name.text : "";
+  const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
+  const define = (object: Expression, key: string, value: Expression, flags: boolean[]) =>
+    useJavaScript("Define", [object, string(key), value, ...flags.map(boolean)], context);
+  const defineMethods = (object: Expression, isStaticObject: boolean) =>
+    methods.reduce(
+      (current, method, position) =>
+        isStatic(method) === isStaticObject
+          ? define(current, getName(method), getRef(position + 1), [true, false, true])
+          : current,
+      object,
+    );
+  const functionPrototype = translateBuiltInValue("Function.prototype", node, context);
+  const withMethods = methods.reduce(
+    (current, method) =>
+      useJavaScript(
+        "Allocate",
+        [
+          current,
+          useJavaScript(
+            "ArrowObject",
+            [
+              functionPrototype,
+              string(getName(method)),
+              number(getFunctionLength(getParameters(method))),
+            ],
+            context,
+          ),
+        ],
+        context,
+      ),
+    heap,
+  );
+  const prototype = defineMethods(
+    define(identifier("EmptyObject"), "constructor", getRef(methods.length + 2), [
+      true,
+      false,
+      true,
+    ]),
+    false,
+  );
+  const length = getFunctionLength(
+    node.members.find(ts.isConstructorDeclaration)?.parameters ?? [],
+  );
+  const object = defineMethods(
+    define(
+      define(
+        define(
+          useJavaScript("ClassObject", [functionPrototype], context),
+          "length",
+          number(length),
+          [false, false, true],
+        ),
+        "name",
+        string(getFunctionName(node)),
+        [false, false, true],
+      ),
+      "prototype",
+      getRef(methods.length + 1),
+      [false, false, false],
+    ),
+    true,
+  );
+  return useJavaScript(
+    "Allocate",
+    [useJavaScript("Allocate", [withMethods, prototype], context), object],
+    context,
+  );
+};
+
 // An instance of a heap class with its fields, before the constructor runs. An instance of a class
 // with private methods or accessors has the class's key in its private names first.
 const translateInstance = (
@@ -489,7 +564,11 @@ export const translateHasPrivate = (
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
-  if (isFunctionObject(node, context) && node.asteriskToken !== undefined) {
+  if (
+    isFunctionObject(node, context) &&
+    !ts.isClassExpression(node) &&
+    node.asteriskToken !== undefined
+  ) {
     return useJavaScript(
       "Allocate",
       [
@@ -506,6 +585,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       ],
       context,
     );
+  }
+  if (isFunctionObject(node, context) && ts.isClassExpression(node)) {
+    return translateClassObject(node, heap, context);
   }
   if (isFunctionObject(node, context)) {
     return ts.isArrowFunction(node)

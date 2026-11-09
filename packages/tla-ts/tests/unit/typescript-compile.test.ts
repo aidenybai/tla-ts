@@ -1304,6 +1304,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("names the classes that a parameter's defaults make", async () => {
+    const result = await check(
+      compile(
+        `let names = "";\nfunction make([named = class Named { static run(a: number) {} }, plain = class { static name() {} }] = []) {\n  names = named.name + " " + Object.getOwnPropertyNames(named).join();\n  if (typeof plain.name !== "function" || typeof named.prototype !== "object") throw new Error("missed");\n}\nmake();\nif (names !== "Named length,name,prototype,run") throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
