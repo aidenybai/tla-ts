@@ -231,7 +231,6 @@
   "tlapm/imported/parser/prefix_op/prefix_op_prefix_operator_references": "text-mismatch",
   "tlapm/imported/parser/proofs/proofs_proof_by_module_references": "text-mismatch",
   "tlapm/imported/parser/proofs/proofs_proof_with_instance_step_type": "message-mismatch",
-  "tlapm/imported/parser/step_expressions/step_expressions_step_expression_requiring_lookahead": "message-mismatch",
   "tlapm/imported/parser/step_expressions/step_expressions_step_expression_with_parameterized_subscript": "message-mismatch",
   "tlapm/imported/parser/use_or_hide/use_or_hide_use_hide_modules": "text-mismatch",
   "tlapm/imported/zenon/test/test13.znn": "text-mismatch",

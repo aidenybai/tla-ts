@@ -897,11 +897,15 @@ const parse = (
         return { kind, fields, location };
       }
       if (isBoundAhead()) {
+        const checkpoint = cursor.index;
         const bounds = parseBounds();
-        expect("|->");
-        const body = parseExpression();
-        expect("]");
-        return { kind: "FunctionConstruction", bounds, body, location };
+        if (!isTlapm || isAt("|->")) {
+          expect("|->");
+          const body = parseExpression();
+          expect("]");
+          return { kind: "FunctionConstruction", bounds, body, location };
+        }
+        cursor.index = checkpoint;
       }
       const expression = parseExpression();
       if (accept("->")) {
