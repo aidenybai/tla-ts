@@ -432,13 +432,6 @@ export const toLiveExpression = (
     scope: Scope | undefined,
   ) => {
     const level = getLevel(expression, scope, environment);
-    const isConstant = expression.bounds.every(
-      (bound) => getLevel(bound.set, scope, environment) === CONSTANT_LEVEL,
-    );
-    if (!isConstant) {
-      if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
-      throw createCannotHandleError(expression);
-    }
     const operands: LiveExpression[] = [];
     const isForall = expression.kind === "Forall";
     // TLC can't handle a quantifier whose body fails, and under \A adds another failure's message.
