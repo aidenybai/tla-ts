@@ -28,7 +28,7 @@ import {
   getBuiltIn,
   isBuiltInObject,
   translateBuiltInObject,
-  translatePrototype,
+  translateBuiltInValue,
 } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { createStateScope, type Scope } from "./scope";
@@ -368,7 +368,7 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
         define(
           useJavaScript(
             "ClassObject",
-            [translatePrototype("Function.prototype", node, context)],
+            [translateBuiltInValue("Function.prototype", node, context)],
             context,
           ),
           string("length"),
@@ -483,7 +483,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     const array = useJavaScript(
       "ArrayObject",
       [
-        translatePrototype("Array.prototype", node, context),
+        translateBuiltInValue("Array.prototype", node, context),
         tuple(node.elements.map((element) => translateExpression(element, scope, context))),
       ],
       context,

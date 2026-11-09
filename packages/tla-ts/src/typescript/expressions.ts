@@ -62,7 +62,7 @@ import {
   isBuiltInObject,
   translateBuiltInObject,
   translateIntrinsic,
-  translatePrototype,
+  translateBuiltInValue,
 } from "./intrinsics";
 import {
   getTypeNames,
@@ -800,7 +800,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
               "Has",
               [
                 getHeap(scope, node, context),
-                translatePrototype("Array.prototype", node, context),
+                translateBuiltInValue("Array.prototype", node, context),
                 translatePropertyKey(node.left, scope, context),
               ],
               context,
@@ -1075,7 +1075,7 @@ const translateElementAccess = (
             "Get",
             [
               getHeap(scope, node, context),
-              translatePrototype("Array.prototype", node, context),
+              translateBuiltInValue("Array.prototype", node, context),
               translatePropertyKey(node.argumentExpression, scope, context),
             ],
             context,

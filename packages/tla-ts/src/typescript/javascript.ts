@@ -771,6 +771,16 @@ LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
 
 IsArray(heap, value) == IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
+\\* ArraySpeciesCreate, which makes the array that a method returns through the constructor of the
+\\* array that the method copies, where tla-ts follows only Array.
+Species(constructor, array, elements) ==
+  IF SameValue(constructor, array)
+  THEN elements
+  ELSE Assert(FALSE, "tla-ts can't make an array through a constructor that a script gives")
+
+SpeciesElements(heap, ref, array, elements) ==
+  IF IsArray(heap, ref) THEN Species(Get(heap, ref, "constructor"), array, elements) ELSE elements
+
 \\* An array that a script makes, which holds its elements under their indices, and its length.
 ArrayObject(prototype, elements) ==
   LET indices == {ToString(position - 1) : position \\in DOMAIN elements}

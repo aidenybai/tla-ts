@@ -15,7 +15,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateSetKey } from "./expressions";
 import { translateBody } from "./functions";
 import { getHeap } from "./heap";
-import { isBuiltInObject } from "./intrinsics";
+import { isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
 import {
@@ -990,7 +990,14 @@ export const translateMethod = (
   if (updated !== undefined) return updated;
   if (kind === "sequence") {
     const method = node.expression.name.text;
-    const sequence = translateExpression(receiver, scope, context);
+    const sequence = translateMethodElements(
+      method,
+      translateExpression(receiver, scope, context),
+      undefined,
+      node,
+      scope,
+      context,
+    );
     const call = {
       node,
       method,
@@ -1032,6 +1039,60 @@ const ARRAY_LIKE_METHODS = new Set([
   "reduceRight",
 ]);
 
+// The array methods that make an array through ArraySpeciesCreate, which reads the constructor of
+// the array that they copy.
+const SPECIES_METHODS = new Set(["concat", "filter", "flat", "flatMap", "map", "slice", "splice"]);
+
+// The elements that an array method reads: a sequence's own, or an array-like object's through an
+// operator of the JavaScript module. A method that makes an array checks the array's constructor,
+// which for a sequence a script may change only through Array.prototype.
+export const translateMethodElements = (
+  method: string,
+  owner: Expression,
+  read: "ArrayLike" | "PresentElements" | undefined,
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+) => {
+  if (!SPECIES_METHODS.has(method)) {
+    return read === undefined
+      ? owner
+      : useJavaScript(read, [getHeap(scope, node, context), owner], context);
+  }
+  if (read !== undefined) {
+    const heap = getHeap(scope, node, context);
+    return useJavaScript(
+      "SpeciesElements",
+      [
+        heap,
+        owner,
+        translateBuiltInValue("Array", node, context),
+        useJavaScript(read, [heap, owner], context),
+      ],
+      context,
+    );
+  }
+  return context.hasInheritedElements
+    ? useJavaScript(
+        "Species",
+        [
+          useJavaScript(
+            "Get",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue("Array.prototype", node, context),
+              string("constructor"),
+            ],
+            context,
+          ),
+          translateBuiltInValue("Array", node, context),
+          owner,
+        ],
+        context,
+      )
+    : owner;
+};
+
 // The array methods that visit only the elements an array-like object has, skipping its holes.
 export const HOLE_SKIPPING_METHODS = new Set([
   "every",
@@ -1070,7 +1131,6 @@ export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, co
   const method = call.method;
   const object = call.object;
   const methodArguments = call.methodArguments;
-  const heap = getHeap(scope, node, context);
   const operate = (owner: Expression, sequence: Expression, indices?: Expression) =>
     translateSequenceOperation(
       { node, method, arguments: methodArguments, elementType: undefined, owner, indices },
@@ -1085,13 +1145,16 @@ export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, co
   return share(translateExpression(object, scope, context), "object", context, (owner) =>
     isSkippingHoles
       ? share(
-          useJavaScript("PresentElements", [heap, owner], context),
+          translateMethodElements(method, owner, "PresentElements", node, scope, context),
           "present",
           context,
           (present) => operate(owner, field(present, "values"), field(present, "indices")),
         )
-      : share(useJavaScript("ArrayLike", [heap, owner], context), "sequence", context, (sequence) =>
-          operate(owner, sequence),
+      : share(
+          translateMethodElements(method, owner, "ArrayLike", node, scope, context),
+          "sequence",
+          context,
+          (sequence) => operate(owner, sequence),
         ),
   );
 };

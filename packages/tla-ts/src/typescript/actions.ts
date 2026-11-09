@@ -6,6 +6,7 @@ import {
   getCallbackReceiver,
   getUpdatedValue,
   HOLE_SKIPPING_METHODS,
+  translateMethodElements,
   MUTATING_METHODS,
   removeLast,
 } from "./collections";
@@ -1046,9 +1047,12 @@ const translateLoopCall = (
             define(
               presentName,
               [],
-              useJavaScript(
+              translateMethodElements(
+                method,
+                owner,
                 "PresentElements",
-                [getHeap(path.scope, receiver, context), owner],
+                receiver,
+                path.scope,
                 context,
               ),
             ),
@@ -1059,9 +1063,14 @@ const translateLoopCall = (
         [],
         isSkippingHoles
           ? field(identifier(presentName), "values")
-          : loop.isArrayLike
-            ? useJavaScript("ArrayLike", [getHeap(path.scope, receiver, context), owner], context)
-            : owner,
+          : translateMethodElements(
+              method,
+              owner,
+              loop.isArrayLike ? "ArrayLike" : undefined,
+              receiver,
+              path.scope,
+              context,
+            ),
       ),
     ],
     seeded,

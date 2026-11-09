@@ -976,6 +976,17 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("fails the check where an array method makes an array through a script's constructor", async () => {
+    const result = await check(
+      compile(
+        `const values = [1];\nObject.defineProperty(values, "constructor", { value: Object });\nconst copied = values.map((value) => value + 1);`,
+      ),
+    );
+    expect(result.failure?.message).toContain(
+      "tla-ts can't make an array through a constructor that a script gives",
+    );
+  });
+
   it("rejects an array in the heap where it's read as a value", () => {
     expect(() =>
       compile(
