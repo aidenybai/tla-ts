@@ -73,6 +73,7 @@ describe("typed tier matches TLC", () => {
     ["GameOfLife", 1024],
     ["LoopArguments", 31],
     ["AsymmetricViews", 11],
+    ["SubSeqPrefixes", 1149],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([
@@ -94,6 +95,7 @@ describe("typed tier matches TLC", () => {
     ["SparseSuffix", "error", undefined],
     ["TupleLengths", "error", undefined],
     ["OperatorDomains", "error", undefined],
+    ["SubSeqRanges", "error", undefined],
   ])("reports the property %s violates, as TLC does", async (name, status, property) => {
     const result = await checkFixture(name, true);
     expect([result.status, result.violation?.name]).toEqual([status, property]);
