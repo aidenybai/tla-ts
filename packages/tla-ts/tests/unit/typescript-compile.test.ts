@@ -1335,6 +1335,20 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives the object that Object.defineProperty and Object.freeze change", async () => {
+    const result = await check(
+      compile(
+        `let reads = 0;\nconst object = Object.defineProperty({ kept: 1 }, "counted", {\n  get: () => {\n    reads += 1;\n    return 2;\n  },\n  enumerable: true,\n});\nconst frozen = Object.freeze({ size: 3 });\nlet total = 0;\ntotal = object.kept + Object.keys(object).length + frozen.size;\nif (total !== 6 || reads !== 0) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(
+        `const object = {};\nconst list = Object.freeze([1, 2]);\nif (list[0] !== 1) throw new Error("missed");`,
+      ),
+    ).toThrow("Unsupported call: Object.freeze");
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

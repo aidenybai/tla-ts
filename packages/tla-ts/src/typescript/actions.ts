@@ -642,8 +642,19 @@ const translateCallStatement = (
         bindings: new Map([...path.scope.bindings, [heapSymbol, heap]]),
       },
     });
+    // Each change but Reflect.construct gives the object it changes.
+    const target = expression.arguments.at(0);
+    const value =
+      expression.expression.name.text === "construct" || target === undefined
+        ? undefined
+        : translateObjectValue(target, path.scope, context);
     if (!translated.isFallible) {
-      return bindOnce(path, name, translated.change, continueWith(withHeap(identifier(name))));
+      return bindOnce(
+        path,
+        name,
+        translated.change,
+        continueWith(withHeap(identifier(name)), value),
+      );
     }
     const after = withHeap(field(identifier(name), "heap"));
     return bindOnce(
@@ -652,7 +663,7 @@ const translateCallStatement = (
       translated.change,
       ifThenElse(
         field(identifier(name), "isDone"),
-        continueWith(after),
+        continueWith(after, value),
         ifThenElse(
           field(identifier(name), "isRangeError"),
           throwError("RangeError", after, expression, context, frame),
@@ -2283,6 +2294,9 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
+  (isObjectChange(node) &&
+    node.expression.name.text !== "construct" &&
+    isHeapType(context.checker.getTypeAtLocation(node), node, context)) ||
   isGeneratorStep(node, context) ||
   getCreatedGenerator(node, path, context) !== undefined ||
   isHeapCall(node, path, context) ||

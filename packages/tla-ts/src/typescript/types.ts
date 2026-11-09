@@ -79,9 +79,11 @@ const LIBRARY_OBJECTS = new Set([
 ]);
 
 // An object type, or the object type, which any object may have.
-const isPlainObject = (type: ts.Type, context: Context) => {
+const isPlainObject = (type: ts.Type, context: Context): boolean => {
   const checker = context.checker;
   const symbol = type.getSymbol();
+  const readonly = type.aliasSymbol?.name === "Readonly" ? type.aliasTypeArguments?.[0] : undefined;
+  if (readonly !== undefined) return isPlainObject(readonly, context);
   if ((type.flags & ts.TypeFlags.NonPrimitive) !== 0) return true;
   const declaration = symbol?.valueDeclaration;
   if (
