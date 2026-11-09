@@ -11,6 +11,7 @@ export interface TlcArguments {
   dump: string[] | undefined;
   fingerprintIndex: number;
   metadir: string | undefined;
+  isRecovering: boolean;
   mode: "model-check" | "simulate" | "generate";
   dfidDepth: number | undefined;
   traceDepth: number;
@@ -132,6 +133,7 @@ const createDefaults = (): TlcArguments => ({
   dump: undefined,
   fingerprintIndex: 0,
   metadir: undefined,
+  isRecovering: false,
   mode: "model-check",
   dfidDepth: undefined,
   traceDepth: 100,
@@ -465,6 +467,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         );
       }
       if (flag === "-metadir") parsed.metadir = directory;
+      if (flag === "-recover") parsed.isRecovering = true;
       continue;
     }
     if (flag === "-workers") {

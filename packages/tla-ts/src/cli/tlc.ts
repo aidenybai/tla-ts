@@ -1047,6 +1047,10 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
     return 1;
   }
+  if (parsed.isRecovering) {
+    console.error("Error: tla-ts can't recover a model check from a checkpoint.");
+    return 1;
+  }
   if (parsed.fingerprintIndex !== 0) {
     console.error(
       `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${parsed.fingerprintIndex}.`,
