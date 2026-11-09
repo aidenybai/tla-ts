@@ -126,6 +126,8 @@ interface Compiled {
 interface CodeBinding {
   kind: "Code";
   compiled: Compiled;
+  // The LET definition whose value the code is, which a prime evaluates in the next state.
+  source: OperatorBinding | undefined;
 }
 
 interface OperatorBinding {
@@ -870,12 +872,12 @@ interface Frame {
 const getVariableCodes = (program: Program) => program.variableTypes.map((_, index) => `v${index}`);
 
 // An expression primed as a whole reads every variable in the next state, where priming again is an
-// error.
-const getNextFrame = (frame: Frame): Frame => {
-  const variables = frame.primed.flatMap((code) => (code === undefined ? [] : [code]));
-  if (variables.length !== frame.primed.length) return unsupported();
-  return { scope: frame.scope, primed: frame.primed.map(() => undefined), variables };
-};
+// error. A variable the action hasn't assigned yet has no value there, and TLC fails on it.
+const getNextFrame = (frame: Frame): Frame => ({
+  scope: frame.scope,
+  primed: frame.primed.map(() => undefined),
+  variables: frame.primed.map((code) => code ?? "H.deopt()"),
+});
 
 const withBinding = (scope: TierScope, name: string, binding: Binding): TierScope =>
   new Map(scope).set(name, binding);
@@ -898,7 +900,23 @@ const isBuiltin = (program: Program, frame: Frame, operator: string, name: strin
   operator === name && !frame.scope.has(name) && !program.environment.definitions.has(name);
 
 const bindCode = (scope: TierScope, name: string, type: Type, code: string) =>
-  withBinding(scope, name, { kind: "Code", compiled: { type, emit: () => code } });
+  withBinding(scope, name, {
+    kind: "Code",
+    compiled: { type, emit: () => code },
+    source: undefined,
+  });
+
+const bindDefinition = (
+  scope: TierScope,
+  definition: OperatorDefinition,
+  value: Compiled,
+  name: string,
+) =>
+  withBinding(scope, definition.name, {
+    kind: "Code",
+    compiled: { type: value.type, emit: () => getLazyCode(name) },
+    source: { kind: "Operator", definition, scope },
+  });
 
 const inline = <Result>(program: Program, definition: Definition, compile: () => Result) => {
   if (program.inlining.includes(definition)) return unsupported();
@@ -943,25 +961,25 @@ const bindArguments = (
     const arg = args[index];
     if (param.arity > 0)
       return withBinding(scope, param.name, getOperatorArgument(program, arg, frame));
-    // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action.
-    if (isBranching(program, arg, frame.scope)) {
-      return withBinding(scope, param.name, {
+    const source: OperatorBinding = {
+      kind: "Operator",
+      definition: {
         kind: "Operator",
-        definition: {
-          kind: "Operator",
-          name: param.name,
-          params: [],
-          body: arg,
-          isLocal: true,
-          isRecursive: false,
-          location: arg.location,
-        },
-        scope: frame.scope,
-      });
-    }
+        name: param.name,
+        params: [],
+        body: arg,
+        isLocal: true,
+        isRecursive: false,
+        location: arg.location,
+      },
+      scope: frame.scope,
+    };
+    // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action.
+    if (isBranching(program, arg, frame.scope)) return withBinding(scope, param.name, source);
     return withBinding(scope, param.name, {
       kind: "Code",
       compiled: compileValue(program, arg, frame),
+      source,
     });
   }, new Map());
 
@@ -2282,7 +2300,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         const value = compileValue(program, definition.body, { ...frame, scope: current });
         const name = getName(program, "l");
         names.push({ name, value });
-        return bindCode(current, definition.name, value.type, getLazyCode(name));
+        return bindDefinition(current, definition, value, name);
       }, frame.scope);
       const body = compileValue(program, expression.body, { ...frame, scope });
       return {
@@ -2477,6 +2495,17 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       const global = findGlobalName(target.name, program.environment);
       if (!frame.scope.has(target.name) && global?.kind === "Definition") {
         return compileIdentifier(program, target.name, getNextFrame(frame));
+      }
+      const binding = frame.scope.get(target.name);
+      const source = binding?.kind === "Code" ? binding.source : binding;
+      if (source) {
+        if (source.definition.params.length > 0) return unsupported();
+        return inline(program, source.definition, () =>
+          compileValue(program, source.definition.body, {
+            ...getNextFrame(frame),
+            scope: source.scope,
+          }),
+        );
       }
       if (frame.scope.has(target.name) || global?.kind !== "Variable") return unsupported();
       const code = frame.primed[global.index] ?? unsupported();
@@ -2790,7 +2819,7 @@ const compileStep = (
         const value = compileValue(program, definition.body, { ...frame, scope: current });
         const name = getName(program, "l");
         names.push({ name, value });
-        return bindCode(current, definition.name, value.type, getLazyCode(name));
+        return bindDefinition(current, definition, value, name);
       }, first.scope);
       const body = continueWith(scope, [expression.body]);
       return () => `{ ${getDeclarations(names)} ${body()} }`;
