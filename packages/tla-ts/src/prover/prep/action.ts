@@ -485,6 +485,8 @@ const commuteSequent = createSequentMap(commuteSymbols, "all");
 const coalesceSequent = createSequentMap(coalesceModal, "visible");
 
 export const processObligation = (sequent: Sequent): Sequent => {
+  // Throws for an operator applied to the wrong number of arguments.
+  getLevelInfo(undefined, { kind: "Sequent", sequent });
   const keys = sequent.context;
   const expanded = expandUnchangedSequent(keys, expandActionSequent(keys, sequent));
   const commuted = commuteSequent(keys, expanded);
