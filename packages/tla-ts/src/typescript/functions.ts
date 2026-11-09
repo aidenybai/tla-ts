@@ -223,7 +223,8 @@ const translateOperatorArgument = (node: ts.Expression, scope: Scope, context: C
 };
 
 // A call to a top-level helper, or a reference to a top-level constant when node is undefined.
-// A helper that reads state after the step has changed it is inlined, so it reads the new values.
+// A helper that reads state after the step has changed it is inlined, so it reads the new values,
+// as is one whose parameters a TLA+ operator can't declare, such as one with a default.
 export const translateHelperCall = (
   declaration: HelperDeclaration,
   node: ts.CallExpression | undefined,
@@ -231,6 +232,28 @@ export const translateHelperCall = (
   context: Context,
 ) => {
   rejectCaught(node ?? declaration, declaration, scope, context);
+  const helper = getFunction(declaration);
+  if (
+    node !== undefined &&
+    helper !== undefined &&
+    !helper.parameters.every(
+      (parameter) =>
+        ts.isIdentifier(parameter.name) &&
+        parameter.initializer === undefined &&
+        parameter.dotDotDotToken === undefined,
+    )
+  ) {
+    if (context.inProgress.has(helper)) {
+      throw new TlaTypeScriptError(
+        "A function whose parameters have defaults, patterns, or rest can't call itself",
+        node,
+      );
+    }
+    context.inProgress.add(helper);
+    const value = inlineCall(helper, node.arguments, scope, context);
+    context.inProgress.delete(helper);
+    return value;
+  }
   const definition = getDefinition(declaration, context);
   const argumentNodes = node?.arguments ?? [];
   if (definition.readsState && isStateModified(scope, context)) {

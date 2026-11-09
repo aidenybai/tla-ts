@@ -1582,6 +1582,21 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("inlines a top-level helper whose parameters have defaults or rest", async () => {
+    const result = await checkModel(`
+      function pick(first: number = 1) {
+        return first;
+      }
+      function count(first: number, ...others: number[]) {
+        return first + others.length;
+      }
+      const picked = pick();
+      const counted = count(1, 2, 3);
+      if (picked !== 1 || counted !== 3) throw new Error("missed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(
