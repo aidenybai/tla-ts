@@ -19,7 +19,6 @@ import {
   resolveGlobalOperator,
   expectFunction,
   toKeepLazyContext,
-  createPrimeOutsideActionError,
   createUnassignedError,
   getSortedFields,
   hasDuplicateFields,
@@ -92,9 +91,6 @@ const createGeneratedHelpers = () => ({
   enumerate: getQuantifierElements,
   unassigned: (name: string, expression: Expression): never => {
     throw createUnassignedError(name, expression);
-  },
-  primeOutsideAction: (expression: Expression): never => {
-    throw createPrimeOutsideActionError(expression);
   },
   prime: (context: Context): Context => ({
     environment: context.environment,
@@ -364,16 +360,14 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "SetEnumeration":
       return `set([${expression.elements.map((element) => generate(element)).join(", ")}])`;
     case "Prime": {
-      const node = addReference(generator, expression);
-      if (frame.isPrimed) return `primeOutsideAction(${node})`;
-      const primed = {
+      if (frame.isPrimed) return generateDelegate(generator, expression, frame);
+      return generate(expression.expression, {
         context: `(primed ??= prime(${frame.context}))`,
         state: frame.next,
         next: "undefined",
         isPrimed: true,
         locals: frame.locals,
-      };
-      return `(${frame.next} === undefined ? primeOutsideAction(${node}) : ${generate(expression.expression, primed)})`;
+      });
     }
     case "Unchanged": {
       const primed = generate({

@@ -370,11 +370,6 @@ export const toUnspecifiedSubscriptError = (error: unknown, version: TlcVersion 
       )
     : error;
 
-export const createPrimeOutsideActionError = (expression: Expression) =>
-  new TlaEvaluationError(
-    `A primed expression appears outside an action at ${describeLocation(expression)}`,
-  );
-
 export const lookupScope = (scope: Scope | undefined, name: string): Binding | undefined => {
   for (let current = scope; current; current = current.parent) {
     if (current.name === name) return current.binding;
@@ -1972,16 +1967,14 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
-      return (context) => {
-        if (!context.next) throw createPrimeOutsideActionError(expression);
-        return inner({
+      return (context) =>
+        inner({
           environment: context.environment,
           scope: context.scope,
           state: context.next,
           next: undefined,
           isKeepLazy: context.isKeepLazy,
         });
-      };
     }
     case "Unchanged": {
       const primed = getChildEvaluator({
