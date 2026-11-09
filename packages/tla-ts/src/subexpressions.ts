@@ -410,7 +410,6 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve" ? [theorem.name] : [],
     ),
   );
-  // The operands of an ASSUME/PROVE are its assumptions and then its goal.
   const clauses = module.theorems.flatMap((theorem): Definition[] => {
     const statement = theorem.statement;
     if (theorem.name === undefined || statement.kind !== "AssumeProve") return [];
