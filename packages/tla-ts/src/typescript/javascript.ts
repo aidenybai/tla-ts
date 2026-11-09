@@ -7,10 +7,29 @@ import type { Scope } from "./scope";
 import { getKind } from "./types";
 import { apply, boolean, identifier, ifExpression, number, string } from "./tla";
 
+// The names of the well-known symbols, such as iterator for Symbol.iterator.
+export const WELL_KNOWN_SYMBOLS = [
+  "asyncDispose",
+  "asyncIterator",
+  "dispose",
+  "hasInstance",
+  "isConcatSpreadable",
+  "iterator",
+  "match",
+  "matchAll",
+  "replace",
+  "search",
+  "species",
+  "split",
+  "toPrimitive",
+  "toStringTag",
+  "unscopables",
+];
+
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Undefined, Null, Ref, BuiltIns, ConstantFunctions,
+CONSTANTS Undefined, Null, Ref, BuiltIns, ConstantFunctions, Symbols,
           NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
@@ -19,6 +38,17 @@ LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 SpecialNumbers == {NaN, Infinity, NegativeInfinity, NegativeZero}
 
 LOCAL Infinities == {Infinity, NegativeInfinity}
+
+\\* The names of the well-known symbols, which are the first model values in Symbols. The rest stand
+\\* for the symbols that a script makes, in the order it makes them.
+LOCAL WellKnownSymbols == <<${WELL_KNOWN_SYMBOLS.map((name) => `"${name}"`).join(", ")}>>
+
+\\* A model value equals only a model value, so this compares a value of any kind with Symbols.
+IsSymbol(value) == \\E position \\in DOMAIN Symbols : Symbols[position] = value
+
+LOCAL SymbolPosition(symbol) == CHOOSE position \\in DOMAIN Symbols : Symbols[position] = symbol
+
+LOCAL IsWellKnown(value) == IsSymbol(value) /\\ SymbolPosition(value) <= Len(WellKnownSymbols)
 
 TypeOf(value) ==
   LET text == ToString(value)
@@ -30,6 +60,7 @@ TypeOf(value) ==
        [] first = "\\"" -> "string"
        [] \\A i \\in 1..Len(text) : SubSeq(text, i, i) \\in Digits -> "number"
        [] first \\in {"[", "<", "{", "("} \\cup Digits -> "object"
+       [] IsSymbol(value) -> "symbol"
        [] OTHER -> "function"
 
 \\* TLC can't tell whether a value that isn't an integer is in Int, so this asks TypeOf.
@@ -261,7 +292,7 @@ EmptyObject ==
    privates |-> <<>>]
 
 \\* A heap holds the objects a script makes, and the built-in objects it has changed, by key.
-EmptyHeap == [objects |-> <<>>, changed |-> <<>>]
+EmptyHeap == [objects |-> <<>>, changed |-> <<>>, symbols |-> <<>>]
 
 Allocate(heap, object) == [heap EXCEPT !.objects = Append(@, object)]
 
@@ -401,12 +432,19 @@ ToIndex(key) ==
   ELSE 10 * ToIndex(SubSeq(key, 1, Len(key) - 1))
          + (CHOOSE digit \\in 0..9 : ToString(digit) = SubSeq(key, Len(key), Len(key)))
 
+\\* An object's own string keys, with the indices first in order.
 OwnKeys(object) ==
-  SortSeq(SelectSeq(object.keys, IsIndex), LAMBDA left, right : ToIndex(left) < ToIndex(right))
-    \\o SelectSeq(object.keys, LAMBDA key : ~IsIndex(key))
+  LET strings == SelectSeq(object.keys, LAMBDA key : ~IsSymbol(key))
+  IN SortSeq(SelectSeq(strings, IsIndex), LAMBDA left, right : ToIndex(left) < ToIndex(right))
+       \\o SelectSeq(strings, LAMBDA key : ~IsIndex(key))
 
 LOCAL EnumerableKeys(object) ==
   SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
+
+\\* The enumerable own keys that spread and Object.assign copy, which include symbols.
+LOCAL EnumerableOwnKeys(object) ==
+  SelectSeq(OwnKeys(object) \\o SelectSeq(object.keys, IsSymbol),
+            LAMBDA key : object.attributes[key].enumerable)
 
 LOCAL Value(object, key) ==
   LET attributes == object.attributes[key]
@@ -438,7 +476,7 @@ PutAll(object, values, keys) ==
 
 Spread(object, heap, ref) ==
   LET source == Lookup(heap, ref)
-  IN PutAll(object, [key \\in DOMAIN source.values |-> Value(source, key)], EnumerableKeys(source))
+  IN PutAll(object, [key \\in DOMAIN source.values |-> Value(source, key)], EnumerableOwnKeys(source))
 
 Describe(heap, ref, key) ==
   LET object == Lookup(heap, ref)
@@ -516,7 +554,7 @@ ObjectValues(heap, ref) ==
 \\* The object that an object pattern's rest element makes, which holds the enumerable own properties
 \\* of the object that the pattern reads, except those it names, in their order.
 RestObject(heap, ref, excluded) ==
-  LET keys == SelectSeq(ObjectKeys(heap, ref), LAMBDA key : key \\notin excluded)
+  LET keys == SelectSeq(EnumerableOwnKeys(Lookup(heap, ref)), LAMBDA key : key \\notin excluded)
       kept == {keys[position] : position \\in DOMAIN keys}
   IN [EmptyObject EXCEPT !.keys = keys,
                          !.values = Read([key \\in kept |-> Get(heap, ref, key)]),
@@ -752,6 +790,52 @@ StringOf(value) ==
     [] value = NegativeZero -> "0"
     [] TypeOf(value) = "number" -> ToString(value)
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
+
+\\* The heap after Symbol(description) makes a symbol, which holds the symbol's description.
+NewSymbol(heap, description) ==
+  IF Len(WellKnownSymbols) + Len(heap.symbols) < Len(Symbols)
+  THEN [heap EXCEPT !.symbols =
+          Append(@, IF description = Undefined THEN Undefined ELSE StringOf(description))]
+  ELSE Assert(FALSE, "tla-ts can't make more symbols than a script has calls of Symbol")
+
+\\* The symbol that the last call of Symbol made.
+NewestSymbol(heap) == Symbols[Len(WellKnownSymbols) + Len(heap.symbols)]
+
+WellKnownSymbol(name) ==
+  Symbols[CHOOSE position \\in DOMAIN WellKnownSymbols : WellKnownSymbols[position] = name]
+
+SymbolDescription(heap, symbol) ==
+  LET position == SymbolPosition(symbol)
+  IN IF position <= Len(WellKnownSymbols)
+     THEN "Symbol." \\o WellKnownSymbols[position]
+     ELSE heap.symbols[position - Len(WellKnownSymbols)]
+
+\\* What String(symbol) and symbol.toString() give.
+SymbolString(heap, symbol) ==
+  LET description == SymbolDescription(heap, symbol)
+  IN "Symbol(" \\o (IF description = Undefined THEN "" ELSE description) \\o ")"
+
+\\* The key that a symbol gives. tla-ts doesn't know which properties of the built-in objects the
+\\* well-known symbols name, nor run what JavaScript runs through them, so it uses none as a key.
+SymbolKey(symbol) ==
+  IF IsWellKnown(symbol)
+  THEN Assert(FALSE, "tla-ts can't use a well-known symbol as a key")
+  ELSE symbol
+
+PropertyKey(value) == IF IsSymbol(value) THEN SymbolKey(value) ELSE StringOf(value)
+
+\\* What a symbol's toString, valueOf, or description gives, where Symbol.prototype still holds the
+\\* built-in method or getter.
+SymbolProperty(heap, symbol, prototype, name) ==
+  LET found == IF name = "description"
+               THEN GetterOf(heap, prototype, name)
+               ELSE Get(heap, prototype, name)
+      builtIn == Ref :> ((IF name = "description" THEN "get " ELSE "") \\o "Symbol.prototype." \\o name)
+  IN CASE ~SameValue(found, builtIn) ->
+            Assert(FALSE, "tla-ts can't call a symbol's " \\o name \\o " that a script replaced")
+       [] name = "toString" -> SymbolString(heap, symbol)
+       [] name = "valueOf" -> symbol
+       [] OTHER -> SymbolDescription(heap, symbol)
 
 \\* The text that a string method reads, where tla-ts reads only strings.
 LOCAL Text(value) ==
@@ -1245,7 +1329,7 @@ DefineProperty(heap, ref, key, descriptor) ==
 
 DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
-      keys == EnumerableKeys(source)
+      keys == EnumerableOwnKeys(source)
       values == [position \\in DOMAIN keys |-> Value(source, keys[position])]
   IN IF \\/ ~IsObjectArgument(ref)
         \\/ ~IsObjectArgument(properties)
@@ -1322,6 +1406,7 @@ export const getTypeNames = (type: ts.Type, checker: ts.TypeChecker): string[] |
   if (flags & ts.TypeFlags.BooleanLike) return ["boolean"];
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return ["undefined"];
   if (flags & ts.TypeFlags.Null) return ["null"];
+  if (flags & ts.TypeFlags.ESSymbolLike) return ["symbol"];
   if (!(flags & ts.TypeFlags.Object)) return undefined;
   // A structural type such as {} or { length: number } also holds the primitives that fit it.
   const isPrimitive = [
@@ -1471,7 +1556,9 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
         : apply("#", [value, number(0)]);
     }
     if (kind === "string") return apply("#", [value, string("")]);
-    if (isEmpty || kind === "object" || kind === "function") return boolean(!isEmpty);
+    if (isEmpty || kind === "object" || kind === "function" || kind === "symbol") {
+      return boolean(!isEmpty);
+    }
   }
   if (name === "String") {
     if (kind === "string") return value;
@@ -1482,6 +1569,10 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     }
     if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
     if (isEmpty) return string(kind);
+    const heap = context.heap === undefined ? undefined : scope.bindings.get(context.heap);
+    if (kind === "symbol" && heap !== undefined) {
+      return useJavaScript("SymbolString", [heap, value], context);
+    }
     if (names === undefined) return useJavaScript("StringOf", [value], context);
   }
   throw unsupported;

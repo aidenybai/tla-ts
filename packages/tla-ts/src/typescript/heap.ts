@@ -32,7 +32,7 @@ import {
   translateBuiltInObject,
   translateBuiltInValue,
 } from "./intrinsics";
-import { translateToNumber, useJavaScript } from "./javascript";
+import { getTypeNames, translateToNumber, useJavaScript } from "./javascript";
 import { createStateScope, type Scope } from "./scope";
 import {
   apply,
@@ -87,7 +87,14 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
       ? useJavaScript("StringOf", [value], context)
       : apply("ToString", [value]);
   }
-  throw new TlaTypeScriptError("Use a string or a number as a key", node);
+  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
+  if (names?.length === 1 && names[0] === "symbol") {
+    return useJavaScript("SymbolKey", [value], context);
+  }
+  if (names?.every((name) => ["string", "number", "symbol"].includes(name))) {
+    return useJavaScript("PropertyKey", [value], context);
+  }
+  throw new TlaTypeScriptError("Use a string, a number, or a symbol as a key", node);
 };
 
 export const translateMemberKey = (name: ts.PropertyName, scope: Scope, context: Context) => {
@@ -564,6 +571,22 @@ export const translateHasPrivate = (
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
+  if (ts.isCallExpression(node) && isSymbolCall(node, context)) {
+    const description = node.arguments.at(0);
+    if (description !== undefined && ts.isSpreadElement(description)) {
+      throw new TlaTypeScriptError("Pass Symbol a description, not a spread", description);
+    }
+    return useJavaScript(
+      "NewSymbol",
+      [
+        heap,
+        description === undefined
+          ? getUndefined(context)
+          : translateExpression(description, scope, context),
+      ],
+      context,
+    );
+  }
   if (
     isFunctionObject(node, context) &&
     !ts.isClassExpression(node) &&
@@ -744,8 +767,13 @@ export const isCreation = (node: ts.Node, context: Context) => {
   );
 };
 
+// A call of Symbol, which changes the heap as an allocation does, to record the symbol it makes.
+export const isSymbolCall = (node: ts.Node, context: Context) =>
+  ts.isCallExpression(node) && getBuiltIn(node.expression, context) === "Symbol";
+
 export const isAllocation = (node: ts.Node, context: Context) =>
-  (ts.isCallExpression(node) && (isDescription(node, context) || isCreation(node, context))) ||
+  (ts.isCallExpression(node) &&
+    (isDescription(node, context) || isCreation(node, context) || isSymbolCall(node, context))) ||
   isNewObject(node, context) ||
   getNewWrapper(node, context) !== undefined;
 

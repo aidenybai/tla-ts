@@ -1647,6 +1647,44 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes symbols that differ from each other and key their own properties", async () => {
+    const result = await checkModel(`
+      const first: symbol = Symbol("key");
+      const second: symbol = Symbol("key");
+      if (first === second || typeof first !== "symbol") throw new Error("identity");
+      if (first.description !== "key" || String(first) !== "Symbol(key)") throw new Error("text");
+      if (first.toString() !== "Symbol(key)" || first.valueOf() !== first) throw new Error("methods");
+      if (first.toString !== Symbol.prototype.toString) throw new Error("method");
+      if (Symbol.iterator.description !== "Symbol.iterator") throw new Error("well-known");
+      const object: { [key: symbol]: number; name: number } = { name: 1 };
+      object[first] = 2;
+      if (object[first] !== 2 || object[second] !== undefined) throw new Error("keys");
+      if (Object.keys(object).length !== 1) throw new Error("string keys");
+      const copy: { [key: symbol]: number } = { ...object };
+      if (copy[first] !== 2) throw new Error("spread");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a script uses a well-known symbol as a key", async () => {
+    const result = await checkModel(`
+      const object: { [key: symbol]: number } = {};
+      object[Symbol.iterator] = 1;
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't use a well-known symbol as a key");
+  });
+
+  it("stops where a script makes more symbols than it has calls of Symbol", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      for (let index = 0; index < 10; index++) {
+        const made: symbol = Symbol();
+        count++;
+      }
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't make more symbols");
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

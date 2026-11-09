@@ -15,7 +15,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateSetKey } from "./expressions";
 import { translateBody } from "./functions";
 import { getHeap } from "./heap";
-import { isBuiltInObject, translateBuiltInValue } from "./intrinsics";
+import { isBuiltInObject, translateBuiltInValue, translateSymbolProperty } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
 import {
@@ -1019,6 +1019,16 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
+  const symbolMethod = node.expression.name.text;
+  const receiverNames = getTypeNames(context.checker.getTypeAtLocation(receiver), context.checker);
+  if (
+    receiverNames?.length === 1 &&
+    receiverNames[0] === "symbol" &&
+    (symbolMethod === "toString" || symbolMethod === "valueOf") &&
+    node.arguments.length === 0
+  ) {
+    return translateSymbolProperty(receiver, symbolMethod, node, scope, context);
+  }
   // valueOf on a value whose type doesn't tell what it is, such as this in a callback, which may
   // be a primitive or a wrapper object.
   if (

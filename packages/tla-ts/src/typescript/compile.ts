@@ -7,6 +7,7 @@ import { render } from "./formula";
 import { translateBody } from "./functions";
 import { findHeapArrays, translateConstantFunctions } from "./heap";
 import { translateBuiltIns } from "./intrinsics";
+import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
@@ -90,7 +91,7 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
     (ts.isNewExpression(node) &&
       ts.isIdentifier(node.expression) &&
       ["Boolean", "Number", "String"].includes(node.expression.text)) ||
-    (ts.isIdentifier(node) && node.text === "arguments") ||
+    (ts.isIdentifier(node) && (node.text === "arguments" || node.text === "Symbol")) ||
     (ts.forEachChild(node, usesObjects) ?? false);
   if (heap !== undefined && isScript(sourceFile) && usesObjects(sourceFile)) {
     context.heap = heap;
@@ -120,6 +121,29 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
         prototypes.has(node.left.expression.getText())) ||
       (ts.forEachChild(node, changesPrototype) ?? false);
     context.hasInheritedElements = changesPrototype(sourceFile);
+    const getSymbolCalls = (node: ts.Node): number =>
+      node
+        .getChildren()
+        .reduce(
+          (count, child) => count + getSymbolCalls(child),
+          ts.isCallExpression(node) &&
+            ts.isIdentifier(node.expression) &&
+            node.expression.text === "Symbol"
+            ? 1
+            : 0,
+        );
+    const namesSymbol = (node: ts.Node): boolean =>
+      (ts.isIdentifier(node) && node.text === "Symbol") ||
+      (ts.forEachChild(node, namesSymbol) ?? false);
+    // Each call of Symbol may make a few symbols, as where a loop or a function runs it again.
+    context.symbols = namesSymbol(sourceFile)
+      ? [
+          ...WELL_KNOWN_SYMBOLS,
+          ...Array.from({ length: 4 * getSymbolCalls(sourceFile) }, () => ""),
+        ].map((name) =>
+          context.names.getFresh(`Symbol${name.charAt(0).toUpperCase()}${name.slice(1)}`),
+        )
+      : [];
   }
   const model = readModel(sourceFile, context);
   rejectSharing(program.sourceFile, context);
@@ -150,6 +174,7 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
         context.heap === undefined ? tuple([]) : translateBuiltIns(sourceFile, context),
       ),
       define("UsedConstantFunctions", [], translateConstantFunctions(context)),
+      define("UsedSymbols", [], tuple(context.symbols.map((name) => identifier(name)))),
     );
   }
   return emit(getModuleName(fileName), program.sourceFile, model, sections, context);

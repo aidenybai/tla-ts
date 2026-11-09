@@ -147,6 +147,7 @@ export const emit = (
     ...(prelude.has("Undefined") && !isJavaScript ? ["Undefined"] : []),
     ...context.modelValues.values(),
     ...context.constructors.values(),
+    ...context.symbols,
   ];
   const modelValues = [
     ...(isJavaScript ? ["Undefined", "Null", "Ref", ...SPECIAL_NUMBERS] : []),
@@ -263,7 +264,11 @@ export const emit = (
           "CONSTANTS",
           ...modelValues.map((constant) => `  ${constant} = ${constant}`),
           ...(isJavaScript
-            ? ["  BuiltIns <- UsedBuiltIns", "  ConstantFunctions <- UsedConstantFunctions"]
+            ? [
+                "  BuiltIns <- UsedBuiltIns",
+                "  ConstantFunctions <- UsedConstantFunctions",
+                "  Symbols <- UsedSymbols",
+              ]
             : []),
         ]
       : []),

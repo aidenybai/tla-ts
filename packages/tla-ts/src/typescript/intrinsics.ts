@@ -4,7 +4,7 @@ import { TlaTypeScriptError } from "../errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { getHeap } from "./heap";
-import { useJavaScript } from "./javascript";
+import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import type { Scope } from "./scope";
 import type { Expression } from "../ast";
 import { BUILT_INS } from "./built-ins";
@@ -215,13 +215,34 @@ export const translateBuiltInValue = (
     | "get Function.prototype.arguments"
     | "Boolean.prototype"
     | "Number.prototype"
-    | "String.prototype",
+    | "String.prototype"
+    | "Symbol.prototype",
   node: ts.Node,
   context: Context,
 ) => {
   context.builtIns.add(name);
   return getBuiltInValue(name, node, context);
 };
+
+// A symbol's toString(), valueOf(), or description, which the heap's Symbol.prototype must still
+// hold the built-in of.
+export const translateSymbolProperty = (
+  receiver: ts.Expression,
+  name: "toString" | "valueOf" | "description",
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+) =>
+  useJavaScript(
+    "SymbolProperty",
+    [
+      getHeap(scope, node, context),
+      translateExpression(receiver, scope, context),
+      translateBuiltInValue("Symbol.prototype", node, context),
+      string(name),
+    ],
+    context,
+  );
 
 // A built-in object. A script may change a property that a path to one reads, so a script reads
 // the path from its heap, unless the property can't change.
@@ -351,7 +372,10 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
           ]);
           return { key, value: accessor, attributes: getAttributes(flags, "accessor") };
         }
-        const value = translateBuiltInProperty(property[2], node, context);
+        const value =
+          name === "Symbol" && WELL_KNOWN_SYMBOLS.includes(property[0])
+            ? useJavaScript("WellKnownSymbol", [string(property[0])], context)
+            : translateBuiltInProperty(property[2], node, context);
         return {
           key,
           value: value ?? getUndefined(context),

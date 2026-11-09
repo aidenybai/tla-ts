@@ -52,6 +52,7 @@ import {
   getHeap,
   isCreation,
   isDescription,
+  isSymbolCall,
   isNewObject,
   getNewWrapper,
   getMethodValue,
@@ -66,6 +67,7 @@ import {
   translateBuiltInObject,
   translateIntrinsic,
   translateBuiltInValue,
+  translateSymbolProperty,
 } from "./intrinsics";
 import {
   getTypeNames,
@@ -422,6 +424,13 @@ const translateCall = (
   context: Context,
   isDefined: boolean,
 ) => {
+  if (isSymbolCall(node, context)) {
+    const made = scope.allocated.get(node);
+    if (made === undefined) {
+      throw new TlaTypeScriptError("Make symbols only where a statement always runs", node);
+    }
+    return made;
+  }
   const converted =
     translateConversion(node, scope, context) ?? translateIntrinsic(node, scope, context);
   if (converted !== undefined) return converted;
@@ -1040,6 +1049,21 @@ const translatePropertyAccess = (
   const name = node.name.text;
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
+  const receiverNames = getTypeNames(context.checker.getTypeAtLocation(receiver), context.checker);
+  // A symbol has no properties of its own, so it reads them from Symbol.prototype.
+  if (receiverNames?.length === 1 && receiverNames[0] === "symbol") {
+    return name === "description"
+      ? translateSymbolProperty(receiver, name, node, scope, context)
+      : useJavaScript(
+          "Get",
+          [
+            getHeap(scope, node, context),
+            translateBuiltInValue("Symbol.prototype", node, context),
+            string(name),
+          ],
+          context,
+        );
+  }
   // A value of type Function, such as an object's constructor, may be a built-in function, which
   // only the heap knows the properties of.
   const isFunctionType =

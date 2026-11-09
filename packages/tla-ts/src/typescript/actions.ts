@@ -61,6 +61,7 @@ import {
   getHeap,
   isAllocation,
   isObjectChange,
+  isSymbolCall,
   translateAllocated,
   translateHasPrivate,
   translateHoldsMethod,
@@ -2443,7 +2444,11 @@ const allocateAll = (
   const allocated = allocations.reduce<Bound>(
     (current, allocation) => {
       const name = context.names.getFresh("heap");
-      const ref = useJavaScript("Allocated", [identifier(name)], context);
+      const ref = useJavaScript(
+        isSymbolCall(allocation, context) ? "NewestSymbol" : "Allocated",
+        [identifier(name)],
+        context,
+      );
       return {
         definitions: [
           ...current.definitions,
