@@ -591,7 +591,7 @@ export const getCalledMethod = (
 // The function that a callee or callback names: one written in place, one declared elsewhere, or
 // a method of a known class.
 const resolve = (node: ts.Expression, context: Context) =>
-  getAnyFunction(node) ??
+  getAnyFunction(skipCasts(node)) ??
   getAnyFunction(getSymbol(node, context.checker)?.valueDeclaration) ??
   getMethod(node, context);
 

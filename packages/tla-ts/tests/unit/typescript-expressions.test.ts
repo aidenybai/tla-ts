@@ -509,6 +509,20 @@ const CASES: Record<string, (string | [string, string])[]> = {
       const holder: { [key: string]: unknown } = { 0: 3, length: 1 };`,
     ],
     [
+      "[seen, after, value]",
+      `let seen: unknown = 0;
+      let after = 0;
+      (function (x: unknown) {
+        seen = x;
+      })("outer");
+      ((y: number) => {
+        after = y + 1;
+      })(2);
+      const value = (function () {
+        return 5;
+      })();`,
+    ],
+    [
       "[unset, flag, zero, empty, kept, held, shown]",
       `const box = {};
       let unset: unknown = undefined;
