@@ -174,8 +174,8 @@ const withModifiers = (context: ProofContext, modifiers: readonly Modifier[]): C
           withClaset(
             current,
             modifier.kind === "intro"
-              ? addUnsafeIntro(current, fact)
-              : addUnsafeDest(current, fact),
+              ? addUnsafeIntro(current, fact, context.atomizeRules)
+              : addUnsafeDest(current, fact, context.atomizeRules),
           ),
         classical,
       ),

@@ -141,6 +141,7 @@ export interface Bound {
   name: string;
   level: Level;
   domain: BoundDomain;
+  location?: Locus;
 }
 
 export type Selector =
@@ -222,8 +223,9 @@ export interface Field {
 export interface InstanceDefinition {
   args: string[];
   module: string;
-  substitutions: { name: string; expression: Expr }[];
+  substitutions: { name: string; expression: Expr; location?: Locus }[];
   location?: Locus;
+  instanceLocation?: Locus;
 }
 
 export type Defn = DefnCore & { location?: Locus };

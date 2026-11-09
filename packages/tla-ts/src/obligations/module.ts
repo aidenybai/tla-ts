@@ -397,7 +397,7 @@ const substituteUnit = (
           instance: {
             ...unit.instance,
             substitutions: unit.instance.substitutions.map((entry) => ({
-              name: entry.name,
+              ...entry,
               expression: substituteExpr(substitution, entry.expression),
             })),
           },

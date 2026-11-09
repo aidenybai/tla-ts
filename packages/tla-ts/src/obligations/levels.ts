@@ -162,9 +162,12 @@ const getBoundsLevel = (scope: Scope | undefined, bounds: Bound[], body: Expr) =
   ]);
 };
 
-const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
+const applyOperator = (operator: LevelInfo, args: LevelInfo[], from: Expr): LevelInfo => {
   if (operator.weights.length !== args.length) {
-    throw new TlaProofError("Invalid number of arguments");
+    throw new TlaProofError("Invalid number of arguments", {
+      failure: "Expr.Levels: ARITY",
+      locus: from.location,
+    });
   }
   const weighted = args.filter((_arg, index) => operator.weights[index]);
   return {
@@ -219,7 +222,11 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         return recurse({ ...expression, operator: operator.args[0] });
       }
       if (operator.kind === "Opaque") {
-        return applyOperator(getInfo(0, expression.args.length), expression.args.map(recurse));
+        return applyOperator(
+          getInfo(0, expression.args.length),
+          expression.args.map(recurse),
+          expression,
+        );
       }
       if (operator.kind === "Internal" && expression.args.length === 1) {
         const arg = expression.args[0];
@@ -248,7 +255,7 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         expression.args.forEach(recurse);
         return getInfo(3, 2);
       }
-      return applyOperator(recurse(operator), expression.args.map(recurse));
+      return applyOperator(recurse(operator), expression.args.map(recurse), expression);
     }
     case "Sequent": {
       const context = getContextLevel(scope, expression.sequent.context);

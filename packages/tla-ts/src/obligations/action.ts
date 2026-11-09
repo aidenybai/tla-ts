@@ -1,6 +1,6 @@
 // A port of tlapm's Expr.Action.
 
-import { TlaProofError, TlapmBugError, TlaProverError } from "../errors";
+import { TlapmBugError, TlaProverError } from "../errors";
 import type { Anonymizer } from "./anonymize";
 import { bumpBy, normalizeApply, shift, substituteExpr, type Substitution } from "./substitution";
 import {
@@ -173,7 +173,7 @@ const expandDefinitions = (
   if (hyp.kind === "Fresh") {
     const message = `The expression that results from applying the declared operator \`${hyp.name}\` has expression level ${expressionLevel} within the scope of \`ENABLED\` or \`\\cdot\` where soundness requires expanding expressions of level >= ${level}. A declared operator cannot be expanded.\n${getDeclaration(hyp.name)}\n and has level: ${LEVEL_NUMBERS[hyp.level]}\n and arity: ${hyp.shape}`;
     onWarning(getErrorNote(expression.location, message));
-    throw new TlaProofError(message);
+    throw new TlaProverError(message);
   }
   const definition = hyp.definition;
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {

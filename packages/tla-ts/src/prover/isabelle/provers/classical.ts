@@ -8,7 +8,7 @@ import { aconv, sizeOfTerm } from "../pure/term";
 import { stripAssumsConcl, stripAssumsHyp } from "../pure/logic";
 import { listOfSeq, seqHead } from "../pure/seq";
 import { trade } from "../pure/variable";
-import { atomizePremsTac } from "../pure/object-logic";
+import { atomizePremsTac, flatRule } from "../pure/object-logic";
 import { bestFirst } from "../pure/search";
 import {
   allGoals,
@@ -169,22 +169,18 @@ const insertRules = (
 const isMember = (rules: readonly ClassicalRule[], rule: ClassicalRule) =>
   rules.some((other) => aconv(other.rule.prop, rule.rule.prop));
 
-export const addUnsafeIntro = (context: ClassicalContext, rule: Thm): Claset => {
+export const addUnsafeIntro = (
+  context: ClassicalContext,
+  rule: Thm,
+  atomizeRules: readonly Thm[],
+): Claset => {
   const claset = context.claset;
-  if (
-    premsOf(rule).some(
-      (premise) =>
-        premise.kind === "App" &&
-        premise.fun.kind === "Const" &&
-        premise.fun.name.startsWith("Pure."),
-    )
-  )
-    throw new TlaIsabelleError("ERROR", "Rules with meta-level premises are not supported");
-  const dup = dupIntr(context.data, rule);
+  const flat = flatRule(context.limits, atomizeRules, rule);
+  const dup = dupIntr(context.data, flat);
   const entry: ClassicalRule = {
     rule,
-    internal: rule,
-    swapped: swapify(context.data, [rule]),
+    internal: flat,
+    swapped: swapify(context.data, [flat]),
     dup,
     dupSwapped: swapify(context.data, [dup]),
   };
@@ -198,10 +194,18 @@ export const addUnsafeIntro = (context: ClassicalContext, rule: Thm): Claset => 
   };
 };
 
-const addUnsafeElim = (context: ClassicalContext, rule: Thm): Claset => {
+const addUnsafeElim = (
+  context: ClassicalContext,
+  rule: Thm,
+  atomizeRules: readonly Thm[],
+): Claset => {
   const claset = context.claset;
   if (nprems(rule) < 1) throw new TlaIsabelleError("ERROR", "Ill-formed elimination rule");
-  const internal = classicalRule(context.data, rule, context.limits);
+  const internal = classicalRule(
+    context.data,
+    flatRule(context.limits, atomizeRules, rule),
+    context.limits,
+  );
   const entry: ClassicalRule = {
     rule,
     internal,
@@ -219,9 +223,13 @@ const addUnsafeElim = (context: ClassicalContext, rule: Thm): Claset => {
   };
 };
 
-export const addUnsafeDest = (context: ClassicalContext, rule: Thm): Claset => {
+export const addUnsafeDest = (
+  context: ClassicalContext,
+  rule: Thm,
+  atomizeRules: readonly Thm[],
+): Claset => {
   if (nprems(rule) < 1) throw new TlaIsabelleError("ERROR", "Ill-formed destruction rule");
-  return addUnsafeElim(context, makeElim(rule));
+  return addUnsafeElim(context, makeElim(rule), atomizeRules);
 };
 
 // AList.update: replaces a wrapper of the same name in place, or adds it in front.

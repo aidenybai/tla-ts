@@ -10,6 +10,7 @@ import {
   at,
   exprifySequent,
   findNamed,
+  getScopeHyps,
   getBoundFresh,
   getErrorNote,
   getErrorSetting,
@@ -163,6 +164,10 @@ export const createAnonymizer = (
       case "Fresh":
         return anonApply(index, args, from);
       case "Flex":
+        if (args.length > 0)
+          throw new TlapmBugError(
+            'File "src/expr/e_anon.ml", line 224, characters 24-30: Assertion failed',
+          );
         return at({ kind: "Ix", index }, from);
       case "Fact":
         throw new TlapmBugError(
@@ -222,7 +227,8 @@ export const createAnonymizer = (
         : standardForm(index, hyp.whereDefined, hyp.definition.body, args, from);
     }
     const body = withLocus(shiftExpr(index, hyp.definition.body), from);
-    return withLocus(resolveSubexpression(onWarning, body, args, selectors), from);
+    const hyps = getScopeHyps(context.scope);
+    return withLocus(resolveSubexpression(onWarning, hyps, body, args, selectors), from);
   };
 
   const anonCore = (context: AnonContext, expression: Expr): Expr => {

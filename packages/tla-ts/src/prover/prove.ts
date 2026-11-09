@@ -96,6 +96,9 @@ interface ProofReport extends ProofResult {
   warnings: ObligationWarning[];
 }
 
+// tlapm checks a backend's time limit only once its --wait period has passed.
+const BACKEND_WAIT_MS = 3000;
+
 // The frontends in the order Prep.normalize_expand names the one whose soundness check failed.
 const FAILING_FRONTENDS = [
   "expandenabled",
@@ -483,17 +486,13 @@ const proveWithBackends = async (
         run.settings.onInput?.(file, chunks.join(""));
       }
       const text = chunks.join("");
+      const timeLimitMs = Math.max(method.timeLimitMs, BACKEND_WAIT_MS);
       const decision =
         method.prover === "smt" && run.settings.solveSmt
-          ? await run.settings.solveSmt(file, text, method.timeLimitMs)
-          : await run.decide(
-              method.prover,
-              text,
-              { timeLimitMs: method.timeLimitMs, signal },
-              index,
-            );
+          ? await run.settings.solveSmt(file, text, timeLimitMs)
+          : await run.decide(method.prover, text, { timeLimitMs, signal }, index);
       const isProved = decision.verdict === "unsat";
-      const isTimedOut = decision.timeUsedMs >= method.timeLimitMs;
+      const isTimedOut = decision.timeUsedMs >= timeLimitMs;
       record({
         method,
         isProved,

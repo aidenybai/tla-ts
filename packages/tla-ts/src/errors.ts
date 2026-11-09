@@ -218,14 +218,17 @@ export class TlaIllegalStateError extends TlaEvaluationError {
 interface TlapmReport {
   failure?: string;
   exception?: string;
+  locus?: Locus;
 }
 
 export class TlaProofError extends TlaError {
   failure: string | undefined;
   exception: string;
+  locus: Locus | undefined;
 
   constructor(message: string, report: TlapmReport = {}) {
     super(message);
+    this.locus = report.locus;
     this.name = "TlaProofError";
     this.failure = report.exception === undefined ? (report.failure ?? message) : undefined;
     this.exception = report.exception ?? `Failure(${JSON.stringify(this.failure)})`;

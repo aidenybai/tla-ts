@@ -217,12 +217,14 @@ export const createSource = (
     bounds.map((bound, index) => {
       if (bound.pattern.kind === "Tuple")
         throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
+      const range = bound.pattern.ranges?.[0];
       return {
         name: bound.pattern.name,
         level: "Constant",
         domain: isDitto(bounds, index)
           ? { kind: "Ditto" }
           : { kind: "Domain", expression: convertExpression(bound.set, isExcept) },
+        ...(range && { location: getRangeLocus(range) }),
       };
     });
 
@@ -312,9 +314,18 @@ export const createSource = (
         const args = expression.args.map(recurse);
         const operator = lookupOperator(expression.operator);
         if (operator.fixity !== "Nonfix") {
+          const operatorLocus = getPointLocus(expression.location, 1);
+          const first = args[0]?.location;
+          const isNonfix =
+            args.length === 2 &&
+            first !== undefined &&
+            (operatorLocus.startLine < first.startLine ||
+              (operatorLocus.startLine === first.startLine &&
+                operatorLocus.startColumn < first.startColumn));
+          const operands = getOperatorLocus(args, operator.fixity);
           return at(
             { kind: "Apply", operator: convertOperator(expression.operator, undefined), args },
-            { location: getOperatorLocus(args, operator.fixity) },
+            { location: isNonfix ? mergeLoci(operatorLocus, operands) : operands },
           );
         }
         return convertName(expression.operator, args, location, expression.argumentCounts);
@@ -685,11 +696,13 @@ export const createSource = (
 
   const convertInstance = (instance: Instance): InstanceDefinition => ({
     location: getRangeLocus(instance.definitionRange ?? instance.instanceRange),
+    instanceLocation: getRangeLocus(instance.instanceRange),
     args: instance.params.map((param) => param.name),
     module: instance.module,
     substitutions: instance.substitutions.map((substitution) => ({
       name: getCanonicalName(substitution.name),
       expression: convertExpression(substitution.expression, false),
+      location: getRangeLocus(substitution.nameRange),
     })),
   });
 

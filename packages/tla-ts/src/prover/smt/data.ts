@@ -175,7 +175,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
           axiom(
             "IntExpTyping",
             [],
-            `(forall ((x Idv) (y Idv)) (! (=> (and (${MEM} x ${INT_SET}) (${MEM} y ${INT_SET}) (or (distinct x (${CAST_INT} 0)) (${INT_LTEQ} (${CAST_INT} 1) y))) (${MEM} (${symbol} x y) ${INT_SET})) :pattern ((${symbol} x y))))`,
+            `(forall ((x Idv) (y Idv)) (! (=> (and (${MEM} x ${INT_SET}) (${MEM} y ${INT_SET}) (${INT_LTEQ} (${CAST_INT} 0) y) (or (distinct x (${CAST_INT} 0)) (${INT_LTEQ} (${CAST_INT} 1) y))) (${MEM} (${symbol} x y) ${INT_SET})) :pattern ((${symbol} x y))))`,
           ),
         ],
       );

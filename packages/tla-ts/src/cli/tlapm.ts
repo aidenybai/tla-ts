@@ -110,6 +110,27 @@ interface ErrorSetting {
   message: string;
 }
 
+const reportAbnormalEnding = (
+  error: TlaProofError,
+  errorSetting: ErrorSetting,
+  isToolbox: boolean,
+) => {
+  console.error(` tlapm ending abnormally with ${error.exception}\n`);
+  if (isToolbox)
+    printToolboxMessage(
+      errorSetting.message === ""
+        ? [
+            "type:error",
+            "url:http://tla.msr-inria.inria.fr/bugs",
+            `msg:Oops, this seems to be a bug in TLAPM.\nPlease give feedback to developers.\n\n\n ${error.exception}\n`,
+          ]
+        : [
+            "type:warning",
+            `msg:${errorSetting.location === undefined ? "" : `${errorSetting.location}\n\n`}${errorSetting.message}`,
+          ],
+    );
+};
+
 const generateObligations = (
   generate: (errorSetting: ErrorSetting) => ModuleObligations[],
   isToolbox: boolean,
@@ -119,20 +140,7 @@ const generateObligations = (
     return generate(errorSetting);
   } catch (error) {
     if (!(error instanceof TlaProofError)) throw error;
-    console.error(` tlapm ending abnormally with ${error.exception}\n`);
-    if (isToolbox)
-      printToolboxMessage(
-        errorSetting.message === ""
-          ? [
-              "type:error",
-              "url:http://tla.msr-inria.inria.fr/bugs",
-              `msg:Oops, this seems to be a bug in TLAPM.\nPlease give feedback to developers.\n\n\n ${error.exception}\n`,
-            ]
-          : [
-              "type:warning",
-              `msg:${errorSetting.location === undefined ? "" : `${errorSetting.location}\n\n`}${errorSetting.message}`,
-            ],
-      );
+    reportAbnormalEnding(error, errorSetting, isToolbox);
     return undefined;
   }
 };
@@ -465,7 +473,24 @@ export const runTlapm = async (args: string[]) => {
         (name) => `${name}.tla`,
       ),
     );
-    const isFailed = await proveModule(module, directory, fingerprintsPath, settings);
+    const isFailed = await proveModule(module, directory, fingerprintsPath, settings).catch(
+      (error: unknown) => {
+        if (!(error instanceof TlaProofError)) throw error;
+        return error;
+      },
+    );
+    if (isFailed instanceof TlaProofError) {
+      console.error(`${getAtPrefix(isFailed.locus)}Error: ${isFailed.message}`);
+      reportAbnormalEnding(
+        isFailed,
+        {
+          location: isFailed.locus && getLocusText(isFailed.locus),
+          message: isFailed.message,
+        },
+        isToolbox,
+      );
+      return TLAPM_FAILURE_STATUS;
+    }
     if (isFailed && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
     if (isFailed && !parsed.has("--strict") && !isToolbox) {
       console.error(UNPROVED_ENDING);

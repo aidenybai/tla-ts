@@ -327,9 +327,13 @@ const instantiate = (
   const parameters = getParameters(module);
   for (const substitution of instance.substitutions) {
     if (!parameters.has(substitution.name)) {
-      throw new TlaProofError(
-        `Parameter ${substitution.name} occurs in the statement \`INSTANCE ${instance.module} WITH\`, and is not declared in the module ${instance.module}`,
-      );
+      pipeline.onWarning({
+        text: `${getLocusPrefix(substitution.location)}Parameter ${substitution.name} occurs in the statement \`INSTANCE ${instance.module} WITH\`, and is not declared in the module ${instance.module}\n`,
+        channel: "toolbox",
+      });
+      throw new TlaProofError("Module.Elab.instance_substitutes_declared_identifiers", {
+        failure: "Module.Elab.instance_substitutes_declared_identifiers",
+      });
     }
   }
   const instanceScope = adjoinAll(
@@ -344,7 +348,7 @@ const instantiate = (
     if (!findNamed(instanceScope, name)) {
       const message = `Required parameter ${name} for module ${instance.module} could not be inferred.`;
       pipeline.onWarning({
-        text: `${getLocusPrefix(instance.location)}${message}\n`,
+        text: `${getLocusPrefix(instance.instanceLocation)}${message}\n`,
         channel: "toolbox",
       });
       throw new TlaProofError(message, { failure: "Module.Elab.complete_with_statement_params" });

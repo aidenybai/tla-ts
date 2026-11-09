@@ -692,19 +692,31 @@ const parse = (
   // fairness expression to take as its action.
   const parseSubscript = (): { subscript: Expression; lastArgs: Expression[] } => {
     const token = peek();
+    if (isTlapm && BUILTIN_CONSTANTS.has(token.text)) {
+      const start = cursor.index;
+      advance();
+      const constant: Expression = {
+        kind: "Identifier",
+        name: token.text,
+        location: getLocation(token),
+      };
+      return { subscript: withRange(constant, start), lastArgs: [] };
+    }
+    const isTlapmAtom =
+      isTlapm && (token.kind === "Number" || token.kind === "String" || isAt("@"));
     if (token.kind === "Identifier") {
       const start = cursor.index;
       const names: string[] = [];
       const selectorRanges: SourceRange[] = [];
-      const parseElement = () => {
+      const parseElement = (isApplicable: boolean) => {
         selectorRanges.push(getRange(cursor.index, cursor.index));
         names.push(expectIdentifier());
-        return isAt("(") ? parseArguments() : [];
+        return isApplicable && isAt("(") ? parseArguments() : [];
       };
-      const elementArgs = [parseElement()];
+      const elementArgs = [parseElement(!isTlapm)];
       while (isAt("!") && peek(1).kind === "Identifier") {
         advance();
-        elementArgs.push(parseElement());
+        elementArgs.push(parseElement(true));
       }
       const prefixArgs = elementArgs.slice(0, -1);
       const location = getLocation(token);
@@ -723,7 +735,7 @@ const parse = (
           };
       return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
     }
-    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[")) {
+    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[") || isTlapmAtom) {
       return { subscript: parsePrimary(), lastArgs: [] };
     }
     throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
@@ -897,11 +909,15 @@ const parse = (
         return { kind, fields, location };
       }
       if (isBoundAhead()) {
+        const checkpoint = cursor.index;
         const bounds = parseBounds();
-        expect("|->");
-        const body = parseExpression();
-        expect("]");
-        return { kind: "FunctionConstruction", bounds, body, location };
+        if (!isTlapm || isAt("|->")) {
+          expect("|->");
+          const body = parseExpression();
+          expect("]");
+          return { kind: "FunctionConstruction", bounds, body, location };
+        }
+        cursor.index = checkpoint;
       }
       const expression = parseExpression();
       if (accept("->")) {
@@ -1263,7 +1279,10 @@ const parse = (
   // prefix operator.
   const parsePrefixOperand = (operator: Token, low: number, high: number) => {
     operators.last = operators.preceding = { low, high };
-    const operand = parseExpression(high + 1);
+    // tlapm applies a postfix operator to the operand, as no prefix operator binds above it.
+    const operand = parseExpression(
+      isTlapm ? Math.min(high + 1, POSTFIX_PRECEDENCE.low) : high + 1,
+    );
     const next = peek();
     const nextHigh = DEFINABLE_POSTFIX_OPERATORS.has(next.text)
       ? POSTFIX_PRECEDENCE.high
@@ -1282,6 +1301,26 @@ const parse = (
     if (token.kind === "Operator" && isBullet(token)) {
       return parseJunctionList();
     }
+    if (isTlapm && INFIX_OPERATORS.has(token.text) && isAt("(", 1)) {
+      const start = cursor.index;
+      const nonfix = withBracketLayout(() => {
+        advance();
+        advance();
+        const left = parseExpression();
+        if (!accept(",")) return undefined;
+        const right = parseExpression();
+        expect(")");
+        const apply: Expression = {
+          kind: "Apply",
+          operator: token.text,
+          args: [left, right],
+          location,
+        };
+        return withRange(apply, start);
+      });
+      if (nonfix !== undefined) return nonfix;
+      cursor.index = start;
+    }
     if (token.kind === "Operator" || token.kind === "Keyword") {
       switch (token.text) {
         case "~":
@@ -1293,6 +1332,8 @@ const parse = (
             location,
           };
         case "-":
+        case "-.":
+          if (token.text === "-." && !isTlapm) break;
           advance();
           return {
             kind: "Apply",
@@ -1392,7 +1433,7 @@ const parse = (
       }
       advance();
       // SANY reads - after an infix operator as prefix -, and rejects it after one that binds tighter.
-      if (infix.low > NEGATION_PRECEDENCE && isAt("-")) {
+      if (!isTlapm && infix.low > NEGATION_PRECEDENCE && isAt("-")) {
         throw createError(`Precedence conflict between ${token.text} and -`, peek());
       }
       operators.last = operators.preceding = infix;
@@ -1812,9 +1853,12 @@ const parse = (
   };
 
   const parseNewSymbol = (): NewSymbol => {
-    const start = cursor.index;
-    const location = getLocation(peek());
+    const newStart = cursor.index;
+    const newLocation = getLocation(peek());
     const isNew = accept("NEW");
+    // tlapm locates a declaration without its NEW.
+    const start = isTlapm ? cursor.index : newStart;
+    const location = isTlapm ? getLocation(peek()) : newLocation;
     const level = peek().kind === "Keyword" ? NEW_SYMBOL_LEVELS.get(peek().text) : undefined;
     if (!isNew && level === undefined) {
       throw createUnexpected(`Expected a declaration but found ${describeToken(peek())}`);
