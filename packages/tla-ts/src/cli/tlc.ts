@@ -446,8 +446,8 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
       isCounterExample ? COUNTER_EXAMPLE : undefined,
       isCounterExample && !isRebuiltFirst,
     );
-    printTraceOutput(printer, violation.traceOutput);
   }
+  printTraceOutput(printer, violation.traceOutput);
   if (isLasso) {
     const label = violation.loopLabel;
     if (loopStart === violation.trace.length - 1)
