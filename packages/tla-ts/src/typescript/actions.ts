@@ -3346,11 +3346,15 @@ const translateJoined = (
 };
 
 // Binds what a for-of's head declares or assigns to an element, for an iteration's body.
+// An element that the code writes in place, as a source, lets the defaults it certainly evaluates
+// run as statements first.
 const bindIteration = (
   declared: ts.ForInitializer,
   element: Expression,
+  source: ts.Expression | undefined,
   path: Path,
   context: Context,
+  frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
   if (!ts.isVariableDeclarationList(declared)) {
@@ -3361,6 +3365,18 @@ const bindIteration = (
   }
   rejectCatchRedeclaration(declared.declarations[0]);
   const name = declared.declarations[0].name;
+  const defaulted =
+    source &&
+    runCertainDefault(
+      [name],
+      getKnownDefaults(name, source, undefined, context),
+      [],
+      path,
+      context,
+      frame,
+      (after) => bindIteration(declared, element, source, after, context, frame, continueWith),
+    );
+  if (defaulted !== undefined) return defaulted;
   // Each iteration makes the objects that the pattern's defaults make.
   return allocateAll(getAllocated(name, context), path, context, (allocated) => {
     const bound = bindPattern(name, element, allocated.scope, context);
@@ -3395,8 +3411,13 @@ const translateForAwait = (
   const iterated = getCast(loop.expression);
   const uncaught = apply("Assert", [boolean(false), string(loop.expression.getText())]);
   const throwWith = (current: Path, value: Expression) => throwTo(current, { value, uncaught });
-  const runBody = (current: Path, value: Expression, bodyFrame: Frame) =>
-    bindIteration(loop.initializer, value, current, context, (bound) =>
+  const runBody = (
+    current: Path,
+    value: Expression,
+    source: ts.Expression | undefined,
+    bodyFrame: Frame,
+  ) =>
+    bindIteration(loop.initializer, value, source, current, context, bodyFrame, (bound) =>
       translateStatements([loop.statement], bound, context, bodyFrame),
     );
   if (!ts.isArrayLiteralExpression(iterated)) {
@@ -3445,7 +3466,7 @@ const translateForAwait = (
           const iteration = getIteration(fulfilled, loop, promise);
           return iteration.isDone
             ? continueWith(fulfilled)
-            : runBody(fulfilled, iteration.value, {
+            : runBody(fulfilled, iteration.value, undefined, {
                 ...guardYields(frame),
                 next: iterate,
                 continueTo: iterate,
@@ -3470,6 +3491,17 @@ const translateForAwait = (
   const sequence = context.names.getFresh("sequence");
   const tick = (current: Path, next: (path: Path) => Formula) =>
     awaitTo(current, getUndefined(context), undefined, next, next);
+  // An array pattern takes its values from a generator element through the generator's next,
+  // which the array then doesn't hold.
+  const declared = loop.initializer;
+  const pattern =
+    ts.isVariableDeclarationList(declared) &&
+    declared.declarations.length === 1 &&
+    ts.isArrayBindingPattern(declared.declarations[0].name)
+      ? declared.declarations[0].name
+      : undefined;
+  const isTaken = (element: ts.Expression) =>
+    pattern !== undefined && !ts.isOmittedExpression(element) && isGeneratorType(element, context);
   const iterate = (current: Path, position: number): Formula => {
     if (position === iterated.elements.length) {
       return tick(current, (resumed) => tick(resumed, continueWith));
@@ -3483,17 +3515,53 @@ const translateForAwait = (
       exit: (after, value) => tick(after, (closed) => frame.exit(closed, value)),
       throwTo: (after, thrown) => tick(after, (closed) => throwTo(closed, thrown)),
     };
+    if (pattern !== undefined && isTaken(element)) {
+      return tick(current, (fulfilled) =>
+        tick(fulfilled, (resumed) => {
+          const taken = takeFromGenerator(
+            pattern,
+            element,
+            [],
+            resumed,
+            context,
+            bodyFrame,
+            (after, values) => runBody(after, values, undefined, bodyFrame),
+          );
+          if (taken === undefined) {
+            throw new TlaTypeScriptError("tla-ts can't follow a generator here", element);
+          }
+          return taken;
+        }),
+      );
+    }
     return awaitTo(
       current,
       index(identifier(sequence), [number(position + 1)]),
       ts.isOmittedExpression(element) ? undefined : element,
-      (fulfilled, value) => tick(fulfilled, (resumed) => runBody(resumed, value, bodyFrame)),
+      (fulfilled, value) =>
+        tick(fulfilled, (resumed) =>
+          runBody(resumed, value, ts.isOmittedExpression(element) ? undefined : element, bodyFrame),
+        ),
       (rejected, reason) => tick(rejected, (resumed) => throwWith(resumed, reason)),
     );
   };
   return allocate(loop.expression, path, context, (inner) =>
     letIn(
-      [define(sequence, [], translateExpression(loop.expression, inner.scope, context))],
+      [
+        define(
+          sequence,
+          [],
+          iterated.elements.some(isTaken)
+            ? tuple(
+                iterated.elements.map((element) =>
+                  isTaken(element) || ts.isOmittedExpression(element)
+                    ? getUndefined(context)
+                    : translateExpression(element, inner.scope, context),
+                ),
+              )
+            : translateExpression(loop.expression, inner.scope, context),
+        ),
+      ],
       iterate(inner, 0),
     ),
   );
@@ -3637,8 +3705,10 @@ const translateIterations = (
     return bindIteration(
       iterated.initializer,
       index(identifier(sequence), [identifier(position)]),
+      undefined,
       current,
       context,
+      bodyFrame,
       (bound) => translateStatements([loop.statement], bound, context, bodyFrame),
     );
   };

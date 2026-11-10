@@ -2072,6 +2072,69 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs the defaults that a for await's pattern evaluates", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let initCount = 0;
+      function counter() {
+        initCount += 1;
+        return initCount * 10;
+      }
+      let log = "";
+      async function fn() {
+        for await (const [w = counter(), x = counter(), y = counter()] of [[null, undefined, ""]]) {
+          log = log + (w === null) + (x === 10) + (y === "") + initCount;
+        }
+      }
+      fn();
+      setTimeout(() => {
+        if (log !== "truetruetrue1") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("takes a for await's array pattern from a generator element", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; });
+      function* g() {
+        log = log + "g";
+        yield 7;
+        log = log + "h";
+        yield 8;
+      }
+      const failing = (function* () {
+        log = log + "f";
+        throw "x";
+      })();
+      async function fn() {
+        for await (const [a] of [g()]) {
+          log = log + "a" + a;
+        }
+        try {
+          for await (const [,] of [failing]) {
+            log = log + "no";
+          }
+        } catch (error) {
+          log = log + "c" + error;
+        }
+      }
+      fn();
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "s12ga7345fcx") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";
