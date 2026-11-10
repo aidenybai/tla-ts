@@ -5,6 +5,25 @@ features:
   - sany-syntax
   - tlc-bug
 outcome: success
+correct:
+  all:
+    exit: 150
+    transcript: |-
+      | ***Parse Error***
+      | `::' at line 29, col 32 to line 29, col 33 of module labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885 does not follow a label.
+      | Residual stack trace follows:
+      | ExtendableExpr starting at line 29, column 21.
+      | Expression starting at line 29, column 21.
+      | Quantified form starting at line 29, column 7.
+      | Expression starting at line 29, column 7.
+      | Definition starting at line 29, column 1.
+      | Fatal errors while parsing TLA+ spec in file labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885
+      | In module labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885
+      | Could not parse module labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885 from file labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885.tla
+      | *** Errors: 1
+      | In module labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885
+      | Could not parse module labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885 from file labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885.tla
+      3002:1 Parsing or semantic analysis failed.
 ---*)
 ---- MODULE labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885 ----
 op == \A x \in {} : A!B!lbl(x) :: x
