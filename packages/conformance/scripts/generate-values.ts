@@ -4,6 +4,7 @@ interface BinaryOperator {
   name: string;
   ref: string;
   render: (left: string, right: string) => string;
+  tlcBugPairs?: string[];
 }
 
 const BINARY_OPERATORS: BinaryOperator[] = [
@@ -61,6 +62,12 @@ const BINARY_OPERATORS: BinaryOperator[] = [
     name: "apply",
     ref: "tlc2/value/impl/FcnRcdValue.java#apply",
     render: (left, right) => `(${left})[${right}]`,
+    // TLC indexes past an argument shorter than the parameters, and prints the Java exception.
+    tlcBugPairs: [
+      "function_pair_domain__bag",
+      "function_pair_domain__function_empty",
+      "function_pair_domain__tuple_empty",
+    ],
   },
   {
     name: "append",
@@ -78,6 +85,7 @@ const generateBinaryOperator = (operator: BinaryOperator) =>
         `${operator.name} of ${left.name}, a ${left.valueClass}, and ${right.name}, a ${right.valueClass}.`,
         operator.ref,
         operator.render(left.text, right.text),
+        operator.tlcBugPairs?.includes(`${left.name}__${right.name}`),
       ),
     ),
   );

@@ -1,7 +1,7 @@
 (*---
-description: 'A label has no case in processConfigProps, so a labeled box is level 3 and an implied temporal, though unlabeled it would be an invariant.'
+description: 'A label has no case in processConfigProps, so a labeled box is level 3 and an implied temporal, though unlabeled it would be an invariant. Real TLC bug, as a label does not change the meaning of the formula it names.'
 ref: tlc2/tool/impl/SpecProcessor.java#processConfigProps
-features: [liveness]
+features: [liveness, tlc-bug]
 outcome: liveness-violation
 config: |
   SPECIFICATION Spec
