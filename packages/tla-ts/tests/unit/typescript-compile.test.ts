@@ -2548,6 +2548,32 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws a TypeError where a WeakMap gets a registered symbol", async () => {
+    const result = await checkModel(`
+      let map = new WeakMap<symbol, number>();
+      const own = Symbol();
+      map.set(own, 0);
+      let threw = false;
+      try {
+        map.set(Symbol.for("key"), 1);
+      } catch (error) {
+        threw = error instanceof TypeError;
+      }
+      if (!threw || map.get(own) !== 0) throw new Error("registered");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a new WeakMap gets a registered symbol", async () => {
+    const result = await checkModel(`
+      const key = Symbol.for("key");
+      try {
+        let map = new WeakMap<symbol, number>([[key, 0]]);
+      } catch (error) {}
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't throw the TypeError of a new WeakMap");
+  });
+
   it("gives a WeakMap WeakMap.prototype", async () => {
     const result = await checkModel(`
       const holder = {};

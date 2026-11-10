@@ -906,7 +906,7 @@ export const translateCallStatement = (
     }
     const kind = getKind(receiver, context);
     if (MUTATING_METHODS.has(method) && kind !== "other") {
-      return continueWith(
+      const updated = continueWith(
         assign(receiver, path, context, (current) => {
           const value = getUpdatedValue(current, kind, expression, path.scope, context);
           if (value === undefined) {
@@ -914,6 +914,25 @@ export const translateCallStatement = (
           }
           return value;
         }),
+      );
+      const key = expression.arguments.at(0);
+      // A weak collection throws a TypeError on a symbol that Symbol.for registered.
+      if (
+        getCollection(receiver, context)?.startsWith("Weak") !== true ||
+        (method !== "set" && method !== "add") ||
+        key === undefined ||
+        context.heap === undefined
+      ) {
+        return updated;
+      }
+      return ifThenElse(
+        useJavaScript(
+          "IsRegisteredSymbol",
+          [getHeap(path.scope, expression, context), translateExpression(key, path.scope, context)],
+          context,
+        ),
+        throwTypeError(path, expression, context, frame),
+        updated,
       );
     }
   }

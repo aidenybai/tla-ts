@@ -1412,7 +1412,40 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
     );
   }
   const kind = constructor === "WeakSet" ? "Set" : constructor === "WeakMap" ? "Map" : constructor;
-  // A weak collection's keys are objects and symbols, as it throws a TypeError on any other key.
+  const made = translateNewCollection(node, kind, scope, context);
+  if (kind === constructor || argument === undefined) return made;
+  // A weak collection throws a TypeError on a key that Symbol.for registered, which tla-ts can't
+  // throw where the collection is made.
+  const key = context.names.getFresh("key");
+  return share(made, "made", context, (shared) =>
+    ifExpression(
+      quantify(
+        "Exists",
+        [bound(key, kind === "Set" ? shared : getDomain(shared))],
+        useJavaScript(
+          "IsRegisteredSymbol",
+          [getHeap(scope, node, context), identifier(key)],
+          context,
+        ),
+      ),
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't throw the TypeError of a new ${constructor} with a registered symbol`),
+      ]),
+      shared,
+    ),
+  );
+};
+
+// The set or the map that new Set or new Map makes, or a weak one, which holds its keys alike.
+const translateNewCollection = (
+  node: ts.NewExpression,
+  kind: string,
+  scope: Scope,
+  context: Context,
+) => {
+  const constructor = node.expression.getText();
+  const argument = node.arguments?.[0];
   if (constructor === "Set" || constructor === "Map") {
     const kinds = getKeyKinds(node, context);
     if (kinds === undefined || kinds.size > 1) {

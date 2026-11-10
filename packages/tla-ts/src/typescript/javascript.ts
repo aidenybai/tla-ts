@@ -847,6 +847,9 @@ RegisterSymbol(heap, key) ==
 
 RegisteredSymbol(heap, key) == heap.registry[StringOf(key)]
 
+\\* Whether Symbol.for made a symbol, which a weak collection can't hold.
+IsRegisteredSymbol(heap, value) == \\E key \\in DOMAIN heap.registry : heap.registry[key] = value
+
 SymbolKeyFor(heap, symbol) ==
   LET keys == {key \\in DOMAIN heap.registry : heap.registry[key] = symbol}
   IN CASE ~IsSymbol(symbol) ->
