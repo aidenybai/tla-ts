@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import type { Emitted } from "./emit";
 import { createNames, type Names } from "./names";
 
 export interface Definition {
@@ -18,7 +19,7 @@ export interface Context {
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
   // Rendered definitions, each after the definitions it uses.
-  output: string[];
+  output: Emitted[];
   // String literals of @symmetric types, which become model values.
   modelValues: Map<string, string>;
   // Model values and helper operators that the spec uses.

@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import ts from "@typescript/typescript6";
 import { writesState } from "./actions";
 import { type Context, createContext } from "./context";
@@ -55,16 +54,30 @@ const translateExported = (
 
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
 // relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
-export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
-  const program = createProgram(source, fileName.replaceAll("\\", "/"));
+// Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
+export const compile = (
+  source: string,
+  fileName = "spec.ts",
+  libraries?: ReadonlyMap<string, string>,
+): CompiledSpec => {
+  const path = fileName.replaceAll("\\", "/");
+  const program = createProgram(source, path, libraries);
   const context = createContext(program.checker);
   const model = readModel(program.sourceFile, context);
   const sections = createSections();
-  sections.init.push(...model.variables.map((variable) => translateInitial(variable, context)));
+  sections.init.push(
+    ...model.variables.map((variable) => ({
+      name: variable.name,
+      text: translateInitial(variable, context),
+      node: variable.declaration,
+    })),
+  );
   for (const definition of model.exported) translateExported(definition, model, sections, context);
-  const moduleName = basename(fileName, ".ts")
+  const moduleName = path
+    .slice(path.lastIndexOf("/") + 1)
+    .replace(/\.ts$/, "")
     .split(/[^A-Za-z0-9]+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join("");
-  return emit(moduleName, model, sections, context);
+  return emit(moduleName, program.sourceFile, model, sections, context);
 };

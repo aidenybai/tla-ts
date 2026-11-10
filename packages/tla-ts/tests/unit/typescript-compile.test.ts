@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import ts from "@typescript/typescript6";
 import { check, type CheckResult, formatValue } from "../../src";
 import { describe, expect, it } from "vite-plus/test";
 import { compile } from "../../src/typescript/compile";
@@ -533,5 +534,113 @@ describe("errors", () => {
     expect(() =>
       compile(`let count = 0;\nexport const isBelow = (limit: 1 | 2) => count < limit;`),
     ).toThrow("spec.ts:2:25 Invariants can't take parameters");
+  });
+});
+
+describe("regions", () => {
+  const getLinks = (source: string) => {
+    const compiled = compile(source);
+    return compiled.regions.map((region) => [
+      region.kind,
+      region.name,
+      source.slice(region.source.start, region.source.end),
+      compiled.source.slice(region.output.start, region.output.end),
+    ]);
+  };
+
+  it("links each definition to the statement it compiles from", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/examples/die-hard/die-hard.ts");
+    const links = getLinks(readFileSync(path, "utf8"));
+    expect(links).toContainEqual(["variable", "big", "big", "big"]);
+    expect(links).toContainEqual(["init", "small", "let small = 0;", "small = 0"]);
+    expect(links).toContainEqual([
+      "action",
+      "fillSmallJug",
+      "export const fillSmallJug = () => {\n  small = 3;\n};",
+      "fillSmallJug ==\n  /\\ small' = 3\n  /\\ UNCHANGED <<big>>",
+    ]);
+    expect(links).toContainEqual([
+      "next",
+      "fillSmallJug",
+      "export const fillSmallJug = () => {\n  small = 3;\n};",
+      "fillSmallJug",
+    ]);
+    expect(links).toContainEqual([
+      "predicate",
+      "notSolved",
+      "export const notSolved = () => big !== 4;",
+      "notSolved ==\n  big # 4",
+    ]);
+  });
+
+  it("links helpers, steps with parameters, and properties", () => {
+    const links = getLinks(`type Id = 1 | 2;
+let owner: Id = 1;
+const other = (id: Id): Id => (id === 1 ? 2 : 1);
+export const pass = (id: Id) => {
+  if (owner !== id) return;
+  owner = other(id);
+};
+/** @eventually */
+export const returns = () => owner === 1;
+`);
+    expect(links).toContainEqual([
+      "definition",
+      "other",
+      "const other = (id: Id): Id => (id === 1 ? 2 : 1);",
+      "other(id_1) ==\n  IF id_1 = 1 THEN 2 ELSE 1",
+    ]);
+    expect(links).toContainEqual([
+      "next",
+      "pass",
+      "export const pass = (id: Id) => {\n  if (owner !== id) return;\n  owner = other(id);\n};",
+      "\\E id \\in {1, 2} : pass(id)",
+    ]);
+    expect(links).toContainEqual([
+      "property",
+      "returns",
+      "export const returns = () => owner === 1;",
+      "returns ==\n  <>(owner = 1)",
+    ]);
+  });
+
+  it("links each use of a state variable to its declaration", () => {
+    const source = `let count = 0;
+const limit = 3;
+export const step = () => {
+  if (count >= limit) return;
+  count = count + 1;
+};
+`;
+    const compiled = compile(source);
+    const declaration = compiled.regions.find((region) => region.kind === "variable");
+    const references = compiled.regions.filter((region) => region.kind === "reference");
+    expect(
+      references.map((region) => source.slice(region.source.start, region.source.end)),
+    ).toEqual(["count", "count", "count"]);
+    expect(references.map((region) => region.output)).toEqual(
+      references.map(() => declaration?.output),
+    );
+  });
+});
+
+describe("without a file system", () => {
+  const directory = dirname(ts.getDefaultLibFilePath({}));
+  const libraries = new Map(
+    readdirSync(directory)
+      .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
+      .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")]),
+  );
+
+  it("compiles with TypeScript's declaration files passed in", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/examples/die-hard/die-hard.ts");
+    const source = readFileSync(path, "utf8");
+    expect(compile(source, "die-hard.ts", libraries)).toEqual(compile(source, "die-hard.ts"));
+  });
+
+  it("reports type errors", () => {
+    expect(() => compile(`let count: number = "one";`, "spec.ts", libraries)).toThrow(
+      "spec.ts(1,5): error TS2322: Type 'string' is not assignable to type 'number'.",
+    );
   });
 });

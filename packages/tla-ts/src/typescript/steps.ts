@@ -125,14 +125,15 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     parameters.length === 0
       ? name
       : `${name}(${parameters.map((parameter) => parameter.name).join(", ")})`;
-  sections.actions.push(`${head} ==\n  ${indent(render(formula), "  ")}`);
+  const node = definition.declaration;
+  sections.actions.push({ name, text: `${head} ==\n  ${indent(render(formula), "  ")}`, node });
   const fairness = definition.tags.has("strongFair")
     ? "SF_vars"
     : definition.tags.has("fair")
       ? "WF_vars"
       : undefined;
   if (parameters.length === 0) {
-    sections.next.push(name);
+    sections.next.push({ name, text: name, node });
     if (fairness !== undefined) sections.fairness.push(`${fairness}(${name})`);
     return;
   }
@@ -152,7 +153,7 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     .filter((entry) => entry[1].isDependent)
     .map((entry) => `\\E ${entry[0].name} \\in ${entry[1].domain} : `);
   const step = `\\E ${independent.join(", ")} : ${dependent.join("")}${head}`;
-  sections.next.push(step);
+  sections.next.push({ name, text: step, node });
   if (fairness === undefined) return;
   // Fairness holds for each parameter value when every parameter has a finite type, with the
   // guards that chose parameters kept inside the action.

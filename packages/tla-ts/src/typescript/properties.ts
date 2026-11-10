@@ -16,7 +16,10 @@ const TEMPORAL_OPERATORS = new Map([
 ]);
 
 // Tags whose functions become named predicates that the config lists in a section.
-const PREDICATE_TAGS = new Map<string, keyof Sections>([
+const PREDICATE_TAGS = new Map<
+  string,
+  "constraints" | "actionConstraints" | "views" | "postconditions" | "assumptions"
+>([
   ["constraint", "constraints"],
   ["actionConstraint", "actionConstraints"],
   ["view", "views"],
@@ -102,32 +105,44 @@ export const translateProperty = (
   const value = indent(translateBody(definition.body, scope, context), "  ");
   const operator = TEMPORAL_OPERATORS.get(tag);
   const predicate = PREDICATE_TAGS.get(tag);
+  const declaration = definition.declaration;
   if (operator !== undefined) {
-    sections.temporal.push(`${name} ==\n  ${forAll}${operator}(${value})`);
+    sections.temporal.push({
+      name,
+      text: `${name} ==\n  ${forAll}${operator}(${value})`,
+      node: declaration,
+    });
     sections.properties.push(name);
   }
   if (tag === "leadsTo") {
     const parameters = quantified.map((parameter) => parameter.name);
     const target = getLeadsToTarget(definition, parameters, model, context);
-    sections.temporal.push(`${name} ==\n  ${forAll}(${value}) ~> ${target}`);
+    sections.temporal.push({
+      name,
+      text: `${name} ==\n  ${forAll}(${value}) ~> ${target}`,
+      node: declaration,
+    });
     sections.properties.push(name);
   }
   if (tag === "always") {
-    sections.temporal.push(
-      node.parameters.length === 0
-        ? `${name} ==\n  [](${value})`
-        : `${name} ==\n  [][${value}]_vars`,
-    );
+    sections.temporal.push({
+      name,
+      text:
+        node.parameters.length === 0
+          ? `${name} ==\n  [](${value})`
+          : `${name} ==\n  [][${value}]_vars`,
+      node: declaration,
+    });
     sections.properties.push(name);
   }
   // An end state takes a step that changes nothing, as PlusCal's Terminating does.
   if (tag === "terminating") {
-    sections.actions.push(`${name} ==\n  ${value}`);
-    sections.next.push(`${name} /\\ UNCHANGED vars`);
+    sections.actions.push({ name, text: `${name} ==\n  ${value}`, node: declaration });
+    sections.next.push({ name, text: `${name} /\\ UNCHANGED vars`, node: declaration });
   }
-  if (tag === "initially") sections.init.push(value);
+  if (tag === "initially") sections.init.push({ name, text: value, node: declaration });
   if (predicate !== undefined) {
-    sections.predicates.push(`${name} ==\n  ${value}`);
+    sections.predicates.push({ name, text: `${name} ==\n  ${value}`, node: declaration });
     sections[predicate].push(name);
   }
 };
@@ -143,6 +158,10 @@ export const translateInvariant = (definition: Exported, sections: Sections, con
   const value = ts.isBlock(body)
     ? translateBody(body, scope, context)
     : translateCondition(body, scope, context);
-  sections.predicates.push(`${definition.name} ==\n  ${indent(value, "  ")}`);
+  sections.predicates.push({
+    name: definition.name,
+    text: `${definition.name} ==\n  ${indent(value, "  ")}`,
+    node: definition.declaration,
+  });
   sections.invariants.push(definition.name);
 };
