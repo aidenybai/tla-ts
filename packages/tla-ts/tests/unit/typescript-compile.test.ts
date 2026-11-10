@@ -1848,6 +1848,47 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("awaits each element of a for await two jobs before its body", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; })
+        .then(() => { log = log + "6"; })
+        .then(() => { log = log + "7"; });
+      const rejected = Promise.reject("r");
+      async function run() {
+        for await (const [x, y] of [[1, 2], [3, 4]]) {
+          log = log + "x" + x + y;
+        }
+        log = log + "a";
+        for await (const value of [5, 6]) {
+          log = log + "v" + value;
+          break;
+        }
+        log = log + "b";
+        try {
+          for await (const value of [rejected]) {
+            log = log + "no";
+          }
+        } catch (error) {
+          log = log + "c" + error;
+        }
+        return "e";
+      }
+      run().then((value: string) => { log = log + value; });
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "s12x1234x3456a7v5bcre") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls async methods with their object as this", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

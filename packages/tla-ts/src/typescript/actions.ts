@@ -288,7 +288,7 @@ export interface Frame {
     | ((
         path: Path,
         value: Expression,
-        operand: ts.Expression,
+        operand: ts.Expression | undefined,
         onFulfilled: (path: Path, value: Expression) => Formula,
         onRejected: (path: Path, value: Expression) => Formula,
       ) => Formula)
@@ -3245,6 +3245,103 @@ const translateJoined = (
   );
 };
 
+// Binds what a for-of's head declares or assigns to an element, for an iteration's body.
+const bindIteration = (
+  declared: ts.ForInitializer,
+  element: Expression,
+  path: Path,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  if (!ts.isVariableDeclarationList(declared)) {
+    return continueWith(assignPattern(declared, undefined, element, path, context));
+  }
+  if (declared.declarations.length !== 1) {
+    throw new TlaTypeScriptError("Declare one element of a for-of", declared);
+  }
+  rejectCatchRedeclaration(declared.declarations[0]);
+  const name = declared.declarations[0].name;
+  // Each iteration makes the objects that the pattern's defaults make.
+  return allocateAll(getAllocated(name, context), path, context, (allocated) => {
+    const bound = bindPattern(name, element, allocated.scope, context);
+    return letIn(
+      bound.definitions,
+      forceHeap(
+        allocated.scope,
+        bound.scope,
+        continueWith({ ...allocated, scope: bound.scope }),
+        leaf(boolean(false)),
+        context,
+      ),
+    );
+  });
+};
+
+// A for await over an array written in place. Each element reaches the body two jobs on, as the
+// async-from-sync iterator awaits the element and the loop then awaits the iterator's result, and
+// the last next takes two more. Leaving the body early awaits the iterator's return.
+const translateForAwait = (
+  loop: ts.ForOfStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const awaitTo = frame.awaitTo;
+  const throwTo = frame.throwTo;
+  if (awaitTo === undefined || throwTo === undefined) {
+    throw new TlaTypeScriptError("Unsupported for await", loop);
+  }
+  const iterated = getCast(loop.expression);
+  if (
+    !ts.isArrayLiteralExpression(iterated) ||
+    iterated.elements.some((element) => ts.isSpreadElement(element))
+  ) {
+    throw new TlaTypeScriptError("for await iterates only arrays written in place", iterated);
+  }
+  const sequence = context.names.getFresh("sequence");
+  const tick = (current: Path, next: (path: Path) => Formula) =>
+    awaitTo(current, getUndefined(context), undefined, next, next);
+  const iterate = (current: Path, position: number): Formula => {
+    if (position === iterated.elements.length) {
+      return tick(current, (resumed) => tick(resumed, continueWith));
+    }
+    const element = iterated.elements[position];
+    const bodyFrame: Frame = {
+      ...frame,
+      next: (after) => iterate(after, position + 1),
+      continueTo: (after) => iterate(after, position + 1),
+      breakTo: (after) => tick(after, continueWith),
+      exit: (after, value) => tick(after, (closed) => frame.exit(closed, value)),
+      throwTo: (after, thrown) => tick(after, (closed) => throwTo(closed, thrown)),
+    };
+    return awaitTo(
+      current,
+      index(identifier(sequence), [number(position + 1)]),
+      ts.isOmittedExpression(element) ? undefined : element,
+      (fulfilled, value) =>
+        tick(fulfilled, (resumed) =>
+          bindIteration(loop.initializer, value, resumed, context, (bound) =>
+            translateStatements([loop.statement], bound, context, bodyFrame),
+          ),
+        ),
+      (rejected, reason) =>
+        tick(rejected, (resumed) =>
+          throwTo(resumed, {
+            value: reason,
+            uncaught: apply("Assert", [boolean(false), string(loop.expression.getText())]),
+          }),
+        ),
+    );
+  };
+  return allocate(loop.expression, path, context, (inner) =>
+    letIn(
+      [define(sequence, [], translateExpression(loop.expression, inner.scope, context))],
+      iterate(inner, 0),
+    ),
+  );
+};
+
 const translateLoop = (
   loop: ts.IterationStatement,
   path: Path,
@@ -3375,36 +3472,13 @@ const translateIterations = (
     if (iterated === undefined) {
       return translateStatements([loop.statement], current, context, bodyFrame);
     }
-    const declared = iterated.initializer;
-    const element = index(identifier(sequence), [identifier(position)]);
-    if (!ts.isVariableDeclarationList(declared)) {
-      const assigned = assignPattern(declared, undefined, element, current, context);
-      return translateStatements([loop.statement], assigned, context, bodyFrame);
-    }
-    if (declared.declarations.length !== 1) {
-      throw new TlaTypeScriptError("Declare one element of a for-of", declared);
-    }
-    rejectCatchRedeclaration(declared.declarations[0]);
-    const name = declared.declarations[0].name;
-    // Each iteration makes the objects that the pattern's defaults make.
-    return allocateAll(getAllocated(name, context), current, context, (allocated) => {
-      const bound = bindPattern(name, element, allocated.scope, context);
-      return letIn(
-        bound.definitions,
-        forceHeap(
-          allocated.scope,
-          bound.scope,
-          translateStatements(
-            [loop.statement],
-            { ...allocated, scope: bound.scope },
-            context,
-            bodyFrame,
-          ),
-          leaf(boolean(false)),
-          context,
-        ),
-      );
-    });
+    return bindIteration(
+      iterated.initializer,
+      index(identifier(sequence), [identifier(position)]),
+      current,
+      context,
+      (bound) => translateStatements([loop.statement], bound, context, bodyFrame),
+    );
   };
   const inner = {
     ...bindValues(
@@ -3864,6 +3938,9 @@ export const translateStatements = (
         shareHeap(after, context, continueWith),
       ),
     );
+  }
+  if (ts.isForOfStatement(statement) && statement.awaitModifier !== undefined) {
+    return translateForAwait(statement, path, context, frame, continueWith);
   }
   if (ts.isIterationStatement(statement, false)) {
     return translateLoop(statement, path, context, frame, continueWith);
