@@ -482,6 +482,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: TlcP
   const postcondition =
     violation.unwitnessed ??
     (status === "postcondition-violation" ? undefined : violation.postcondition);
+  printTraceOutput(printer, violation.postconditionOutput);
   if (postcondition?.counts) console.log(postcondition.counts);
   if (postcondition) {
     print(

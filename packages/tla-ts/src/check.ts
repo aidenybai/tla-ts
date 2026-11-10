@@ -200,6 +200,8 @@ export interface Violation {
   trace: TraceStep[];
   // What the spec prints after the trace, as TLC finds the lasso's step back or rebuilds the trace.
   traceOutput?: OutputLine[];
+  // What the postconditions print, which TLC checks after the lasso's step back.
+  postconditionOutput?: OutputLine[];
   loopStart: number | undefined;
   loopLabel?: string;
   message?: string;
@@ -504,10 +506,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       violation.trace,
       start === undefined || !getLoopAction ? undefined : { start, action: getLoopAction() },
     );
-    const traceOutput = [...(violation.traceOutput ?? []), ...checked.lines];
     return createResult(status, {
       ...violation,
-      ...(traceOutput.length > 0 && { traceOutput }),
+      ...(checked.lines.length > 0 && { postconditionOutput: checked.lines }),
       ...(checked.unwitnessed && { unwitnessed: checked.unwitnessed }),
       ...(checked.postcondition && { postcondition: checked.postcondition }),
     });
