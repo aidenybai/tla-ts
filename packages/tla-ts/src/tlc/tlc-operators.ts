@@ -35,6 +35,7 @@ import {
   toFiniteSet,
   type Value,
   rankString,
+  setFunctionClass,
 } from "../values";
 
 const padTime = (value: number) => String(value).padStart(2, "0");
@@ -46,6 +47,10 @@ const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
 // TLC creates its model checker after it processes the spec, so these are undefined before then.
+// TLC builds the checker's records unnormalized, so they print in the order it writes them.
+const createCheckerRecord = (fields: [string, Value][]) =>
+  setFunctionClass(createWrittenFunction(fields), "record");
+
 const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
 const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
 const CHECKER_KEYS_174 = new Set(["diameter", "distinct", "queue", "level"]);
@@ -77,7 +82,7 @@ const getRuntimeValue = (
     case "duration":
       return duration;
     case "stats":
-      return createRecord([
+      return createCheckerRecord([
         ["queue", runtime.queueSize],
         ["distinct", runtime.distinctStates],
         ["initial", runtime.initialStates],
@@ -87,7 +92,7 @@ const getRuntimeValue = (
         ["worker", 0],
       ]);
     case "config":
-      return createRecord([
+      return createCheckerRecord([
         ["mode", "bfs"],
         ["deadlock", runtime.checkDeadlock],
         ["worker", 1],
