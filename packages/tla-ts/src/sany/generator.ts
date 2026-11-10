@@ -1755,10 +1755,8 @@ export const generateSanySpecification = (
         const params = getParams(definition, paramsSpan, true);
         const existing = resolveSymbol(symbolTable, name);
         if (existing?.kind === "OpDef" && existing.inRecursive && !existing.isDefined) {
-          // SANY compares only the arity of the last parameter.
           const isMatching =
-            existing.params?.length === params.length &&
-            (params.length === 0 || params[params.length - 1].arity === 0);
+            existing.params?.length === params.length && params.every((param) => param.arity === 0);
           if (existing.letInLevel !== state.curLevel) {
             addError(location, `Recursive operator ${name} defined at wrong LET/IN level.`);
           } else {
