@@ -10,12 +10,13 @@ import type {
   CheckOptions,
   InitialStatesProgress,
   InitialStateViolation,
+  ModuleOperator,
   Postcondition,
   Violation,
 } from "./check";
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import { getReadVariables, isConstantLevel } from "./dependencies";
-import { createEnvironment } from "./environment";
+import { createEnvironment, type ResolvedModuleOperator } from "./environment";
 import {
   isStackOverflow,
   TlaConfigError,
@@ -801,13 +802,18 @@ export const prepareSearch = (options: CheckOptions) => {
     order,
     loadClass: options.loadClass,
     print: options.onPrint ?? console.log,
-    files: { readFile: options.readFile, writeFile: options.writeFile },
+    files: {
+      readFile: options.readFile,
+      writeFile: options.writeFile,
+      makeDirectory: options.makeDirectory,
+    },
     seed: options.seed,
     isTool: options.isTool,
-    isTraceRecorded: options.isTraceRecorded,
+    traceFile: options.traceSpec?.traceFile,
     isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
+    moduleOperators: options.moduleOperators,
   });
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;
@@ -824,6 +830,7 @@ export const prepareSearch = (options: CheckOptions) => {
     specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     options.onProgress,
+    specification.moduleOperators,
   );
   return { config, specification, environment, search };
 };
@@ -849,13 +856,29 @@ export const reportAssumptionViolation = (
   return EXIT_STATUS.assumptionViolation;
 };
 
+export const createMissingOperatorError = (operator: ModuleOperator) =>
+  setExitCode(
+    new TlaEvaluationError(
+      `${UNEXPECTED_EXCEPTION}Could not find operator: ${operator.operator} in module: ${operator.module}`,
+    ),
+    EXIT_STATUS.error,
+  );
+
 export const createSearch = (
   config: ModelConfig,
   environment: Environment,
   variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress?: CheckOptions["onProgress"],
+  moduleOperators: ResolvedModuleOperator[] = [],
 ): Search | undefined => {
+  const getModuleOperators = (kind: ResolvedModuleOperator["kind"]) =>
+    moduleOperators
+      .filter((operator) => operator.kind === kind)
+      .map((operator) => {
+        if (operator.key === undefined) throw createMissingOperatorError(operator);
+        return { name: operator.operator, key: operator.key };
+      });
   const configInvariants = getInvariants(config.invariants, environment);
   const spec = getSpecification(
     config,
@@ -901,7 +924,11 @@ export const createSearch = (
     throw new TlaConfigError("The configuration file did not specify the next state predicate.");
   }
   const constraints = getStateChecks(
-    getNamedExpressions("constraint", config.constraints, environment),
+    getNamedExpressions(
+      "constraint",
+      [...config.constraints, ...getModuleOperators("constraint").map((operator) => operator.name)],
+      environment,
+    ),
     environment,
   );
   const actionConstraints = getNamedExpressions(
@@ -921,10 +948,11 @@ export const createSearch = (
     config.view === undefined
       ? undefined
       : getConfigDefinition("view function", config.view, environment);
+  const viewName = config.view ?? getModuleOperators("view")[0]?.name;
   const view =
-    config.view === undefined
+    viewName === undefined
       ? undefined
-      : { name: config.view, expression: createIdentifier(config.view), scope: undefined };
+      : { name: viewName, expression: createIdentifier(viewName), scope: undefined };
   const actionProperties = properties.actionProperties.map((property) => {
     const unchanged: Expression = {
       kind: "Unchanged",
@@ -1200,6 +1228,7 @@ export const createSearch = (
       return value;
     },
     findPostconditionViolation: (isAfterViolation = false) => {
+      const modulePostconditions = getModuleOperators("postcondition");
       // TLC replaces a startup definition by its value, and rejects it as a postcondition first.
       const rejection = config.postconditions
         .map((name) => {
@@ -1217,16 +1246,14 @@ export const createSearch = (
         if (isAfterViolation) return undefined;
         throw setExitCode(new TlaEvaluationError(rejection), EXIT_STATUS.configParseError);
       }
-      const unwitnessed = findUnwitnessedPossible();
-      if (unwitnessed) return unwitnessed;
-      for (const name of config.postconditions) {
+      const findViolation = (name: string, key: string) => {
         const failure = getConstantFailure(
-          (context) => holdsLikeTlc(createIdentifier(name), context),
+          (context) => holdsLikeTlc(createIdentifier(key), context),
           environment,
         );
-        if (!failure) continue;
-        const body = getDefinition(name, environment)?.body;
-        const range = getBodyRange(name, environment);
+        if (!failure) return undefined;
+        const body = getDefinition(key, environment)?.body;
+        const range = getBodyRange(key, environment);
         const location = range
           ? ` at ${body?.kind === "Number" ? describeNode(body) : formatRange(range)}`
           : "";
@@ -1241,6 +1268,16 @@ export const createSearch = (
               code: MESSAGE_CODE.postconditionFailed,
               message: `Evaluating postcondition ${name}${location} failed.\n${failure.message}`,
             };
+      };
+      for (const operator of modulePostconditions) {
+        const violation = findViolation(operator.name, operator.key);
+        if (violation) return violation;
+      }
+      const unwitnessed = findUnwitnessedPossible();
+      if (unwitnessed) return unwitnessed;
+      for (const name of config.postconditions) {
+        const violation = findViolation(name, name);
+        if (violation) return violation;
       }
       return undefined;
     },

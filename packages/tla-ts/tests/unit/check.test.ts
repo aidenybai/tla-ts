@@ -2314,7 +2314,7 @@ describe("evaluation errors match TLC", () => {
       const result = await check({
         source: '---- MODULE M ----\nEXTENDS Naturals\nASSUME 1 .. "a" = {}\n====',
         config: "",
-        isTraceRecorded,
+        traceSpec: isTraceRecorded ? { module: "M_TTrace", traceFile: "M_TTrace.bin" } : undefined,
       });
       expect(result.violation?.message).toContain(`tlc2.module.${module}.DotDot`);
     },
@@ -2333,7 +2333,7 @@ describe("evaluation errors match TLC", () => {
       await check({
         source: `---- MODULE M ----\nEXTENDS ${module}, TLC\nASSUME PrintT(<<1 \\div (0 - 2), (0 - 1) \\div 2, (0 - 3) \\div 2>>)\nASSUME PrintT((0 - 2147483647 - 1) \\div (0 - 1))\n====`,
         config: "",
-        isTraceRecorded,
+        traceSpec: isTraceRecorded ? { module: "M_TTrace", traceFile: "M_TTrace.bin" } : undefined,
         onPrint: (text) => printed.push(text),
       });
       expect(printed).toEqual(quotients);

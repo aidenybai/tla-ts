@@ -9,6 +9,7 @@ import {
   type OperatorParam,
   type SourceLocation,
 } from "./ast";
+import type { ModuleOperator } from "./check";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
 import {
@@ -102,10 +103,15 @@ interface EnvironmentOptions {
   isUnconfigured?: boolean;
   isTool?: boolean;
   // TLC loads Integers for a trace exploration spec, whose methods then compute Naturals.
-  isTraceRecorded?: boolean;
+  traceFile?: string;
   isSanyReported?: boolean;
   isWarningEnabled?: boolean;
   version?: TlcVersion;
+  moduleOperators?: ModuleOperator[];
+}
+
+export interface ResolvedModuleOperator extends ModuleOperator {
+  key: string | undefined;
 }
 
 export interface Specification {
@@ -119,6 +125,8 @@ export interface Specification {
   rootSymbols: Symbols;
   // The methods of the modules' classes, in the order TLC loads the classes.
   javaOverrides: JavaOverride[];
+  moduleOperators: ResolvedModuleOperator[];
+  rootName: string;
 }
 
 export interface InstanceAction {
@@ -1123,11 +1131,39 @@ export const createEnvironment = (
   };
 
   const linkedRoot = linkTopLevel(root).linked;
+  const traceFile = options.traceFile;
+  // TLC records the binary trace of a trace exploration spec with a postcondition it adds last.
+  const traceOperators: ModuleOperator[] =
+    traceFile === undefined
+      ? []
+      : [
+          {
+            kind: "postcondition",
+            module: "_TLCTrace",
+            operator: "_TLCTraceSilent",
+            constants: { _TLCTraceFile: traceFile },
+          },
+        ];
+  // SANY reads these modules as extendees of the root, so TLC finishes them before the root.
+  const moduleOperators = [...(options.moduleOperators ?? []), ...traceOperators].map(
+    (operator): ResolvedModuleOperator => {
+      const symbol = getLinkedModule(operator.module, root.name).visible.get(operator.operator);
+      return { ...operator, key: symbol?.kind === "Definition" ? symbol.key : undefined };
+    },
+  );
+  linkOrder.push(...linkOrder.splice(linkOrder.indexOf(linkedRoot), 1));
   if (warnings.length > 0 && !options.isSanyReported) options.print(formatSanyWarnings(warnings));
   const getRootKey = (name: string) => linkedRoot.visible.get(name)?.key ?? name;
   linkedRoot.visible.forEach((symbol, name) => {
     const definition = definitions.get(symbol.key);
     if (definition && symbol.key !== name) definitions.set(name, definition);
+  });
+  // TLC adds a constraint or a view it names on the command line to the root's definitions.
+  moduleOperators.forEach((operator) => {
+    const definition = operator.key === undefined ? undefined : definitions.get(operator.key);
+    if (operator.kind !== "postcondition" && definition) {
+      definitions.set(operator.operator, definition);
+    }
   });
 
   const assumptions: Assumption[] = [];
@@ -1329,6 +1365,12 @@ export const createEnvironment = (
       if (symbol.key === key && name !== key) definitions.set(name, alias);
     });
   });
+  moduleOperators.forEach((operator) =>
+    getLinkedModule(operator.module, root.name).constants.forEach((constant) => {
+      const value = operator.constants?.[constant.name];
+      if (value !== undefined) constants.set(constant.name, value);
+    }),
+  );
   const unassigned = declaredConstants.filter(
     (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
   );
@@ -1342,7 +1384,7 @@ export const createEnvironment = (
     );
   }
 
-  if (options.isTraceRecorded) {
+  if (options.traceFile !== undefined) {
     builtins.forEach((builtin, name) => {
       const replacement = getTraceSpecArithmetic(builtin);
       if (replacement) builtins.set(name, replacement);
@@ -1443,5 +1485,7 @@ export const createEnvironment = (
     rootConstants: linkedRoot.constants,
     rootSymbols: linkedRoot.visible,
     javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
+    moduleOperators,
+    rootName: root.name,
   };
 };

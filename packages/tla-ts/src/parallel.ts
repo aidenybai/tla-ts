@@ -50,7 +50,7 @@ export interface StartMessage {
   ports: (Port | undefined)[];
   seed: EncodedStates;
   isTool: boolean | undefined;
-  isTraceRecorded: boolean | undefined;
+  traceFile: string | undefined;
   isWarningEnabled: boolean | undefined;
   version: TlcVersion | undefined;
   fingerprintPolynomial: number | undefined;
@@ -124,7 +124,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     options.isContinued === true ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||
-    config.possible.length > 0;
+    config.possible.length > 0 ||
+    (options.moduleOperators?.length ?? 0) > 0;
   if (isSequential) return fallBack();
   const modules = new Map<string, string | undefined>();
   const loadModule = (name: string) => {
@@ -152,9 +153,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       printed.count++;
       print(text);
     },
-    files: { readFile: options.readFile, writeFile: options.writeFile },
+    files: {
+      readFile: options.readFile,
+      writeFile: options.writeFile,
+      makeDirectory: options.makeDirectory,
+    },
     isTool: options.isTool,
-    isTraceRecorded: options.isTraceRecorded,
+    traceFile: options.traceSpec?.traceFile,
     isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
@@ -299,7 +304,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ports,
       seed,
       isTool: options.isTool,
-      isTraceRecorded: options.isTraceRecorded,
+      traceFile: options.traceSpec?.traceFile,
       isWarningEnabled: options.isWarningEnabled,
       version: options.version,
       fingerprintPolynomial: options.fingerprintPolynomial,

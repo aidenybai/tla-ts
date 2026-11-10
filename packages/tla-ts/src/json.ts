@@ -29,7 +29,8 @@ import {
 
 export interface FileSystem {
   readFile: ((path: string) => string | undefined) | undefined;
-  writeFile: ((path: string, content: string) => void) | undefined;
+  writeFile: ((path: string, content: string | Uint8Array) => void) | undefined;
+  makeDirectory: ((path: string) => void) | undefined;
 }
 
 const OPEN_OPTIONS = new Set([
@@ -146,7 +147,7 @@ const fromJson = (element: JsonElement): Value => {
   return value || 0;
 };
 
-const getPath = (value: Value) => {
+export const getPath = (value: Value) => {
   if (typeof value !== "string") {
     throw new TlaEvaluationError(
       `Cannot cast tlc2.value.impl.${getJavaClassName(value)} to tlc2.value.impl.StringValue`,
@@ -211,6 +212,12 @@ const writeWithOptions = (files: FileSystem, path: string, names: string[], text
   );
 };
 
+// Java's File#getParentFile has no parent for a file name without a directory.
+const makeParentDirectory = (files: FileSystem, path: string) => {
+  const separator = path.lastIndexOf("/");
+  if (separator !== -1) files.makeDirectory?.(path.slice(0, Math.max(separator, 1)));
+};
+
 const readText = (files: FileSystem, path: string) => {
   const text = files.readFile?.(path);
   if (text === undefined) throw new TlaEvaluationError(`${path} (No such file or directory)`);
@@ -241,6 +248,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
       if (!getSequenceElements(value) && !toRecord(value)) {
         throw createModuleArgumentError("second", "JsonSerialize", "sequence or record", value);
       }
+      makeParentDirectory(files, path);
       files.writeFile?.(path, toJson(value));
       return true;
     }),
@@ -254,6 +262,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
       if (!elements) {
         throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", value);
       }
+      makeParentDirectory(files, path);
       files.writeFile?.(path, elements.map((element) => `${toJson(element)}\n`).join(""));
       return true;
     }),

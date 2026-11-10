@@ -38,6 +38,7 @@ import {
   type LiveSuccessor,
 } from "./liveness-checker";
 import {
+  createMissingOperatorError,
   createSearch,
   getIncompleteSuccessorMessage,
   findAssumptionViolation,
@@ -79,7 +80,9 @@ import {
   type FailureMessage,
 } from "./tlc/messages";
 import { createTautologyError } from "./liveness";
+import { KEY_SEPARATOR } from "./resolve";
 import { setFingerprintPolynomial } from "./tlc/fingerprint";
+import { writeTraceSpec } from "./tlc/trace-spec";
 import { createTlcOrder } from "./tlc/order";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -92,6 +95,7 @@ import {
   formatState,
   getFingerprintError,
   getHeldValues,
+  getModelValues,
   getValueHash,
   isSameValue,
   markFingerprinted,
@@ -108,7 +112,8 @@ export interface CheckOptions {
   onPrint?: (text: string) => void;
   onPause?: () => void;
   readFile?: (path: string) => string | undefined;
-  writeFile?: (path: string, content: string) => void;
+  writeFile?: (path: string, content: string | Uint8Array) => void;
+  makeDirectory?: (path: string) => void;
   seed?: bigint;
   workers?: number;
   // TLC's -lncheck: "final" checks liveness only on the complete graph, "off" never looks for a cycle.
@@ -127,14 +132,27 @@ export interface CheckOptions {
   isTool?: boolean;
   // TLC's -continue: reports each violation through onProgress and goes on.
   isContinued?: boolean;
-  // Whether TLC records a binary trace for a trace exploration spec, for which it loads Integers.
-  isTraceRecorded?: boolean;
+  moduleOperators?: ModuleOperator[];
+  // TLC's trace exploration spec, and the binary trace TLC records for it unless -noTEBin.
+  traceSpec?: TraceSpecOptions;
   // Whether the caller printed SANY's report, its warnings included, before the check.
   isSanyReported?: boolean;
   // False for TLC's -nowarning, which changes how TLC computes some successors.
   isWarningEnabled?: boolean;
   version?: TlcVersion;
   onProgress?: (progress: CheckProgress) => void;
+}
+
+export interface TraceSpecOptions {
+  module: string;
+  traceFile?: string;
+}
+
+export interface ModuleOperator {
+  kind: "postcondition" | "constraint" | "view";
+  module: string;
+  operator: string;
+  constants?: Record<string, string>;
 }
 
 export interface InitialStatesProgress {
@@ -210,6 +228,8 @@ export interface Violation {
   trace: TraceStep[];
   // What the spec prints after the trace, as TLC finds the lasso's step back or rebuilds the trace.
   traceOutput?: OutputLine[];
+  // What the postconditions print, which TLC checks after the lasso's step back.
+  postconditionOutput?: OutputLine[];
   loopStart: number | undefined;
   loopLabel?: string;
   message?: string;
@@ -282,6 +302,7 @@ export interface CheckResult {
   liveCallStack?: Expression[];
   // The outdegrees when TLC's workers stop on a violation that TLC 1.7.4 reports as a success.
   violationOutDegrees?: number[];
+  traceSpec?: string;
 }
 
 interface Behavior {
@@ -389,13 +410,18 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     order,
     loadClass: options.loadClass,
     print,
-    files: { readFile: options.readFile, writeFile: options.writeFile },
+    files: {
+      readFile: options.readFile,
+      writeFile: options.writeFile,
+      makeDirectory: options.makeDirectory,
+    },
     seed: options.seed,
     isTool: options.isTool,
-    isTraceRecorded: options.isTraceRecorded,
+    traceFile: options.traceSpec?.traceFile,
     isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
+    moduleOperators: options.moduleOperators,
   });
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;
@@ -410,22 +436,46 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       specification.instanceActions,
     );
   const statistics = { depth: 0, initialStates: undefined as InitialStates | undefined };
+  const getTraceSpec = (trace: TraceStep[], loopStart: number | undefined) =>
+    options.traceSpec &&
+    writeTraceSpec({
+      module: options.traceSpec.module,
+      specName: specification.rootName,
+      rawConstants: config.rawConstants,
+      states: trace.map((step) => getStepState(step)),
+      loopStart,
+      modelValues: getModelValues().map((value) => value.name),
+      isDefined: (name) =>
+        environment.definitions.has(name) ||
+        environment.constants.has(name) ||
+        [...environment.definitions.keys()].some((key) =>
+          key.startsWith(`${name}${KEY_SEPARATOR}`),
+        ),
+    });
   const createResult = (
     status: CheckStatus,
     violation?: Omit<Violation, "loopStart"> & { loopStart?: number },
     failure?: EvaluationFailure,
-  ): CheckResult => ({
-    status,
-    violation: violation && { ...violation, loopStart: violation.loopStart },
-    failure,
-    generatedStates: runtime.generatedStates,
-    distinctStates: runtime.distinctStates,
-    queuedStates: runtime.queueSize,
-    depth: runtime.generatedStates === 0 ? 0 : Math.max(statistics.depth, 1),
-    initialStates: statistics.initialStates,
-    outDegrees: undefined,
-    fingerprintDistance: undefined,
-  });
+  ): CheckResult => {
+    // TLC writes the trace it printed, and a safety property's counterexample doesn't loop back.
+    const traceSpec = getTraceSpec(
+      violation?.trace ?? failure?.trace ?? [],
+      status === "property-violation" ? undefined : violation?.loopStart,
+    );
+    return {
+      status,
+      violation: violation && { ...violation, loopStart: violation.loopStart },
+      failure,
+      generatedStates: runtime.generatedStates,
+      distinctStates: runtime.distinctStates,
+      queuedStates: runtime.queueSize,
+      depth: runtime.generatedStates === 0 ? 0 : Math.max(statistics.depth, 1),
+      initialStates: statistics.initialStates,
+      outDegrees: undefined,
+      fingerprintDistance: undefined,
+      ...(traceSpec !== undefined && { traceSpec }),
+    };
+  };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
   const expansion = { newStates: 0 };
   const getOutDegreeBucket = () => Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1);
@@ -460,6 +510,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     options.onProgress,
+    specification.moduleOperators,
   );
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);
@@ -476,7 +527,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
     return createSuccess();
   }
-  const hasPostconditions = config.postconditions.length > 0 || config.possible.length > 0;
+  const hasPostconditions =
+    config.postconditions.length > 0 ||
+    config.possible.length > 0 ||
+    specification.moduleOperators.some((operator) => operator.kind === "postcondition");
   // The state of each step without the alias, and its action, which CounterExample records.
   const traceSteps = new WeakMap<
     TraceStep,
@@ -515,10 +569,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       violation.trace,
       start === undefined || !getLoopAction ? undefined : { start, action: getLoopAction() },
     );
-    const traceOutput = [...(violation.traceOutput ?? []), ...checked.lines];
     return createResult(status, {
       ...violation,
-      ...(traceOutput.length > 0 && { traceOutput }),
+      ...(checked.lines.length > 0 && { postconditionOutput: checked.lines }),
       ...(checked.unwitnessed && { unwitnessed: checked.unwitnessed }),
       ...(checked.postcondition && { postcondition: checked.postcondition }),
     });
@@ -1697,6 +1750,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
 
   // TLC finishes the check of the temporal properties before it checks the postconditions.
   if (finalLiveness) options.onProgress?.({ kind: "liveness-finished" });
+  const missingPostcondition = specification.moduleOperators.find(
+    (operator) => operator.kind === "postcondition" && operator.key === undefined,
+  );
+  if (missingPostcondition) {
+    return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
+  }
   const postcondition = search.findPostconditionViolation();
   if (postcondition) {
     return createResult("postcondition-violation", {

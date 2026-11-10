@@ -27,7 +27,7 @@ const dumpFixture = async (
       return existsSync(path) ? readFileSync(path, "utf8") : undefined;
     },
     onPrint: () => {},
-    writeFile: (path, content) => written.set(path, content),
+    writeFile: (path, content) => written.set(path, String(content)),
     dump,
     ...options,
   });

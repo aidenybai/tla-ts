@@ -21,6 +21,7 @@ import type {
   CheckOptions,
   CheckProgress,
   InitialStateViolation,
+  ModuleOperator,
   OutputLine,
   CheckResult,
   CheckStatus,
@@ -483,6 +484,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: TlcP
   const postcondition =
     violation.unwitnessed ??
     (status === "postcondition-violation" ? undefined : violation.postcondition);
+  printTraceOutput(printer, violation.postconditionOutput);
   if (postcondition?.counts) console.log(postcondition.counts);
   if (postcondition) {
     print(
@@ -789,12 +791,75 @@ const printSimulationProgress = (printer: MessagePrinter, statistics: Simulation
     `Progress(${statistics.traces}) at ${formatTlcDate(new Date())}: ${statistics.generatedStates} states generated, -1 distinct states found, -1 states left on queue.`,
   );
 
-// -generateSpecTE turns the trace exploration spec on, and -tool, -continue, -noGenerateSpecTE
-// and -noTE turn it off. TLC 1.7.4 records no such trace.
-const isTraceRecorded = (args: TlcArguments, version: TlcVersion) =>
-  version !== "1.7.4" &&
-  (args.isTraceSpecForced || (!args.isTraceSpecDisabled && !args.isTool && !args.isContinued)) &&
-  !args.isTraceBinaryDisabled;
+// Java's Path drops repeated and trailing separators.
+const getJavaPath = (path: string) => path.replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
+
+const getJavaParent = (path: string) => {
+  const normalized = getJavaPath(path);
+  const separator = normalized.lastIndexOf("/");
+  return separator === -1 ? "." : normalized.slice(0, Math.max(separator, 1));
+};
+
+const resolveJavaPath = (directory: string, name: string) =>
+  directory.endsWith("/") ? `${directory}${name}` : `${directory}/${name}`;
+
+// -generateSpecTE turns the trace exploration spec on, and -tool, -continue, -noGenerateSpecTE,
+// -noTE and a spec TLC named as a trace spec turn it off. TLC 1.7.4 writes no such spec.
+const getTraceSpecLocation = (
+  args: TlcArguments,
+  version: TlcVersion,
+  mainFile: string,
+  startTime: number,
+) => {
+  const isGenerated =
+    version !== "1.7.4" &&
+    (args.isTraceSpecForced ||
+      (!args.isTraceSpecDisabled &&
+        !args.isTool &&
+        !args.isContinued &&
+        !basename(mainFile).includes("_TTrace")));
+  if (!isGenerated) return undefined;
+  const output = args.traceSpecPath;
+  const module = `${basename(mainFile)}_TTrace_${Math.floor(startTime / 1000)}`;
+  const location =
+    output === undefined
+      ? { directory: getJavaParent(mainFile), module }
+      : output.toLowerCase().endsWith(".tla")
+        ? { directory: getJavaParent(output), module: basename(output).replace(/\.tla$/, "") }
+        : { directory: getJavaPath(output), module };
+  return {
+    ...location,
+    traceFile: args.isTraceBinaryDisabled
+      ? undefined
+      : resolveJavaPath(location.directory, `${location.module}.bin`),
+  };
+};
+
+const JAVA_FILE_ERRORS: Record<string, string> = {
+  ENOENT: "No such file or directory",
+  ENOTDIR: "Not a directory",
+  EISDIR: "Is a directory",
+  EACCES: "Permission denied",
+};
+
+// TLC writes files with a FileOutputStream, which names the path and the system's error.
+const writeJavaFile = (path: string, content: string | Uint8Array) => {
+  try {
+    writeFileSync(path, content);
+  } catch (error) {
+    const reason =
+      error instanceof Error && "code" in error ? JAVA_FILE_ERRORS[String(error.code)] : undefined;
+    if (reason === undefined) throw error;
+    throw new TlaEvaluationError(`${path} (${reason})`);
+  }
+};
+
+// Java's File#mkdirs reports a failure only through its result, which TLC ignores.
+const makeJavaDirectory = (path: string) => {
+  try {
+    mkdirSync(path, { recursive: true });
+  } catch {}
+};
 
 const createMetadir = (args: TlcArguments) => {
   const now = new Date();
@@ -884,7 +949,16 @@ const checkSpec = async (
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
   const loadModule = createModuleLoader(directories);
-  const isRecorded = isTraceRecorded(args, version);
+  const traceSpec = getTraceSpecLocation(
+    args,
+    version,
+    specPath.replace(/\.tla$/, ""),
+    timing.startTime,
+  );
+  const getOperatorModules = (kind: ModuleOperator["kind"]) =>
+    args.moduleOperators
+      .filter((operator) => operator.kind === kind)
+      .map((operator) => operator.module);
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   }
@@ -914,8 +988,11 @@ const checkSpec = async (
       version,
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
       rootExtendees: [
-        ...(isRecorded ? ["_TLCTrace"] : []),
+        ...getOperatorModules("postcondition"),
+        ...(traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
         ...args.invariants.flatMap((invariant) => invariant.modules),
+        ...getOperatorModules("constraint"),
+        ...getOperatorModules("view").slice(0, 1),
       ],
       suppressedCodes: args.suppressedCodes,
       errorCodes: args.errorCodes,
@@ -965,7 +1042,8 @@ const checkSpec = async (
       dump,
       isTool: printer.isTool,
       isContinued: args.isContinued,
-      isTraceRecorded: isRecorded,
+      moduleOperators: args.moduleOperators,
+      traceSpec,
       isSanyReported: true,
       isWarningEnabled: args.isWarningEnabled,
       version,
@@ -983,11 +1061,8 @@ const checkSpec = async (
         checkNotDirectory(path);
         return existsSync(path) ? readFileSync(path, "utf8") : undefined;
       },
-      writeFile: (path, content) => {
-        checkNotDirectory(path);
-        mkdirSync(dirname(resolve(path)), { recursive: true });
-        writeFileSync(path, content);
-      },
+      writeFile: writeJavaFile,
+      makeDirectory: makeJavaDirectory,
     };
     if (args.mode !== "model-check") {
       const status = simulate({
@@ -1014,6 +1089,26 @@ const checkSpec = async (
     const result = await check(options);
     printResult(result, printer, timing);
     printFinished();
+    if (traceSpec && result.traceSpec !== undefined) {
+      const path = resolveJavaPath(traceSpec.directory, `${traceSpec.module}.tla`);
+      makeJavaDirectory(traceSpec.directory);
+      const failure = (() => {
+        try {
+          writeJavaFile(path, result.traceSpec);
+          return undefined;
+        } catch (error) {
+          if (!(error instanceof TlaEvaluationError)) throw error;
+          return error;
+        }
+      })();
+      printer.print(
+        failure ? MESSAGE_CODE.traceSpecFailed : MESSAGE_CODE.traceSpecWritten,
+        MESSAGE_LEVEL.none,
+        failure
+          ? `Failed to generate trace exploration spec; error message: ${failure.message}`
+          : `Trace exploration spec path: ${path}`,
+      );
+    }
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;

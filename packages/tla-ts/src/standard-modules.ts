@@ -22,6 +22,7 @@ import type { Builtin, BuiltinArgument, Context } from "./evaluate";
 import type { CheckerRuntime } from "./runtime";
 import { createBagsOperators } from "./bags";
 import { createIoUtilsOperators, createJsonOperators, type FileSystem } from "./json";
+import { createTlcTraceOperators } from "./tlc/value-stream";
 import { createRandomizationOperators, createRandomSubsetSet } from "./randomization";
 import { createPossibleOperators, createTlcExtOperators } from "./tlc/tlcext-operators";
 import { createTlcOperators } from "./tlc/tlc-operators";
@@ -606,6 +607,7 @@ export const getJavaOverrides = (
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
   if (name === "AnySet") return [defineConstant("ANY", ANY_SET)];
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
+  if (name === "_TLCTrace") return createTlcTraceOperators(files);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
   const operators = getStandardModule(name, print, runtime, files, builtins)?.operators;
   return name === "Randomization" && operators
