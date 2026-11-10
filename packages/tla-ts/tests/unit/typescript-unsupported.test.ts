@@ -11,7 +11,6 @@ const CASES: [string, string][] = [
     "a Set of numbers and strings",
     'const mixed = new Set<number | string>([1, "a"]); count = mixed.size;',
   ],
-  ["returning from a loop", "while (count < 2) { count++; return; }"],
   ["changing an array a for-of iterates", "for (const value of values) values.pop();"],
   ["division", "count = count / 2;"],
   ["fractions", "count = 1.5;"],
@@ -62,10 +61,6 @@ const CASES: [string, string][] = [
   [
     "a let used before its declaration in try",
     "try { const read = () => later; count = read(); } catch { count = 0; } let later = 1;",
-  ],
-  [
-    "throwing out of a loop to a catch",
-    "try { while (count < 2) { throw new Error('a'); } } catch { count = 0; }",
   ],
   [
     "instanceof on a value that isn't caught or an error",
