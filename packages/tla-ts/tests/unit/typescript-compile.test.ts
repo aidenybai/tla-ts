@@ -2312,6 +2312,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("uses a function that a function called in place declares as a value", async () => {
+    const result = await checkModel(`
+      let log = 0;
+      (function () {
+        const obj: { x?: number } = {};
+        function getFunc() {
+          return 10;
+        }
+        Object.defineProperty(obj, "x", { get: getFunc });
+        log = obj.x!;
+      })();
+      if (log !== 10) throw new Error(String(log));
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

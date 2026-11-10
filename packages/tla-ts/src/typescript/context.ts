@@ -264,9 +264,23 @@ const getMethod = (node: ts.Expression, context: Context) => {
 };
 
 // Whether a node runs at most once, outside every function and loop.
+// Whether code under a node runs at most once: outside functions and loops, or in the body of a
+// function that a call runs where it's written.
 export const isOnce = (node: ts.Node): boolean =>
   ts.isSourceFile(node) ||
-  (!ts.isFunctionLike(node) && !ts.isIterationStatement(node, false) && isOnce(node.parent));
+  ((ts.isFunctionLike(node) ? isCalledInPlace(node) : !ts.isIterationStatement(node, false)) &&
+    isOnce(node.parent));
+
+const isCalledInPlace = (node: ts.Node) => {
+  const getOuter = (inner: ts.Node): ts.Node =>
+    ts.isParenthesizedExpression(inner.parent) ? getOuter(inner.parent) : inner;
+  const outer = getOuter(node);
+  return (
+    (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+    ts.isCallExpression(outer.parent) &&
+    outer.parent.expression === outer
+  );
+};
 
 const isMethodShape = (node: ts.Node): node is ts.MethodDeclaration =>
   ts.isMethodDeclaration(node) && node.body !== undefined && !ts.isComputedPropertyName(node.name);
