@@ -132,10 +132,11 @@ const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 const toValue = (value: ConfigValue): Value => {
   switch (value.kind) {
     case "Number":
-      // TLC fails with an unexpected exception on a configuration number too big for it.
+      // ModelConfig#parseValue lets Integer.parseInt fail on a number too big for TLC, where
+      // tla-ts reports it as TLC reports such a number in a module.
       if (!isTlcInteger(value.value)) {
         throw setExitCode(
-          new TlaModuleError(`Integer overflow: ${value.value} is outside TLC's 32-bit range`),
+          new TlaModuleError(`TLC can't handle a number this big.\n${value.value}`),
           EXIT_STATUS.error,
         );
       }
