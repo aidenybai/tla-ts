@@ -137,7 +137,7 @@ export class Rewriter extends RewriterTpl {
       },
     });
     this.array = new ArrayRewriter(manager, options.isSortingStore);
-    this.seq = new SeqRewriter(manager, options.isCoalescingChars ?? true);
+    this.seq = new SeqRewriter(manager, options.isCoalescingChars ?? true, this);
     this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
     this.der = new Der(manager);
   }
@@ -146,6 +146,7 @@ export class Rewriter extends RewriterTpl {
   release() {
     this.unusedVarsEliminator.release();
     this.der.release();
+    this.seq.release();
     super.release();
   }
 

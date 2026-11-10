@@ -27,6 +27,7 @@ const POST = "seq.post";
 const EQ = "seq.eq";
 const MAX_UNFOLDING = "seq.max_unfolding";
 const LENGTH_LIMIT = "seq.length_limit";
+const ACCEPT = "aut.accept";
 
 export interface Decomposition {
   head: number;
@@ -156,6 +157,24 @@ export class SeqSkolem {
     return this.mk(SEQ_FIRST, [seq]);
   }
 
+  mkAccept(seq: number, index: number, regex: number) {
+    return this.mk(ACCEPT, [seq, index, regex], SORT_BOOL);
+  }
+
+  getAccept(expr: number) {
+    const manager = this.manager;
+    if (!this.isNamed(expr, ACCEPT) || manager.getNumArgs(expr) !== 3) return undefined;
+    const index = manager.getArg(expr, 1);
+    const position = manager.getNumeral(index);
+    if (position === undefined || position < 0n || position > 0xffffffffn) return undefined;
+    return {
+      seq: manager.getArg(expr, 0),
+      index,
+      position: Number(position),
+      regex: manager.getArg(expr, 2),
+    };
+  }
+
   mkMaxUnfoldingDepth(depth: number) {
     return mkSkolem(this.manager, MAX_UNFOLDING, [], SORT_BOOL, [depth], [depth]);
   }
@@ -241,7 +260,7 @@ export class SeqSkolem {
 
   isRegexSkolem(expr: number) {
     return (
-      this.isNamed(expr, "aut.accept") ||
+      this.isNamed(expr, ACCEPT) ||
       this.isNamed(expr, "re.is_empty") ||
       this.isNamed(expr, "re.is_non_empty") ||
       this.isNamed(expr, "aut.step")

@@ -1765,7 +1765,7 @@ export const createSmtlibReader = (
         digits.length * (isBinary ? 1 : 4),
       );
     }
-    if (sexpr.kind === "string") return manager.mkString(parseZstring(sexpr.text));
+    if (sexpr.kind === "string") return manager.mkString(parseZstring(sexpr.text, manager.maxChar));
     if (sexpr.kind === "symbol") {
       if (sexpr.text === "true") return manager.trueExpr;
       if (sexpr.text === "false") return manager.falseExpr;

@@ -1,7 +1,7 @@
 // Ported from Z3 (src/model/seq_factory.h, src/model/char_factory.h), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import type { AstManager } from "./ast";
-import { MAX_CHAR, mkConcatOf, mkSeqApp } from "./seq-decl-plugin";
+import { mkConcatOf, mkSeqApp } from "./seq-decl-plugin";
 import { OP_SEQ_TO_RE, OP_SEQ_UNIT } from "./ast";
 
 interface ElementModel {
@@ -22,6 +22,8 @@ export class CharFactory {
   private chars = new Set<number>();
   private next = 65;
 
+  constructor(private manager: AstManager) {}
+
   getSomeValue() {
     this.chars.add(97);
     return 97;
@@ -29,7 +31,8 @@ export class CharFactory {
 
   getFreshValue() {
     while (this.chars.has(this.next)) this.next++;
-    if (this.next > MAX_CHAR) throw new SmtUnsupportedError("a model with more characters");
+    if (this.next > this.manager.maxChar)
+      throw new SmtUnsupportedError("a model with more characters");
     this.chars.add(this.next);
     return this.next++;
   }

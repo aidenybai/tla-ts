@@ -18,7 +18,7 @@ import { type Enode, TheoryJustification } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { type Literal, mkLiteral, negate } from "./literal";
 import type { ProtoModel } from "./proto-model";
-import { CHAR_BITS, MAX_CHAR, isSkolemOf, mkSkolem } from "./seq-decl-plugin";
+import { isSkolemOf, mkSkolem } from "./seq-decl-plugin";
 import { FC_CONTINUE, FC_DONE, Theory } from "./theory";
 
 const BITS2CHAR = "bits2char";
@@ -102,7 +102,7 @@ export class TheoryChar extends Theory {
       }
       return;
     }
-    for (let index = 0; index < CHAR_BITS; index++) {
+    for (let index = 0; index < this.manager.charBits; index++) {
       const bit = mkSkolem(manager, "char.bit", [expr], SORT_BOOL, [index], [index]);
       manager.incRef(bit);
       ebits.push(bit);
@@ -247,7 +247,7 @@ export class TheoryChar extends Theory {
         this.enforceAckerman(other, thVar);
         return FC_CONTINUE;
       }
-      if (code > MAX_CHAR) {
+      if (code > this.manager.maxChar) {
         this.enforceValueBound(thVar);
         return FC_CONTINUE;
       }
@@ -273,7 +273,7 @@ export class TheoryChar extends Theory {
       if (this.var2value[thVar] !== NO_VALUE) continue;
       const start = code;
       while (values.has(code)) {
-        code = (code + 1) % MAX_CHAR;
+        code = (code + 1) % this.manager.maxChar;
         if (start === code) {
           this.enforceBits();
           return FC_CONTINUE;
@@ -305,7 +305,7 @@ export class TheoryChar extends Theory {
   }
 
   private enforceValueBound(thVar: number) {
-    const node = this.ensureEnodeOf(this.manager.mkChar(MAX_CHAR));
+    const node = this.ensureEnodeOf(this.manager.mkChar(this.manager.maxChar));
     const maxVar = node.getThVar(this.id);
     this.initBits(maxVar);
     this.initBits(thVar);

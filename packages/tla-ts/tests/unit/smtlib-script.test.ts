@@ -274,11 +274,7 @@ describe("runSmtlibScript prints what Z3 prints", () => {
 
   it("throws at a theory it does not implement", () => {
     expect(() =>
-      run([
-        "(declare-const s String)",
-        '(assert (str.in_re s (re.* (str.to_re "a"))))',
-        "(check-sat)",
-      ]),
+      run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
     ).toThrow(SmtUnsupportedError);
   });
 

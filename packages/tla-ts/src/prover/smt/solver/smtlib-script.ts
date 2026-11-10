@@ -1,5 +1,6 @@
 // Ported from Z3 (src/cmd_context/cmd_context.cpp, src/cmd_context/basic_cmds.cpp), MIT license,
 // see z3-license.txt.
+import { ENCODINGS, UNICODE_ENCODING } from "./seq-decl-plugin";
 import {
   isStackOverflow,
   SmtCanceledError,
@@ -328,6 +329,7 @@ export const runSmtlibScript = (
     isMbqi: true,
     isFindingMacros: false,
     isHiDiv0: true,
+    encoding: UNICODE_ENCODING,
     rlimit: 0,
     printOptions: { ...DEFAULT_PRINT_OPTIONS },
     parserOptions: { isIgnoringBadPatterns: true },
@@ -337,6 +339,8 @@ export const runSmtlibScript = (
       new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
     );
     manager.isHiDiv0 = settings.isHiDiv0;
+    manager.maxChar = settings.encoding.maxChar;
+    manager.charBits = settings.encoding.charBits;
     return {
       manager,
       logic: undefined,
@@ -1036,6 +1040,11 @@ export const runSmtlibScript = (
       if (optionName === ":rewriter.hi_div0") {
         settings.isHiDiv0 = isTrue;
         script.state.manager.isHiDiv0 = isTrue;
+      }
+      if (optionName === ":encoding" && value !== undefined && value.kind !== "list") {
+        settings.encoding = ENCODINGS.get(value.text) ?? UNICODE_ENCODING;
+        script.state.manager.maxChar = settings.encoding.maxChar;
+        script.state.manager.charBits = settings.encoding.charBits;
       }
       if (optionName === ":parser.ignore_bad_patterns")
         settings.parserOptions.isIgnoringBadPatterns = isTrue;
