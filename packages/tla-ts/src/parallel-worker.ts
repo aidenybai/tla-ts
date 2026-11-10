@@ -52,9 +52,9 @@ const runWorker = (start: StartMessage, parent: Port) => {
     order,
     loadClass: (name) => classes.get(name),
     print: () => {},
-    files: { readFile: undefined, writeFile: undefined },
+    files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
     isTool: start.isTool,
-    isTraceRecorded: start.isTraceRecorded,
+    traceFile: start.traceFile,
     isWarningEnabled: start.isWarningEnabled,
     version: start.version,
   });

@@ -103,7 +103,7 @@ interface EnvironmentOptions {
   isUnconfigured?: boolean;
   isTool?: boolean;
   // TLC loads Integers for a trace exploration spec, whose methods then compute Naturals.
-  isTraceRecorded?: boolean;
+  traceFile?: string;
   isSanyReported?: boolean;
   isWarningEnabled?: boolean;
   version?: TlcVersion;
@@ -126,6 +126,7 @@ export interface Specification {
   // The methods of the modules' classes, in the order TLC loads the classes.
   javaOverrides: JavaOverride[];
   moduleOperators: ResolvedModuleOperator[];
+  rootName: string;
 }
 
 export interface InstanceAction {
@@ -1130,8 +1131,21 @@ export const createEnvironment = (
   };
 
   const linkedRoot = linkTopLevel(root).linked;
+  const traceFile = options.traceFile;
+  // TLC records the binary trace of a trace exploration spec with a postcondition it adds last.
+  const traceOperators: ModuleOperator[] =
+    traceFile === undefined
+      ? []
+      : [
+          {
+            kind: "postcondition",
+            module: "_TLCTrace",
+            operator: "_TLCTraceSilent",
+            constants: { _TLCTraceFile: traceFile },
+          },
+        ];
   // SANY reads these modules as extendees of the root, so TLC finishes them before the root.
-  const moduleOperators = (options.moduleOperators ?? []).map(
+  const moduleOperators = [...(options.moduleOperators ?? []), ...traceOperators].map(
     (operator): ResolvedModuleOperator => {
       const symbol = getLinkedModule(operator.module, root.name).visible.get(operator.operator);
       return { ...operator, key: symbol?.kind === "Definition" ? symbol.key : undefined };
@@ -1370,7 +1384,7 @@ export const createEnvironment = (
     );
   }
 
-  if (options.isTraceRecorded) {
+  if (options.traceFile !== undefined) {
     builtins.forEach((builtin, name) => {
       const replacement = getTraceSpecArithmetic(builtin);
       if (replacement) builtins.set(name, replacement);
@@ -1472,5 +1486,6 @@ export const createEnvironment = (
     rootSymbols: linkedRoot.visible,
     javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
     moduleOperators,
+    rootName: root.name,
   };
 };

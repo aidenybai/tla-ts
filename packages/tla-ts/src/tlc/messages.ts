@@ -47,6 +47,8 @@ export const MESSAGE_CODE = {
   modelChecking: 2187,
   simulating: 2188,
   finished: 2186,
+  traceSpecWritten: 2501,
+  traceSpecFailed: 2502,
   computingInit: 2189,
   initGenerated1: 2190,
   initGenerated2: 2191,

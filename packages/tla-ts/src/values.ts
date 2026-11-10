@@ -521,6 +521,8 @@ export const createModelValue = (name: string): ModelValue => {
   return value;
 };
 
+export const getModelValues = () => [...modelValues.values()];
+
 export const createSortedSet = (elements: Value[]): SetValue => ({
   kind: "Set",
   elements,

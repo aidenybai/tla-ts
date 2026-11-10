@@ -34,6 +34,7 @@ export interface ModelConfig {
   actionConstraints: string[];
   constants: ConstantAssignment[];
   substitutions: Substitution[];
+  rawConstants: string[];
   checkDeadlock: boolean;
   symmetry: string | undefined;
   view: string | undefined;
@@ -244,6 +245,7 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
     actionConstraints: [],
     constants: [],
     substitutions: [],
+    rawConstants: [],
     checkDeadlock: true,
     symmetry: undefined,
     view: undefined,
@@ -314,61 +316,69 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
   };
 
   // TLC reports a malformed argument list at the line of the CONSTANT keyword.
+  const parseConstant = (first: ConfigToken, keywordLine: number) => {
+    const current = { token: advance(), name: first.text };
+    while (current.token.text === "!") {
+      current.name = `${current.name}!${advance().text}`;
+      current.token = advance();
+    }
+    const name = current.name;
+    if (current.token.text === "<-") {
+      current.token = advance();
+      if (current.token.text === "[") {
+        const module = parseModuleScope("<-");
+        const target = advance();
+        if (target.kind === "End") {
+          throw createSyntaxError(target.line, "Expected an identifier after <-[mod].");
+        }
+        config.substitutions.push({ name, target: target.text, module });
+        return;
+      }
+      if (current.token.kind === "End") {
+        throw createSyntaxError(current.token.line, "Expected an identifier after <-.");
+      }
+      config.substitutions.push({ name, target: current.token.text });
+      return;
+    }
+    const args: ConfigValue[] = [];
+    const hasArgs = current.token.text === "(";
+    if (hasArgs) {
+      while (true) {
+        args.push(parseValue(advance()));
+        current.token = advance();
+        if (current.token.text !== ",") break;
+      }
+      if (current.token.text !== ")") {
+        throw createSyntaxError(keywordLine, "");
+      }
+      current.token = advance();
+    }
+    if (current.token.text !== "=") {
+      throw createSyntaxError(current.token.line, "It was expecting = or <-, but did not find it.");
+    }
+    current.token = advance();
+    const module = current.token.text === "[" ? parseModuleScope("=") : undefined;
+    const value = parseValue(module === undefined ? current.token : advance());
+    config.constants.push({
+      name,
+      value,
+      ...(hasArgs && { args }),
+      ...(module !== undefined && { module }),
+    });
+  };
+
   const parseConstants = (keywordLine: number) => {
     while (true) {
       const first = advance();
       if (first.kind === "End" || keywords.has(first.text)) return first;
-      const current = { token: advance(), name: first.text };
-      while (current.token.text === "!") {
-        current.name = `${current.name}!${advance().text}`;
-        current.token = advance();
-      }
-      const name = current.name;
-      if (current.token.text === "<-") {
-        current.token = advance();
-        if (current.token.text === "[") {
-          const module = parseModuleScope("<-");
-          const target = advance();
-          if (target.kind === "End") {
-            throw createSyntaxError(target.line, "Expected an identifier after <-[mod].");
-          }
-          config.substitutions.push({ name, target: target.text, module });
-          continue;
-        }
-        if (current.token.kind === "End") {
-          throw createSyntaxError(current.token.line, "Expected an identifier after <-.");
-        }
-        config.substitutions.push({ name, target: current.token.text });
-        continue;
-      }
-      const args: ConfigValue[] = [];
-      const hasArgs = current.token.text === "(";
-      if (hasArgs) {
-        while (true) {
-          args.push(parseValue(advance()));
-          current.token = advance();
-          if (current.token.text !== ",") break;
-        }
-        if (current.token.text !== ")") {
-          throw createSyntaxError(keywordLine, "");
-        }
-        current.token = advance();
-      }
-      if (current.token.text !== "=") {
-        throw createSyntaxError(
-          current.token.line,
-          "It was expecting = or <-, but did not find it.",
-        );
-      }
-      current.token = advance();
-      const module = current.token.text === "[" ? parseModuleScope("=") : undefined;
-      const value = parseValue(module === undefined ? current.token : advance());
-      config.constants.push({
-        name,
-        value,
-        ...(hasArgs && { args }),
-        ...(module !== undefined && { module }),
-      });
+      const start = cursor.index - 1;
+      parseConstant(first, keywordLine);
+      config.rawConstants.push(
+        tokens
+          .slice(start, cursor.index)
+          .map((token) => token.text)
+          .join(" "),
+      );
     }
   };
 

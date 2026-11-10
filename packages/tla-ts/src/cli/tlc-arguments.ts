@@ -25,6 +25,7 @@ export interface TlcArguments {
   isTraceSpecForced: boolean;
   isTraceSpecDisabled: boolean;
   isTraceBinaryDisabled: boolean;
+  traceSpecPath: string | undefined;
   isDiffTrace: boolean;
   suppressedCodes: number[];
   errorCodes: number[];
@@ -189,6 +190,7 @@ const createDefaults = (): TlcArguments => ({
   isTraceSpecForced: false,
   isTraceSpecDisabled: false,
   isTraceBinaryDisabled: false,
+  traceSpecPath: undefined,
   isDiffTrace: false,
   suppressedCodes: [],
   errorCodes: [],
@@ -320,7 +322,9 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       continue;
     }
     if (flag === "-teSpecOutDir") {
-      if (take() === undefined) return reject("Error: expected a path for -teSpecOutDir option.");
+      const path = take();
+      if (path === undefined) return reject("Error: expected a path for -teSpecOutDir option.");
+      parsed.traceSpecPath = path;
       continue;
     }
     if (flag === "-userFile") {

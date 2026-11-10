@@ -5,6 +5,7 @@ export type {
   CheckStatus,
   EvaluationFailure,
   ModuleOperator,
+  TraceSpecOptions,
   TraceStep,
   Violation,
 } from "./check";
