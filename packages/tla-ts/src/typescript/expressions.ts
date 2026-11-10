@@ -114,6 +114,7 @@ import {
   rejectGeneratorUse,
   isNumericKey,
   isObject,
+  isSequenceType,
   translateUnknown,
 } from "./types";
 
@@ -1307,6 +1308,29 @@ const translateNode = (
     );
   }
   if (ts.isArrayLiteralExpression(node) && !context.heapArrays.has(node)) {
+    // A sequence has no properties but an array's, so a type that gives it others, as a script
+    // writes them, needs an array that the heap holds.
+    const checker = context.checker;
+    const contextual = checker.getContextualType(node);
+    const arrayKeys = new Set(
+      checker
+        .getTypeAtLocation(node)
+        .getProperties()
+        .map((property) => property.name),
+    );
+    const contextualKeys = (contextual?.isUnion() ? contextual.types : [contextual]).flatMap(
+      (member) =>
+        member === undefined ||
+        (member.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) === 0 ||
+        isSequenceType(member, checker) ||
+        // An iterable, such as a generator that a pattern takes, reads an array only as one.
+        member.getProperties().some((property) => property.name.startsWith("__@iterator"))
+          ? []
+          : member.getProperties().map((property) => property.name),
+    );
+    if (contextualKeys.some((key) => !arrayKeys.has(key))) {
+      throw new TlaTypeScriptError("Use an array only as an array, not as an object", node);
+    }
     return translateArrayLiteral(node, scope, context);
   }
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);

@@ -39,6 +39,10 @@ const CASES: [string, string][] = [
     "yielding inside a loop",
     "const make = function* () { for (const value of values) yield; }; make().next();",
   ],
+  [
+    "an array typed as an object with other properties",
+    "const descriptor: PropertyDescriptor = []; count = descriptor.enumerable === true ? 1 : 0;",
+  ],
   ["delegating a yield to a string", 'const make = function* () { yield* "ab"; }; make().next();'],
   ["calling an async function", "const run = async () => { count++; }; run();"],
   [
