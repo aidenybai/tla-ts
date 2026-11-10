@@ -163,7 +163,6 @@
   "tlapm/obligations/printing/integer_literals": "exit-mismatch",
   "tlapm/obligations/use_hide/module_use_suppressed": "text-mismatch",
   "tlapm/smoke/parse_error": "text-mismatch",
-  "tlc/cli/other/recover_missing_directory": "exit-mismatch",
   "tlc/generated/random/000/random_00102#assume": "exit-mismatch",
   "tlc/generated/random/003/random_01576#assume": "exit-mismatch",
   "tlc/generated/random/004/random_02309#assume": "crash",

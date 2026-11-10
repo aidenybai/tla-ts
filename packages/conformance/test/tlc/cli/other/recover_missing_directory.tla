@@ -10,6 +10,10 @@ features:
 args:
   - -recover
   - no_such_checkpoint
+correct:
+  all:
+    exit: 255
+    transcript: 1000:1 The directory no_such_checkpoint holds no checkpoint to recover from.
 ---*)
 ---- MODULE recover_missing_directory ----
 EXTENDS Naturals
