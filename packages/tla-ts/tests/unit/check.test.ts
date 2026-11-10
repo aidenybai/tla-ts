@@ -882,6 +882,43 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates]).toEqual([1, 1]);
   });
 
+  it("prints at each element of a loop whose body prints the same value", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nRECURSIVE Count(_)\nCount(n) == IF n = 0 THEN PrintT("c") ELSE Count(n - 1)\nShow(v) == PrintT(v)\nASSUME \\A e \\in 1..3 : PrintT(Cardinality({1, 2}))\nASSUME \\A e \\in 1..2 : Show("s") /\\ Count(1)\nASSUME LET F(v) == PrintT(v) IN \\A e \\in 1..2 : F("f")\nASSUME \\A e \\in 1..2 : LET G(v) == PrintT(v) IN G("g")\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(prints).toEqual(["2", "2", "2", '"s"', '"c"', '"s"', '"c"', '"f"', '"f"', '"g"', '"g"']);
+  });
+
+  it("evaluates a failing subexpression of a loop's body only where the body reaches it", async () => {
+    const passing = await checkModule(
+      "ASSUME \\A e \\in {} : 1 \\div 0 = 1\nASSUME \\A e \\in 1..3 : e < 4 \\/ 1 \\div 0 = 1",
+    );
+    expect(passing.status).toBe("success");
+    const failing = await checkModule("ASSUME \\A e \\in 1..3 : e < 3 \\/ 1 \\div 0 = 1");
+    expect(failing.violation?.name).toBe("line 6, col 8 to line 6, col 44 of module M");
+    expect(failing.violation?.message).toBe("The second argument of \\div is 0.");
+  });
+
+  it("evaluates loops over large sets whose bodies hold a constant subexpression", async () => {
+    const result = await checkModule(
+      [
+        "ASSUME {e \\in 2..1000000 : 1..3 \\subseteq {1, 2}} = {}",
+        "ASSUME (CHOOSE e \\in 2..1000000 : 1..3 = {} \\/ e = 1000000) = 1000000",
+        "ASSUME [e \\in 1..3 |-> Cardinality({4, 5})] = <<2, 2, 2>>",
+      ].join("\n"),
+    );
+    expect(result.status).toBe("success");
+    const chosen = await checkModule("ASSUME CHOOSE e \\in 2..1000000 : 1..3 = {}");
+    expect(chosen.violation?.message).toMatch(
+      /^Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P\./,
+    );
+  });
+
   it("checks liveness on the symmetry-reduced graph", async () => {
     const result = await checkFixture("symmetry", "SymmetricLiveness");
     expect(result.status).toBe("liveness-violation");

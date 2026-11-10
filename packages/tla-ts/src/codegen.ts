@@ -1,4 +1,6 @@
-import { getChildren, isLocallyResolved, type Expression } from "./ast";
+import { getChildren, isLocallyResolved, type BoundPattern, type Expression } from "./ast";
+import { isRepeatable } from "./dependencies";
+import { LITERAL_KINDS } from "./tlc/replay";
 import {
   bindValue,
   expectBooleanBody,
@@ -57,6 +59,12 @@ interface Frame {
   next: string;
   isPrimed: boolean;
   locals: Map<string, string>;
+  loop: Loop | undefined;
+}
+
+interface Loop {
+  names: string[];
+  hoisted: string[];
 }
 
 interface Generator {
@@ -191,12 +199,13 @@ const generateHelper = (
 ) => {
   const name = `helper${generator.counter++}`;
   const outerLocals = [...frame.locals.values()];
-  const bodyFrame = {
+  const bodyFrame: Frame = {
     context: "context",
     state: "state",
     next: "next",
     isPrimed: false,
     locals: new Map(frame.locals),
+    loop: undefined,
   };
   const parameters = outerLocals.map((local) => `, ${local}`).join("");
   generator.helpers.push(
@@ -230,12 +239,16 @@ const generateQuantifier = (
       if (bound.pattern.kind === "Name") bodyFrame.locals.set(bound.pattern.name, local);
       return local;
     });
+    const loop = enterLoop(
+      bodyFrame,
+      expression.bounds.map((bound) => bound.pattern),
+    );
     const test = `if (body(${generateExpression(generator, expression.body, bodyFrame)}, ${addReference(generator, expression)}) !== ${isForall}) return ${!isForall};`;
     const loops = elements.reduce(
       (code, element, index) => generateLoop(generator, lists[index], element, code),
       test,
     );
-    return `${declarations.join(" ")} ${loops} return ${isForall};`;
+    return `${declarations.join(" ")} ${declareHoisted(loop)} ${loops} return ${isForall};`;
   });
 };
 
@@ -252,8 +265,9 @@ const generateChoose = (
     const node = addReference(generator, expression);
     const elements = `choiceElements(${generateExpression(generator, set, bodyFrame)}, ${node}, ${addReference(generator, set)}, ${JSON.stringify(generator.environment.runtime.version)})`;
     bodyFrame.locals.set(name, element);
+    const loop = enterLoop(bodyFrame, [expression.pattern]);
     const test = `if (body(${generateExpression(generator, expression.body, bodyFrame)}, ${node})) return ${element};`;
-    return `const ${list} = ${elements}; ${generateLoop(generator, list, element, test)} return noChoice(${node});`;
+    return `const ${list} = ${elements}; ${declareHoisted(loop)} ${generateLoop(generator, list, element, test)} return noChoice(${node});`;
   });
 
 const generateSetFilter = (
@@ -272,8 +286,9 @@ const generateSetFilter = (
     const lazy = `if (!isReducible(${base})) return ${filterLazily}(${base}, ${getDelegateContext(generator, expression, bodyFrame)});`;
     const set = generateExpression(generator, expression.bound.set, bodyFrame);
     bodyFrame.locals.set(name, element);
+    const loop = enterLoop(bodyFrame, [expression.bound.pattern]);
     const test = `if (filterPredicate(${generateExpression(generator, expression.predicate, bodyFrame)}, ${node})) addBounded(${kept}, ${element});`;
-    return `const ${base} = ${set}; ${lazy} const ${list} = ${base}.kind === "Interval" ? ${base} : finiteElements(${base}); const ${kept} = []; ${generateLoop(generator, list, element, test)} return normalizedSet(${kept});`;
+    return `const ${base} = ${set}; ${lazy} const ${list} = ${base}.kind === "Interval" ? ${base} : finiteElements(${base}); const ${kept} = []; ${declareHoisted(loop)} ${generateLoop(generator, list, element, test)} return normalizedSet(${kept});`;
   });
 
 const generateFunctionConstruction = (
@@ -294,8 +309,9 @@ const generateFunctionConstruction = (
     const built = `if (context.isKeepLazy || !isReducible(${domain})) return ${builder}.build(${domain}, ${builtContext});`;
     const set = generateExpression(generator, expression.bounds[0].set, bodyFrame);
     bodyFrame.locals.set(name, element);
+    const loop = enterLoop(bodyFrame, [expression.bounds[0].pattern]);
     const store = `const ${value} = ${generateExpression(generator, expression.body, bodyFrame)}; if (!${isBeyond}) ${values}.push(${value});`;
-    return `const ${domain} = ${set}; ${built} const ${isBeyond} = isBeyondBound(${domain}); const ${keys} = ${isBeyond} ? ${domain} : functionDomain(${domain}); if (${isBeyond}) cardinality(${domain}); const ${values} = []; ${generateLoop(generator, keys, element, store)} return ${isBeyond} ? ${builder}.createLazy(${domain}, ${builtContext}) : sortedFunction(${keys}, ${values});`;
+    return `const ${domain} = ${set}; ${built} const ${isBeyond} = isBeyondBound(${domain}); const ${keys} = ${isBeyond} ? ${domain} : functionDomain(${domain}); if (${isBeyond}) cardinality(${domain}); const ${values} = []; ${declareHoisted(loop)} ${generateLoop(generator, keys, element, store)} return ${isBeyond} ? ${builder}.createLazy(${domain}, ${builtContext}) : sortedFunction(${keys}, ${values});`;
   });
 
 const generateApply = (
@@ -384,7 +400,100 @@ const isReadOnly = (expression: Expression): boolean => {
   }
 };
 
+const getPatternNames = (pattern: BoundPattern) =>
+  pattern.kind === "Name" ? [pattern.name] : pattern.names;
+
+const getBinderNames = (expression: Expression) => {
+  switch (expression.kind) {
+    case "Forall":
+    case "Exists":
+    case "SetMap":
+    case "FunctionConstruction":
+      return expression.bounds.flatMap((bound) => getPatternNames(bound.pattern));
+    case "SetFilter":
+      return getPatternNames(expression.bound.pattern);
+    case "Choose":
+      return getPatternNames(expression.pattern);
+    case "UnboundedQuantifier":
+      return expression.names;
+    case "Lambda":
+      return expression.params;
+    case "Let":
+      return expression.definitions.flatMap((definition) => [
+        definition.name,
+        ...(definition.kind === "Operator"
+          ? definition.params.map((param) => param.name)
+          : definition.bounds.flatMap((bound) => getPatternNames(bound.pattern))),
+      ]);
+    default:
+      return [];
+  }
+};
+
+const enterLoop = (frame: Frame, patterns: BoundPattern[]) => {
+  const loop: Loop = { names: patterns.flatMap(getPatternNames), hoisted: [] };
+  frame.loop = loop;
+  return loop;
+};
+
+const declareHoisted = (loop: Loop) =>
+  loop.hoisted.length === 0 ? "" : `let hoisted, ${loop.hoisted.join(", ")};`;
+
+// An expression the scope binds, such as an operator's parameter, may hold an argument that has an
+// effect, so only names bound inside the expression, or to a loop's element, are known to be pure.
+const isLoopInvariant = (
+  expression: Expression,
+  frame: Frame,
+  loop: Loop,
+  environment: Environment,
+) => {
+  if (LITERAL_KINDS.has(expression.kind)) return false;
+  if (expression.kind === "Identifier" && !isLocallyResolved(expression)) {
+    const global = findGlobalName(expression.name, environment);
+    if (global?.kind === "Variable" || global?.kind === "Value") return false;
+  }
+  const references: (Expression & { kind: "Identifier" | "Apply" | "OperatorReference" })[] = [];
+  const boundNames = new Set<string>();
+  const visit = (node: Expression): boolean => {
+    if (node.kind === "Subexpression") return false;
+    if (node.kind === "Let" && node.instances !== undefined && node.instances.length > 0) {
+      return false;
+    }
+    getBinderNames(node).forEach((name) => boundNames.add(name));
+    if (node.kind === "Identifier" || node.kind === "Apply" || node.kind === "OperatorReference") {
+      references.push(node);
+    }
+    return getChildren(node).every(visit);
+  };
+  if (!visit(expression)) return false;
+  const isKnown = references.every((reference) => {
+    const name = reference.kind === "Identifier" ? reference.name : reference.operator;
+    if (loop.names.includes(name)) return false;
+    if (frame.locals.has(name) || boundNames.has(name)) return true;
+    if (reference.kind !== "OperatorReference" && isLocallyResolved(reference)) return false;
+    return (
+      findGlobalName(name, environment) !== undefined ||
+      resolveGlobalOperator(name, environment) !== undefined
+    );
+  });
+  return isKnown && isRepeatable(expression, environment);
+};
+
+// A loop evaluates an invariant subexpression when its body first reaches it, so an empty domain or
+// a short circuit skips it as before. TLC builds a set or function anew at each evaluation and
+// normalizes it in place, so the loop keeps only a primitive value.
 const generateExpression = (generator: Generator, expression: Expression, frame: Frame): string => {
+  const loop = frame.loop;
+  if (loop === undefined || !isLoopInvariant(expression, frame, loop, generator.environment)) {
+    return generateNode(generator, expression, frame);
+  }
+  const local = createLocal(generator);
+  loop.hoisted.push(local);
+  const code = generateNode(generator, expression, { ...frame, loop: undefined });
+  return `(${local} ?? (typeof (hoisted = ${code}) === "object" ? hoisted : (${local} = hoisted)))`;
+};
+
+const generateNode = (generator: Generator, expression: Expression, frame: Frame): string => {
   const generate = (node: Expression, nodeFrame = frame) =>
     generateExpression(generator, node, nodeFrame);
   switch (expression.kind) {
@@ -464,6 +573,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         next: "undefined",
         isPrimed: true,
         locals: frame.locals,
+        loop: frame.loop,
       });
     case "Unchanged": {
       const primed = generate({
@@ -526,6 +636,7 @@ export const generateEvaluator = (
     next: "next",
     isPrimed: false,
     locals: new Map(),
+    loop: undefined,
   };
   const body = generateExpression(generator, expression, frame);
   const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
