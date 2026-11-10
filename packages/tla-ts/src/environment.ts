@@ -955,14 +955,12 @@ export const createEnvironment = (
       parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
     const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
-    const isInstancedAfterDefinition = (nested: Module) => {
-      const first = parsed.instances.find((instance) => instance.module === nested.name);
-      return first !== undefined && isBefore(nested.location, first.location);
-    };
     const getLetModule = (instance: Instance) => {
       const ownModule = parsed.modules.find((nested) => nested.name === instance.module);
       if (!ownModule) return getVisibleModules().get(instance.module);
-      return isInstancedAfterDefinition(ownModule) ? modules.get(ownModule.name) : undefined;
+      return isBefore(ownModule.location, instance.location)
+        ? modules.get(ownModule.name)
+        : undefined;
     };
     const getUnit = (module: Module): ModuleUnit => ({
       imported: visible,
