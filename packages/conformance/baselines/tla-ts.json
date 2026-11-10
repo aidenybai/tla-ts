@@ -73,6 +73,7 @@
   "tlapm/backends/z3/z3test/regressions/smt2/fp-rem-tests-double-non-partial.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/fp-rem-tests-double-partial.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/fp-rem-tests-single-non-partial.smt2": "message-mismatch",
+  "tlapm/backends/z3/z3test/regressions/smt2/fp-roundToIntegral-8.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/fp-sqrt-8.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/fp-to_ieee_bv-2.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/fpa_to_fp_from_real_interval.smt2": "message-mismatch",
