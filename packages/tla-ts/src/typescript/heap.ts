@@ -164,9 +164,12 @@ export const getMethodValue = (
   context: Context,
 ) => {
   if (ts.isGetAccessorDeclaration(method)) return getAccessorValue(method, context);
-  const symbol = getSymbol(method.name, context.checker);
+  const symbol = ts.isComputedPropertyName(method.name)
+    ? context.checker.getTypeAtLocation(method).getSymbol()
+    : getSymbol(method.name, context.checker);
   if (symbol === undefined) throw new TlaTypeScriptError("Name this method", method);
-  return getModelValue(method, symbol, `${method.name.getText()}Method`, context);
+  const name = ts.isComputedPropertyName(method.name) ? "computed" : method.name.getText();
+  return getModelValue(method, symbol, `${name}Method`, context);
 };
 
 // A getter or setter has its own value, though it shares its property's symbol.

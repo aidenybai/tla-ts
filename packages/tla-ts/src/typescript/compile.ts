@@ -143,6 +143,24 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   }
   const model = readModel(sourceFile, context);
   rejectSharing(program.sourceFile, context);
+  // A using declaration disposes nothing where it holds only null or undefined.
+  const isNothing = (node: ts.Expression | undefined) =>
+    node !== undefined &&
+    (node.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isIdentifier(node) && node.text === "undefined") ||
+      (ts.isArrayLiteralExpression(node) && node.elements.length === 0));
+  const findUsing = (node: ts.Node): ts.Node | undefined =>
+    ts.isVariableDeclarationList(node) &&
+    (node.flags & ts.NodeFlags.Using) !== 0 &&
+    !(ts.isForOfStatement(node.parent)
+      ? isNothing(node.parent.expression)
+      : node.declarations.every((declaration) => isNothing(declaration.initializer)))
+      ? node
+      : ts.forEachChild(node, findUsing);
+  const using = findUsing(program.sourceFile);
+  if (using !== undefined) {
+    throw new TlaTypeScriptError("tla-ts can't dispose what a using declaration holds", using);
+  }
   const sections = createSections();
   sections.init.push(
     ...(context.heap === undefined &&

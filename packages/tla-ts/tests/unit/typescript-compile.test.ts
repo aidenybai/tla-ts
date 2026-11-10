@@ -1698,6 +1698,29 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("defines an object literal's methods under computed keys", async () => {
+    const result = await checkModel(`
+      const iterable = {
+        [Symbol.iterator]() {
+          return 3;
+        },
+        ["plain" + "Key"]() {
+          return 4;
+        },
+      };
+      if (typeof iterable[Symbol.iterator] !== "function") throw new Error("typeof");
+      if (Object.getOwnPropertySymbols(iterable).length !== 1) throw new Error("symbols");
+      if (Object.keys(iterable).join() !== "plainKey") throw new Error("keys");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects a using declaration, whose resource it doesn't dispose", () => {
+    expect(() =>
+      compile("const holder = {};\n{\n  using resource = { [Symbol.dispose]() {} };\n}"),
+    ).toThrow("tla-ts can't dispose what a using declaration holds");
+  });
+
   it("rejects a symbol key on a value that isn't an object", () => {
     expect(() => compile("const map = new Map();\nconst read = map[Symbol.iterator];")).toThrow(
       "tla-ts can't read what a symbol keys on this value",

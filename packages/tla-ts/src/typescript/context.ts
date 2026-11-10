@@ -797,14 +797,18 @@ export const getPrivateMember = (name: ts.PrivateIdentifier, context: Context) =
 
 // A plain method that a script makes once, of an object literal or a heap class, which a value can
 // name, since each call checks that the property still holds it.
-export const getObjectMethod = (node: ts.Node | undefined, context: Context) =>
-  node !== undefined &&
-  (isPlainMethod(node) || isPrivateMethod(node)) &&
-  (ts.isObjectLiteralExpression(node.parent)
-    ? isOnce(node.parent)
-    : ts.isClassLike(node.parent) && isHeapClass(node.parent, context))
+// A method of an object literal may have a computed name, such as [Symbol.iterator].
+export const getObjectMethod = (node: ts.Node | undefined, context: Context) => {
+  if (node === undefined || !ts.isMethodDeclaration(node) || node.body === undefined) {
+    return undefined;
+  }
+  if (ts.isObjectLiteralExpression(node.parent)) return isOnce(node.parent) ? node : undefined;
+  return (isPlainMethod(node) || isPrivateMethod(node)) &&
+    ts.isClassLike(node.parent) &&
+    isHeapClass(node.parent, context)
     ? node
     : undefined;
+};
 
 export interface CalledMethod {
   method: ts.MethodDeclaration | ts.GetAccessorDeclaration;
