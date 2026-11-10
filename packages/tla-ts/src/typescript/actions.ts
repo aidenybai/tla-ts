@@ -168,7 +168,8 @@ interface Suspension {
   // generator completes.
   resume: ((path: Path) => Formula) | undefined;
   isStarted: boolean;
-  isInTry: boolean;
+  // Whether it suspended inside a try or a yield*, which a return or a throw would have to run.
+  isGuarded: boolean;
   isAsync: boolean;
   // The promises of the nexts that called an async generator while its body ran, which it settles
   // in order once it yields or completes.
@@ -265,6 +266,29 @@ interface Thrown {
   uncaught: Expression;
 }
 
+interface YieldMode {
+  // A yield* passes on what it yields, which an async generator doesn't await.
+  isDelegated: boolean;
+  // Whether a return or a throw at the yield would run code, such as a finally block or the close
+  // of an iterator, which tla-ts doesn't follow.
+  isGuarded: boolean;
+}
+
+// A frame whose yields a return or a throw can't complete.
+const guardYields = (frame: Frame): Frame => {
+  const yieldTo = frame.yieldTo;
+  return {
+    ...frame,
+    yieldTo:
+      yieldTo &&
+      ((path, value, rest, throwRest, mode) =>
+        yieldTo(path, value, rest, throwRest, {
+          isDelegated: mode?.isDelegated ?? false,
+          isGuarded: true,
+        })),
+  };
+};
+
 export interface Frame {
   // What follows the statements once they complete.
   next: (path: Path) => Formula;
@@ -281,6 +305,7 @@ export interface Frame {
         value: Expression | undefined,
         rest: (path: Path) => Formula,
         throwRest: (path: Path, thrown: Expression) => Formula,
+        mode?: YieldMode,
       ) => Formula)
     | undefined;
   // What an await does in an async function's body, with what follows once the promise settles.
@@ -1220,7 +1245,7 @@ const makeGenerator = (
       if (caller === undefined) throw new TlaTypeScriptError("Unsupported generator", node);
       return caller;
     };
-    const leave = (current: Path, resume: Suspension["resume"]): Path => ({
+    const leave = (current: Path, resume: Suspension["resume"], isGuarded = false): Path => ({
       ...leaveBody(current, getCaller(current).path, changed, isOuter),
       generators: new Map([
         ...current.generators,
@@ -1231,7 +1256,7 @@ const makeGenerator = (
             generator: callee,
             resume,
             isStarted: true,
-            isInTry: current.scope.isCatching,
+            isGuarded,
             isAsync,
             queue: current.generators.get(name)?.queue ?? [],
           },
@@ -1315,14 +1340,14 @@ const makeGenerator = (
         return caller.throwTo === undefined ? leaf(thrown.uncaught) : caller.throwTo(left, thrown);
       },
       // An async generator's yield awaits its value.
-      yieldTo: (current, value, rest, throwRest) => {
+      yieldTo: (current, value, rest, throwRest, mode) => {
         const step = (resumed: Path, settled: Expression | undefined) =>
           getCaller(resumed).step(
-            leave(resumed, (resumer) => rest(enter(resumer, resumed))),
+            leave(resumed, (resumer) => rest(enter(resumer, resumed)), mode?.isGuarded),
             settled,
             false,
           );
-        return isAsync
+        return isAsync && mode?.isDelegated !== true
           ? suspend(
               current,
               value ?? getUndefined(context),
@@ -1347,7 +1372,7 @@ const makeGenerator = (
       resume: (resumer) =>
         translateStatements(getBody(callee), enter(resumer, start), context, bodyFrame),
       isStarted: false,
-      isInTry: false,
+      isGuarded: false,
       isAsync,
       queue: [],
     };
@@ -1488,8 +1513,13 @@ const resumeGenerator = (
           ]),
         });
       }
-      if (resume !== undefined && suspension.isStarted && suspension.isInTry) {
-        throw new TlaTypeScriptError("tla-ts can't close a generator that suspended in try", node);
+      if (resume !== undefined && suspension.isStarted && suspension.isGuarded) {
+        return leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't close a generator that suspended in try or yield*"),
+          ]),
+        );
       }
       if (method === "throw") {
         const thrown =
@@ -1564,8 +1594,13 @@ const resumeGenerator = (
         ]),
       });
     }
-    if (resume !== undefined && suspension.isStarted && suspension.isInTry) {
-      throw new TlaTypeScriptError("tla-ts can't close a generator that suspended in try", node);
+    if (resume !== undefined && suspension.isStarted && suspension.isGuarded) {
+      return leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't close a generator that suspended in try or yield*"),
+        ]),
+      );
     }
     if (method === "return") {
       return step(completed, argument && translateExpression(argument, path.scope, context), true);
@@ -2424,6 +2459,62 @@ const translateStaticElements = (
   )(path);
 };
 
+// A yield* of an array written in place, which yields each element. In an async generator, each
+// element takes two jobs, as the async-from-sync iterator awaits it and the yield* then awaits the
+// iterator's result, and the last next takes two more.
+const translateDelegatedYield = (
+  node: ts.YieldExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const yieldTo = frame.yieldTo;
+  const throwTo = frame.throwTo;
+  const awaitTo = frame.awaitTo;
+  const iterated = node.expression && getCast(node.expression);
+  if (
+    yieldTo === undefined ||
+    iterated === undefined ||
+    !ts.isArrayLiteralExpression(iterated) ||
+    iterated.elements.some((element) => ts.isSpreadElement(element))
+  ) {
+    throw new TlaTypeScriptError("Unsupported yield", node);
+  }
+  const sequence = context.names.getFresh("sequence");
+  const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+  const throwWith = (current: Path, value: Expression) =>
+    throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
+  const tick = (current: Path, next: (path: Path) => Formula) =>
+    awaitTo === undefined
+      ? next(current)
+      : awaitTo(current, getUndefined(context), undefined, next, next);
+  const delegate = (current: Path, position: number): Formula => {
+    if (position === iterated.elements.length) {
+      return tick(current, (resumed) => tick(resumed, continueWith));
+    }
+    const element = iterated.elements[position];
+    const value = index(identifier(sequence), [number(position + 1)]);
+    const next = (after: Path) => delegate(after, position + 1);
+    const mode = { isDelegated: true, isGuarded: true };
+    if (awaitTo === undefined) return yieldTo(current, value, next, throwWith, mode);
+    return awaitTo(
+      current,
+      value,
+      ts.isOmittedExpression(element) ? undefined : element,
+      (fulfilled, settled) =>
+        tick(fulfilled, (resumed) => yieldTo(resumed, settled, next, throwWith, mode)),
+      (rejected, reason) => tick(rejected, (resumed) => throwWith(resumed, reason)),
+    );
+  };
+  return allocate(iterated, path, context, (inner) =>
+    letIn(
+      [define(sequence, [], translateExpression(iterated, inner.scope, context))],
+      delegate(inner, 0),
+    ),
+  );
+};
+
 const translateExpressionStatement = (
   expression: ts.Expression,
   path: Path,
@@ -2449,6 +2540,9 @@ const translateExpressionStatement = (
   const constructor = getConstructorRun(expression, context);
   if (constructor !== undefined && ts.isNewExpression(expression)) {
     return translateConstruction(expression, constructor, path, context, frame, continueWith);
+  }
+  if (ts.isYieldExpression(expression) && expression.asteriskToken !== undefined) {
+    return translateDelegatedYield(expression, path, context, frame, continueWith);
   }
   if (ts.isYieldExpression(expression)) {
     const yielded = expression.expression;
@@ -3308,7 +3402,7 @@ const translateForAwait = (
     }
     const element = iterated.elements[position];
     const bodyFrame: Frame = {
-      ...frame,
+      ...guardYields(frame),
       next: (after) => iterate(after, position + 1),
       continueTo: (after) => iterate(after, position + 1),
       breakTo: (after) => tick(after, continueWith),
@@ -3604,7 +3698,7 @@ const translateTry = (
           catchClause.block.statements,
           { ...caught, scope: bound.scope },
           context,
-          outer,
+          statement.finallyBlock === undefined ? outer : guardYields(outer),
         ),
         leaf(boolean(false)),
         context,
@@ -3615,7 +3709,7 @@ const translateTry = (
     statement.tryBlock.statements,
     { ...path, scope: { ...path.scope, isCatching: true } },
     context,
-    { ...outer, throwTo: handle },
+    guardYields({ ...outer, throwTo: handle }),
   );
 };
 

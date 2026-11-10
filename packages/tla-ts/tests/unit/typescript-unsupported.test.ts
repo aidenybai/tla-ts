@@ -40,7 +40,7 @@ const CASES: [string, string][] = [
     "yielding inside a loop",
     "const make = function* () { for (const value of values) yield; }; make().next();",
   ],
-  ["delegating a yield", "const make = function* () { yield* [1]; }; make().next();"],
+  ["delegating a yield to a string", 'const make = function* () { yield* "ab"; }; make().next();'],
   ["calling an async function", "const run = async () => { count++; }; run();"],
   [
     "a var that redeclares a catch parameter",

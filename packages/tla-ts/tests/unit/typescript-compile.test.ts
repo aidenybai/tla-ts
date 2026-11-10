@@ -1889,6 +1889,69 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("yields each element of an array that yield* takes", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; })
+        .then(() => { log = log + "6"; })
+        .then(() => { log = log + "7"; })
+        .then(() => { log = log + "8"; });
+      const rejected = Promise.reject("r");
+      async function* gen() {
+        log = log + "g";
+        yield* [10, 20];
+        log = log + "h";
+        try {
+          yield* [rejected];
+        } catch (error) {
+          log = log + "c" + error;
+        }
+      }
+      const iterator = gen();
+      iterator.next().then((result: IteratorResult<number>) => {
+        log = log + "a" + result.value + (result.done === true);
+      });
+      iterator.next().then((result: IteratorResult<number>) => {
+        log = log + "b" + result.value + (result.done === true);
+      });
+      iterator.next().then((result: IteratorResult<number>) => {
+        log = log + "d" + result.value + (result.done === true);
+      });
+      function* sync() {
+        yield* [1, 2];
+        log = log + "e";
+      }
+      const syncIterator = sync();
+      const first = syncIterator.next();
+      const second = syncIterator.next();
+      const third = syncIterator.next();
+      log = log + "x" + (first.value === 1) + (second.value === 2) + (third.done === true);
+      setTimeout(() => {
+        if (log !== "gextruetruetrue123a10false45b20false6h78crdundefinedtrue") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a return would close a generator inside yield*", async () => {
+    await expect(
+      checkModel(`
+        function* gen() {
+          yield* [1, 2];
+        }
+        const iterator = gen();
+        iterator.next();
+        iterator.return();
+      `),
+    ).rejects.toThrow("tla-ts can't close a generator that suspended in try or yield*");
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";
