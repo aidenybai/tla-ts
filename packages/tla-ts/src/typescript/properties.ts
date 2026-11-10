@@ -31,6 +31,7 @@ export const VALUE_TAGS = new Set([
   "initially",
   "always",
   "leadsTo",
+  "terminating",
 ]);
 
 // The scope of an action property, whose one parameter names the state before the step, and whose
@@ -118,6 +119,11 @@ export const translateProperty = (
         : `${name} ==\n  [][${value}]_vars`,
     );
     sections.properties.push(name);
+  }
+  // An end state takes a step that changes nothing, as PlusCal's Terminating does.
+  if (tag === "terminating") {
+    sections.actions.push(`${name} ==\n  ${value}`);
+    sections.next.push(`${name} /\\ UNCHANGED vars`);
   }
   if (tag === "initially") sections.init.push(value);
   if (predicate !== undefined) {
