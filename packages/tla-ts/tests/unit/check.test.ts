@@ -2610,10 +2610,14 @@ describe("evaluation errors match TLC", () => {
       `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 19 to line 5, col 23 of module M`,
       75,
     ]);
-    expect(await getFailure("x = 0", "3")).toEqual([
-      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
-      255,
-    ]);
+    // Tool's constructor rejects such a relation before TLC computes the initial states.
+    const error = await getFailure("x = 0", "3").catch((caught: unknown) => caught);
+    expect(error).toEqual(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
+      ),
+    );
+    expect(error instanceof Error && getExitCode(error)).toBe(255);
   });
 
   it("reports a failing constraint on a successor like a failure of the next-state relation", async () => {

@@ -1221,8 +1221,14 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       );
     }
   }
-  const inputs = getInputPaths(parsed.specs);
   const isConfigured = parsed.configPath !== undefined;
+  if (isConfigured && parsed.specs.length > 1) {
+    return printCommandLineError(
+      createMessagePrinter(parsed.isTool, true, version),
+      `Error: more than one input files: ${parsed.specs[0].replace(/\.tla$/, "")} and ${parsed.specs[1]}`,
+    );
+  }
+  const inputs = getInputPaths(parsed.specs);
   // A spec named without an extension is the .tla file of that name. A glob also matches modules
   // that only other specs import, which have no configuration.
   const specPaths = inputs

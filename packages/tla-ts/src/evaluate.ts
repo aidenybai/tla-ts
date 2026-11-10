@@ -129,7 +129,11 @@ export interface Thunk {
   isStreamed: boolean;
 }
 
-type Binding = { kind: "Value"; value: Value } | Thunk | { kind: "Operator"; operator: Operator };
+type Binding =
+  // A literal argument keeps its expression, which TLC binds lazily like any other.
+  | { kind: "Value"; value: Value; argument?: Expression }
+  | Thunk
+  | { kind: "Operator"; operator: Operator };
 
 export interface Scope {
   name: string;
@@ -465,7 +469,7 @@ export const isEquivalent = (left: Value, right: Value, expression: Expression) 
 export const expectBooleanBody = (value: Value, expression: Expression) => {
   if (typeof value !== "boolean") {
     throw new TlaEvaluationError(
-      `TLC expected a boolean value, but did not find one. ${describeRange(expression)}`,
+      `TLC expected a boolean value, but did not find one. ${describeNode(expression)}`,
     );
   }
   return value;
@@ -1035,7 +1039,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
   const isLiteral =
     argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
   if (isLiteral) {
-    const binding: Binding = { kind: "Value", value: argument.value };
+    const binding: Binding = { kind: "Value", value: argument.value, argument };
     return () => binding;
   }
   // TLC counts an argument where the operator's body evaluates it, under the call.
@@ -2207,10 +2211,16 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const action = getChildEvaluator(expression.action);
       const unchanged = compileUnchanged(getChildEvaluator(expression.subscript));
       const isBox = expression.kind === "BoxAction";
-      return (context) =>
-        isBox
-          ? expectBoolean(action(context), "an action") || unchanged(context)
-          : expectBoolean(action(context), "an action") && !unchanged(context);
+      const form = isBox ? "[A]_e" : "<A>_e";
+      return (context) => {
+        const value = action(context);
+        if (typeof value !== "boolean") {
+          throw new TlaEvaluationError(
+            `Attempted to evaluate an expression of form ${form}, but A was not a boolean.\n${describeRange(expression)}`,
+          );
+        }
+        return isBox ? value || unchanged(context) : value && !unchanged(context);
+      };
     }
     case "Enabled": {
       const action = expression.expression;

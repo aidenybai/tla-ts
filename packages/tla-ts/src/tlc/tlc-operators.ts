@@ -21,7 +21,6 @@ import { getRandomElement } from "./random";
 import {
   ANY_SET,
   createFunction,
-  createRecord,
   createSet,
   createTuple,
   createWrittenFunction,
@@ -37,6 +36,7 @@ import {
   rankString,
   setFunctionClass,
 } from "../values";
+import { getFingerprintPolynomial } from "./fingerprint";
 
 const padTime = (value: number) => String(value).padStart(2, "0");
 
@@ -46,10 +46,11 @@ const formatCalendarVersion = (date: Date) =>
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
-// TLC creates its model checker after it processes the spec, so these are undefined before then.
-// TLC builds the checker's records unnormalized, so they print in the order it writes them.
-const createCheckerRecord = (fields: [string, Value][]) =>
+// TLC doesn't normalize the records it builds, so they keep their written order.
+const createTlcRecord = (fields: [string, Value][]) =>
   setFunctionClass(createWrittenFunction(fields), "record");
+
+// TLC creates its model checker after it processes the spec, so these are undefined before then.
 
 const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
 const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
@@ -82,7 +83,7 @@ const getRuntimeValue = (
     case "duration":
       return duration;
     case "stats":
-      return createCheckerRecord([
+      return createTlcRecord([
         ["queue", runtime.queueSize],
         ["distinct", runtime.distinctStates],
         ["initial", runtime.initialStates],
@@ -92,17 +93,17 @@ const getRuntimeValue = (
         ["worker", 0],
       ]);
     case "config":
-      return createCheckerRecord([
+      return createTlcRecord([
         ["mode", "bfs"],
         ["deadlock", runtime.checkDeadlock],
         ["worker", 1],
         ["seed", String(runtime.seed)],
-        ["fingerprint", "0"],
+        ["fingerprint", String(BigInt.asIntN(64, getFingerprintPolynomial()))],
         ["install", "unknown"],
       ]);
     case "revision": {
       const now = new Date();
-      return createRecord([
+      return createTlcRecord([
         ["count", 0],
         ["timestamp", Math.floor(now.getTime() / 1000)],
         ["date", rankString(`${now.toISOString().slice(0, 19)}.${now.getUTCMilliseconds()}Z`)],

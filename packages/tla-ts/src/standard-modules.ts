@@ -43,7 +43,7 @@ import {
   getCardinality,
   getDomain,
   getSortedIntersection,
-  getStreamedElements,
+  someStreamedElement,
   isElementOf,
   getSequenceElements,
   isEmptySet,
@@ -189,7 +189,7 @@ export const CORE_OPERATORS: Builtin[] = [
       }
       return true;
     }
-    return isSubsetOf(getStreamedElements(left), right);
+    return !someStreamedElement(left, (element) => !isElementOf(element, right));
   }),
   // TLC defers set operations on non-sets to enumerating or testing membership in the result.
   ...SET_OPERATORS.map((operator) =>

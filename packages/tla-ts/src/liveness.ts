@@ -159,10 +159,29 @@ export const getLevel = (
       return getNameLevel(expression.name, expression);
     case "OperatorReference":
       return getNameLevel(expression.operator, expression);
-    case "Apply":
+    case "Apply": {
       if (TEMPORAL_OPERATORS.has(expression.operator)) return TEMPORAL_LEVEL;
       if (expression.operator === "\\cdot") return ACTION_LEVEL;
-      return Math.max(getNameLevel(expression.operator, expression), getChildrenLevel(expression));
+      const operatorLevel = getNameLevel(expression.operator, expression);
+      const level = Math.max(operatorLevel, getChildrenLevel(expression));
+      const operator = isLocallyResolved(expression)
+        ? undefined
+        : resolveGlobalOperator(expression.operator, environment);
+      if (
+        level === operatorLevel ||
+        operator?.kind !== "Closure" ||
+        operator.params.length !== expression.args.length
+      ) {
+        return level;
+      }
+      // SANY counts an argument only where the definition's level depends on its parameter, so
+      // ENABLED of an operator argument stays a state predicate.
+      return getBodyLevel(
+        operator,
+        operator.body,
+        bindOperatorArguments(operator, expression.args, getConstantContext(environment, scope)),
+      );
+    }
     default:
       return getChildrenLevel(expression);
   }

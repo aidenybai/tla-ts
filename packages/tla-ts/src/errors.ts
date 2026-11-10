@@ -188,6 +188,15 @@ export class TlaModuleError extends TlaEvaluationError {
   }
 }
 
+// TLC reports an Assert.fail of TLC_FEATURE_UNSUPPORTED as it is, even as it starts.
+export class TlaFeatureUnsupportedError extends TlaEvaluationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+    setExitCode(this, EXIT_STATUS.error);
+  }
+}
+
 // TLC's WrongInvocationException, which its CallStackTool records no call stack for.
 export class TlaSetBoundError extends TlaEvaluationError {
   constructor(message: string) {

@@ -485,7 +485,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         successorStack[0] = [];
         position.level = 0;
         const isInitialLeaf = toLevel < 2;
-        checker.isMoreLevel ||= !expandState(0, isInitialLeaf, successorStack[0]);
+        const isInitialNoLeaf = expandState(0, isInitialLeaf, successorStack[0]);
+        checker.isMoreLevel ||= !isInitialNoLeaf;
         position.level = 1;
         while (!isInitialLeaf) {
           const index = getNextIndex(successorStack[position.level - 1], position.level);
@@ -502,11 +503,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           stack[position.level] = successorStack[position.level - 1][index];
           successorStack[position.level] = [];
           const isLeaf = position.level >= toLevel - 1;
-          checker.isMoreLevel ||= !expandState(
-            position.level,
-            isLeaf,
-            successorStack[position.level],
-          );
+          const isNoLeaf = expandState(position.level, isLeaf, successorStack[position.level]);
+          checker.isMoreLevel ||= !isNoLeaf;
           position.level++;
           if (isLeaf) break;
         }

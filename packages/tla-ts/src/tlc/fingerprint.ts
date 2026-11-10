@@ -143,6 +143,10 @@ const POLYNOMIALS = [
   0x91f5a5fa9c5515a5n,
 ];
 
+const selected = { polynomial: POLYNOMIALS[0] };
+
+export const getFingerprintPolynomial = () => selected.polynomial;
+
 const SLICE_HIGH_0 = new Int32Array(256);
 const SLICE_HIGH_1 = new Int32Array(256);
 const SLICE_HIGH_2 = new Int32Array(256);
@@ -167,6 +171,7 @@ const extendByte = (byte: number) => {
 // bytes that come after it: SLICE_HIGH_k and SLICE_LOW_k hold them for k zero bytes after.
 export const setFingerprintPolynomial = (index: number) => {
   const polynomial = POLYNOMIALS[index];
+  selected.polynomial = polynomial;
   const powers: bigint[] = [];
   for (let power = 1n << 63n; powers.length < 72;) {
     powers.push(power);

@@ -19,6 +19,7 @@ import {
   formatSanyWarnings,
   TlaConfigError,
   TlaEvaluationError,
+  TlaFeatureUnsupportedError,
   TlaModuleError,
   TlaSyntaxError,
   UNEXPECTED_EXCEPTION,
@@ -163,7 +164,13 @@ const toConstantValue = (value: ConfigValue) => {
   try {
     return toValue(value);
   } catch (error) {
-    if (!(error instanceof TlaEvaluationError) || error instanceof TlaModuleError) throw error;
+    if (
+      !(error instanceof TlaEvaluationError) ||
+      error instanceof TlaModuleError ||
+      error instanceof TlaFeatureUnsupportedError
+    ) {
+      throw error;
+    }
     throw setExitCode(
       new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
       EXIT_STATUS.error,
@@ -923,12 +930,16 @@ export const createEnvironment = (
       }
       const linked = nested ?? getLinkedModule(name, parsed.name);
       constants.push(
-        ...linked.constants.filter((constant) =>
-          constants.every((existing) => existing.name !== constant.name),
+        ...linked.constants.filter(
+          (constant) =>
+            constants.every((existing) => existing.name !== constant.name) &&
+            !variables.includes(constant.name),
         ),
       );
       linked.variables.forEach((variable, index) => {
-        if (variables.includes(variable)) return;
+        const isDeclared =
+          variables.includes(variable) || constants.some((constant) => constant.name === variable);
+        if (isDeclared) return;
         variables.push(variable);
         variableLocations.push(linked.variableLocations[index]);
       });

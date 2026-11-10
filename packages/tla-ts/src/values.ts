@@ -1,4 +1,10 @@
-import { isStackOverflow, TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
+import {
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaFeatureUnsupportedError,
+  TlaModuleError,
+  TlaSetBoundError,
+} from "./errors";
 import { prettyPrint } from "./pretty-print";
 import { isEvalException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
@@ -536,10 +542,18 @@ export const compareValues = (left: Value, right: Value): number => {
 
 const modelValues = new Map<string, ModelValue>();
 
+// ModelValue's index is a short.
+const MAXIMUM_MODEL_VALUES = 32768;
+
 // setStringOrder clears the model values, so each check ranks and creates its own.
 export const createModelValue = (name: string): ModelValue => {
   const known = modelValues.get(name);
   if (known) return known;
+  if (modelValues.size === MAXIMUM_MODEL_VALUES) {
+    throw new TlaFeatureUnsupportedError(
+      `TLC supports at most ${MAXIMUM_MODEL_VALUES} model values, but model value ${name} exceeds this limit.`,
+    );
+  }
   const value: ModelValue = {
     kind: "ModelValue",
     name,
@@ -676,12 +690,6 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     }
     return compareValues(left, right) === 0;
   }
-  const isHashed =
-    (left.kind === "Set" || left.kind === "Function") &&
-    (right.kind === "Set" || right.kind === "Function") &&
-    left.hash !== 0 &&
-    right.hash !== 0;
-  if (isHashed && left.hash !== right.hash) return false;
   if (left.kind === "Function" && right.kind === "Function")
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
@@ -1794,13 +1802,31 @@ export const getNormalizedSetElements = (value: Value) => {
   return elements;
 };
 
-// TLC streams the sets a lazy set combines until it caches it, so a shared element repeats.
-export const getStreamedElements = (value: Value): Value[] => {
-  if (typeof value !== "object" || isCachedSet(value)) return toFiniteSet(value).elements;
+// TLC streams the sets a lazy set combines until it caches it, so a shared element repeats. Like
+// its enumerators, the stream stops at the first element visit accepts.
+export const someStreamedElement = (value: Value, visit: (element: Value) => boolean): boolean => {
+  if (typeof value !== "object" || isCachedSet(value)) {
+    return toFiniteSet(value).elements.some(visit);
+  }
   const sets = setTrace.sets;
   sets?.push(value);
-  const elements = streamElements(value);
+  // The set is enumerated only while it computes an element, not while visit looks at one.
+  const isFound = someElementOfStream(value, (element) => {
+    sets?.pop();
+    const isAccepted = visit(element);
+    sets?.push(value);
+    return isAccepted;
+  });
   sets?.pop();
+  return isFound;
+};
+
+export const getStreamedElements = (value: Value) => {
+  const elements: Value[] = [];
+  someStreamedElement(value, (element) => {
+    elements.push(element);
+    return false;
+  });
   return elements;
 };
 
@@ -1857,30 +1883,36 @@ const isStreamedApart = (value: Value): boolean => {
   return getCombinedSets(value)?.some(isStreamedApart) ?? false;
 };
 
-const streamElements = (value: ObjectValue): Value[] => {
+const someElementOfStream = (value: ObjectValue, visit: (element: Value) => boolean): boolean => {
   // TLC streams the sets of a UNION it hasn't enumerated, so a repeated set yields them twice.
   if (value.kind === "Union") {
-    return getUnionSets(value, getStreamedElements).flatMap((set, index) =>
-      getStreamedElements(getUnionSet(set, index, value)),
+    return getUnionSets(value, getStreamedElements).some((set, index) =>
+      someStreamedElement(getUnionSet(set, index, value), visit),
     );
   }
   if (value.kind === "FilteredSet" && isTlcEnumerable(value.base)) {
-    return getStreamedElements(value.base).filter((element) => value.test(element, false));
+    return someStreamedElement(
+      value.base,
+      (element) => value.test(element, false) && visit(element),
+    );
   }
   const components = getCombinedSets(value);
-  if (components?.some(isStreamedApart)) return enumerateSet(value, getStreamedElements);
-  if (value.kind !== "SetOperation") return toFiniteSet(value).elements;
+  if (components?.some(isStreamedApart)) {
+    return enumerateSet(value, getStreamedElements).some(visit);
+  }
+  if (value.kind !== "SetOperation") return toFiniteSet(value).elements.some(visit);
   if (value.operator === "\\cup") {
     return !isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)
-      ? toFiniteSet(value).elements
-      : [...getStreamedElements(value.left), ...getStreamedElements(value.right)];
+      ? toFiniteSet(value).elements.some(visit)
+      : someStreamedElement(value.left, visit) || someStreamedElement(value.right, visit);
   }
   const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
-  if (!isTlcEnumerable(enumerated)) return toFiniteSet(value).elements;
-  return getStreamedElements(enumerated).filter(
-    (element) => isElementOf(element, other) === (value.operator === "\\cap"),
+  if (!isTlcEnumerable(enumerated)) return toFiniteSet(value).elements.some(visit);
+  return someStreamedElement(
+    enumerated,
+    (element) => isElementOf(element, other) === (value.operator === "\\cap") && visit(element),
   );
 };
 
@@ -3106,16 +3138,26 @@ const isUnchanged = (previous: Value | undefined, value: Value) => {
   }
 };
 
+const formatJava = (format: string, args: string[]) => {
+  const next = { index: 0 };
+  return format.replace(/%s|%n|%%/g, (match) =>
+    match === "%n" ? "\n" : match === "%%" ? "%" : (args[next.index++] ?? match),
+  );
+};
+
 // TLC prints the VIEW of a state, but not of one it prints as a difference from the previous.
 export const formatState = (state: Record<string, Value>, previous?: Record<string, Value>) => {
   const getViewText = previous ? undefined : viewTexts.get(state);
   if (getViewText) return getViewText();
   const entries = Object.entries(state);
+  const format = state._format;
+  const isFormatted = typeof format === "string";
+  const fallback = entries.length === 1 ? "%s = %s\n" : "/\\ %s = %s\n";
   return entries
+    .filter(([name]) => !(isFormatted && name === "_format"))
     .filter(([name, value]) => !previous || !isUnchanged(previous[name], value))
-    .map(
-      ([name, value]) =>
-        `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}\n`,
+    .map(([name, value]) =>
+      formatJava(isFormatted ? format : fallback, [name, prettyPrint(formatValue(value))]),
     )
     .join("");
 };

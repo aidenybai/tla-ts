@@ -630,6 +630,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const specNextActions = { value: undefined as SpecAction[] | undefined };
   const getSpecNextActions = () =>
     (specNextActions.value ??= getNextActions(config, environment, specification.instanceActions));
+  // Tool's constructor splits the next-state relation into actions before TLC checks anything.
+  getSpecNextActions();
   const addCoverageRelations = (kind: "init" | "next", actions: SpecAction[]) =>
     actions.map((action): CoveredAction => ({
       ...action,
