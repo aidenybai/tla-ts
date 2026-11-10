@@ -194,7 +194,8 @@ const getMembers = (node: ts.Node, context: Context) => {
   return type.isUnion() ? type.types : [type];
 };
 
-const isGeneratorMember = (type: ts.Type) => type.getSymbol()?.name === "Generator";
+const isGeneratorMember = (type: ts.Type) =>
+  ["Generator", "AsyncGenerator"].includes(type.getSymbol()?.name ?? "");
 
 export const isGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every(isGeneratorMember);

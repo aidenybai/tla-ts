@@ -164,6 +164,11 @@ export const isGenerator = (node: FunctionNode) =>
 export const isAsyncFunction = (node: FunctionNode) =>
   node.asteriskToken === undefined && isAsync(node);
 
+export const isAsyncGenerator = (node: FunctionNode) =>
+  node.asteriskToken !== undefined && isAsync(node);
+
+export const isAnyGenerator = (node: FunctionNode) => node.asteriskToken !== undefined;
+
 const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
   if (node === undefined) return undefined;
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {

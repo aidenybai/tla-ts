@@ -902,6 +902,72 @@ const awaitValue = (
       ),
   );
 
+// Suspends code at an await: a job resumes it once the promise of the value settles, and the code
+// that ran it continues meanwhile.
+export const awaitIn = (
+  path: Path,
+  node: ts.Node,
+  value: Expression,
+  operand: ts.Expression | undefined,
+  context: Context,
+  resume: (
+    resumer: Path,
+    settled: Expression,
+    isRejected: boolean,
+    onReturn: (path: Path) => Formula,
+  ) => Formula,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const resumeWith = (isRejected: boolean): Handler => ({
+    run: (resumer, settled, onReturn) =>
+      resume(resumer, settled, isRejected, (after) => onReturn(after, getUndefined(context))),
+  });
+  return awaitValue(path, node, value, operand, context, (awaited, awaitedName) =>
+    continueWith(
+      addReaction(
+        awaited,
+        node,
+        awaitedName,
+        { onFulfilled: resumeWith(false), onRejected: resumeWith(true), derived: undefined },
+        context,
+      ),
+    ),
+  );
+};
+
+// Makes the promise of a request to an async generator, which its next, return, or throw gives.
+export const makeRequest = (
+  path: Path,
+  node: ts.Node,
+  context: Context,
+  continueWith: (path: Path, name: string, ref: Expression) => Formula,
+) =>
+  makePromise(path, node, context, (made, name) =>
+    continueWith(made, name, getPromise(made, node, name).ref),
+  );
+
+// Settles the promise of a request to an async generator: with an iterator result of what the
+// body yields or returns, or with what it throws.
+export const settleRequest = (
+  path: Path,
+  node: ts.Node,
+  request: string,
+  value: Expression,
+  isDone: boolean,
+  isThrown: boolean,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+): Formula =>
+  isThrown
+    ? continueWith(settle(path, node, request, value, true, context))
+    : allocateObject(
+        path,
+        node,
+        context,
+        useJavaScript("IteratorResult", [value, boolean(isDone)], context),
+        (made, ref) => resolve(made, node, request, ref, undefined, context, continueWith),
+      );
+
 // A call of an async function, which runs the body until it awaits and gives the promise that the
 // body settles once it returns or throws. The body leaves to the code that last ran it: the call,
 // and then the job that resumed it once a promise it awaited settled.
@@ -974,36 +1040,25 @@ export const translateAsyncCall = (
           yieldTo: undefined,
           awaitTo: (current, value, operand, onFulfilled, onRejected) => {
             const left = leave(current);
-            const resumeWith = (
-              onSettled: (path: Path, value: Expression) => Formula,
-            ): Handler => ({
-              run: (resumer, settled, onReturn) =>
-                onSettled(
+            return awaitIn(
+              left.left,
+              node,
+              value,
+              operand,
+              context,
+              (resumer, settled, isRejected, onReturn) =>
+                (isRejected ? onRejected : onFulfilled)(
                   setCaller(
                     enterBody(
                       resumer,
                       current,
                       (symbol) => isOuter(symbol) && !captured.has(symbol),
                     ),
-                    { path: resumer, resume: (after) => onReturn(after, getUndefined(context)) },
+                    { path: resumer, resume: onReturn },
                   ),
                   settled,
                 ),
-            });
-            return awaitValue(left.left, node, value, operand, context, (awaited, awaitedName) =>
-              left.caller.resume(
-                addReaction(
-                  awaited,
-                  node,
-                  awaitedName,
-                  {
-                    onFulfilled: resumeWith(onFulfilled),
-                    onRejected: resumeWith(onRejected),
-                    derived: undefined,
-                  },
-                  context,
-                ),
-              ),
+              left.caller.resume,
             );
           },
           inlining: new Set([...frame.inlining, callee]),

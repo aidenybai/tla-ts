@@ -22,7 +22,9 @@ import {
   getElement,
   getFunctionOrGenerator,
   isAsyncFunction,
-  isGenerator,
+  isAsyncGenerator,
+  isAnyGenerator,
+  getLocalCaptures,
   isPlain,
   getNewClass,
   skipCasts,
@@ -61,6 +63,9 @@ import {
   EMPTY_TASKS,
   isPromiseCall,
   isPromiseConstruction,
+  makeRequest,
+  settleRequest,
+  awaitIn,
   type Tasks,
   translateAsyncCall,
   translatePromiseCall,
@@ -164,13 +169,85 @@ interface Suspension {
   resume: ((path: Path) => Formula) | undefined;
   isStarted: boolean;
   isInTry: boolean;
+  isAsync: boolean;
+  // The promises of the nexts that called an async generator while its body ran, which it settles
+  // in order once it yields or completes.
+  queue: readonly string[];
   // The call that resumed the body, while it runs, which takes what it yields or returns.
-  caller?: {
-    path: Path;
-    step: (path: Path, value: Expression | undefined, isDone: boolean) => Formula;
-    throwTo: Frame["throwTo"];
-  };
+  caller?: Caller;
 }
+
+interface Caller {
+  path: Path;
+  step: (path: Path, value: Expression | undefined, isDone: boolean) => Formula;
+  throwTo: Frame["throwTo"];
+  // For an async generator: the promise of the request that resumed the body, and what the code
+  // that resumed it does once the body awaits.
+  request?: string;
+  suspend?: (path: Path) => Formula;
+}
+
+// The code that resumes an async generator for a request, which the request's promise settles with
+// what the body yields, returns, or throws. The body then runs for the next that waits in its
+// queue, or the code continues.
+const getAsyncCaller = (
+  node: ts.Node,
+  name: string,
+  path: Path,
+  request: string,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+): Caller => {
+  const drain = (current: Path): Formula => {
+    const suspension = current.generators.get(name);
+    const queued = suspension?.queue.at(0);
+    if (suspension === undefined || queued === undefined) return continueWith(current);
+    const waiting = { ...suspension, queue: suspension.queue.slice(1) };
+    const resume = suspension.resume;
+    return resume === undefined
+      ? settleRequest(
+          { ...current, generators: new Map([...current.generators, [name, waiting]]) },
+          node,
+          queued,
+          getUndefined(context),
+          true,
+          false,
+          context,
+          drain,
+        )
+      : resume({
+          ...current,
+          generators: new Map([
+            ...current.generators,
+            [
+              name,
+              {
+                ...waiting,
+                caller: getAsyncCaller(node, name, current, queued, context, continueWith),
+              },
+            ],
+          ]),
+        });
+  };
+  return {
+    path,
+    step: (current, value, isDone) =>
+      settleRequest(
+        current,
+        node,
+        request,
+        value ?? getUndefined(context),
+        isDone,
+        false,
+        context,
+        drain,
+      ),
+    throwTo: (current, thrown) =>
+      settleRequest(current, node, request, thrown.value, true, true, context, drain),
+    request,
+    suspend: continueWith,
+  };
+};
 
 interface Target {
   symbol: ts.Symbol;
@@ -196,9 +273,15 @@ export interface Frame {
   breakTo: ((path: Path) => Formula) | undefined;
   continueTo: ((path: Path) => Formula) | undefined;
   throwTo: ((path: Path, thrown: Thrown) => Formula) | undefined;
-  // What a yield does in a generator's body, with the statements after it.
+  // What a yield does in a generator's body, with the statements after it, and what an async
+  // generator does where the promise it yields rejects.
   yieldTo:
-    | ((path: Path, value: Expression | undefined, rest: (path: Path) => Formula) => Formula)
+    | ((
+        path: Path,
+        value: Expression | undefined,
+        rest: (path: Path) => Formula,
+        throwRest: (path: Path, thrown: Expression) => Formula,
+      ) => Formula)
     | undefined;
   // What an await does in an async function's body, with what follows once the promise settles.
   awaitTo:
@@ -800,9 +883,9 @@ export const getCallback = (node: ts.Expression, path: Path, context: Context) =
 const getGeneratorCallee = (node: ts.Expression, path: Path, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const assigned = symbol && path.scope.functions.get(symbol);
-  return assigned !== undefined && isGenerator(assigned)
+  return assigned !== undefined && isAnyGenerator(assigned)
     ? assigned
-    : getFunctionOfKind(node, context, isGenerator);
+    : getFunctionOfKind(node, context, isAnyGenerator);
 };
 
 const getAsyncCallee = (node: ts.Expression, path: Path, context: Context) => {
@@ -1085,12 +1168,24 @@ const makeGenerator = (
       heapSymbol === undefined
         ? record("Record", [{ name: "generator", value: string(name) }])
         : useJavaScript("Allocated", [identifier(name)], context);
-    const changed = getChanged(callee, inner, context);
+    const isAsync = isAsyncGenerator(callee);
+    // An async generator's body changes the heap as it awaits, which makes promises.
+    const changed = isAsync
+      ? [
+          ...new Set([
+            ...getChanged(callee, inner, context),
+            ...(heapSymbol === undefined ? [] : [heapSymbol]),
+          ]),
+        ]
+      : getChanged(callee, inner, context);
     const isOuter = (symbol: ts.Symbol) =>
       !(symbol.declarations ?? []).some(
         (declaration) =>
           ts.findAncestor(declaration, (ancestor) => ancestor === callee) !== undefined,
       );
+    // A job that resumes an async generator's body runs once the calls around it return.
+    const captured = isAsync ? getLocalCaptures(callee, context) : new Set<ts.Symbol>();
+    const isResumedOuter = (symbol: ts.Symbol) => isOuter(symbol) && !captured.has(symbol);
     const getCaller = (current: Path) => {
       const caller = current.generators.get(name)?.caller;
       if (caller === undefined) throw new TlaTypeScriptError("Unsupported generator", node);
@@ -1102,16 +1197,87 @@ const makeGenerator = (
         ...current.generators,
         [
           name,
-          { ref, generator: callee, resume, isStarted: true, isInTry: current.scope.isCatching },
+          {
+            ref,
+            generator: callee,
+            resume,
+            isStarted: true,
+            isInTry: current.scope.isCatching,
+            isAsync,
+            queue: current.generators.get(name)?.queue ?? [],
+          },
         ],
       ]),
     });
-    const enter = (resumer: Path, suspended: Path) => enterBody(resumer, suspended, isOuter);
+    const enter = (resumer: Path, suspended: Path) => enterBody(resumer, suspended, isResumedOuter);
     const finish = (current: Path, value?: Expression) =>
       getCaller(current).step(leave(current, undefined), value, true);
+    // An async generator's body suspends at an await, which leaves the generator running, and a
+    // job resumes it, which the request's promise then leaves to.
+    const suspend = (
+      current: Path,
+      value: Expression,
+      operand: ts.Expression | undefined,
+      resume: (resumed: Path, settled: Expression, isRejected: boolean) => Formula,
+    ) => {
+      const caller = getCaller(current);
+      const request = caller.request;
+      const suspendTo = caller.suspend;
+      if (request === undefined || suspendTo === undefined) {
+        throw new TlaTypeScriptError("Unsupported await", node);
+      }
+      return awaitIn(
+        leaveBody(current, caller.path, changed, isOuter),
+        node,
+        value,
+        operand,
+        context,
+        (resumer, settled, isRejected, onReturn) => {
+          const entered = enter(resumer, current);
+          const suspension = entered.generators.get(name);
+          if (suspension === undefined) throw new TlaTypeScriptError("Unsupported await", node);
+          return resume(
+            {
+              ...entered,
+              generators: new Map([
+                ...entered.generators,
+                [
+                  name,
+                  {
+                    ...suspension,
+                    caller: getAsyncCaller(node, name, resumer, request, context, onReturn),
+                  },
+                ],
+              ]),
+            },
+            settled,
+            isRejected,
+          );
+        },
+        suspendTo,
+      );
+    };
     const bodyFrame: Frame = {
       next: finish,
-      exit: finish,
+      // An async generator's return awaits its value.
+      exit: (current, value) => {
+        if (!isAsync || value === undefined) return finish(current, value);
+        if (current.scope.isCatching) {
+          throw new TlaTypeScriptError(
+            "tla-ts can't return a value inside try in an async generator",
+            callee,
+          );
+        }
+        return suspend(current, value, undefined, (resumed, settled, isRejected) => {
+          if (!isRejected) return finish(resumed, settled);
+          const caller = getCaller(resumed);
+          const left = leave(resumed, undefined);
+          const uncaught = apply("Assert", [boolean(false), string("An async generator threw")]);
+          return caller.throwTo === undefined
+            ? leaf(uncaught)
+            : caller.throwTo(left, { value: settled, uncaught });
+        });
+      },
       breakTo: undefined,
       continueTo: undefined,
       throwTo: (current, thrown) => {
@@ -1119,13 +1285,30 @@ const makeGenerator = (
         const left = leave(current, undefined);
         return caller.throwTo === undefined ? leaf(thrown.uncaught) : caller.throwTo(left, thrown);
       },
-      yieldTo: (current, value, rest) =>
-        getCaller(current).step(
-          leave(current, (resumer) => rest(enter(resumer, current))),
-          value,
-          false,
-        ),
-      awaitTo: undefined,
+      // An async generator's yield awaits its value.
+      yieldTo: (current, value, rest, throwRest) => {
+        const step = (resumed: Path, settled: Expression | undefined) =>
+          getCaller(resumed).step(
+            leave(resumed, (resumer) => rest(enter(resumer, resumed))),
+            settled,
+            false,
+          );
+        return isAsync
+          ? suspend(
+              current,
+              value ?? getUndefined(context),
+              undefined,
+              (resumed, settled, isRejected) =>
+                isRejected ? throwRest(resumed, settled) : step(resumed, settled),
+            )
+          : step(current, value);
+      },
+      awaitTo: isAsync
+        ? (current, value, operand, onFulfilled, onRejected) =>
+            suspend(current, value, operand, (resumed, settled, isRejected) =>
+              (isRejected ? onRejected : onFulfilled)(resumed, settled),
+            )
+        : undefined,
       inlining: new Set([...frame.inlining, callee]),
     };
     const start = { ...inner, scope: bound.scope };
@@ -1136,6 +1319,8 @@ const makeGenerator = (
         translateStatements(getBody(callee), enter(resumer, start), context, bodyFrame),
       isStarted: false,
       isInTry: false,
+      isAsync,
+      queue: [],
     };
     const made = { ...inner, generators: new Map([...inner.generators, [name, suspension]]) };
     if (heapSymbol === undefined) return letIn(bound.definitions, continueWith(made, ref));
@@ -1213,6 +1398,7 @@ const translateGeneratorStep = (
         ),
       );
     },
+    continueWith,
   );
 };
 
@@ -1228,10 +1414,105 @@ const resumeGenerator = (
   context: Context,
   frame: Frame,
   step: (path: Path, value: Expression | undefined, isDone: boolean) => Formula,
+  continueAsync?: (path: Path, request: Expression) => Formula,
 ): Formula => {
+  // An async generator's next, return, or throw gives a promise of what the body does.
+  const runAsync = (
+    name: string,
+    suspension: Suspension,
+    continueWith: (path: Path, request: Expression) => Formula,
+  ) =>
+    makeRequest(path, node, context, (made, request, ref) => {
+      const done = (after: Path) => continueWith(after, ref);
+      const resume = suspension.resume;
+      const completed = {
+        ...made,
+        generators: new Map([
+          ...made.generators,
+          [name, { ...suspension, resume: undefined, isStarted: true }],
+        ]),
+      };
+      if (method === "next") {
+        if (resume === undefined) {
+          return settleRequest(
+            made,
+            node,
+            request,
+            getUndefined(context),
+            true,
+            false,
+            context,
+            done,
+          );
+        }
+        if (argument !== undefined && suspension.isStarted) {
+          throw new TlaTypeScriptError("tla-ts can't send a value to a generator", argument);
+        }
+        return resume({
+          ...made,
+          generators: new Map([
+            ...made.generators,
+            [
+              name,
+              { ...suspension, caller: getAsyncCaller(node, name, made, request, context, done) },
+            ],
+          ]),
+        });
+      }
+      if (resume !== undefined && suspension.isStarted && suspension.isInTry) {
+        throw new TlaTypeScriptError("tla-ts can't close a generator that suspended in try", node);
+      }
+      if (method === "throw") {
+        const thrown =
+          argument === undefined
+            ? getUndefined(context)
+            : translateThrown(argument, path.scope, context);
+        return settleRequest(completed, node, request, thrown, true, true, context, done);
+      }
+      // A return awaits its value before the request settles.
+      return awaitIn(
+        completed,
+        node,
+        argument === undefined
+          ? getUndefined(context)
+          : translateExpression(argument, path.scope, context),
+        argument,
+        context,
+        (resumer, settled, isRejected, onReturn) =>
+          settleRequest(resumer, node, request, settled, true, isRejected, context, onReturn),
+        done,
+      );
+    });
   const run = (name: string, suspension: Suspension) => {
+    // A next of an async generator whose body runs waits for the body to yield.
+    if (
+      suspension.caller !== undefined &&
+      suspension.isAsync &&
+      method === "next" &&
+      argument === undefined &&
+      continueAsync !== undefined
+    ) {
+      return makeRequest(path, node, context, (made, request, ref) =>
+        continueAsync(
+          {
+            ...made,
+            generators: new Map([
+              ...made.generators,
+              [name, { ...suspension, queue: [...suspension.queue, request] }],
+            ]),
+          },
+          ref,
+        ),
+      );
+    }
     if (suspension.caller !== undefined) {
       throw new TlaTypeScriptError("tla-ts can't resume a generator that is running", node);
+    }
+    if (suspension.isAsync) {
+      if (continueAsync === undefined) {
+        throw new TlaTypeScriptError("tla-ts can't follow an async generator here", node);
+      }
+      return runAsync(name, suspension, continueAsync);
     }
     const completed = {
       ...path,
@@ -2150,11 +2431,15 @@ const translateExpressionStatement = (
       throw new TlaTypeScriptError("Unsupported yield", expression);
     }
     const yieldTo = frame.yieldTo;
+    const throwTo = frame.throwTo;
+    const uncaught = apply("Assert", [boolean(false), string(expression.getText())]);
     return allocate(yielded, path, context, (inner) =>
       yieldTo(
         inner,
         yielded === undefined ? undefined : translateExpression(yielded, inner.scope, context),
         continueWith,
+        (rejected, thrown) =>
+          throwTo === undefined ? leaf(uncaught) : throwTo(rejected, { value: thrown, uncaught }),
       ),
     );
   }
@@ -2794,7 +3079,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     return (
       (symbol && path.scope.functions.get(symbol)) ??
       getCallee(node, context) ??
-      getFunctionOfKind(node, context, isGenerator) ??
+      getFunctionOfKind(node, context, isAnyGenerator) ??
       getFunctionOfKind(node, context, isAsyncFunction) ??
       getCalledMethod(node, context)?.method
     );

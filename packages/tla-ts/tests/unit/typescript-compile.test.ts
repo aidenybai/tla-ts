@@ -1823,6 +1823,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("settles each next of an async generator once its body yields", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      async function* numbers(start: number) {
+        log = log + "b" + start;
+        yield start;
+        const got = await Promise.resolve(10);
+        yield got + start;
+      }
+      const iterator = numbers(1);
+      log = log + "s";
+      iterator.next().then((result: IteratorResult<number>) => { log = log + "n" + result.value; });
+      iterator.next().then((result: IteratorResult<number>) => { log = log + "m" + result.value; });
+      iterator.next().then((result: IteratorResult<number>) => {
+        log = log + (result.done === true ? "d" : "?");
+      });
+      Promise.resolve(0).then(() => { log = log + "t"; }).then(() => { log = log + "u"; });
+      setTimeout(() => {
+        if (log !== "sb1tn1um11d") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a timer finds a promise's handler threw", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
