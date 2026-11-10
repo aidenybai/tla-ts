@@ -89,7 +89,6 @@ export interface OperatorValue {
   arity: number;
   call: (args: Value[]) => Value;
   expression?: Expression;
-  literalBody?: Value;
 }
 
 export type BuiltinArgument = Value | OperatorValue;
@@ -975,11 +974,6 @@ const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
         name: operator.name,
         arity: getArity(operator),
         call: (args) => callOperatorWithValues(operator, args, context),
-        literalBody:
-          operator.kind === "Closure" &&
-          (operator.body.kind === "Number" || operator.body.kind === "String")
-            ? operator.body.value
-            : undefined,
       };
 
 const isOperatorArgument = (expression: Expression, context: Context) => {

@@ -10,7 +10,7 @@ import {
   getValue,
   isOutOfRange,
 } from "./builtins";
-import { TlaEvaluationError, TlaModuleError, TlaNullPointerError } from "./errors";
+import { TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import {
   createEnumeratedSet,
@@ -45,32 +45,23 @@ const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
   return functionValue;
 };
 
-// Bags.java reads the count of BagIn and CopiesIn without checking that it has a function.
 const getCount = (args: BuiltinArgument[], name: string) => {
   const bag = getValue(args, 1, name);
   const functionValue = toFunction(bag);
-  if (!functionValue)
-    throw new TlaNullPointerError('Cannot read field "values" because "fcn" is null');
-  const count = findCount(functionValue, getValue(args, 0, name));
-  if (count !== undefined && typeof count !== "number") {
+  const count = functionValue && findCount(functionValue, getValue(args, 0, name));
+  if (!functionValue || (count !== undefined && typeof count !== "number")) {
     throw createModuleArgumentError("second", name, "bag", bag);
   }
   return count;
 };
 
-// BagCup checks each argument with IsABag, which fails on a value that isn't a function.
 const getAddedBag = (
   args: BuiltinArgument[],
   functions: (FunctionValue | undefined)[],
   index: number,
 ) => {
   const functionValue = functions[index];
-  if (!functionValue) {
-    throw new TlaNullPointerError(
-      'Cannot invoke "tlc2.value.impl.Value.toFcnRcd()" because "b" is null',
-    );
-  }
-  if (!isBag(functionValue)) {
+  if (!functionValue || !isBag(functionValue)) {
     throw createModuleArgumentError(
       index === 0 ? "first" : "second",
       "(+)",
@@ -110,11 +101,14 @@ const addCounts = (left: Value, right: Value) => {
   return sum;
 };
 
-// TLC subtracts counts as Java ints, which wrap on overflow.
+// Bags.java subtracts counts as Java ints, which wrap, where the - of the TLA+ definition overflows.
 const subtractCounts = (functionValue: FunctionValue, index: number, other: FunctionValue) => {
   const count = toCount(functionValue.range[index]);
   const removed = findCount(other, functionValue.domain[index]);
-  return removed === undefined ? count : (count - toCount(removed)) | 0;
+  if (removed === undefined) return count;
+  const difference = count - toCount(removed);
+  if (isOutOfRange(difference)) throw createOverflowError(`${count}-${removed}`);
+  return difference;
 };
 
 // BagCup looks up a key of its second bag only among the keys of its first.
@@ -206,16 +200,13 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     const right = toFunction(rightValue);
     if (!left) throw createWrongValueError("\\sqsubseteq", FINITE_FUNCTION, leftValue);
     if (!right) throw createWrongValueError("\\sqsubseteq", FINITE_FUNCTION, rightValue);
-    return left.domain.every((_, index) => subtractCounts(left, index, right) <= 0);
+    return left.domain.every((key, index) => {
+      const count = findCount(right, key);
+      return toCount(left.range[index]) <= (count === undefined ? 0 : toCount(count));
+    });
   }),
   defineHigherOrderOperator("BagOfAll", 2, (args) => {
     const operator = getOperator(args, 0, "BagOfAll");
-    // TLC passes an operator whose body is a number or string literal to Bags.java as that literal.
-    if (operator.literalBody !== undefined) {
-      throw new TlaModuleError(
-        `The first argument of BagOfAll should be an operator, but instead it is:\n${formatValue(operator.literalBody)}`,
-      );
-    }
     const value = getValue(args, 1, "BagOfAll");
     const functionValue = toFunction(value);
     if (!functionValue) {
