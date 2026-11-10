@@ -71,12 +71,13 @@ interface PendingTest {
   isOutcomeObserved: boolean;
 }
 
-// TLC's output for these leaks a Java exception or an internal name, or, with -continue, reports
+// These expect TLC to leak a Java exception or an internal name, or, with -continue, to report
 // that no error was found after a violation.
 const TLC_BUG_TESTS = new Set([
   "PrintTraceExceptionTest",
   "ContinueTest",
   "DistributedDoInitFunctorInvariantContinueTest",
+  "ModuleSemanticsAssumeTest",
   "E4294_Module_Test",
   "sets_mistaken_set_filter_tuples_test",
 ]);
