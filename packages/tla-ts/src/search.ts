@@ -557,12 +557,22 @@ interface Search {
   properties: Properties;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
-  getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
+  getStoredFingerprints: (
+    count: number,
+    getState: (index: number) => Value[],
+    getFingerprintState: (index: number) => Value[],
+  ) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
   // TLC drops a constraint that is a true constant formula.
   isConstrained: boolean;
-  findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
+  // With -continue, TLC goes on to the successors of a state that violates an invariant, and
+  // checks them whole.
+  findViolatedInvariant: (
+    state: Value[],
+    parent?: Value[],
+    isParentViolating?: boolean,
+  ) => StateCheck | undefined;
   // Every invariant an initial state violates, which TLC reports with -continue.
   getViolatedInvariants: (state: Value[]) => StateCheck[];
   // The checks of a state that TLC evaluates when it replays the computation of the initial states
@@ -762,11 +772,14 @@ export const createSearch = (
         : [getViewValue(view.expression, representative)],
     );
   };
-  // With -continue, TLC goes on to the successors of a state that violates an invariant.
-  const violatingStates = new WeakSet<Value[]>();
-  const isViolated = (invariant: StateCheck, state: Value[], parent: Value[] | undefined) => {
+  const isViolated = (
+    invariant: StateCheck,
+    state: Value[],
+    parent: Value[] | undefined,
+    isParentViolating = false,
+  ) => {
     // A parent that satisfies every invariant leaves only what the step changed to fail.
-    const checkedParent = parent && !violatingStates.has(parent) ? parent : undefined;
+    const checkedParent = isParentViolating ? undefined : parent;
     if (isUnchangedFor(invariant, state, checkedParent)) return false;
     try {
       const context = getContext(environment, state, undefined, invariant.scope);
@@ -808,11 +821,13 @@ export const createSearch = (
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,
-    getStoredFingerprints: (states, fingerprintStates) => {
+    getStoredFingerprints: (count, getState, getFingerprintState) => {
       if (view !== undefined || isFingerprintedLikeTlc) {
-        return BigInt64Array.from(states, getTlcStateFingerprint);
+        return BigInt64Array.from({ length: count }, (_, index) =>
+          getTlcStateFingerprint(getState(index)),
+        );
       }
-      return getTlcFingerprints(fingerprintStates, getTlcOrder());
+      return getTlcFingerprints(count, getFingerprintState, getTlcOrder());
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
@@ -823,21 +838,15 @@ export const createSearch = (
           : getRepresentative(state, symmetryGroup, getTlcOrder());
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
-    findViolatedInvariant: (state, parent) => {
-      const violated = invariants.find((invariant) => isViolated(invariant, state, parent));
-      if (violated) violatingStates.add(state);
-      return violated;
-    },
-    getViolatedInvariants: (state) => {
-      const violated = invariantPredicates.filter((predicate) =>
+    findViolatedInvariant: (state, parent, isParentViolating) =>
+      invariants.find((invariant) => isViolated(invariant, state, parent, isParentViolating)),
+    getViolatedInvariants: (state) =>
+      invariantPredicates.filter((predicate) =>
         invariants.some(
           (invariant) =>
             invariant.predicate === predicate.predicate && isViolated(invariant, state, undefined),
         ),
-      );
-      if (violated.length > 0) violatingStates.add(state);
-      return violated;
-    },
+      ),
     checkReplayedInitialState: (state, tracing, addFingerprint) => {
       const holdsIn = (expression: Expression, scope: Scope | undefined) =>
         holdsLikeTlc(expression, getContext(tracing, state, undefined, scope));

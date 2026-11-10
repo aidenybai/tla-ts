@@ -1,4 +1,5 @@
 import { TlaEvaluationError } from "./errors";
+import { createHashIndex } from "./hash-index";
 import { prettyPrint } from "./pretty-print";
 import type { TlcVersion } from "./tlc/version";
 
@@ -710,38 +711,57 @@ const canonicalizeElements = (elements: Value[], canonicalize: (value: Value) =>
   }
 };
 
-// Replaces each set and function in a state with the first interchangeable one it has seen, so that
-// the states it keeps share their values.
-export const createCanonicalizer = () => {
-  const canonicalValues = new Map<number, Value | Value[]>();
+const isInlineInteger = (value: Value): value is number =>
+  typeof value === "number" && value === (value << 1) >> 1;
+
+// The distinct values of the states a search keeps, which share each set and function. A value's
+// cell is an integer that fits in 31 bits shifted left, or its position shifted left plus one.
+export const createValueTable = () => {
+  const values: Value[] = [];
+  const otherIds = new Map<Value, number>();
+  const canonical = createHashIndex();
+  const isCanonicalMatch = (position: number, value: Value) => {
+    const candidate = values[position];
+    return candidate === value || isInterchangeableValue(candidate, value);
+  };
+  const isCanonicalIdentity = (position: number, value: Value) => values[position] === value;
   const canonicalize = (value: Value): Value => {
     if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function")) {
       return value;
     }
     const hash = getValueHash(value);
-    const bucket = canonicalValues.get(hash);
-    if (bucket !== undefined && !Array.isArray(bucket)) {
-      if (bucket === value || isInterchangeableValue(bucket, value)) return bucket;
-    }
-    if (Array.isArray(bucket)) {
-      for (let index = 0; index < bucket.length; index++) {
-        if (bucket[index] === value || isInterchangeableValue(bucket[index], value))
-          return bucket[index];
-      }
-    }
+    const position = canonical.find(hash, isCanonicalMatch, value);
+    if (position !== -1) return values[position];
     if (value.kind === "Set") canonicalizeElements(value.elements, canonicalize);
     else {
       canonicalizeElements(value.domain, canonicalize);
       canonicalizeElements(value.range, canonicalize);
     }
-    if (bucket === undefined) canonicalValues.set(hash, value);
-    else if (Array.isArray(bucket)) bucket.push(value);
-    else canonicalValues.set(hash, [bucket, value]);
+    values.push(value);
+    canonical.add(hash, values.length - 1);
     return value;
   };
-  return (state: Value[]) => {
-    for (let index = 0; index < state.length; index++) state[index] = canonicalize(state[index]);
-    return state;
+  const getOtherId = (value: Value) => {
+    const existing = otherIds.get(value);
+    if (existing !== undefined) return existing;
+    values.push(value);
+    otherIds.set(value, values.length - 1);
+    return values.length - 1;
+  };
+  return {
+    canonicalizeState: (state: Value[]) => {
+      for (let index = 0; index < state.length; index++) state[index] = canonicalize(state[index]);
+      return state;
+    },
+    getCell: (value: Value) => {
+      if (isInlineInteger(value)) return value << 1;
+      if (typeof value === "object" && (value.kind === "Set" || value.kind === "Function")) {
+        const id = canonical.find(getValueHash(value), isCanonicalIdentity, value);
+        return ((id === -1 ? getOtherId(value) : id) << 1) | 1;
+      }
+      return (getOtherId(value) << 1) | 1;
+    },
+    getValue: (cell: number): Value => ((cell & 1) === 0 ? cell >> 1 : values[cell >>> 1]),
   };
 };
 

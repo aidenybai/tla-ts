@@ -1,0 +1,122 @@
+import { createValueTable, isSameValue, type Value } from "./values";
+
+// A chunk never moves, so adding a state doesn't copy the states before it.
+const CHUNK_BITS = 14;
+const CHUNK_MASK = (1 << CHUNK_BITS) - 1;
+const PARENT = 0;
+const DEPTH = 1;
+const ACTION = 2;
+const HEADER_LENGTH = 3;
+// Set in the action word of a state that violates an invariant, which TLC goes on past with
+// -continue.
+const VIOLATING = 1 << 30;
+
+// The states the checker has found, one row of integers each: its parent, depth, and action, the
+// cells of its variables, and the cells of its fingerprint state, when that differs from the state.
+export const createStateStore = (isSymmetric: boolean) => {
+  const table = createValueTable();
+  const chunks: Int32Array[] = [];
+  const actionIds = new Map<string, number>();
+  const actionNames: (string | undefined)[] = [undefined];
+  const layout = {
+    count: 0,
+    rowLength: 0,
+    variableCount: 0,
+    fingerprintStart: HEADER_LENGTH,
+    // Copies of the first state and its fingerprint state, which a state read back starts from, so
+    // its array is packed.
+    stateTemplate: [] as Value[],
+    fingerprintTemplate: [] as Value[],
+  };
+  const getRowStart = (index: number) => (index & CHUNK_MASK) * layout.rowLength;
+  const getChunk = (index: number) => chunks[index >>> CHUNK_BITS];
+  const getActionId = (action: string | undefined) => {
+    if (action === undefined) return 0;
+    const existing = actionIds.get(action);
+    if (existing !== undefined) return existing;
+    actionIds.set(action, actionNames.length);
+    actionNames.push(action);
+    return actionNames.length - 1;
+  };
+  const readCells = (index: number, start: number, template: Value[]) => {
+    const chunk = getChunk(index);
+    const cellStart = getRowStart(index) + start;
+    const values = template.slice();
+    for (let position = 0; position < values.length; position++) {
+      values[position] = table.getValue(chunk[cellStart + position]);
+    }
+    return values;
+  };
+  return {
+    canonicalizeState: table.canonicalizeState,
+    getCount: () => layout.count,
+    add: (
+      state: Value[],
+      fingerprintState: Value[],
+      parent: number,
+      action: string | undefined,
+      isViolating: boolean,
+    ) => {
+      // A symmetry's representative or a view is a new state, which shares values with the others
+      // only once it is canonicalized too.
+      if (fingerprintState !== state) table.canonicalizeState(fingerprintState);
+      // A symmetric state can be its own representative, but the next one may not be.
+      const isFingerprintStored = isSymmetric || fingerprintState !== state;
+      if (layout.count === 0) {
+        layout.variableCount = state.length;
+        layout.stateTemplate = state.slice();
+        layout.fingerprintTemplate = fingerprintState.slice();
+        layout.rowLength =
+          HEADER_LENGTH + state.length + (isFingerprintStored ? fingerprintState.length : 0);
+        layout.fingerprintStart = isFingerprintStored
+          ? HEADER_LENGTH + state.length
+          : HEADER_LENGTH;
+      }
+      const index = layout.count++;
+      if ((index & CHUNK_MASK) === 0) {
+        chunks.push(new Int32Array((CHUNK_MASK + 1) * layout.rowLength));
+      }
+      const chunk = getChunk(index);
+      const start = getRowStart(index);
+      chunk[start + PARENT] = parent;
+      chunk[start + DEPTH] = parent === -1 ? 1 : getChunk(parent)[getRowStart(parent) + DEPTH] + 1;
+      chunk[start + ACTION] = getActionId(action) | (isViolating ? VIOLATING : 0);
+      for (let position = 0; position < state.length; position++) {
+        chunk[start + HEADER_LENGTH + position] = table.getCell(state[position]);
+      }
+      if (!isFingerprintStored) return;
+      for (let position = 0; position < fingerprintState.length; position++) {
+        chunk[start + layout.fingerprintStart + position] = table.getCell(
+          fingerprintState[position],
+        );
+      }
+    },
+    getParent: (index: number) => getChunk(index)[getRowStart(index) + PARENT],
+    getDepth: (index: number) => getChunk(index)[getRowStart(index) + DEPTH],
+    getAction: (index: number) =>
+      actionNames[getChunk(index)[getRowStart(index) + ACTION] & ~VIOLATING],
+    isViolating: (index: number) =>
+      (getChunk(index)[getRowStart(index) + ACTION] & VIOLATING) !== 0,
+    getState: (index: number) => readCells(index, HEADER_LENGTH, layout.stateTemplate),
+    getFingerprintState: (index: number) =>
+      readCells(index, layout.fingerprintStart, layout.fingerprintTemplate),
+    isSameFingerprint: (index: number, state: Value[]) => {
+      const chunk = getChunk(index);
+      const cellStart = getRowStart(index) + layout.fingerprintStart;
+      for (let position = 0; position < state.length; position++) {
+        if (!isSameValue(table.getValue(chunk[cellStart + position]), state[position])) {
+          return false;
+        }
+      }
+      return true;
+    },
+    isStoredIdentically: (index: number, state: Value[]) => {
+      const chunk = getChunk(index);
+      const cellStart = getRowStart(index) + HEADER_LENGTH;
+      for (let position = 0; position < layout.variableCount; position++) {
+        if (table.getValue(chunk[cellStart + position]) !== state[position]) return false;
+      }
+      return true;
+    },
+  };
+};

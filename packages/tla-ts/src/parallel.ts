@@ -30,7 +30,7 @@ import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import type { TlcVersion } from "./tlc/version";
 import {
-  createCanonicalizer,
+  createValueTable,
   freezeStringOrder,
   getUnorderedString,
   setStringOrder,
@@ -174,7 +174,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     return fallBack();
   }
 
-  const canonicalize = createCanonicalizer();
+  const canonicalize = createValueTable().canonicalizeState;
   const shared = { fingerprints: createSharedFingerprints() };
   const fingerprint = new Int32Array(2);
   const seeds = Array.from({ length: workerCount }, createStateEncoder);
