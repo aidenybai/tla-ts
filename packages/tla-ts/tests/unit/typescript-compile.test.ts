@@ -1131,13 +1131,47 @@ describe("errors", () => {
       "const box = {\n  read() {\n    const inner = function (this: unknown) {\n      return this;\n    };\n    return inner();\n  },\n};\nlet value = box.read();",
       "Unsupported expression: this",
     ],
-    [
-      "a call to a method that a variable holds",
-      "const counter = { get() { return 1; } };\nconst get = counter.get;\nlet value = get();",
-      "Unsupported call: get",
-    ],
   ])("rejects %s in a script", (_, source, message) => {
     expect(() => compile(source)).toThrow(message);
+  });
+
+  it("runs the function that a call's callee holds, by its value", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      const counter = {
+        step: 2,
+        increment() {
+          count += this.step;
+        },
+      };
+      const add = (amount: number) => {
+        count += amount;
+      };
+      const double = (amount: number) => {
+        count += 2 * amount;
+      };
+      let operation: (amount: number) => void = add;
+      operation(3);
+      operation = double;
+      operation(1);
+      const other = { step: 5, increment: counter.increment };
+      other.increment();
+      const get = { read() { return 1; } }.read;
+      const read = get();
+      for (let index = 0; index < 2; index++) operation(1);
+      if (count !== 14 || read !== 1) throw new Error("count");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a callee holds a function that the script doesn't declare", async () => {
+    const result = await checkModel(`
+      const holder = {};
+      const add = (left: number, right: number) => left + right;
+      const largest: (left: number, right: number) => number = Math.max;
+      let result = largest(1, 2);
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
   });
 
   it("renames a function that the JavaScript module defines", async () => {

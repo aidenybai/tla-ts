@@ -12,6 +12,7 @@ import {
 } from "./collections";
 import {
   getObjectGetter,
+  getObjectMethod,
   type HeapFunction,
   type Context,
   type FunctionNode,
@@ -78,6 +79,7 @@ import {
   getAccessorValue,
   getAllocated,
   getHeap,
+  getMethodValue,
   isAllocation,
   isObjectChange,
   translateAllocated,
@@ -974,6 +976,42 @@ export const translateCallStatement = (
     );
   }
   const callee = called?.method ?? getCallback(expression.expression, path, context);
+  const dispatched = callee === undefined ? getDispatched(expression, path, context) : undefined;
+  if (dispatched !== undefined) {
+    const target = getCast(expression.expression);
+    const value = translateExpression(target, path.scope, context);
+    const receiver =
+      ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)
+        ? translateObjectValue(target.expression, path.scope, context)
+        : getUndefined(context);
+    return dispatched.reduceRight(
+      (otherwise, candidate) => {
+        const candidateValue = getFunctionValue(candidate, context);
+        return candidateValue === undefined || frame.inlining.has(candidate)
+          ? otherwise
+          : ifThenElse(
+              apply("=", [value, candidateValue]),
+              inlineBody(
+                expression,
+                candidate,
+                expression.arguments,
+                ts.isArrowFunction(candidate) ? undefined : { value: receiver, method: candidate },
+                path,
+                context,
+                frame,
+                continueWith,
+              ),
+              otherwise,
+            );
+      },
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this call runs"),
+        ]),
+      ),
+    );
+  }
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
@@ -3042,6 +3080,56 @@ const isHeapCall = (
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
 };
 
+const candidates = new WeakMap<ts.SourceFile, FunctionNode[]>();
+
+// The functions that a call through a value may run, where tla-ts can't tell which one it names:
+// those that no other function encloses, other than generators and async functions, whose type
+// TypeScript lets the callee hold. The call branches on its callee's value between them.
+const getDispatched = (node: ts.CallExpression, path: Path, context: Context) => {
+  const callee = getCast(node.expression);
+  const declarations = getSymbol(callee, context.checker)?.declarations ?? [];
+  if (
+    context.heap === undefined ||
+    declarations.length === 0 ||
+    declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
+    getCallback(callee, path, context) !== undefined ||
+    getCalledMethod(callee, context) !== undefined ||
+    getFunctionOfKind(callee, context, isAnyGenerator) !== undefined ||
+    getFunctionOfKind(callee, context, isAsyncFunction) !== undefined
+  ) {
+    return undefined;
+  }
+  const sourceFile = node.getSourceFile();
+  const found =
+    candidates.get(sourceFile) ??
+    findNodes(sourceFile, (inner): inner is FunctionNode => {
+      const candidate =
+        ts.isFunctionDeclaration(inner) ||
+        ts.isFunctionExpression(inner) ||
+        ts.isArrowFunction(inner)
+          ? inner
+          : getObjectMethod(inner, context);
+      return (
+        candidate?.body !== undefined &&
+        isPlain(candidate) &&
+        ts.findAncestor(candidate.parent, ts.isFunctionLike) === undefined
+      );
+    });
+  candidates.set(sourceFile, found);
+  const type = context.checker.getTypeAtLocation(callee);
+  const dispatched = found.filter((candidate) =>
+    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type),
+  );
+  return dispatched.length > 0 ? dispatched : undefined;
+};
+
+const getFunctionValue = (node: FunctionNode, context: Context) =>
+  ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)
+    ? getMethodValue(node, context)
+    : ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+      ? translateFunctionValue(node, context)
+      : undefined;
+
 // A call to a function or a method that changes state, which inlines as statements that give its
 // result.
 const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
@@ -3067,7 +3155,8 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   getCalledMethod(node.expression, context, isAsyncFunction) !== undefined ||
   isHeapCall(node, path, context) ||
   getLoopCall(node, path, context) !== undefined ||
-  isStateCall(node, path, context);
+  isStateCall(node, path, context) ||
+  getDispatched(node, path, context) !== undefined;
 
 // The expression that parentheses and casts wrap.
 export const getCast = (node: ts.Expression): ts.Expression =>
@@ -3420,9 +3509,13 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
     if (context.heap !== undefined && isHeapChanged) changed.add(context.heap);
     if (ts.isCallExpression(node)) {
-      [node.expression, ...node.arguments].forEach((callee) => {
-        const called = getFunctionNode(callee);
-        if (called !== undefined && !visited.has(called)) {
+      [
+        ...[node.expression, ...node.arguments].flatMap((callee) => getFunctionNode(callee) ?? []),
+        ...(getFunctionNode(node.expression) === undefined
+          ? (getDispatched(node, path, context) ?? [])
+          : []),
+      ].forEach((called) => {
+        if (!visited.has(called)) {
           visited.add(called);
           visit(called);
         }
