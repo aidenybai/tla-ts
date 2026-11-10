@@ -506,8 +506,9 @@ describe("the CLI reports results like TLC", () => {
   });
 
   // TLC's output with one worker for the specs of its ContinueTest and
-  // DoInitFunctorInvariantContinueTest, and for a spec whose violating states lead to more.
-  it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors"])(
+  // DoInitFunctorInvariantContinueTest, for a spec whose violating states lead to more, and for one
+  // whose invariant reads TLCGet("level") after an ALIAS printed a trace.
+  it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors", "ContinueAlias"])(
     "goes on past each violation in %s with -continue like TLC",
     (name) => {
       const result = runCliWith("tlc-continue", [`${name}.tla`, "-continue"]);

@@ -31,6 +31,19 @@ describe("INSTANCE matches TLC", () => {
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
   });
 
+  it("evaluates a substitution once each time an instantiated operator is evaluated", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source: readFileSync(join(DIRECTORY, "SubstOnce.tla"), "utf8"),
+      config: readFileSync(join(DIRECTORY, "SubstOnce.cfg"), "utf8"),
+      loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+      onPrint: (text) => prints.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(result.generatedStates).toBe(3);
+    expect(prints).toEqual([1, 2, 2, 1, 3, 3, 2].map((value) => `<<"eval", ${value}>>  ${value}`));
+  });
+
   it("reports violations through instantiated operators", async () => {
     const result = await checkInstances("Violation.cfg");
     expect(result.status).toBe("invariant-violation");

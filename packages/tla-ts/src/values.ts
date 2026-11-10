@@ -315,19 +315,38 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
   );
 };
 
+interface StringOrder {
+  ranks: Record<string, number>;
+  size: number;
+  // A parallel search's workers rank the strings they create in different orders, so the search
+  // notes the first string it orders against another string ranked from this rank on.
+  searchRank: number | undefined;
+  unorderedString: string | undefined;
+}
+
 // TLC orders strings and model value names by when it first interned the text, so every
 // check sets the order of its spec's strings before it builds any value.
-const stringOrder: { ranks: Record<string, number>; size: number } = {
+const stringOrder: StringOrder = {
   ranks: Object.create(null),
   size: 0,
+  searchRank: undefined,
+  unorderedString: undefined,
 };
 
 export const setStringOrder = (texts: Iterable<string>) => {
   stringOrder.ranks = Object.create(null);
   stringOrder.size = 0;
+  stringOrder.searchRank = undefined;
+  stringOrder.unorderedString = undefined;
   modelValues.clear();
   for (const text of texts) rankString(text);
 };
+
+export const freezeStringOrder = () => {
+  stringOrder.searchRank = stringOrder.size;
+};
+
+export const getUnorderedString = () => stringOrder.unorderedString;
 
 // TLC 1.7.4 prints an empty function that isn't a tuple with a space between its brackets, and
 // looks a key up in a function differently, so every check also sets the version its values follow.
@@ -342,11 +361,6 @@ export const rankString = (text: string) => {
   return text;
 };
 
-export const getRankedStringCount = () => stringOrder.size;
-
-export const getRankedString = (rank: number) =>
-  Object.keys(stringOrder.ranks).find((text) => stringOrder.ranks[text] === rank);
-
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
 const compareStrings = (left: string, right: string) => {
@@ -354,6 +368,14 @@ const compareStrings = (left: string, right: string) => {
   const ranks = stringOrder.ranks;
   const leftRank = ranks[left];
   const rightRank = ranks[right];
+  const searchRank = stringOrder.searchRank;
+  if (
+    searchRank !== undefined &&
+    (leftRank === undefined || leftRank >= searchRank) &&
+    (rightRank === undefined || rightRank >= searchRank)
+  ) {
+    stringOrder.unorderedString ??= left;
+  }
   if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
   if (leftRank !== undefined) return -1;
   if (rightRank !== undefined) return 1;
@@ -591,12 +613,6 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     }
     return compareValues(left, right) === 0;
   }
-  const isHashed =
-    (left.kind === "Set" || left.kind === "Function") &&
-    (right.kind === "Set" || right.kind === "Function") &&
-    left.hash !== 0 &&
-    right.hash !== 0;
-  if (isHashed && left.hash !== right.hash) return false;
   if (left.kind === "Function" && right.kind === "Function")
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
@@ -1229,18 +1245,23 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
       );
 };
 
+const MAX_SHARED_INTERVAL_LENGTH = 1024;
 const intervalDomains: Value[][] = [];
+const longIntervalDomains = new Map<number, WeakRef<Value[]>>();
 const intervalValues: IntervalValue[] = [];
 const intervalArrays = new WeakMap<Value[], IntervalValue>();
 
 // TLC keeps the domain of a tuple, or of a function built over an interval, as an interval. Every
 // function over 1..n shares one domain array per length, and the elements of any other interval
 // map to it, so the array's identity records it. Callers must not mutate the returned array.
+// Longer domains are held weakly: a sequence that grows one element at a time would otherwise keep
+// an array of every length it passed through, n * n / 2 numbers in all.
 const getIntervalDomain = (length: number): Value[] => {
-  const cached = intervalDomains[length];
+  const cached = intervalDomains[length] ?? longIntervalDomains.get(length)?.deref();
   if (cached) return cached;
   const domain = Array.from({ length }, (_, index) => index + 1);
-  intervalDomains[length] = domain;
+  if (length > MAX_SHARED_INTERVAL_LENGTH) longIntervalDomains.set(length, new WeakRef(domain));
+  else intervalDomains[length] = domain;
   return domain;
 };
 
@@ -1255,7 +1276,10 @@ export const getIntervalElements = (value: IntervalValue): Value[] => {
 };
 
 const isIntervalDomain = (domain: Value[]) =>
-  domain.length > 0 && (domain === intervalDomains[domain.length] || intervalArrays.has(domain));
+  domain.length > 0 &&
+  (domain === intervalDomains[domain.length] ||
+    domain === longIntervalDomains.get(domain.length)?.deref() ||
+    intervalArrays.has(domain));
 
 // TLC keeps an interval domain only for a function built over an interval itself, so a set
 // such as (1..2) \cap S, whose elements are the shared array, gets a copy.
