@@ -52,7 +52,7 @@ import type { ProtoModel } from "./proto-model";
 import { mkSeqApp } from "./seq-decl-plugin";
 import type { SeqFactory } from "./seq-factory";
 import { type DependentValue, FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./theory";
-import { TheorySeqSolve } from "./theory-seq-solve";
+import { TheorySeqRegex } from "./theory-seq-regex";
 
 const MAX_UNFOLDING = 0x3fffffff;
 const MAX_PAD = 1 << 16;
@@ -66,7 +66,7 @@ const compareCodes = (first: readonly number[], second: readonly number[]) => {
   return first.length - second.length;
 };
 
-export class TheorySeq extends TheorySeqSolve {
+export class TheorySeq extends TheorySeqRegex {
   readonly name = "seq";
   private factory: SeqFactory | undefined;
   private limitMap: ObjMap<number>;
@@ -81,6 +81,7 @@ export class TheorySeq extends TheorySeqSolve {
     this.isNewPropagation = false;
     const checks = [
       () => this.simplifyAndSolveEqs(),
+      () => this.checkEquationConflict(),
       () => this.checkLts(),
       () => this.solveNqs(0),
       () => this.checkFixedLength(true, false),
@@ -98,6 +99,7 @@ export class TheorySeq extends TheorySeqSolve {
       () => this.branchItos(),
       () => this.checkFixedLength(false, true),
       () => this.solveRecfuns(),
+      () => this.finalCheckRegex(),
     ];
     if (checks.some((check) => check())) return FC_CONTINUE;
     if (this.unhandledExpr !== undefined) return FC_GIVEUP;
@@ -115,8 +117,7 @@ export class TheorySeq extends TheorySeqSolve {
 
   private mkVar(node: Enode) {
     const expr = node.owner;
-    if (this.isRe(expr)) throw new SmtUnsupportedError("regular expressions");
-    if (!this.isSeq(expr) && !this.isNthU(expr)) return -1;
+    if (!this.isSeq(expr) && !this.isRe(expr) && !this.isNthU(expr)) return -1;
     if (this.isAttachedToVar(node)) return node.getThVar(this.id);
     const thVar = this.varEnodes.length;
     this.varEnodes.push(node);
@@ -135,7 +136,7 @@ export class TheorySeq extends TheorySeqSolve {
     const manager = this.manager;
     this.hasSeq = true;
     const op = manager.getOp(term);
-    if (op === OP_SEQ_IN_RE) throw new SmtUnsupportedError("regular expressions");
+    if (op === OP_SEQ_IN_RE) this.mkVar(this.ensureEnodeOf(manager.getArg(term, 0)));
     if (op === OP_STRING_UBVTOS || op === OP_STRING_SBVTOS)
       throw new SmtUnsupportedError("str.from_ubv in the theory of sequences");
     if (op === OP_SEQ_LENGTH) this.mkVar(this.ensureEnodeOf(manager.getArg(term, 0)));
@@ -144,7 +145,7 @@ export class TheorySeq extends TheorySeqSolve {
       return true;
     }
     const isBool = manager.isBool(term);
-    if (isBool && this.sk.isSkolem(term)) {
+    if (isBool && (op === OP_SEQ_IN_RE || this.sk.isSkolem(term))) {
       context.setVarTheory(context.mkBoolVar(term), this.id);
       context.markAsRelevant(term);
       return true;
@@ -460,9 +461,17 @@ export class TheorySeq extends TheorySeqSolve {
       this.ncs.push({ contains: this.keep(expr), lengthGreater: isShorter, dep });
       return;
     }
+    if (this.sk.getAccept(expr) !== undefined) {
+      if (isTrue) this.propagateAccept(literal);
+      return;
+    }
     if (this.sk.isEq(expr)) {
       if (isTrue)
         this.propagateEq(null, [literal], manager.getArg(expr, 0), manager.getArg(expr, 1), true);
+      return;
+    }
+    if (op === OP_SEQ_IN_RE) {
+      this.propagateInRe(literal);
       return;
     }
     if (this.sk.getLengthLimit(expr) !== undefined) {
@@ -526,6 +535,10 @@ export class TheorySeq extends TheorySeqSolve {
   newEqEh(first: number, second: number) {
     const firstNode = this.getEnode(first);
     const secondNode = this.getEnode(second);
+    if (this.isRe(firstNode.owner)) {
+      this.propagateReEq(firstNode.owner, secondNode.owner);
+      return;
+    }
     if (!this.isSeq(firstNode.owner)) return;
     this.newEqEhOf(
       this.mkAssumption({ first: firstNode, second: secondNode, literal: undefined }),
@@ -541,7 +554,12 @@ export class TheorySeq extends TheorySeqSolve {
     const secondNode = this.getEnode(second);
     let left = firstNode.owner;
     let right = secondNode.owner;
-    if (firstNode.root === secondNode.root || !this.isSeq(left)) return;
+    if (firstNode.root === secondNode.root) return;
+    if (this.isRe(left)) {
+      this.propagateReNe(left, right);
+      return;
+    }
+    if (!this.isSeq(left)) return;
     this.exclude.update(this.keep(left), this.keep(right));
     if (this.rewrite(manager.mkApp(OP_EQ, [left, right], SORT_BOOL)) === manager.falseExpr) return;
     const literal = this.mkEqLiteral(left, right, false);
@@ -631,14 +649,6 @@ export class TheorySeq extends TheorySeqSolve {
     }
     if (op === OP_SEQ_REPLACE_ALL || op === OP_SEQ_REPLACE_RE || op === OP_SEQ_REPLACE_RE_ALL)
       this.addUnhandledExpr(expr);
-  }
-
-  private addUnhandledExpr(expr: number) {
-    if (this.unhandledExpr !== undefined) return;
-    this.context.pushTrail(() => {
-      this.unhandledExpr = undefined;
-    });
-    this.unhandledExpr = this.keep(expr);
   }
 
   canPropagate() {
