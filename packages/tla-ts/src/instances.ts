@@ -14,11 +14,17 @@ import {
 import { TlaSyntaxError } from "./errors";
 import { getArity, getBoundNames, getPatternNames, isBefore, LOCAL_RESOLUTION } from "./resolve";
 
-export const substitutedExpressions = new WeakSet<Expression>();
-
-// Applications inside an instance with substitutions or parameters, which TLC evaluates in a
-// context that binds them.
 export const contextualApplications = new WeakSet<Expression>();
+
+export const substitutionFrames = new WeakMap<Expression, Expression[]>();
+
+export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
+  if (frames.length === 0) return expression;
+  const copy = { ...expression };
+  if (contextualApplications.has(expression)) contextualApplications.add(copy);
+  substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
+  return copy;
+};
 
 export const renameLocals = (
   expression: Expression,
@@ -36,6 +42,9 @@ export const renameLocals = (
     return { ...mapped, name: names.get(mapped.name) ?? mapped.name };
   }
   if (mapped.kind === "Apply" && isLocallyResolved(mapped) && !bound.has(mapped.operator)) {
+    return { ...mapped, operator: names.get(mapped.operator) ?? mapped.operator };
+  }
+  if (mapped.kind === "OperatorReference" && !bound.has(mapped.operator)) {
     return { ...mapped, operator: names.get(mapped.operator) ?? mapped.operator };
   }
   return mapped;
@@ -227,6 +236,7 @@ interface Instantiation {
   isParameterized: (key: string) => boolean;
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
+  frame?: Expression;
 }
 
 // LAMBDA is a keyword, so no name bound inside the instance can capture it.
@@ -516,8 +526,7 @@ const substitute = (
   if (expression.kind === "Identifier" && isFree(expression.name)) {
     const replacement = instantiation.substitutions.get(expression.name);
     if (replacement) {
-      substitutedExpressions.add(replacement);
-      return replacement;
+      return withSubstitutionFrames(replacement, [expression]);
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
@@ -655,6 +664,13 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
       ),
       rename,
     );
+    const frame = instantiation.frame;
+    // TLC's call stack holds the SubstInNode an instance puts around each definition it copies.
+    if (frame)
+      substitutionFrames.set(mapped.body, [
+        frame,
+        ...(substitutionFrames.get(definition.body) ?? []),
+      ]);
     return withInstanceParams(mapped, instantiation.params, definition.location);
   });
 };

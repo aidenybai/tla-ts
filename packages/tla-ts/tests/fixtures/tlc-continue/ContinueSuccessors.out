@@ -87,11 +87,6 @@ State 5: <Next line 7, col 12 to line 7, col 54 of module ContinueSuccessors>
 /\ x = 2
 /\ y = 2
 
-Model checking completed. No error has been found.
-  Estimates of the probability that TLC did not check all reachable states
-  because two distinct states had the same fingerprint:
-  calculated (optimistic):  val = 0.0
 5 states generated, 5 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 5.
-The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
 Finished in _ at (_)

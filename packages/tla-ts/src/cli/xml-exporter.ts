@@ -14,7 +14,6 @@ import {
   toLibraryPath,
 } from "./shared";
 
-// The usage that XMLExporter.printUsage prints with UsageGenerator.
 const XML_EXPORT_USAGE = (() => {
   const bold = (text: string) => `\x1b[1m${text}\x1b[0m`;
   const options = [
@@ -67,7 +66,6 @@ const printXmlExportUsageError = (message: string) => {
   return XML_EXPORT_EXIT_CODE.argsParsingFailure;
 };
 
-// XMLExporter.run.
 const writeXml = (specification: SanySpecification, options: XmlExportOptions) => {
   try {
     process.stdout.write(exportSanyXml(specification, options));
@@ -128,8 +126,7 @@ export const exportXml = (args: string[]) => {
     return EXIT_STATUS.success;
   }
   const fileName = name.endsWith(".tla") ? name : `${name}.tla`;
-  // SANY looks for each module in the working directory, then in the -I directories, which
-  // XMLExporter passes in place of TLA-Library, then among its standard modules.
+  // XMLExporter passes the -I directories in place of TLA-Library.
   const directories = [".", ...parsed.includes];
   const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
   if (path === undefined && !SANY_STANDARD_MODULES.has(fileName.slice(0, -".tla".length))) {
@@ -152,8 +149,6 @@ export const exportXml = (args: string[]) => {
   });
 };
 
-// TLC 1.7.4's XMLExporter.main throws an exception for an argument it can't take or a
-// specification without a root module.
 const printXmlExporterException = (exception: string, line: number) => {
   console.error(
     `Exception in thread "main" ${exception}\n\tat tla2sany.xml.XMLExporter.main(XMLExporter.java:${line})`,
@@ -161,8 +156,8 @@ const printXmlExporterException = (exception: string, line: number) => {
   return XML_EXPORT_EXIT_CODE.uncaughtException;
 };
 
-// TLC 1.7.4's XMLExporter.main, which takes only -o, as it can't validate the XML without
-// fetching its schema, and -I, and exports a specification that SANY finds errors in.
+// TLC 1.7.4's XMLExporter takes only -o, as it can't validate the XML without fetching its
+// schema, and -I, and exports a specification that SANY finds errors in.
 export const exportXml174 = (args: string[], jar: string | undefined) => {
   if (args.length === 0) {
     return printXmlExporterException(
@@ -185,8 +180,7 @@ export const exportXml174 = (args: string[], jar: string | undefined) => {
   }
   const name = args[args.length - 1];
   const fileName = `${name.replace(/\.tla$/i, "")}.tla`;
-  // SimpleFilenameToStream looks for a module in the working directory, then in the -I
-  // directories, or the root directory when there are none, then among the standard modules.
+  // With no -I directories, SimpleFilenameToStream looks in the root directory.
   const libraries = (parsed.includes.length === 0 ? ["/"] : parsed.includes).map(toLibraryPath);
   const directories = [".", ...libraries];
   const printMissingFile = (moduleFileName: string) =>

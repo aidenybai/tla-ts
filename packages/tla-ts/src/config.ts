@@ -1,5 +1,6 @@
-import { TlaConfigError } from "./errors";
-import { matchOperator, matchUnicodeToken } from "./lexer";
+import { getUnexpectedException, TlaConfigError } from "./errors";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { matchBasedNumber, matchOperator, matchUnicodeToken } from "./lexer";
 import { formatLexicalError } from "./sany/lexer";
 import type { TlcVersion } from "./tlc/version";
 
@@ -33,6 +34,7 @@ export interface ModelConfig {
   actionConstraints: string[];
   constants: ConstantAssignment[];
   substitutions: Substitution[];
+  rawConstants: string[];
   checkDeadlock: boolean;
   symmetry: string | undefined;
   view: string | undefined;
@@ -78,15 +80,25 @@ const KEYWORDS = new Set([
   "_RL_REWARD",
 ]);
 
-// TLC 1.7.4 reads a TYPE and a TYPE_CONSTRAINT, which it doesn't check, and none of the keywords
-// that came after it.
+// TLC 1.7.4 reads TYPE and TYPE_CONSTRAINT without checking them, and none of the later keywords.
 const TYPE_KEYWORDS = ["TYPE", "TYPE_CONSTRAINT"];
 const KEYWORDS_174 = new Set([...SHARED_KEYWORDS, ...TYPE_KEYWORDS]);
 
 const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")", "!"];
 
-// TLC reads a configuration file with the TLA+ lexer. A lexical error ends the tokens; TLC reports
-// it only when it reads that far.
+const getCommentLength = (text: string) => {
+  const cursor = { index: 0, depth: 0 };
+  do {
+    if (cursor.index >= text.length) return undefined;
+    const pair = text.slice(cursor.index, cursor.index + 2);
+    const step = pair === "(*" ? 1 : pair === "*)" ? -1 : 0;
+    cursor.depth += step;
+    cursor.index += step === 0 ? 1 : 2;
+  } while (cursor.depth > 0);
+  return cursor.index;
+};
+
+// A lexical error ends the tokens, and TLC reports it only when it reads that far.
 const tokenizeConfig = (source: string) => {
   const tokens: ConfigToken[] = [];
   const cursor = { index: 0, line: 1, lineStart: 0 };
@@ -97,8 +109,7 @@ const tokenizeConfig = (source: string) => {
       line: cursor.line,
     });
   };
-  // TLC appends a newline to the file. JavaCC reports a token that the end of the input cuts off,
-  // that newline included, at the start of the line after it.
+  // TLC appends a newline, and JavaCC reports a token it cuts off at the start of the next line.
   const addEndOfInputError = (after: string) => {
     tokens.push({
       kind: "Error",
@@ -127,17 +138,19 @@ const tokenizeConfig = (source: string) => {
       continue;
     }
     if (rest.startsWith("(*")) {
-      const end = rest.indexOf("*)");
-      if (end === -1) {
+      const length = getCommentLength(rest);
+      if (length === undefined) {
         skip(rest);
         addEndOfInputError("");
         return tokens;
       }
-      skip(rest.slice(0, end + 2));
+      skip(rest.slice(0, length));
       continue;
     }
     const line = cursor.line;
-    const number = /^\d+(?![A-Za-z_])/.exec(rest)?.[0];
+    const basedLength = matchBasedNumber(source, cursor.index);
+    const number =
+      basedLength > 0 ? rest.slice(0, basedLength) : /^\d+(?![A-Za-z_])/.exec(rest)?.[0];
     if (number) {
       tokens.push({ kind: "Number", text: number, line });
       skip(number);
@@ -158,17 +171,17 @@ const tokenizeConfig = (source: string) => {
         else addLexicalError(cursor.index, text);
         return tokens;
       }
-      tokens.push({ kind: "String", text: string[1], line });
+      tokens.push({ kind: "String", text, line });
       skip(text);
       continue;
     }
+    const operator = matchUnicodeToken(source, cursor.index) ?? matchOperator(source, cursor.index);
     const symbol = SYMBOLS.find((candidate) => rest.startsWith(candidate));
-    if (symbol) {
+    if (symbol && symbol.length >= (operator?.length ?? 0)) {
       tokens.push({ kind: "Symbol", text: symbol, line });
       skip(symbol);
       continue;
     }
-    const operator = matchUnicodeToken(source, cursor.index) ?? matchOperator(source, cursor.index);
     if (!operator) {
       addLexicalError(cursor.index, "");
       return tokens;
@@ -180,7 +193,6 @@ const tokenizeConfig = (source: string) => {
   return tokens;
 };
 
-// TLC's messages for a configuration file it can't read, from ModelConfig.parse.
 const createSyntaxError = (line: number, problem: string) =>
   new TlaConfigError(`TLC found an error in the configuration file at line ${line}\n${problem}`);
 
@@ -218,7 +230,7 @@ const LIST_KEYWORDS = new Map<
   ["_POSSIBLE", "possible"],
 ]);
 
-// A port of TLC's ModelConfig.parse, which takes any token where it expects a name or a value.
+// Like TLC, take any token where a name or a value is expected.
 export const parseConfig = (source: string, version: TlcVersion = "master"): ModelConfig => {
   const keywords = version === "1.7.4" ? KEYWORDS_174 : KEYWORDS;
   const tokens = tokenizeConfig(source);
@@ -233,6 +245,7 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
     actionConstraints: [],
     constants: [],
     substitutions: [],
+    rawConstants: [],
     checkDeadlock: true,
     symmetry: undefined,
     view: undefined,
@@ -253,8 +266,21 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
   };
 
   const parseValue = (token: ConfigToken): ConfigValue => {
+    if (token.kind === "Number" && token.text.startsWith("\\")) {
+      throw setExitCode(
+        new TlaConfigError(
+          `${getUnexpectedException("java.lang.NumberFormatException")}For input string: "${token.text}"`,
+        ),
+        EXIT_STATUS.error,
+      );
+    }
     if (token.kind === "Number") return { kind: "Number", value: Number(token.text) };
-    if (token.kind === "String") return { kind: "String", value: token.text };
+    if (token.kind === "String" && token.text.includes("\\")) {
+      throw new TlaConfigError(
+        `TLC found an error in the configuration file:\nescape sequences are not supported in strings at line ${token.line}`,
+      );
+    }
+    if (token.kind === "String") return { kind: "String", value: token.text.slice(1, -1) };
     if (token.text === "TRUE" || token.text === "FALSE")
       return { kind: "Boolean", value: token.text === "TRUE" };
     if (token.text === "{") {
@@ -277,7 +303,6 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
     throw createSyntaxError(token.line, "It was expecting a value, but did not find it.");
   };
 
-  // A module name in brackets after = or <-, which applies the assignment in that module.
   const parseModuleScope = (operator: string) => {
     const name = advance();
     if (name.kind === "End") {
@@ -291,61 +316,69 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
   };
 
   // TLC reports a malformed argument list at the line of the CONSTANT keyword.
+  const parseConstant = (first: ConfigToken, keywordLine: number) => {
+    const current = { token: advance(), name: first.text };
+    while (current.token.text === "!") {
+      current.name = `${current.name}!${advance().text}`;
+      current.token = advance();
+    }
+    const name = current.name;
+    if (current.token.text === "<-") {
+      current.token = advance();
+      if (current.token.text === "[") {
+        const module = parseModuleScope("<-");
+        const target = advance();
+        if (target.kind === "End") {
+          throw createSyntaxError(target.line, "Expected an identifier after <-[mod].");
+        }
+        config.substitutions.push({ name, target: target.text, module });
+        return;
+      }
+      if (current.token.kind === "End") {
+        throw createSyntaxError(current.token.line, "Expected an identifier after <-.");
+      }
+      config.substitutions.push({ name, target: current.token.text });
+      return;
+    }
+    const args: ConfigValue[] = [];
+    const hasArgs = current.token.text === "(";
+    if (hasArgs) {
+      while (true) {
+        args.push(parseValue(advance()));
+        current.token = advance();
+        if (current.token.text !== ",") break;
+      }
+      if (current.token.text !== ")") {
+        throw createSyntaxError(keywordLine, "");
+      }
+      current.token = advance();
+    }
+    if (current.token.text !== "=") {
+      throw createSyntaxError(current.token.line, "It was expecting = or <-, but did not find it.");
+    }
+    current.token = advance();
+    const module = current.token.text === "[" ? parseModuleScope("=") : undefined;
+    const value = parseValue(module === undefined ? current.token : advance());
+    config.constants.push({
+      name,
+      value,
+      ...(hasArgs && { args }),
+      ...(module !== undefined && { module }),
+    });
+  };
+
   const parseConstants = (keywordLine: number) => {
     while (true) {
       const first = advance();
       if (first.kind === "End" || keywords.has(first.text)) return first;
-      const current = { token: advance(), name: first.text };
-      while (current.token.text === "!") {
-        current.name = `${current.name}!${advance().text}`;
-        current.token = advance();
-      }
-      const name = current.name;
-      if (current.token.text === "<-") {
-        current.token = advance();
-        if (current.token.text === "[") {
-          const module = parseModuleScope("<-");
-          const target = advance();
-          if (target.kind === "End") {
-            throw createSyntaxError(target.line, "Expected an identifier after <-[mod].");
-          }
-          config.substitutions.push({ name, target: target.text, module });
-          continue;
-        }
-        if (current.token.kind === "End") {
-          throw createSyntaxError(current.token.line, "Expected an identifier after <-.");
-        }
-        config.substitutions.push({ name, target: current.token.text });
-        continue;
-      }
-      const args: ConfigValue[] = [];
-      const hasArgs = current.token.text === "(";
-      if (hasArgs) {
-        while (true) {
-          args.push(parseValue(advance()));
-          current.token = advance();
-          if (current.token.text !== ",") break;
-        }
-        if (current.token.text !== ")") {
-          throw createSyntaxError(keywordLine, "");
-        }
-        current.token = advance();
-      }
-      if (current.token.text !== "=") {
-        throw createSyntaxError(
-          current.token.line,
-          "It was expecting = or <-, but did not find it.",
-        );
-      }
-      current.token = advance();
-      const module = current.token.text === "[" ? parseModuleScope("=") : undefined;
-      const value = parseValue(module === undefined ? current.token : advance());
-      config.constants.push({
-        name,
-        value,
-        ...(hasArgs && { args }),
-        ...(module !== undefined && { module }),
-      });
+      const start = cursor.index - 1;
+      parseConstant(first, keywordLine);
+      config.rawConstants.push(
+        tokens
+          .slice(start, cursor.index)
+          .map((token) => token.text)
+          .join(" "),
+      );
     }
   };
 

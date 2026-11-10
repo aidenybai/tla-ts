@@ -9,6 +9,14 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2144:3 The EXCEPT was applied to non-existing fields of the value at
+      line 23, col 132 to line 23, col 135 of module random_05311
+      2105:1 Evaluating assumption line 24, col 8 to line 24, col 11 of module random_05311 failed.
+      Attempted to construct a set with too many elements (>1000000).
 ---*)
 ---- MODULE random_05311 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
@@ -20,7 +28,7 @@ all:
   exit: 255
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
-    line 14, col 132 to line 14, col 135 of module random_05311
+    line 23, col 132 to line 23, col 135 of module random_05311
     1001:1 Java ran out of memory.  Running Java with a larger memory allocation
     pool (heap) may fix this.  But it won't help if some state has an enormous
     number of successor states, or if TLC must compute the value of a huge set.

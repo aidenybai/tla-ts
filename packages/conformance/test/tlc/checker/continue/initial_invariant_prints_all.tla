@@ -10,6 +10,18 @@ config: |
   INVARIANT Inv
 args:
   - -continue
+correct:
+  all:
+    exit: 12
+    transcript: |-
+      2107:1 Invariant Inv is violated by the initial state:
+      x = 1
+      2269:0 Computed 2 initial states...
+      2107:1 Invariant Inv is violated by the initial state:
+      x = 2
+      2190:0 Finished computing initial states: 3 distinct states generated at <date>.
+      2199:0 6 states generated, 3 distinct states found, 0 states left on queue.
+      2194:0 The depth of the complete state graph search is 1.
 ---*)
 ---- MODULE initial_invariant_prints_all ----
 EXTENDS Naturals, TLC

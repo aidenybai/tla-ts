@@ -35,8 +35,6 @@ const COMMENT_END = "-->";
 const isNameCharacter = (character: string) =>
   character !== " " && character !== ">" && character !== "/" && character !== "\n";
 
-// Parses the elements, text, and CDATA of a document without attributes, like the XML that SANY's
-// XMLExporter writes.
 export const parseXml = (source: string): XmlElement => {
   const cursor = { index: 0 };
   const root: XmlElement = { name: "", children: [], text: "" };

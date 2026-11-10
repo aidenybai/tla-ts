@@ -25,6 +25,7 @@ import {
   reportStartup,
 } from "./search";
 import { getInitialStates } from "./successors";
+import { setFingerprintPolynomial } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
@@ -34,7 +35,7 @@ import {
   getRankedString,
   getRankedStringCount,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
   type Value,
 } from "./values";
 import { spawnWorker, type Port } from "./worker";
@@ -49,9 +50,12 @@ export interface StartMessage {
   ports: (Port | undefined)[];
   seed: EncodedStates;
   isTool: boolean | undefined;
-  isTraceRecorded: boolean | undefined;
+  traceFile: string | undefined;
   isWarningEnabled: boolean | undefined;
   version: TlcVersion | undefined;
+  fingerprintPolynomial: number | undefined;
+  maxSetSize: number | undefined;
+  isLazyValueExpanded: boolean | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
   remaining: Int32Array;
@@ -82,7 +86,6 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       : options.config;
   const print = options.onPrint ?? console.log;
   const printed = { count: 0 };
-  // What each point the search reports is about, such as the invariant TLC warns about.
   const getKey = (progress: CheckProgress) =>
     [
       progress.kind,
@@ -113,15 +116,18 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   const workerCount = options.workers ?? 1;
   // TLC's workers write the -dump state graph, and print the violations -continue goes on past, in
-  // whichever order they find them, so one worker does what a single TLC worker does.
+  // whichever order they find them, so one worker does what a single TLC worker does. The
+  // coverage counts live in one worker's evaluators.
   const isSequential =
     workerCount < 2 ||
     typeof SharedArrayBuffer !== "function" ||
     options.dump !== undefined ||
+    options.coverage !== undefined ||
     options.isContinued === true ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||
-    config.possible.length > 0;
+    config.possible.length > 0 ||
+    (options.moduleOperators?.length ?? 0) > 0;
   if (isSequential) return fallBack();
   const modules = new Map<string, string | undefined>();
   const loadModule = (name: string) => {
@@ -137,7 +143,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   const order = createTlcOrder(options.source, loadModule);
   setStringOrder(order.getStringOrder(config));
-  setValueVersion(options.version);
+  setValueOptions(options);
+  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(config, {
     source: options.source,
@@ -148,9 +155,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       printed.count++;
       print(text);
     },
-    files: { readFile: options.readFile, writeFile: options.writeFile },
+    files: {
+      readFile: options.readFile,
+      writeFile: options.writeFile,
+      makeDirectory: options.makeDirectory,
+    },
     isTool: options.isTool,
-    isTraceRecorded: options.isTraceRecorded,
+    traceFile: options.traceSpec?.traceFile,
     isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
@@ -160,6 +171,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const search = createSearch(
     config,
     environment,
+    specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     report,
   );
@@ -294,9 +306,12 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ports,
       seed,
       isTool: options.isTool,
-      isTraceRecorded: options.isTraceRecorded,
+      traceFile: options.traceSpec?.traceFile,
       isWarningEnabled: options.isWarningEnabled,
       version: options.version,
+      fingerprintPolynomial: options.fingerprintPolynomial,
+      maxSetSize: options.maxSetSize,
+      isLazyValueExpanded: options.isLazyValueExpanded,
       fingerprints: shared.fingerprints,
       requests,
       remaining,

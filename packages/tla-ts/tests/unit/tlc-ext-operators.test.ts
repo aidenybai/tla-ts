@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, TlaUnsupportedError } from "../../src";
+import { check } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
@@ -49,19 +49,25 @@ describe("TLCExt operators match TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 3, 3]);
   });
 
-  it("fails PickSuccessor without a complete successor state", async () => {
-    expect((await checkFixture("Pick", "PickIncomplete")).failure?.message).toContain(
-      'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null',
-    );
+  it("takes PickSuccessor without a complete successor state for TRUE", async () => {
+    expect((await checkFixture("Pick", "PickIncomplete")).status).toBe("success");
   });
 
-  it("does not ask interactively for an unseen successor", async () => {
-    await expect(
-      checkModule(
-        "Init == x = 0\nNext == x' = (x + 1) % 3\nAsk == PickSuccessor(x' # 1)",
-        "INIT Init\nNEXT Next\nACTION_CONSTRAINT Ask",
-      ),
-    ).rejects.toThrow(TlaUnsupportedError);
+  it("asks about an unseen successor and finds standard input at its end", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nAsk == PickSuccessor(x' # 1)\n====",
+      config: "INIT Init\nNEXT Next\nACTION_CONSTRAINT Ask",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toBe(
+      "PickSuccessor reached the end of standard input without an answer whether to extend the behavior.",
+    );
+    expect(printed[0]).toBe(
+      'Extend behavior of length 1 with a "Next" step [<Action line 5, col 9 to line 5, col 24 of module M>]? (Yes/no/explored/states/diff):',
+    );
   });
 
   it("requires a string literal as the message of AssertError", async () => {
@@ -71,7 +77,7 @@ describe("TLCExt operators match TLC", () => {
     );
     expect(result.status).toBe("assumption-violation");
     expect(result.violation?.message).toContain(
-      "In computing AssertError, a non-string expression (line 5, col 20) was used as the err of an AssertError(err, exp).",
+      "In computing AssertError, a non-string expression (line 5, col 20 to line 5, col 26 of module M) was used as the err of an AssertError(err, exp).",
     );
   });
 

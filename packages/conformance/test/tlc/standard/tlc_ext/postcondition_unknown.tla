@@ -9,6 +9,13 @@ config: |
   INIT Init
   NEXT Next
   POSTCONDITION Missing
+correct:
+  all:
+    exit: 151
+    transcript: |-
+      2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+      2229:1 The post condition Missing specified in the configuration file
+      is not defined in the specification.
 ---*)
 ---- MODULE postcondition_unknown ----
 EXTENDS TLCExt, TLC, Naturals, Sequences

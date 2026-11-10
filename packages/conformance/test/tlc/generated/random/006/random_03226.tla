@@ -9,6 +9,12 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 22, col 8 to line 22, col 11 of module random_03226 failed.
+      Attempted to construct a set with too many elements (>1000000).
 ---*)
 ---- MODULE random_03226 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC

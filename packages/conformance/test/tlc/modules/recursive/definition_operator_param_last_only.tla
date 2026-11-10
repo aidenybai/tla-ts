@@ -3,6 +3,15 @@ description: "The arity check on definition parameters only looks at the last pa
 ref: "tla2sany/semantic/Generator.java#processOperator"
 features: [recursive, tlc-bug]
 outcome: success
+correct:
+  all:
+    exit: 150
+    transcript: |-
+      | Semantic errors:
+      | *** Errors: 1
+      | line 18, col 1 to line 18, col 15 of module definition_operator_param_last_only
+      | Definition of F has different arity than its RECURSIVE declaration.
+      3002:1 Parsing or semantic analysis failed.
 ---*)
 ---- MODULE definition_operator_param_last_only ----
 RECURSIVE F(_, _)

@@ -9,6 +9,14 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 24, col 8 to line 24, col 11 of module random_02420 failed.
+      Attempted to apply function:
+      (-1 :> -7)
+      to argument 1, which is not in the domain of the function.
 ---*)
 ---- MODULE random_02420 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC

@@ -9,6 +9,15 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 25, col 8 to line 25, col 11 of module random_03504 failed.
+      2154:0 Attempted to apply the operator overridden by the Java method
+      public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
+      but it produced the following error:
+      Attempted to construct a set with too many elements (>1000000).
 ---*)
 ---- MODULE random_03504 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
@@ -19,7 +28,7 @@ Test == PrintT(Cardinality(UNION {UNION {({x \in 1..3 : x > 1} \ {2, 1, 3}), (1 
 all:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 16, col 8 to line 16, col 11 of module random_03504 failed.
+    2105:1 Evaluating assumption line 25, col 8 to line 25, col 11 of module random_03504 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),
     but it produced the following error:

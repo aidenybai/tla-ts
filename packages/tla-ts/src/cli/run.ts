@@ -5,8 +5,8 @@ import { runTlapm } from "./tlapm";
 import { checkSpecs } from "./tlc";
 import { exportXml, exportXml174 } from "./xml-exporter";
 
-// Tools that run TLC with Java, such as pstack's statechart skill, can run tla-ts in place of java,
-// as in `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. Other JVM options are ignored.
+// Tools that run TLC with Java can run tla-ts in place of java, as in
+// `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. Other JVM options are ignored.
 const JAVA_MAIN_CLASSES = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 
 const TLA_LIBRARY_PROPERTY = "-DTLA-Library=";

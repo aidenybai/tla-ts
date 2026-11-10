@@ -25,7 +25,6 @@ import {
   type UseOrHideNode,
 } from "./nodes";
 
-// XMLExporterExitCode, and the status Java exits with on an exception that nothing catches.
 export const XML_EXPORT_EXIT_CODE = {
   uncaughtException: 1,
   argsParsingFailure: 1,
@@ -40,7 +39,6 @@ interface XmlElement {
   children: XmlElement[];
 }
 
-// The exception that SANY's XMLExporter throws for a node of a kind it can't export.
 const getUnsupportedKind = (kind: number) =>
   `java.lang.IllegalArgumentException: unsupported kind: ${kind} in xml export`;
 
@@ -62,14 +60,13 @@ const XML_ENTITIES: Record<string, string> = {
   "\r": "&#13;",
 };
 
-// Java's serializer also writes a character outside the Basic Multilingual Plane, which a Java
-// string holds as two chars, as a character reference.
+// Java's serializer writes a character outside the BMP, two chars in Java, as a character
+// reference.
 const escapeXml = (text: string) =>
   text.replace(/[&<>\r]|[\u{10000}-\u{10FFFF}]/gu, (character) =>
     character.length === 2 ? `&#${character.codePointAt(0)};` : XML_ENTITIES[character],
   );
 
-// A character outside XML 1.0's Char production.
 const UNREPRESENTABLE_CHARACTER = /[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
 
 interface UnrepresentableCharacter {
@@ -77,8 +74,6 @@ interface UnrepresentableCharacter {
   character: string;
 }
 
-// XMLExporter.findUnrepresentableCharacterData: the first element, in document order, whose
-// character data XML 1.0 cannot represent, with the character.
 const findUnrepresentable = (element: XmlElement): UnrepresentableCharacter | undefined => {
   const character = (element.cdata ?? element.text)?.match(UNREPRESENTABLE_CHARACTER)?.[0];
   if (character !== undefined) return { tag: element.tag, character };
@@ -89,7 +84,6 @@ const findUnrepresentable = (element: XmlElement): UnrepresentableCharacter | un
   return undefined;
 };
 
-// The lines of Java's identity Transformer, which pretty prints with an indent amount of 2.
 const printElement = (
   element: XmlElement,
   depth: number,
@@ -97,8 +91,6 @@ const printElement = (
   lines: string[],
 ): void => {
   const indent = " ".repeat(depth * indentAmount);
-  // An element whose text or character data is empty has no content, like an element without
-  // children.
   if (element.cdata) {
     const data = element.cdata.replaceAll("]]>", "]]]]><![CDATA[>");
     lines.push(`${indent}<${element.tag}><![CDATA[${data}]]></${element.tag}>`);
@@ -155,15 +147,11 @@ const getReferenceTag = (node: ContextNode) => {
   }
 };
 
-// A frame of the Java stack of TLC 1.7.4's XMLExporter, in package tla2sany, with the node that
-// the frame reports when an exception unwinds it.
 interface JavaFrame {
   at: string;
   failedFor?: string;
 }
 
-// A call by which TLC 1.7.4's XMLExporter exports an expression that may be the null SANY generates
-// for an operator it can't resolve, and how the JVM names that null.
 interface JavaExpressionCall extends JavaFrame {
   nullType: string;
   nullValue: string;
@@ -268,7 +256,6 @@ const JAVA_CALLS = {
   defStep: { at: "semantic.DefStepNode.getLevelElement(DefStepNode.java:99)" },
 } satisfies Record<string, JavaFrame | JavaExpressionCall>;
 
-// The calls by which TLC 1.7.4's XMLExporter exports the parts of a SubstInNode or APSubstInNode.
 const SUBST_IN_CALLS = {
   SubstIn: {
     subst: { at: "semantic.SubstInNode.getLevelElement(SubstInNode.java:530)" },
@@ -295,11 +282,8 @@ const SUBST_IN_CALLS = {
 const SEMANTIC_EXPORT = "semantic.SemanticNode.export(SemanticNode.java:379)";
 const LEVEL_EXPORT = "semantic.LevelNode.getSemanticElement(LevelNode.java:333)";
 const UNSUPPORTED_KIND_FRAME = { at: "semantic.OpDefNode.getSymbolElement(OpDefNode.java:1424)" };
-// Where SANY's builtin operators, such as nullODN, are.
 const IN_BUILTINS = formatSanyLocation("--TLA+ BUILTINS--");
 
-// The frames of the export of a node by reference in TLC 1.7.4's XMLExporter, down to the export
-// of its definition, which reports the node.
 const getDefinitionFrames = (kind: ContextNode["kind"], location: string): JavaFrame[] => {
   const [exportAt, putLine, definitionAt] =
     kind === "Theorem"
@@ -328,8 +312,8 @@ const getDefinitionFrames = (kind: ContextNode["kind"], location: string): JavaF
   ];
 };
 
-// java.util.HashMap, which holds SymbolContext's entries, and lists them by the bucket of their
-// Integer key, and the entries of a bucket in the order they were added.
+// java.util.HashMap lists SymbolContext's entries by the bucket of their Integer key, and a
+// bucket's entries in the order they were added.
 const getHashMapCapacity = (size: number, capacity = 16): number =>
   size > capacity * 0.75 ? getHashMapCapacity(size, capacity * 2) : capacity;
 
@@ -350,7 +334,6 @@ const TRAILING_WHITESPACE =
   // eslint-disable-next-line no-control-regex
   /[\t-\r\x1C-\x20\u1680\u2000-\u2006\u2008-\u200A\u2028\u2029\u205F\u3000]+$/;
 
-// SyntaxTreeNode.unboxComment: the lines of a comment boxed in (** and **), without the box.
 const unboxComment = (text: string) => {
   const start = text.indexOf("(**");
   const end = text.lastIndexOf("**)");
@@ -370,8 +353,7 @@ const unboxComment = (text: string) => {
     .join("\n");
 };
 
-// SyntaxTreeNode.unboxBackslashStarComment: the lines of a comment, without the \* that starts
-// them, when at least half of them start with one.
+// SANY strips the \* only when at least half of the lines start with one.
 const unboxBackslashStarComment = (text: string) => {
   const lines = splitLines(text);
   const isCommentLine = (line: string) => trimJava(line).startsWith("\\*");
@@ -387,31 +369,24 @@ const unboxBackslashStarComment = (text: string) => {
 
 export interface XmlExportOptions {
   version: TlcVersion;
-  // -r: only the root module, and only the declarations and definitions a module makes itself.
   isRestricted: boolean;
-  // -u: the pre-comments without the boxes and \* that format them.
   isUncommented: boolean;
-  // -t: the XML on one line.
   isTerse: boolean;
 }
 
-// The XML of SANY's XMLExporter: every module of the specification, and a context with an entry
-// for each symbol, theorem and assumption that the modules refer to.
 const exportSpecification = (
   modules: ModuleNode[],
   root: ModuleNode,
   options: XmlExportOptions,
 ) => {
-  // TLC 1.7.4's XMLExporter writes fewer elements, which keeps their nodes out of the context.
   const isTlc174 = options.version === "1.7.4";
-  // SymbolContext: SANY marks a node's UID as exported before it exports the node's definition,
-  // which can export other definitions, and adds the definition to its entries after them.
+  // SANY marks a node's UID as exported before it exports the node's definition, which can export
+  // other definitions, and adds the definition to its entries after them.
   const keys = new Set<number>();
   const entries = new Map<number, XmlElement>();
   // SymbolContext's OTHER_BUG flag, which every copy of the context shares, so that from the first
   // CASE with an OTHER arm on, a node missing its first operand exports it as $Other.
   const otherBug = { isSet: false };
-  // The Java stack of TLC 1.7.4's XMLExporter as it exports the current node, outermost first.
   const javaStack: JavaFrame[] = [];
 
   const withFrames = <Result>(frames: JavaFrame[], run: () => Result) => {
@@ -422,8 +397,8 @@ const exportSpecification = (
     return result;
   };
 
-  // TLC 1.7.4's XMLExporter reports the exception at each node it unwinds before the JVM reports
-  // it uncaught.
+  // TLC 1.7.4's XMLExporter reports the exception at each node it unwinds before the JVM reports it
+  // uncaught.
   const getJavaException = (exception: string, frames: JavaFrame[]) => {
     const trace = [...javaStack, ...frames].reverse();
     const stackTrace = [exception, ...trace.map((frame) => `\tat tla2sany.${frame.at}`)].join("\n");
@@ -640,10 +615,8 @@ const exportSpecification = (
     }
   };
 
-  // The children of a ModuleNode element after its name, built in the order SANY builds them so
-  // that the context entries they add appear in the same order.
+  // Built in SANY's order, so that the context entries they add appear in the same order.
   const exportModuleChildren = (module: ModuleNode): XmlElement[] => {
-    // XMLExporter's filter for -r: a declaration or definition that the module makes itself.
     const isExported = (node: OpDeclNode | OpDefNode) =>
       !options.isRestricted || node.module === module;
     return [
@@ -689,7 +662,7 @@ const exportSpecification = (
 
   const exportApplication = (node: OpApplNode) => {
     // TLC 1.7.4's XMLExporter exports a specification with semantic errors, and fails on the
-    // operator of the node that SANY puts where it found one.
+    // operator of the node SANY puts where it found one.
     if (node.isNull && isTlc174) {
       throw getJavaException(getUnsupportedKind(0), [
         JAVA_CALLS.operator,
@@ -748,7 +721,6 @@ const exportSpecification = (
       ? getReference(fact, call)
       : exportExpression(fact, call);
 
-  // SemanticNode.export reports an exception that unwinds the export of a node.
   const exportExpression = (
     node: ExportedNode,
     call: JavaFrame | JavaExpressionCall,
@@ -987,9 +959,6 @@ const exportSpecification = (
 
 type ExportedNode = LevelNode | InstanceNode | UseOrHideNode | ProofPartNode;
 
-// The specification SANY accepts, level-checked, as SANY's tla2sany.xml.XMLExporter prints it
-// with -o and the given options: every module the root module depends on, the standard modules
-// among them, with the level of every expression.
 export const exportSanyXml = (
   specification: SanySpecification,
   options: XmlExportOptions = {
