@@ -365,7 +365,11 @@ export const toLiveExpression = (
     const result = convert(body, bodyScope);
     expansion.depth--;
     const level = getLiveLevel(result);
-    return level > ACTION_LEVEL ? result : toAtom(expression, scope, level);
+    // For a constant body, Liveness#astToLive bounds the level of a temporal call by its own and
+    // takes the call for an action, which classifyExpr rejects. tla-ts keeps the constant.
+    const isConstantTemporal =
+      level === CONSTANT_LEVEL && getLevel(expression, scope, environment) > ACTION_LEVEL;
+    return level > ACTION_LEVEL || isConstantTemporal ? result : toAtom(expression, scope, level);
   };
 
   const convertCall = (
