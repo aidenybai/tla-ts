@@ -149,6 +149,7 @@ JSDoc tags cover what TypeScript has no syntax for:
 | `@assume`              | A boolean function             | Check it once before the search                    |
 | `@postcondition`       | A boolean function             | Check it after the search                          |
 | `@symmetric`           | A union of strings             | Check one state of each permutation of its values  |
+| `@terminating`         | A boolean function             | Stopping where it holds isn't a deadlock           |
 | `@noDeadlock`          | The first statement            | Allow states where no action can run               |
 
 A function that takes `before` reads the state before the step from it, and the variables themselves hold the state after the step.

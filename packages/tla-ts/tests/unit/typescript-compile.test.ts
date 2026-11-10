@@ -421,6 +421,26 @@ describe("tags", () => {
     expect(result.status).toBe("success");
   });
 
+  it.each([
+    ['phase !== "paying"', "success"],
+    ['phase === "paid"', "deadlock"],
+  ])("reports a deadlock only outside the end states where %s", async (condition, status) => {
+    const result = await checkModel(`
+      let phase: "paying" | "paid" | "failed" = "paying";
+      export const pay = () => {
+        if (phase !== "paying") return;
+        phase = "paid";
+      };
+      export const decline = () => {
+        if (phase !== "paying") return;
+        phase = "failed";
+      };
+      /** @terminating */
+      export const isFinished = () => ${condition};
+    `);
+    expect([result.status, result.distinctStates]).toEqual([status, 3]);
+  });
+
   it("reduces states with a symmetric type", async () => {
     const getDistinctStates = async (tag: string) =>
       (
