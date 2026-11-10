@@ -182,7 +182,6 @@
   "tlc/checker/registers/config_depth_traces_bfs": "text-mismatch",
   "tlc/checker/simulate/continue_deadlock_multiple": "exit-mismatch",
   "tlc/checker/simulate/continue_multiple_traces": "exit-mismatch",
-  "tlc/checker/view/error_eval_next": "message-mismatch",
   "tlc/cli/coverage/enumeration_cost": "message-mismatch",
   "tlc/cli/coverage/final_report": "message-mismatch",
   "tlc/cli/coverage/interval_zero": "message-mismatch",

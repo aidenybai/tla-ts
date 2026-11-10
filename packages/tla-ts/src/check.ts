@@ -878,6 +878,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         }
       : getTrace(index);
   // TLC rebuilds the trace for the postcondition after a violation, but not after a failure.
+  // TLC fails again to fingerprint the successor in the trace, as an unexpected exception.
+  const isUnfingerprintable = (state: Value[]) => {
+    try {
+      return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
+    } catch (error) {
+      if (!(error instanceof TlaEvaluationError)) throw error;
+      return true;
+    }
+  };
   const getFailedTrace = (index: number, successor: Successor): Behavior => ({
     trace: getTrace(index, successor).trace,
   });
@@ -1435,10 +1444,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           );
           return true;
         }
-        // TLC fails again to fingerprint the successor in the trace, as an unexpected exception.
-        const isTraceFailed = getFingerprintState(successor.state).some(
-          (value) => getFingerprintError(value) !== undefined,
-        );
+        const isTraceFailed = isUnfingerprintable(successor.state);
         const traceFailure =
           isTraceFailed && error instanceof TlaEvaluationError
             ? getFailureMessage(
