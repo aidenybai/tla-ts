@@ -2339,6 +2339,16 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops where a script reads a promise's properties", async () => {
+    const result = await checkModel(`
+      const promise = Promise.resolve(3);
+      if (promise.finally !== Promise.prototype.finally) throw new Error("no");
+    `);
+    expect(result.failure?.message).toContain(
+      "can't read the properties of a generator or a promise",
+    );
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

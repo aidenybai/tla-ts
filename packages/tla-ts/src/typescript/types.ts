@@ -72,6 +72,7 @@ export const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
 
 // The plain objects that built-in functions take or give.
 const LIBRARY_OBJECTS = new Set([
+  "Promise",
   "PropertyDescriptor",
   "TypedPropertyDescriptor",
   "PropertyDescriptorMap",
