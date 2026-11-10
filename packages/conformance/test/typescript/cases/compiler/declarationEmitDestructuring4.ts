@@ -1,0 +1,22 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/declarationEmitDestructuring4.ts.
+outcome: success
+source: tests/cases/compiler/declarationEmitDestructuring4.ts
+---*/
+﻿// @target: es2015
+// @declaration: true
+// For an array binding pattern with empty elements,
+// we will not make any modification and will emit
+// the similar binding pattern users' have written
+function baz([]) { }
+function baz1([] = [1,2,3]) { }
+function baz2([[]] = [[1,2,3]]) { }
+
+function baz3({}) { }
+function baz4({} = { x: 10 }) { }
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

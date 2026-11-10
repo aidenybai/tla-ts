@@ -1,0 +1,20 @@
+/*---
+description: Ported from TypeScript's tests/cases/conformance/es6/destructuring/destructuringReassignsRightHandSide.ts.
+outcome: success
+source: tests/cases/conformance/es6/destructuring/destructuringReassignsRightHandSide.ts
+---*/
+// @target: es5, es2015
+var foo: any = { foo: 1, bar: 2 };
+var bar: any;
+
+// reassignment in destructuring pattern
+({ foo, bar } = foo);
+
+// reassignment in subsequent var
+var { foo, baz } = foo;
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

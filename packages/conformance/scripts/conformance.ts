@@ -9,6 +9,7 @@ import {
   getRecording,
   getShard,
   type Recording,
+  UNTRANSLATABLE_EXIT,
 } from "./test-file";
 import { getMessageCodes } from "./transcript";
 
@@ -20,6 +21,7 @@ type Verdict =
   | "time-limit"
   | "memory-limit"
   | "crash"
+  | "untranslatable"
   | "unrecorded";
 
 interface ResultEntry {
@@ -63,6 +65,9 @@ const getVerdict = (expected: Recording | undefined, actual: HostResult): Verdic
   if (!expected) return "unrecorded";
   if (actual.exceeded) return `${actual.exceeded}-limit`;
   if (actual.exit === CRASH_EXIT) return "crash";
+  if (actual.exit === UNTRANSLATABLE_EXIT && actual.transcript.startsWith("untranslatable: ")) {
+    return "untranslatable";
+  }
   if (actual.exit !== expected.exit) return "exit-mismatch";
   const expectedTranscript = expected.transcript ?? "";
   if (getMessageCodes(actual.transcript) !== getMessageCodes(expectedTranscript))

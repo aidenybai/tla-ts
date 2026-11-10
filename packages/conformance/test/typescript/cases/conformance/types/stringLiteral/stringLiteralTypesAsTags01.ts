@@ -1,0 +1,56 @@
+/*---
+description: Ported from TypeScript's tests/cases/conformance/types/stringLiteral/stringLiteralTypesAsTags01.ts.
+outcome: success
+source: tests/cases/conformance/types/stringLiteral/stringLiteralTypesAsTags01.ts
+---*/
+// @target: es2015
+// @strict: false
+// @declaration: true
+
+type Kind = "A" | "B"
+
+interface Entity {
+    kind: Kind;
+}
+
+interface A extends Entity {
+    kind: "A";
+    a: number;
+}
+
+interface B extends Entity {
+    kind: "B";
+    b: string;
+}
+
+function hasKind(entity: Entity, kind: "A"): entity is A;
+function hasKind(entity: Entity, kind: "B"): entity is B;
+function hasKind(entity: Entity, kind: Kind): entity is Entity;
+function hasKind(entity: Entity, kind: Kind): boolean {
+    return entity.kind === kind;
+}
+
+let x: A = {
+    kind: "A",
+    a: 100,
+}
+
+if (hasKind(x, "A")) {
+    let a = x;
+}
+else {
+    let b = x;
+}
+
+if (!hasKind(x, "B")) {
+    let c = x;
+}
+else {
+    let d = x;
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

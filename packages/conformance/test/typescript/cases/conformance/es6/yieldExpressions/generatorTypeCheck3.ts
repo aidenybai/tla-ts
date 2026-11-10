@@ -1,0 +1,13 @@
+/*---
+description: Ported from TypeScript's tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck3.ts.
+outcome: success
+source: tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck3.ts
+---*/
+//@target: ES6
+function* g1(): IterableIterator<string> { }
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

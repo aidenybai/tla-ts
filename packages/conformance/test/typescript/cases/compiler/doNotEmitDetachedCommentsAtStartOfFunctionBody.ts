@@ -1,0 +1,44 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/doNotEmitDetachedCommentsAtStartOfFunctionBody.ts.
+outcome: success
+source: tests/cases/compiler/doNotEmitDetachedCommentsAtStartOfFunctionBody.ts
+---*/
+﻿// @target: es2015
+// @removeComments: true
+function foo1() {
+    // Single line comment
+
+    return 42;
+}
+
+function foo2() {
+    /*
+
+        multi line
+        comment
+    */
+
+    return 42;
+}
+
+function foo3() {
+    // Single line comment with more than one blank line
+
+
+    return 42;
+}
+
+function foo4() {
+    /*
+
+        multi line comment with more than one blank line
+    */
+
+    return 42;
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

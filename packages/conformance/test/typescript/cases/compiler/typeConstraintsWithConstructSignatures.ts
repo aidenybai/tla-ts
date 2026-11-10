@@ -1,0 +1,23 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/typeConstraintsWithConstructSignatures.ts.
+outcome: success
+source: tests/cases/compiler/typeConstraintsWithConstructSignatures.ts
+---*/
+// @target: es2015
+interface Constructable {
+    new (): any;
+}
+
+class C<T extends Constructable> {
+    constructor(public data: T, public data2: Constructable) { }
+    create() {
+        var x = new this.data(); // should not error
+        var x2 = new this.data2(); // should not error
+    }
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

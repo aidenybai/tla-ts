@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { SuiteTest, TestContext } from "./test-file";
 import { normalizeTranscript } from "./transcript";
+import { getCodebaseFile } from "./typescript";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 
@@ -38,7 +39,10 @@ const TLA_TS = [
 
 export interface Host {
   tlc?: string[];
+  typescript?: string[];
 }
+
+const getScript = (name: string) => join(PACKAGE_DIRECTORY, ".scripts", `${name}.js`);
 
 export const HOSTS: Record<string, Host> = {
   tlc: {
@@ -55,12 +59,13 @@ export const HOSTS: Record<string, Host> = {
       "tlc2.TLC",
     ],
   },
-  "tla-ts": { tlc: TLA_TS },
+  typescript: { typescript: ["node", getScript("typescript-oracle")] },
+  "tla-ts": { tlc: TLA_TS, typescript: [...TLA_TS.slice(0, 3), getScript("tla-ts-typescript")] },
 };
 
 export const getHost = (name: string): Host => {
   const host = HOSTS[name];
-  if (!host) return { tlc: name.split(" ") };
+  if (!host) return { tlc: name.split(" "), typescript: name.split(" ") };
   if (host.tlc === HOSTS.tlc.tlc && !existsSync(TLC_JAR)) {
     console.error("Run `pnpm fetch-tlc` first");
     process.exit(1);
@@ -69,7 +74,7 @@ export const getHost = (name: string): Host => {
 };
 
 export const getSuiteCommand = (host: Host, test: SuiteTest) =>
-  test.suite === "tlc" ? host.tlc : undefined;
+  test.suite === "tlc" ? host.tlc : test.suite === "typescript" ? host.typescript : undefined;
 
 export interface HostResult {
   exit: number;
@@ -194,6 +199,20 @@ const runTlc = async (
   };
 };
 
+// A host runs a TypeScript test's program, or the codebase file that the test names, and prints
+// its outcome.
+const runTypeScript = async (
+  command: string[],
+  test: SuiteTest,
+  directory: string,
+  limits: Limits,
+) => {
+  const file = getCodebaseFile(test.metadata) ?? join(directory, test.fileName);
+  if (test.metadata.codebase === undefined) writeFileSync(file, test.source);
+  const result = await spawnRun({ command: [...command, file], directory, limits });
+  return { exit: result.exit, exceeded: result.exceeded, transcript: result.stdout.trimEnd() };
+};
+
 export const runTest = async (
   host: Host,
   test: SuiteTest,
@@ -204,7 +223,10 @@ export const runTest = async (
   if (!command) throw new Error(`The host has no command for ${test.id}`);
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "conformance-")));
   copyIncludes(test, directory);
-  const result = await runTlc(command, test, context, directory, limits);
+  const result =
+    test.suite === "typescript"
+      ? await runTypeScript(command, test, directory, limits)
+      : await runTlc(command, test, context, directory, limits);
   rmSync(directory, { recursive: true, force: true });
   return result;
 };

@@ -1,0 +1,20 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/commentOnArrayElement3.ts.
+outcome: success
+source: tests/cases/compiler/commentOnArrayElement3.ts
+---*/
+﻿// @target: es2015
+const array = [
+    /* element 1*/
+    1
+    /* end of element 1 */,
+    2
+    /* end of element 2 */, ,
+    /* extra comment */
+];
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

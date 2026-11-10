@@ -5,6 +5,7 @@
   "scripts": {
     "conformance": "bun scripts/run.ts conformance",
     "fetch-tlc": "bun scripts/fetch-tlc.ts",
+    "fetch-typescript": "bun scripts/fetch-typescript.ts",
     "record": "bun scripts/run.ts record",
     "test": "vp test",
     "typecheck": "tsc --noEmit"
@@ -12,6 +13,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22",
+    "@typescript/typescript6": "6.0.2",
     "js-yaml": "^4.1.0",
     "typescript": "^7.0.2"
   }

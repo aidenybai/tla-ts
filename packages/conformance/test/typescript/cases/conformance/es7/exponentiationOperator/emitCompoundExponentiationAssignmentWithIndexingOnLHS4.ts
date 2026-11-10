@@ -1,0 +1,27 @@
+/*---
+description: Ported from TypeScript's tests/cases/conformance/es7/exponentiationOperator/emitCompoundExponentiationAssignmentWithIndexingOnLHS4.ts.
+outcome: success
+source: tests/cases/conformance/es7/exponentiationOperator/emitCompoundExponentiationAssignmentWithIndexingOnLHS4.ts
+---*/
+﻿// @target: es5, es2015
+
+var globalCounter = 0;
+function incrementIdx(max: number) {
+    globalCounter += 1;
+    let idx = Math.floor(Math.random() * max);
+    return idx;
+}
+
+var array1 = [1, 2, 3, 4, 5];
+
+array1[incrementIdx(array1.length)] **= 3;
+
+array1[incrementIdx(array1.length)] **= array1[incrementIdx(array1.length)] **= 2;
+
+array1[incrementIdx(array1.length)] **= array1[incrementIdx(array1.length)] ** 2;
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

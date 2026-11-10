@@ -47,3 +47,28 @@ jobs:
         with:
           name: tlc-results-${{ matrix.shard }}
           path: packages/conformance/.results/tlc.json
+
+  typescript:
+    name: recordings match Node and TypeScript
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: packages/conformance/.oracles/typescript
+          key: typescript-${{ hashFiles('packages/conformance/scripts/fetch-typescript.ts', 'packages/conformance/scripts/typescript.ts') }}
+      - run: pnpm --filter @tla-ts/conformance fetch-typescript
+      - run: pnpm --filter @tla-ts/conformance conformance --host typescript
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typescript-results
+          path: packages/conformance/.results/typescript.json

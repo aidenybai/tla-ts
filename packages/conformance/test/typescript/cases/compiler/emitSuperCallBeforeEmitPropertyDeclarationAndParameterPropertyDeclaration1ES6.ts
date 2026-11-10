@@ -1,0 +1,25 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/emitSuperCallBeforeEmitPropertyDeclarationAndParameterPropertyDeclaration1ES6.ts.
+outcome: success
+source: tests/cases/compiler/emitSuperCallBeforeEmitPropertyDeclarationAndParameterPropertyDeclaration1ES6.ts
+---*/
+﻿// @target: ES6
+class A {
+    blub = 6;
+}
+
+
+class B extends A {
+    blah = 2;
+    constructor(public x: number) {
+        "use strict";
+        'someStringForEgngInject';
+        super()
+    }
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/
