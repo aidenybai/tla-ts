@@ -12,6 +12,10 @@
         }
       ],
       "destination": "/index.md"
+    },
+    {
+      "source": "/editor",
+      "destination": "/index.html"
     }
   ],
   "headers": [

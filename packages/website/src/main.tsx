@@ -5,11 +5,14 @@ import "./index.css";
 
 await document.fonts.load('400 16px "Geist Mono Variable"');
 
+const Page =
+  location.pathname.replace(/\/$/, "") === "/editor" ? (await import("./editor")).Editor : App;
+
 const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <App />
+      <Page />
     </StrictMode>,
   );
 }
