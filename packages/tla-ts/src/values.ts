@@ -1,5 +1,6 @@
 import {
   isStackOverflow,
+  TlaAliasFormatError,
   TlaEvaluationError,
   TlaFeatureUnsupportedError,
   TlaModuleError,
@@ -404,6 +405,14 @@ const viewTexts = new WeakMap<Record<string, Value>, () => string>();
 
 export const setViewText = (state: Record<string, Value>, getText: () => string) => {
   if (printing.isViewPrinted) viewTexts.set(state, getText);
+  return state;
+};
+
+// TLC prints by its _format only the state an ALIAS gives.
+const aliasNames = new WeakMap<Record<string, Value>, string>();
+
+export const setAliasName = (state: Record<string, Value>, alias: string) => {
+  aliasNames.set(state, alias);
   return state;
 };
 
@@ -3138,11 +3147,57 @@ const isUnchanged = (previous: Value | undefined, value: Value) => {
   }
 };
 
-const formatJava = (format: string, args: string[]) => {
-  const next = { index: 0 };
-  return format.replace(/%s|%n|%%/g, (match) =>
-    match === "%n" ? "\n" : match === "%%" ? "%" : (args[next.index++] ?? match),
+const JAVA_FORMAT_SPECIFIER = /%(\d+\$)?([-#+ 0,(<]*)(\d+)?(\.\d+)?(.?)/gs;
+
+const getJavaHashCode = (text: string) =>
+  Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).reduce(
+    (hash, unit) => (Math.imul(hash, 31) + unit) | 0,
+    0,
   );
+
+// Java's String.format of strings, or undefined when a conversion can't format a string.
+const formatJava = (format: string, args: string[]) => {
+  const indices = { next: 0, last: -1 };
+  const isFitting = { value: true };
+  const text = format.replace(
+    JAVA_FORMAT_SPECIFIER,
+    (match, explicit?: string, flags = "", width?: string, precision?: string, conversion = "") => {
+      const pad = (value: string) =>
+        flags.includes("-") ? value.padEnd(Number(width)) : value.padStart(Number(width ?? 0));
+      const isRelative = flags.includes("<");
+      const otherFlags = flags.replace("<", "");
+      if (conversion === "n" && match === "%n") return "\n";
+      if (conversion === "%" && precision === undefined && /^-?$/.test(otherFlags)) {
+        if (otherFlags === "-" && width === undefined) isFitting.value = false;
+        return pad("%");
+      }
+      const index = isRelative
+        ? indices.last
+        : explicit === undefined
+          ? indices.next++
+          : Number(explicit.slice(0, -1)) - 1;
+      indices.last = index;
+      const arg = args[index];
+      if (
+        !"sSbBhH".includes(conversion) ||
+        conversion === "" ||
+        !/^-?$/.test(otherFlags) ||
+        (otherFlags === "-" && width === undefined) ||
+        arg === undefined
+      ) {
+        isFitting.value = false;
+        return match;
+      }
+      const lower = conversion.toLowerCase();
+      const value =
+        lower === "s" ? arg : lower === "b" ? "true" : (getJavaHashCode(arg) >>> 0).toString(16);
+      const shown = pad(
+        precision === undefined ? value : value.slice(0, Number(precision.slice(1))),
+      );
+      return conversion === lower ? shown : shown.toUpperCase();
+    },
+  );
+  return isFitting.value ? text : undefined;
 };
 
 // TLC prints the VIEW of a state, but not of one it prints as a difference from the previous.
@@ -3150,14 +3205,25 @@ export const formatState = (state: Record<string, Value>, previous?: Record<stri
   const getViewText = previous ? undefined : viewTexts.get(state);
   if (getViewText) return getViewText();
   const entries = Object.entries(state);
-  const format = state._format;
-  const isFormatted = typeof format === "string";
-  const fallback = entries.length === 1 ? "%s = %s\n" : "/\\ %s = %s\n";
+  const alias = aliasNames.get(state);
+  const isFormatted = alias !== undefined && "_format" in state;
+  const format = isFormatted ? state._format : entries.length === 1 ? "%s = %s\n" : "/\\ %s = %s\n";
+  if (typeof format !== "string") {
+    throw new TlaAliasFormatError(
+      `The _format field of the ALIAS ${alias} is ${formatValue(format)}, but it must be a string.`,
+    );
+  }
   return entries
     .filter(([name]) => !(isFormatted && name === "_format"))
     .filter(([name, value]) => !previous || !isUnchanged(previous[name], value))
-    .map(([name, value]) =>
-      formatJava(isFormatted ? format : fallback, [name, prettyPrint(formatValue(value))]),
-    )
+    .map(([name, value]) => {
+      const text = formatJava(format, [name, prettyPrint(formatValue(value))]);
+      if (text === undefined) {
+        throw new TlaAliasFormatError(
+          `The _format field of the ALIAS ${alias} is ${formatValue(format)}, but it must format two strings, the name and the value of a field.`,
+        );
+      }
+      return text;
+    })
     .join("");
 };

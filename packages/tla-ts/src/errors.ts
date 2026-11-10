@@ -197,6 +197,14 @@ export class TlaFeatureUnsupportedError extends TlaEvaluationError {
   }
 }
 
+// An ALIAS's _format that can't print the trace, where TLC leaks a Java exception.
+export class TlaAliasFormatError extends TlaEvaluationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+  }
+}
+
 // TLC's WrongInvocationException, which its CallStackTool records no call stack for.
 export class TlaSetBoundError extends TlaEvaluationError {
   constructor(message: string) {

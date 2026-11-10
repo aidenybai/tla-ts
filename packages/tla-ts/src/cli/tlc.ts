@@ -34,6 +34,7 @@ import type {
 import { parseConfig } from "../config";
 import { checkDepthFirst, type DepthFirstOutput } from "../dfid";
 import {
+  TlaAliasFormatError,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
@@ -179,15 +180,22 @@ const printTrace = (
   isLastDiffed = heading !== BEHAVIOR,
 ) => {
   if (trace.length > 0) printer.print(heading.code, MESSAGE_LEVEL.error, heading.text);
-  trace.forEach((step, index) => {
-    if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
-    const isDiffed = printer.isDiffTrace && index > 0 && (isLastDiffed || index < trace.length - 1);
-    printer.print(
-      MESSAGE_CODE.statePrint2,
-      MESSAGE_LEVEL.state,
-      `${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
-    );
-  });
+  // TLC reports an error in printing the trace and stops printing it.
+  try {
+    trace.forEach((step, index) => {
+      if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
+      const isDiffed =
+        printer.isDiffTrace && index > 0 && (isLastDiffed || index < trace.length - 1);
+      printer.print(
+        MESSAGE_CODE.statePrint2,
+        MESSAGE_LEVEL.state,
+        `${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
+      );
+    });
+  } catch (error) {
+    if (!(error instanceof TlaAliasFormatError)) throw error;
+    printer.print(MESSAGE_CODE.general, MESSAGE_LEVEL.error, error.message);
+  }
 };
 
 const COUNTER_EXAMPLE = {
