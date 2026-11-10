@@ -1,5 +1,3 @@
-// The calls to TLC and SANY that pstack's statechart skill makes for each spec of its corpus, which
-// record-statechart.ts records from Java and tests/unit/statechart.test.ts replays with tla-ts.
 import {
   cpSync,
   existsSync,
@@ -17,13 +15,10 @@ import { gunzipSync, gzipSync } from "node:zlib";
 export const STATECHART_DIRECTORY = join(import.meta.dirname, "../tests/fixtures/statechart");
 
 export interface StatechartCall {
-  // The arguments the skill passes to java, with {jar}, {spec}, and {work} for the jar, the folder
-  // of the spec, and the folder the skill writes its modules and configurations to.
   args: string[];
   status: number;
 }
 
-// A folder for each spec, next to pstack's license.
 export const getStatechartSpecs = () =>
   readdirSync(STATECHART_DIRECTORY, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -33,8 +28,6 @@ export const getStatechartSpecs = () =>
 export const readStatechartCalls = (spec: string): StatechartCall[] =>
   JSON.parse(readFileSync(join(STATECHART_DIRECTORY, spec, "calls.json"), "utf8"));
 
-// What a call printed, and the state graph it dumped. SANY's XML is large, so the fixture keeps it
-// compressed.
 const getExpectedPath = (spec: string, call: StatechartCall, index: number, kind: "out" | "dot") =>
   join(
     STATECHART_DIRECTORY,
@@ -65,14 +58,11 @@ export const writeExpected = (
   writeFileSync(path, path.endsWith(".gz") ? gzipSync(text) : text);
 };
 
-// The file -dump writes the state graph to.
 export const getDumpPath = (args: string[]) => {
   const index = args.indexOf("-dump");
   return index === -1 ? undefined : `${args[index + 2]}.dot`;
 };
 
-// Copies a spec's folders to a new folder, where each call runs in the work folder. The skill writes
-// nothing to the work folder of a spec it stops at before checking, and git keeps no empty folder.
 export const prepareStatechart = (spec: string, jar: string) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "statechart-")));
   const folders = { spec: join(root, "spec"), work: join(root, "work") };
@@ -88,7 +78,6 @@ export const prepareStatechart = (spec: string, jar: string) => {
   return {
     root,
     work: folders.work,
-    // The skill creates the folder it names as Java's temporary directory before each call.
     getArgs: (call: StatechartCall) => {
       const args = call.args.map((arg) =>
         placeholders.reduce((text, [placeholder, path]) => text.replaceAll(placeholder, path), arg),
@@ -97,7 +86,6 @@ export const prepareStatechart = (spec: string, jar: string) => {
       if (temporary) mkdirSync(temporary.slice(TEMPORARY_DIRECTORY.length), { recursive: true });
       return args;
     },
-    // What a run prints, without what depends on the machine, the time, or the folders.
     normalize: (output: string) =>
       placeholders
         .reduce((text, [placeholder, path]) => text.replaceAll(path, placeholder), output)
@@ -113,5 +101,4 @@ export const prepareStatechart = (spec: string, jar: string) => {
 
 const TEMPORARY_DIRECTORY = "-Djava.io.tmpdir=";
 
-// The messages in which TLC names its version, warns about the Java VM, and describes the machine.
 const ENVIRONMENT_MESSAGE = /@!@!@STARTMSG (2262|2401|2187):\d @!@!@\n.*?@!@!@ENDMSG \1 @!@!@\n/gs;

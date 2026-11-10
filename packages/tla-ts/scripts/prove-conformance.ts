@@ -1,17 +1,3 @@
-// Proves each module with tla-ts's own backends and compares every obligation's status with the one
-// tlapm reached, as conformance:record-proofs recorded it. tla-ts should prove what tlapm proves,
-// find trivial what tlapm finds trivial, never prove what tlapm fails to prove, and prove each
-// obligation with the prover tlapm used. A proof of what tlapm's backend refuted is unsound. A
-// difference where tlapm is wrong counts as a deviation instead, and one where tlapm's backend
-// proved the obligation after tlapm's time limit counts as late. Worker processes take one module
-// at a time, largest first, --jobs of them at once.
-//
-// tlapm's time limits are wall-clock time, which a loaded machine stretches. So an obligation
-// tla-ts misses, or proves with a later prover than tlapm's, goes to tlapm's prover again until it
-// has used the limit in both wall-clock and CPU time. Each result counts twice: by wall-clock time,
-// as prove saw it here, and by CPU time, where a proof within the limit on that second run agrees.
-// Both runs use the built package, as users do, and conformance:prove builds it first.
-
 import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
@@ -26,7 +12,7 @@ import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
 import {
   getModuleLoader,
-  getModuleObligations,
+  getObligationsById,
   printResults,
   readProofRecords,
   type ModuleProofRecord,
@@ -34,9 +20,6 @@ import {
 } from "./proof-records";
 import { getDeviation } from "./tlapm-deviations";
 
-// "extra" is a proof of what tlapm failed to prove, and "unsound" one of what tlapm's backend
-// refuted. "late" is a proof by a backend whose input tlapm's backend proved too, after tlapm had
-// stopped waiting for it at its time limit.
 const VERDICTS = [
   "agree",
   "deviation",
@@ -54,7 +37,6 @@ type Verdict = (typeof VERDICTS)[number];
 const isDifference = (verdict: Verdict) =>
   verdict !== "agree" && verdict !== "deviation" && verdict !== "late";
 
-// tlapm's prover proving the obligation within its limit in CPU time.
 interface CpuProof {
   prover: string;
   wallMilliseconds: number;
@@ -68,7 +50,6 @@ interface Result {
   expected: string;
   actual?: string;
   reason?: string;
-  // The backend a difference points at.
   backend?: string;
   cpuProof?: CpuProof;
 }
@@ -77,14 +58,12 @@ const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".prove-results.json");
 
 const isProved = (status: string) => status === "proved" || status === "trivial";
 
-// What tlapm reached, with the prover that proved it.
 const getExpected = (record: ObligationRecord) =>
   record.status === "proved" ? `proved by ${record.prover}` : record.status;
 
 const getActual = (obligation: ProofObligation) =>
   obligation.status === "proved" ? `proved by ${obligation.prover}` : obligation.status;
 
-// What tlapm's backend answered on the input the prover selects.
 const getBackendVerdict = (record: ObligationRecord, prover: string) => {
   if (!("prover" in record)) return undefined;
   return prover === "smt" || prover === "z3"
@@ -119,9 +98,6 @@ const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefi
   return "agree";
 };
 
-// Decides the obligation again with the method of the prover tlapm proved it with, and returns the
-// proof if it comes within the method's limit in CPU time. The SMT encoder's CASE numbering only
-// names a symbol, so the input starts it from zero.
 const getCpuProof = async (
   obligation: PrintedObligation,
   method: Method,
@@ -143,8 +119,6 @@ const getCpuProof = async (
   }
 };
 
-// Of the provers tlapm and tla-ts proved the obligation with, the first one the obligation's methods
-// try, as the other answered differently on it. A difference without one is in Prep.
 const getBackend = (
   provers: Method[],
   expected: ObligationRecord,
@@ -164,7 +138,6 @@ const getBackend = (
 
 const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   const path = join(CORPORA_DIRECTORY, record.id);
-  // A module tla-ts can't load leaves each of its obligations absent, with the error as reason.
   const proved = await tlaTs
     .prove({ source: readFileSync(path, "utf8"), loadModule: getModuleLoader(path) })
     .then(
@@ -198,10 +171,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
     };
   });
   if (!results.some((result) => isDifference(result.verdict))) return results;
-  const printed = new Map(
-    getModuleObligations(path).map((obligation) => [obligation.id, obligation]),
-  );
-  // The second runs go one at a time, so they don't share the core they are timed on.
+  const printed = getObligationsById(path);
   const withBackends: Result[] = [];
   for (const [index, result] of results.entries()) {
     const obligation = printed.get(result.id);
@@ -213,7 +183,6 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
     const actual = byId.get(result.id);
     const provers = findMethods(obligation).provers;
     const backend = getBackend(provers, expected, actual);
-    // tla-ts not proving what tlapm's prover did may be a time-out.
     const method = provers.find((innerMethod) => innerMethod.prover === backend);
     const cpuProof =
       (result.verdict === "missed" || result.verdict === "prover") &&
@@ -229,7 +198,6 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
 
 const records = readProofRecords();
 const byModule = await runModuleWorkers(records, proveModule, availableParallelism());
-// A worker that exits mid-module leaves that module's obligations absent.
 const results = records.flatMap(
   (record, index) =>
     byModule.get(index) ??
@@ -254,7 +222,6 @@ const byCpu = results.map((result) => (result.cpuProof ? "agree" : result.verdic
 console.log(
   `by CPU time: ${VERDICTS.map((verdict) => `${byCpu.filter((innerVerdict) => innerVerdict === verdict).length} ${verdict}`).join(", ")}`,
 );
-// The differences by CPU time, by kind and the backend each points at.
 const differences = Map.groupBy(
   results.filter((result) => isDifference(result.verdict) && !result.cpuProof),
   (result) => `${result.verdict} ${result.backend ?? "prep"}`,

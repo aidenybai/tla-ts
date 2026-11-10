@@ -1,13 +1,6 @@
-// Times the built prove on each recorded module against the time tlapm's provers reported using on
-// it, as conformance:record-proofs recorded it. tlapm's time leaves out its own Prep and counts only
-// the provers. Modules run one at a time unless --jobs says otherwise, and prove runs on one thread
-// unless --workers says otherwise. The CPU time counts every thread of the module's process, and
-// stays fair on a busy machine where the wall time doesn't. Each module's times go to
-// .prove-benchmark.json.
-
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption, writeResults } from "./corpora";
 import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
 import { getModuleLoader, readProofRecords, type ModuleProofRecord } from "./proof-records";
@@ -34,7 +27,6 @@ const getMedian = (values: number[]) => {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 };
 
-// The time prove takes on a module, or undefined when tla-ts can't load it.
 const timeModule = async (record: ModuleProofRecord): Promise<ModuleTime | undefined> => {
   const path = join(CORPORA_DIRECTORY, record.id);
   const startedAt = performance.now();
@@ -67,7 +59,7 @@ const timings = records.flatMap((record, index): Timing[] => {
   ];
 });
 
-writeFileSync(RESULTS_PATH, `${JSON.stringify(timings, null, 2)}\n`);
+writeResults(RESULTS_PATH, timings);
 
 const describe = (timing: Timing) =>
   `  ${timing.module} (${timing.obligations} obligations): ${formatSeconds(timing.wall)}, CPU ${formatSeconds(timing.cpu)}, tlapm ${formatSeconds(timing.tlapm)}`;
@@ -78,7 +70,6 @@ console.log(`total: ${getTotal("wall")}, CPU ${getTotal("cpu")}, tlapm ${getTota
 console.log(
   `median per module: ${formatSeconds(getMedian(timings.map((timing) => timing.wall)))}, CPU ${formatSeconds(getMedian(timings.map((timing) => timing.cpu)))}`,
 );
-// tlapm prints a tenth of a second, so the ratio leaves out the modules it reported as 0 s.
 const timed = timings.filter((timing) => timing.tlapm > 0);
 console.log(
   `median ratio to tlapm: ${getMedian(timed.map((timing) => timing.wall / timing.tlapm)).toFixed(2)}, CPU ${getMedian(timed.map((timing) => timing.cpu / timing.tlapm)).toFixed(2)}, over ${timed.length} modules`,

@@ -16,7 +16,7 @@ export interface ModelOutcome {
 
 const libraryModules = getLibraryModules();
 
-export const checkModel = async (specPath: string, configPath: string): Promise<ModelOutcome> => {
+const checkModel = async (specPath: string, configPath: string): Promise<ModelOutcome> => {
   const directory = dirname(specPath);
   const startedAt = performance.now();
   const source = readFileSync(specPath, "utf8");
@@ -27,11 +27,9 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
     );
   }
   const result = await check({
-    // TLC records the expected results with -nowarning.
     isWarningEnabled: false,
     source,
     config: readFileSync(configPath, "utf8"),
-    // TLC reads a module beside the spec before one on its library path.
     loadModule: (name) => {
       const modulePath = join(directory, `${name}.tla`);
       const libraryPath = libraryModules.get(name);
@@ -49,7 +47,6 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
     },
     onPrint: () => {},
     seed: TLC_SEED,
-    // The recordings run TLC with -lncheck final, since a periodic check depends on timing.
     livenessCheck: "final",
   });
   const milliseconds = Math.round(performance.now() - startedAt);
@@ -70,7 +67,6 @@ export const checkModel = async (specPath: string, configPath: string): Promise<
     };
   }
   const trace = result.violation?.trace;
-  // TLC numbers the stuttering step at the end of a lasso like a state.
   const isStuttering = trace !== undefined && result.violation?.loopStart === trace.length - 1;
   return {
     status: result.status,
@@ -91,11 +87,8 @@ const getErrorOutcome = (error: unknown, milliseconds: number): ModelOutcome => 
 
 if (process.argv[1] === import.meta.filename) {
   const startedAt = performance.now();
-  const outcome = { value: undefined as ModelOutcome | undefined };
-  try {
-    outcome.value = await checkModel(process.argv[2], process.argv[3]);
-  } catch (error) {
-    outcome.value = getErrorOutcome(error, Math.round(performance.now() - startedAt));
-  }
-  process.stdout.write(JSON.stringify(outcome.value));
+  const outcome = await checkModel(process.argv[2], process.argv[3]).catch((error: unknown) =>
+    getErrorOutcome(error, Math.round(performance.now() - startedAt)),
+  );
+  process.stdout.write(JSON.stringify(outcome));
 }

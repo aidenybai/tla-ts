@@ -15,7 +15,7 @@ import {
   CORPORA_DIRECTORY,
   getLibraryModules,
   getOption,
-  writeResults,
+  reportModuleResults,
 } from "./corpora";
 import { digestParsed, type ModuleDigest } from "./proof-digest";
 import type { SanyResult } from "./record-sany";
@@ -35,7 +35,6 @@ const readModule = (path: string | undefined) =>
 
 const libraryModules = getLibraryModules();
 
-// SANY's XML has no digest for a module without theorems, USE, HIDE, or nested modules.
 const getDigest = (module: Module) => {
   const digest = digestParsed(module);
   return digest.units.length === 0 && digest.modules.length === 0 ? undefined : digest;
@@ -44,7 +43,6 @@ const getDigest = (module: Module) => {
 const getRangeStart = (range: string | undefined) =>
   (range ?? "0:0").split("-")[0].split(":").map(Number);
 
-// SANY lists USE and HIDE apart from theorems, so units compare in source order.
 const sortUnits = (digest: ModuleDigest): ModuleDigest => ({
   name: digest.name,
   units: [...digest.units].sort((left, right) => {
@@ -76,7 +74,6 @@ const getDigestDifference = (expected: SanyResult, actual: ParseOutcome) =>
     "module",
   );
 
-// tla-ts checks a module the way SANY does when it builds the environment, before it needs a model.
 const analyze = (path: string): ParseOutcome => {
   const source = readFileSync(path, "utf8");
   try {
@@ -98,7 +95,6 @@ const analyze = (path: string): ParseOutcome => {
     if (error instanceof TlaUnsupportedError)
       return { status: "unsupported", error: error.message };
     if (error instanceof TlaSyntaxError) return { status: "error", error: error.message };
-    // TLC rejects a configuration or a value while it loads a module, which SANY never checks.
     if (!(error instanceof TlaConfigError) && !(error instanceof TlaEvaluationError))
       return {
         status: "error",
@@ -137,9 +133,4 @@ const results = expected
     }
     return { id: result.id, verdict, expected: result.error, actual: actual.error, difference };
   });
-writeResults(RESULTS_PATH, results);
-console.log("");
-Map.groupBy(results, (result) => result.verdict).forEach((group, verdict) =>
-  console.log(`${verdict}: ${group.length}`),
-);
-console.log(`modules: ${results.length} (${basename(RESULTS_PATH)} has the details)`);
+reportModuleResults(RESULTS_PATH, results);

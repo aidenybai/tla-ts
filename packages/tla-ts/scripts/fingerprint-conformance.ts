@@ -1,31 +1,23 @@
-// Checks the fingerprints tla-ts computes against the proofs tlapm reused. tlapm reports a proof
-// it reuses from an earlier obligation with the same fingerprint without a time, so each such
-// obligation must share its fingerprint with an earlier one in its module that the same prover
-// concluded about. A freshly decided obligation that shares one is reported too, as a fingerprint
-// that may be too coarse or a module recorded without fingerprints.
-
 import { join } from "node:path";
 import { TlaError } from "../src";
 import { getFingerprint } from "../src/prover/prep/fingerprint";
 import { CORPORA_DIRECTORY } from "./corpora";
-import { getModuleObligations, readProofRecords } from "./proof-records";
+import { getObligationsById, readProofRecords } from "./proof-records";
 
 const counts = { reused: 0, unmatched: 0, shared: 0, unloaded: 0 };
 for (const record of readProofRecords()) {
-  const obligations = (() => {
+  const byId = (() => {
     try {
-      return getModuleObligations(join(CORPORA_DIRECTORY, record.id));
+      return getObligationsById(join(CORPORA_DIRECTORY, record.id));
     } catch (error) {
       if (!(error instanceof TlaError)) throw error;
       return undefined;
     }
   })();
-  if (!obligations) {
+  if (!byId) {
     counts.unloaded++;
     continue;
   }
-  const byId = new Map(obligations.map((obligation) => [obligation.id, obligation]));
-  // The first obligation with each fingerprint, and the provers that concluded about one.
   const seen = new Map<string, { id: number; provers: Set<string> }>();
   record.obligations.forEach((expected) => {
     const obligation = byId.get(expected.id);
