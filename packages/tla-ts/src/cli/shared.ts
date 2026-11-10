@@ -29,7 +29,6 @@ export const getInputPaths = (paths: string[]): InputPath[] =>
       : [{ path: arg, isGlobbed: false }],
   );
 
-// Like TLC, tla-ts finds a module in the directory of the spec, then in each library directory.
 export const findModuleFile = (directories: string[], name: string) =>
   directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
 
@@ -38,7 +37,6 @@ export const createModuleLoader = (directories: string[]) => (name: string) => {
   return path === undefined ? undefined : readFileSync(path, "utf8");
 };
 
-// SimpleFilenameToStream: SANY names the file of a module it can't find, and where it looked.
 export const printMissingFile = (userDirectory: string, fileName: string, directories: string[]) =>
   console.error(
     `File does not exist: ${userDirectory}/${fileName} while looking in these directories: ${userDirectory}, ${directories.join(", ")}, classpath:/tla2sany/StandardModules, classpath:/`,
@@ -47,8 +45,6 @@ export const printMissingFile = (userDirectory: string, fileName: string, direct
 export const getStandardModulesUrl = (jar: string) =>
   `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;
 
-// TLC prints an error it raises with that error's message code. tla-ts names the others, such as a
-// module SANY rejects.
 export const printError = (error: TlaError, printer: MessagePrinter) => {
   if (error instanceof TlaConfigError || error instanceof TlaEvaluationError) {
     const coded = getCodedMessage(error.message);
@@ -75,18 +71,14 @@ export const reportErrors = async (
   }
 };
 
-// TLC 1.7.4's FileUtil.createNamedInputStream names the last file SimpleFilenameToStream looked
-// for, and the directories it looked in, the jar's standard modules last.
 export const printMissingFile174 = (path: string, libraries: string[], jar: string | undefined) =>
   console.error(
     `File does not exist: ${isAbsolute(path) ? path : `${process.cwd()}/${path}`} while looking in these directories: ${[...libraries, ...(jar === undefined ? [] : [getStandardModulesUrl(jar)])].join(", ")}`,
   );
 
-// SimpleFilenameToStream ends a library directory with a separator.
 export const toLibraryPath = (directory: string) =>
   directory.endsWith("/") ? directory : `${directory}/`;
 
-// TLC 1.7.4's SANY reports each module it can't find as it looks for it.
 export const reportMissingModules174 =
   (loadModule: (name: string) => string | undefined, onMissing: (fileName: string) => void) =>
   (name: string) => {

@@ -73,8 +73,6 @@ const BAG_OF_ALL_SIGNATURE = getBagsSignature("BagOfAll", "tlc2.value.impl.Value
 const BAG_CUP_SIGNATURE = getBagsSignature("BagCup", "tlc2.value.impl.Value", 2);
 const BAG_CARDINALITY_SIGNATURE = getBagsSignature("BagCardinality", "tlc2.value.impl.IntValue", 1);
 
-// Bags.java casts each count to IntValue, so a count that isn't an integer fails with Java's
-// ClassCastException.
 const toCount = (value: Value, method: string) => {
   if (typeof value === "number") return value;
   const javaClass = `tlc2.value.impl.${getJavaClassName(value)}`;
@@ -119,7 +117,6 @@ const mergeBags = (bags: FunctionValue[], method: string) =>
 
 const EMPTY_BAG = createSortedFunction([], []);
 
-// SubBag compares the counts with the >= of Naturals, which Integers replaces when TLC loads it.
 export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Builtin[] => [
   defineConstant("EmptyBag", EMPTY_BAG),
   defineOperator("IsABag", 1, (args) => {
@@ -202,7 +199,6 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
   }),
   defineHigherOrderOperator("BagOfAll", 2, (args) => {
     const operator = getOperator(args, 0, "BagOfAll");
-    // TLC passes an operator whose body is a number or string literal to Bags.java as that literal.
     if (operator.literalBody !== undefined) {
       throw new TlaModuleError(
         `The first argument of BagOfAll should be an operator, but instead it is:\n${formatValue(operator.literalBody)}`,
@@ -228,7 +224,6 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     const functionValue = toFiniteFunction(value);
     const range = createSet(functionValue.range).elements;
     const invalid = range.find((count) => typeof count !== "number");
-    // A count that isn't an integer fails the comparison.
     if (invalid !== undefined) builtins.get(">=")?.evaluateBinary?.(range[0], invalid);
     const counts = functionValue.range.filter((count) => typeof count === "number");
     if (counts.some((count) => count < 1)) {

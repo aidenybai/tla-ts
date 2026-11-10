@@ -100,7 +100,6 @@ const getWorkerCount = (values: string[] | undefined) => {
 
 const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
 
-// TLC names the file of a -dump by its format unless the name already ends that way.
 const getDumpPath = (path: string, extension: string) =>
   path.endsWith(extension) ? path : `${path}${extension}`;
 
@@ -137,7 +136,6 @@ const getInitialViolationHeadline = (
         text: `Property ${name} is violated by the initial state:`,
       };
 
-// What the spec prints as TLC rebuilds a trace, before it prints the states or after.
 const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefined) =>
   lines?.forEach((line) => {
     if (typeof line === "string") return console.log(line);
@@ -177,7 +175,6 @@ const COUNTER_EXAMPLE = {
   text: "The following behavior constitutes a counter-example:\n",
 };
 
-// TLC 1.7.4 doesn't name the properties, and later versions name none when they can't tell which.
 const getTemporalHeadline = (names: string[], version: TlcVersion) =>
   version === "1.7.4" || names.length === 0
     ? "Temporal properties were violated.\n"
@@ -185,8 +182,6 @@ const getTemporalHeadline = (names: string[], version: TlcVersion) =>
       ? `Temporal property ${names[0]} was violated.\n`
       : `Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
 
-// TLC's FingerprintException#getTrace: the range of each source, innermost first, skipping a
-// source the same as the one inside it.
 const formatFingerprintTrace = (sources: Expression[]) =>
   sources
     .filter((source, index) => source !== sources[index - 1])
@@ -194,8 +189,6 @@ const formatFingerprintTrace = (sources: Expression[]) =>
     .toReversed()
     .join("");
 
-// TLC's CallStack.toString: the range of each expression, skipping an expression that it evaluates
-// again right inside itself.
 const formatCallStack = (expressions: Expression[]) => {
   if (expressions.length === 0) return "    The error call stack is empty.\n";
   const lines: string[] = [];
@@ -230,13 +223,10 @@ const printInitialStates = (printer: MessagePrinter, initialStates: InitialState
 
 interface Timing {
   startTime: number;
-  // Whether TLC has printed that SANY finished.
   isParsed: boolean;
   livenessStartTime: number | undefined;
 }
 
-// TLC reports a depth of at least 1, even before it finds a state, and rates a minute only once the
-// search has started.
 const printProgress = (
   printer: MessagePrinter,
   statistics: SearchStatistics,
@@ -272,7 +262,6 @@ const printCheckProgress = (
         `Starting... (${formatTlcDate(new Date())})`,
       );
       return;
-    // TLC 1.7.4 warns about neither a constant-level invariant nor a state-level property.
     case "constant-level-invariant":
       if (printer.version === "1.7.4") return;
       print(
@@ -297,7 +286,6 @@ const printCheckProgress = (
           "Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.",
         );
       }
-      // Only TLC 1.7.4 warns about constraints.
       if (progress.isConstrained && printer.version === "1.7.4") {
         print(
           MESSAGE_CODE.livenessConstraints,
@@ -314,7 +302,6 @@ const printCheckProgress = (
       );
       return;
     case "java-override": {
-      // Class#getResource, which names the class file TLC loads the override from.
       const location = pathToFileURL(resolve(getClassPath(directory, progress.module))).href;
       print(
         progress.isMatched ? MESSAGE_CODE.javaOverrideLoaded : MESSAGE_CODE.javaOverrideMismatch,
@@ -337,10 +324,8 @@ const printCheckProgress = (
       return;
     case "liveness-started": {
       timing.livenessStartTime = Date.now();
-      // TLC reports how far the search got before it checks the complete state graph.
       if (progress.isComplete) printProgress(printer, progress.statistics);
       const branches = progress.branches > 1 ? `${progress.branches} branches of ` : "";
-      // TLC counts the states of the behavior graph of each branch, without its tableau nodes.
       const states = progress.branches * progress.states;
       print(
         MESSAGE_CODE.checkingTemporal,
@@ -375,12 +360,10 @@ const printLivenessEnd = (printer: MessagePrinter, timing: Timing) => {
   timing.livenessStartTime = undefined;
 };
 
-// Prints a violation, and returns whether TLC goes on to print the statistics of the search.
 const printViolation = (status: CheckStatus, violation: Violation, printer: MessagePrinter) => {
   const print = printer.print;
   const name = violation.name;
   const loopStart = violation.loopStart;
-  // TLC prints a violation by an initial state without the behavior or the statistics.
   const isInitial =
     loopStart === undefined &&
     violation.trace.length === 1 &&
@@ -421,17 +404,13 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
       text: violation.message ?? `Postcondition ${name} is false.`,
     },
   }[status];
-  // A safety property's counterexample ends where it breaks, and a liveness one loops back.
   const isProperty = status === "property-violation";
   const isLasso = loopStart !== undefined && !isProperty;
   const isCounterExample = isProperty || isLasso;
-  // TLC rebuilds a liveness counterexample before it reports the violation, and 1.7.4's
-  // LiveWorker#printTrace after it prints the heading of the counterexample.
   const isRebuiltFirst = isCounterExample && printer.version !== "1.7.4";
   if (isRebuiltFirst) printTraceOutput(printer, violation.trace[0]?.output);
   if (violation.counts) console.log(violation.counts);
   if (headline) {
-    // TLC prints the initial state that violates a property in the same message.
     const text = isInitial
       ? `${headline.text}\n${formatState(violation.trace[0].state)}`
       : headline.text;
@@ -459,16 +438,13 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
       );
     else console.log(`Back to state ${loopStart + 1}${label ? `: <${label}>\n` : ""}`);
   }
-  // TLC 1.7.4 doesn't explain a stuttering counterexample.
   if (violation.warning && printer.version !== "1.7.4")
     print(violation.warning.code, MESSAGE_LEVEL.warning, violation.warning.text);
-  // TLC checks the postconditions after it prints a counterexample.
   const postcondition =
     violation.unwitnessed ??
     (status === "postcondition-violation" ? undefined : violation.postcondition);
   if (postcondition?.counts) console.log(postcondition.counts);
   if (postcondition) print(postcondition.code, MESSAGE_LEVEL.error, postcondition.message);
-  // TLC checks assumptions before it starts the search, so it has no statistics to print.
   return !isInitial && status !== "assumption-violation";
 };
 
@@ -487,8 +463,6 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     const printCallStack = () => {
       const fingerprint = failure.fingerprint;
       if (fingerprint) {
-        // TLC prints the call stack when the replay has one, and otherwise the sources of the
-        // values it failed to fingerprint, innermost first. TLC 1.7.4 always prints the sources.
         const trace =
           failure.callStack?.length && printer.version !== "1.7.4"
             ? formatCallStack(failure.callStack)
@@ -503,8 +477,6 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
       if (failure.callStack) printNestedExpressions(printer, failure.callStack);
     };
     if (failure.isCallStackFirst) printCallStack();
-    // TLC prints the state as it reports the error, so a state it can't print fails outside the
-    // checker, which TLC reports as an exception it did not expect.
     const initialState =
       failure.initialState &&
       (() => {
@@ -518,7 +490,6 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
           );
         }
       })();
-    // TLC prints an error on an initial state and the state as one message.
     print(
       initialState ? MESSAGE_CODE.initialState : failure.code,
       MESSAGE_LEVEL.error,
@@ -541,8 +512,6 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     if (!failure.isCallStackFirst) printCallStack();
   } else if (result.violation) {
     if (!printViolation(result.status, result.violation, printer)) return;
-    // TLC adds a deadlocked state to the behavior graph after it reports the deadlock, which can
-    // violate a temporal property too.
     const additionalViolation = result.additionalViolation;
     if (additionalViolation) printViolation("property-violation", additionalViolation, printer);
     if (result.liveCallStack) printNestedExpressions(printer, result.liveCallStack);
@@ -575,8 +544,6 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     MESSAGE_LEVEL.none,
     `${result.generatedStates} states generated, ${result.distinctStates} distinct states found, ${result.queuedStates} states left on queue.`,
   );
-  // ModelChecker#printSummary prints the depth, which TLC 1.7.4 prints only after a search it
-  // reports as successful, and as at least 1, and then the outdegree of a successful search.
   const is174 = printer.version === "1.7.4";
   const outDegrees = is174 ? (result.outDegrees ?? result.violationOutDegrees) : result.outDegrees;
   if (!is174 || outDegrees) {
@@ -590,14 +557,8 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
   if (outDegree) print(MESSAGE_CODE.stateGraphOutdegree, MESSAGE_LEVEL.none, outDegree);
 };
 
-// Java's Files.createTempDirectory names a directory by a random unsigned long. tla-ts derives it
-// from TLC's fingerprint of what the directory holds, so that each run of a spec prints the same
-// files.
 const getTemporaryName = (contents: string) => getTlcFingerprint([contents]).toString();
 
-// The file TLC's SANY says it parses each module from: the real path of a module's own file, or a
-// copy in a temporary directory of a module from the root module's file or from the jar on the
-// class path, followed by where TLC copied it from.
 const createFileDescriber = (
   specPath: string,
   directories: string[],
@@ -612,9 +573,7 @@ const createFileDescriber = (
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
     if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
-    // TLC 1.7.4 copies a standard module into the temporary directory itself.
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
-    // FileUtil.createTempFile copies a module from the root module's file into the -metadir.
     if (origin === "root file") {
       const directory = metadir === undefined ? temporaryDirectory : resolve(metadir);
       const root = realpathSync(specPath);
@@ -628,7 +587,6 @@ const createFileDescriber = (
 const printWelcome = (printer: MessagePrinter) =>
   printer.print(MESSAGE_CODE.version, MESSAGE_LEVEL.none, `TLC2 Version ${version} (rev: tla-ts)`);
 
-// TLC.printErrorMsg: TLC says which version it is, then why it can't read its options.
 const printCommandLineError = (printer: MessagePrinter, message: string) => {
   printWelcome(printer);
   printer.print(
@@ -639,8 +597,6 @@ const printCommandLineError = (printer: MessagePrinter, message: string) => {
   return 1;
 };
 
-// TLC.printStartupBanner, with what runs tla-ts in place of the JVM. tla-ts keeps its fingerprints
-// and its queue of states in memory.
 const printStartupBanner = (printer: MessagePrinter, seed: string, workers: number) =>
   printer.print(
     MESSAGE_CODE.modelChecking,
@@ -648,9 +604,6 @@ const printStartupBanner = (printer: MessagePrinter, seed: string, workers: numb
     `Running breadth-first search Model-Checking with fp 0 and seed ${BigInt(seed)} with ${workers} worker${workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit, MemFPSet, MemStateQueue).`,
   );
 
-// TLC loads Integers for the binary trace that its trace exploration spec records. -generateSpecTE
-// turns the spec on, and -tool, -continue, -noGenerateSpecTE and -noTE turn it off, as
-// -noGenerateSpecTEBin and -noTEBin turn off the binary trace. TLC 1.7.4 records no such trace.
 const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
   const flags = [...args.unknown, ...args.options.map((option) => option.name)];
   const hasFlag = (name: string, alias = name) =>
@@ -667,7 +620,6 @@ const checkSpec = async (
   java: JavaProperties,
   printer: MessagePrinter,
 ) => {
-  // TLC.handleParameters: TLC reads its options before it says which version it is.
   const seed = args.has("-seed") ? args.get("-seed")?.[0] : "0";
   if (seed === undefined) return printCommandLineError(printer, "Error: seed required.");
   if (!isJavaLong(seed)) {
@@ -718,7 +670,6 @@ const checkSpec = async (
   }
   const fileName = basename(specPath, ".tla");
   const timing: Timing = { startTime: Date.now(), livenessStartTime: undefined, isParsed: false };
-  // Without -tool, TLC prints how long it ran for a person to read.
   const printFinished = () => {
     const runtime = Date.now() - timing.startTime;
     printer.print(
@@ -733,7 +684,6 @@ const checkSpec = async (
       MESSAGE_LEVEL.error,
       "Parsing or semantic analysis failed.",
     );
-  // TLC prints how long it ran even when it stops at an error.
   const printFailure = (error: TlaError) => {
     if (error instanceof TlaSyntaxError) {
       printParsingFailed();
@@ -743,8 +693,6 @@ const checkSpec = async (
     printFinished();
     return getErrorExitCode(error);
   };
-  // TLC reads the configuration file before it parses the spec, and prints how long it ran even
-  // when it can't read it.
   const config = (() => {
     try {
       return parseConfig(readFileSync(configPath, "utf8"), version);
@@ -753,7 +701,6 @@ const checkSpec = async (
       return error;
     }
   })();
-  // TLC 1.7.4 reports a configuration file it can't parse as an exception it didn't expect.
   if (config instanceof TlaConfigError && version === "1.7.4") {
     printer.print(
       MESSAGE_CODE.general,
@@ -772,9 +719,6 @@ const checkSpec = async (
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   }
-  // TLC.handleParameters: SANY names the spec as TLC's arguments do, except that TLC runs from the
-  // directory of a spec given by an absolute path, and names it by its file name. SANY looks for
-  // the spec's modules in the spec's directory and the TLA-Library directories.
   const isAbsoluteSpec = isAbsolute(specPath);
   const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
   const jar = getToolsJar(java);
@@ -791,7 +735,6 @@ const checkSpec = async (
       [...(isAbsoluteSpec || directory === "." ? [] : [directory]), ...java.libraries],
     );
   }
-  // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for.
   const sany = getSanyReport(
     specPath,
     reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
@@ -805,7 +748,6 @@ const checkSpec = async (
         version,
       ),
       version,
-      // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
       rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
       onPrint: (text) => process.stdout.write(text),
       onPrintError: (text) => process.stderr.write(text),
@@ -863,8 +805,6 @@ const checkSpec = async (
   }
 };
 
-// What SANY prints about a spec it rejects: a module it can't find or parse is a fatal error, and
-// it reports the other errors as semantic errors.
 const formatSanyErrors = (error: TlaSyntaxError, specName: string) => {
   const isFatal = error instanceof TlaSanyFatalError;
   if (!isFatal && !error.failure)
@@ -882,9 +822,6 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const parsed = CHECK_COMMAND.parse(args);
   const inputs = getInputPaths(parsed.positionals);
   const isConfigured = parsed.has("-config");
-  // Like TLC, a spec named without an extension is the .tla file of that name. A glob also matches
-  // modules that only other specs import, which have no configuration. A TypeScript file compiles
-  // to a spec.
   const specPaths = inputs
     .map((input) => ({
       ...input,
@@ -908,14 +845,11 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  // TLC also looks for the spec itself in the library directories.
   const findSpec = (path: string) =>
     existsSync(path) || isAbsolute(path)
       ? path
       : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
   const paths = [...new Set(specPaths.map(findSpec))];
-  // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others
-  // to report. The exit code is the first that is not success.
   const exitCodes: number[] = [];
   for (const [index, path] of paths.entries()) {
     if (index > 0) console.log("");
@@ -927,7 +861,6 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     exitCodes.push(
       await reportErrors(async () => {
         const specPath = path.endsWith(".ts") ? await writeTypeScriptSpec(path) : path;
-        // TLC checks one spec, so tla-ts names each of several it checks.
         if (paths.length > 1) {
           console.log(`Checking ${basename(specPath)} with ${basename(specPath, ".tla")}.cfg`);
         }
@@ -938,9 +871,6 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
 
-// TLC 1.7.4's SimpleFilenameToStream looks for a module in the directory of a spec that TLC is
-// given by an absolute path, then in the directory that a relative path names, or else in the
-// TLA-Library directories.
 const createMissingFilePrinter174 = (
   specPath: string,
   java: JavaProperties,

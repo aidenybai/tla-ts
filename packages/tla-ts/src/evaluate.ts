@@ -10,10 +10,9 @@ import {
   type NumberExpression,
   type OperatorParam,
   type RecordField,
-  type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
-import { isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
+import { formatRange, isStackOverflow, TlaEvaluationError, TlaUnassignedError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import { MESSAGE_CODE } from "./tlc/messages";
@@ -94,7 +93,6 @@ export interface Builtin {
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
   isStateLevel?: boolean;
-  // Whether TLC takes an application for a constant one although its value depends on the state.
   isLevelConstant?: boolean;
   isLazy?: boolean;
 }
@@ -116,10 +114,7 @@ export interface Thunk {
   state: State | undefined;
   next: State | undefined;
   cache: Value | undefined;
-  // Whether the expression may build a set that streams until TLC caches it, so that the thunk
-  // caches only a settled value.
   isStreamed: boolean;
-  // Whether the thunk dropped its scope after caching a value that holds in every state.
   isReleased?: boolean;
 }
 
@@ -137,55 +132,34 @@ export interface Environment {
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
   substitutions: Map<string, string>;
-  // The name SANY gives each definition that a named instance such as `M == INSTANCE Module`
-  // copies, such as M!Op, by the key of the copy.
   instanceNames: Map<string, string>;
   variables: string[];
   variableIndex: Map<string, number>;
   facts: DefinitionFacts;
-  // The value of each constant definition TLC computed when it started, by the definition's id in
-  // facts. TLC evaluates a definition it failed to compute where the spec uses it.
   startupValues: (Value | undefined)[];
-  // The definitions an INSTANCE copies from a module that declares constants or variables. SANY
-  // wraps the body of each in its substitutions.
   substitutedDefinitions: Set<Definition>;
-  // The compiled code of each expression, of each expression evaluated as a whole, which generated
-  // code can serve, and of each reference to a definition.
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
-  // The expressions being evaluated, outermost first, when the environment replays an error to
-  // find where it occurred, as TLC's CallStackTool does.
   callStack?: CallStack;
 }
 
 export interface CallStack {
   expressions: Expression[];
-  // TLC stops popping the stack once an evaluation fails, so it keeps where the failure occurred.
   isFrozen: boolean;
-  // The expression that built each value of the replay that TLC's CallStackTool gives a source.
   sources: WeakMap<ObjectValue, Expression>;
-  // The value each expression of the replay last evaluated to.
   values: WeakMap<Expression, Value>;
-  // The expression each failure last left, which tells a failure of an operand from one of the
-  // method that computes the operator.
   failures: WeakMap<Error, Expression>;
-  // The failure of a value with a source, which TLC raises as a FingerprintException.
   fingerprint?: FingerprintFailure;
 }
 
 export interface FingerprintFailure {
-  // The sources of the values whose methods failed, outermost first.
   sources: Expression[];
-  // The message of the error the innermost one raised.
   reason: string;
 }
 
-// The operators of Tool#evalAppl whose value TLC's CallStackTool gives a source.
 const SOURCED_OPERATORS = new Set(["SUBSET", "UNION", "DOMAIN", "\\cup", "\\cap", "\\"]);
 
-// CallStackTool copies the SetPredValue, FcnLambdaValue and OpLambdaValue that an evaluation
-// returns without their source, and a function TLC builds from a FcnLambdaValue has none.
 const SOURCED_KINDS = new Set<Expression["kind"]>([
   "SetEnumeration",
   "SetFilter",
@@ -201,8 +175,6 @@ const isSourced = (expression: Expression) =>
   SOURCED_KINDS.has(expression.kind) ||
   (expression.kind === "Apply" && SOURCED_OPERATORS.has(expression.operator));
 
-// The argument whose method Tool#evalAppl calls to compute an operator, as with S.member(e) for
-// e \in S, f.apply(e) for f[e] when f is a function, or S.diff(T) for S \ T when S is Reducible.
 const getReceiver = (expression: Expression, values: CallStack["values"]) => {
   if (expression.kind === "FunctionApplication" || expression.kind === "Except") {
     return expression.function;
@@ -223,8 +195,6 @@ export interface Context {
   scope: Scope | undefined;
   state: State | undefined;
   next: State | undefined;
-  // EvalControl.KeepLazy, which Tool#evalAppl sets to evaluate the function it applies and which
-  // the evaluation passes on, so that a function constructor within builds a FcnLambdaValue.
   isKeepLazy?: boolean;
 }
 
@@ -248,15 +218,11 @@ const EXCEPT_AT = "@";
 export const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
 
-export const formatRange = (range: SourceRange) =>
-  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
-
 export const describeRange = (expression: Expression) => {
   const range = expression.location.range;
   return range ? formatRange(range) : describeLocation(expression);
 };
 
-// SANY prints a numeral as written and any other expression by its location.
 export const describeNode = (expression: Expression) =>
   expression.kind === "Number"
     ? (expression.text ?? String(expression.value))
@@ -267,8 +233,6 @@ export const createConditionError = (expression: Expression, value: Value) =>
     `A non-boolean expression (${getKindString(value)}) was used as the condition of an IF.\n${describeRange(expression)}`,
   );
 
-// TLC parses an infix chain of /\ or \/ as nested binary junctions and a bulleted list as one
-// junction list, and it words the error differently for each.
 export const createJunctionError = (
   expression: Expression & { kind: "And" | "Or" },
   index: number,
@@ -289,8 +253,6 @@ export const createJunctionError = (
   );
 };
 
-// TLC selects a field of a record, and of another function from the function it converts it to,
-// which for a tuple keeps its domain as an interval.
 export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" }) => {
   const field = expression.field;
   const describeMissing = (record: Value) =>
@@ -305,8 +267,6 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
     }
     const functionClass = getFunctionClass(value);
     if (functionClass === "tuple") throw createNonIntegerKeyError(field);
-    // Only TLC's RecordValue names the field it lacks. Any other function, such as a FcnRcdValue
-    // whose keys are strings, reports an argument outside its domain.
     return applyFunction(
       value,
       field,
@@ -315,7 +275,6 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
   };
 };
 
-// TLC 1.7.4 words what a tuple or a record lacks differently.
 export const getMissingArgumentDescriber = (version: TlcVersion | undefined) =>
   version === "1.7.4"
     ? (functionValue: Value, argument: Value) =>
@@ -341,7 +300,6 @@ export const getSubsetOperator =
     return builtin.evaluate([left, right]);
   };
 
-// TLC rejects a decimal, or an integer literal too big for it, while it processes the spec.
 export const createRealNumberError = (expression: DecimalExpression) =>
   setExitCode(
     new TlaEvaluationError(
@@ -358,15 +316,12 @@ export const createBigNumberError = (expression: NumberExpression) =>
     EXIT_STATUS.error,
   );
 
-// TLC's Tool#evalAppl fails to look up a variable the state doesn't assign.
 export const createUnassignedError = (name: string, expression: Expression) =>
   new TlaUnassignedError(
     `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
     name,
   );
 
-// TLC's Tool#enabled reads the subscript of <<A>>_v in the successor as a state of its own, and
-// names the fairness condition when A leaves a variable of v unassigned, unlike TLC 1.7.4's.
 export const toUnspecifiedSubscriptError = (error: unknown, version: TlcVersion | undefined) =>
   error instanceof TlaUnassignedError && version !== "1.7.4"
     ? new TlaEvaluationError(
@@ -406,7 +361,6 @@ const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Val
   );
 };
 
-// Tool#evalAppl checks that it applies a function before it evaluates the argument.
 export const expectFunction = (value: Value, application: Expression) => {
   if (isFunctionValue(value)) return value;
   throw new TlaEvaluationError(
@@ -461,12 +415,9 @@ const getBoundExplanation = (set: Value, text: string) => {
   return undefined;
 };
 
-// TLC enumerates every set except the ones it implements in Java, so any other set fails as its own
-// class does.
 const checkEnumerable = (set: Value, expression: Expression, version: TlcVersion) => {
   if (!isSetValue(set) || isOverriddenSet(set)) {
     const text = formatValue(set);
-    // TLC 1.7.4 doesn't explain why it can't enumerate a set.
     const explanation = version === "1.7.4" ? undefined : getBoundExplanation(set, text);
     throw new TlaEvaluationError(
       explanation === undefined
@@ -482,16 +433,12 @@ const getEnumeratedElements = (set: Value, expression: Expression, version: TlcV
   return getLazySubsets(set) ?? getNormalizedSetElements(set);
 };
 
-// The elements Tool.contexts binds to the bound of a quantifier or a set map. TLC 1.7.4 streams a
-// lazy set's elements, where later versions normalize the set first.
 export const getContextElements = (set: Value, expression: Expression, version: TlcVersion) => {
   if (version !== "1.7.4") return getEnumeratedElements(set, expression, version);
   checkEnumerable(set, expression, version);
   return getLazySubsets(set) ?? getStreamedElements(set);
 };
 
-// Like TLC, a quantifier keeps an interval as an interval, so that it can stop at the first witness
-// in a large interval such as 1..2000000000 without listing it.
 const getKeptInterval = (set: Value) => {
   if (typeof set !== "object" || set.kind !== "Interval") return undefined;
   getCardinality(set);
@@ -501,7 +448,6 @@ const getKeptInterval = (set: Value) => {
 export const getQuantifierElements = (set: Value, expression: Expression, version: TlcVersion) =>
   getKeptInterval(set) ?? getContextElements(set, expression, version);
 
-// CHOOSE and a function constructor visit the elements of the normalized set.
 const getNormalizedElements = (set: Value, expression: Expression, version: TlcVersion) =>
   getKeptInterval(set) ?? getEnumeratedElements(set, expression, version);
 
@@ -525,7 +471,6 @@ export const getBoundElements = (bounds: Bound[], context: Context) =>
     ),
   );
 
-// Visits each binding of the bounds to the elements of their sets, until visit returns true.
 export const forEachBoundElement = (
   bounds: Bound[],
   sets: ReturnType<typeof getBoundElements>,
@@ -561,8 +506,6 @@ const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value
   );
 };
 
-// The parameters, body and scope of each function a constructor or a definition keeps lazy, whose
-// body TLC's getInitStates and getNextStates walk for an argument, as they do a FcnLambdaValue's.
 interface LazyFunction {
   value: LazyFunctionValue;
   bounds: Bound[];
@@ -570,8 +513,6 @@ interface LazyFunction {
   scope: Scope | undefined;
 }
 
-// The function keeps its parameters, body and scope itself, since a WeakMap entry for each
-// short-lived function makes every garbage collection slower.
 interface KeptLazyFunctionValue extends LazyFunctionValue {
   lambda: LazyFunction;
 }
@@ -584,8 +525,6 @@ const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambd
 export const getLazyFunction = (value: Value) =>
   isKeptLazyFunction(value) ? value.lambda : undefined;
 
-// Tool.getFcnContext: the scope of a lazy function's body for the arguments of an application. It
-// ignores arguments beyond the parameters.
 export const bindLazyArguments = (
   lambda: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
@@ -639,8 +578,6 @@ export const bindLazyArguments = (
   return bindArgument(bounds, lambda.scope, createTuple(elements.slice(0, bounds.length)));
 };
 
-// TLC prints a function it can't enumerate as its parameters and the location of its body. It
-// prints only the first name of a group such as `m, n \in S`.
 interface LazyFunctionTemplate {
   parameters: { index: number; name: string }[];
   body: string;
@@ -686,7 +623,6 @@ const getLazyFunctionSource = (
   };
 };
 
-// TLC's FcnLambdaValue evaluates its body at each application.
 const createLazyFunction = (
   domain: Value,
   compute: (argument: Value, self: LazyFunctionValue) => Value,
@@ -701,7 +637,6 @@ const createLazyFunction = (
   return self;
 };
 
-// The function constructor of a definition, which SANY locates at the whole definition.
 const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
   kind: "FunctionConstruction",
   bounds: definition.bounds,
@@ -736,8 +671,6 @@ const createRecursiveFunction = (definition: FunctionDefinition, context: Contex
   return definition.bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
 };
 
-// TLC computes a constant definition when it starts, without keeping a function it constructs
-// lazy, so a function over an interval or an enumerated set is a FcnRcdValue.
 const toStartupValue = (definition: Definition, value: Value): Value => {
   if (typeof value !== "object" || getFunctionClass(value) !== "lambda") return value;
   if (
@@ -752,14 +685,11 @@ const toStartupValue = (definition: Definition, value: Value): Value => {
     const finite = toFiniteFunction(value);
     return createSortedFunction(finite.domain, finite.range);
   } catch (error) {
-    // TLC leaves a definition it fails to compute to evaluate where the spec uses it.
     if (error instanceof TlaEvaluationError) return value;
     throw error;
   }
 };
 
-// The code of a definition's body, evaluated as a whole. TLC evaluates a function definition that
-// isn't recursive as it does a function constructor.
 const compileDefinitionBody = (definition: Definition, environment: Environment): Evaluator => {
   if (definition.kind === "Operator" && definition.params.length > 0) {
     return () => {
@@ -774,46 +704,41 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   return getEntryEvaluator(getDefinitionSource(definition), environment);
 };
 
-// The code that evaluates a reference to a definition: the value TLC computed at startup when it
-// has one, and the body at the top level otherwise.
 const getDefinitionEvaluator = (definition: Definition, environment: Environment): Evaluator => {
   const compiled = environment.definitionEvaluators.get(definition);
   if (compiled) return compiled;
   const body = compileDefinitionBody(definition, environment);
-  const id = environment.facts.ids.get(definition);
+  const definitionId = environment.facts.ids.get(definition);
   const startupValues = environment.startupValues;
   const evaluator: Evaluator =
-    id === undefined
+    definitionId === undefined
       ? (context) => body(withScope(context, undefined))
-      : (context) => startupValues[id] ?? body(withScope(context, undefined));
+      : (context) => startupValues[definitionId] ?? body(withScope(context, undefined));
   environment.definitionEvaluators.set(definition, evaluator);
   return evaluator;
 };
 
 export const getStartupValue = (definition: Definition, environment: Environment) => {
-  const id = environment.facts.ids.get(definition);
-  return id === undefined ? undefined : environment.startupValues[id];
+  const definitionId = environment.facts.ids.get(definition);
+  return definitionId === undefined ? undefined : environment.startupValues[definitionId];
 };
 
-// TLC computes each constant definition the configuration doesn't replace when it starts, and
-// leaves one it fails to compute to evaluate where the spec uses it.
 export const evaluateStartupDefinitions = (definitions: Definition[], environment: Environment) =>
   definitions.forEach((definition) => {
     if (definition.kind === "Operator" && definition.params.length > 0) return;
     const name = definition.name;
     if (environment.constants.has(name) || environment.substitutions.has(name)) return;
     if (!isConstantLevel(definition, environment)) return;
-    const id = environment.facts.ids.get(definition);
-    if (id === undefined || environment.startupValues[id] !== undefined) return;
+    const definitionId = environment.facts.ids.get(definition);
+    if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) return;
     const context = { environment, scope: undefined, state: undefined, next: undefined };
     try {
       const value = environment.runtime.evaluateAtStartup(() =>
         toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
       );
       markNormalized(value);
-      environment.startupValues[id] = value;
+      environment.startupValues[definitionId] = value;
     } catch (error) {
-      // TLC swallows whatever the definition throws, a stack overflow included.
       if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
     }
   });
@@ -823,8 +748,6 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   if (thunk.cache !== undefined && (isSameState || thunk.isReleased)) return thunk.cache;
   const value = evaluate(thunk.expression, withScope(context, thunk.scope));
   if (isSameState && (!thunk.isStreamed || isSettledValue(value))) thunk.cache = value;
-  // A value a thunk cached with no state read no variable, so it holds in every state. Releasing
-  // its scope frees the evaluations the scope's bindings cached, which a long script keeps alive.
   if (thunk.cache !== undefined && thunk.state === undefined && thunk.next === undefined) {
     thunk.scope = undefined;
     thunk.isReleased = true;
@@ -1028,14 +951,11 @@ const callOperator = (
   return operator.evaluate(evaluateBuiltinArguments(args, context), context);
 };
 
-// The LET definitions that a reference evaluates again, and those that cache only a settled value.
 interface ReevaluatedDefinitions {
   impure: ReadonlySet<Definition>;
   streamed: ReadonlySet<Definition>;
 }
 
-// A LET's function definition has one function constructor, as in SANY, so its code compiles once
-// however often the LET is evaluated.
 const letFunctionConstructions = new WeakMap<FunctionDefinition, Expression>();
 
 const getLetFunctionConstruction = (definition: FunctionDefinition): Expression => {
@@ -1125,9 +1045,6 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
 };
 
-// TLC's next-state generator does not bind LET definitions to values, so each reference to one
-// evaluates it again: one that calls an impure builtin repeats its effects, and a set one builds
-// with UNION or \cup starts out uncached.
 export const getReevaluatedDefinitions = (
   definitions: Definition[],
   environment: Environment,
@@ -1143,14 +1060,11 @@ export const isImpure = (environment: Environment) =>
     isImpureDefinition(definition, environment),
   );
 
-// Whether evaluating a definition again can show, such as by printing twice.
 export const hasRepeatedEffects = (environment: Environment) =>
   [...environment.facts.ids.keys()].some((definition) =>
     isImpureDefinition(definition, environment, "repeated"),
   );
 
-// A set filter TLC evaluates lazily, with how to rebuild it so that its predicate runs in another
-// environment.
 interface RebindableFilteredSet extends FilteredSetValue {
   rebind: (environment: Environment) => Value;
 }
@@ -1158,8 +1072,6 @@ interface RebindableFilteredSet extends FilteredSetValue {
 const isRebindableFilteredSet = (value: Value): value is RebindableFilteredSet =>
   typeof value === "object" && value.kind === "FilteredSet" && "rebind" in value;
 
-// TLC's CallStackTool rebinds the lazy values its evaluations return, so their later evaluation
-// records its call stack too.
 const traceEvaluator =
   (
     expression: Expression,
@@ -1211,20 +1123,15 @@ const traceEvaluator =
     }
   };
 
-// A method of a value with a source raises a FingerprintException, which each value with a source
-// whose method called it heads in turn. CallStack#freeze adds their sources to the stack, outermost
-// first. The values are those whose methods failed, outermost first.
 export const freezeCallStack = (
   callStack: CallStack,
   values: (Value | undefined)[],
   error: unknown,
 ) => {
-  // A set that streams its elements enumerates itself too, so it can appear twice.
   const sources = [...new Set(values)].flatMap((item) => {
     const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
     return source ? [source] : [];
   });
-  // A value with a source raises a FingerprintException even when the stack is frozen already.
   if (sources.length > 0 && error instanceof TlaEvaluationError) {
     if (!callStack.isFrozen) callStack.expressions.push(...sources);
     const inner = callStack.fingerprint;
@@ -1236,8 +1143,6 @@ export const freezeCallStack = (
   callStack.isFrozen = true;
 };
 
-// A FingerprintException that a method of a value with a source raises, or that passes through one,
-// takes the value's source as its new head.
 const headFingerprint = (callStack: CallStack, source: Expression, error: unknown) => {
   if (!(error instanceof TlaEvaluationError)) return;
   if (!callStack.isFrozen) callStack.expressions.push(source);
@@ -1249,8 +1154,6 @@ const headFingerprint = (callStack: CallStack, source: Expression, error: unknow
   };
 };
 
-// A copy of the environment that records the call stack of each evaluation, with evaluators of its
-// own since the environment's evaluators record nothing.
 export const createTracingEnvironment = (environment: Environment): Environment => ({
   ...environment,
   evaluators: new WeakMap(),
@@ -1309,12 +1212,9 @@ const compileIdentifier = (
     return () => value;
   }
   if (global?.kind === "Definition") {
-    // The body compiles when the reference is first evaluated, as a recursive definition's body
-    // refers back to it.
     const definition = global.definition;
-    const compiled = { reference: undefined as Evaluator | undefined };
-    return (context) =>
-      (compiled.reference ??= getDefinitionEvaluator(definition, environment))(context);
+    let reference: Evaluator | undefined;
+    return (context) => (reference ??= getDefinitionEvaluator(definition, environment))(context);
   }
   return (context) => evaluateLocalIdentifier(name, expression, context);
 };
@@ -1394,11 +1294,10 @@ const compileClosureCall = (
   environment: Environment,
 ): Evaluator => {
   const bindArguments = compileArgumentScope(closure, args, environment);
-  // The body compiles when the call is first evaluated, as a recursive operator's body calls it.
-  const compiled = { body: undefined as Evaluator | undefined };
+  let body: Evaluator | undefined;
   return (context) => {
-    compiled.body ??= getEntryEvaluator(closure.body, environment);
-    return compiled.body({
+    body ??= getEntryEvaluator(closure.body, environment);
+    return body({
       environment,
       scope: bindArguments(context),
       state: context.state,
@@ -1434,7 +1333,6 @@ const compileApply = (
     const domain = getDomainOperator(expression);
     return (context) => domain(operand(context));
   }
-  // TLC sorts the value of a constant TLCEval argument only where no context binds a name.
   if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
     const operand = getEvaluator(args[0], environment);
     if (contextualApplications.has(expression) || isNonconstant(args[0], environment)) {
@@ -1450,7 +1348,6 @@ const compileApply = (
     return (context) => subset(left(context), right(context));
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
-  // TLC refuses action composition unless a Java property enables its incomplete implementation.
   if (expression.operator === "\\cdot" && args.length === 2) {
     return () => {
       throw new TlaEvaluationError(
@@ -1539,8 +1436,6 @@ const getBoundValue = (pattern: BoundPattern, scope: Scope | undefined) => {
   return binding?.kind === "Value" ? binding.value : undefined;
 };
 
-// TLC keeps a function constructor lazy when it is the function of an application, or the base of
-// an EXCEPT that is, so it evaluates the body only at the arguments it is applied to.
 const keptLazyExpressions = new WeakSet<Expression>();
 
 export const keepLazy = (expression: Expression) => {
@@ -1549,8 +1444,6 @@ export const keepLazy = (expression: Expression) => {
   }
 };
 
-// The names an expression may look up in its scope, or undefined when a subexpression selector may
-// look up others.
 const scopeNames = new WeakMap<Expression, string[] | undefined>();
 
 const getScopeNames = (expression: Expression) => {
@@ -1568,9 +1461,6 @@ const getScopeNames = (expression: Expression) => {
   return result;
 };
 
-// The bindings of a scope that names look up, so that a lazy function keeps only those alive and
-// not the values its other bindings cached. An unnamed node ends the chain, since a TLCEval in the
-// body sorts its value only where no context binds a name.
 const trimScope = (scope: Scope | undefined, names: string[] | undefined) =>
   names === undefined || scope === undefined
     ? scope
@@ -1600,7 +1490,6 @@ const compileFunctionConstruction = (
         keys,
         keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
       );
-      // FcnLambdaValue#toFcnRcd builds a FcnRcdValue over an interval or an enumerated set.
       return isReducibleSet(domain) ? functionValue : markLambdaFunction(functionValue);
     }
     const pairs: [Value, Value][] = [];
@@ -1644,9 +1533,6 @@ const compileFunctionConstruction = (
     if (expression.isRecursive || isKeptLazy || context.isKeepLazy || !isEnumerable(domain)) {
       return createLazy(domain, context);
     }
-    // TLC builds a function over a domain other than a set enumeration or an interval lazily, so
-    // its body fails only where TLC forces it, as the replay does. Building it at once is faster
-    // otherwise.
     if (!isReducibleSet(domain)) {
       if (callStack) return createLazy(domain, context);
       try {
@@ -1657,7 +1543,6 @@ const compileFunctionConstruction = (
       }
     }
     if (!callStack) return construct(domain, context);
-    // TLC builds the function in a method of the FcnLambdaValue that CallStackTool gives a source.
     try {
       return construct(domain, context);
     } catch (error) {
@@ -1711,13 +1596,12 @@ const compileExcept = (
   return (context) => {
     let current = evaluateFunction(context);
     for (const item of updates) {
-      // TLC leaves the value as it is when an update's path is not in it, and warns.
-      const found = { value: false };
+      let isFound = false;
       current = update(current, item.path, 0, context, (inner) => {
-        found.value = true;
+        isFound = true;
         return item.value(inner);
       });
-      if (!found.value) {
+      if (!isFound) {
         context.environment.runtime.warn(
           MESSAGE_CODE.exceptAppliedToUnknownField,
           `The EXCEPT was applied to non-existing fields of the value at\n${describeRange(expression.function)}`,
@@ -1764,7 +1648,6 @@ const compileSetComprehension = (
     });
     return (context) => {
       const base = set(context);
-      // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
       if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
       return createSortedSet(toFiniteSet(base).elements.filter(createTest(predicate, context)));
     };
@@ -1797,24 +1680,23 @@ const compileSetComprehension = (
         `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
       );
     }
-    const chosen = { value: undefined as Value | undefined };
+    let chosen: Value | undefined;
     const elements = getNormalizedElements(base, set, context.environment.runtime.version);
     someElement(elements, (element) => {
       const scope = bindPattern(context.scope, expression.pattern, element);
       if (!expectBoolean(body(withScope(context, scope)), "the body of CHOOSE")) return false;
-      chosen.value = getBoundValue(expression.pattern, scope);
+      chosen = getBoundValue(expression.pattern, scope);
       return true;
     });
-    if (chosen.value === undefined) {
+    if (chosen === undefined) {
       throw new TlaEvaluationError(
         `Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n${describeRange(expression)}`,
       );
     }
-    return chosen.value;
+    return chosen;
   };
 };
 
-// TLC orders a record's fields by name.
 export const getSortedFields = (fields: RecordField[]) =>
   [...fields].sort((left, right) => compareValues(left.name, right.name));
 

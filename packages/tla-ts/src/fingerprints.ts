@@ -25,7 +25,8 @@ export const writeStateFingerprint = (state: Value[], fingerprint: Int32Array) =
 };
 
 export const createFingerprintTable = (): FingerprintTable => {
-  const table = { slots: new Int32Array(INITIAL_CAPACITY * 2), used: 0 };
+  let tableSlots = new Int32Array(INITIAL_CAPACITY * 2);
+  let used = 0;
   const findSlot = (slots: Int32Array, first: number, second: number) => {
     const mask = slots.length / 2 - 1;
     for (let index = first & mask; ; index = (index + 1) & mask) {
@@ -35,7 +36,7 @@ export const createFingerprintTable = (): FingerprintTable => {
     }
   };
   const grow = () => {
-    const previous = table.slots;
+    const previous = tableSlots;
     const slots = new Int32Array(previous.length * 2);
     for (let index = 0; index < previous.length; index += 2) {
       if (previous[index] === EMPTY) continue;
@@ -43,22 +44,21 @@ export const createFingerprintTable = (): FingerprintTable => {
       slots[slot * 2] = previous[index];
       slots[slot * 2 + 1] = previous[index + 1];
     }
-    table.slots = slots;
+    tableSlots = slots;
   };
   return {
     insert: (first, second) => {
-      if (table.used * 4 >= table.slots.length) grow();
-      const slot = findSlot(table.slots, first, second);
-      if (table.slots[slot * 2] === first) return false;
-      table.slots[slot * 2] = first;
-      table.slots[slot * 2 + 1] = second;
-      table.used++;
+      if (used * 4 >= tableSlots.length) grow();
+      const slot = findSlot(tableSlots, first, second);
+      if (tableSlots[slot * 2] === first) return false;
+      tableSlots[slot * 2] = first;
+      tableSlots[slot * 2 + 1] = second;
+      used++;
       return true;
     },
   };
 };
 
-// Workers share one table of 64-bit fingerprints. The first word is never 0, so 0 marks an empty slot.
 export interface SharedFingerprints {
   slots: BigInt64Array;
   used: Int32Array;

@@ -47,8 +47,6 @@ export interface ScopedExpression {
   scope: Scope | undefined;
 }
 
-// A part of a temporal formula, with the name TLC gives the part when the formula is a property:
-// a conjunct's location, or the name of the definition the part is the body of.
 interface ExpandedExpression extends ScopedExpression {
   name: string | undefined;
 }
@@ -76,7 +74,6 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined):
   next: undefined,
 });
 
-// TLC adds the message of the error that stopped it, when it has one.
 const createCannotHandleError = (expression: Expression, inner?: string) =>
   new TlaEvaluationError(
     `TLC cannot handle the temporal formula ${describeRange(expression)}${inner === undefined ? "" : `:\n${inner}`}`,
@@ -119,10 +116,10 @@ export const getLevel = (
     return getGlobalLevel(name) ?? getBindingLevel(name) ?? CONSTANT_LEVEL;
   };
   const getChildrenLevel = (node: Expression) => {
-    const level = { value: CONSTANT_LEVEL };
+    let level = CONSTANT_LEVEL;
     mapChildren(node, (child, bound) => {
-      level.value = Math.max(
-        level.value,
+      level = Math.max(
+        level,
         getLevel(
           child,
           scope,
@@ -132,7 +129,7 @@ export const getLevel = (
       );
       return child;
     });
-    return level.value;
+    return level;
   };
   switch (expression.kind) {
     case "Prime":
@@ -162,7 +159,6 @@ export const getLevel = (
   }
 };
 
-// TLC leaves a formula whose sets it fails to enumerate, and doesn't expect an EvalException.
 const getUnrolledElements = (bounds: Bound[], context: Context) => {
   try {
     return getBoundElements(bounds, context);
@@ -180,11 +176,8 @@ export const expandTemporal = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-  // Whether TLC expands the formula as a property, which unrolls each \A over a constant set.
   isProperty: boolean,
   expanding = new Set<Definition>(),
-  // Whether the expansion entered the body of an instance's definition. Like TLC, it then no
-  // longer expands an operator applied to arguments.
   isSubstituted = false,
   name?: string,
 ): ExpandedExpression[] => {
@@ -239,8 +232,6 @@ export const expandTemporal = (
     }
   }
   const context = getConstantContext(environment, scope);
-  // TLC 1.7.4 never expands an operator applied to arguments. A property expands every one it
-  // applies, but a specification only the temporal ones.
   if (
     expression.kind === "Apply" &&
     environment.runtime.version !== "1.7.4" &&
@@ -305,7 +296,6 @@ export const toLiveExpression = (
     scope: Scope | undefined,
     level: number,
   ): LiveExpression => {
-    // TLC after 1.7.4 bounds the level of a formula whose parts are constant by the formula's own.
     const atomLevel =
       level === CONSTANT_LEVEL && !is174 ? getLevel(expression, scope, environment) : level;
     if (atomLevel === CONSTANT_LEVEL) {
@@ -321,7 +311,7 @@ export const toLiveExpression = (
     return { kind: "Action", expression, unchanged: undefined, scope };
   };
 
-  const expansion = { depth: 0 };
+  let expansionDepth = 0;
 
   const expand = (
     body: Expression,
@@ -329,12 +319,12 @@ export const toLiveExpression = (
     expression: Expression,
     scope: Scope | undefined,
   ) => {
-    if (expansion.depth >= MAXIMUM_EXPANSION_DEPTH) {
+    if (expansionDepth >= MAXIMUM_EXPANSION_DEPTH) {
       throw createStackOverflowError();
     }
-    expansion.depth++;
+    expansionDepth++;
     const result = convert(body, bodyScope);
-    expansion.depth--;
+    expansionDepth--;
     const level = getLiveLevel(result);
     return level > ACTION_LEVEL ? result : toAtom(expression, scope, level);
   };
@@ -369,7 +359,6 @@ export const toLiveExpression = (
     return expandCall(
       expression,
       () => {
-        // TLC 1.7.4 evaluates the arguments of an operator it expands.
         if (is174) {
           args
             .filter((arg) => arg.kind !== "Lambda" && arg.kind !== "OperatorReference")
@@ -386,8 +375,6 @@ export const toLiveExpression = (
     );
   };
 
-  // TLC takes an application of an operator whose expansion fails for a formula it can't handle,
-  // except that TLC after 1.7.4 fails as the expansion of a recursive operator does.
   const expandCall = (
     expression: Expression,
     expandBody: () => LiveExpression,
@@ -416,8 +403,6 @@ export const toLiveExpression = (
     }
     const operands: LiveExpression[] = [];
     const isForall = expression.kind === "Forall";
-    // TLC takes a quantified formula whose body fails for one it can't handle, and under \A it adds
-    // the message of a failure that isn't an EvalException.
     try {
       forEachBinding(expression.bounds, getConstantContext(environment, scope), (boundScope) => {
         operands.push(convert(expression.body, boundScope));
@@ -437,14 +422,11 @@ export const toLiveExpression = (
     return toWhole(expression, scope, createJunction(isForall ? "And" : "Or", operands));
   };
 
-  // TLC takes a formula whose translated parts are below temporal level whole, at their level.
   const toWhole = (expression: Expression, scope: Scope | undefined, parts: LiveExpression) => {
     const level = getLiveLevel(parts);
     return level > ACTION_LEVEL ? parts : toAtom(expression, scope, level);
   };
 
-  // The formulas below temporal level whose parts TLC's Liveness.astToLive translates, as one
-  // that is constant, such as a quantifier over the empty set, can make the formula constant.
   const isTranslatedWhole = (expression: Expression) =>
     expression.kind === "Label" ||
     expression.kind === "Let" ||
@@ -507,7 +489,6 @@ export const toLiveExpression = (
       case "Exists":
         return convertQuantifier(expression, scope);
       case "If": {
-        // TLC 1.7.4 translates both branches whatever the guard.
         if (!is174 && getLevel(expression.condition, scope, environment) === CONSTANT_LEVEL) {
           const condition = evaluate(expression.condition, getConstantContext(environment, scope));
           if (typeof condition === "boolean") {

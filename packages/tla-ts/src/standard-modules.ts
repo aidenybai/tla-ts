@@ -41,6 +41,7 @@ import {
   isEnumerable,
   isFiniteSet,
   isFunctionValue,
+  isOverriddenSet,
   computeLikeTlcOnFailure,
   isReducibleSet,
   markStreamedSet,
@@ -70,8 +71,6 @@ const isSubsetOf = (left: Value[], right: Value) =>
 
 const BOOLEAN_SET = createSet([false, true]);
 
-// Merging the sets pairwise in a balanced tree compares each element about log2 of their count
-// times.
 const getBalancedUnion = (sets: SetValue[], start: number, end: number): SetValue => {
   if (end - start === 1) return sets[start];
   const middle = (start + end) >> 1;
@@ -84,8 +83,6 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
-// TLC combines a set enumeration or an interval with another set element by element, testing each
-// element for membership in the other set.
 const combineReducible = (
   operator: SetOperationValue["operator"],
   set: ReducibleSet,
@@ -128,7 +125,6 @@ export const CORE_OPERATORS: Builtin[] = [
   ),
   defineOperator("\\subseteq", 2, (args) => {
     const left = getSet(args, 0, "\\subseteq");
-    // TLC tests each element of the left set for membership in the right value.
     const right = getValue(args, 1, "\\subseteq");
     const isPowerSets =
       typeof left === "object" &&
@@ -139,8 +135,6 @@ export const CORE_OPERATORS: Builtin[] = [
     if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
     return isSubsetOf(toFiniteSet(left).elements, right);
   }),
-  // TLC defers the set operations of values that aren't sets to the enumeration or the membership
-  // tests of the result.
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
       const left = getValue(args, 0, operator);
@@ -158,7 +152,6 @@ export const CORE_OPERATORS: Builtin[] = [
             : operator === "\\cap"
               ? getSortedIntersection
               : getSortedDifference;
-        // The merge compares the elements, which TLC tests for membership one by one instead.
         return computeLikeTlcOnFailure(
           (finiteLeft, finiteRight) => merge(toFiniteSet(finiteLeft), toFiniteSet(finiteRight)),
           (reducibleLeft, reducibleRight) =>
@@ -202,8 +195,6 @@ export const CORE_OPERATORS: Builtin[] = [
 
 const NEG_SIGNATURE = getJavaSignature("Integers", "Neg", "IntValue", 1);
 
-// TLC overrides the arithmetic of Naturals with the Java methods of tlc2.module.Naturals, or with
-// those of tlc2.module.Integers when the spec loads Integers, and names the method in an error.
 const createArithmeticOperators = (module: string) => {
   const dotDotSignature = getJavaSignature(module, "DotDot", "IntervalValue", 2);
   return [
@@ -221,8 +212,7 @@ const createArithmeticOperators = (module: string) => {
     }),
     defineArithmetic(module, "\\div", "Divide", (left, right) => {
       if (right === 0) throw new TlaModuleError("The second argument of \\div is 0.");
-      // tlc2.module.Naturals#Divide floors only a quotient Java truncates below 0, and lets
-      // -2147483648 \div -1 overflow.
+      // tlc2.module.Naturals#Divide floors only a quotient Java truncates below 0, and lets -2147483648 \div -1 overflow.
       if (module === "Naturals") {
         const truncated = Math.trunc(left / right) | 0;
         return truncated < 0 && Math.imul(truncated, right) !== left ? truncated - 1 : truncated;
@@ -251,8 +241,6 @@ const NATURALS_ARITHMETIC = createArithmeticOperators("Naturals");
 
 const INTEGERS_ARITHMETIC = createArithmeticOperators("Integers");
 
-// The operators of Naturals that TLC overrides with the methods of tlc2.module.Integers when it
-// loads Integers for its trace exploration spec, by the operator each replaces.
 export const getTraceSpecArithmetic = (builtin: Builtin) => {
   const index = NATURALS_ARITHMETIC.indexOf(builtin);
   return index === -1 ? undefined : INTEGERS_ARITHMETIC[index];
@@ -264,8 +252,7 @@ const NATURALS_OPERATORS = [
   defineComparison("<", (left, right) => left < right),
   defineComparison(">", (left, right) => left > right),
   defineComparison("<=", (left, right) => left <= right),
-  // tlc2.module.Naturals#GEQ names itself > in its errors. Only a spec that extends Integers gets
-  // the GEQ of tlc2.module.Integers, not one that loads Integers for its trace exploration spec.
+  // tlc2.module.Naturals#GEQ names itself > in its errors.
   defineComparison(">=", (left, right) => left >= right, ">"),
 ];
 
@@ -404,10 +391,7 @@ const createFiniteSetsOperators = (version: TlcVersion) =>
     }),
     defineOperator("Cardinality", 1, (args) => {
       const set = getValue(args, 0, "Cardinality");
-      if (
-        !isSetValue(set) ||
-        (typeof set === "object" && (set.kind === "InfiniteSet" || set.kind === "SequenceSet"))
-      ) {
+      if (!isSetValue(set) || isOverriddenSet(set)) {
         throw new TlaModuleError(
           `Attempted to compute cardinality of the value\n${formatValue(set)}`,
         );
@@ -416,7 +400,6 @@ const createFiniteSetsOperators = (version: TlcVersion) =>
     }),
   ]);
 
-// The modules that each standard module loads through EXTENDS and LOCAL INSTANCE in TLC.
 export const STANDARD_DEPENDENCIES = new Map([
   ["Integers", ["Naturals"]],
   ["Sequences", ["Naturals"]],

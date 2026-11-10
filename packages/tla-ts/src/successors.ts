@@ -56,22 +56,25 @@ export interface Successor {
 interface Run {
   environment: Environment;
   isInit: boolean;
-  // Whether the run computes ENABLED rather than the successors of the state.
   isEnabled: boolean;
   current: Value[] | undefined;
   isStopped: boolean;
 }
 
-type Continuation = (partial: State, action: string | undefined) => void;
+interface Continuation {
+  (partial: State, action: string | undefined): void;
+}
 
-type Runner = (
-  run: Run,
-  scope: Scope | undefined,
-  partial: State,
-  action: string | undefined,
-  isFixed: boolean,
-  onComplete: Continuation,
-) => void;
+interface Runner {
+  (
+    run: Run,
+    scope: Scope | undefined,
+    partial: State,
+    action: string | undefined,
+    isFixed: boolean,
+    onComplete: Continuation,
+  ): void;
+}
 
 type Conjunct = { expression: Expression } & (
   | { kind: "Guard" }
@@ -94,18 +97,14 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-// What TLC says it was computing when it fails.
 const getComputation = (run: Run) =>
   run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
 
-// TLC fails with an unexpected exception when it fails to compute the next states or ENABLED.
 const createRunError = (run: Run, message: string) => {
   const error = new TlaEvaluationError(message);
   return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
 };
 
-// TLC's message for a conjunct that isn't a boolean, which differs for a literal it walks to rather
-// than evaluates.
 const getNonBooleanMessage = (
   run: Run,
   value: Value,
@@ -121,7 +120,6 @@ const getNonBooleanMessage = (
   return `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${node}`;
 };
 
-// TLC words an IF whose condition isn't a boolean differently for each computation.
 const getIfConditionMessage = (run: Run, value: Value, expression: Expression) => {
   const kind = getKindString(value);
   const range = describeRange(expression);
@@ -277,9 +275,7 @@ const isGuard = (expression: Expression, environment: Environment, isInit: boole
 
 const NO_NAMES: ReadonlySet<string> = new Set();
 
-// The local names an expression reads from enclosing scopes, or undefined when it applies a local
-// operator, whose body may assign variables.
-export const getReadLocals = (
+const getReadLocals = (
   expression: Expression,
   bound: ReadonlySet<string>,
 ): string[] | undefined => {
@@ -288,20 +284,18 @@ export const getReadLocals = (
     return bound.has(expression.name) ? [] : [expression.name];
   }
   const names: string[] = [];
-  const result = { isReadOnly: true };
+  let isReadOnly = true;
   mapChildren(expression, (child, childNames) => {
-    const childLocals = result.isReadOnly
+    const childLocals = isReadOnly
       ? getReadLocals(child, childNames.length === 0 ? bound : new Set([...bound, ...childNames]))
       : [];
     if (childLocals) names.push(...childLocals);
-    else result.isReadOnly = false;
+    else isReadOnly = false;
     return child;
   });
-  return result.isReadOnly ? names : undefined;
+  return isReadOnly ? names : undefined;
 };
 
-// TLC generates a successor for every disjunct and witness that holds, so an expression only
-// checks like a guard when it has neither.
 const hasBranches = (
   expression: Expression,
   environment: Environment,
@@ -344,8 +338,6 @@ const toConjunct = (
   return { kind: "Branch", expression, runner: getRunner(expression, environment, isInit) };
 };
 
-// The leading guards of `\E x \in S, y \in T : P /\ Q` that read no inner bound hold for every inner
-// binding alike, so they can run once for each element of the outermost bound.
 const getHoistedGuards = (expression: QuantifierExpression, environment: Environment) => {
   if (expression.bounds.length < 2 || expression.body.kind !== "And") return undefined;
   const names = expression.bounds.flatMap((bound) =>
@@ -520,8 +512,6 @@ const compileDynamicAssignment = (
   };
 };
 
-// Tool.getInitStates and Tool.getNextStates walk the body of a function they apply that is still
-// lazy, which they evaluate as TLC computes the initial states eagerly, and otherwise apply it.
 const compileFunctionAction = (
   expression: Expression & { kind: "FunctionApplication" },
   environment: Environment,
@@ -597,10 +587,10 @@ const compileCall = (
   if (global?.kind === "Builtin") return guard;
   if (global?.kind === "Closure") {
     const bindArguments = compileArgumentScope(global, expression.args, environment);
-    const compiled = { body: undefined as Runner | undefined };
+    let compiledBody: Runner | undefined;
     return (run, scope, partial, action, isFixed, onComplete) => {
-      compiled.body ??= getRunner(global.body, environment, isInit);
-      compiled.body(
+      compiledBody ??= getRunner(global.body, environment, isInit);
+      compiledBody(
         run,
         bindArguments(getContext(run, scope, partial)),
         partial,
@@ -637,7 +627,7 @@ const compileIdentifier = (
   const definition = isLocallyResolved(expression)
     ? undefined
     : getZeroArityBody(expression.name, environment);
-  const compiled = { body: undefined as Runner | undefined };
+  let compiledBody: Runner | undefined;
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding = lookupScope(scope, expression.name);
     if (binding?.kind === "Thunk" && !binding.isReleased) {
@@ -655,16 +645,11 @@ const compileIdentifier = (
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
-    compiled.body ??= getRunner(definition.body, environment, isInit);
-    compiled.body(run, undefined, partial, isFixed ? action : definition.name, isFixed, onComplete);
+    compiledBody ??= getRunner(definition.body, environment, isInit);
+    compiledBody(run, undefined, partial, isFixed ? action : definition.name, isFixed, onComplete);
   };
 };
 
-// A PlusCal action starts with a guard such as pc[self] = "L1", and a process is a disjunction of
-// its actions. The labels an expression requires of one variable at one bound name let a
-// disjunction skip the operands whose guard is false without evaluating them. A hand-written
-// action often puts other guards first, such as running = self /\ pc[self] = "L1". TLC evaluates
-// those before the label's guard, so a skipped operand still runs them, for their errors.
 interface LabelGuard {
   variable: number;
   argument: string;
@@ -689,16 +674,12 @@ const toLabelGuard = (expression: Expression, environment: Environment) => {
 const getConjuncts = (expression: Expression): Expression[] =>
   expression.kind === "And" ? expression.operands.flatMap(getConjuncts) : [expression];
 
-// What may come before the label's guard: a comparison or a name that a conjunction checks as a
-// guard. An operand with another conjunct first, such as an assignment or a name defined as an
-// action that may branch, runs in full.
 const isLeadingGuard = (expression: Expression, environment: Environment) =>
   (expression.kind === "Identifier" ||
     (expression.kind === "Apply" &&
       (expression.operator === "=" || expression.operator === "#"))) &&
   isGuard(expression, environment, false);
 
-// Checks the guards before a label's guard as a conjunction does, for TLC's errors.
 const compileLeadingGuards = (guards: Expression[]) => {
   const evaluators: (Evaluator | undefined)[] = [];
   return (run: Run, scope: Scope | undefined, partial: State) => {
@@ -955,7 +936,6 @@ const compileAction = (
         const arm = arms.find((candidate) => {
           const value = evaluate(candidate.condition, context);
           if (typeof value === "boolean") return value;
-          // TLC leaves out the space before the kind under ENABLED.
           throw createRunError(
             run,
             `In computing ${getComputation(run)}, a non-boolean expression${run.isEnabled ? "" : " "}(${getKindString(value)}) was used as a guard condition of a CASE.\n${describeNode(candidate.source)}`,
@@ -1056,7 +1036,6 @@ const compileAction = (
   }
 };
 
-// A partial state that assigns no variable, which a run fills in as it assigns them.
 const getEmptyState = (environment: Environment): State =>
   environment.variables.map((): Value | undefined => undefined);
 
@@ -1075,7 +1054,6 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  // TLC computes ENABLED again with its call stack recorded as it computes successors.
   if (environment.callStack) return replayEnabled(expression, context.scope, state, environment);
   const run: Run = {
     environment,
@@ -1084,7 +1062,6 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     current: state,
     isStopped: false,
   };
-  // TLC stops computing ENABLED at the first successor, so it skips the rest of the action.
   getRunner(expression, environment, false)(
     run,
     context.scope,
@@ -1120,8 +1097,6 @@ export const forEachInitialState = (
     (partial) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
-        // TLC reports an initial state that isn't completely specified as an illegal state, not as
-        // an evaluation failure.
         throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
       }
       run.isStopped = onState(partial);
@@ -1161,7 +1136,7 @@ export const forEachSuccessor = (
     current: state,
     isStopped: false,
   };
-  const counter = { successors: 0 };
+  let successorCount = 0;
   getRunner(expression, environment, false)(
     run,
     scope,
@@ -1179,11 +1154,11 @@ export const forEachSuccessor = (
           missing,
         );
       }
-      counter.successors++;
+      successorCount++;
       run.isStopped = onSuccessor({ state: partial, action });
     },
   );
-  return counter.successors;
+  return successorCount;
 };
 
 export const getSuccessors = (

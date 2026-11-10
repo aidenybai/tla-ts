@@ -35,14 +35,6 @@ interface InfixOperator extends Precedence {
   isAssociative: boolean;
 }
 
-// TLAplusParser.lastOp, the operator parsed last, and the operator an operand being parsed follows
-// in its expression.
-interface OperatorContext {
-  last?: Precedence;
-  preceding?: Precedence;
-}
-
-// SANY's precedences of a postfix operator and of the "[" of a function application.
 const POSTFIX_PRECEDENCE: Precedence = { low: 15, high: 15 };
 const FUNCTION_PRECEDENCE: Precedence = { low: 16, high: 16 };
 
@@ -156,7 +148,6 @@ const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
-// The prefix operators SANY reads in a definition's left-hand side, built-in ones included.
 const DEFINABLE_PREFIX_OPERATORS = new Set([
   "-.",
   "~",
@@ -297,7 +288,6 @@ const BUILTIN_CONSTANTS = new Set(["TRUE", "FALSE", "BOOLEAN", "STRING"]);
 
 const NO_OFFSIDE = -1;
 
-// A SANY InfixExpr or PostfixExpr.
 const isOperatorExpression = (expression: Expression) =>
   expression.kind === "Prime" ||
   expression.kind === "Product" ||
@@ -331,8 +321,6 @@ const getOperatorApplication = (
   }
 };
 
-// MonolithSpecExtractor.module: a module that no file defines can follow the root module in the
-// root module's file, from its ---- MODULE line to the next ==== line.
 export const extractModule = (source: string, name: string) => {
   const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
   const lines = source.split(/\r?\n/);
@@ -342,22 +330,18 @@ export const extractModule = (source: string, name: string) => {
   return `${lines.slice(start, end === -1 ? undefined : end + 1).join("\n")}\n`;
 };
 
-// The tlapm mode parses as tlapm does for proof obligations, which accepts and rejects some modules
-// that SANY does not. The sany mode leaves the checks that SANY makes after parsing to the SANY
-// generator.
 type ParseMode = "tlc" | "tlapm" | "sany";
 
 const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source)): Module => {
   const isTlapm = mode === "tlapm";
   const tokens = isTlapm ? sourceTokens : sourceTokens.map(readAtAsIdentifier);
-  const cursor = { index: 0, offsideColumns: [] as number[] };
-  const operators: OperatorContext = {};
-  // A RECURSIVE declaration covers the definitions of its own LET or module.
+  let nextIndex = 0;
+  const offsideColumns: number[] = [];
+  let lastOperator: Precedence | undefined;
+  let precedingOperator: Precedence | undefined;
   const recursiveScopes: Set<string>[] = [];
   const factNames = new Set<string>();
-  // The NEW, TAKE, and PICK names in scope, which a DEF clause cannot cite.
   const proofScopes: Set<string>[] = [];
-  // SANY reports a location in a nested module as one in the module of its file.
   const openModules: Module[] = [];
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
@@ -372,7 +356,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const tokenEnds: SourceLocation[] = [];
   const tokenRanges: SourceRange[] = [];
 
-  const getRange = (startIndex: number, endIndex = cursor.index - 1) => {
+  const getRange = (startIndex: number, endIndex = nextIndex - 1) => {
     const cached = startIndex === endIndex ? tokenRanges[startIndex] : undefined;
     if (cached) return cached;
     const last = tokens[endIndex];
@@ -387,17 +371,16 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     return range;
   };
 
-  // Each node gets its own location object from getLocation, so the range can be set in place.
   const withRange = <Node extends { location: SourceLocation }>(node: Node, startIndex: number) => {
     node.location.range = getRange(startIndex);
     return node;
   };
 
-  const peekRaw = (offset = 0) => tokens[Math.min(cursor.index + offset, tokens.length - 1)];
+  const peekRaw = (offset = 0) => tokens[Math.min(nextIndex + offset, tokens.length - 1)];
 
   const peek = (offset = 0) => {
     const token = peekRaw(offset);
-    const offsideColumn = cursor.offsideColumns[cursor.offsideColumns.length - 1];
+    const offsideColumn = offsideColumns[offsideColumns.length - 1];
     if (offsideColumn === undefined || offsideColumn === NO_OFFSIDE || token.kind === "End") {
       return token;
     }
@@ -407,16 +390,15 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const describeToken = (token: Token) =>
     token.kind === "End" ? "end of input" : JSON.stringify(token.text);
 
-  const unitStart = { index: 0 };
+  let unitStartIndex = 0;
 
   const getDefinitionEnd = (fallback: { line: number; column: number }) => {
     const equals = tokens
-      .slice(unitStart.index, cursor.index)
+      .slice(unitStartIndex, nextIndex)
       .find((token) => token.text === "==" && token.kind !== "String");
     return equals ? { line: equals.line, column: equals.endColumn + 1 } : fallback;
   };
 
-  // tlapm reads TRUE, FALSE, BOOLEAN, STRING and the other keywords only as keywords.
   const isTlapmKeyword = (token: Token) =>
     isTlapm && (token.kind === "Keyword" || BUILTIN_CONSTANTS.has(token.text));
 
@@ -477,7 +459,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const createUnexpected = (message: string, token: Token = peekRaw()) =>
     createError(message, token, token);
 
-  // TLAplusParser.isFieldNameToken: a keyword or an underscore names a field or a module too.
   const isFieldName = (token: Token) =>
     (token.kind === "Identifier" ||
       token.kind === "Keyword" ||
@@ -492,13 +473,13 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const advance = () => {
     const token = peek();
     if (token.kind === "End") throw createError("Unexpected end of expression");
-    cursor.index++;
+    nextIndex++;
     return token;
   };
 
   const accept = (text: string) => {
     if (!isAt(text)) return false;
-    cursor.index++;
+    nextIndex++;
     return true;
   };
 
@@ -514,12 +495,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       throw createUnexpected(`Expected an identifier but found ${describeToken(token)}`);
     }
     if (isTlapmKeyword(token)) throw createUnexpected(`Unexpected keyword ${token.text}`);
-    cursor.index++;
+    nextIndex++;
     return token.text;
   };
 
   const expectName = () => {
-    const start = cursor.index;
+    const start = nextIndex;
     return { name: expectIdentifier(), range: getRange(start) };
   };
 
@@ -528,7 +509,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     ranges: names.map((item) => item.range),
   });
 
-  // TLAplusParser.Substitution: an identifier, or a prefix, infix or postfix operator.
   const expectSubstitutionTarget = () => {
     const token = peek();
     const isOperator =
@@ -538,25 +518,22 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         POSTFIX_OPERATORS.has(token.text) ||
         token.text === "'");
     if (!isOperator) return expectIdentifier();
-    cursor.index++;
+    nextIndex++;
     return token.text;
   };
 
-  // SANY takes a keyword for the name of a module, as it does for a field.
-  const keywordModuleName = { isUsed: false };
+  let isKeywordModuleName = false;
   const expectModuleName = () => {
     if (peek().kind === "Identifier" || !isFieldName(peek())) return expectIdentifier();
-    keywordModuleName.isUsed = true;
+    isKeywordModuleName = true;
     return advance().text;
   };
 
-  // tlapm reads a bracketed expression apart from the junction list around it, whose alignment
-  // SANY keeps applying.
-  const withBracketLayout = <Result>(parse: () => Result) => {
-    if (!isTlapm) return parse();
-    cursor.offsideColumns.push(NO_OFFSIDE);
-    const result = parse();
-    cursor.offsideColumns.pop();
+  const withBracketLayout = <Result>(parseContent: () => Result) => {
+    if (!isTlapm) return parseContent();
+    offsideColumns.push(NO_OFFSIDE);
+    const result = parseContent();
+    offsideColumns.pop();
     return result;
   };
 
@@ -568,15 +545,15 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
 
   const isBoundAhead = () => {
     if (isAt("<<")) {
-      const offset = { value: 1 };
-      while (peek(offset.value).kind === "Identifier" || isAt(",", offset.value)) offset.value++;
-      return isAt(">>", offset.value) && isAt("\\in", offset.value + 1);
+      let offset = 1;
+      while (peek(offset).kind === "Identifier" || isAt(",", offset)) offset++;
+      return isAt(">>", offset) && isAt("\\in", offset + 1);
     }
-    const offset = { value: 0 };
-    while (peek(offset.value).kind === "Identifier") {
-      if (isAt("\\in", offset.value + 1)) return true;
-      if (!isAt(",", offset.value + 1)) return false;
-      offset.value += 2;
+    let offset = 0;
+    while (peek(offset).kind === "Identifier") {
+      if (isAt("\\in", offset + 1)) return true;
+      if (!isAt(",", offset + 1)) return false;
+      offset += 2;
     }
     return false;
   };
@@ -584,14 +561,9 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const isLabelAhead = () => {
     if (isAt("::")) return true;
     if (!isAt("(")) return false;
-    const offset = { value: 1 };
-    while (peek(offset.value).kind === "Identifier" && isAt(",", offset.value + 1))
-      offset.value += 2;
-    return (
-      peek(offset.value).kind === "Identifier" &&
-      isAt(")", offset.value + 1) &&
-      isAt("::", offset.value + 2)
-    );
+    let offset = 1;
+    while (peek(offset).kind === "Identifier" && isAt(",", offset + 1)) offset += 2;
+    return peek(offset).kind === "Identifier" && isAt(")", offset + 1) && isAt("::", offset + 2);
   };
 
   const parsePattern = (): BoundPattern => {
@@ -615,7 +587,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const parseSubscript = (): Expression => {
     const token = peek();
     if (token.kind === "Identifier") {
-      const start = cursor.index;
+      const start = nextIndex;
       const names = [advance().text];
       while (isAt("!") && peek(1).kind === "Identifier") {
         advance();
@@ -644,8 +616,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     );
   };
 
-  // SANY's OpOrExpr reads an operator as an argument only before what ends the argument, and as
-  // the start of an expression, such as -.(1), otherwise.
   const isStandalone = (operator: Token) => {
     const token = peek(1);
     return (
@@ -665,8 +635,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       token.kind === "Operator" &&
       (INFIX_OPERATORS.has(token.text) || PREFIX_OPERATOR_REFERENCES.has(token.text)) &&
       isStandalone(token);
-    // tlapm reads a prefix operator as the start of an expression, and (+), (-), (/) and (\X) as
-    // the operators \oplus, \ominus, \oslash and \otimes.
     const isTlapmIncomplete =
       isTlapm &&
       token.kind !== "String" &&
@@ -683,7 +651,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           peek(1).column === token.endColumn + 1));
     if (isTlapmIncomplete && isStandalone(token)) throw createError("incomplete expression", token);
     if (isOperatorAlone) {
-      cursor.index++;
+      nextIndex++;
       return withRange(
         {
           kind: "OperatorReference",
@@ -691,18 +659,18 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           spelling: token.spelling,
           location: getLocation(token),
         },
-        cursor.index - 1,
+        nextIndex - 1,
       );
     }
     const isPrefixAlone =
       token.kind !== "String" && OPERATOR_ARGUMENTS.has(token.text) && isStandalone(token);
     if (isPrefixAlone) {
-      cursor.index++;
+      nextIndex++;
       const location = getLocation(token);
       if (POSTFIX_OPERATORS.has(token.text)) {
         return withRange(
           { kind: "OperatorReference", operator: token.text, spelling: token.spelling, location },
-          cursor.index - 1,
+          nextIndex - 1,
         );
       }
       const argument: Expression = { kind: "Identifier", name: "argument", location };
@@ -714,11 +682,11 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           operator: token.text,
           location: getLocation(token),
         },
-        cursor.index - 1,
+        nextIndex - 1,
       );
     }
     if (isAt("LAMBDA")) {
-      const start = cursor.index;
+      const start = nextIndex;
       advance();
       const params = getNames(parseSeparated(expectName));
       expect(":");
@@ -737,27 +705,27 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     return parseExpression();
   };
 
-  const lastArguments: { range: SourceRange | undefined } = { range: undefined };
+  let lastArgumentsRange: SourceRange | undefined;
 
   const parseArguments = () =>
     withBracketLayout(() => {
-      const start = cursor.index;
+      const start = nextIndex;
       expect("(");
       const args = parseSeparated(parseArgument);
       expect(")");
-      lastArguments.range = getRange(start);
+      lastArgumentsRange = getRange(start);
       return args;
     });
 
   const parseJunctionList = (): Expression => {
     const bullet = advance();
-    cursor.offsideColumns.push(bullet.column);
+    offsideColumns.push(bullet.column);
     const operands = [parseExpression()];
     while (peekRaw().text === bullet.text && peekRaw().column === bullet.column) {
-      cursor.index++;
+      nextIndex++;
       operands.push(parseExpression());
     }
-    cursor.offsideColumns.pop();
+    offsideColumns.pop();
     return {
       kind: bullet.text === "/\\" ? "And" : "Or",
       operands,
@@ -769,13 +737,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const parseBracket = (start: Token): Expression =>
     withBracketLayout(() => {
       const location = getLocation(start);
-      // SANY takes a keyword for the first field of a record, as it does for a selected field.
       const isIdentifier = peek().kind === "Identifier";
       const isRecord = isAt("|->", 1) && (isIdentifier || isFieldName(peek()));
       if (isRecord || (isIdentifier && isAt(":", 1))) {
         const kind = isRecord ? "Record" : "RecordSet";
         const parseField = (readName: () => string) => {
-          const fieldStart = cursor.index;
+          const fieldStart = nextIndex;
           const fieldLocation = getLocation(peek());
           const name = readName();
           fieldLocation.range = getRange(fieldStart);
@@ -833,9 +800,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       return { kind: "BoxAction", action: expression, subscript: parseSubscript(), location };
     });
 
-  // SANY reads the set after the \in of {x \in S} as a whole expression, whatever operators it has.
   const parseSetMembership = (): Expression => {
-    const start = cursor.index;
+    const start = nextIndex;
     const element = withRange(parsePrefix(), start);
     const location = getLocation(advance());
     return withRange(
@@ -849,7 +815,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       const location = getLocation(start);
       if (accept("}")) return { kind: "SetEnumeration", elements: [], location };
       if (isBoundAhead() && (peek(1).text === "\\in" || isAt("<<"))) {
-        const checkpoint = cursor.index;
+        const checkpoint = nextIndex;
         const pattern = parsePattern();
         expect("\\in");
         const set = parseExpression();
@@ -858,7 +824,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           expect("}");
           return { kind: "SetFilter", bound: { pattern, set }, predicate, location };
         }
-        cursor.index = checkpoint;
+        nextIndex = checkpoint;
       }
       const first =
         peek().kind === "Identifier" && isAt("\\in", 1) ? parseSetMembership() : parseExpression();
@@ -949,7 +915,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       case "@":
         return { kind: "At" };
       case "(": {
-        cursor.index--;
+        nextIndex--;
         return { kind: "Bound", args: parseArguments() };
       }
     }
@@ -957,7 +923,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parsePrimary = (preceding?: Precedence): Expression => {
-    const start = cursor.index;
+    const start = nextIndex;
     const token = advance();
     const location = getLocation(token);
     if (isTlapm && token.kind === "Keyword" && token.text === "LAMBDA") {
@@ -985,13 +951,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         if (params.names.length > 0) expect(")");
         expect("::");
         const body = parseExpression();
-        // TLAplusParser.labelDoesNotChangeParse.
         if (
           !isTlapm &&
           preceding !== undefined &&
-          operators.last !== undefined &&
+          lastOperator !== undefined &&
           isOperatorExpression(body) &&
-          preceding.high >= operators.last.low
+          preceding.high >= lastOperator.low
         ) {
           throw createError("Removing the label would change expression parsing", token);
         }
@@ -1008,20 +973,20 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       if (name === "@" && !hasArguments && !isSelectorAhead())
         return { kind: "ExceptAt", location };
       const args = hasArguments ? parseArguments() : [];
-      const argumentRanges = [hasArguments ? lastArguments.range : undefined];
+      const argumentRanges = [hasArguments ? lastArgumentsRange : undefined];
       if (!isSelectorAhead()) {
         return hasArguments
-          ? { kind: "Apply", operator: name, args, argumentsRange: lastArguments.range, location }
+          ? { kind: "Apply", operator: name, args, argumentsRange: lastArgumentsRange, location }
           : { kind: "Identifier", name, location };
       }
       const selectors: Selector[] = [{ kind: "Name", name, args }];
       const selectorRanges = [getRange(start, start)];
       while (isSelectorAhead()) {
         advance();
-        selectorRanges.push(getRange(cursor.index, cursor.index));
-        lastArguments.range = undefined;
+        selectorRanges.push(getRange(nextIndex, nextIndex));
+        lastArgumentsRange = undefined;
         selectors.push(parseSelector());
-        argumentRanges.push(lastArguments.range);
+        argumentRanges.push(lastArgumentsRange);
       }
       const names = selectors.flatMap((selector) =>
         selector.kind === "Name" ? [selector.name] : [],
@@ -1049,7 +1014,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
               location,
             };
     }
-    // SANY reads an infix or postfix operator as a primary expression, with or without arguments.
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
       return {
         kind: "Apply",
@@ -1137,10 +1101,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     throw createUnexpected(`Unexpected ${describeToken(token)}`, token);
   };
 
-  // SANY rejects the operator after a prefix operator's operand unless it binds looser than the
-  // prefix operator.
   const parsePrefixOperand = (operator: Token, low: number, high: number) => {
-    operators.last = operators.preceding = { low, high };
+    lastOperator = precedingOperator = { low, high };
     const operand = parseExpression(high + 1);
     const next = peek();
     const nextHigh =
@@ -1154,8 +1116,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parsePrefix = (): Expression => {
-    const preceding = operators.preceding;
-    operators.preceding = undefined;
+    const preceding = precedingOperator;
+    precedingOperator = undefined;
     const token = peek();
     const location = getLocation(token);
     if (token.kind === "Operator" && (token.text === "/\\" || token.text === "\\/")) {
@@ -1198,7 +1160,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           return {
             kind: "Apply",
             operator: token.text,
-            // tlapm gives these operators the precedence 8 of the TLA+ book, and SANY 10-13.
             args: [isTlapm ? parseExpression(9) : parsePrefixOperand(token, 10, 13)],
             location,
           };
@@ -1208,31 +1169,29 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parseExpression = (minimumPrecedence = 0): Expression => {
-    const start = cursor.index;
+    const start = nextIndex;
     const prefix = parsePrefix();
-    const state = {
-      left: prefix.location.range ? prefix : withRange(prefix, start),
-      previous: undefined as (InfixOperator & { text: string }) | undefined,
-    };
+    let left = prefix.location.range ? prefix : withRange(prefix, start);
+    let previous: (InfixOperator & { text: string }) | undefined;
     while (true) {
       const token = peek();
       if (token.kind !== "Operator") break;
       const location = getLocation(token);
       if (token.text === "'" && minimumPrecedence <= 15) {
         advance();
-        operators.last = POSTFIX_PRECEDENCE;
-        state.left = withRange({ kind: "Prime", expression: state.left, location }, start);
+        lastOperator = POSTFIX_PRECEDENCE;
+        left = withRange({ kind: "Prime", expression: left, location }, start);
         continue;
       }
       if (POSTFIX_OPERATORS.has(token.text) && minimumPrecedence <= 15) {
         advance();
-        operators.last = POSTFIX_PRECEDENCE;
-        state.left = withRange(
+        lastOperator = POSTFIX_PRECEDENCE;
+        left = withRange(
           {
             kind: "Apply",
             operator: token.text,
             spelling: token.spelling,
-            args: [state.left],
+            args: [left],
             location,
           },
           start,
@@ -1243,22 +1202,18 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         advance();
         const args = withBracketLayout(() => parseSeparated(() => parseExpression()));
         withBracketLayout(() => expect("]"));
-        operators.last = FUNCTION_PRECEDENCE;
-        state.left = withRange(
-          { kind: "FunctionApplication", function: state.left, args, location },
-          start,
-        );
+        lastOperator = FUNCTION_PRECEDENCE;
+        left = withRange({ kind: "FunctionApplication", function: left, args, location }, start);
         continue;
       }
       if (token.text === "." && isFieldName(peek(1))) {
         advance();
         const field = advance().text;
-        state.left = withRange({ kind: "FieldAccess", record: state.left, field, location }, start);
+        left = withRange({ kind: "FieldAccess", record: left, field, location }, start);
         continue;
       }
       const infix = INFIX_OPERATORS.get(token.text);
       if (!infix || infix.low < minimumPrecedence) break;
-      const previous = state.previous;
       if (previous) {
         const isOverlapping = !(previous.low > infix.high || previous.high < infix.low);
         const isChain = previous.text === token.text && infix.isAssociative;
@@ -1270,17 +1225,15 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         }
       }
       advance();
-      // SANY reads - after an infix operator as prefix -, and rejects it after one that binds tighter.
       if (infix.low > NEGATION_PRECEDENCE && isAt("-")) {
         throw createError(`Precedence conflict between ${token.text} and -`, peek());
       }
-      operators.last = operators.preceding = infix;
+      lastOperator = precedingOperator = infix;
       const right = parseExpression(infix.high + 1);
-      const left = state.left;
       if (token.text === "/\\" || token.text === "\\/") {
         const kind = token.text === "/\\" ? "And" : "Or";
         const prefixEnds = [getRange(start).end];
-        state.left =
+        left =
           left.kind === kind && previous?.text === token.text
             ? {
                 ...left,
@@ -1289,12 +1242,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
               }
             : { kind, operands: [left, right], prefixEnds, location };
       } else if (token.text === "\\X") {
-        state.left =
+        left =
           left.kind === "Product" && previous?.text === "\\X"
             ? { ...left, factors: [...left.factors, right] }
             : { kind: "Product", factors: [left, right], location };
       } else {
-        state.left = {
+        left = {
           kind: "Apply",
           operator: token.text,
           spelling: token.spelling,
@@ -1302,10 +1255,10 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           location,
         };
       }
-      state.left = withRange(state.left, start);
-      state.previous = { ...infix, text: token.text };
+      left = withRange(left, start);
+      previous = { ...infix, text: token.text };
     }
-    return state.left;
+    return left;
   };
 
   const parseParams = () => {
@@ -1318,13 +1271,13 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const parseBody = () => {
     const start = getLocation(peek());
     const body = parseExpression();
-    const last = tokens[cursor.index - 1];
+    const last = tokens[nextIndex - 1];
     const end = { line: last.line, column: last.endColumn };
     return { body, bodyRange: { module: openModules[0].name, start, end } };
   };
 
   const parseDefinition = (isLocal: boolean): Definition | Instance => {
-    const start = cursor.index;
+    const start = nextIndex;
     return withRange(parseDefinitionUnit(isLocal), start);
   };
 
@@ -1390,7 +1343,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         location,
       };
     }
-    const definitionStart = cursor.index;
+    const definitionStart = nextIndex;
     const params = parseParams();
     expect("==");
     if (isAt("INSTANCE")) {
@@ -1406,12 +1359,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     isLocal: boolean,
     location: SourceLocation,
   ): Instance => {
-    const start = cursor.index;
+    const start = nextIndex;
     expect("INSTANCE");
     const module = expectModuleName();
     const substitutions = accept("WITH")
       ? parseSeparated(() => {
-          const targetStart = cursor.index;
+          const targetStart = nextIndex;
           const target = expectSubstitutionTarget();
           const nameRange = getRange(targetStart);
           expect("<-");
@@ -1431,7 +1384,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parseDeclaration = (): Declaration => {
-    const start = cursor.index;
+    const start = nextIndex;
     return withRange(parseDeclarationUnit(), start);
   };
 
@@ -1465,18 +1418,18 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const getClosingOffset = (offset: number) => {
-    const depth = { value: 0, offset };
+    let depth = 0;
+    let closingOffset = offset;
     do {
-      const token = peek(depth.offset);
-      if (token.kind === "End") return depth.offset;
-      if (token.kind === "Operator" && OPENING_BRACKETS.has(token.text)) depth.value++;
-      if (token.kind === "Operator" && CLOSING_BRACKETS.has(token.text)) depth.value--;
-      depth.offset++;
-    } while (depth.value > 0);
-    return depth.offset;
+      const token = peek(closingOffset);
+      if (token.kind === "End") return closingOffset;
+      if (token.kind === "Operator" && OPENING_BRACKETS.has(token.text)) depth++;
+      if (token.kind === "Operator" && CLOSING_BRACKETS.has(token.text)) depth--;
+      closingOffset++;
+    } while (depth > 0);
+    return closingOffset;
   };
 
-  // SANY inserts a break before each definition, which ends the fact list or step before it.
   const isDefinitionStart = () => {
     const token = peek();
     const next = peek(1);
@@ -1496,7 +1449,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     return isAt("==", 1);
   };
 
-  // SANY's proof levels, one for each open proof, which stay -1 until a step sets them.
   const proofLevels: number[] = [];
 
   const getProofLevel = () => proofLevels[proofLevels.length - 1] ?? -1;
@@ -1509,9 +1461,9 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
 
   const getStepLabel = (step: Token) => {
     const label = step.text.slice(step.text.indexOf(">") + 1);
-    const end = { value: label.length };
-    while (label[end.value - 1] === ".") end.value--;
-    return label.slice(0, end.value);
+    let end = label.length;
+    while (label[end - 1] === ".") end--;
+    return label.slice(0, end);
   };
 
   const isStepReference = (step: Token) =>
@@ -1574,17 +1526,15 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     return !isDefinitionStart();
   };
 
-  // SANY reads an infix or postfix operator alone as its name, but a prefix operator such as - as the
-  // start of an expression.
   const parseFact = (): Fact => {
-    const start = cursor.index;
+    const start = nextIndex;
     const token = peek();
     if (
       token.kind === "Operator" &&
       !EXPRESSION_PREFIXES.has(token.text) &&
       isOperatorName(token.text)
     ) {
-      cursor.index++;
+      nextIndex++;
       return withRange(
         {
           kind: "OperatorReference",
@@ -1604,9 +1554,9 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
 
   const declareProofSymbol = (name: string) => proofScopes[proofScopes.length - 1]?.add(name);
 
-  const withProofScope = <Result>(parse: () => Result) => {
+  const withProofScope = <Result>(parseContent: () => Result) => {
     proofScopes.push(new Set());
-    const result = parse();
+    const result = parseContent();
     proofScopes.pop();
     return result;
   };
@@ -1619,9 +1569,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         module.variables.some((variable) => variable.name === name),
     );
 
-  // tlapm's definable: names and operators joined by !.
   const parseDefinable = (): Fact => {
-    const start = cursor.index;
+    const start = nextIndex;
     const token = peek();
     const parts = parseSeparated(() => {
       const part = peek();
@@ -1629,7 +1578,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       if (!isName && part.kind !== "Operator") {
         throw createUnexpected(`Expected a definition name but found ${describeToken(part)}`, part);
       }
-      cursor.index++;
+      nextIndex++;
       return part.text;
     }, "!");
     const location = getLocation(token);
@@ -1660,7 +1609,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   });
 
   const parseUseOrHide = (): UseOrHide => {
-    const start = cursor.index;
+    const start = nextIndex;
     const keyword = advance();
     const isOnly = keyword.text === "USE" && accept("ONLY");
     const keywordRange = getRange(start);
@@ -1686,7 +1635,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parseNewSymbol = (): NewSymbol => {
-    const start = cursor.index;
+    const start = nextIndex;
     const location = getLocation(peek());
     const isNew = accept("NEW");
     const level = peek().kind === "Keyword" ? NEW_SYMBOL_LEVELS.get(peek().text) : undefined;
@@ -1732,7 +1681,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parseAssumeProve = (): AssumeProve => {
-    const start = cursor.index;
+    const start = nextIndex;
     const location = getLocation(expect("ASSUME"));
     const assumptions = parseSeparated(() => {
       if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
@@ -1747,11 +1696,11 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const isNameListAhead = (terminator: string) => {
-    const offset = { value: 0 };
-    while (peek(offset.value).kind === "Identifier" && isAt(",", offset.value + 1)) {
-      offset.value += 2;
+    let offset = 0;
+    while (peek(offset).kind === "Identifier" && isAt(",", offset + 1)) {
+      offset += 2;
     }
-    return peek(offset.value).kind === "Identifier" && isAt(terminator, offset.value + 1);
+    return peek(offset).kind === "Identifier" && isAt(terminator, offset + 1);
   };
 
   const declareProofSymbols = (names: string[], bounds: Bound[]) => {
@@ -1767,11 +1716,11 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     const token = peek();
     if (isAt("USE") || isAt("HIDE")) return parseUseOrHide();
     if (isAt("INSTANCE")) {
-      const start = cursor.index;
+      const start = nextIndex;
       return withRange(parseInstance(undefined, [], false, getLocation(token)), start);
     }
     if (isAt("DEFINE") || isDefinitionStart()) {
-      const start = cursor.index;
+      const start = nextIndex;
       accept("DEFINE");
       const definitions = [parseDefinition(false)];
       while (isDefinitionStart()) definitions.push(parseDefinition(false));
@@ -1822,16 +1771,14 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     if (getStepLevel(step) < 0 && getStepName(step) !== undefined) {
       throw createError("<*> and <+> cannot be used for a named step", step);
     }
-    cursor.index++;
+    nextIndex++;
     return { name: getStepName(step), token: step.text, location: getLocation(step) };
   };
 
-  // The names an assertion assumes stay in its own proof, and other steps declare theirs for the rest
-  // of the enclosing proof.
   const parseStep = (): ProofStep => {
-    const start = cursor.index;
+    const start = nextIndex;
     const step = parseStepStart(isAt("QED", 1));
-    const statementStart = cursor.index;
+    const statementStart = nextIndex;
     const scope = new Set<string>();
     proofScopes.push(scope);
     const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
@@ -1852,7 +1799,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     if (isAt("BY") || (isAt("PROOF") && isAt("BY", 1))) {
       accept("PROOF");
       advance();
-      const keyword = getRange(cursor.index - 1);
+      const keyword = getRange(nextIndex - 1);
       return { kind: "By", isOnly: accept("ONLY"), ...parseFacts(), keyword, location };
     }
     const terminal = peek(isAt("PROOF") ? 1 : 0);
@@ -1862,7 +1809,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     ) {
       accept("PROOF");
       advance();
-      const keyword = getRange(cursor.index - 1);
+      const keyword = getRange(nextIndex - 1);
       return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", keyword, location };
     }
     accept("PROOF");
@@ -1872,29 +1819,30 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parseProof = (): Proof => {
-    const start = cursor.index;
+    const start = nextIndex;
     proofLevels.push(-1);
     const proof = withProofScope(parseProofBody);
     proofLevels.pop();
     return withRange(proof, start);
   };
 
-  // SANY binds the name of a theorem or assumption that a module already defines to the first
-  // definition, warning of the second.
   const addFactDefinition = (module: Module, definition: Definition) => {
     if (module.definitions.some((other) => other.name === definition.name)) return;
     module.definitions.push(definition);
   };
 
+  const parseFactName = () => {
+    if (peek().kind !== "Identifier" || !isAt("==", 1)) return undefined;
+    const name = expectIdentifier();
+    factNames.add(name);
+    advance();
+    return name;
+  };
+
   const parseTheorem = (module: Module) => {
-    const start = cursor.index;
+    const start = nextIndex;
     const keyword = advance();
-    const isNamed = peek().kind === "Identifier" && isAt("==", 1);
-    const name = isNamed ? expectIdentifier() : undefined;
-    if (name !== undefined) {
-      factNames.add(name);
-      advance();
-    }
+    const name = parseFactName();
     const parsed = withProofScope(() => {
       const statement = isAt("ASSUME") ? parseAssumeProve() : parseExpression();
       return { statement, proof: isProofStart(peek()) ? parseProof() : undefined };
@@ -1925,14 +1873,9 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parseAssumption = (): Assumption => {
-    const start = cursor.index;
+    const start = nextIndex;
     const keyword = advance();
-    const isNamed = peek().kind === "Identifier" && isAt("==", 1);
-    const name = isNamed ? expectIdentifier() : undefined;
-    if (name !== undefined) {
-      factNames.add(name);
-      advance();
-    }
+    const name = parseFactName();
     return withRange(
       {
         name,
@@ -1968,14 +1911,14 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     recursiveScopes.push(new Set());
     if (accept("EXTENDS")) {
       parseSeparated(() => {
-        const start = cursor.index;
+        const start = nextIndex;
         module.extends.push(expectModuleName());
         module.extendsRanges.push(getRange(start));
       });
     }
     while (true) {
-      const tokenIndex = cursor.index;
-      unitStart.index = tokenIndex;
+      const tokenIndex = nextIndex;
+      unitStartIndex = tokenIndex;
       const token = peek();
       if (token.kind === "ModuleEnd") {
         location.range = {
@@ -2012,7 +1955,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         case "VARIABLES": {
           const unitLocation = getLocation(advance());
           const declarations = parseSeparated(() => {
-            const start = cursor.index;
+            const start = nextIndex;
             const location = getLocation(peek());
             return withRange({ name: expectIdentifier(), arity: 0, location }, start);
           });
@@ -2042,7 +1985,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         }
         case "USE":
         case "HIDE": {
-          // SANY's module body takes a USE only when ONLY doesn't follow it.
           if (isAt("USE") && isAt("ONLY", 1)) {
             throw createUnexpected(`Expected a module unit but found ${describeToken(token)}`);
           }
@@ -2093,16 +2035,13 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const module = parseModuleBody();
-  // SANY's lexer marks where each definition begins before its parser runs, which can split a
-  // module's name from a keyword that the parser would take for one.
-  const sanyError = keywordModuleName.isUsed ? getSanyParseError(source) : undefined;
+  const sanyError = isKeywordModuleName ? getSanyParseError(source) : undefined;
   if (sanyError !== undefined) throw new TlaSyntaxError(sanyError);
   return module;
 };
 
 export const parseModule = (source: string) => parse(source, "tlc");
 
-// Parses a module the caller has tokenized already.
 export const parseModuleTokens = (source: string, tokens: Token[]) => parse(source, "tlc", tokens);
 
 export const parseTlapmModule = (source: string) => parse(source, "tlapm");

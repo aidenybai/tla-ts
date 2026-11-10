@@ -12,6 +12,7 @@ import {
   formatValue,
   getSequenceElements,
   isFunctionValue,
+  isOverriddenSet,
   isSetValue,
   toFiniteFunction,
   toFiniteSet,
@@ -59,9 +60,7 @@ const toJsonString = (text: string) =>
   JSON.stringify(text).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
 
 const toSetJson = (value: Value, method: string) => {
-  if (typeof value === "object" && (value.kind === "InfiniteSet" || value.kind === "SequenceSet")) {
-    throw createUnsupportedError(method, value);
-  }
+  if (isOverriddenSet(value)) throw createUnsupportedError(method, value);
   return `[${toFiniteSet(value)
     .elements.map((element) => toJson(element, method))
     .join(",")}]`;
@@ -99,9 +98,7 @@ const toJsonObject = (value: Value) => {
   return toFunctionJson(value, TO_JSON_OBJECT_SIGNATURE);
 };
 
-// TLC reads a JSON number with Gson's intValue, which truncates the exact decimal toward zero and
-// keeps its low 32 bits, so 3000000000 becomes -1294967296 and 1.5 becomes 1.
-const toInteger = (source: string) => {
+const toGsonIntValue = (source: string) => {
   const [, sign, whole = "0", fraction = "", exponent = "0"] =
     /^(-?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source) ?? [];
   const digits = BigInt(whole + fraction);
@@ -133,7 +130,7 @@ const parseJson = (text: string, method: string) => {
   try {
     return fromJson(
       JSON.parse(text, (_, value: unknown, context?: ParseContext) =>
-        typeof value === "number" ? toInteger(context?.source ?? String(value)) : value,
+        typeof value === "number" ? toGsonIntValue(context?.source ?? String(value)) : value,
       ),
       method,
     );

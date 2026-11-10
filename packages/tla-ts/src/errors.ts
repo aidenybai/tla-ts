@@ -4,17 +4,13 @@ import { EXIT_STATUS, getExitCode, setExitCode } from "./exit-codes";
 import type { PcalNode } from "./pcal/ast";
 import type { Value } from "./values";
 
-// The start of TLC's message for an exception of a Java class it didn't expect.
 export const getUnexpectedException = (exceptionClass: string) =>
   `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a ${exceptionClass}\n: `;
 
-// How TLC reports a RuntimeException it did not expect, such as one raised while computing next
-// states.
 export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeException");
 
 export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
 
-// V8's RangeError for a stack overflow, which TLC raises as a Java StackOverflowError.
 export const isStackOverflow = (error: unknown) =>
   error instanceof RangeError && error.message === "Maximum call stack size exceeded";
 
@@ -32,15 +28,11 @@ export interface SyntaxFailure {
   isEnd: boolean;
 }
 
-// An error SANY reports at a location, such as "In module M" or a range in a module.
 export interface SanyError {
   location: string;
   message: string;
 }
 
-// The errors SANY reports for a spec, and the warnings it prints before them. A fatal error stops it
-// before semantic analysis. SANY's parser prints its message for a module it rejects before the
-// report.
 interface SanyReport {
   errors: SanyError[];
   warnings: SanyError[];
@@ -60,10 +52,6 @@ export class TlaSyntaxError extends TlaError {
   }
 }
 
-// A fatal error of SANY's parsing phase: a module SANY can't find or parse, a file whose name
-// doesn't match its module's, or a circular dependency. SANY reports it in the module that imports
-// or holds the failed one, or without a location, after its JavaCC parser's report of a module it
-// failed to parse. It keeps the name TlaSyntaxError, and index.ts doesn't export it.
 export class TlaSanyFatalError extends TlaSyntaxError {
   location: string | undefined;
   parseError: string | undefined;
@@ -75,8 +63,6 @@ export class TlaSanyFatalError extends TlaSyntaxError {
   }
 }
 
-// A module that another imports and SANY can't find, which SANY reports in the importer, except
-// TLC 1.7.4's SANY, which gives it no location.
 export class TlaMissingModuleError extends TlaSanyFatalError {
   constructor(name: string, importer: string | undefined, isLocated = true) {
     super(
@@ -110,7 +96,6 @@ export const createMissingModuleError = (name: string, importer: string | undefi
     true,
   );
 
-// How SANY prints the warnings it reports, which do not stop TLC.
 export const formatSanyWarnings = (warnings: SanyError[]) =>
   `*** Warnings: ${warnings.length}\n\n${warnings.map((warning) => `${warning.location}\n\n${warning.message}\n\n\n`).join("\n")}`;
 
@@ -137,19 +122,15 @@ export class TlaEvaluationError extends TlaError {
 export const STACK_OVERFLOW_MESSAGE =
   "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
 
-// A Java StackOverflowError, which TLC catches only at the top, unlike the exceptions of evaluation.
 export class TlaStackOverflowError extends TlaEvaluationError {
   constructor() {
     super(STACK_OVERFLOW_MESSAGE);
   }
 }
 
-// TLC reports a stack overflow outside the computation of states on its own, and exits with 255.
 export const createStackOverflowError = () =>
   setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
 
-// A next-state action left variables of a successor state unassigned. TLC reports the partial
-// state, with null for each unassigned variable.
 export class TlaIncompleteSuccessorError extends TlaEvaluationError {
   state: (Value | undefined)[];
   action: string | undefined;
@@ -168,8 +149,6 @@ export class TlaIncompleteSuccessorError extends TlaEvaluationError {
   }
 }
 
-// An expression read a variable that its state doesn't assign. It keeps the name
-// TlaEvaluationError, and index.ts doesn't export it.
 export class TlaUnassignedError extends TlaEvaluationError {
   variable: string;
 
@@ -179,25 +158,20 @@ export class TlaUnassignedError extends TlaEvaluationError {
   }
 }
 
-// An evaluation error that TLC raises as an EvalException from a standard module's Java code. It
-// keeps the name TlaEvaluationError, and index.ts doesn't export it.
 export class TlaModuleError extends TlaEvaluationError {
   exitCode: number;
 
   constructor(message: string, exitCode: number = EXIT_STATUS.error) {
     super(message);
-    this.name = "TlaEvaluationError";
     this.exitCode = exitCode;
   }
 }
 
-// TLC reports an initial state that the initial predicate leaves incomplete as an illegal state.
 export class TlaIllegalStateError extends TlaEvaluationError {
   state: (Value | undefined)[];
 
   constructor(state: (Value | undefined)[]) {
     super("current state is not a legal state");
-    this.name = "TlaEvaluationError";
     this.state = state;
   }
 }
@@ -219,16 +193,12 @@ export class TlaProofError extends TlaError {
   }
 }
 
-// tlapm fails one of its own assertions, which it reports as a bug in itself. It keeps the name
-// TlaProofError, and index.ts doesn't export it.
 export class TlapmBugError extends TlaProofError {
   constructor(exception = "Assert_failure") {
     super("Oops, this seems to be a bug in TLAPM.", { exception });
-    this.name = "TlaProofError";
   }
 }
 
-// A backend can't take an obligation, which tlapm reports as not tried.
 export class TlaProverError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
@@ -236,7 +206,6 @@ export class TlaProverError extends TlaError {
   }
 }
 
-// Zenon gives up on a .znn file the way the OCaml Zenon raises an exception and prints no proof.
 export class TlaZenonError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
@@ -244,12 +213,9 @@ export class TlaZenonError extends TlaError {
   }
 }
 
-// The exceptions Isabelle raises: ERROR for a rejected theory or a failed proof, TERM, TYPE and THM
-// for an ill-formed term, type or theorem, and Interrupt when the time limit runs out.
 type IsabelleException = "ERROR" | "TERM" | "TYPE" | "THM" | "Interrupt";
 
-// Isabelle's tactics raise and handle these as control flow, often millions of times per proof, and
-// decideIsabelle answers "unknown" for any that escape. So unlike an Error, it skips the stack trace.
+// Not an Error, so V8 captures no stack trace: Isabelle's tactics raise these millions of times per proof.
 export class TlaIsabelleError {
   readonly name = "TlaIsabelleError";
   readonly exception: IsabelleException;
@@ -268,8 +234,6 @@ export class TlaUnsupportedError extends TlaError {
   }
 }
 
-// The SMT solver met input outside the SMT-LIB subset that tlapm emits, or a numeral too large for
-// its exact arithmetic. The solver answers unknown.
 export class SmtUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
@@ -277,8 +241,6 @@ export class SmtUnsupportedError extends TlaError {
   }
 }
 
-// The SMT solver ran past its time limit, or its signal aborted, in the middle of a rewrite. The
-// solver answers unknown.
 export class SmtCanceledError extends TlaError {
   constructor() {
     super("the SMT solver was canceled");
@@ -286,8 +248,6 @@ export class SmtCanceledError extends TlaError {
   }
 }
 
-// The SMT solver broke one of its own invariants, a bug in the port rather than in the input. It
-// keeps its name, and index.ts doesn't export it.
 export class SmtInvariantError extends TlaError {
   constructor(message: string) {
     super(message);
@@ -295,8 +255,6 @@ export class SmtInvariantError extends TlaError {
   }
 }
 
-// nlsat reached a case Z3 leaves unimplemented, where Z3 exits the process. nra answers unknown
-// instead. index.ts doesn't export it.
 export class NlsatUnsupportedError extends TlaError {
   constructor(reason: string) {
     super(`nlsat does not implement ${reason}`);
@@ -304,8 +262,6 @@ export class NlsatUnsupportedError extends TlaError {
   }
 }
 
-// mem_out: the pdd manager needed a node past its limit outside an operation. Grobner catches it
-// and gives up on the round. index.ts doesn't export it.
 export class PddMemoryOutError extends TlaError {
   constructor() {
     super("the pdd manager ran out of nodes");
@@ -313,7 +269,6 @@ export class PddMemoryOutError extends TlaError {
   }
 }
 
-// The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
 export class SmtParseError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
@@ -321,8 +276,6 @@ export class SmtParseError extends TlaError {
   }
 }
 
-// An exception that TLC's Java code throws and nothing catches, with the stack trace it prints, after
-// what the frames that the exception unwinds print about it.
 export class TlaJavaException extends TlaUnsupportedError {
   unwound: string;
 
@@ -343,8 +296,6 @@ export const getErrorExitCode = (error: TlaError) =>
         ? EXIT_STATUS.specEvaluationFailure
         : EXIT_STATUS.error);
 
-// pcal.UnrecoverableException and its subclasses: an error the PlusCal translator reports as
-// "Unrecoverable error". UnrecoverablePositionedException adds the statement the error is at.
 export class PcalError extends TlaError {
   node: PcalNode | undefined;
 
@@ -355,8 +306,6 @@ export class PcalError extends TlaError {
   }
 }
 
-// A RuntimeException the translator's Java code throws, such as an index out of bounds, which
-// ParseAlgorithm.getAlgorithm turns into a parsing error.
 export class PcalRuntimeError extends TlaError {
   constructor(message: string) {
     super(message);
@@ -364,8 +313,6 @@ export class PcalRuntimeError extends TlaError {
   }
 }
 
-// PcalDebug.ReportBug: the translator found itself in a state it considers a bug, and throws a
-// java.lang.Error that nothing in SANY catches.
 export class PcalBugError extends TlaError {
   constructor(message: string) {
     super(
@@ -375,7 +322,6 @@ export class PcalBugError extends TlaError {
   }
 }
 
-// TypeScript that tla-ts can't compile to TLA+, at the file, line and column of the construct.
 export class TlaTypeScriptError extends TlaError {
   constructor(message: string, node?: ts.Node) {
     const sourceFile = node?.getSourceFile();

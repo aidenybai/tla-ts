@@ -110,11 +110,9 @@ const createGeneratedHelpers = () => ({
   }),
 });
 
-const generatedHelpers = {
-  value: undefined as ReturnType<typeof createGeneratedHelpers> | undefined,
-};
+let generatedHelpers: ReturnType<typeof createGeneratedHelpers> | undefined;
 
-const codeGeneration = { isAllowed: undefined as boolean | undefined };
+let isCodeGenerationAllowed: boolean | undefined;
 
 // Hosts such as Cloudflare Workers, or a page whose CSP lacks 'unsafe-eval', throw an EvalError.
 const getIsCodeGenerationAllowed = () => {
@@ -179,7 +177,6 @@ const generateQuantifier = (
     return local;
   });
   const test = `if (bool(${generateExpression(generator, expression.body, bodyFrame)}, ${description}) !== ${isForall}) return ${!isForall};`;
-  // enumerate returns an array, or an interval, which has a low end, to step through.
   const loops = elements.reduce((code, element, index) => {
     const position = createLocal(generator);
     const low = createLocal(generator);
@@ -233,7 +230,6 @@ const generateApply = (
   return generateDelegate(generator, expression, frame);
 };
 
-// Whether an expression only reads values, so that it constructs no function whatever the control.
 const isConstructionFree = (
   expression: Expression,
   frame: Frame,
@@ -259,8 +255,6 @@ const isConstructionFree = (
   }
 };
 
-// Whether the generated code evaluates an expression only in the context its frame names. A primed
-// expression doesn't, since it shares the generated function's primed context.
 const isReadOnly = (expression: Expression): boolean => {
   switch (expression.kind) {
     case "Identifier":
@@ -312,7 +306,6 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       return `(condition(${generate(expression.condition)}, ${addReference(generator, expression)}) ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
     case "FunctionApplication": {
       keepLazy(expression.function);
-      // The interpreter evaluates a function that may construct one with EvalControl.KeepLazy.
       const keepLazyFrame = { ...frame, context: `keepLazyContext(${frame.context})` };
       const evaluatedFunction = isConstructionFree(
         expression.function,
@@ -323,8 +316,6 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         : isReadOnly(expression.function)
           ? generate(expression.function, keepLazyFrame)
           : generateDelegate(generator, expression.function, keepLazyFrame);
-      // Tool#evalAppl checks that it applies a function before it evaluates the argument. The check
-      // is written out, as calling expectFunction for each application costs more.
       const functionCode = `(applied = ${evaluatedFunction}, typeof applied === "object" && (applied.kind === "Function" || applied.kind === "LazyFunction") ? applied : expectFunction(applied, ${addReference(generator, expression)}))`;
       const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
@@ -388,8 +379,8 @@ export const generateEvaluator = (
   environment: Environment,
 ): Evaluator | undefined => {
   if (!GENERATED_KINDS.has(expression.kind)) return undefined;
-  codeGeneration.isAllowed ??= getIsCodeGenerationAllowed();
-  if (!codeGeneration.isAllowed) return undefined;
+  isCodeGenerationAllowed ??= getIsCodeGenerationAllowed();
+  if (!isCodeGenerationAllowed) return undefined;
   const generator: Generator = { environment, references: [], helpers: [], counter: 0 };
   const frame: Frame = {
     context: "context",
@@ -401,8 +392,8 @@ export const generateEvaluator = (
   const body = generateExpression(generator, expression, frame);
   const referenceNames = generator.references.map((_, index) => `reference${index}`);
   const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let applied; return ${body}; };`;
-  generatedHelpers.value ??= createGeneratedHelpers();
-  const helpers = generatedHelpers.value;
+  generatedHelpers ??= createGeneratedHelpers();
+  const helpers = generatedHelpers;
   const helperNames = Object.keys(helpers);
   const factory = new Function(...helperNames, ...referenceNames, source);
   return factory(...Object.values(helpers), ...generator.references);

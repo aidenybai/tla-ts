@@ -20,7 +20,6 @@ import {
   type Value,
 } from "./values";
 
-// The image of each model value a permutation moves, by name.
 type Images = Map<string, ModelValue>;
 
 const getPermutationKey = (permutation: Images) =>
@@ -40,8 +39,6 @@ const composePermutations = (first: Images, second: Images) => {
   return composed;
 };
 
-// Tool#getSymmetryPerms fails with a RuntimeException as TLC starts, which TLC reports as one it
-// did not expect.
 const createSymmetryError = (message: string) =>
   setExitCode(new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${message}`), EXIT_STATUS.error);
 
@@ -58,7 +55,6 @@ const toImages = (value: Value) => {
   return permutation;
 };
 
-// SyntaxTreeNode.getHumanReadableImage, which joins the tokens of an expression without spaces.
 const getExpressionImage = (expression: Expression): string => {
   if (expression.kind === "Identifier") return expression.name;
   if (expression.kind !== "Apply") return "";
@@ -100,8 +96,6 @@ export const getSymmetryGroup = (
     throw createSymmetryError("The symmetry values must be function records.");
   }
   const permutations = elements.map(toImages);
-  // Tool#getSymmetryPerms warns about each permuted set with fewer than two elements, by the name
-  // the config substitutes for it. As many permuted sets as permutations means none has two.
   const permutedSets = definition.body.kind === "Apply" ? definition.body.args : [];
   const configNames = new Map(
     substitutions
@@ -129,24 +123,22 @@ export const getSymmetryGroup = (
     if (permutation.size > 0) group.set(getPermutationKey(permutation), permutation);
   });
   const generators = [...group.values()];
-  const frontier = { start: 0 };
-  while (frontier.start < group.size) {
+  let frontierStart = 0;
+  while (frontierStart < group.size) {
     const members = [...group.values()];
     const end = members.length;
     generators.forEach((generator) =>
-      members.slice(frontier.start, end).forEach((member) => {
+      members.slice(frontierStart, end).forEach((member) => {
         const composed = composePermutations(generator, member);
         const key = getPermutationKey(composed);
         if (composed.size > 0 && !group.has(key)) group.set(key, composed);
       }),
     );
-    frontier.start = end;
+    frontierStart = end;
   }
   const movedNames = new Set(
     [...group.values()].flatMap((images) => [...images.values()].map((image) => image.name)),
   );
-  // Only a permutation of a constant that TLC holds as an enumerated set is checked. TLC binds a
-  // constant the config substitutes with <- to the definition, which it skips.
   const substitutedNames = new Set(substitutions.map((substitution) => substitution.name));
   warnSmallSets(
     permutedSets.filter((node) => {
@@ -180,8 +172,6 @@ const permuteElements = (elements: Value[], images: Images) => {
   return undefined;
 };
 
-// A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
-// in order, so it sorts only the moved ones and merges them back.
 const permuteSortedElements = (elements: Value[], images: Images) => {
   const kept: Value[] = [];
   const moved: Value[] = [];
@@ -207,8 +197,6 @@ const permuteSortedElements = (elements: Value[], images: Images) => {
   return merged;
 };
 
-// Value#permute: the value with each model value replaced by its image. A value the permutation
-// doesn't move is returned itself, so that comparing it with itself stops at identity.
 const permuteValue = (value: Value, images: Images): Value => {
   if (typeof value !== "object") return value;
   const kind = value.kind;
@@ -225,8 +213,6 @@ const permuteValue = (value: Value, images: Images): Value => {
       const permuted = createFunction(
         domain.map((key, index): [Value, Value] => [key, range[index]]),
       );
-      // A permutation often maps the domain to itself, such as a function over the symmetric set.
-      // Sharing the original domain array lets comparisons with other images skip the domain.
       const isSameDomain = permuted.domain.every(
         (key, index) => key === functionValue.domain[index],
       );
@@ -242,9 +228,6 @@ const permuteValue = (value: Value, images: Images): Value => {
   return elements ? createSet(elements) : set;
 };
 
-// TLCStateMut#fingerPrint: the smallest image of the state under the group in TLC's variable
-// order. TLC permutes the state under each permutation, variable by variable, and moves on to the
-// next permutation as soon as a variable's image is larger than the smallest state's.
 export const getRepresentative = (
   state: Value[],
   permutations: Images[],

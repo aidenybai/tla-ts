@@ -44,6 +44,11 @@ interface SpecDescription {
   impliedTemporals: SpecAction[];
 }
 
+interface ScopedExpression {
+  expression: Expression;
+  scope: Scope | undefined;
+}
+
 const UNNAMED_ACTION = "UnnamedAction";
 
 const BUILTIN_RANGE: SourceRange = {
@@ -63,7 +68,6 @@ const toLocationValue = (location: SourceLocation) => {
   ]);
 };
 
-// TLC's RecordValue(Action): the action's name and location, with the values of its parameters.
 export const toActionValue = (action: SpecAction) => {
   const fields: [string, Value][] = [
     ["name", action.name],
@@ -253,7 +257,6 @@ const getActions = (
     return getInstanceActions(instanceAction, expression, scope, called, environment);
   if (!called) return [createSplitAction()];
   const args = getArguments(expression);
-  // TLC names an action after the operator it applies, as SANY names it in the spec.
   const calledName = isLocallyResolved(expression)
     ? called.name
     : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
@@ -286,25 +289,30 @@ const getActions = (
   }, callAction);
 };
 
+const unwrapBinding = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+): ScopedExpression | undefined =>
+  expression.kind === "Let"
+    ? {
+        expression: expression.body,
+        scope: bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+      }
+    : getThunk(expression, scope);
+
 const describeSpecification = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
   description: SpecDescription,
-  next: { expression: Expression; scope: Scope | undefined }[],
+  next: ScopedExpression[],
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined) =>
     describeSpecification(inner, innerScope, environment, description, next);
-  if (expression.kind === "Let") {
-    recurse(
-      expression.body,
-      bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
-    );
-    return;
-  }
-  const thunk = getThunk(expression, scope);
-  if (thunk) {
-    recurse(thunk.expression, thunk.scope);
+  const unwrapped = unwrapBinding(expression, scope, environment);
+  if (unwrapped) {
+    recurse(unwrapped.expression, unwrapped.scope);
     return;
   }
   const called = resolveClosure(expression, scope, environment);
@@ -352,16 +360,9 @@ const describeProperty = (
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined) =>
     describeProperty(configName, inner, innerScope, environment, description);
-  if (expression.kind === "Let") {
-    recurse(
-      expression.body,
-      bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
-    );
-    return;
-  }
-  const thunk = getThunk(expression, scope);
-  if (thunk) {
-    recurse(thunk.expression, thunk.scope);
+  const unwrapped = unwrapBinding(expression, scope, environment);
+  if (unwrapped) {
+    recurse(unwrapped.expression, unwrapped.scope);
     return;
   }
   const called = resolveClosure(expression, scope, environment);
@@ -432,7 +433,7 @@ const getSpecDescription = (
     impliedActions: [],
     impliedTemporals: [],
   };
-  const next: { expression: Expression; scope: Scope | undefined }[] = [];
+  const next: ScopedExpression[] = [];
   const specification =
     config.specification === undefined
       ? undefined
@@ -472,14 +473,12 @@ const getSpecDescription = (
   return description;
 };
 
-// TLC's initial predicates, which it conjoins to compute the initial states.
 export const getInitActions = (
   config: ModelConfig,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
 ) => getSpecDescription(config, environment, instanceActions).inits;
 
-// TLC's split of the next-state relation into the actions it names in a behavior.
 export const getNextActions = (
   config: ModelConfig,
   environment: Environment,
@@ -491,11 +490,9 @@ const formatParameters = (action: SpecAction) =>
     ? ""
     : `(${action.parameters.map((parameter) => formatValue(parameter[1])).join(",")})`;
 
-// TLC's Action.getLocation, which TLC 1.7.4 names the action in without its parameters.
 export const getActionLabel = (action: SpecAction, version?: TlcVersion) =>
   `${action.name === UNNAMED_ACTION ? "Action" : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
 
-// TLC's Action.getInvocationSignature, which names the action and the values of its parameters.
 export const getActionSignature = (action: SpecAction) =>
   `${action.name}${formatParameters(action)}`;
 

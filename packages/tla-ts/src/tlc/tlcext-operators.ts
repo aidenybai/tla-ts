@@ -50,7 +50,6 @@ const TRACE_METHOD = `public static tlc2.value.impl.TupleValue tlc2.module.TLCEx
 
 const PICK_SUCCESSOR_METHOD = `public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(${OVERRIDE_PARAMETERS})`;
 
-// TLC's record for an action it doesn't store, such as every action in breadth-first search.
 export const createActionRecord = (action: string | undefined) =>
   createRecord([
     ["name", action ?? "UnnamedAction"],
@@ -66,13 +65,15 @@ export const createActionRecord = (action: string | undefined) =>
     ],
   ]);
 
-// TLC's CounterExample is a graph of the violating behavior: the states numbered from 1, an edge
-// for each step, and for a lasso an edge from the last state back to where the loop starts. Each
-// edge holds the record of the action TLC found for the step.
+interface CounterExampleLoop {
+  start: number;
+  action: Value;
+}
+
 export const createCounterExample = (
   stateRecords: Record<string, Value>[],
   actions: Value[],
-  loop: { start: number; action: Value } | undefined,
+  loop: CounterExampleLoop | undefined,
 ) => {
   const states = stateRecords.map((state, index) =>
     createTuple([index + 1, createRecord(Object.entries(state))]),
@@ -97,7 +98,6 @@ const getRegister = (runtime: CheckerRuntime, key: Value) => {
   return undefined;
 };
 
-// TLC's TLCSet. TLCExt's TLCGetAndSet is a TLA+ definition that calls it.
 export const setTlcValue = (
   runtime: CheckerRuntime,
   print: (text: string) => void,
@@ -272,7 +272,6 @@ export const createTlcExtOperators = (
       }
       return createModelValue(name);
     }),
-    // TLC runs the deferred expression only in simulation, when it extends a behavior.
     defineLazyOperator("TLCDefer", 1, () => true),
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     defineLazyOperator("PickSuccessor", 1, (args, context) => {

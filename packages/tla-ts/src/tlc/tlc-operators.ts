@@ -42,9 +42,7 @@ const formatCalendarVersion = (date: Date) =>
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
-// TLC creates its model checker after it processes the spec, so these are undefined before then.
 const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
-// The keys of TLC 1.7.4's TLCGet, and those it can't read before it creates its model checker.
 const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
 const CHECKER_KEYS_174 = new Set(["diameter", "distinct", "queue", "level"]);
 
@@ -143,7 +141,6 @@ const getPermutations = (elements: Value[]): Value[][] =>
         ]),
       );
 
-// TLC sorts the value of a TLCEval argument that it caches, with every value inside it.
 const normalizeDeeply = (value: Value): void => {
   if (typeof value !== "object") return;
   if (value.kind === "Set" || value.kind === "MixedSet") {
@@ -215,16 +212,12 @@ export const createTlcOperators = (
       }, []),
     );
   }),
-  // TLC evaluates TLCGet with its argument in TLCGetSet.TLCGetEval, so it reports any failure,
-  // the argument's too, as a failure of that method. TLC 1.7.4 calls TLC.TLCGet with the value of
-  // its argument.
   runtime.version === "1.7.4"
     ? overrideWithJava(
         {
           ...defineStateOperator("TLCGet", 1, (args, context) =>
             getTlcValue(runtime, getValue(args, 0, "TLCGet"), context),
           ),
-          // Unlike TLCGetSet.TLCGetEval, TLC.TLCGet declares no minimum level.
           isLevelConstant: true,
         },
         "public static tlc2.value.impl.Value tlc2.module.TLC.TLCGet(tlc2.value.impl.Value)",

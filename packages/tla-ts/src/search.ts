@@ -21,6 +21,7 @@ import {
   TlaEvaluationError,
   TlaModuleError,
   UNEXPECTED_EXCEPTION,
+  formatRange,
 } from "./errors";
 import {
   describeNode,
@@ -29,7 +30,6 @@ import {
   evaluateStartupDefinitions,
   getStartupValue,
   expectBoolean,
-  formatRange,
   getDefinition,
   type Context,
   type Environment,
@@ -61,11 +61,9 @@ interface NamedExpression {
 interface StateCheck extends NamedExpression {
   variables: number[] | undefined;
   membership: Membership | undefined;
-  // The whole predicate that TLC evaluates for the check, of which the expression is a conjunct.
   predicate: Expression;
 }
 
-// A conjunct `x \in S` whose S reads no variables.
 interface Membership {
   variable: number;
   set: Expression;
@@ -93,6 +91,12 @@ interface Properties {
   liveness: TemporalProperty[];
 }
 
+interface StartupSpecification {
+  environment: Environment;
+  startupDefinitions: Definition[];
+  javaOverrides: JavaOverride[];
+}
+
 const START: SourceLocation = { line: 0, column: 0 };
 
 export const createIdentifier = (name: string): Expression => ({
@@ -101,7 +105,6 @@ export const createIdentifier = (name: string): Expression => ({
   location: START,
 });
 
-// TLC leaves the kind out when it rejects arguments to the specification or a property.
 const UNNAMED_ARGUMENT_KINDS = new Set(["name", "property"]);
 
 const getConfigOperator = (kind: string, name: string, environment: Environment) => {
@@ -121,21 +124,17 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
   return definition;
 };
 
-// TLC evaluates every constant definition before it reads the configuration. It keeps a literal
-// number or string, and a definition that fails to evaluate, as an operator.
 const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
   if (!isConstantLevel(definition, environment)) return undefined;
   if (definition.body.kind === "Number" || definition.body.kind === "String") return undefined;
   try {
     return evaluate(createIdentifier(name), getContext(environment, undefined, undefined));
   } catch (error) {
-    // TLC swallows whatever the definition throws, a stack overflow included.
     if (error instanceof TlaEvaluationError || isStackOverflow(error)) return undefined;
     throw error;
   }
 };
 
-// TLC takes for an operator only a definition it hasn't replaced with its value.
 export const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
   const definition = getConfigOperator(kind, name, environment);
   if (getConstantValue(name, definition, environment) !== undefined) {
@@ -144,7 +143,6 @@ export const getConfigDefinition = (kind: string, name: string, environment: Env
   return definition;
 };
 
-// TLC also takes a constant that the configuration assigns a value, which must be TRUE.
 const getConfigPredicate = (kind: string, name: string, environment: Environment) => {
   const definition = environment.constants.has(name)
     ? undefined
@@ -167,14 +165,8 @@ export const reportInitialStatesProgress = (
   }
 };
 
-// After SANY, TLC computes the constant definitions and warns once about each invariant that is a
-// true constant formula, which it doesn't check.
 export const reportStartup = (
-  specification: {
-    environment: Environment;
-    startupDefinitions: Definition[];
-    javaOverrides: JavaOverride[];
-  },
+  specification: StartupSpecification,
   config: ModelConfig,
   onProgress: CheckOptions["onProgress"],
 ) => {
@@ -186,7 +178,6 @@ export const reportStartup = (
     onProgress?.({ kind: "warning", code, text });
   };
   onProgress?.({ kind: "parsed" });
-  // TLC loads the classes of the modules before it computes the constant definitions.
   specification.javaOverrides.forEach((override) =>
     onProgress?.({ kind: "java-override", ...override }),
   );
@@ -304,7 +295,6 @@ const getSpecification = (config: ModelConfig, environment: Environment): Specif
       conjunct.kind === "Always" &&
       getLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
     ) {
-      // TLC accepts the spec and fails when it builds the tableau of the temporal formulas.
       throw setExitCode(
         new TlaEvaluationError(
           `TLC cannot handle the temporal formula ${describeRange(conjunct.expression)}`,
@@ -384,13 +374,9 @@ const getProperties = (
   config.properties.forEach((name) => {
     const definition = getConfigPredicate("property", name, environment);
     if (!definition) return;
-    // TLC checks a property that is a state formula only on the initial states, so it warns about
-    // one as it processes the property, before the constraints.
     if (getLevel(definition.body, undefined, environment) === VARIABLE_LEVEL) {
       onProgress?.({ kind: "state-level-property", name });
     }
-    // TLC 1.7.4 expands a property as it does a specification, so it doesn't unroll one that
-    // quantifies over a constant set.
     const isProperty = environment.runtime.version !== "1.7.4";
     expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
@@ -410,9 +396,6 @@ const getProperties = (
         conjunct.kind === "Always" &&
         getLevel(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
       ) {
-        // TLC names the invariant by the operator the property asserts always holds, when it
-        // applies the operator to no arguments. The name of an operator another module defines
-        // resolves to its key, so the name comes from its definition.
         const body = conjunct.expression;
         const operator =
           body.kind === "Identifier" && !isLocallyResolved(body)
@@ -488,7 +471,6 @@ const getMembership = (
     : undefined;
 };
 
-// TLC evaluates the body of an invariant that the configuration names.
 const getPredicate = (expression: Expression, environment: Environment) => {
   if (expression.kind !== "Identifier" || environment.constants.has(expression.name)) {
     return expression;
@@ -502,7 +484,6 @@ const getPredicate = (expression: Expression, environment: Environment) => {
 const getStateChecks = (named: NamedExpression[], environment: Environment): StateCheck[] =>
   named.flatMap((item) =>
     getConjuncts(item.expression, environment).map((expression) => {
-      // A LET or an argument in the scope can read variables the expression doesn't name.
       const variables =
         item.scope === undefined ? getReadVariables(expression, environment) : undefined;
       return {
@@ -539,8 +520,7 @@ const isWideExpression = (expression: Expression): boolean =>
   (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
   getChildren(expression).some(isWideExpression);
 
-// TLC fingerprints a string by the low byte of each character, so it merges states whose
-// strings differ only above U+00FF. Strings reach a state from literals, the config, or files.
+// TLC fingerprints a string by the low byte of each character, so it merges states whose strings differ only above U+00FF.
 const hasWideString = (config: ModelConfig, environment: Environment) =>
   config.constants.some(
     (constant) =>
@@ -560,21 +540,14 @@ interface Search {
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
-  // TLC drops a constraint that is a true constant formula.
   isConstrained: boolean;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
-  // Every invariant an initial state violates, which TLC reports with -continue.
   getViolatedInvariants: (state: Value[]) => StateCheck[];
-  // The checks of a state that TLC evaluates when it replays the computation of the initial states
-  // or of the successors of a state, with an environment that records the call stack. The first
-  // returns the check that stops the replay, and the second false where TLC stops it.
-  // TLC fingerprints a replayed state that satisfies the constraints before it checks the rest.
   checkReplayedInitialState: (
     state: Value[],
     tracing: Environment,
     addFingerprint: () => void,
   ) => Pick<InitialStateViolation, "status" | "name"> | undefined;
-  // Adding the fingerprint of a successor tells whether TLC had not seen it yet.
   checkReplayedSuccessor: (
     state: Value[],
     next: Value[],
@@ -588,7 +561,6 @@ interface Search {
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
   findUnwitnessedPossible: () => Postcondition | undefined;
-  // After a counterexample, TLC skips the postconditions when one of them is constant.
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
 
@@ -602,7 +574,6 @@ export const getContext = (
 const holds = (expression: Expression, context: Context, description: string) =>
   expectBoolean(evaluate(expression, context), description);
 
-// TLC names a check that is not a boolean by the location of the predicate it evaluates.
 const holdsLikeTlc = (
   expression: Expression,
   context: Context,
@@ -624,8 +595,6 @@ const getExpectedBoolean = (expression: Expression, environment: Environment) =>
   return `TLC expected a boolean value, but did not find one. ${location}`;
 };
 
-// TLC evaluates the whole predicate of a check, which fails at a conjunct that isn't a boolean as
-// the conjunction does.
 const holdsAsConjunct = (check: StateCheck, context: Context) =>
   holdsLikeTlc(check.expression, context, (expression, environment) => {
     holdsLikeTlc(check.predicate, context);
@@ -679,7 +648,6 @@ export const createSearch = (
   const spec = getSpecification(config, environment);
   const properties = getProperties(config, environment, onProgress);
   const invariants = getStateChecks([...configInvariants, ...properties.invariants], environment);
-  // The invariants TLC evaluates, each of which may have several conjuncts among the checks.
   const invariantPredicates = [
     ...new Map(invariants.map((invariant) => [invariant.predicate, invariant])).values(),
   ];
@@ -737,18 +705,18 @@ export const createSearch = (
   const statePossible = possible.filter((item) => !isActionPossible(item));
   const actionPossible = possible.filter(isActionPossible);
   const runtime = environment.runtime;
-  const tlcOrder = { indices: undefined as number[] | undefined };
+  let tlcOrder: number[] | undefined;
   const getTlcOrder = () => {
-    if (tlcOrder.indices) return tlcOrder.indices;
+    if (tlcOrder) return tlcOrder;
     const variableOrder = getVariableOrder();
     const getTlcPosition = (index: number) => {
       const position = variableOrder.indexOf(environment.variables[index]);
       return position === -1 ? environment.variables.length : position;
     };
-    tlcOrder.indices = environment.variables
+    tlcOrder = environment.variables
       .map((_, index) => index)
       .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
-    return tlcOrder.indices;
+    return tlcOrder;
   };
   const getViewValue = (expression: Expression, state: Value[]) =>
     evaluate(expression, getContext(environment, state, undefined));
@@ -762,10 +730,8 @@ export const createSearch = (
         : [getViewValue(view.expression, representative)],
     );
   };
-  // With -continue, TLC goes on to the successors of a state that violates an invariant.
   const violatingStates = new WeakSet<Value[]>();
   const isViolated = (invariant: StateCheck, state: Value[], parent: Value[] | undefined) => {
-    // A parent that satisfies every invariant leaves only what the step changed to fail.
     const checkedParent = parent && !violatingStates.has(parent) ? parent : undefined;
     if (isUnchangedFor(invariant, state, checkedParent)) return false;
     try {
@@ -779,7 +745,6 @@ export const createSearch = (
           )
         : !holdsAsConjunct(invariant, context);
     } catch (error) {
-      // TLC reports a failure only on a state after the initial states as an invariant failure.
       if (!parent) throw error;
       throw withHeadline(
         setExitCode(error, EXIT_STATUS.safetyEvaluationFailure),
@@ -816,7 +781,6 @@ export const createSearch = (
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
-      // A representative in TLC's variable order is the one whose fingerprint TLC reports.
       const representative =
         symmetryGroup === undefined
           ? state
@@ -852,7 +816,6 @@ export const createSearch = (
       return predicate && { status: "liveness-violation", name: predicate.name };
     },
     checkReplayedSuccessor: (state, next, tracing, addFingerprint) => {
-      // TLC evaluates the action constraints only on a state that satisfies the constraints.
       const isInModel =
         constraints.every((constraint) =>
           holdsLikeTlc(
@@ -863,8 +826,7 @@ export const createSearch = (
         actionConstraints.every((constraint) =>
           holdsLikeTlc(constraint.expression, getContext(tracing, state, next, constraint.scope)),
         );
-      // ModelChecker.doNext checks the invariants of a successor it has not seen, which includes
-      // one outside the model.
+      // TLC checks the invariants of every successor it has not seen, even outside the model.
       const isUnseen = isInModel ? addFingerprint() : true;
       return (
         (!isUnseen ||
@@ -937,8 +899,6 @@ export const createSearch = (
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
     findUnwitnessedPossible,
     findPostconditionViolation: (isAfterViolation = false) => {
-      // TLC replaces a definition it computes when it starts by its value, and then rejects it as
-      // a postcondition before it checks any of them.
       const constant = config.postconditions.find((name) => {
         const definition = getDefinition(name, environment);
         return definition !== undefined && getStartupValue(definition, environment) !== undefined;
@@ -976,7 +936,5 @@ export const createSearch = (
   };
 };
 
-// TLC exits with the code of a standard module's failure only when the failure escapes the
-// computation of next states. In every other phase, the phase decides the code.
 export const withNextStateExitCode = (error: unknown) =>
   error instanceof TlaModuleError ? setExitCode(error, error.exitCode) : error;

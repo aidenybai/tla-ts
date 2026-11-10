@@ -20,7 +20,6 @@ import {
 const RANDOM_SUBSET_SIGNATURE =
   "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
-// TLCGlobals.setBound: TLC 1.7.4's ValueVec holds at most this many elements of a set.
 const SET_BOUND_174 = 1000000;
 
 const getCount = (value: Value, position: string, name: string) => {
@@ -30,7 +29,6 @@ const getCount = (value: Value, position: string, name: string) => {
   return value;
 };
 
-// SubsetValue.CoinTossingSubsetEnumerator: each pick keeps each element with the probability.
 const tossSubsets = (elements: Value[], picks: number, probability: number, random: JavaRandom) =>
   createSet(
     Array.from({ length: picks }, () =>

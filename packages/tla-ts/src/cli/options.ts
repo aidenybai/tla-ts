@@ -1,7 +1,6 @@
 interface OptionSpec {
   flag: string;
   isRepeatable?: boolean;
-  // How many of the arguments after the flag the option takes, when that depends on them.
   getArity?: (rest: string[]) => number;
 }
 
@@ -19,8 +18,6 @@ export interface ParsedArgs {
   get: (name: string) => string[] | undefined;
 }
 
-// Each <name> in a flag such as "--toolbox <start> <end>" is one value the option takes, and
-// {options} in the usage stands for the options.
 export const defineCommand = (usage: string, specs: OptionSpec[]) => {
   const arities = new Map(
     specs.map((spec) => {
@@ -67,7 +64,6 @@ export const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|spec.ts|gl
   { flag: "-config <Spec.cfg>" },
   { flag: "-continue" },
   { flag: "-deadlock" },
-  // Like TLC, -dump takes a format only when the next argument starts with dot and a file follows.
   {
     flag: "-dump [<format>] <file>",
     getArity: (rest) => (rest.length > 1 && rest[0].startsWith("dot") ? 2 : 1),

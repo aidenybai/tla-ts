@@ -1,5 +1,4 @@
-// TLC's Reals.tla, RealTime.tla, and Toolbox.tla, verbatim, so that errors inside them name the same
-// lines as TLC's errors.
+// TLC's Reals.tla, RealTime.tla, and Toolbox.tla, verbatim, so that errors inside them name the same lines as TLC's errors.
 export const REALS = `-------------------------------- MODULE Reals -------------------------------
 (***************************************************************************)
 (* This module provides dummy definitions of the operators that are        *)
