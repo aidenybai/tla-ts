@@ -1565,14 +1565,25 @@ const resumeGenerator = (
         ),
       );
     }
+    // A receiver that tla-ts can't match to one generator branches over each, so a generator
+    // that it can't resume fails only where the receiver holds it.
     if (suspension.caller !== undefined) {
-      throw new TlaTypeScriptError("tla-ts can't resume a generator that is running", node);
+      return leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't resume a generator that is running"),
+        ]),
+      );
     }
     if (suspension.isAsync) {
-      if (continueAsync === undefined) {
-        throw new TlaTypeScriptError("tla-ts can't follow an async generator here", node);
-      }
-      return runAsync(name, suspension, continueAsync);
+      return continueAsync === undefined
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't follow an async generator here"),
+            ]),
+          )
+        : runAsync(name, suspension, continueAsync);
     }
     const completed = {
       ...path,

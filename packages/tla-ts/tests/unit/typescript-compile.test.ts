@@ -1982,6 +1982,26 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a for await over an async generator inside another async generator", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let count = 0;
+      const inner = (async function* () {
+        yield* [[1, 2]];
+      })();
+      async function* outer() {
+        for await (const [x, y] of inner) {
+          count = count + x + y;
+        }
+      }
+      outer().next();
+      setTimeout(() => {
+        if (count !== 3) throw new Error("missed");
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a return would close a generator inside yield*", async () => {
     await expect(
       checkModel(`
