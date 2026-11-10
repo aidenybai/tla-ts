@@ -74,6 +74,7 @@ import {
   getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
+  setAliasName,
   setStringOrder,
   setValueOptions,
   setViewText,
@@ -1141,7 +1142,8 @@ export const createSearch = (
       try {
         getConfigDefinition("alias", alias, environment);
         const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
-        return toAliasRecord(value) ?? toRecord(state);
+        const record = toAliasRecord(value);
+        return record === undefined ? toRecord(state) : setAliasName(record, alias);
       } catch (error) {
         if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
         return { ...toRecord(state), _ALIASEvalError: formatNestedMessage(error.message, isTool) };

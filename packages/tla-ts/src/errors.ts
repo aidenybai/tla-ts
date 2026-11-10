@@ -197,6 +197,32 @@ export class TlaFeatureUnsupportedError extends TlaEvaluationError {
   }
 }
 
+// TLC's PickSuccessor fails to read an answer past the end of standard input with a Java exception.
+export class TlaEndOfInputError extends TlaUncodedError {
+  constructor() {
+    super(
+      "PickSuccessor reached the end of standard input without an answer whether to extend the behavior.",
+    );
+  }
+}
+
+// TLC reads a checkpoint that isn't there with a Java exception.
+export class TlaMissingCheckpointError extends TlaEvaluationError {
+  constructor(directory: string) {
+    super(`The directory ${directory} holds no checkpoint to recover from.`);
+    this.name = "TlaEvaluationError";
+    setExitCode(this, EXIT_STATUS.error);
+  }
+}
+
+// An ALIAS's _format that can't print the trace, where TLC leaks a Java exception.
+export class TlaAliasFormatError extends TlaEvaluationError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TlaEvaluationError";
+  }
+}
+
 // TLC's WrongInvocationException, which its CallStackTool records no call stack for.
 export class TlaSetBoundError extends TlaEvaluationError {
   constructor(message: string) {

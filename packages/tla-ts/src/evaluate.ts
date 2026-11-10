@@ -104,6 +104,8 @@ export interface Builtin {
   isStateLevel?: boolean;
   // Whether TLC takes an application for a constant one although its value depends on the state.
   isLevelConstant?: boolean;
+  // TLC's minLevel of ActionLevel for a Java override.
+  isActionLevel?: boolean;
   isLazy?: boolean;
 }
 

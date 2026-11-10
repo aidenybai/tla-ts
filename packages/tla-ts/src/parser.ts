@@ -1199,13 +1199,11 @@ const parse = (
     }
     // SANY reads an infix or postfix operator as a primary expression, with or without arguments.
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
-      return {
-        kind: "Apply",
-        operator: token.text,
-        spelling: token.spelling,
-        args: parseArguments(),
-        location,
-      };
+      const args = parseArguments();
+      // SANY's built-in \X has no definition for TLC to evaluate, a TLC bug.
+      return mode === "tlc" && token.text === "\\X" && args.length === 2
+        ? { kind: "Product", factors: args, location }
+        : { kind: "Apply", operator: token.text, spelling: token.spelling, args, location };
     }
     if (token.kind === "Operator" && isOperatorName(token.text) && !isTlapm) {
       return { kind: "Identifier", name: token.text, spelling: token.spelling, location };

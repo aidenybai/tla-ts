@@ -1,4 +1,9 @@
-import { TlaEvaluationError, TlaModuleError, TlaNullPointerError } from "./errors";
+import {
+  TlaEndOfInputError,
+  TlaEvaluationError,
+  TlaModuleError,
+  TlaNullPointerError,
+} from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import {
   formatValue,
@@ -245,7 +250,9 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
       try {
         return compute(...args);
       } catch (error) {
-        if (!(error instanceof TlaEvaluationError)) throw error;
+        if (!(error instanceof TlaEvaluationError) || error instanceof TlaEndOfInputError) {
+          throw error;
+        }
         const isFingerprinted = isFingerprintedSince(depth);
         // The wrapping error replaces the FingerprintException.
         if (setTrace.sets) setTrace.sets.length = depth;

@@ -12,6 +12,16 @@ config: |
   ALIAS Alias
 args:
   - -deadlock
+correct:
+  all:
+    exit: 12
+    transcript: |-
+      2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+      2110:1 Invariant Inv is violated.
+      2121:1 The behavior up to this point is:
+      1000:1 The _format field of the ALIAS Alias is "%d = %s\n", but it must format two strings, the name and the value of a field.
+      2199:0 8 states generated, 7 distinct states found, 2 states left on queue.
+      2194:0 The depth of the complete state graph search is 4.
 ---*)
 ---- MODULE PrintTraceException ----
 EXTENDS Naturals

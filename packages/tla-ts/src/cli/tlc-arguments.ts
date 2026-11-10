@@ -16,7 +16,7 @@ export interface TlcArguments {
   isLazyValueExpanded: boolean;
   isViewPrinted: boolean;
   metadir: string | undefined;
-  isRecovering: boolean;
+  recoverDirectory: string | undefined;
   mode: "model-check" | "simulate" | "generate";
   dfidDepth: number | undefined;
   traceDepth: number;
@@ -185,7 +185,7 @@ const createDefaults = (): TlcArguments => ({
   isLazyValueExpanded: true,
   isViewPrinted: false,
   metadir: undefined,
-  isRecovering: false,
+  recoverDirectory: undefined,
   mode: "model-check",
   dfidDepth: undefined,
   traceDepth: 100,
@@ -541,7 +541,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         );
       }
       if (flag === "-metadir") parsed.metadir = directory;
-      if (flag === "-recover") parsed.isRecovering = true;
+      if (flag === "-recover") parsed.recoverDirectory = directory;
       continue;
     }
     if (flag === "-workers") {

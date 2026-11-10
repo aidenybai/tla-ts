@@ -34,9 +34,12 @@ import type {
 import { parseConfig } from "../config";
 import { checkDepthFirst, type DepthFirstOutput } from "../dfid";
 import {
+  TlaAliasFormatError,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
+  TlaFeatureUnsupportedError,
+  TlaMissingCheckpointError,
   TlaSyntaxError,
   getUnexpectedException,
   UNEXPECTED_EXCEPTION,
@@ -72,9 +75,9 @@ import {
   type MessagePrinter,
 } from "../tlc/messages";
 import { formatState } from "../values";
-import { USAGE } from "./options";
 import { addRuntimeInvariants } from "./runtime-invariants";
 import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
+import { getTlcUsage } from "./tlc-usage";
 import {
   createModuleLoader,
   findModuleFile,
@@ -179,15 +182,22 @@ const printTrace = (
   isLastDiffed = heading !== BEHAVIOR,
 ) => {
   if (trace.length > 0) printer.print(heading.code, MESSAGE_LEVEL.error, heading.text);
-  trace.forEach((step, index) => {
-    if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
-    const isDiffed = printer.isDiffTrace && index > 0 && (isLastDiffed || index < trace.length - 1);
-    printer.print(
-      MESSAGE_CODE.statePrint2,
-      MESSAGE_LEVEL.state,
-      `${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
-    );
-  });
+  // TLC reports an error in printing the trace and stops printing it.
+  try {
+    trace.forEach((step, index) => {
+      if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
+      const isDiffed =
+        printer.isDiffTrace && index > 0 && (isLastDiffed || index < trace.length - 1);
+      printer.print(
+        MESSAGE_CODE.statePrint2,
+        MESSAGE_LEVEL.state,
+        `${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
+      );
+    });
+  } catch (error) {
+    if (!(error instanceof TlaAliasFormatError)) throw error;
+    printer.print(MESSAGE_CODE.general, MESSAGE_LEVEL.error, error.message);
+  }
 };
 
 const COUNTER_EXAMPLE = {
@@ -933,6 +943,15 @@ const checkSpec = async (
   const seed = args.seed;
   const version = printer.version;
   printWelcome(printer);
+  // TLC reads the checkpoint's table of names first.
+  const recoverDirectory = args.recoverDirectory;
+  if (recoverDirectory !== undefined) {
+    throw existsSync(join(recoverDirectory, "vars.chkpt"))
+      ? new TlaFeatureUnsupportedError(
+          `tla-ts can't recover a model check from the checkpoint in ${recoverDirectory}.`,
+        )
+      : new TlaMissingCheckpointError(recoverDirectory);
+  }
   printStartupBanner(printer, args);
   const configPath = args.configPath ?? specPath.replace(/\.tla$/, ".cfg");
   if (!existsSync(configPath)) {
@@ -1194,11 +1213,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     return printCommandLineError(createMessagePrinter(parsed.isTool, true, version), parsed.error);
   }
   if (parsed.isUsage) {
-    console.log(USAGE);
-    return 1;
-  }
-  if (parsed.isRecovering) {
-    console.error("Error: tla-ts can't recover a model check from a checkpoint.");
+    console.log(getTlcUsage());
     return 1;
   }
   // TLC opens the file of a -dump as it reads its arguments, in the meta directory it creates.

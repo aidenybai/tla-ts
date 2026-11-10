@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, TlaUnsupportedError } from "../../src";
+import { check } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
@@ -53,13 +53,21 @@ describe("TLCExt operators match TLC", () => {
     expect((await checkFixture("Pick", "PickIncomplete")).status).toBe("success");
   });
 
-  it("does not ask interactively for an unseen successor", async () => {
-    await expect(
-      checkModule(
-        "Init == x = 0\nNext == x' = (x + 1) % 3\nAsk == PickSuccessor(x' # 1)",
-        "INIT Init\nNEXT Next\nACTION_CONSTRAINT Ask",
-      ),
-    ).rejects.toThrow(TlaUnsupportedError);
+  it("asks about an unseen successor and finds standard input at its end", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nAsk == PickSuccessor(x' # 1)\n====",
+      config: "INIT Init\nNEXT Next\nACTION_CONSTRAINT Ask",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toBe(
+      "PickSuccessor reached the end of standard input without an answer whether to extend the behavior.",
+    );
+    expect(printed[0]).toBe(
+      'Extend behavior of length 1 with a "Next" step [<Action line 5, col 9 to line 5, col 24 of module M>]? (Yes/no/explored/states/diff):',
+    );
   });
 
   it("requires a string literal as the message of AssertError", async () => {
