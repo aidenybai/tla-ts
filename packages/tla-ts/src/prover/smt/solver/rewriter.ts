@@ -405,7 +405,6 @@ export class Rewriter extends RewriterTpl {
     );
   }
 
-  // unify_core: the arguments that differ, in the order of app and other, and the one they share.
   private unify(app: number, other: number) {
     const manager = this.manager;
     if (manager.getNumArgs(app) !== 2) return undefined;

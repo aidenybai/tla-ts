@@ -234,7 +234,6 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   return [goal];
 };
 
-// tactic2solver: each check runs a fresh tactic on all the assertions.
 const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrSolver => {
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;

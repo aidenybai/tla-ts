@@ -350,7 +350,6 @@ export class AigManager {
     return true;
   }
 
-  // On success iteCond, iteThen and iteElse hold the parts.
   isIte(node: number) {
     if (isVar(node)) return false;
     const left = this.lefts[node];
