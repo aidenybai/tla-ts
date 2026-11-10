@@ -1753,16 +1753,18 @@ const trimScope = (scope: Scope | undefined, names: string[] | undefined) =>
         { name: "", binding: { kind: "Value", value: false }, parent: undefined },
       );
 
-const compileFunctionConstruction = (
+export const isKeptLazy = (expression: Expression) => keptLazyExpressions.has(expression);
+
+// Builds the function of a constructor from its evaluated domain.
+export const getFunctionBuilder = (
   expression: Expression & { kind: "FunctionConstruction" },
   environment: Environment,
-): Evaluator => {
-  const isKeptLazy = keptLazyExpressions.has(expression);
+) => {
+  const isKeptLazyExpression = isKeptLazy(expression);
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
   const isSingleName = bounds.length === 1 && bound.pattern.kind === "Name";
-  const set = getEvaluator(bound.set, environment);
   const construct = (domain: Value, context: Context) => {
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
@@ -1815,9 +1817,13 @@ const compileFunctionConstruction = (
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
   const callStack = environment.callStack;
-  return (context) => {
-    const domain = isSingleName ? set(context) : getBoundsDomain(bounds, context);
-    if (expression.isRecursive || isKeptLazy || context.isKeepLazy || !isEnumerable(domain)) {
+  const build = (domain: Value, context: Context) => {
+    if (
+      expression.isRecursive ||
+      isKeptLazyExpression ||
+      context.isKeepLazy ||
+      !isEnumerable(domain)
+    ) {
       return createLazy(domain, context);
     }
     // TLC builds a function lazily unless each bound is reducible, so its body fails where forced.
@@ -1845,6 +1851,20 @@ const compileFunctionConstruction = (
       throw error;
     }
   };
+  return { build, createLazy };
+};
+
+const compileFunctionConstruction = (
+  expression: Expression & { kind: "FunctionConstruction" },
+  environment: Environment,
+): Evaluator => {
+  const build = getFunctionBuilder(expression, environment).build;
+  const bounds = expression.bounds;
+  if (bounds.length === 1 && bounds[0].pattern.kind === "Name") {
+    const set = getEvaluator(bounds[0].set, environment);
+    return (context) => build(set(context), context);
+  }
+  return (context) => build(getBoundsDomain(bounds, context), context);
 };
 
 const compileExcept = (
@@ -1908,6 +1928,101 @@ const compileExcept = (
   };
 };
 
+// TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
+export const getLazyFilter = (
+  expression: Expression & { kind: "SetFilter" },
+  environment: Environment,
+) => {
+  const predicate = getEvaluator(expression.predicate, environment);
+  const pattern = expression.bound.pattern;
+  const range = expression.predicate.location.range;
+  const source = range && {
+    names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
+    predicate: formatRange(range),
+  };
+  const predicateNode = describeNode(expression.predicate);
+  const coverage = environment.coverage;
+  // TLC evaluates a lazy set's predicate under the set's node only as it enumerates the set,
+  // and costs each element it tests and each it keeps.
+  const testCovered = (node: number, isMember: boolean, test: () => Value) => {
+    if (!coverage || node === -1) return test();
+    if (!isMember) coverage.secondary[node]++;
+    const value = runAtCoverageNode(coverage, isMember ? -1 : node, test);
+    if (!isMember && value === true) coverage.secondary[node]++;
+    return value;
+  };
+  const createFiltered = (
+    base: Value,
+    context: Context,
+    evaluator: Evaluator,
+    node: number,
+  ): RebindableFilteredSet => ({
+    kind: "FilteredSet",
+    base,
+    test: (element, isMember) => {
+      if (
+        pattern.kind === "Tuple" &&
+        getSequenceElements(element)?.length !== pattern.names.length
+      ) {
+        throw new TlaEvaluationError(
+          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
+        );
+      }
+      const value = testCovered(node, isMember, () =>
+        evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
+      );
+      if (typeof value !== "boolean") {
+        throw new TlaEvaluationError(
+          `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
+        );
+      }
+      return value;
+    },
+    source,
+    rebind: (tracing) =>
+      createFiltered(
+        base,
+        { ...context, environment: tracing },
+        getEvaluator(expression.predicate, tracing),
+        -1,
+      ),
+  });
+  return (base: Value, context: Context, node = -1) =>
+    createFiltered(base, context, predicate, node);
+};
+
+export const expectFilterPredicate = (
+  value: Value,
+  expression: Expression & { kind: "SetFilter" },
+) => {
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError(
+      `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${describeNode(expression.predicate)}`,
+    );
+  }
+  return value;
+};
+
+export const getChoiceElements = (
+  base: Value,
+  expression: Expression & { kind: "Choose" },
+  set: Expression,
+  version: TlcVersion,
+) => {
+  if (!isSetValue(base) || isOverriddenSet(base)) {
+    throw new TlaEvaluationError(
+      `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
+    );
+  }
+  normalizeShallowly(base);
+  return getNormalizedElements(base, set, version);
+};
+
+export const createNoChoiceError = (expression: Expression & { kind: "Choose" }) =>
+  new TlaEvaluationError(
+    `Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n${describeRange(expression)}`,
+  );
+
 const compileSetComprehension = (
   expression: Expression & { kind: "SetFilter" | "SetMap" | "Choose" },
   environment: Environment,
@@ -1915,73 +2030,16 @@ const compileSetComprehension = (
   if (expression.kind === "SetFilter") {
     const predicate = getEvaluator(expression.predicate, environment);
     const set = getEvaluator(expression.bound.set, environment);
+    const filterLazily = getLazyFilter(expression, environment);
     const pattern = expression.bound.pattern;
-    const range = expression.predicate.location.range;
-    const source = range && {
-      names: pattern.kind === "Name" ? pattern.name : pattern.names.join(", "),
-      predicate: formatRange(range),
-    };
-    const predicateNode = describeNode(expression.predicate);
     const coverage = environment.coverage;
-    // TLC evaluates a lazy set's predicate under the set's node only as it enumerates the set,
-    // and costs each element it tests and each it keeps.
-    const testCovered = (node: number, isMember: boolean, test: () => Value) => {
-      if (!coverage || node === -1) return test();
-      if (!isMember) coverage.secondary[node]++;
-      const value = runAtCoverageNode(coverage, isMember ? -1 : node, test);
-      if (!isMember && value === true) coverage.secondary[node]++;
-      return value;
-    };
-    const createFiltered = (
-      base: Value,
-      context: Context,
-      evaluator: Evaluator,
-      node = -1,
-    ): RebindableFilteredSet => ({
-      kind: "FilteredSet",
-      base,
-      test: (element, isMember) => {
-        if (
-          pattern.kind === "Tuple" &&
-          getSequenceElements(element)?.length !== pattern.names.length
-        ) {
-          throw new TlaEvaluationError(
-            `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
-          );
-        }
-        const value = testCovered(node, isMember, () =>
-          evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
-        );
-        if (typeof value !== "boolean") {
-          throw new TlaEvaluationError(
-            `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
-          );
-        }
-        return value;
-      },
-      source,
-      rebind: (tracing) =>
-        createFiltered(
-          base,
-          { ...context, environment: tracing },
-          getEvaluator(expression.predicate, tracing),
-        ),
-    });
     return (context) => {
       const base = set(context);
-      // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
-      if (!isReducibleSet(base)) {
-        return createFiltered(base, context, predicate, coverage?.current);
-      }
+      if (!isReducibleSet(base)) return filterLazily(base, context, coverage?.current);
       const kept: Value[] = [];
       const visit = (element: Value) => {
         const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
-        if (typeof value !== "boolean") {
-          throw new TlaEvaluationError(
-            `Attempted to evaluate an expression of form {x \\in S : P(x)} when P was ${getKindString(value)}.\n${predicateNode}`,
-          );
-        }
-        if (value) addBoundedElement(kept, element);
+        if (expectFilterPredicate(value, expression)) addBoundedElement(kept, element);
       };
       const elements = base.kind === "Interval" ? base : toFiniteSet(base).elements;
       forEachElement(elements, visit);
@@ -2015,15 +2073,13 @@ const compileSetComprehension = (
   const body = getEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
   return (context) => {
-    const base = evaluateSet(context);
-    if (!isSetValue(base) || isOverriddenSet(base)) {
-      throw new TlaEvaluationError(
-        `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
-      );
-    }
-    normalizeShallowly(base);
+    const elements = getChoiceElements(
+      evaluateSet(context),
+      expression,
+      set,
+      context.environment.runtime.version,
+    );
     const chosen = { value: undefined as Value | undefined };
-    const elements = getNormalizedElements(base, set, context.environment.runtime.version);
     const pattern = expression.pattern;
     someElement(elements, (element) => {
       if (
@@ -2039,11 +2095,7 @@ const compileSetComprehension = (
       chosen.value = getBoundValue(pattern, scope);
       return true;
     });
-    if (chosen.value === undefined) {
-      throw new TlaEvaluationError(
-        `Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n${describeRange(expression)}`,
-      );
-    }
+    if (chosen.value === undefined) throw createNoChoiceError(expression);
     return chosen.value;
   };
 };

@@ -1,5 +1,4 @@
 {
   "tlc/generated/random/003/random_01576#assume": "exit-mismatch",
-  "tlc/generated/random/004/random_02309#assume": "crash",
   "tlc/generated/random/016/random_08023#assume": "time-limit"
 }
