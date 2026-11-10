@@ -1,5 +1,3 @@
-// encode/n_axioms.ml: the formulas of the axioms that depend on a count or on fields.
-
 import {
   call,
   CAST_INT,
@@ -18,7 +16,6 @@ import {
 } from "./format";
 import { axiom, TYPED_SYMBOLS, type AxiomArgument } from "./table";
 
-// The arithmetic symbols with a Typing axiom: each one's SMT-LIB operator and arity.
 export const TYPED_OPERATORS: Record<string, [string, number]> = {
   IntPlus: ["+", 2],
   IntMinus: ["-", 2],
@@ -79,7 +76,6 @@ export const getIntegers = (count: number) =>
 
 export const getFieldKeys = (fields: string[]) => fields.map((field) => tla(`StrLit_${field}`));
 
-// TupExcept and RecExcept: updating one component of a tuple or record.
 const getComponentExcepts = (
   prefix: string,
   args: AxiomArgument[],
@@ -104,8 +100,6 @@ export const getTupleExcepts = (count: number) =>
 export const getRecordExcepts = (fields: string[]) =>
   getComponentExcepts("Rec", [fields], tla(`Record_${fields.join("_")}`), getFieldKeys(fields));
 
-// TupIsafcn, TupDomDef and TupAppDef, or their Rec counterparts: a tuple or record is the
-// function from its keys to its components. The empty tuple has no domain or components to define.
 const getComponentFunction = (
   prefix: string,
   args: AxiomArgument[],
@@ -172,7 +166,6 @@ export const getRecordAxioms = (fields: string[], isExcept: boolean) => [
   ...(isExcept ? getRecordExcepts(fields) : []),
 ];
 
-// The set of tuples or records whose components are in the given sets.
 export const getComponentSet = (
   name: string,
   args: AxiomArgument[],

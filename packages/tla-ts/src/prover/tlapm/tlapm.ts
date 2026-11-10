@@ -1,12 +1,9 @@
-// The tlapm backend: runs tlapm on a module and reads each obligation's result from its Toolbox
-// messages.
-
 import { TlaUnsupportedError } from "../../errors";
 
 // Loaded at runtime so browser bundles leave them out. prove loads this module only in Node and Bun.
 const childProcess = process.getBuiltinModule("node:child_process");
-const fs = process.getBuiltinModule("node:fs");
-const os = process.getBuiltinModule("node:os");
+const fileSystem = process.getBuiltinModule("node:fs");
+const operatingSystem = process.getBuiltinModule("node:os");
 const path = process.getBuiltinModule("node:path");
 
 export type TlapmResult =
@@ -23,9 +20,8 @@ export const getTlapmPaths = () =>
   (process.env.PATH ?? "")
     .split(path.delimiter)
     .map((directory) => path.join(directory, "tlapm"))
-    .filter((tlapm) => fs.existsSync(tlapm));
+    .filter((tlapm) => fileSystem.existsSync(tlapm));
 
-// tlapm's Toolbox protocol: each message is @!!BEGIN, then @!!name:value lines, then @!!END.
 const parseToolboxMessages = (text: string) =>
   text
     .split("@!!BEGIN\n")
@@ -53,8 +49,6 @@ const getResult = (fields: Map<string, string>): TlapmResult | undefined => {
   return undefined;
 };
 
-// Runs tlapm with --toolbox 0 0 on the module name, which modules holds with each module it
-// extends or instances, and returns the last result tlapm reported for each obligation.
 export const proveWithTlapm = async (
   name: string,
   modules: Map<string, string>,
@@ -63,9 +57,9 @@ export const proveWithTlapm = async (
   const tlapm = getTlapmPaths()[0];
   if (tlapm === undefined)
     throw new TlaUnsupportedError("The tlapm backend needs tlapm on your PATH.");
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tla-ts-"));
+  const directory = fileSystem.mkdtempSync(path.join(operatingSystem.tmpdir(), "tla-ts-"));
   modules.forEach((source, moduleName) =>
-    fs.writeFileSync(path.join(directory, `${moduleName}.tla`), source),
+    fileSystem.writeFileSync(path.join(directory, `${moduleName}.tla`), source),
   );
   const results = new Map<number, TlapmResult>();
   const child = childProcess.spawn(
@@ -75,22 +69,23 @@ export const proveWithTlapm = async (
   );
   const kill = () => child.kill();
   options.signal?.addEventListener("abort", kill);
-  const output = { text: "", parsed: 0 };
+  let text = "";
+  let parsedCount = 0;
   child.stderr.on("data", (chunk: Buffer) => {
-    output.text += chunk.toString("utf8");
-    const messages = parseToolboxMessages(output.text);
-    messages.slice(output.parsed).forEach((fields) => {
+    text += chunk.toString("utf8");
+    const messages = parseToolboxMessages(text);
+    messages.slice(parsedCount).forEach((fields) => {
       const result = getResult(fields);
       const id = Number(fields.get("id"));
       if (fields.get("type") !== "obligation" || !result) return;
       results.set(id, result);
       options.onResult?.(id, result);
     });
-    output.parsed = messages.length;
+    parsedCount = messages.length;
   });
   await new Promise((resolve) => child.on("close", resolve));
   options.signal?.removeEventListener("abort", kill);
-  fs.rmSync(directory, { recursive: true, force: true });
+  fileSystem.rmSync(directory, { recursive: true, force: true });
   options.signal?.throwIfAborted();
   return results;
 };

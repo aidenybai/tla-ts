@@ -1,10 +1,6 @@
-// encode/n_rewrite.ml, type/t_synth.ml, and encode/n_standardize.ml: a TLA+ expression as an
-// SMT-LIB term over the sort Idv. Set extensionality is in extensionality.ts, and the axioms each
-// flattened symbol brings are in instances.ts.
-
 import { TlaUnsupportedError } from "../../errors";
 import { normalizeApply, shiftExpr } from "../../obligations/substitution";
-import { type Bound, type Builtin, type Expr, type Sequent } from "../../obligations/expression";
+import type { Bound, Builtin, Expr, Sequent } from "../../obligations/expression";
 import { createContext, type Identifier } from "./context";
 import {
   createFlattener,
@@ -48,17 +44,14 @@ import {
 interface Term {
   isBool: boolean;
   text: string;
-  // Type.Synthesize: the Int-sorted form of a term that is an integer before it's cast to Idv.
   integer?: string;
 }
 
-// What tlapm keeps across the obligations of one run.
 export interface EncodingSession {
   caseErrors: number;
 }
 
 export interface Mode {
-  // Whether the text encodes a fact that tlapm leaves out, which may declare operators.
   isOmitted: boolean;
   polarity: Polarity;
   at: string | undefined;
@@ -77,8 +70,6 @@ export interface Env {
   rest: Env | undefined;
 }
 
-// A nested ASSUME's declarations and facts so far: each wraps the goal in a quantifier or an
-// implication.
 interface NestedContext {
   env: Env | undefined;
   mode: Mode;
@@ -88,25 +79,20 @@ interface NestedContext {
 export const createEncoder = (session: EncodingSession) => {
   const flattener = createFlattener();
   const flatten = flattener.flatten;
-  // The arity of each anonymous operator Coalesce introduces.
   const anonymous = new Map<string, number>();
-  // The fields of each record symbol.
   const recordFields = new Map<string, string[]>();
   const context = createContext();
-  // The salted name of each declared user symbol, for the printer's context.
   const declared = new Map<string, Identifier>();
 
-  // Standardize wraps a cast term in an application, and set_extensionality_visitor visits the
-  // arguments of an application with neither polarity, so a cast triggers every set equality in it.
   const toBool = (term: Term) =>
     term.isBool ? term.text : `(= ${resolveTriggers(term.text, true)} ${TT_IDV})`;
 
   const toIdv = (term: Term) =>
     term.isBool ? `(${CAST_BOOL} ${resolveTriggers(term.text, true)})` : term.text;
 
-  const bool = (text: string): Term => ({ isBool: true, text });
+  const wrapBool = (text: string): Term => ({ isBool: true, text });
 
-  const idv = (text: string): Term => ({ isBool: false, text });
+  const wrapIdv = (text: string): Term => ({ isBool: false, text });
 
   const getBinding = (env: Env | undefined, index: number): Binding => {
     const found = Array.from({ length: index - 1 }).reduce<Env | undefined>(
@@ -119,13 +105,11 @@ export const createEncoder = (session: EncodingSession) => {
 
   const push = (env: Env | undefined, binding: Binding): Env => ({ binding, rest: env });
 
-  // The variables bound outside depth that text uses, outermost first.
   const getFree = (text: string, depth: number) =>
     [...new Set(text.match(/[^\s()]+#\d+/g))]
       .filter((variable) => getDepth(variable) < depth)
       .toSorted((left, right) => getDepth(left) - getDepth(right));
 
-  // Smtlib.adj: the Action frontend's name, salted while it's taken.
   const getUniqueName = (name: string) => {
     const identifier = context.adjoin(name);
     context.enter(identifier);
@@ -133,7 +117,7 @@ export const createEncoder = (session: EncodingSession) => {
     return identifier.name;
   };
 
-  const neither = (mode: Mode): Mode => ({ ...mode, polarity: "Neither" });
+  const clearPolarity = (mode: Mode): Mode => ({ ...mode, polarity: "Neither" });
 
   const invert = (mode: Mode): Mode => ({
     ...mode,
@@ -146,13 +130,12 @@ export const createEncoder = (session: EncodingSession) => {
   });
 
   const encodeIdv = (expression: Expr, env: Env | undefined, mode: Mode) =>
-    toIdv(encode(expression, env, neither(mode)));
+    toIdv(encode(expression, env, clearPolarity(mode)));
 
   const encodeBool = (expression: Expr, env: Env | undefined, mode: Mode) =>
     toBool(encode(expression, env, mode));
 
-  // The domains of bounds, each in the scope outside them. A Ditto copies the last domain, and
-  // tlapm's Rewrite encodes each copy, so each one flattens again.
+  // tlapm's Rewrite encodes each Ditto's copy of a domain, so each copy flattens again.
   const encodeDomains = (bounds: Bound[], env: Env | undefined, mode: Mode) =>
     bounds
       .reduce<(Expr | undefined)[]>((domains, bound) => {
@@ -203,7 +186,7 @@ export const createEncoder = (session: EncodingSession) => {
     mode: Mode,
   ) => {
     const domain = encodeIdv(expression.domain, env, mode);
-    const bound = bindVariables([expression.name], env, neither(mode));
+    const bound = bindVariables([expression.name], env, clearPolarity(mode));
     const body = encodeBool(expression.body, bound.env, bound.mode);
     const free = getFree(body, mode.depth);
     const symbol = flatten(
@@ -213,7 +196,7 @@ export const createEncoder = (session: EncodingSession) => {
       (name) => getSetStAxioms(name, free, body, bound.variables[0]),
       free.length + 1,
     );
-    return idv(call(symbol, [domain, ...free]));
+    return wrapIdv(call(symbol, [domain, ...free]));
   };
 
   const encodeSetOf = (
@@ -225,7 +208,7 @@ export const createEncoder = (session: EncodingSession) => {
     const bound = bindVariables(
       expression.bounds.map((innerBound) => innerBound.name),
       env,
-      neither(mode),
+      clearPolarity(mode),
     );
     const element = encodeIdv(expression.element, bound.env, bound.mode);
     const free = getFree(element, mode.depth);
@@ -237,10 +220,9 @@ export const createEncoder = (session: EncodingSession) => {
       (name) => getSetOfAxioms(name, free, element, bound.variables),
       count + free.length,
     );
-    return idv(call(symbol, [...domains, ...free]));
+    return wrapIdv(call(symbol, [...domains, ...free]));
   };
 
-  // Rewrite.elim_multiarg: a function of several arguments is a function of a tuple.
   const encodeFunction = (
     expression: Extract<Expr, { kind: "Fcn" }>,
     env: Env | undefined,
@@ -253,7 +235,7 @@ export const createEncoder = (session: EncodingSession) => {
       domains.length === 1 ? expression.bounds[0].name : "x",
       mode.depth,
     );
-    const inner = { ...neither(mode), depth: mode.depth + 1 };
+    const inner = { ...clearPolarity(mode), depth: mode.depth + 1 };
     const bodyEnv =
       domains.length === 1
         ? push(env, { kind: "constant", symbol: variable })
@@ -271,16 +253,15 @@ export const createEncoder = (session: EncodingSession) => {
       (name, axioms) => getFunctionAxioms(name, free, body, variable, axioms),
       free.length + 1,
     );
-    return idv(call(symbol, [domain, ...free]));
+    return wrapIdv(call(symbol, [domain, ...free]));
   };
 
-  // Elab: CHOOSE x \in S : P is CHOOSE x : x \in S /\ P.
   const encodeChoose = (
     expression: Extract<Expr, { kind: "Choose" }>,
     env: Env | undefined,
     mode: Mode,
   ) => {
-    const bound = bindVariables([expression.name], env, neither(mode));
+    const bound = bindVariables([expression.name], env, clearPolarity(mode));
     const variable = bound.variables[0];
     const domain =
       expression.domain && `(${MEM} ${variable} ${encodeIdv(expression.domain, env, mode)})`;
@@ -294,11 +275,9 @@ export const createEncoder = (session: EncodingSession) => {
       (name) => getChooseAxioms(name, free, body, variable),
       free.length,
     );
-    return idv(call(symbol, free));
+    return wrapIdv(call(symbol, free));
   };
 
-  // Type.Synthesize compares values of the same sort only above type level 1, so two formulas are
-  // compared as values.
   const encodeEquality = (args: Expr[], env: Env | undefined, mode: Mode, isNegated: boolean) =>
     getEquality(
       encodeIdv(args[0], env, mode),
@@ -307,11 +286,9 @@ export const createEncoder = (session: EncodingSession) => {
       isNegated,
     );
 
-  // Type.Synthesize: SelectSeq's test becomes the predicate LAMBDA x1 : Test(x1), its body the
-  // text Flatten compares.
   const getSelectionTest = (test: Expr, env: Env | undefined, mode: Mode) => {
     const lambda = test.kind === "Lambda" && test.params.length === 1 ? test : undefined;
-    const bound = bindVariables([lambda?.params[0].name ?? "x1"], env, neither(mode));
+    const bound = bindVariables([lambda?.params[0].name ?? "x1"], env, clearPolarity(mode));
     const body = encodeBool(
       lambda?.body ?? {
         kind: "Apply",
@@ -330,43 +307,44 @@ export const createEncoder = (session: EncodingSession) => {
     env: Env | undefined,
     mode: Mode,
   ): Term => {
-    const idvs = () => args.map((arg) => encodeIdv(arg, env, mode));
+    const encodeArgs = () => args.map((arg) => encodeIdv(arg, env, mode));
     switch (builtin) {
       case "Conj":
-        return bool(conjoin(args.map((arg) => encodeBool(arg, env, mode))));
+        return wrapBool(conjoin(args.map((arg) => encodeBool(arg, env, mode))));
       case "Disj":
-        return bool(disjoin(args.map((arg) => encodeBool(arg, env, mode))));
+        return wrapBool(disjoin(args.map((arg) => encodeBool(arg, env, mode))));
       case "Implies":
-        return bool(
+        return wrapBool(
           `(=> ${encodeBool(args[0], env, invert(mode))} ${encodeBool(args[1], env, mode)})`,
         );
       case "Equiv":
-        return bool(`(= ${args.map((arg) => encodeBool(arg, env, neither(mode))).join(" ")})`);
+        return wrapBool(
+          `(= ${args.map((arg) => encodeBool(arg, env, clearPolarity(mode))).join(" ")})`,
+        );
       case "Neg":
-        return bool(`(not ${encodeBool(args[0], env, invert(mode))})`);
+        return wrapBool(`(not ${encodeBool(args[0], env, invert(mode))})`);
       case "Eq":
-        return bool(encodeEquality(args, env, mode, false));
+        return wrapBool(encodeEquality(args, env, mode, false));
       case "Neq":
-        return bool(encodeEquality(args, env, mode, true));
+        return wrapBool(encodeEquality(args, env, mode, true));
       case "Mem":
-        return bool(call(MEM, idvs()));
-      // Rewrite.elim_notmem: a \notin S is ~(a \in S).
+        return wrapBool(call(MEM, encodeArgs()));
       case "Notmem":
-        return bool(`(not ${call(MEM, idvs())})`);
+        return wrapBool(`(not ${call(MEM, encodeArgs())})`);
       case "Subseteq":
-        return bool(call(SUBSET_EQ, idvs()));
-      // Rewrite.elim_compare: a < b is a <= b /\ a # b, and a > b is b < a.
+        return wrapBool(call(SUBSET_EQ, encodeArgs()));
       case "Lteq":
-        return bool(call(INT_LTEQ, idvs()));
+        return wrapBool(call(INT_LTEQ, encodeArgs()));
       case "Gteq":
-        return bool(call(INT_LTEQ, idvs().toReversed()));
+        return wrapBool(call(INT_LTEQ, encodeArgs().toReversed()));
       case "Lt":
       case "Gt": {
         // Rewrite copies the operands before Flatten, which flattens each copy again.
-        const getOperands = () => (builtin === "Lt" ? idvs() : idvs().toReversed());
-        return bool(`(and ${call(INT_LTEQ, getOperands())} (distinct ${getOperands().join(" ")}))`);
+        const getOperands = () => (builtin === "Lt" ? encodeArgs() : encodeArgs().toReversed());
+        return wrapBool(
+          `(and ${call(INT_LTEQ, getOperands())} (distinct ${getOperands().join(" ")}))`,
+        );
       }
-      // Flatten: SelectSeq(s, Test) is a fresh operator of s and the bound variables Test uses.
       case "SelectSeq": {
         const test = getSelectionTest(args[1], env, mode);
         const free = getFree(test.body, mode.depth);
@@ -377,16 +355,16 @@ export const createEncoder = (session: EncodingSession) => {
           (name) => getSelectSeqAxioms(name, free, test.body, test.variable),
           free.length + 1,
         );
-        return idv(call(symbol, [encodeIdv(args[0], env, mode), ...free]));
+        return wrapIdv(call(symbol, [encodeIdv(args[0], env, mode), ...free]));
       }
       case "Unprimable": {
-        const term = encode(args[0], env, neither(mode));
+        const term = encode(args[0], env, clearPolarity(mode));
         return { ...term, text: `(${UNPRIMABLE} ${term.text})` };
       }
       default: {
         const symbol = BUILTIN_SYMBOLS[builtin];
         if (symbol === undefined) throw new TlaUnsupportedError(`the operator ${builtin}`);
-        return idv(call(symbol, idvs()));
+        return wrapIdv(call(symbol, encodeArgs()));
       }
     }
   };
@@ -401,26 +379,22 @@ export const createEncoder = (session: EncodingSession) => {
       case "constant":
       case "variable":
         if (args.length > 0) throw new TlaUnsupportedError(`an applied ${binding.kind}`);
-        return idv(binding.symbol);
+        return wrapIdv(binding.symbol);
       case "operator":
         if (args.length !== binding.arity)
           throw new TlaUnsupportedError("an operator applied to the wrong number of arguments");
-        return idv(
+        return wrapIdv(
           call(
             binding.symbol,
             args.map((arg) => encodeIdv(arg, env, mode)),
           ),
         );
-      // Flatten: an application of a second-order operator, which has no axioms, is a fresh
-      // operator of its first-order arguments and the bound variables its others use.
       case "secondOrder": {
         if (args.length !== binding.shapes.length)
           throw new TlaUnsupportedError("an operator applied to the wrong number of arguments");
         const operands = args.map((arg, index) => {
           if (binding.shapes[index] === 0)
             return { isFirstOrder: true, text: encodeIdv(arg, env, mode) };
-          // An operator's name as the argument stands for the operator, which compare_expr
-          // matches by name.
           if (arg.kind === "Ix") {
             const argument = getBinding(env, arg.index);
             if (argument.kind !== "operator")
@@ -432,7 +406,7 @@ export const createEncoder = (session: EncodingSession) => {
           const bound = bindVariables(
             arg.params.map((param) => param.name),
             env,
-            neither(mode),
+            clearPolarity(mode),
           );
           return { isFirstOrder: false, text: encodeIdv(arg.body, bound.env, bound.mode) };
         });
@@ -451,15 +425,13 @@ export const createEncoder = (session: EncodingSession) => {
           firstOrder.length + free.length,
           binding.name,
         );
-        return idv(call(symbol, [...firstOrder, ...free]));
+        return wrapIdv(call(symbol, [...firstOrder, ...free]));
       }
       case "unsupported":
         throw new TlaUnsupportedError(binding.reason);
     }
   };
 
-  // Rewrite.elim_flex: the Action frontend's name#prime is the primed copy of the variable it
-  // names, which tlapm finds by name.
   const getPrimed = (env: Env | undefined, name: string): string => {
     if (!env) throw new TlaUnsupportedError(`a primed declaration that isn't a variable`);
     const binding = env.binding;
@@ -468,14 +440,12 @@ export const createEncoder = (session: EncodingSession) => {
       : getPrimed(env.rest, name);
   };
 
-  // Standardize: an opaque name the Action frontend introduces is an anonymous operator, named
-  // OPAQUE_ when it has no arguments.
   const encodeOpaque = (name: string, args: Expr[], env: Env | undefined, mode: Mode) => {
     if (args.length === 0 && name.endsWith("#prime"))
-      return idv(getPrimed(env, name.slice(0, -"#prime".length)));
+      return wrapIdv(getPrimed(env, name.slice(0, -"#prime".length)));
     const anonymousName = args.length === 0 ? `Anon_OPAQUE_${name}` : `Anon_${name}`;
     anonymous.set(anonymousName, args.length);
-    return idv(
+    return wrapIdv(
       call(
         tla(anonymousName),
         args.map((arg) => encodeIdv(arg, env, mode)),
@@ -490,7 +460,6 @@ export const createEncoder = (session: EncodingSession) => {
   ) =>
     expression.specs.reduce(
       (base, spec) => {
-        // Elab.desugar: @ is the value at the whole trail.
         const update = (value: string, trail: typeof spec.trail): string => {
           if (trail.length === 0) return encodeIdv(spec.value, env, { ...mode, at: value });
           const point = trail[0];
@@ -511,7 +480,6 @@ export const createEncoder = (session: EncodingSession) => {
       encodeIdv(expression.function, env, mode),
     );
 
-  // Standardize names each CASE with no OTHER by a count that tlapm never resets.
   const getCaseError = () => {
     session.caseErrors++;
     const name = `Anon_incomplete_case_error_${session.caseErrors}`;
@@ -525,17 +493,16 @@ export const createEncoder = (session: EncodingSession) => {
     mode: Mode,
   ): Term => {
     const bodies = expression.arms.map((arm) => encode(arm.body, env, mode));
-    // Standardize: a CASE with no OTHER ends in an unknown value.
     const other: Term = expression.other
       ? encode(expression.other, env, mode)
-      : idv(getCaseError());
+      : wrapIdv(getCaseError());
     const isBool = other.isBool && bodies.every((body) => body.isBool);
     const isInteger =
       other.integer !== undefined && bodies.every((body) => body.integer !== undefined);
     if (isInteger) {
       const integer = expression.arms.reduceRight(
         (rest, arm, index) =>
-          `(ite ${encodeBool(arm.condition, env, neither(mode))} ${bodies[index].integer} ${rest})`,
+          `(ite ${encodeBool(arm.condition, env, clearPolarity(mode))} ${bodies[index].integer} ${rest})`,
         other.integer ?? "",
       );
       return { isBool: false, text: `(${CAST_INT} ${integer})`, integer };
@@ -610,17 +577,17 @@ export const createEncoder = (session: EncodingSession) => {
       case "Internal":
         switch (expression.builtin) {
           case "TRUE":
-            return bool("true");
+            return wrapBool("true");
           case "FALSE":
-            return bool("false");
+            return wrapBool("false");
           case "BOOLEAN":
-            return idv(BOOL_SET);
+            return wrapIdv(BOOL_SET);
           case "STRING":
-            return idv(STR_SET);
+            return wrapIdv(STR_SET);
           case "Nat":
-            return idv(NAT_SET);
+            return wrapIdv(NAT_SET);
           case "Int":
-            return idv(INT_SET);
+            return wrapIdv(INT_SET);
           default:
             throw new TlaUnsupportedError(`the operator ${expression.builtin}`);
         }
@@ -637,7 +604,7 @@ export const createEncoder = (session: EncodingSession) => {
         throw new TlaUnsupportedError(`an application of ${operator.kind}`);
       }
       case "Sequent":
-        return bool(encodeSequent(expression.sequent, env, mode));
+        return wrapBool(encodeSequent(expression.sequent, env, mode));
       case "With":
       case "Parens":
         return encode(expression.expression, env, mode);
@@ -650,17 +617,17 @@ export const createEncoder = (session: EncodingSession) => {
           return { isBool: false, text: `(${CAST_INT} ${integer})`, integer };
         }
         return consequent.isBool && alternative.isBool
-          ? bool(`(ite ${condition} ${consequent.text} ${alternative.text})`)
-          : idv(`(ite ${condition} ${toIdv(consequent)} ${toIdv(alternative)})`);
+          ? wrapBool(`(ite ${condition} ${consequent.text} ${alternative.text})`)
+          : wrapIdv(`(ite ${condition} ${toIdv(consequent)} ${toIdv(alternative)})`);
       }
       case "List": {
         const items = expression.items.map((item) => encodeBool(item, env, mode));
-        return bool(expression.bullet === "Or" ? disjoin(items) : conjoin(items));
+        return wrapBool(expression.bullet === "Or" ? disjoin(items) : conjoin(items));
       }
       case "Opaque":
         return encodeOpaque(expression.name, [], env, mode);
       case "Quant":
-        return bool(encodeQuantifier(expression, env, mode));
+        return wrapBool(encodeQuantifier(expression, env, mode));
       case "Choose":
         return encodeChoose(expression, env, mode);
       case "SetSt":
@@ -668,21 +635,21 @@ export const createEncoder = (session: EncodingSession) => {
       case "SetOf":
         return encodeSetOf(expression, env, mode);
       case "SetEnum":
-        return idv(
+        return wrapIdv(
           call(
             tla(`SetEnum_${expression.elements.length}`),
             expression.elements.map((element) => encodeIdv(element, env, mode)),
           ),
         );
       case "Product":
-        return idv(
+        return wrapIdv(
           call(
             tla(`Product_${expression.factors.length}`),
             expression.factors.map((factor) => encodeIdv(factor, env, mode)),
           ),
         );
       case "Tuple":
-        return idv(
+        return wrapIdv(
           call(
             tla(`Tuple_${expression.elements.length}`),
             expression.elements.map((element) => encodeIdv(element, env, mode)),
@@ -690,15 +657,14 @@ export const createEncoder = (session: EncodingSession) => {
         );
       case "Fcn":
         return encodeFunction(expression, env, mode);
-      // Rewrite.elim_multiarg: f[a, b] applies f to the tuple <<a, b>>.
       case "FcnApp": {
         const encodedFunction = encodeIdv(expression.function, env, mode);
         const args = expression.args.map((arg) => encodeIdv(arg, env, mode));
         const argument = args.length === 1 ? args[0] : call(tla(`Tuple_${args.length}`), args);
-        return idv(`(${FUN_APP} ${encodedFunction} ${argument})`);
+        return wrapIdv(`(${FUN_APP} ${encodedFunction} ${argument})`);
       }
       case "Arrow":
-        return idv(
+        return wrapIdv(
           call(FUN_SET, [
             encodeIdv(expression.domain, env, mode),
             encodeIdv(expression.range, env, mode),
@@ -710,7 +676,7 @@ export const createEncoder = (session: EncodingSession) => {
         const suffix = names.join("_");
         recordFields.set(`Record_${suffix}`, names);
         recordFields.set(`RecordSet_${suffix}`, names);
-        return idv(
+        return wrapIdv(
           call(
             tla(`${expression.kind === "Record" ? "Record" : "RecordSet"}_${suffix}`),
             expression.fields.map((field) => encodeIdv(field.value, env, mode)),
@@ -718,15 +684,15 @@ export const createEncoder = (session: EncodingSession) => {
         );
       }
       case "Except":
-        return idv(encodeExcept(expression, env, mode));
+        return wrapIdv(encodeExcept(expression, env, mode));
       case "Dot":
-        return idv(
+        return wrapIdv(
           `(${FUN_APP} ${encodeIdv(expression.expression, env, mode)} ${tla(`StrLit_${expression.field}`)})`,
         );
       case "Case":
         return encodeCase(expression, env, mode);
       case "String":
-        return idv(tla(`StrLit_${expression.value}`));
+        return wrapIdv(tla(`StrLit_${expression.value}`));
       case "Num":
         if (expression.fraction !== "") throw new TlaUnsupportedError("a real number");
         return {
@@ -736,7 +702,7 @@ export const createEncoder = (session: EncodingSession) => {
         };
       case "At":
         if (mode.at === undefined) throw new TlaUnsupportedError("@ outside EXCEPT");
-        return idv(mode.at);
+        return wrapIdv(mode.at);
       case "Tquant":
       case "Tsub":
       case "Fair":
@@ -746,7 +712,6 @@ export const createEncoder = (session: EncodingSession) => {
     }
   };
 
-  // One fact or the goal, after the declarations of the symbols it flattens.
   const getEntries = (line: string): Entry[] => [
     ...flattener.takeIntroduced(),
     removeUnprimable(resolveTriggers(line, false)),

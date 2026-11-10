@@ -1,6 +1,3 @@
-// Expr.Action.implication_to_enabled, the ENABLEDaxioms frontend: it proves a rule about ENABLED
-// from facts of the form the rule needs.
-
 import { TlapmBugError, TlaProverError } from "../../errors";
 import { shiftExpr } from "../../obligations/substitution";
 import { isEqualExpr } from "../../obligations/equality";
@@ -40,7 +37,6 @@ const getEnabled = (expression: Expr) =>
     ? expression.args[0]
     : undefined;
 
-// Both operands of the connective, when each is an ENABLED.
 const getEnabledOperands = (expression: Expr, builtin: Builtin) => {
   const operands = getOperands(expression, builtin);
   const left = operands && getEnabled(operands[0]);
@@ -48,7 +44,6 @@ const getEnabledOperands = (expression: Expr, builtin: Builtin) => {
   return left && right ? [left, right] : undefined;
 };
 
-// E_visit.collect_primed_vars: the variables under a prime, an UNCHANGED, or a subscript.
 const getPrimedVariables = (scope: Scope | undefined, expression: Expr) => {
   const names = new Set<string>();
   const visit = (state: { scope: Scope | undefined; isPrimed: boolean }, inner: Expr): Expr => {
@@ -90,7 +85,6 @@ const isDisjoint = (scope: Scope | undefined, left: Expr, right: Expr) => {
   return [...getPrimedVariables(scope, right)].every((name) => !leftNames.has(name));
 };
 
-// check_active: the rule the goal's form calls for, with the operands the facts must mention.
 const getRule = (scope: Scope | undefined, goal: Expr): Rule | undefined => {
   const getLevelOf = (expression: Expr) => getLevelInfo(scope, expression).level;
   const assertActions = (left: Expr, right: Expr) => {
@@ -135,13 +129,12 @@ const getRule = (scope: Scope | undefined, goal: Expr): Rule | undefined => {
   return implication && { name: "implies", left: implication[0], right: implication[1] };
 };
 
-// implication_to_enabled: the goal follows by the rule its form calls for when a visible fact is
-// the rule's premise and others say that both operands are in BOOLEAN, or the premise is an
-// equivalence. The goal then becomes TRUE; otherwise tlapm records the obligation as not tried.
 export const implicationToEnabled = (sequent: Sequent): Sequent => {
   const goalScope = adjoinAll(undefined, sequent.context);
   const rule = getRule(goalScope, sequent.active);
-  const found = { isPremise: false, isLeftBoolean: false, isRightBoolean: false };
+  let isPremise = false;
+  let isLeftBoolean = false;
+  let isRightBoolean = false;
   sequent.context.forEach((hyp, index) => {
     if (!rule || hyp.kind !== "Fact" || hyp.visibility !== "Visible") return;
     const amount = sequent.context.length - index;
@@ -167,22 +160,22 @@ export const implicationToEnabled = (sequent: Sequent): Sequent => {
       isPair(getEnabledOperands(fact, "Conj"), ["abconj_inverse", "pconj_inverse"]) ||
       isPair(conjunction && action && [conjunction[0], action], ["pconj_inverse"])
     ) {
-      found.isPremise = true;
+      isPremise = true;
     } else if (isPair(getOperands(fact, "Equiv"), ["equiv"])) {
-      found.isPremise = true;
-      found.isLeftBoolean = true;
-      found.isRightBoolean = true;
+      isPremise = true;
+      isLeftBoolean = true;
+      isRightBoolean = true;
     } else if (isPair(getOperands(fact, "Eq"), ["equiv"])) {
-      found.isPremise = true;
+      isPremise = true;
     } else if (membership && isBoolean && isLeft(membership[0])) {
-      found.isLeftBoolean = true;
+      isLeftBoolean = true;
     } else if (membership && isBoolean && isRight(membership[0])) {
-      found.isRightBoolean = true;
+      isRightBoolean = true;
     } else if (isPair(getOperands(fact, "Implies"), ["implies"])) {
-      found.isPremise = true;
+      isPremise = true;
     }
   });
-  if (!found.isPremise || !found.isLeftBoolean || !found.isRightBoolean) {
+  if (!isPremise || !isLeftBoolean || !isRightBoolean) {
     throw new TlaProverError("ENABLEDaxioms proof directive did not succeed.\n");
   }
   return { ...sequent, active: TRUE };

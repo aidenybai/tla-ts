@@ -1,5 +1,3 @@
-// tlapm's fingerprints file, ported from src/backend/fpfile.ml.
-
 import {
   cpSync,
   existsSync,
@@ -14,17 +12,21 @@ import {
 import { basename, join } from "node:path";
 import { version } from "../../../package.json";
 import { TlaProofError } from "../../errors";
-import { block, isBlock, readMarshaled, writeMarshaled, type OcamlValue } from "./ocaml-marshal";
+import {
+  createBlock,
+  isBlock,
+  readMarshaled,
+  writeMarshaled,
+  type OcamlValue,
+} from "./ocaml-marshal";
 import type { ProofAttempt } from "../prove";
 
-// One optional result per prover, in V13.str's order.
 export type FingerprintTable = Map<string, OcamlValue[]>;
 
 const MAGIC_NUMBER = 20210223;
 
 const RECORD_SIZE = 23;
 
-// Each prover's field in V13.str and constructor in V13.meth.
 const PROVERS: Record<string, { field: number; tag: number }> = {
   zenon: { field: 1, tag: 1 },
   isabelle: { field: 2, tag: 0 },
@@ -37,7 +39,6 @@ const FAIL_METHOD = 5;
 
 const REASONS = ["false", "timeout"];
 
-// Stored as the tlapm, Zenon and Isabelle versions, which --safefp compares.
 const VERSION = `tla-ts ${version}`;
 
 const CHECKED_VERSIONS = new Map([
@@ -53,13 +54,12 @@ const getField = (value: OcamlValue | undefined, index: number) =>
 const getFloat = (value: OcamlValue | undefined) =>
   value !== undefined && typeof value === "object" && "float" in value ? value.float : Infinity;
 
-// Hashtbl.hash on a string.
 const hashKey = (key: string) => {
   const bytes = new TextEncoder().encode(key);
   const rotate = (value: number, shift: number) => (value << shift) | (value >>> (32 - shift));
   const mixed = Array.from(
     { length: Math.ceil(bytes.length / 4) },
-    (_, index) =>
+    (_value, index) =>
       bytes[index * 4] |
       (bytes[index * 4 + 1] << 8) |
       (bytes[index * 4 + 2] << 16) |
@@ -78,7 +78,6 @@ const readBucket = (entry: OcamlValue | undefined): [OcamlValue, OcamlValue][] =
     ? [[entry.fields[0], entry.fields[1]], ...readBucket(entry.fields[2])]
     : [];
 
-// Fpfile.load_fingerprints. Each bucket lists the latest fingerprint first.
 export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: boolean) => {
   const bytes = readFileSync(path);
   const magic = readMarshaled(bytes, 0);
@@ -132,25 +131,25 @@ const encodeResult = (attempt: ProofAttempt) => {
   const timeout = { float: method.rlimit ?? method.timeLimitMs / 1000 };
   const argument =
     method.prover === "zenon"
-      ? block(0, timeout, FAIL_METHOD)
+      ? createBlock(0, timeout, FAIL_METHOD)
       : method.prover === "isabelle"
-        ? block(0, block(0, timeout), method.tactic ?? "auto")
-        : block(0, timeout);
+        ? createBlock(0, createBlock(0, timeout), method.tactic ?? "auto")
+        : createBlock(0, timeout);
   const reasonIndex = REASONS.indexOf(attempt.reason ?? "");
   const reason =
     attempt.reason === undefined
       ? 0
-      : block(0, reasonIndex === -1 ? block(0, attempt.reason) : reasonIndex);
-  return block(
+      : createBlock(0, reasonIndex === -1 ? createBlock(0, attempt.reason) : reasonIndex);
+  return createBlock(
     0,
-    block(
+    createBlock(
       0,
-      block(
+      createBlock(
         0,
-        attempt.isProved ? 0 : block(0, reason),
-        block(PROVERS[method.prover].tag, argument),
+        attempt.isProved ? 0 : createBlock(0, reason),
+        createBlock(PROVERS[method.prover].tag, argument),
       ),
-      block(
+      createBlock(
         0,
         now.getFullYear(),
         now.getMonth(),
@@ -171,14 +170,13 @@ const encodeTable = (table: FingerprintTable) => {
   const buckets: OcamlValue[] = Array.from({ length }, () => 0);
   table.forEach((record, fingerprint) => {
     const index = hashKey(fingerprint) & (length - 1);
-    buckets[index] = block(0, fingerprint, block(0, ...record), buckets[index]);
+    buckets[index] = createBlock(0, fingerprint, createBlock(0, ...record), buckets[index]);
   });
-  return block(0, block(0, table.size, block(0, ...buckets), 0, 512));
+  return createBlock(0, createBlock(0, table.size, createBlock(0, ...buckets), 0, 512));
 };
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
-// Fpfile.fp_init.
 export const saveHistory = (path: string, sources: string[]) => {
   const now = new Date();
   const history = `${path}.history`;
@@ -197,9 +195,6 @@ export const saveHistory = (path: string, sources: string[]) => {
     .forEach((old) => rmSync(old, { recursive: true, force: true }));
 };
 
-// Fpfile.query: what each prover concluded for each fingerprint. Saving them, as fp_writes,
-// add_to_table and fp_close_and_consolidate do, keeps each record and result loaded unchanged, with
-// its date, versions and other provers' results.
 export const getKnownResults = (table: FingerprintTable) => {
   const storedResults = new Map<ProofAttempt, OcamlValue>();
   const storedRecords = new Map<Map<string, ProofAttempt>, OcamlValue[]>();

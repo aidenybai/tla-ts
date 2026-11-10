@@ -1,8 +1,3 @@
-// tlapm's PTL backend up to the text it sends LS4 (Pltl.process_obligation, Prep.flatten, and
-// Ls4's printer): temporal operators reduce to [], <> and prime, assumptions that hold
-// always get a [], and every other subformula becomes an atom named by a hash of its printed form.
-// The text is the negated obligation.
-
 import {
   bumpBy,
   shift,
@@ -27,9 +22,6 @@ import { getLevelInfo } from "../../obligations/levels";
 import { expandAction, expandFairness, expandLeadsto, getTime } from "../../obligations/temporal";
 import { getHashName, LEVEL_NUMBER_PREFIXES, LEVEL_PREFIXES } from "../prep/action";
 
-// Coalesce.rename_with_loc: each declared name gets its kind in front, or its level for a definition,
-// as in VARIABLE_x_ and CONSTANT_i_, so atoms print with the names tlapm hashes. A variable a
-// temporal quantifier binds keeps its name.
 const renameSequent = (scope: Scope | undefined, sequent: Sequent): Sequent => {
   const [inner, context] = mapAccumulate(
     scope,
@@ -93,38 +85,30 @@ const renameDeclarations = (scope: Scope | undefined, expression: Expr): Expr =>
   }
 };
 
-interface PreparedHyps {
-  scope: Scope | undefined;
-  substitution: Substitution;
-  context: Hyp[];
-}
-
-// Pltl.expand_domains and Pltl.box_assumptions: NEW x \in S becomes NEW x and the fact x \in S, and
-// each visible fact that holds always gets a [].
 const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
   if (expression.kind !== "Sequent")
     return mapScoped(scope, expression, prepareHyps, adjoin, "all");
-  const state: PreparedHyps = { scope, substitution: shift(0), context: [] };
+  let innerScope = scope;
+  let substitution: Substitution = shift(0);
+  const context: Hyp[] = [];
   const push = (hyp: Hyp) => {
     const prepared =
       hyp.kind === "Fact" && hyp.visibility === "Visible" && hyp.time === "Always"
         ? { ...hyp, expression: applyBuiltin("BoxTrue", [hyp.expression], hyp.expression) }
         : hyp;
-    state.context.push(prepared);
-    state.scope = adjoin(state.scope, prepared);
+    context.push(prepared);
+    innerScope = adjoin(innerScope, prepared);
   };
   for (const original of expression.sequent.context) {
-    const hyp = substituteHyp(state.substitution, original);
+    const hyp = substituteHyp(substitution, original);
     if (hyp.kind !== "Fresh" || !hyp.domain || original.kind !== "Fresh" || !original.domain) {
       push(
-        hyp.kind === "Fact"
-          ? { ...hyp, expression: prepareHyps(state.scope, hyp.expression) }
-          : hyp,
+        hyp.kind === "Fact" ? { ...hyp, expression: prepareHyps(innerScope, hyp.expression) } : hyp,
       );
-      state.substitution = bumpBy(1, state.substitution);
+      substitution = bumpBy(1, substitution);
       continue;
     }
-    const domain = prepareHyps(state.scope, hyp.domain);
+    const domain = prepareHyps(innerScope, hyp.domain);
     push({ ...hyp, domain: undefined });
     // tlapm judges the time of the domain as written, one hypothesis too deep.
     push({
@@ -135,19 +119,19 @@ const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
         domain,
       ),
       visibility: hyp.domainVisibility,
-      time: hyp.level === "Constant" ? getTime(state.scope, original.domain) : "Now",
+      time: hyp.level === "Constant" ? getTime(innerScope, original.domain) : "Now",
       location: hyp.location,
     });
-    state.substitution = {
+    substitution = {
       kind: "Compose",
       outer: shift(1),
-      inner: bumpBy(1, state.substitution),
+      inner: bumpBy(1, substitution),
     };
   }
-  const active = substituteExpr(state.substitution, expression.sequent.active);
+  const active = substituteExpr(substitution, expression.sequent.active);
   return {
     ...expression,
-    sequent: { context: state.context, active: prepareHyps(state.scope, active) },
+    sequent: { context, active: prepareHyps(innerScope, active) },
   };
 };
 
@@ -166,8 +150,6 @@ const UNARY: Partial<Record<Builtin, string>> = {
   Prime: "next",
 };
 
-// Prep.flatten, which tlapm applies after Pltl.process_obligation has made every equality an atom:
-// TRUE drops out of the conjunctions of each visible fact, and a fact left with nothing disappears.
 const removeTrue = (expression: Expr): Expr | undefined => {
   if (expression.kind === "Internal" && expression.builtin === "TRUE") return undefined;
   if (expression.kind === "List" && expression.bullet !== "Or") {
@@ -189,10 +171,7 @@ const removeTrue = (expression: Expr): Expr | undefined => {
 
 const TRUE_TEXT = "(cc | ~ cc)";
 
-// The text tlapm sends LS4 for an obligation after Prep.normalize_expand.
 export const encodePtl = (sequent: Sequent): string => {
-  // Ls4's printer. A sequent becomes an implication from its visible facts, joined by &, and
-  // Prep.flatten applies to the facts of the outermost one.
   const print = (hyps: Hyp[], expression: Expr, isOutermost = false): string => {
     const recurse = (inner: Expr) => print(hyps, inner);
     switch (expression.kind) {
@@ -235,7 +214,6 @@ export const encodePtl = (sequent: Sequent): string => {
         return facts.length === 0 ? goal : `(${facts.join(" & ")} -> ${goal})`;
       }
     }
-    // Pltl.coalesce_fol names an atom as Coalesce does.
     return getHashName(hyps, expression);
   };
   const renamed = renameDeclarations(undefined, { kind: "Sequent", sequent });

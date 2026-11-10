@@ -1,17 +1,12 @@
-// Decides the text tlapm sends LS4, as LS4 does: unsat when the negated obligation has no model,
-// which proves the obligation.
-
 import { TlaSyntaxError } from "../../errors";
 import type { DecideOptions, Verdict } from "../verdict";
 import { getSatisfiability, type PtlFormula } from "./tableau";
 
-// LS4's input syntax, as tlapm writes it: every operator is parenthesized except the facts of a
-// sequent, which are joined by & before ->.
 const parseLs4 = (text: string): PtlFormula => {
   const tokens = text.match(/<->|->|[()~&|]|[\w']+|\S/g) ?? [];
-  const state = { position: 0 };
+  let position = 0;
   const take = (expected?: string) => {
-    const token = tokens[state.position++];
+    const token = tokens[position++];
     if (token === undefined || (expected !== undefined && token !== expected))
       throw new TlaSyntaxError(
         `Expected ${expected ?? "a formula"} in LS4 input, found ${token ?? "the end"}`,
@@ -35,7 +30,7 @@ const parseLs4 = (text: string): PtlFormula => {
   };
   const parseJunction = (operator: string, kind: "And" | "Or", parseOperand: () => PtlFormula) => {
     const operands = [parseOperand()];
-    while (tokens[state.position] === operator) {
+    while (tokens[position] === operator) {
       take();
       operands.push(parseOperand());
     }
@@ -43,19 +38,19 @@ const parseLs4 = (text: string): PtlFormula => {
   };
   const parseImplies = (): PtlFormula => {
     const left = parseJunction("|", "Or", () => parseJunction("&", "And", parseUnary));
-    if (tokens[state.position] !== "->") return left;
+    if (tokens[position] !== "->") return left;
     take();
     return { kind: "Implies", left, right: parseImplies() };
   };
   const parseEquiv = (): PtlFormula => {
     const left = parseImplies();
-    if (tokens[state.position] !== "<->") return left;
+    if (tokens[position] !== "<->") return left;
     take();
     return { kind: "Equiv", left, right: parseEquiv() };
   };
   const formula = parseEquiv();
-  if (state.position < tokens.length)
-    throw new TlaSyntaxError(`Expected the end of LS4 input, found ${tokens[state.position]}`);
+  if (position < tokens.length)
+    throw new TlaSyntaxError(`Expected the end of LS4 input, found ${tokens[position]}`);
   return formula;
 };
 
