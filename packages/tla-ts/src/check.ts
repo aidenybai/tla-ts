@@ -15,6 +15,7 @@ import {
 } from "./errors";
 import {
   createTracingEnvironment,
+  describeRange,
   formatRange,
   getDefinition,
   isImpure,
@@ -650,9 +651,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
               source,
               getGraphState(next, depths[index] + 1),
               !isUnseen,
-              isNamingEdges
-                ? { name: action.name, signature: getActionSignature(action) }
-                : undefined,
+              isNamingEdges ? getGraphAction(action) : undefined,
             );
           }
           return isUnseen;
@@ -1110,6 +1109,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
+  const getGraphAction = (action: SpecAction) => ({
+    name: action.name,
+    signature: getActionSignature(action),
+  });
   const getGraphState = (state: Value[], level: number): GraphState => ({
     fingerprint: BigInt.asIntN(64, runtime.getFingerprint(state)),
     level,
@@ -1201,8 +1204,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         source,
         getGraphState(successor.state, depths[index] + 1),
         existing !== -1,
-        action && { name: action.name, signature: getActionSignature(action) },
+        action && getGraphAction(action),
       );
+    }
+    if (source && !isInModel && options.dump?.constrained) {
+      const excluded = getGraphState(successor.state, depths[index] + 1);
+      search
+        .getExcludingConstraints(state, successor.state)
+        .forEach((constraint) =>
+          stateWriter?.writeConstrained(
+            source,
+            excluded,
+            action && getGraphAction(action),
+            constraint,
+          ),
+        );
     }
     if (existing !== -1 && liveness) {
       const stored = states[existing];
@@ -1345,6 +1361,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   );
   const forEachActionSuccessor = (
     state: Value[],
+    onUnsatisfied:
+      | ((successor: Value[], conjunct: Expression, action?: SpecAction) => void)
+      | undefined,
     onSuccessor: (successor: Successor, action: SpecAction | undefined) => boolean,
   ) => {
     if (!isNamingEdges) {
@@ -1354,6 +1373,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         environment,
         (successor) => onSuccessor(successor, undefined),
         spec.scope,
+        undefined,
+        onUnsatisfied,
       );
     }
     const progress = { isStopped: false };
@@ -1370,6 +1391,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             return progress.isStopped;
           },
           action.scope,
+          undefined,
+          onUnsatisfied && ((successor, conjunct) => onUnsatisfied(successor, conjunct, action)),
         )
       );
     }, 0);
@@ -1423,7 +1446,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const state = states[index];
     const source = stateWriter && getGraphState(state, depths[index]);
-    const successorCount = forEachActionSuccessor(state, (successor, action) => {
+    const writeUnsatisfied =
+      source && options.dump?.constrained
+        ? (successor: Value[], conjunct: Expression, action?: SpecAction) =>
+            stateWriter?.writeConstrained(
+              source,
+              getGraphState(successor, depths[index] + 1),
+              action && getGraphAction(action),
+              describeRange(conjunct),
+            )
+        : undefined;
+    const successorCount = forEachActionSuccessor(state, writeUnsatisfied, (successor, action) => {
       try {
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
@@ -1478,7 +1511,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     if (result) return result;
     const addLiveState = () => {
-      if (liveness && source && is174) stateWriter?.writeStuttering(source);
+      if (liveness && source && (is174 || options.dump?.stuttering)) {
+        stateWriter?.writeStuttering(source);
+      }
       const accepted = liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
       const steps = getPathSteps(accepted);

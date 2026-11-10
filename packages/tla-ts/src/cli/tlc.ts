@@ -100,8 +100,6 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   error: EXIT_STATUS.error,
 };
 
-const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
-
 const checkNotDirectory = (path: string) => {
   if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
     throw new TlaEvaluationError(`${path} (Is a directory)`);
@@ -120,6 +118,9 @@ const getStateDump = (values: string[]): StateDump => {
     colorize: format.includes("colorize"),
     actionLabels: format.includes("actionlabels"),
     snapshot: format.includes("snapshot"),
+    constrained: format.includes("constrained"),
+    stuttering: format.includes("stuttering"),
+    strict: format.includes("strict"),
   };
 };
 
@@ -1047,14 +1048,6 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   }
   if (parsed.isUsage) {
     console.log(USAGE);
-    return 1;
-  }
-  const dumpValues = parsed.dump;
-  const unsupportedFormat =
-    dumpValues?.length === 2 &&
-    UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
-  if (unsupportedFormat) {
-    console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
     return 1;
   }
   if (parsed.isRecovering) {

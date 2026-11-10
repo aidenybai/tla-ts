@@ -188,7 +188,6 @@
   "tlc/cli/coverage/spec_form": "message-mismatch",
   "tlc/cli/coverage/uncovered_action_is_listed": "message-mismatch",
   "tlc/cli/coverage/with_violation": "message-mismatch",
-  "tlc/cli/dump/dot_options": "exit-mismatch",
   "tlc/cli/other/dump_trace_any_case": "text-mismatch",
   "tlc/cli/other/dump_trace_json": "text-mismatch",
   "tlc/cli/other/load_trace_missing_file": "exit-mismatch",

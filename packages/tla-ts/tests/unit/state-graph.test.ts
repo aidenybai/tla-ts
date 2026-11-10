@@ -135,6 +135,35 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("FailedInvariant.dot")).toBe(readTlcDump("FailedInvariant.dot"));
   });
 
+  it("writes the stuttering steps and the successors the constraints exclude", async () => {
+    const dump = await dumpFixture("state-graph", "Excluded", {
+      path: "Excluded.dot",
+      dot: true,
+      colorize: true,
+      actionLabels: true,
+      constrained: true,
+      stuttering: true,
+    });
+    expect(dump.written.get("Excluded.dot")).toBe(readTlcDump("Excluded.dot"));
+  });
+
+  it("writes an edge once with strict", async () => {
+    const dump = await dumpFixture("state-graph", "Doubled", {
+      path: "Doubled.dot",
+      dot: true,
+      strict: true,
+    });
+    expect(dump.written.get("Doubled.dot")).toBe(readTlcDump("Doubled.dot"));
+  });
+
+  // TLC keys an edge by the XOR of its fingerprints, so it writes one self loop in the graph.
+  it("keeps every self loop with strict, unlike TLC", async () => {
+    const options = { path: "Excluded.dot", dot: true };
+    const strict = await dumpFixture("state-graph", "Excluded", { ...options, strict: true });
+    const plain = await dumpFixture("state-graph", "Excluded", options);
+    expect(strict.written.get("Excluded.dot")).toBe(plain.written.get("Excluded.dot"));
+  });
+
   it("leaves a snapshot that matches the finished graph", async () => {
     const dump = await dumpFixture("water-jugs", "WaterJugs", {
       path: "WaterJugs.dot",
@@ -172,9 +201,9 @@ describe("the CLI takes TLC's -dump flag", () => {
     ]);
   });
 
-  it("rejects a format it cannot write like TLC", () => {
-    const result = runCli(["-dump", "dot,strict", "Counter"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts does not support the -dump format strict.\n");
+  it("takes the options of a dot format", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-dump-"));
+    runCli(["-dump", "dot,actionlabels,strict,stuttering,constrained", join(directory, "Counter")]);
+    expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(readTlcDump("Counter.dot"));
   });
 });

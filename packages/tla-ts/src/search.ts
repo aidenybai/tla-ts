@@ -678,6 +678,7 @@ interface Search {
   findFailedInitialPredicate: (state: Value[]) => NamedExpression | undefined;
   findViolatedActionProperty: (state: Value[], next: Value[]) => ActionProperty | undefined;
   satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
+  getExcludingConstraints: (state: Value[], next: Value[]) => string[];
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
   findUnwitnessedPossible: () => Postcondition | undefined;
@@ -1025,6 +1026,12 @@ export const createSearch = (
           )
           .join("")
       : prettyPrint(formatValue(getViewValue(expression, state)));
+  const holdsActionConstraint = (constraint: NamedExpression, state: Value[], next: Value[]) =>
+    holdsLikeTlc(
+      constraint.expression,
+      getContext(environment, state, next),
+      (expression) => `${UNEXPECTED_EXCEPTION}${getExpectedBoolean(expression, environment)}`,
+    );
   const toRecord = (state: Value[]): Record<string, Value> => {
     const record = Object.fromEntries(
       getTlcOrder().map((index) => [environment.variables[index], state[index]]),
@@ -1159,13 +1166,19 @@ export const createSearch = (
         }
       }),
     satisfiesActionConstraints: (state, next) =>
-      actionConstraints.every((constraint) =>
-        holdsLikeTlc(
-          constraint.expression,
-          getContext(environment, state, next),
-          (expression) => `${UNEXPECTED_EXCEPTION}${getExpectedBoolean(expression, environment)}`,
+      actionConstraints.every((constraint) => holdsActionConstraint(constraint, state, next)),
+    getExcludingConstraints: (state, next) =>
+      [
+        ...constraints.filter(
+          (constraint) => !holdsAsConjunct(constraint, getContext(environment, next, undefined)),
         ),
-      ),
+        ...actionConstraints.filter(
+          (constraint) => !holdsActionConstraint(constraint, state, next),
+        ),
+      ].map((constraint) => {
+        const range = getBodyRange(constraint.name, environment);
+        return range ? formatRange(range) : constraint.name;
+      }),
     trackStatePossible:
       statePossible.length === 0
         ? ignorePossible
