@@ -41,6 +41,7 @@ import {
   addBoundedElement,
   createNonIntegerKeyError,
   forEachElement,
+  isBeyondSetBound,
   createRecord,
   createEnumeratedSet,
   createSortedFunction,
@@ -1765,11 +1766,17 @@ const compileFunctionConstruction = (
   const construct = (domain: Value, context: Context) => {
     if (isSingleName && bound.pattern.kind === "Name") {
       const name = bound.pattern.name;
+      const evaluateAt = (key: Value) =>
+        body(withScope(context, bindValue(context.scope, name, key)));
+      // TLC sizes the domain, then evaluates the body at each element. A domain too large to hold
+      // the values stays lazy.
+      if (isBeyondSetBound(domain)) {
+        getCardinality(domain);
+        forEachElement(domain, evaluateAt);
+        return createLazy(domain, context);
+      }
       const keys = getFunctionDomain(domain);
-      const functionValue = createSortedFunction(
-        keys,
-        keys.map((key) => body(withScope(context, bindValue(context.scope, name, key)))),
-      );
+      const functionValue = createSortedFunction(keys, keys.map(evaluateAt));
       if (isReducibleSet(domain)) return functionValue;
       functionValue.lambdaDomain = domain;
       return markLambdaFunction(functionValue);

@@ -205,7 +205,7 @@ export const addBoundedElement = (elements: Value[], element: Value) => {
   elements.push(element);
 };
 
-export const isBeyondSetBound = (value: Value) =>
+export const isBeyondSetBound = (value: Value): value is IntervalValue =>
   typeof value === "object" &&
   value.kind === "Interval" &&
   value.high - value.low >= getMaximumSetSize();
