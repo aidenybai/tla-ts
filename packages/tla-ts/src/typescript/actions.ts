@@ -4109,17 +4109,15 @@ const translateAwait = (
 ): Formula => {
   const awaitTo = frame.awaitTo;
   const throwTo = frame.throwTo;
-  if (awaitTo === undefined || throwTo === undefined) {
-    throw new TlaTypeScriptError("Unsupported await", node);
-  }
+  if (awaitTo === undefined) throw new TlaTypeScriptError("Unsupported await", node);
   const operand = getCast(node.expression);
   const settleWith = (current: Path, value: Expression) =>
-    awaitTo(current, value, operand, continueWith, (rejected, thrown) =>
-      throwTo(rejected, {
-        value: thrown,
-        uncaught: apply("Assert", [boolean(false), string(node.getText())]),
-      }),
-    );
+    awaitTo(current, value, operand, continueWith, (rejected, thrown) => {
+      const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+      return throwTo === undefined
+        ? leaf(uncaught)
+        : throwTo(rejected, { value: thrown, uncaught });
+    });
   if (isPromiseConstruction(operand, context)) {
     return translatePromiseConstruction(operand, path, context, frame, (after, value) =>
       settleWith(after, value ?? getUndefined(context)),
@@ -4659,7 +4657,26 @@ export const translateScript = (
       continueTo: undefined,
       throwTo: undefined,
       yieldTo: undefined,
-      awaitTo: undefined,
+      // A module's body awaits as an async function's body does: the jobs run until the promise
+      // settles, and then a job runs the rest of the body, with the state that the jobs left.
+      awaitTo: (current, value, operand, onFulfilled, onRejected) =>
+        awaitIn(
+          current,
+          operand ?? statements[0],
+          value,
+          operand,
+          context,
+          (resumer, settled, isRejected) =>
+            (isRejected ? onRejected : onFulfilled)(
+              enterBody(
+                resumer,
+                current,
+                (symbol) => context.variables.has(symbol) || symbol === context.heap,
+              ),
+              settled,
+            ),
+          (suspended) => drainTasks(suspended, finish),
+        ),
       inlining: new Set(),
     },
   );

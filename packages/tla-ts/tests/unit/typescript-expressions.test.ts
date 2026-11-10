@@ -807,8 +807,10 @@ const CASES: Record<string, (string | [string, string])[]> = {
     ],
     [
       "[made === again, typeof made, Object.getPrototypeOf(made) === Object.prototype, 'x' in made, 'x' in again]",
-      `interface ObjectConstructor {
-        new (value?: null): object;
+      `declare global {
+        interface ObjectConstructor {
+          new (value?: null): object;
+        }
       }
       const nothing = undefined;
       const made = new Object();

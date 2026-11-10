@@ -2504,6 +2504,35 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a module's body after the jobs that settle what it awaits", async () => {
+    const result = await checkModel(`
+      const holder = {};
+      let log = "";
+      Promise.resolve().then(() => { log = log + "a"; }).then(() => { log = log + "c"; });
+      log = log + "0";
+      await undefined;
+      log = log + "b";
+      let caught: unknown = undefined;
+      try {
+        await Promise.reject(holder);
+      } catch (thrown) {
+        caught = thrown;
+      }
+      const five = await Promise.resolve(5);
+      log = log + (caught === holder ? "d" : "x") + five;
+      if (log !== "0abcd5") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("fails where a module's body awaits a promise that rejects", async () => {
+    const result = await checkModel(`
+      const holder = {};
+      await Promise.reject(holder);
+    `);
+    expect(result.failure?.message).toContain("await Promise.reject(holder)");
+  });
+
   it("gives whether a set or a map held the key it deletes", async () => {
     const result = await checkModel(`
       let seen = new Set<number>([1, 2]);

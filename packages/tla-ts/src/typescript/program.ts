@@ -25,15 +25,15 @@ const libraryFiles = new Map<string, ts.SourceFile>();
 
 // Type checks a model, with the files it imports, and throws its type errors.
 export const createProgram = (source: string, path: string) => {
-  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true);
   const host = ts.createCompilerHost(COMPILER_OPTIONS);
   const program = ts.createProgram({
     rootNames: [path],
     options: COMPILER_OPTIONS,
     host: {
       ...host,
+      // The program's options parse the model as a module, where await can start a statement.
       getSourceFile: (fileName, languageVersion) => {
-        if (fileName === path) return sourceFile;
+        if (fileName === path) return ts.createSourceFile(path, source, languageVersion, true);
         const cached = libraryFiles.get(fileName);
         if (cached !== undefined) return cached;
         const file = host.getSourceFile(fileName, languageVersion);
@@ -46,6 +46,8 @@ export const createProgram = (source: string, path: string) => {
       readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
     },
   });
+  const sourceFile = program.getSourceFile(path);
+  if (sourceFile === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
   const syntaxErrors = program.getSyntacticDiagnostics(sourceFile);
   if (syntaxErrors.length > 0)
     throw new TlaTypeScriptError(ts.formatDiagnostics(syntaxErrors, host));
