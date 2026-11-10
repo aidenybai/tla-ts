@@ -78,6 +78,14 @@ export class GuardSet {
     this.guard = -1;
   }
 
+  clone() {
+    const copy = new GuardSet(this.manager, this.sort, this.variable, this.cache);
+    copy.isOk = this.isOk;
+    copy.ranges = this.ranges;
+    if (!this.isChar) copy.guard = assign(this.manager, copy.guard, this.guard);
+    return copy;
+  }
+
   conjoin(guard: number) {
     const manager = this.manager;
     if (!this.isOk) return;

@@ -2037,6 +2037,29 @@ export class SeqRewriter {
     return true;
   }
 
+  mkSeqReverse(seq: number) {
+    const manager = this.manager;
+    const elements: number[] = [];
+    const todo = [seq];
+    while (todo.length > 0) {
+      const expr = todo.pop()!;
+      if (this.isOp(expr, OP_SEQ_CONCAT)) {
+        todo.push(...manager.getArgs(expr));
+        continue;
+      }
+      if (isEmptySeq(manager, expr)) continue;
+      elements.push(expr);
+    }
+    const reversed: number[] = [];
+    for (const element of elements) {
+      const chars = manager.getString(element);
+      if (this.isOp(element, OP_SEQ_UNIT)) reversed.push(element);
+      else if (chars !== undefined) reversed.push(manager.mkString([...chars].reverse()));
+      else return undefined;
+    }
+    return mkConcatOf(manager, reversed, manager.sorts[seq]);
+  }
+
   mkLengthOf(seq: number) {
     const result = this.mkSeqLength(seq);
     return result === undefined
