@@ -127,8 +127,10 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     const location = formatRange(
       check.location.range ?? {
         module: check.instancer,
-        start: check.location,
-        end: check.location,
+        startLine: check.location.line,
+        startColumn: check.location.column,
+        endLine: check.location.line,
+        endColumn: check.location.column,
       },
     );
     const addMessage = (message: string) =>

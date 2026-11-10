@@ -1241,11 +1241,6 @@ export const generateSanySpecification = (
       return record;
     };
 
-    const getTokenPosition = (index: number) => ({
-      line: file.tokens[index].line,
-      column: file.tokens[index].column,
-    });
-
     // The declarations of a RECURSIVE statement, which the syntax tree of a LET leaves out:
     // names, each with (_, ...) for its arguments.
     const getRecursiveDeclarations = (start: number) => {
@@ -1260,11 +1255,14 @@ export const generateSanySpecification = (
           name: file.tokens[index].text,
           arity,
           location: {
-            ...getTokenPosition(index),
+            line: file.tokens[index].line,
+            column: file.tokens[index].column,
             range: {
               module: file.name,
-              start: getTokenPosition(index),
-              end: getTokenPosition(end),
+              startLine: file.tokens[index].line,
+              startColumn: file.tokens[index].column,
+              endLine: file.tokens[end].line,
+              endColumn: file.tokens[end].column,
             },
           },
         });

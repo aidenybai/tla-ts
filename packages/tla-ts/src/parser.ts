@@ -362,26 +362,28 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
 
+  const getStartColumn = (token: Token) =>
+    isTlapm && token.kind === "String" ? token.endColumn : token.column;
+
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
-    column: isTlapm && token.kind === "String" ? token.endColumn : token.column,
+    column: getStartColumn(token),
     range: undefined,
   });
 
-  const tokenStarts: SourceLocation[] = [];
-  const tokenEnds: SourceLocation[] = [];
   const tokenRanges: SourceRange[] = [];
 
   const getRange = (startIndex: number, endIndex = cursor.index - 1) => {
     const cached = startIndex === endIndex ? tokenRanges[startIndex] : undefined;
     if (cached) return cached;
+    const first = tokens[startIndex];
     const last = tokens[endIndex];
-    tokenStarts[startIndex] ??= getLocation(tokens[startIndex]);
-    tokenEnds[endIndex] ??= { line: last.line, column: last.endColumn };
     const range = {
       module: openModules[0].name,
-      start: tokenStarts[startIndex],
-      end: tokenEnds[endIndex],
+      startLine: first.line,
+      startColumn: getStartColumn(first),
+      endLine: last.line,
+      endColumn: last.endColumn,
     };
     if (startIndex === endIndex) tokenRanges[startIndex] = range;
     return range;
@@ -1279,7 +1281,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       const left = state.left;
       if (token.text === "/\\" || token.text === "\\/") {
         const kind = token.text === "/\\" ? "And" : "Or";
-        const prefixEnds = [getRange(start).end];
+        const prefixRange = getRange(start);
+        const prefixEnds = [{ line: prefixRange.endLine, column: prefixRange.endColumn }];
         state.left =
           left.kind === kind && previous?.text === token.text
             ? {
@@ -1316,11 +1319,9 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parseBody = () => {
-    const start = getLocation(peek());
+    const start = cursor.index;
     const body = parseExpression();
-    const last = tokens[cursor.index - 1];
-    const end = { line: last.line, column: last.endColumn };
-    return { body, bodyRange: { module: openModules[0].name, start, end } };
+    return { body, bodyRange: getRange(start) };
   };
 
   const parseDefinition = (isLocal: boolean): Definition | Instance => {
@@ -1332,8 +1333,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     name: named.name,
     arity: 0,
     location: {
-      line: named.range.start.line,
-      column: named.range.start.column,
+      line: named.range.startLine,
+      column: named.range.startColumn,
       range: named.range,
     },
   });
@@ -1980,8 +1981,10 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       if (token.kind === "ModuleEnd") {
         location.range = {
           module: openModules[0].name,
-          start: { line: location.line, column: location.column },
-          end: { line: token.line, column: token.endColumn },
+          startLine: location.line,
+          startColumn: location.column,
+          endLine: token.line,
+          endColumn: token.endColumn,
         };
         openModules.pop();
         recursiveScopes.pop();

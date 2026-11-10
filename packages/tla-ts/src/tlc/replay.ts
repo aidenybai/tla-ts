@@ -94,7 +94,9 @@ const getPrefix = (expression: Expression & { kind: "And" | "Or" }, count: numbe
   const range = expression.location.range;
   const end = expression.prefixEnds?.[count - 2];
   const location: SourceLocation =
-    range && end ? { ...first, range: { ...range, end } } : expression.location;
+    range && end
+      ? { ...first, range: { ...range, endLine: end.line, endColumn: end.column } }
+      : expression.location;
   return { ...expression, operands: expression.operands.slice(0, count), location };
 };
 

@@ -249,7 +249,7 @@ export const describeLocation = (expression: Expression) =>
   `line ${expression.location.line}, column ${expression.location.column}`;
 
 export const formatRange = (range: SourceRange) =>
-  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+  `line ${range.startLine}, col ${range.startColumn} to line ${range.endLine}, col ${range.endColumn} of module ${range.module}`;
 
 export const describeRange = (expression: Expression) => {
   const range = expression.location.range;
@@ -276,16 +276,17 @@ export const createJunctionError = (
 ) => {
   const range = expression.location.range;
   const isBulleted =
-    range?.start.line === expression.location.line &&
-    range.start.column === expression.location.column;
+    range?.startLine === expression.location.line &&
+    range.startColumn === expression.location.column;
   if (isBulleted || !range) {
     return new TlaEvaluationError(
       `A non-boolean expression (${getKindString(value)}) was used as a formula in a ${expression.kind === "And" ? "conjunction" : "disjunction"}.\n${describeNode(expression.operands[index])}`,
     );
   }
-  const end = expression.prefixEnds?.[Math.max(index, 1) - 1] ?? range.end;
+  const end = expression.prefixEnds?.[Math.max(index, 1) - 1];
+  const prefixRange = end ? { ...range, endLine: end.line, endColumn: end.column } : range;
   return new TlaEvaluationError(
-    `Attempted to evaluate an expression of form P ${expression.kind === "And" ? "/\\" : "\\/"} Q when ${index === 0 ? "P" : "Q"} was\n${getKindString(value)}.\n${describeRange({ ...expression, location: { ...expression.location, range: { ...range, end } } })}`,
+    `Attempted to evaluate an expression of form P ${expression.kind === "And" ? "/\\" : "\\/"} Q when ${index === 0 ? "P" : "Q"} was\n${getKindString(value)}.\n${describeRange({ ...expression, location: { ...expression.location, range: prefixRange } })}`,
   );
 };
 

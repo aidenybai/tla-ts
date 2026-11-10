@@ -115,7 +115,7 @@ export const formatSanyWarnings = (warnings: SanyError[]) =>
   `*** Warnings: ${warnings.length}\n\n${warnings.map((warning) => `${warning.location}\n\n${warning.message}\n\n\n`).join("\n")}`;
 
 export const formatRange = (range: SourceRange) =>
-  `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`;
+  `line ${range.startLine}, col ${range.startColumn} to line ${range.endLine}, col ${range.endColumn} of module ${range.module}`;
 
 export const createSemanticError = (message: string, range: SourceRange) =>
   createSanyError([{ location: formatRange(range), message }]);

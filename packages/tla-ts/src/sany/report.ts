@@ -168,7 +168,7 @@ export const getSanyReport = (
     const fileLines = loaded.text.split(/\r\n|\r|\n/);
     const results = validatePcalModule(
       session,
-      fileLines.slice(range.start.line - 1, range.end.line),
+      fileLines.slice(range.startLine - 1, range.endLine),
       options.version,
     );
     const isTlaChanged = results.has("TLA_DIVERGENCE_EXISTS");

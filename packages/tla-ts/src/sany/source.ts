@@ -95,8 +95,8 @@ export interface TokenSpan {
 }
 
 export const getRangeSpan = (file: SourceFile, range: SourceRange): TokenSpan => ({
-  start: getTokenIndex(file, range.start),
-  end: getEndTokenIndex(file, range.end),
+  start: getTokenIndex(file, { line: range.startLine, column: range.startColumn }),
+  end: getEndTokenIndex(file, { line: range.endLine, column: range.endColumn }),
 });
 
 // The tokens of an expression. Some nodes, such as a tuple in a subscript, have no range, so their

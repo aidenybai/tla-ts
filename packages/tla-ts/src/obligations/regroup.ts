@@ -22,14 +22,26 @@ const isSamePosition = (left: SourceLocation | undefined, right: SourceLocation 
   left.line === right.line &&
   left.column === right.column;
 
-const getStart = (expression: Expression) => expression.location.range?.start;
+const getStart = (expression: Expression) => {
+  const range = expression.location.range;
+  return range && { line: range.startLine, column: range.startColumn };
+};
 
-const getEnd = (expression: Expression) => expression.location.range?.end;
+const getEnd = (expression: Expression) => {
+  const range = expression.location.range;
+  return range && { line: range.endLine, column: range.endColumn };
+};
 
 const withEnd = (expression: Expression, end: SourceLocation | undefined): Expression => {
   const range = expression.location.range;
   return range && end
-    ? { ...expression, location: { ...expression.location, range: { ...range, end } } }
+    ? {
+        ...expression,
+        location: {
+          ...expression.location,
+          range: { ...range, endLine: end.line, endColumn: end.column },
+        },
+      }
     : expression;
 };
 
@@ -75,7 +87,10 @@ export const regroup = (expression: Extract<Expression, { kind: "Apply" }>): Exp
       args: [operand, right],
       location:
         range && start
-          ? { ...expression.location, range: { ...range, start } }
+          ? {
+              ...expression.location,
+              range: { ...range, startLine: start.line, startColumn: start.column },
+            }
           : expression.location,
     };
   };

@@ -19,7 +19,7 @@ const formatCallStack = (expressions: Expression[] | undefined) =>
     .map((expression) => {
       const range = expression.location.range;
       return range
-        ? `${range.start.line}.${range.start.column}-${range.end.line}.${range.end.column}`
+        ? `${range.startLine}.${range.startColumn}-${range.endLine}.${range.endColumn}`
         : "?";
     });
 

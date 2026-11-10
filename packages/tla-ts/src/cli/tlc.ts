@@ -203,7 +203,7 @@ const formatCallStack = (expressions: Expression[]) => {
     const range = expression.location.range;
     if (expression === expressions[index - 1] || !range) return;
     lines.push(
-      `${lines.length}. Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}\n`,
+      `${lines.length}. Line ${range.startLine}, column ${range.startColumn} to line ${range.endLine}, column ${range.endColumn} in ${range.module}\n`,
     );
   });
   return `${lines.join("")}\n`;

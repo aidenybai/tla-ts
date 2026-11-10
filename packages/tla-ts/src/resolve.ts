@@ -157,7 +157,7 @@ const getModuleBinding = (name: string, unit: Unit, range: SourceRange | undefin
   const binding = unit.bindings.get(name);
   return binding &&
     isBefore(binding.position, unit.location) &&
-    (!range || isBefore(binding.position, range.start))
+    (!range || isBefore(binding.position, { line: range.startLine, column: range.startColumn }))
     ? binding
     : undefined;
 };
@@ -279,8 +279,10 @@ const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Bi
 // SANY reports a name at the range of its text.
 const getNameRange = (location: SourceLocation, name: string): SourceRange => ({
   module: location.range?.module ?? "",
-  start: location,
-  end: { line: location.line, column: location.column + name.length - 1 },
+  startLine: location.line,
+  startColumn: location.column,
+  endLine: location.line,
+  endColumn: location.column + name.length - 1,
 });
 
 // SANY reports a name at its tokens, such as M ! ⊕ for M!\oplus.
@@ -291,7 +293,11 @@ const getSpelledNameRange = (
   const selectorRange =
     expression.kind === "OperatorReference" ? undefined : expression.selectorRanges?.at(-1);
   return selectorRange
-    ? { module: selectorRange.module, start: expression.location, end: selectorRange.end }
+    ? {
+        ...selectorRange,
+        startLine: expression.location.line,
+        startColumn: expression.location.column,
+      }
     : getNameRange(expression.location, expression.spelling ?? name);
 };
 
@@ -1823,7 +1829,9 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           ),
       })),
       {
-        location: module.location.range?.end ?? module.location,
+        location: module.location.range
+          ? { line: module.location.range.endLine, column: module.location.range.endColumn }
+          : module.location,
         check: (errors: SanyError[]) =>
           declarations.forEach((item) => {
             const range = item.declaration.location.range;

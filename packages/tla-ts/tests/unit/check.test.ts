@@ -1128,7 +1128,7 @@ ASSUME TLCFP(a) = -887695703
       .map((expression) => {
         const range = expression.location.range;
         return range
-          ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
+          ? `Line ${range.startLine}, column ${range.startColumn} to line ${range.endLine}, column ${range.endColumn} in ${range.module}`
           : "";
       });
     expect(frames).toEqual([
@@ -1580,7 +1580,7 @@ describe("evaluation errors match TLC", () => {
     });
     const ranges = result.failure?.callStack?.map((expression) => {
       const range = expression.location.range;
-      return range ? `${range.start.column}-${range.end.column}` : "";
+      return range ? `${range.startColumn}-${range.endColumn}` : "";
     });
     expect(new Set(ranges)).toEqual(new Set(["9-57", "9-46", "51-57", "34-45", "34-41"]));
     expect(ranges?.at(-1)).toBe("34-41");
@@ -4389,8 +4389,10 @@ describe("level checking matches SANY", () => {
         "Level error in applying operator F:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
         {
           module: "M",
-          start: { line: 5, column: 6 },
-          end: { line: 5, column: 10 },
+          startLine: 5,
+          startColumn: 6,
+          endLine: 5,
+          endColumn: 10,
         },
       ),
     );
@@ -4498,8 +4500,10 @@ describe("level checking matches SANY", () => {
     ).rejects.toThrow(
       createSemanticError("The operator I requires 1 arguments.", {
         module: "M",
-        start: { line: 9, column: 6 },
-        end: { line: 9, column: end },
+        startLine: 9,
+        startColumn: 6,
+        endLine: 9,
+        endColumn: end,
       }),
     );
   });
