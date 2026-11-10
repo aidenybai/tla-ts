@@ -120,15 +120,11 @@ describe("the Bags module matches TLC", () => {
   });
 
   it.each([
-    ['BagOfAll(LAMBDA e : "c", <<1>>)', '"c"'],
-    ["LET H(e) == 1 IN BagOfAll(H, <<1>>)", "1"],
-    ['LET H(e) == "c"\n    G(Op(_)) == BagOfAll(Op, <<1>>)\nIN G(H)', '"c"'],
-  ])("rejects an operator with a literal body in %s", async (expression, literal) => {
-    const result = await checkBags(`ASSUME PrintT(${expression})`);
-    expect(result.status).toBe("assumption-violation");
-    expect(result.violation?.message).toBe(
-      `The first argument of BagOfAll should be an operator, but instead it is:\n${literal}`,
-    );
+    ['BagOfAll(LAMBDA e : "c", <<1>>) = ("c" :> 1)'],
+    ["LET H(e) == 1 IN BagOfAll(H, <<1>>) = (1 :> 1)"],
+    ['LET H(e) == "c"\n    G(Op(_)) == BagOfAll(Op, <<1>>)\nIN G(H) = ("c" :> 1)'],
+  ])("applies an operator with a literal body in %s", async (expression) => {
+    expect((await checkBags(`ASSUME ${expression}`)).status).toBe("success");
   });
 
   it("applies an operator whose body is not a literal", async () => {

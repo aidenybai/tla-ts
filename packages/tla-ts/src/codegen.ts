@@ -1,10 +1,19 @@
 import { getChildren, isLocallyResolved, type Expression } from "./ast";
 import {
   bindValue,
-  expectBoolean,
+  expectBooleanBody,
+  expectImplication,
+  isEquivalent,
+  negate,
   findGlobalName,
   createConditionError,
   createJunctionError,
+  createNoChoiceError,
+  expectFilterPredicate,
+  getChoiceElements,
+  getFunctionBuilder,
+  getLazyFilter,
+  isKeptLazy,
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
@@ -16,7 +25,6 @@ import {
   resolveGlobalOperator,
   expectFunction,
   toKeepLazyContext,
-  createPrimeOutsideActionError,
   createUnassignedError,
   getSortedFields,
   hasDuplicateFields,
@@ -25,12 +33,20 @@ import {
   type Evaluator,
 } from "./evaluate";
 import {
+  addBoundedElement,
   applyFunction,
   createEnumeratedSet,
+  createNormalizedSet,
+  createSortedFunction,
   createSortedRecord,
   createTuple,
   createWrittenRecord,
+  getCardinality,
+  getFunctionDomain,
+  isBeyondSetBound,
+  isReducibleSet,
   isTlcInteger,
+  toFiniteSet,
   valuesEqual,
   type Value,
 } from "./values";
@@ -64,10 +80,16 @@ const GENERATED_KINDS = new Set([
   "Unchanged",
   "Forall",
   "Exists",
+  "Choose",
+  "SetFilter",
+  "FunctionConstruction",
 ]);
 
 const createGeneratedHelpers = () => ({
-  bool: expectBoolean,
+  implication: expectImplication,
+  negate,
+  equivalent: isEquivalent,
+  body: expectBooleanBody,
   condition: (value: Value, expression: Expression) => {
     if (typeof value !== "boolean") throw createConditionError(expression, value);
     return value;
@@ -84,11 +106,21 @@ const createGeneratedHelpers = () => ({
   writtenRecord: createWrittenRecord,
   equal: valuesEqual,
   enumerate: getQuantifierElements,
+  choiceElements: getChoiceElements,
+  noChoice: (expression: Expression & { kind: "Choose" }): never => {
+    throw createNoChoiceError(expression);
+  },
+  filterPredicate: expectFilterPredicate,
+  isReducible: isReducibleSet,
+  finiteElements: (set: Value) => toFiniteSet(set).elements,
+  addBounded: addBoundedElement,
+  normalizedSet: createNormalizedSet,
+  isBeyondBound: isBeyondSetBound,
+  cardinality: getCardinality,
+  functionDomain: getFunctionDomain,
+  sortedFunction: createSortedFunction,
   unassigned: (name: string, expression: Expression): never => {
     throw createUnassignedError(name, expression);
-  },
-  primeOutsideAction: (expression: Expression): never => {
-    throw createPrimeOutsideActionError(expression);
   },
   prime: (context: Context): Context => ({
     environment: context.environment,
@@ -140,26 +172,28 @@ const getFreeNames = (expression: Expression, names = new Set<string>()) => {
   return names;
 };
 
-const generateDelegate = (generator: Generator, expression: Expression, frame: Frame) => {
-  const evaluator = addReference(generator, getEvaluator(expression, generator.environment));
+const getDelegateContext = (generator: Generator, expression: Expression, frame: Frame) => {
   const freeNames = getFreeNames(expression);
   const captured = [...frame.locals].filter(([name]) => freeNames.has(name));
-  if (captured.length === 0) return `${evaluator}(${frame.context})`;
+  if (captured.length === 0) return frame.context;
   const names = addReference(
     generator,
     captured.map(([name]) => name),
   );
-  return `${evaluator}(extend(${frame.context}, ${names}, [${captured.map(([, local]) => local).join(", ")}]))`;
+  return `extend(${frame.context}, ${names}, [${captured.map(([, local]) => local).join(", ")}])`;
 };
 
-const generateQuantifier = (
+const generateDelegate = (generator: Generator, expression: Expression, frame: Frame) =>
+  `${addReference(generator, getEvaluator(expression, generator.environment))}(${getDelegateContext(generator, expression, frame)})`;
+
+// A helper function gets the frame's locals as parameters, so a loop in it binds its element to a
+// local too.
+const generateHelper = (
   generator: Generator,
-  expression: Expression & { kind: "Forall" | "Exists" },
   frame: Frame,
+  build: (bodyFrame: Frame) => string,
 ) => {
-  const isForall = expression.kind === "Forall";
-  const description = JSON.stringify(isForall ? "the body of \\A" : "the body of \\E");
-  const name = `quantifier${generator.counter++}`;
+  const name = `helper${generator.counter++}`;
   const outerLocals = [...frame.locals.values()];
   const bodyFrame = {
     context: "context",
@@ -168,31 +202,108 @@ const generateQuantifier = (
     isPrimed: false,
     locals: new Map(frame.locals),
   };
-  const lists = expression.bounds.map(() => createLocal(generator));
-  const declarations = expression.bounds.map(
-    (bound, index) =>
-      `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, bodyFrame)}, ${addReference(generator, bound.set)}, ${JSON.stringify(generator.environment.runtime.version)});`,
-  );
-  const elements = expression.bounds.map((bound) => {
-    const local = createLocal(generator);
-    if (bound.pattern.kind === "Name") bodyFrame.locals.set(bound.pattern.name, local);
-    return local;
-  });
-  const test = `if (bool(${generateExpression(generator, expression.body, bodyFrame)}, ${description}) !== ${isForall}) return ${!isForall};`;
-  // enumerate returns an array, or an interval, which has a low end, to step through.
-  const loops = elements.reduce((code, element, index) => {
-    const position = createLocal(generator);
-    const low = createLocal(generator);
-    const size = createLocal(generator);
-    const list = lists[index];
-    return `for (let ${position} = 0, ${low} = ${list}.low, ${size} = ${low} === undefined ? ${list}.length : ${list}.high - ${low} + 1; ${position} < ${size}; ${position}++) { const ${element} = ${low} === undefined ? ${list}[${position}] : ${low} + ${position}; ${code} }`;
-  }, test);
   const parameters = outerLocals.map((local) => `, ${local}`).join("");
   generator.helpers.push(
-    `function ${name}(context, state, next${parameters}) { let primed; let applied; ${declarations.join(" ")} ${loops} return ${isForall}; }`,
+    `function ${name}(context, state, next${parameters}) { let primed; let applied; ${build(bodyFrame)} }`,
   );
   return `${name}(${frame.context}, ${frame.state}, ${frame.isPrimed ? "undefined" : frame.next}${parameters})`;
 };
+
+// The list is an array, or an interval, which has a low end, to step through.
+const generateLoop = (generator: Generator, list: string, element: string, code: string) => {
+  const position = createLocal(generator);
+  const low = createLocal(generator);
+  const size = createLocal(generator);
+  return `for (let ${position} = 0, ${low} = ${list}.low, ${size} = ${low} === undefined ? ${list}.length : ${list}.high - ${low} + 1; ${position} < ${size}; ${position}++) { const ${element} = ${low} === undefined ? ${list}[${position}] : ${low} + ${position}; ${code} }`;
+};
+
+const generateQuantifier = (
+  generator: Generator,
+  expression: Expression & { kind: "Forall" | "Exists" },
+  frame: Frame,
+) => {
+  const isForall = expression.kind === "Forall";
+  return generateHelper(generator, frame, (bodyFrame) => {
+    const lists = expression.bounds.map(() => createLocal(generator));
+    const declarations = expression.bounds.map((bound, index) =>
+      index > 0 && expression.bounds[index - 1].set === bound.set
+        ? `const ${lists[index]} = ${lists[index - 1]};`
+        : `const ${lists[index]} = enumerate(${generateExpression(generator, bound.set, bodyFrame)}, ${addReference(generator, bound.set)}, ${JSON.stringify(generator.environment.runtime.version)});`,
+    );
+    const elements = expression.bounds.map((bound) => {
+      const local = createLocal(generator);
+      if (bound.pattern.kind === "Name") bodyFrame.locals.set(bound.pattern.name, local);
+      return local;
+    });
+    const test = `if (body(${generateExpression(generator, expression.body, bodyFrame)}, ${addReference(generator, expression)}) !== ${isForall}) return ${!isForall};`;
+    const loops = elements.reduce(
+      (code, element, index) => generateLoop(generator, lists[index], element, code),
+      test,
+    );
+    return `${declarations.join(" ")} ${loops} return ${isForall};`;
+  });
+};
+
+const generateChoose = (
+  generator: Generator,
+  expression: Expression & { kind: "Choose" },
+  set: Expression,
+  name: string,
+  frame: Frame,
+) =>
+  generateHelper(generator, frame, (bodyFrame) => {
+    const list = createLocal(generator);
+    const element = createLocal(generator);
+    const node = addReference(generator, expression);
+    const elements = `choiceElements(${generateExpression(generator, set, bodyFrame)}, ${node}, ${addReference(generator, set)}, ${JSON.stringify(generator.environment.runtime.version)})`;
+    bodyFrame.locals.set(name, element);
+    const test = `if (body(${generateExpression(generator, expression.body, bodyFrame)}, ${node})) return ${element};`;
+    return `const ${list} = ${elements}; ${generateLoop(generator, list, element, test)} return noChoice(${node});`;
+  });
+
+const generateSetFilter = (
+  generator: Generator,
+  expression: Expression & { kind: "SetFilter" },
+  name: string,
+  frame: Frame,
+) =>
+  generateHelper(generator, frame, (bodyFrame) => {
+    const base = createLocal(generator);
+    const list = createLocal(generator);
+    const kept = createLocal(generator);
+    const element = createLocal(generator);
+    const node = addReference(generator, expression);
+    const filterLazily = addReference(generator, getLazyFilter(expression, generator.environment));
+    const lazy = `if (!isReducible(${base})) return ${filterLazily}(${base}, ${getDelegateContext(generator, expression, bodyFrame)});`;
+    const set = generateExpression(generator, expression.bound.set, bodyFrame);
+    bodyFrame.locals.set(name, element);
+    const test = `if (filterPredicate(${generateExpression(generator, expression.predicate, bodyFrame)}, ${node})) addBounded(${kept}, ${element});`;
+    return `const ${base} = ${set}; ${lazy} const ${list} = ${base}.kind === "Interval" ? ${base} : finiteElements(${base}); const ${kept} = []; ${generateLoop(generator, list, element, test)} return normalizedSet(${kept});`;
+  });
+
+// TLC builds a function with a reducible domain by sizing it, then evaluating its body at each
+// element. A domain too large to hold the values keeps the function lazy once the body is evaluated.
+const generateFunctionConstruction = (
+  generator: Generator,
+  expression: Expression & { kind: "FunctionConstruction" },
+  name: string,
+  frame: Frame,
+) =>
+  generateHelper(generator, frame, (bodyFrame) => {
+    const domain = createLocal(generator);
+    const isBeyond = createLocal(generator);
+    const keys = createLocal(generator);
+    const values = createLocal(generator);
+    const element = createLocal(generator);
+    const value = createLocal(generator);
+    const builder = addReference(generator, getFunctionBuilder(expression, generator.environment));
+    const builtContext = getDelegateContext(generator, expression, bodyFrame);
+    const built = `if (context.isKeepLazy || !isReducible(${domain})) return ${builder}.build(${domain}, ${builtContext});`;
+    const set = generateExpression(generator, expression.bounds[0].set, bodyFrame);
+    bodyFrame.locals.set(name, element);
+    const store = `const ${value} = ${generateExpression(generator, expression.body, bodyFrame)}; if (!${isBeyond}) ${values}.push(${value});`;
+    return `const ${domain} = ${set}; ${built} const ${isBeyond} = isBeyondBound(${domain}); const ${keys} = ${isBeyond} ? ${domain} : functionDomain(${domain}); if (${isBeyond}) cardinality(${domain}); const ${values} = []; ${generateLoop(generator, keys, element, store)} return ${isBeyond} ? ${builder}.createLazy(${domain}, ${builtContext}) : sortedFunction(${keys}, ${values});`;
+  });
 
 const generateApply = (
   generator: Generator,
@@ -203,7 +314,14 @@ const generateApply = (
   if (expression.operator === "=>") {
     const left = generateExpression(generator, args[0], frame);
     const right = generateExpression(generator, args[1], frame);
-    return `(bool(${left}, "the left side of =>") ? bool(${right}, "the right side of =>") : true)`;
+    const reference = addReference(generator, expression);
+    return `(implication(${left}, ${reference}, "P") ? implication(${right}, ${reference}, "Q") : true)`;
+  }
+  if (expression.operator === "~" && args.length === 1) {
+    return `negate(${generateExpression(generator, args[0], frame)}, ${addReference(generator, expression)})`;
+  }
+  if (expression.operator === "<=>") {
+    return `equivalent(${generateExpression(generator, args[0], frame)}, ${generateExpression(generator, args[1], frame)}, ${addReference(generator, expression)})`;
   }
   if (isLocallyResolved(expression)) return generateDelegate(generator, expression, frame);
   const builtin = resolveGlobalOperator(expression.operator, generator.environment);
@@ -233,7 +351,6 @@ const generateApply = (
   return generateDelegate(generator, expression, frame);
 };
 
-// Whether an expression only reads values, so that it constructs no function whatever the control.
 const isConstructionFree = (
   expression: Expression,
   frame: Frame,
@@ -259,8 +376,7 @@ const isConstructionFree = (
   }
 };
 
-// Whether the generated code evaluates an expression only in the context its frame names. A primed
-// expression doesn't, since it shares the generated function's primed context.
+// A primed expression shares the generated function's primed context, so it isn't read-only.
 const isReadOnly = (expression: Expression): boolean => {
   switch (expression.kind) {
     case "Identifier":
@@ -304,6 +420,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       return generateApply(generator, expression, frame);
     case "And":
     case "Or": {
+      // UNCHANGED <<>> is an empty conjunction.
+      if (expression.operands.length === 0) return String(expression.kind === "And");
       const node = addReference(generator, expression);
       const operator = expression.kind === "And" ? " && " : " || ";
       return `(${expression.operands.map((operand, index) => `junct(${generate(operand)}, ${node}, ${index})`).join(operator)})`;
@@ -323,8 +441,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         : isReadOnly(expression.function)
           ? generate(expression.function, keepLazyFrame)
           : generateDelegate(generator, expression.function, keepLazyFrame);
-      // Tool#evalAppl checks that it applies a function before it evaluates the argument. The check
-      // is written out, as calling expectFunction for each application costs more.
+      // Tool#evalAppl checks that it applies a function before it evaluates the argument. The check is
+      // written out, as calling expectFunction for each application costs more.
       const functionCode = `(applied = ${evaluatedFunction}, typeof applied === "object" && (applied.kind === "Function" || applied.kind === "LazyFunction") ? applied : expectFunction(applied, ${addReference(generator, expression)}))`;
       const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
@@ -353,16 +471,14 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "SetEnumeration":
       return `set([${expression.elements.map((element) => generate(element)).join(", ")}])`;
     case "Prime": {
-      const node = addReference(generator, expression);
-      if (frame.isPrimed) return `primeOutsideAction(${node})`;
-      const primed = {
+      if (frame.isPrimed) return generateDelegate(generator, expression, frame);
+      return generate(expression.expression, {
         context: `(primed ??= prime(${frame.context}))`,
         state: frame.next,
         next: "undefined",
         isPrimed: true,
         locals: frame.locals,
-      };
-      return `(${frame.next} === undefined ? primeOutsideAction(${node}) : ${generate(expression.expression, primed)})`;
+      });
     }
     case "Unchanged": {
       const primed = generate({
@@ -376,6 +492,34 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "Exists":
       if (expression.bounds.every((bound) => bound.pattern.kind === "Name")) {
         return generateQuantifier(generator, expression, frame);
+      }
+      return generateDelegate(generator, expression, frame);
+    case "Choose":
+      if (expression.set && expression.pattern.kind === "Name") {
+        return generateChoose(
+          generator,
+          expression,
+          expression.set,
+          expression.pattern.name,
+          frame,
+        );
+      }
+      return generateDelegate(generator, expression, frame);
+    case "FunctionConstruction": {
+      const bound = expression.bounds[0];
+      if (
+        expression.bounds.length === 1 &&
+        bound.pattern.kind === "Name" &&
+        !expression.isRecursive &&
+        !isKeptLazy(expression)
+      ) {
+        return generateFunctionConstruction(generator, expression, bound.pattern.name, frame);
+      }
+      return generateDelegate(generator, expression, frame);
+    }
+    case "SetFilter":
+      if (expression.bound.pattern.kind === "Name") {
+        return generateSetFilter(generator, expression, expression.bound.pattern.name, frame);
       }
       return generateDelegate(generator, expression, frame);
     default:

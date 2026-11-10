@@ -1988,7 +1988,7 @@ describe("evaluation errors match TLC", () => {
       ],
       [
         "SelectSeq(<<1>>, LAMBDA e: 1) = <<>>",
-        "The second argument of SelectSeq should be a operator, but instead it is:\n1",
+        "The second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator LAMBDA>",
       ],
       ["Cardinality(Nat) = 0", "Attempted to compute cardinality of the value\nNat"],
       ...[
@@ -2057,6 +2057,10 @@ describe("evaluation errors match TLC", () => {
         "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]",
       ],
       ["{} \\subseteq 0", undefined],
+      [
+        "({1} \\cup {e \\in {1} \\cup TRUE : TRUE}) \\subseteq {}",
+        "Attempted to enumerate S \\cup T when S:\n{1}\nand T:\nTRUE\nare not both enumerable",
+      ],
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
@@ -2325,16 +2329,16 @@ describe("evaluation errors match TLC", () => {
       const result = await check({
         source: '---- MODULE M ----\nEXTENDS Naturals\nASSUME 1 .. "a" = {}\n====',
         config: "",
-        isTraceRecorded,
+        traceSpec: isTraceRecorded ? { module: "M_TTrace", traceFile: "M_TTrace.bin" } : undefined,
       });
       expect(result.violation?.message).toContain(`tlc2.module.${module}.DotDot`);
     },
   );
 
   // tlc2.module.Naturals#Divide rounds some negative quotients toward 0, and doesn't report an
-  // overflow, unlike tlc2.module.Integers#Divide.
+  // overflow. tla-ts floors and reports the overflow, as tlc2.module.Integers#Divide does.
   it.each([
-    [false, "Naturals", ["<<0, 0, -2>>", "-2147483648"]],
+    [false, "Naturals", ["<<-1, -1, -2>>"]],
     [true, "Naturals", ["<<-1, -1, -2>>"]],
     [false, "Integers", ["<<-1, -1, -2>>"]],
   ])(
@@ -2344,7 +2348,7 @@ describe("evaluation errors match TLC", () => {
       await check({
         source: `---- MODULE M ----\nEXTENDS ${module}, TLC\nASSUME PrintT(<<1 \\div (0 - 2), (0 - 1) \\div 2, (0 - 3) \\div 2>>)\nASSUME PrintT((0 - 2147483647 - 1) \\div (0 - 1))\n====`,
         config: "",
-        isTraceRecorded,
+        traceSpec: isTraceRecorded ? { module: "M_TTrace", traceFile: "M_TTrace.bin" } : undefined,
         onPrint: (text) => printed.push(text),
       });
       expect(printed).toEqual(quotients);
@@ -2621,10 +2625,14 @@ describe("evaluation errors match TLC", () => {
       `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 19 to line 5, col 23 of module M`,
       75,
     ]);
-    expect(await getFailure("x = 0", "3")).toEqual([
-      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
-      255,
-    ]);
+    // Tool's constructor rejects such a relation before TLC computes the initial states.
+    const error = await getFailure("x = 0", "3").catch((caught: unknown) => caught);
+    expect(error).toEqual(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
+      ),
+    );
+    expect(error instanceof Error && getExitCode(error)).toBe(255);
   });
 
   it("reports a failing constraint on a successor like a failure of the next-state relation", async () => {
@@ -2990,7 +2998,7 @@ describe("rejecting literals matches TLC", () => {
   ])("rejects %s before checking", async (_, source) => {
     const run = checkSource(source);
     await expect(run).rejects.toThrow(TlaEvaluationError);
-    await expect(run).rejects.toThrow(/^TLC can't handle real numbers: 1\.5/);
+    await expect(run).rejects.toThrow("TLC can't handle real numbers.\n1.5");
   });
 
   it("accepts decimals in proofs and ASSUME PROVE theorems", async () => {
@@ -3011,12 +3019,12 @@ describe("rejecting literals matches TLC", () => {
   ])("rejects an integer literal too big for TLC in %s", async (_, source) => {
     const run = checkSource(source);
     await expect(run).rejects.toThrow(TlaEvaluationError);
-    await expect(run).rejects.toThrow(/^TLC can't handle a number this big: 2147483648/);
+    await expect(run).rejects.toThrow("TLC can't handle a number this big.\n2147483648");
   });
 
   it.each(["\\hFFFFFFFFF", "99999999999999999999"])("quotes %s as typed", async (literal) => {
     await expect(checkSource(`VARIABLE x\nBig == ${literal}\nInit == x = 0`)).rejects.toThrow(
-      `TLC can't handle a number this big: ${literal} at line 3, column 8`,
+      `TLC can't handle a number this big.\n${literal}`,
     );
   });
 
@@ -4570,10 +4578,16 @@ describe("parseConfig matches TLC", () => {
   });
 
   it("reads values the way TLC does", () => {
-    expect(parseConfig('CONSTANT S = "a\\"b\\\\n"').constants[0].value).toEqual({
+    expect(parseConfig('CONSTANT S = "a b"').constants[0].value).toEqual({
       kind: "String",
-      value: 'a\\"b\\\\n',
+      value: "a b",
     });
+    expect(() => parseConfig('CONSTANT S = "a\\"b"')).toThrow(
+      new TlaConfigError(
+        "TLC found an error in the configuration file:\nescape sequences are not supported in strings at line 1",
+      ),
+    );
+    expect(parseConfig('CONSTANT N <- "a"').substitutions[0].target).toBe('"a"');
     ["CONSTANT N = -1", "CONSTANT S = {1,}"].forEach((source) =>
       expect(() => parseConfig(source)).toThrow(TlaConfigError),
     );

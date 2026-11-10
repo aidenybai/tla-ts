@@ -1,9 +1,11 @@
+import { toEnumeratedSet } from "../builtins";
 import { TlaEvaluationError } from "../errors";
 import type { TlcVersion } from "./version";
 import {
   createRecord,
   createSortedFunction,
   createTuple,
+  formatValue,
   getFunctionDomain,
   isEmptySet,
   toFiniteSet,
@@ -21,7 +23,6 @@ const MULTIPLIER = 0x5deece66dn;
 const SEED_MASK = (1n << 48n) - 1n;
 const MAXIMUM_INT = 2147483647;
 
-// java.util.Random, which TLC's RandomEnumerableValues extends.
 export const createJavaRandom = (seed: bigint): JavaRandom => {
   const state = { value: (BigInt.asUintN(64, seed) ^ MULTIPLIER) & SEED_MASK };
   const next = (bits: number) => {
@@ -63,7 +64,7 @@ const getPrimes = () => {
   return PRIMES;
 };
 
-const nextPrime = (random: JavaRandom) => {
+export const nextPrime = (random: JavaRandom) => {
   const primes = getPrimes();
   const choice = { index: primes.length };
   while (choice.index === primes.length) {
@@ -101,8 +102,6 @@ const getModulusAndMultiplier = (size: number) => {
   }
 };
 
-// EnumerableValue.SubsetEnumerator: count indices below size from a full-period linear
-// congruential generator that starts at random.nextInt(size).
 const getSubsetIndicesMaster = (count: number, size: number, random: JavaRandom) => {
   if (size <= 0) return [];
   const generator = getModulusAndMultiplier(size);
@@ -130,8 +129,7 @@ const getSubsetIndices174 = (count: number, size: number, random: JavaRandom) =>
 
 const LARGE_STRIDE = (1n << 63n) - 1n - 24n;
 
-// SetOfFcnsOrRcdsValue.BigIntegerSubsetEnumerator, for products with more than 2^31 - 1
-// elements.
+// For products with more than 2^31 - 1 elements.
 const getLargeSubsetIndices = (count: number, size: bigint, random: JavaRandom) => {
   const signed = random.nextLong();
   const offset = BigInt.asIntN(64, signed < 0n ? -signed : signed);
@@ -187,7 +185,6 @@ export const getEnumeratedFactors = (set: Value, version: TlcVersion) =>
     ? set.factors
     : undefined;
 
-// Enumerable#getRandomSubset, which Randomization's RandomSubset calls.
 export const getRandomSubset = (
   count: number,
   set: Value,
@@ -214,18 +211,12 @@ export const getRandomSubset = (
   return getSubsetIndices(count, elements.length, random).map((index) => elements[Number(index)]);
 };
 
-const pickElement = (elements: Value[], random: JavaRandom) => {
-  const element = elements[Math.floor(random.nextDouble() * elements.length)];
-  if (element === undefined) throw new TlaEvaluationError("RandomElement of the empty set");
-  return element;
-};
-
 // TLC!RandomElement chooses each component of a set of functions, records, or tuples
 // separately, and otherwise indexes the enumerated set with nextDouble.
 export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "FunctionSet") {
     // TLC builds the chosen function without the interval its domain came from.
-    const domain = [...getFunctionDomain(set.domain)];
+    const domain = [...toEnumeratedSet(set.domain, "RandomElement", set).elements];
     return createSortedFunction(
       domain,
       domain.map(() => getRandomElement(set.range, random)),
@@ -245,8 +236,17 @@ export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "Interval") {
     const size = Math.max(0, set.high - set.low + 1);
     const offset = Math.floor(random.nextDouble() * size);
-    if (offset >= size) throw new TlaEvaluationError("RandomElement of the empty set");
+    if (offset >= size) {
+      throw new TlaEvaluationError(
+        `Attempted to retrieve out-of-bounds element from the interval value ${formatValue(set)}.`,
+      );
+    }
     return set.low + offset;
   }
-  return pickElement(toFiniteSet(set).elements, random);
+  const elements = toEnumeratedSet(set, "RandomElement").elements;
+  const index = Math.floor(random.nextDouble() * elements.length);
+  if (index >= elements.length) {
+    throw new TlaEvaluationError(`Index ${index} out of bounds for length ${elements.length}`);
+  }
+  return elements[index];
 };

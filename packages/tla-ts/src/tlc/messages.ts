@@ -1,24 +1,32 @@
 import {
   getErrorExitCode,
+  getUnexpectedException,
   STACK_OVERFLOW_MESSAGE,
   TlaEvaluationError,
   TlaModuleError,
+  TlaSetBoundError,
+  TlaStackOverflowError,
+  TlaUncodedError,
+  TlaWarningAsError,
+  TOO_MANY_STATES_MESSAGE,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "../errors";
 import { setExitCode } from "../exit-codes";
 import type { TlcVersion } from "./version";
 
-// TLC's codes for the messages it prints, from tlc2.output.EC.
 export const MESSAGE_CODE = {
   general: 1000,
+  stackOverflow: 1005,
   commandLineError: 1102,
   initialState: 2102,
   nestedExpression: 2103,
   assumptionFalse: 2104,
   assumptionEvaluationError: 2105,
+  unchangedVariableChanged: 2143,
   exceptAppliedToUnknownField: 2144,
   fingerprintFailed: 2147,
+  initialStateIncomplete: 2106,
   invariantViolatedInitial: 2107,
   incompleteSuccessor: 2109,
   propertyViolatedInitial: 2108,
@@ -28,13 +36,20 @@ export const MESSAGE_CODE = {
   actionPropertyEvaluationFailed: 2113,
   deadlockReached: 2114,
   temporalPropertyViolated: 2116,
+  noInitialStates: 2118,
+  errorState: 2120,
   behaviorUpToThisPoint: 2121,
   backToState: 2122,
+  subscriptUndetermined: 2139,
+  subscriptMissingVariable: 2140,
   constantLevelInvariant: 2149,
   javaOverrideLoaded: 2168,
   starting: 2185,
   modelChecking: 2187,
+  simulating: 2188,
   finished: 2186,
+  traceSpecWritten: 2501,
+  traceSpecFailed: 2502,
   computingInit: 2189,
   initGenerated1: 2190,
   initGenerated2: 2191,
@@ -43,14 +58,27 @@ export const MESSAGE_CODE = {
   searchDepth: 2194,
   stats: 2199,
   progress: 2200,
+  coverageStart: 2201,
+  coverageEnd: 2202,
+  coverageValue: 2221,
+  depthFirstStats: 2204,
+  depthFirstLevel: 2205,
+  depthFirstProgress: 2206,
+  depthFirstInitGenerated: 2208,
+  simulationProgress: 2209,
+  simulationStats: 2210,
   temporalBranches: 2212,
+  statePrint1: 2216,
   statePrint2: 2217,
   statePrint3: 2218,
   sanyFinished: 2219,
   startingSany: 2220,
   stateLevelProperty: 2255,
+  noInitialStatesInModel: 2256,
   version: 2262,
+  depthFirstModelChecking: 2271,
   noSpecificationButProperty: 2257,
+  fairnessTautology: 2258,
   noFairnessButProperty: 2259,
   counterExample: 2264,
   checkingTemporalEnd: 2267,
@@ -62,17 +90,23 @@ export const MESSAGE_CODE = {
   javaOverrideMismatch: 2400,
   postconditionFalse: 2404,
   postconditionFailed: 2405,
+  coverageNext: 2772,
+  coverageInit: 2773,
+  coverageProperty: 2774,
+  coverageValueCost: 2775,
+  coverageEndOverhead: 2777,
+  coverageConstraint: 2778,
+  coverageVariable: 2779,
   possibleUnwitnessed: 2780,
   parsingFailed: 3002,
   configFileError: 5001,
+  moduleOverrideStdout: 20000,
 } as const;
 
-// TLC's message levels, from tlc2.output.MP.
 export const MESSAGE_LEVEL = { none: 0, error: 1, warning: 3, state: 4 } as const;
 
 type MessageLevel = (typeof MESSAGE_LEVEL)[keyof typeof MESSAGE_LEVEL];
 
-// Without -tool, TLC starts a message with the prefix of its level.
 const LEVEL_PREFIXES: Record<MessageLevel, string> = {
   0: "",
   1: "Error: ",
@@ -86,14 +120,20 @@ export interface MessagePrinter {
   print: (code: number, level: MessageLevel, text: string) => void;
 }
 
-// With -tool, TLC wraps each message in markers that name its code and level, so that a program
-// can read the output. Lines outside the markers, such as the output of Print, stay as they are.
-// MP.printWarning prints a warning once, which -nowarning drops, and without -tool, TLC follows the
-// first warning with how to drop them.
+export const formatMessage = (isTool: boolean, code: number, level: MessageLevel, text: string) =>
+  isTool
+    ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
+    : `${LEVEL_PREFIXES[level]}${text}`;
+
+// With -tool, TLC wraps each message in markers of its code and level, and leaves lines such as
+// Print's bare. A warning prints once, -nowarning drops it, and without -tool the first one
+// says how to drop them.
 export const createMessagePrinter = (
   isTool: boolean,
   isWarningEnabled = true,
   version: TlcVersion = "master",
+  suppressedCodes: number[] = [],
+  errorCodes: number[] = [],
 ): MessagePrinter => {
   const warnings = new Set<string>();
   return {
@@ -101,14 +141,16 @@ export const createMessagePrinter = (
     version,
     print: (code, level, text) => {
       const isWarning = level === MESSAGE_LEVEL.warning;
+      if (isWarning && errorCodes.includes(code)) {
+        throw new TlaWarningAsError(code, text);
+      }
       if (isWarning && !isWarningEnabled) return;
+      if (level !== MESSAGE_LEVEL.error && suppressedCodes.includes(code)) return;
       const hint =
         isWarning && !isTool && warnings.size === 0
           ? "\n(Use the -nowarning option to disable this warning.)"
           : "";
-      const message = isTool
-        ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
-        : `${LEVEL_PREFIXES[level]}${text}${hint}`;
+      const message = formatMessage(isTool, code, level, `${text}${hint}`);
       if (isWarning && warnings.has(message)) return;
       if (isWarning) warnings.add(message);
       console.log(message);
@@ -116,19 +158,25 @@ export const createMessagePrinter = (
   };
 };
 
-// TLC 1.7.4's message for a missing initial predicate, which blames a parameterized INSTANCE as
-// well.
+// TLC 1.7.4's message for a missing initial predicate also blames a parameterized INSTANCE.
 export const MISSING_INIT_174 =
   "The configuration file did not specify the initial state predicate.\nCan also be caused by trying to run TLC on a specification from\na module imported with a parameterized INSTANCE statement.";
 
-// The messages that TLC builds from a message code, from tlc2.output.MP, by their code and
-// template, with whether TLC throws them as an EvalException rather than a TLCRuntimeException.
+// isEvalException: whether TLC throws the message as an EvalException, not a TLCRuntimeException.
 // TLC's -tool output wraps such a message in its own markers even inside another message.
 const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean][] = [
   [1005, STACK_OVERFLOW_MESSAGE, false],
+  [
+    1000,
+    "In evaluating TLCExt!Trace, the state is not completely specified yet (variable%1% %2% undefined).",
+    false,
+  ],
+  [1000, "Could not find operator: %1% in module: %2%", false],
   [2117, "Failed to recover the next state from its fingerprint.", true],
   [2123, "Failed to recover the initial state from its fingerprint.", true],
   [2132, "The first argument of Assert evaluated to FALSE; the second argument was:\n%1%", true],
+  [2143, "The variable %1% was changed while it is specified as UNCHANGED at\n%2%", false],
+  [2144, "The EXCEPT was applied to non-existing fields of the value at\n%1%", false],
   [2145, "TLCGet(%1%) was undefined.", true],
   [
     2154,
@@ -147,8 +195,13 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
     "Attempted to apply TransitiveClosure to a set containing\nthe following value:\n%1%",
     true,
   ],
+  [2156, "TLC supports at most %1% model values, but model value %2% exceeds this limit.", false],
+  [2156, "tla-ts can't recover a model check from the checkpoint in %1%.", false],
   [2165, "Choose can only deal with numbers up to %1%", false],
   [2169, "The %1% argument of %2% should be a %3%, but instead it is:\n%4%", true],
+  [2170, "Argument mismatch in operator application.%1%", false],
+  [2171, "Parsing or semantic analysis failed.%1%", false],
+  [2172, TOO_MANY_STATES_MESSAGE, false],
   [2176, "Applying %1% to the following value,\nwhich is not %2%:\n%3%", true],
   [
     2177,
@@ -207,12 +260,23 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2233, "The %1% %2% cannot be a constant.", false],
   [2234, "The operator %1% cannot take any argument.", false],
   [2235, "The operator %1% is not defined in the spec.", false],
+  [2236, "The operator %1%, which equals %2%,\ncannot be used as a %3%", false],
   [2237, "The spec is trivially false because %1% is false.", false],
   [2238, "TLC cannot handle subscript %1%", false],
   [2239, "TLC cannot handle this conjunct of the spec:\n%1%", false],
+  [
+    2240,
+    "The specification contains more than one conjunct of the form [][Next]_v,\nbut TLC can handle only specifications with one next-state relation.",
+    false,
+  ],
   [2241, "The property %1% is not correctly defined.", false],
   [2242, "The arity of the operator %1% is inconsistent in the configuration file.", false],
   [2244, "TLC can't handle real numbers.\n%1%", false],
+  [
+    2245,
+    "In the configuration file, the module name %1% is not a module in the specification.",
+    false,
+  ],
   [2247, "In computing %1%, TLC expected a %2% expression,\nbut instead found %3%.\n%4%", false],
   [2248, "In computing %1%, TLC expected a %2% expression,\nbut didn't find one.\n%3%", false],
   [2260, "In computing ENABLED, TLC encountered a temporal formula (%1%).\n%2%", false],
@@ -223,6 +287,21 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   ],
   [2265, "TLC can't handle a number this big.\n%1%", false],
   [2266, "The %1% argument of %2% should be an %3%, but instead it is:\n%4%", true],
+  [
+    2272,
+    "The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action %1% holds in *every* step of the behavior, define a temporal property: Let A be the formula at %2%; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).",
+    false,
+  ],
+  [
+    2273,
+    'The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action %1% holds in *every* step of the behavior, define a temporal property by applying the "always" temporal operator ([]) to the formula at %2% (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).',
+    false,
+  ],
+  [
+    2274,
+    'The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that infinitely many %1% steps occur, define a temporal property by applying the "always eventually" temporal operator combination ([]<>) to the formula at %2% (compare page 91 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).',
+    false,
+  ],
   [2280, "In evaluation, the identifier %1% is either undefined or not an operator.\n%2%", false],
   [2281, "The configuration file substitutes constant %1% with non-constant %2%%3%", false],
   [2283, "The argument of %1% should be a %2%, but instead it is:\n%3%", true],
@@ -249,6 +328,8 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [5007, "TLC found an error in the configuration file:\n%1%", false],
   // The general message is a prefix of the others above.
   [5002, "TLC found an error in the configuration file at line %1%\n", false],
+  [2250, "A state predicate was evaluated to a non-boolean value.", false],
+  [2252, "Encountered an action predicate that's not a boolean.", false],
   [2253, "Temporal formula is a tautology (its negation is unsatisfiable).", false],
   [
     2301,
@@ -277,18 +358,17 @@ const getCodedMessagePatterns = () =>
     message: { code, isEvalException },
   })));
 
-// The overflows of SetOfFcnsValue and SetOfTuplesValue, which TLC raises with a plain message that
-// reads like the coded overflow of SetOfRcdsValue and SubsetValue.
+// Plain messages that read like coded ones: the overflows of SetOfFcnsValue and SetOfTuplesValue,
+// SetPredValue's tuple membership, and Tool#enabled's for ~> and -+->.
 const UNCODED_MESSAGE_PATTERN =
-  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+ : ))/;
+  /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+: ))|\nis an element of a set of \d+-tuples\.$|^In computing ENABLED, TLC encountered a temporal formula \(a (~> b|-\+-> formula)\)\./;
 
 export const getCodedMessage = (text: string): CodedMessage | undefined =>
   UNCODED_MESSAGE_PATTERN.test(text)
     ? undefined
     : getCodedMessagePatterns().find((item) => item.pattern.test(text))?.message;
 
-// Whether TLC raises an error as an EvalException, which only a standard module's Java code throws,
-// rather than as the TLCRuntimeException of every Assert.fail.
+// Only a standard module's Java code throws an EvalException; Assert.fail throws the other kind.
 export const isEvalException = (error: TlaEvaluationError) =>
   error instanceof TlaModuleError || getCodedMessage(error.message)?.isEvalException === true;
 
@@ -298,12 +378,13 @@ const INNER_MESSAGE_PREFIXES = new Map([
   [1000, "\n: "],
   [2105, "failed.\n"],
   [2154, "but it produced the following error:\n"],
+  [2171, "Parsing or semantic analysis failed."],
   [2213, ":\n"],
   [2281, " - specifically: "],
+  [2405, "failed.\n"],
 ]);
 
-// The text of a coded message with the message of the error it reports marked in -tool output, as
-// TLC's message holds that error's text as TLC printed it.
+// TLC's message holds the inner error's text as TLC printed it, markers included.
 export const formatInnerMessage = (code: number, text: string, isTool: boolean) => {
   const prefix = isTool ? INNER_MESSAGE_PREFIXES.get(code) : undefined;
   const index = prefix === undefined ? -1 : text.indexOf(prefix);
@@ -312,7 +393,6 @@ export const formatInnerMessage = (code: number, text: string, isTool: boolean) 
   return `${text.slice(0, end)}${formatNestedMessage(text.slice(end), isTool)}`;
 };
 
-// The text of an error's message as TLC prints it inside another message.
 export const formatNestedMessage = (text: string, isTool: boolean): string => {
   const code = isTool ? getCodedMessage(text)?.code : undefined;
   return code === undefined
@@ -322,7 +402,6 @@ export const formatNestedMessage = (text: string, isTool: boolean): string => {
 
 const zeroPad = (value: number) => String(value).padStart(2, "0");
 
-// TLC's convertRuntimeToHumanReadable: a duration in its two largest units.
 export const formatTlcDuration = (milliseconds: number) => {
   const seconds = Math.floor(milliseconds / 1000) % 60;
   const minutes = Math.floor(milliseconds / 60_000) % 60;
@@ -334,12 +413,9 @@ export const formatTlcDuration = (milliseconds: number) => {
     : `${zeroPad(seconds)}s`;
 };
 
-// TLC's SimpleDateFormat("yyyy-MM-dd HH:mm:ss") in the local time zone.
 export const formatTlcDate = (date: Date) =>
   `${date.getFullYear()}-${zeroPad(date.getMonth() + 1)}-${zeroPad(date.getDate())} ${zeroPad(date.getHours())}:${zeroPad(date.getMinutes())}:${zeroPad(date.getSeconds())}`;
 
-// An error that TLC reports with a message of its own, by that message's code and first line, and
-// the error whose message follows.
 interface HeadedError {
   code: number;
   headline: string;
@@ -360,18 +436,18 @@ export const withHeadline = (error: unknown, code: number, headline: string) => 
 
 export const isHeadedError = (error: Error) => headedErrors.has(error);
 
+const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
+
 const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
 
-// TLC 1.7.4's Worker wraps an error in adding a successor in a RuntimeException, whose message
-// names the class of the error.
+// TLC 1.7.4 wraps an error in adding a successor in a RuntimeException naming its class.
 const WRAPPED_EVAL_EXCEPTION = `${UNEXPECTED_EXCEPTION}tlc2.tool.EvalException: `;
 const WRAPPED_RUNTIME_EXCEPTION = `${UNEXPECTED_EXCEPTION}util.Assert$TLCRuntimeException: `;
 
 export const getWrappedException = (error: TlaEvaluationError) =>
   isEvalException(error) ? WRAPPED_EVAL_EXCEPTION : WRAPPED_RUNTIME_EXCEPTION;
 
-// TLC reports an EvalException, or a TLCRuntimeException without a message of its own, as an
-// exception it didn't expect.
+// TLC reports an EvalException, or a TLCRuntimeException without its own message, as unexpected.
 export const withUnexpectedException = <Result>(compute: () => Result) => {
   try {
     return compute();
@@ -392,19 +468,17 @@ const UNEXPECTED_EXCEPTION_PREFIXES = [
   UNEXPECTED_EVAL_EXCEPTION,
 ];
 
-// The text of an error's message, with the message of a coded error inside it marked in -tool
-// output as TLC marks it.
 const formatErrorMessage = (error: TlaEvaluationError, isTool: boolean): string => {
   const headed = headedErrors.get(error);
   if (headed) return `${headed.headline}\n${formatErrorMessage(headed.inner, isTool)}`;
   const message = error.message;
+  if (error instanceof TlaUncodedError) return message;
   const prefix = UNEXPECTED_EXCEPTION_PREFIXES.find((start) => message.startsWith(start)) ?? "";
   return `${prefix}${formatNestedMessage(message.slice(prefix.length), isTool)}`;
 };
 
-// How TLC reports an error: with the code of its own message for an error that it reports with a
-// headline; and, when the error escapes the computation of next states, with the code of an
-// EvalException, or as an unexpected exception for any other error.
+// TLC reports an error with a headline by its message's code, and one that escapes the next
+// states with an EvalException's code, or as an unexpected exception.
 export interface FailureMessage {
   code: number;
   message: string;
@@ -424,6 +498,14 @@ export const getFailureMessage = (
       toolMessage: formatErrorMessage(error, true),
     };
   }
+  // TLC prints a StackOverflowError by its code in the next states, as plain text in the initial.
+  if (error instanceof TlaStackOverflowError) {
+    return {
+      code: isNextState ? MESSAGE_CODE.stackOverflow : MESSAGE_CODE.general,
+      message,
+      toolMessage: message,
+    };
+  }
   if (isNextState && isEvalException(error)) {
     return {
       code: getCodedMessage(message)?.code ?? MESSAGE_CODE.general,
@@ -431,8 +513,11 @@ export const getFailureMessage = (
       toolMessage: message,
     };
   }
-  const isUnexpected = isNextState && !message.startsWith(UNEXPECTED_HEADLINE);
-  const prefix = isUnexpected ? UNEXPECTED_EXCEPTION : "";
+  const isUnexpected =
+    isNextState && !message.startsWith(UNEXPECTED_HEADLINE) && !(error instanceof TlaUncodedError);
+  const exception =
+    error instanceof TlaSetBoundError ? WRONG_INVOCATION_EXCEPTION : UNEXPECTED_EXCEPTION;
+  const prefix = isUnexpected ? exception : "";
   return {
     code: MESSAGE_CODE.general,
     message: `${prefix}${message}`,

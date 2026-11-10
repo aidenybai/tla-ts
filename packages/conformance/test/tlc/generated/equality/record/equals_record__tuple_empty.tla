@@ -1,0 +1,21 @@
+(*---
+description: Compares record, a RecordValue, with tuple_empty, a TupleValue.
+ref: tlc2/value/impl/RecordValue.java#equals
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE equals_record__tuple_empty ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT(([a |-> 1, b |-> 2]) = (<<>>))
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: "| FALSE"
+---*)

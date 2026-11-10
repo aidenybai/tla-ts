@@ -1,7 +1,6 @@
 import { PcalBugError, PcalError, PcalRuntimeError } from "../errors";
 import type { TlcVersion } from "../tlc/version";
 
-// TLAToken's types.
 export const PCAL_TOKEN = { builtin: 1, number: 2, string: 3, ident: 4, added: 5 } as const;
 
 export interface PcalToken {
@@ -10,22 +9,21 @@ export interface PcalToken {
   type: number;
 }
 
-// TLAExpr: the tokens of an expression, line by line, and for each line the token of an earlier
-// line it is aligned under, with that token's column when the expression was normalized.
+// For each line, the token of an earlier line it is aligned under, with that token's column when
+// the expression was normalized.
 export interface PcalExpr {
   tokens: PcalToken[][];
   anchorTokens: (PcalToken | undefined)[] | undefined;
   anchorTokCol: number[] | undefined;
 }
 
-// IntPair, as the "Java coordinates" of a token in an expression.
 interface PcalCoord {
   line: number;
   item: number;
 }
 
-// PcalParams: the translator's options, which the Java keeps in static fields that SANY never
-// resets, so options one module sets carry over to the modules SANY validates after it.
+// The Java keeps these in static fields that SANY never resets, so options one module sets carry
+// over to the modules SANY validates after it.
 export interface PcalParams {
   labelFlag: boolean;
   labelRoot: string;
@@ -36,7 +34,6 @@ export interface PcalParams {
   inputVersionNumber: number;
 }
 
-// PcalParams.versionWeight.
 export const PCAL_VERSION_WEIGHT = 1903;
 
 export const createPcalParams = (): PcalParams => ({
@@ -49,7 +46,7 @@ export const createPcalParams = (): PcalParams => ({
   inputVersionNumber: PCAL_VERSION_WEIGHT,
 });
 
-// PcalParams.VersionToNumber: "1.5" is 1500, and -1 means a malformed version.
+// "1.5" is 1500, and -1 means a malformed version.
 export const getPcalVersionNumber = (text: string) => {
   const state = { result: 0, digitsAfterDecimal: 0, isAfterDecimal: false };
   for (const char of text) {
@@ -104,7 +101,6 @@ export interface PcalProcedure extends PcalBase {
   body: PcalStmt[];
 }
 
-// AST.UNFAIR_PROC, WF_PROC and SF_PROC index FairnessString.
 const PCAL_FAIRNESS = ["unfair", "wf", "sf"];
 
 export interface PcalProcess extends PcalBase {
@@ -309,13 +305,11 @@ export const createPcalBase = (): PcalBase => ({
   lbl: "",
 });
 
-// AST.location.
 export const getPcalLocation = (node: PcalBase) =>
   node.macroLine < 0
     ? `line ${node.line}, column ${node.col}`
     : `line ${node.line}, column ${node.col} of macro called at line ${node.macroLine}, column ${node.macroCol}`;
 
-// A Java cast of a statement to AST.LabeledStmt.
 export const toLabeledStmt = (node: PcalStmt) => {
   if (node.kind !== "LabeledStmt") throw new PcalRuntimeError(`ClassCastException: ${node.kind}`);
   return node;
@@ -335,7 +329,7 @@ export const createPcalToken = (string: string, column: number, type: number): P
   type,
 });
 
-// TLAToken.getWidth: a string token's width counts its quotes.
+// A string token's width counts its quotes.
 export const getPcalTokenWidth = (token: PcalToken) =>
   token.type === PCAL_TOKEN.string ? token.string.length + 2 : token.string.length;
 
@@ -345,8 +339,6 @@ export const createPcalExpr = (tokens: PcalToken[][] = []): PcalExpr => ({
   anchorTokCol: undefined,
 });
 
-// TLAExpr.normalize: drops empty first and last lines, shifts the tokens left as far as they go,
-// and records the token each line is aligned under.
 export const normalizePcalExpr = (expr: PcalExpr) => {
   while (expr.tokens.length > 0 && expr.tokens[0].length === 0) expr.tokens.shift();
   while (expr.tokens.length > 0 && expr.tokens[expr.tokens.length - 1].length === 0) {
@@ -387,7 +379,6 @@ export const createNormalizedPcalExpr = (tokens: PcalToken[][]) => {
   return expr;
 };
 
-// TLAExpr.renormalize: shifts each line right by as much as its anchor token has moved.
 const renormalizePcalExpr = (expr: PcalExpr) => {
   const anchorTokens = expr.anchorTokens;
   const anchorTokCol = expr.anchorTokCol;
@@ -409,7 +400,6 @@ const renormalizePcalExpr = (expr: PcalExpr) => {
 export const clonePcalExpr = (expr: PcalExpr) =>
   createNormalizedPcalExpr(expr.tokens.map((line) => line.map((token) => ({ ...token }))));
 
-// TLAExpr.prepend: puts prefix in front of the expression, spaces columns before its first token.
 export const prependPcalExpr = (expr: PcalExpr, prefix: PcalExpr, spaces: number) => {
   const prefixLines = prefix.tokens.length;
   expr.tokens.splice(0, 0, ...prefix.tokens.slice(0, prefixLines - 1));
@@ -438,7 +428,6 @@ export const isOneTokenPcalExpr = (expr: PcalExpr) =>
 export const getPcalTokenAt = (expr: PcalExpr, coord: PcalCoord) =>
   getElement(getElement(expr.tokens, coord.line), coord.item);
 
-// TLAExpr.stepCoord: the coordinates steps tokens after coord, or undefined past the end.
 export const stepPcalCoord = (expr: PcalExpr, coord: PcalCoord, steps: number) => {
   if (expr.tokens.length <= coord.line) {
     throw new PcalBugError("TLAExpr.StepCoord called with line too big");
@@ -461,8 +450,7 @@ export const stepPcalCoord = (expr: PcalExpr, coord: PcalCoord, steps: number) =
   return result;
 };
 
-// TLAExpr.findNextInstanceIn: the next token id at or after start that is not a record field
-// name, such as the a in r.a, [a |-> 1] or [a : S].
+// Skips a record field name, such as the a in r.a, [a |-> 1] or [a : S].
 const findNextInstance = (expr: PcalExpr, id: string, start: PcalCoord) => {
   for (let coord = expr.tokens.length === 0 ? undefined : { ...start }; coord !== undefined;) {
     const token = getPcalTokenAt(expr, coord);
@@ -484,9 +472,6 @@ const findNextInstance = (expr: PcalExpr, id: string, start: PcalCoord) => {
   return undefined;
 };
 
-// TLAExpr.substituteAt: replaces the token at coord with a copy of replacement, parenthesized when
-// isParenthesized and replacement has more than one token, and returns the coordinates of the
-// token after it.
 const substituteAt = (
   expr: PcalExpr,
   replacement: PcalExpr,
@@ -507,7 +492,6 @@ const substituteAt = (
       ? tokenLine[coord.item + 1].column - (token.column + getPcalTokenWidth(token))
       : 0;
   const restOfLine = tokenLine.splice(coord.item + 1);
-  // The line the replacement's tokens go on, and how far right they move.
   const cursor = {
     lineIndex: coord.line,
     indent: (isParenthesized ? 1 : 0) + token.column,
@@ -578,8 +562,6 @@ const substituteAt = (
   return stepPcalCoord(expr, result, 1);
 };
 
-// TLAExpr.substituteForAll: replaces each instance of names[i] with exprs[i], in the order the
-// instances appear.
 export const substitutePcalExpr = (
   expr: PcalExpr,
   exprs: PcalExpr[],
@@ -625,7 +607,6 @@ export const getSubstitutedPcalExpr = (expr: PcalExpr, args: PcalExpr[], params:
   return result;
 };
 
-// TLAExpr.SeqSubstituteForAll.
 export const substitutePcalExprs = (exprs: PcalExpr[], args: PcalExpr[], params: string[]) =>
   exprs.map((expr) => getSubstitutedPcalExpr(expr, args, params));
 
@@ -651,8 +632,6 @@ const formatPcalExpr = (expr: PcalExpr, version?: TlcVersion) => {
   return `<< ${text} >>`;
 };
 
-// AST.toString: the TLA+ record that PlusCal.tla uses for the node. Indent, EndIndent and NewLine
-// keep a stack of indentation columns as the Java concatenates the record's text left to right.
 export const formatPcalNode = (
   node: PcalNode,
   inputVersionNumber: number,

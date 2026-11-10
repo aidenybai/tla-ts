@@ -31,7 +31,6 @@ import {
   type PcalWhile,
 } from "./ast";
 
-// PcalSymTab's symbol types, which index PCAL_SYMBOL_TYPE_NAMES.
 const PCAL_SYMBOL = {
   global: 0,
   label: 1,
@@ -69,7 +68,7 @@ interface PcalSymbol {
   useThis: string;
 }
 
-// PcalSymTab.ProcedureEntry. initialPC is the first label, which a body with no statements lacks.
+// initialPC is the first label, which a body with no statements lacks.
 interface PcalProcedureEntry {
   name: string;
   params: PcalPVarDecl[];
@@ -128,8 +127,6 @@ const useThisVar = (table: PcalSymbolTable, id: string, context: string) => {
   return PCAL_VARIABLE_SYMBOLS.has(symbol.type) ? symbol.useThis : id;
 };
 
-// The PcalSymTab constructor: collects the algorithm's variables, labels, procedures and processes,
-// reporting every redefinition at once.
 const createPcalSymbolTable = (ast: PcalAlgorithm) => {
   const table: PcalSymbolTable = {
     symbols: [],
@@ -249,8 +246,6 @@ const createPcalSymbolTable = (ast: PcalAlgorithm) => {
   return table;
 };
 
-// PcalSymTab.Disambiguate: renames each symbol whose name another symbol already uses, by
-// appending "_", then the letters of its context, then its type. Returns whether it renamed any.
 const disambiguatePcalSymbols = (table: PcalSymbolTable) => {
   const isAmbiguous = (id: string) =>
     table.symbols.filter((symbol) => symbol.useThis === id).length > 1;
@@ -269,7 +264,6 @@ const disambiguatePcalSymbols = (table: PcalSymbolTable) => {
   return renamed.isAny;
 };
 
-// PcalSymTab.CheckForDefaultInitValue.
 const checkForDefaultInitValue = (table: PcalSymbolTable) => {
   const uses = table.symbols
     .filter((symbol) => symbol.id === "defaultInitValue")
@@ -279,8 +273,6 @@ const checkForDefaultInitValue = (table: PcalSymbolTable) => {
   }
 };
 
-// PcalFixIDs.Fix: replaces every identifier with the name PcalSymTab.Disambiguate chose for it, and
-// closes each process's set of called procedures over the procedures they call.
 const fixPcalIds = (ast: PcalAlgorithm, table: PcalSymbolTable, log: (line: string) => void) => {
   const fixExpr = (expr: PcalExpr, context: string) => {
     const names: string[] = [];
@@ -425,8 +417,8 @@ const fixPcalIds = (ast: PcalAlgorithm, table: PcalSymbolTable, log: (line: stri
     process.name = useThis(table, PCAL_SYMBOL.process, process.name, "");
   };
 
-  // PcalFixIDs.FixMultiprocess: a process calling an unknown procedure stops the fixing of the
-  // remaining processes with an error message, but not the translation.
+  // A process calling an unknown procedure stops the fixing of the remaining processes with an
+  // error message, but not the translation.
   const fixMultiprocess = (procedures: PcalProcedure[], processes: PcalProcess[]) => {
     procedures.forEach(fixProcedure);
     const procedureNames = procedures.map((procedure) => procedure.name);
@@ -473,13 +465,11 @@ const fixPcalIds = (ast: PcalAlgorithm, table: PcalSymbolTable, log: (line: stri
   }
 };
 
-// PcalTranslate's token constructors, which leave the column 0.
 const stringToken = (string: string) => createPcalToken(string, 0, PCAL_TOKEN.string);
 const addedToken = (string: string) => createPcalToken(string, 0, PCAL_TOKEN.added);
 const builtInToken = (string: string) => createPcalToken(string, 0, PCAL_TOKEN.builtin);
 const identToken = (string: string) => createPcalToken(string, 0, PCAL_TOKEN.ident);
 
-// PcalTranslate.TokVectorToExpr: copies the tokens onto one line, spaces columns apart.
 const tokensToExpr = (tokens: PcalToken[], spaces: number) => {
   const line: PcalToken[] = [];
   tokens.forEach((token) => {
@@ -491,8 +481,6 @@ const tokensToExpr = (tokens: PcalToken[], spaces: number) => {
   return createNormalizedPcalExpr([line]);
 };
 
-// PcalTranslate.MakeNewStackTopExprPretty: lays out a pushed stack frame one field per line with
-// the "|->" aligned.
 const prettifyStackTopExpr = (expr: PcalExpr) =>
   expr.tokens.forEach((line, lineIndex) => {
     const cursor = { column: lineIndex === 0 || lineIndex === expr.tokens.length - 1 ? 1 : 6 };
@@ -522,7 +510,6 @@ const prettifyStackTopExpr = (expr: PcalExpr) =>
     });
   });
 
-// A new AST.SingleAssign and AST.Assign, whose line and column default to 0.
 const createSingleAssign = (
   variable: string,
   sub: PcalExpr,
@@ -553,7 +540,7 @@ const makeAssign = (variable: string, expr: PcalExpr, line = 0, col = 0) =>
     col,
   );
 
-// PcalTranslate.IsTRUE, which indexes the first line of an expression without checking it has one.
+// PcalTranslate.IsTRUE indexes the first line of an expression without checking it has one.
 const isTrue = (expr: PcalExpr) => {
   if (expr.tokens.length > 1) return false;
   const line = getElement(expr.tokens, 0);
@@ -575,7 +562,6 @@ const checkPC = (label: string): PcalWhen => ({
 const updatePC = (next: string | undefined) =>
   makeAssign("pc", createNormalizedPcalExpr([[stringToken(next ?? "null")]]));
 
-// `Head(stack).field`.
 const getStackHeadTokens = (field: string) => [
   identToken("Head"),
   builtInToken("("),
@@ -585,7 +571,6 @@ const getStackHeadTokens = (field: string) => [
   identToken(field),
 ];
 
-// `Tail(stack)`.
 const getStackTailTokens = () => [
   identToken("Tail"),
   builtInToken("("),
@@ -596,8 +581,6 @@ const getStackTailTokens = () => [
 const createStackHeadExpr = (field: string) =>
   createNormalizedPcalExpr([getStackHeadTokens(field)]);
 
-// The `<< [ procedure |-> "name", pc |-> ..., var |-> var ] >> \o ...` that ExplodeCall and
-// ExplodeCallReturn push onto the stack.
 const createStackPushExpr = (
   procedure: string,
   pcTokens: PcalToken[],
@@ -627,8 +610,6 @@ const createStackPushExpr = (
   return expr;
 };
 
-// The statements a call explodes into after its stack push: the parameters' and the procedure
-// variables' initial values and the jump to the procedure's first label.
 const createCallStmts = (
   assign: PcalAssign,
   entry: PcalProcedureEntry,
@@ -655,23 +636,19 @@ const createCallStmts = (
   ];
 };
 
-// CopyAndExplodeLastStmt's triple: the statements with their last one exploded, the labeled
-// statements the explosion split off, and whether control falls off the end needing a pc update.
 interface PcalExplodedStmts {
   stmts: PcalStmt[];
   labeledStmts: PcalLabeledStmt[];
   needsGoto: boolean;
 }
 
-// PcalTranslate.Explode: turns each labeled statement into an atomic action that checks and sets
-// pc, and calls, returns and gotos into stack and pc assignments. Statement lists nested in the
-// original AST are exploded in place, as the Java does, so the original AST changes too.
+// Statement lists nested in the original AST are exploded in place, as the Java does, so the
+// original AST changes too.
 const explodePcalAlgorithm = (
   ast: PcalAlgorithm,
   table: PcalSymbolTable,
   omitPC: boolean,
 ): PcalAlgorithm => {
-  // The procedure being exploded, which a return comes from.
   const context: { procedure: string | undefined } = { procedure: undefined };
 
   const explodeCall = (call: PcalCall, next: string) => {
@@ -752,8 +729,6 @@ const explodePcalAlgorithm = (
     return createCallStmts(assign, toEntry, stmt);
   };
 
-  // PcalTranslate.CopyAndExplodeLastStmt: explodes the last statement of stmts in place, recursing
-  // into the branches of a trailing if, either or with.
   const copyAndExplodeLastStmt = (stmts: PcalStmt[], next: string): PcalExplodedStmts => {
     if (stmts.length === 0) return { stmts: [], labeledStmts: [], needsGoto: !omitPC };
     const result: PcalExplodedStmts = { stmts, labeledStmts: [], needsGoto: false };
@@ -877,8 +852,6 @@ const explodePcalAlgorithm = (
       explodeLabeledStmt(labeledStmt, index < seq.length - 1 ? seq[index + 1].label : next),
     );
 
-  // PcalTranslate.ExplodeWhile: the loop's label tests the condition, running the unlabeled body
-  // or the statements after the loop.
   const explodeWhile = (labeledStmt: PcalLabeledStmt, loop: PcalWhile, next: string) => {
     const unlabDoNext = loop.labDo.length === 0 ? labeledStmt.label : loop.labDo[0].label;
     const explodedBody = copyAndExplodeLastStmtWithGoto([...loop.unlabDo], unlabDoNext);
@@ -1024,10 +997,7 @@ const explodePcalAlgorithm = (
   };
 };
 
-// The parts of PcalTLAGen.generate that change the AST or throw: GenVarsAndDefs's check that
-// there are variables, and GenAssign's sorting of multiple assignments and its checks that each
-// variable is declared and assigned at most once per step. Changed counts the assignments to each
-// variable along the paths through a labeled statement.
+// Only the parts of PcalTLAGen.generate that change the AST or throw.
 const checkPcalTlaGen = (explodedAst: PcalAlgorithm, omitPC: boolean) => {
   const vars = omitPC ? [] : ["pc"];
   vars.push(...explodedAst.decls.map((decl) => decl.var));
@@ -1041,7 +1011,7 @@ const checkPcalTlaGen = (explodedAst: PcalAlgorithm, omitPC: boolean) => {
   }
   if (vars.length === 0) throw new PcalError("The algorithm has no variables.");
 
-  // Changed.Set, which counts only the first of duplicate variable names.
+  // Changed.Set counts only the first of duplicate variable names.
   const setChanged = (changed: number[], variable: string) => {
     const index = vars.indexOf(variable);
     if (index === -1) return 0;
@@ -1063,7 +1033,6 @@ const checkPcalTlaGen = (explodedAst: PcalAlgorithm, omitPC: boolean) => {
   const genAssign = (assign: PcalAssign, changed: number[]) => {
     const thisChanged = [...changed];
     assign.ass = sortSass(assign.ass);
-    // The sort puts the assignments to each variable next to each other.
     new Set(assign.ass.map((single) => single.lhs.var)).forEach((variable) => {
       const group = assign.ass.filter((single) => single.lhs.var === variable);
       if (!vars.includes(variable)) {
@@ -1134,9 +1103,8 @@ const checkPcalTlaGen = (explodedAst: PcalAlgorithm, omitPC: boolean) => {
   ).forEach(genBody);
 };
 
-// PCalTLAGenerator.removeNameConflicts followed by translate, for what they do to the AST and the
-// errors they report: the symbol table's renaming, PcalFixIDs, PcalTranslate.Explode and the checks
-// PcalTLAGen makes while generating the TLA+ translation, which SANY discards.
+// What removeNameConflicts and translate do to the AST, and the errors they report, without the
+// TLA+ translation, which SANY discards.
 export const translatePcalAlgorithm = (
   ast: PcalAlgorithm,
   omitPC: boolean,

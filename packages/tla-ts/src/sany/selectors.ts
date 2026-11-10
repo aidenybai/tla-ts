@@ -21,18 +21,15 @@ import {
   type ThmOrAssumpDefNode,
 } from "./nodes";
 
-// A port of SANY's Generator.selectorToNode, which turns a name such as Op(a)!lab(b)!:!2 into the
-// semantic node it names, following the Subexpression algorithm of SANY's Subexpression.tla.
+// A port of SANY's Generator.selectorToNode, following the algorithm of SANY's Subexpression.tla.
 
-// An operand selector !i is the number i, and the other selectors are named after SANY's NameSel,
-// NullSel, GGSel, LLSel, ColonSel and AtSel.
+// Named after SANY's NameSel, NullSel, GGSel, LLSel, ColonSel and AtSel; !i is the number i.
 type SelectorOp = number | "Name" | "Null" | ">>" | "<<" | ":" | "@";
 
 export interface SelectorItem {
   op: SelectorOp;
   name: string;
   args: Expression[] | undefined;
-  // Where SANY locates the selector and its parenthesized arguments, when known.
   location?: SanyLocation;
   argsLocation?: SanyLocation;
 }
@@ -62,10 +59,7 @@ interface SelectorGenerator {
   createLambda: (params: FormalParamNode[], body: ExprNode, location: SanyLocation) => OpDefNode;
   copySubstIn: (prefix: SubstInNode, body: ExprNode) => SubstInNode;
   getBuiltin: (name: string) => OpDefNode;
-  // Errors.addMessage for an error SANY recovers from, and the null node SANY returns after one.
   addError: (location: SanyLocation, text: string) => OpApplNode;
-  // Generator.illegalLabelRef and illegalAPPosRef: whether the node being generated lies outside
-  // the scope of a declaration that a label or a clause of an ASSUME/PROVE lies in.
   isOutOfLabelScope: (label: LabelNode) => boolean;
   isOutOfClauseScope: (assumeProve: AssumeProveNode, position: number) => boolean;
 }
@@ -80,8 +74,8 @@ const PROOF_STEP_OPERATORS = new Map([
   ["$Suffices", "SUFFICES"],
 ]);
 
-// The parts of a name like I!Op or Op!lab, except for an operator such as !! that contains a "!".
-const getNameParts = (name: string) => {
+const getNameParts = (name: string): string[] => {
+  if (name.length > 3 && name.endsWith("!!!")) return [...getNameParts(name.slice(0, -3)), "!!"];
   const parts = name.split("!");
   return parts.some((part) => part.length === 0) ? [name] : parts;
 };
@@ -125,19 +119,14 @@ export const getSelectorItems = (expression: Expression): SelectorItem[] | undef
   return undefined;
 };
 
-// A selector SANY parses as a GeneralId rather than an OpApplication: one whose last part is not a
-// name with arguments.
 export const isGeneralId = (items: SelectorItem[]) => {
   const last = items[items.length - 1];
   return last.op !== "Name" || last.args === undefined;
 };
 
-// SANY's selectorItemToString, which names an operand selector after the argument it selects.
 const getSelectorItemName = (item: SelectorItem) =>
   typeof item.op === "number" ? `argument selector ${item.name}` : item.name;
 
-// Subexpression.tla's ArgNum: the human number of the operand that a selector picks out of an
-// expression with arity operands, or -1.
 const getArgNumber = (op: SelectorOp, arity: number) => {
   if (typeof op === "number") return op > 0 && op <= arity ? op : -1;
   if (op === "<<") return arity > 0 ? 1 : -1;
@@ -147,7 +136,6 @@ const getArgNumber = (op: SelectorOp, arity: number) => {
 
 type Mode = "FindingOpName" | "FollowingLabels" | "FindingSubExpr";
 
-// The state of Generator.selectorToNode as it walks the items.
 interface SelectorWalk {
   name: string | undefined;
   nameLocation: SanyLocation | undefined;
@@ -176,13 +164,11 @@ const isSymbol = (node: LevelNode | SymbolNode): node is SymbolNode =>
 const getQuantifierSymbols = (node: OpApplNode) =>
   (node.bounded?.length ?? 0) > 0 ? (node.bounded ?? []).flat() : (node.unbounded ?? []);
 
-// Generator.extendedBy: a name's location grown to the end of its next part.
 const extendLocation = (name: SanyLocation | undefined, part: SanyLocation): SanyLocation =>
   name === undefined ? part : { ...name, endLine: part.endLine, endColumn: part.endColumn };
 
-// selectorToNode: with expectedArity 0 the expression a selector names, with a positive one the
-// operator argument, and with -1 the definition a DEF clause names. A fact can also be an
-// ASSUME/PROVE, a NEW clause or a module instance.
+// With expectedArity 0 a selector names an expression, with a positive one an operator argument,
+// and with -1 the definition a DEF clause names.
 export const createSelectorResolver =
   (generator: SelectorGenerator) =>
   (
@@ -255,8 +241,8 @@ export const createSelectorResolver =
               walk.index++;
             }
           }
-          // TLC 1.7.4's SANY names only the last item of a selector it can't resolve, as
-          // selectorItemToString does, which fails on an argument selector that isn't a number.
+          // TLC 1.7.4's SANY names only the last item of a selector it can't resolve, which fails on an
+          // argument selector that isn't a number.
           if (symbol === undefined && generator.version === "1.7.4") {
             const last = items.length - 1;
             return generator.addError(

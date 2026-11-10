@@ -1,6 +1,7 @@
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import { createJavaRandom, type JavaRandom } from "./tlc/random";
 import { createFunction, createRecord, type Value } from "./values";
+import type { SpecAction } from "./spec-description";
 import type { TlcVersion } from "./tlc/version";
 
 export interface CheckerRuntime {
@@ -8,14 +9,16 @@ export interface CheckerRuntime {
   getBehavior: (state: Value[]) => Value[][];
   getSpecification: () => Value;
   counterExample: Value | undefined;
+  deferred: ((next: Value[]) => void) | undefined;
   setLivenessSource: (index: number | undefined) => void;
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
+  getSimulationValue:
+    | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
+    | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
-  pause: () => void;
-  // Prints a warning TLC raises while it evaluates, with its message code. TLC prints each
-  // distinct warning once.
+  pause: (() => void) | undefined;
   warn: (code: number, text: string) => void;
   // TLC's -nowarning turns the warnings off, and with them the shortcut that evaluates the rest
   // of an action once it assigns every variable, since that shortcut skips a warning.
@@ -26,6 +29,7 @@ export interface CheckerRuntime {
   version: TlcVersion;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
+  getSuccessorAction: (state: Value[], next: Value[]) => SpecAction | undefined;
   generatedStates: number;
   distinctStates: number;
   initialStates: number;
@@ -54,10 +58,13 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getBehavior: () => [],
     getSpecification: () => createRecord([]),
     counterExample: undefined,
+    deferred: undefined,
     isSeen: () => false,
+    getSuccessorAction: () => undefined,
     setLivenessSource: () => {},
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,
+    getSimulationValue: undefined,
     getRandom: () => {
       const state = phase.isStartup ? undefined : runtime.getCurrentState();
       if (state === undefined) return startupRandom;
@@ -76,7 +83,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
         phase.isStartup = wasStartup;
       }
     },
-    pause: () => {},
+    pause: undefined,
     warn: () => {},
     isWarningEnabled: true,
     isTool: false,
