@@ -217,7 +217,6 @@
   "tlc/cli/trace_spec/nested_output_directory_created": "message-mismatch",
   "tlc/cli/usage/h_prints_usage": "text-mismatch",
   "tlc/cli/usage/help_prints_usage": "text-mismatch",
-  "tlc/cli/usage/two_input_files": "message-mismatch",
   "tlc/cli/view/flag_prints_view": "text-mismatch",
   "tlc/config/errors/TLC_CONFIG_ID_MUST_NOT_BE_CONSTANT/postcondition": "exit-mismatch",
   "tlc/config/errors/TLC_CONFIG_ID_REQUIRES_NO_ARG/postcondition": "exit-mismatch",

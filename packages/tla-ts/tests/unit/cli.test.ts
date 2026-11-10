@@ -1203,11 +1203,19 @@ describe("the CLI takes several specs and globs", () => {
     expect(getSteadyLines(result.stdout)).toEqual([...(lines ?? []), ""]);
   });
 
-  it("rejects -config with several specs", () => {
-    const result = runCliWith("cli-output", ["Lasso.tla", "Success.tla", "-config", "Success.cfg"]);
+  it("rejects -config with a glob of several specs", () => {
+    const result = runCliWith("cli-output", ["Lasso*.tla", "-config", "Success.cfg"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toBe(
       "Error: -config applies to one specification, but several were given.\n",
+    );
+  });
+
+  it("rejects -config with several specs as TLC does", () => {
+    const result = runCliWith("cli-output", ["Lasso.tla", "Success.tla", "-config", "Success.cfg"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "Error: more than one input files: Lasso and Success.tla\nUsage: java tlc2.TLC [-help] [-option] inputfile",
     );
   });
 });
