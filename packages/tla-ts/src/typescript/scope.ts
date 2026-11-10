@@ -141,12 +141,6 @@ export const initialize = (
       };
 };
 
-export const rejectNestedPattern = (node: ts.Node, scope: Scope) => {
-  if (scope.isCatching) {
-    throw new TlaTypeScriptError("Inside try, destructure one level at a time", node);
-  }
-};
-
 export const getDefaulted = (
   part: Expression,
   initializer: ts.Expression | undefined,
@@ -189,7 +183,6 @@ export const bindPatternInline = (
   const heapSymbol = context.heap;
   const bound = pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
-    if (!ts.isIdentifier(element.name)) rejectNestedPattern(element, current);
     const initializer = element.initializer;
     const withDefault = (part: Expression) => getDefaulted(part, initializer, current, context);
     if (ts.isArrayBindingPattern(pattern)) {

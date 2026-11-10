@@ -60,10 +60,6 @@ const CASES: [string, string][] = [
     "const getLength = () => { return step.length; }; getLength();",
   ],
   [
-    "nested destructuring in try",
-    "try { const [[first]] = [values]; count = first; } catch { count = 0; }",
-  ],
-  [
     "a let used before its declaration in try",
     "try { const read = () => later; count = read(); } catch { count = 0; } let later = 1;",
   ],

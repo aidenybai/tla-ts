@@ -2015,6 +2015,20 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't close a generator that suspended in try or yield*");
   });
 
+  it("destructures nested patterns inside try", async () => {
+    const result = await checkModel(`
+      let total = 0;
+      try {
+        const [[first, second], { third }] = [[1, 2], { third: 3 }] as const;
+        total = first + second + third;
+      } catch {
+        total = -1;
+      }
+      if (total !== 6) throw new Error("missed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

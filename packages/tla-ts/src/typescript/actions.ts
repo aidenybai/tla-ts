@@ -108,7 +108,6 @@ import {
   getOptionalField,
   initialize,
   rejectBeforeDeclaration,
-  rejectNestedPattern,
   type Receiver,
   type Scope,
 } from "./scope";
@@ -515,9 +514,6 @@ const getDefaultedTarget = (node: ts.Expression) =>
     ? { target: node.left, initializer: node.right }
     : { target: node, initializer: undefined };
 
-const isPattern = (node: ts.Expression) =>
-  ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node);
-
 const assignPattern = (
   target: ts.Expression,
   source: ts.Expression | undefined,
@@ -532,7 +528,6 @@ const assignPattern = (
         throw new TlaTypeScriptError("Rest elements can't be assigned", element);
       }
       const defaulted = getDefaultedTarget(element);
-      if (isPattern(defaulted.target)) rejectNestedPattern(element, current.scope);
       const sourceElement =
         source !== undefined && ts.isArrayLiteralExpression(source)
           ? source.elements[position]
@@ -571,7 +566,6 @@ const assignPattern = (
         ? { target: property.name, initializer: property.objectAssignmentInitializer }
         : getDefaultedTarget(property.initializer);
       const key = property.name.text;
-      if (isPattern(defaulted.target)) rejectNestedPattern(property, current.scope);
       const part = isHeapObject
         ? useJavaScript(
             "Get",
