@@ -44,6 +44,8 @@ import {
   type PcalTokenizerState,
 } from "./tokenize";
 
+// The Java keeps this state in static fields, which SANY never resets between the modules it
+// validates.
 export interface PcalSession {
   params: PcalParams;
   tokenizer: PcalTokenizerState;
@@ -69,6 +71,25 @@ export const createPcalSession = (
   log,
 });
 
+interface PcalParserState {
+  lookaheadSize: number;
+  addedLabels: string[];
+  addedLabelsLocs: string[];
+  nextLabelNum: number;
+  allLabels: Set<string>;
+  hasLabel: boolean;
+  hasDefaultInitialization: boolean;
+  currentProcedure: string | undefined;
+  procedures: PcalProcedure[];
+  cSyntax: boolean;
+  plusLabels: string[];
+  minusLabels: string[];
+  proceduresCalled: string[];
+  gotoUsed: boolean;
+  gotoDoneUsed: boolean;
+  omitPC: boolean;
+}
+
 interface PcalParseResult {
   ast: PcalAlgorithm;
   omitPC: boolean;
@@ -86,6 +107,7 @@ const getUnion = (first: string[], second: string[]) => [
 const isDisjoint = (first: string[], second: string[]) =>
   !second.some((name) => first.includes(name));
 
+// Replaces the contents of target in place, since callers share it.
 const copyInto = (source: string[], target: string[]) => {
   target.splice(0, target.length, ...source);
 };
@@ -98,29 +120,31 @@ export const parsePcalAlgorithm = (
   const params = session.params;
   const lookahead = session.lookahead;
   const lastToken = session.lastToken;
-  let lookaheadSize = 0;
-  const addedLabels: string[] = [];
-  const addedLabelsLocs: string[] = [];
-  let nextLabelNum = 1;
-  const allLabels = new Set<string>();
-  let hasLabel = false;
-  let hasDefaultInitialization = false;
-  let currentProcedure: string | undefined;
-  const procedures: PcalProcedure[] = [];
-  let isCSyntax = false;
-  let plusLabels: string[] = [];
-  let minusLabels: string[] = [];
-  let proceduresCalled: string[] = [];
-  let isGotoUsed = false;
-  let isGotoDoneUsed = false;
-  let omitPC = params.inputVersionNumber >= 1500;
+  const state: PcalParserState = {
+    lookaheadSize: 0,
+    addedLabels: [],
+    addedLabelsLocs: [],
+    nextLabelNum: 1,
+    allLabels: new Set(),
+    hasLabel: false,
+    hasDefaultInitialization: false,
+    currentProcedure: undefined,
+    procedures: [],
+    cSyntax: false,
+    plusLabels: [],
+    minusLabels: [],
+    proceduresCalled: [],
+    gotoUsed: false,
+    gotoDoneUsed: false,
+    omitPC: params.inputVersionNumber >= 1500,
+  };
 
   const throwParsingError = (message: string): never => {
     throw new PcalError(`${message}\n    line ${lastToken.line}, column ${lastToken.column}`);
   };
 
   const getAlgToken = () => {
-    if (lookaheadSize === 0) {
+    if (state.lookaheadSize === 0) {
       peekPcalReader(reader);
       lastToken.column = reader.vcolumn + 1;
       lastToken.line = reader.line + 1;
@@ -130,19 +154,19 @@ export const parsePcalAlgorithm = (
     lastToken.column = lookahead.columns[0] + 1;
     lastToken.line = lookahead.lines[0] + 1;
     const result = lookahead.tokens[0];
-    for (let index = 1; index < lookaheadSize; index++) {
+    for (let index = 1; index < state.lookaheadSize; index++) {
       lookahead.tokens[index - 1] = lookahead.tokens[index];
       lookahead.columns[index - 1] = lookahead.columns[index];
       lookahead.lines[index - 1] = lookahead.lines[index];
     }
-    lookaheadSize -= 1;
+    state.lookaheadSize -= 1;
     lastToken.text = result;
     return result;
   };
 
   const peekAtAlgToken = (tokenNumber: number) => {
-    while (lookaheadSize < tokenNumber) {
-      const size = lookaheadSize;
+    while (state.lookaheadSize < tokenNumber) {
+      const size = state.lookaheadSize;
       if (peekPcalReader(reader) === "\t") {
         throw new PcalError(
           `Premature end of file, perhaps because of unclosed comment, near\n    line ${lookahead.lines[size] + 1}, column ${lookahead.columns[size] + 1}`,
@@ -151,36 +175,38 @@ export const parsePcalAlgorithm = (
       lookahead.columns[size] = reader.vcolumn;
       lookahead.lines[size] = reader.line;
       lookahead.tokens[size] = getPcalAlgorithmToken(session.tokenizer, reader);
-      lookaheadSize += 1;
+      state.lookaheadSize += 1;
     }
     return lookahead.tokens[tokenNumber - 1];
   };
 
   const peekPastAlgToken = (tokenNumber: number) => {
-    if (tokenNumber < lookaheadSize) {
+    if (tokenNumber < state.lookaheadSize) {
       throw new PcalBugError(
         "ParseAlgorithm.PeekPastAlgToken called to peek after a token\n    it has already peeked at",
       );
     }
-    while (tokenNumber > lookaheadSize) {
-      lookahead.tokens[lookaheadSize] = getPcalAlgorithmToken(session.tokenizer, reader);
-      lookaheadSize += 1;
+    while (tokenNumber > state.lookaheadSize) {
+      lookahead.tokens[state.lookaheadSize] = getPcalAlgorithmToken(session.tokenizer, reader);
+      state.lookaheadSize += 1;
     }
     return peekPcalReader(reader);
   };
 
+  // An expression's delimiter becomes the next token.
   const getExpr = (isDefineBlock = false) => {
-    if (lookaheadSize !== 0) {
+    if (state.lookaheadSize !== 0) {
       throw new PcalBugError("ParseAlgorithm: GetExpr called after lookahead");
     }
     const result = tokenizePcalExpr(session.tokenizer, reader, isDefineBlock);
     lookahead.tokens[0] = session.tokenizer.delimiter;
     lookahead.columns[0] = session.tokenizer.delimiterCol;
     lookahead.lines[0] = session.tokenizer.delimiterLine;
-    lookaheadSize = 1;
+    state.lookaheadSize = 1;
     return result;
   };
 
+  // A missing ";" is fine before a token that can't start a statement.
   const gobbleThis = (expected: string, alternate?: string) => {
     if (expected === ";") {
       const next = peekAtAlgToken(1);
@@ -213,10 +239,10 @@ export const parsePcalAlgorithm = (
 
   const gobbleCommaOrSemicolon = () => gobbleThis(peekAtAlgToken(1) === "," ? "," : ";");
 
-  const gobbleBeginOrLeftBrace = () => gobbleThis(isCSyntax ? "{" : "begin");
+  const gobbleBeginOrLeftBrace = () => gobbleThis(state.cSyntax ? "{" : "begin");
 
   const gobbleEndOrRightBrace = (name: string) => {
-    if (isCSyntax) {
+    if (state.cSyntax) {
       gobbleThis("}");
       return;
     }
@@ -240,11 +266,13 @@ export const parsePcalAlgorithm = (
       val: createDefaultVarInit(),
     };
     if (!["=", "\\in", "∈"].includes(peekAtAlgToken(1))) {
-      hasDefaultInitialization = true;
+      state.hasDefaultInitialization = true;
       return decl;
     }
     decl.isEq = gobbleEqualOrIf();
     decl.val = getExpr();
+    // ParseAlgorithm.GetVarDecl takes the end of the value's origin, which an empty value lacks,
+    // before checking for one.
     if (decl.val.tokens.length === 0) throw new PcalRuntimeError("NullPointerException");
     return decl;
   };
@@ -270,7 +298,7 @@ export const parsePcalAlgorithm = (
       val: createDefaultVarInit(),
     };
     if (peekAtAlgToken(1) !== "=") {
-      hasDefaultInitialization = true;
+      state.hasDefaultInitialization = true;
       return decl;
     }
     gobbleThis("=");
@@ -304,23 +332,23 @@ export const parsePcalAlgorithm = (
     if (label === "Done") throwParsingError("Cannot use `Done' as a label.");
     if (label === "Error") throwParsingError("Cannot use `Error' as a label.");
     gobbleThis(":");
-    hasLabel = true;
-    allLabels.add(label);
+    state.hasLabel = true;
+    state.allLabels.add(label);
     const modifier = peekAtAlgToken(1);
     if (modifier !== "+" && modifier !== "-") return label;
     gobbleThis(modifier);
-    (modifier === "+" ? plusLabels : minusLabels).push(label);
-    omitPC = false;
+    (modifier === "+" ? state.plusLabels : state.minusLabels).push(label);
+    state.omitPC = false;
     return label;
   };
 
   const getStmtSeq = (): PcalStmt[] => {
     const result: PcalStmt[] = [];
     const isEnd = (token: string) =>
-      (!isCSyntax && ["end", "else", "elsif", "or"].includes(token)) ||
-      (isCSyntax && token === "}");
+      (!state.cSyntax && ["end", "else", "elsif", "or"].includes(token)) ||
+      (state.cSyntax && token === "}");
     while (!isEnd(peekAtAlgToken(1))) result.push(...getCStmt());
-    if (isCSyntax && result.length === 0) throwParsingError("Empty statement list");
+    if (state.cSyntax && result.length === 0) throwParsingError("Empty statement list");
     return result;
   };
 
@@ -338,7 +366,7 @@ export const parsePcalAlgorithm = (
 
   const getCStmt = () => {
     const label = getLabel();
-    if (isCSyntax && peekAtAlgToken(1) === "{") return getCStmtSeq(label);
+    if (state.cSyntax && peekAtAlgToken(1) === "{") return getCStmtSeq(label);
     const stmt = getStmt();
     stmt.lbl = label;
     return [stmt];
@@ -354,6 +382,8 @@ export const parsePcalAlgorithm = (
       const col = lastToken.column;
       const line = lastToken.line;
       const exp = getExpr();
+      // ParseAlgorithm.GetWhen takes the end of the expression's origin, which an empty
+      // expression lacks, before checking for one.
       if (exp.tokens.length === 0) throw new PcalRuntimeError("NullPointerException");
       gobbleThis(";");
       return { ...createPcalBase(), kind: "When", col, line, exp };
@@ -392,7 +422,7 @@ export const parsePcalAlgorithm = (
         kind: "Return",
         col: lastToken.column,
         line: lastToken.line,
-        from: currentProcedure,
+        from: state.currentProcedure,
       };
       gobbleThis(";");
       return result;
@@ -401,11 +431,11 @@ export const parsePcalAlgorithm = (
       mustGobbleThis("goto");
       const col = lastToken.column;
       const line = lastToken.line;
-      const target = getAlgToken();
-      isGotoUsed = true;
-      if (target === "Done" || target === '"Done"') isGotoDoneUsed = true;
+      const to = getAlgToken();
+      state.gotoUsed = true;
+      if (to === "Done" || to === '"Done"') state.gotoDoneUsed = true;
       gobbleThis(";");
-      return { ...createPcalBase(), kind: "Goto", col, line, to: target };
+      return { ...createPcalBase(), kind: "Goto", col, line, to };
     }
     if (next === "while") return getWhile();
     if (peekPastAlgToken(1)[0] === "(") return getMacroCall();
@@ -416,13 +446,13 @@ export const parsePcalAlgorithm = (
     mustGobbleThis("while");
     const col = lastToken.column;
     const line = lastToken.line;
-    if (isCSyntax) gobbleThis("(");
+    if (state.cSyntax) gobbleThis("(");
     const test = getExpr();
-    if (isCSyntax) gobbleThis(")");
+    if (state.cSyntax) gobbleThis(")");
     if (test.tokens.length === 0) throwParsingError("Empty while test at ");
-    if (!isCSyntax) gobbleThis("do");
-    const unlabDo = isCSyntax ? getCStmt() : getStmtSeq();
-    if (!isCSyntax) {
+    if (!state.cSyntax) gobbleThis("do");
+    const unlabDo = state.cSyntax ? getCStmt() : getStmtSeq();
+    if (!state.cSyntax) {
       gobbleThis("end");
       gobbleThis("while");
       gobbleThis(";");
@@ -444,27 +474,28 @@ export const parsePcalAlgorithm = (
       unlabElse: [],
       labElse: [],
     };
-    if (isCSyntax) gobbleThis("(");
+    if (state.cSyntax) gobbleThis("(");
     result.test = getExpr();
-    if (isCSyntax) gobbleThis(")");
+    if (state.cSyntax) gobbleThis(")");
     if (result.test.tokens.length === 0) throwParsingError("Empty if test at ");
-    if (!isCSyntax) gobbleThis("then");
-    result.unlabThen = isCSyntax ? getCStmt() : getStmtSeq();
+    if (!state.cSyntax) gobbleThis("then");
+    result.unlabThen = state.cSyntax ? getCStmt() : getStmtSeq();
     const next = peekAtAlgToken(1);
     if (next === "else") {
       mustGobbleThis("else");
-      result.unlabElse = isCSyntax ? getCStmt() : getStmtSeq();
+      result.unlabElse = state.cSyntax ? getCStmt() : getStmtSeq();
     }
-    if (!isCSyntax && next === "elsif") result.unlabElse = [getIf(depth + 1)];
-    if (!isCSyntax && !["else", "elsif", "end"].includes(next)) {
+    if (!state.cSyntax && next === "elsif") result.unlabElse = [getIf(depth + 1)];
+    if (!state.cSyntax && !["else", "elsif", "end"].includes(next)) {
       throwParsingError('Expecting "else", "elsif", or "end"');
     }
-    if (!isCSyntax && depth === 0) {
+    if (!state.cSyntax && depth === 0) {
       gobbleThis("end");
       gobbleThis("if");
       gobbleThis(";");
     }
-    // ParseAlgorithm.GetIf reads the last then statement, which throws when there is none.
+    // ParseAlgorithm.GetIf takes the origin of the last statement, which an empty then clause
+    // with no else clause doesn't have.
     if (result.unlabElse.length === 0) {
       getElement(result.unlabThen, result.unlabThen.length - 1);
     }
@@ -484,7 +515,7 @@ export const parsePcalAlgorithm = (
       const clause: PcalClause = {
         ...createPcalBase(),
         kind: "Clause",
-        unlabOr: isCSyntax ? getCStmt() : getStmtSeq(),
+        unlabOr: state.cSyntax ? getCStmt() : getStmtSeq(),
         labOr: [],
       };
       if (clause.unlabOr.length === 0) {
@@ -494,7 +525,7 @@ export const parsePcalAlgorithm = (
       if (peekAtAlgToken(1) !== "or") break;
       mustGobbleThis("or");
     }
-    if (!isCSyntax) {
+    if (!state.cSyntax) {
       mustGobbleThis("end");
       gobbleThis("either");
       gobbleThis(";");
@@ -506,7 +537,7 @@ export const parsePcalAlgorithm = (
   const getWith = (depth: number): PcalWith => {
     if (depth === 0) {
       gobbleThis("with");
-      if (isCSyntax) gobbleThis("(");
+      if (state.cSyntax) gobbleThis("(");
     }
     const result: PcalWith = {
       ...createPcalBase(),
@@ -520,10 +551,10 @@ export const parsePcalAlgorithm = (
     };
     result.isEq = gobbleEqualOrIf();
     result.exp = getExpr();
-    if (!isCSyntax || peekAtAlgToken(1) !== ")") gobbleCommaOrSemicolon();
+    if (!state.cSyntax || peekAtAlgToken(1) !== ")") gobbleCommaOrSemicolon();
     if (result.exp.tokens.length === 0) throwParsingError("Empty with expression at ");
-    const isBlockBody = !isCSyntax && peekAtAlgToken(1) === "do";
-    const isBraceBody = isCSyntax && peekAtAlgToken(1) === ")";
+    const isBlockBody = !state.cSyntax && peekAtAlgToken(1) === "do";
+    const isBraceBody = state.cSyntax && peekAtAlgToken(1) === ")";
     if (isBlockBody) gobbleThis("do");
     if (isBraceBody) mustGobbleThis(")");
     result.Do = isBlockBody ? getStmtSeq() : isBraceBody ? getCStmt() : [getWith(depth + 1)];
@@ -605,7 +636,7 @@ export const parsePcalAlgorithm = (
     };
     gobbleThis("(");
     result.args = getCallArgs();
-    if (!proceduresCalled.includes(result.to)) proceduresCalled.push(result.to);
+    if (!state.proceduresCalled.includes(result.to)) state.proceduresCalled.push(result.to);
     return result;
   };
 
@@ -620,7 +651,7 @@ export const parsePcalAlgorithm = (
         col: call.col,
         line: call.line,
         to: call.to,
-        from: currentProcedure,
+        from: state.currentProcedure,
         args: call.args,
       };
     }
@@ -635,8 +666,8 @@ export const parsePcalAlgorithm = (
       after: getAlgToken(),
       args: call.args,
     };
-    isGotoUsed = true;
-    if (result.to === "Done" || result.to === '"Done"') isGotoDoneUsed = true;
+    state.gotoUsed = true;
+    if (result.to === "Done" || result.to === '"Done"') state.gotoDoneUsed = true;
     gobbleThis(";");
     return result;
   };
@@ -697,10 +728,10 @@ export const parsePcalAlgorithm = (
       decls: [],
       body: [],
     };
-    currentProcedure = result.name;
-    plusLabels = [];
-    minusLabels = [];
-    proceduresCalled = [];
+    state.currentProcedure = result.name;
+    state.plusLabels = [];
+    state.minusLabels = [];
+    state.proceduresCalled = [];
     gobbleThis("(");
     while (peekAtAlgToken(1) !== ")") {
       if (result.params.length > 0) gobbleThis(",");
@@ -714,10 +745,10 @@ export const parsePcalAlgorithm = (
     result.body = getStmtSeq();
     gobbleEndOrRightBrace("procedure");
     if (peekAtAlgToken(1) === ";") getAlgToken();
-    currentProcedure = undefined;
-    result.plusLabels = plusLabels;
-    result.minusLabels = minusLabels;
-    result.proceduresCalled = proceduresCalled;
+    state.currentProcedure = undefined;
+    result.plusLabels = state.plusLabels;
+    result.minusLabels = state.minusLabels;
+    result.proceduresCalled = state.proceduresCalled;
     return result;
   };
 
@@ -725,14 +756,14 @@ export const parsePcalAlgorithm = (
     gobbleThis("process");
     const col = lastToken.column;
     const line = lastToken.line;
-    if (isCSyntax) gobbleThis("(");
+    if (state.cSyntax) gobbleThis("(");
     const name = getAlgToken();
     const isEq = gobbleEqualOrIf();
     const id = getExpr();
-    plusLabels = [];
-    minusLabels = [];
-    proceduresCalled = [];
-    if (isCSyntax) gobbleThis(")");
+    state.plusLabels = [];
+    state.minusLabels = [];
+    state.proceduresCalled = [];
+    if (state.cSyntax) gobbleThis(")");
     if (id.tokens.length === 0) throwParsingError("Empty process id at ");
     const decls = peekAtAlgToken(1) === "begin" || peekAtAlgToken(1) === "{" ? [] : getVarDecls();
     gobbleBeginOrLeftBrace();
@@ -746,9 +777,9 @@ export const parsePcalAlgorithm = (
       line,
       name,
       fairness: 0,
-      minusLabels,
-      plusLabels,
-      proceduresCalled,
+      minusLabels: state.minusLabels,
+      plusLabels: state.plusLabels,
+      proceduresCalled: state.proceduresCalled,
       isEq,
       id,
       decls,
@@ -757,18 +788,19 @@ export const parsePcalAlgorithm = (
   };
 
   const getUnusedLabel = (): string => {
-    const label = `${params.labelRoot}${nextLabelNum}`;
-    nextLabelNum += 1;
-    return allLabels.has(label) ? getUnusedLabel() : label;
+    const label = `${params.labelRoot}${state.nextLabelNum}`;
+    state.nextLabelNum += 1;
+    return state.allLabels.has(label) ? getUnusedLabel() : label;
   };
 
-  const ensureLabel = (stmt: PcalStmt) => {
+  const needsLabel = (stmt: PcalStmt) => {
     if (stmt.lbl !== "") return;
     stmt.lbl = getUnusedLabel();
-    addedLabels.push(stmt.lbl);
-    addedLabelsLocs.push(getPcalLocation(stmt));
+    state.addedLabels.push(stmt.lbl);
+    state.addedLabelsLocs.push(getPcalLocation(stmt));
   };
 
+  // True when the statement after the sequence needs a label.
   const addLabels = (
     stmts: PcalStmt[],
     isFirstLabeled: boolean,
@@ -777,20 +809,19 @@ export const parsePcalAlgorithm = (
     outAssigned: string[],
   ): boolean => {
     copyInto(inAssigned, outAssigned);
-    let isNextLabeled = isFirstLabeled;
-    let hasStepLabel = false;
+    const progress = { isNextLabeled: isFirstLabeled, hasLabel: false };
     const startStep = (stmt: PcalStmt) => {
-      ensureLabel(stmt);
-      hasStepLabel = true;
+      needsLabel(stmt);
+      progress.hasLabel = true;
       outAssigned.length = 0;
     };
     stmts.forEach((stmt) => {
       if (stmt.lbl !== "") {
-        hasStepLabel = true;
+        progress.hasLabel = true;
         outAssigned.length = 0;
         if (isInWith) throw new PcalError("Label in `with' statement", stmt);
       }
-      if (isNextLabeled) {
+      if (progress.isNextLabeled) {
         if (isInWith) {
           throw new PcalError(
             "Statement follows `call' or `return' inside a `with' statement.",
@@ -798,7 +829,7 @@ export const parsePcalAlgorithm = (
           );
         }
         startStep(stmt);
-        isNextLabeled = false;
+        progress.isNextLabeled = false;
       }
       switch (stmt.kind) {
         case "LabelIf": {
@@ -811,7 +842,7 @@ export const parsePcalAlgorithm = (
             outAssigned,
             thenAssigned,
           );
-          isNextLabeled =
+          progress.isNextLabeled =
             addLabels(stmt.unlabElse, false, isInWith, outAssigned, elseAssigned) || isThenLabeled;
           copyInto(getUnion(thenAssigned, elseAssigned), outAssigned);
           return;
@@ -820,8 +851,9 @@ export const parsePcalAlgorithm = (
           const eitherAssigned: string[] = [];
           stmt.clauses.forEach((clause) => {
             const orAssigned: string[] = [];
-            isNextLabeled =
-              addLabels(clause.unlabOr, false, isInWith, outAssigned, orAssigned) || isNextLabeled;
+            progress.isNextLabeled =
+              addLabels(clause.unlabOr, false, isInWith, outAssigned, orAssigned) ||
+              progress.isNextLabeled;
             copyInto(getUnion(orAssigned, eitherAssigned), eitherAssigned);
           });
           copyInto(eitherAssigned, outAssigned);
@@ -831,11 +863,11 @@ export const parsePcalAlgorithm = (
           if (isInWith) throw new PcalError("`while' inside a `with' statement", stmt);
           startStep(stmt);
           addLabels(stmt.unlabDo, false, false, outAssigned, []);
-          isNextLabeled = false;
+          progress.isNextLabeled = false;
           return;
         case "With": {
           const withAssigned: string[] = [];
-          isNextLabeled = addLabels(
+          progress.isNextLabeled = addLabels(
             stmt.Do,
             false,
             true,
@@ -847,6 +879,9 @@ export const parsePcalAlgorithm = (
           return;
         }
       }
+      // A call or return assigns the stack, and a return or a recursive call the parameters and
+      // variables of every procedure. A statement that assigns a variable assigned since the
+      // last label starts a new step.
       const isCall = stmt.kind === "Call" || stmt.kind === "CallGoto";
       const isReturn = stmt.kind === "Return" || stmt.kind === "CallReturn";
       const assigned =
@@ -858,14 +893,14 @@ export const parsePcalAlgorithm = (
           : isCall || isReturn
             ? [
                 "stack",
-                ...(isReturn || stmt.to === currentProcedure
-                  ? procedures.flatMap((procedure) =>
+                ...(isReturn || stmt.to === state.currentProcedure
+                  ? state.procedures.flatMap((procedure) =>
                       [...procedure.params, ...procedure.decls].map((decl) => decl.var),
                     )
                   : []),
               ]
             : [];
-      isNextLabeled = isCall || isReturn || stmt.kind === "Goto";
+      progress.isNextLabeled = isCall || isReturn || stmt.kind === "Goto";
       if (isDisjoint(outAssigned, assigned)) {
         copyInto(getUnion(outAssigned, assigned), outAssigned);
         return;
@@ -881,7 +916,7 @@ export const parsePcalAlgorithm = (
       startStep(stmt);
       copyInto(assigned, outAssigned);
     });
-    return hasStepLabel || isNextLabeled;
+    return progress.hasLabel || progress.isNextLabeled;
   };
 
   const fixStmtSeq = (stmts: PcalStmt[]) => {
@@ -943,6 +978,8 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
+  // 0 for a statement that may have another after it in the step, 1 for a call, return or goto,
+  // which ends a step, and 2 for one with a labeled statement inside.
   const classifyStmt = (stmts: PcalStmt[], index: number): number => {
     const node = stmts[index];
     switch (node.kind) {
@@ -998,7 +1035,7 @@ export const parsePcalAlgorithm = (
         return stmts[index + 1]?.kind === "Return" ? 0 : 1;
       case "Return":
       case "CallReturn":
-        if (currentProcedure === undefined) {
+        if (state.currentProcedure === undefined) {
           throw new PcalError(`return statement not in a procedure at ${getPcalLocation(node)}`);
         }
         return 1;
@@ -1166,6 +1203,8 @@ export const parsePcalAlgorithm = (
     }
   };
 
+  // A parameter assigned to becomes the variable its argument starts with, and the rest of the
+  // argument goes before the subscript.
   const substituteInSingleAssign = (
     assign: PcalSingleAssign,
     args: PcalExpr[],
@@ -1237,6 +1276,7 @@ export const parsePcalAlgorithm = (
     stmts.splice(0, stmts.length, ...expanded);
   };
 
+  // ParseAlgorithm.ExpandMacroCall: the last macro of the name wins.
   const expandMacroCall = (call: PcalMacroCall, macros: PcalMacro[]) => {
     const definition = macros.findLast((macro) => macro.name === call.name);
     if (definition === undefined) {
@@ -1262,10 +1302,11 @@ export const parsePcalAlgorithm = (
     });
   };
 
+  // A body that is a single labeled "while TRUE" without labels inside lets the translation omit pc.
   const checkBody = (body: PcalStmt[]) => {
     if (body.length === 0) return;
     const keepPC = () => {
-      omitPC = false;
+      state.omitPC = false;
     };
     const labeled = body[0];
     if (body.length > 1 || labeled.kind !== "LabeledStmt") return keepPC();
@@ -1275,24 +1316,24 @@ export const parsePcalAlgorithm = (
     if (!isOneTokenPcalExpr(whileStmt.test) || whileStmt.test.tokens[0][0].string !== "TRUE") {
       return keepPC();
     }
-    if (whileStmt.labDo.length > 0) omitPC = false;
+    if (whileStmt.labDo.length > 0) state.omitPC = false;
     const hasLabeled = whileStmt.unlabDo.some((stmt) =>
       ["LabelIf", "LabelEither", "LabeledStmt"].includes(stmt.kind),
     );
-    if (hasLabeled) omitPC = false;
+    if (hasLabeled) state.omitPC = false;
   };
 
   const throwAddedLabels = (): never => {
     const header =
-      addedLabels.length > 1
+      state.addedLabels.length > 1
         ? "Missing labels at the following locations:"
         : "Missing label at the following location:";
-    throw new PcalError([header, ...addedLabelsLocs].join("\n     "));
+    throw new PcalError([header, ...state.addedLabelsLocs].join("\n     "));
   };
 
   const fixProcedures = (macros: PcalMacro[]) =>
-    procedures.forEach((procedure) => {
-      currentProcedure = procedure.name;
+    state.procedures.forEach((procedure) => {
+      state.currentProcedure = procedure.name;
       expandMacrosInStmtSeq(procedure.body, macros);
       procedure.body = makeLabeledStmtSeq(procedure.body);
     });
@@ -1302,23 +1343,23 @@ export const parsePcalAlgorithm = (
       if (getAlgToken() !== "algorithm") throwParsingError("`--fair' not followed by `algorithm'");
     }
     const name = getAlgToken();
-    isCSyntax = peekAtAlgToken(1) === "{";
-    if (isCSyntax) mustGobbleThis("{");
+    state.cSyntax = peekAtAlgToken(1) === "{";
+    if (state.cSyntax) mustGobbleThis("{");
     const decls =
       peekAtAlgToken(1) === "variable" || peekAtAlgToken(1) === "variables" ? getVarDecls() : [];
-    let defs = createPcalExpr();
+    const defs = { value: createPcalExpr() };
     if (peekAtAlgToken(1) === "define") {
       mustGobbleThis("define");
-      if (isCSyntax) gobbleThis("{");
-      defs = getExpr(true);
+      if (state.cSyntax) gobbleThis("{");
+      defs.value = getExpr(true);
       gobbleEndOrRightBrace("define");
       gobbleThis(";");
     }
     const macros: PcalMacro[] = [];
     while (peekAtAlgToken(1) === "macro") macros.push(getMacro(macros));
     while (peekAtAlgToken(1) === "procedure") {
-      procedures.push(getProcedure());
-      omitPC = false;
+      state.procedures.push(getProcedure());
+      state.omitPC = false;
     }
     const isMultiprocess =
       (peekAtAlgToken(1) === "fair" &&
@@ -1348,19 +1389,19 @@ export const parsePcalAlgorithm = (
         checkBody(proc.body);
       });
       fixProcedures(macros);
-      if (addedLabels.length > 0) {
+      if (state.addedLabels.length > 0) {
         if (!params.labelFlag) throwAddedLabels();
         session.log("Labels added.");
       }
-      if (isGotoDoneUsed || isGotoUsed) omitPC = false;
+      if (state.gotoDoneUsed || state.gotoUsed) state.omitPC = false;
       return {
         ...createPcalBase(),
         kind: "Multiprocess",
         name,
         decls,
-        defs,
+        defs: defs.value,
         macros,
-        prcds: procedures,
+        prcds: state.procedures,
         procs,
       };
     }
@@ -1380,23 +1421,24 @@ export const parsePcalAlgorithm = (
     checkForDuplicateMacros(macros);
     expandMacrosInStmtSeq(body, macros);
     fixProcedures(macros);
-    if (isCSyntax) gobbleThis("}");
+    // The first brace ends the body that gobbleBeginOrLeftBrace began.
+    if (state.cSyntax) gobbleThis("}");
     gobbleEndOrRightBrace("algorithm");
     const labeledBody = makeLabeledStmtSeq(body);
-    if (addedLabels.length > 0) {
-      if (hasLabel && !params.labelFlag) throwAddedLabels();
+    if (state.addedLabels.length > 0) {
+      if (state.hasLabel && !params.labelFlag) throwAddedLabels();
       session.log("Labels added.");
     }
-    if (isGotoUsed || isGotoDoneUsed) omitPC = false;
+    if (state.gotoUsed || state.gotoDoneUsed) state.omitPC = false;
     checkBody(labeledBody);
     return {
       ...createPcalBase(),
       kind: "Uniprocess",
       name,
       decls,
-      defs,
+      defs: defs.value,
       macros,
-      prcds: procedures,
+      prcds: state.procedures,
       body: labeledBody,
     };
   };
@@ -1407,8 +1449,8 @@ export const parsePcalAlgorithm = (
     const ast = parse();
     return {
       ast,
-      omitPC,
-      hasDefaultInitialization,
+      omitPC: state.omitPC,
+      hasDefaultInitialization: state.hasDefaultInitialization,
     };
   } catch (error) {
     if (!(error instanceof PcalRuntimeError)) throw error;

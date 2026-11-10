@@ -1,3 +1,6 @@
+// The built package, which the prove scripts run so that tlapm's time limits see the speed users
+// get.
+
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 

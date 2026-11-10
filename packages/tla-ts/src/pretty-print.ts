@@ -1,3 +1,5 @@
+// A port of TLC's tlc2.pprint package. TLC prints the original text whenever the parse fails.
+
 import { skipWhile } from "./lexer";
 
 interface PrintedNode {
@@ -76,9 +78,9 @@ const parsePrinted = (text: string) => {
     separator: string,
   ) => {
     const node: PrintedNode = { kind, first, last: first, children: [] };
-    let position = skipWhitespace(start);
-    while (position !== undefined && text[position] !== close) {
-      const item = parseItem(position);
+    const position = { index: skipWhitespace(start) };
+    while (position.index !== undefined && text[position.index] !== close) {
+      const item = parseItem(position.index);
       if (!item) return undefined;
       node.children.push(item);
       const afterItem = skipWhitespace(item.last + 1);
@@ -86,10 +88,10 @@ const parsePrinted = (text: string) => {
       const afterSeparator = text.startsWith(separator, afterItem)
         ? afterItem + separator.length
         : afterItem;
-      position = skipWhitespace(afterSeparator);
+      position.index = skipWhitespace(afterSeparator);
     }
-    if (position === undefined) return undefined;
-    node.last = position;
+    if (position.index === undefined) return undefined;
+    node.last = position.index;
     return node;
   };
 

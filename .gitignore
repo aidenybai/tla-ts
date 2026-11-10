@@ -4,6 +4,8 @@ node_modules
 dist
 **/*.tgz
 coverage
+# A directory of the conformance suite's tests, not a coverage report.
+!packages/conformance/test/tlc/cli/coverage/
 *.tsbuildinfo
 
 # copied into the package by prepack
@@ -22,3 +24,7 @@ packages/tla-ts/tests/conformance/.isabelle-encode-results.json
 packages/tla-ts/tests/conformance/.prove-results.json
 packages/tla-ts/tests/conformance/.prove-benchmark.json
 packages/tla-ts/.scripts
+
+packages/conformance/.oracles
+packages/conformance/.results
+packages/conformance/.scripts

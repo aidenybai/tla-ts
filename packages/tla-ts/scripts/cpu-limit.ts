@@ -1,10 +1,12 @@
+// Runs a backend until it has used its time limit in both wall-clock and CPU time, as a loaded
+// machine stretches wall-clock time. The thread stays warm for the next run, as it does in prove.
+
 import { once } from "node:events";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import type { DecideResponse } from "../src/prover/decide-pool";
 import type { Verdict } from "../src/prover/verdict";
-import { MAIN_THREAD_STACK_MB } from "./corpora";
 import { DIST_DIRECTORY } from "./dist";
 
 interface CpuLimitedRun {
@@ -15,12 +17,20 @@ interface CpuLimitedRun {
 
 const POLL_MS = 100;
 
-let warmWorker: Worker | undefined;
+// A backend that rejects its input answers unknown, as tlapm counts that as a failure.
+const getVerdict = (response: DecideResponse) =>
+  "verdict" in response ? response.verdict : "unknown";
+
+const state: { warm: Worker | undefined } = { warm: undefined };
 
 const startWorker = async () => {
+  // Node keeps 192 KB of a worker's stack in reserve, so this gives the backend the stack it has on
+  // the main thread.
   const worker = new Worker(join(DIST_DIRECTORY, "prove-worker.js"), {
-    resourceLimits: { stackSizeMb: MAIN_THREAD_STACK_MB },
+    resourceLimits: { stackSizeMb: 1.15 },
   });
+  // The thread's CPU time counts from the moment it has loaded the backends, which its answer to an
+  // empty SMT input shows.
   worker.postMessage({ prover: "smt", text: "", timeLimitMs: Number.POSITIVE_INFINITY });
   await once(worker, "message");
   return worker;
@@ -31,23 +41,28 @@ export const runWithCpuLimit = async (
   prover: string,
   text: string,
 ): Promise<CpuLimitedRun> => {
-  const worker = warmWorker ?? (await startWorker());
-  warmWorker = undefined;
+  const worker = state.warm ?? (await startWorker());
+  state.warm = undefined;
   worker.ref();
   const started = performance.now();
   const startedCpu = await worker.cpuUsage();
+  const getCpuMilliseconds = async () => {
+    const cpu = await worker.cpuUsage(startedCpu);
+    return Math.round((cpu.user + cpu.system) / 1000);
+  };
   const decided = once(worker, "message").then((message: DecideResponse[]) =>
-    "verdict" in message[0] ? message[0].verdict : "unknown",
+    getVerdict(message[0]),
   );
+  // The backend gets no time limit of its own, as this terminates the thread once the limit passes.
   worker.postMessage({ prover, text, timeLimitMs: Number.POSITIVE_INFINITY });
   for (;;) {
     const verdict = await Promise.race([decided, scheduler.wait(POLL_MS)]);
     const wallMilliseconds = Math.round(performance.now() - started);
-    const cpu = await worker.cpuUsage(startedCpu);
-    const cpuMilliseconds = Math.round((cpu.user + cpu.system) / 1000);
+    const cpuMilliseconds = await getCpuMilliseconds();
     if (verdict !== undefined) {
+      // A thread waiting for the next run doesn't keep the process alive.
       worker.unref();
-      warmWorker = worker;
+      state.warm = worker;
       return { verdict, wallMilliseconds, cpuMilliseconds };
     }
     if (wallMilliseconds > limitMs && cpuMilliseconds > limitMs) {

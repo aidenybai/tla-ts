@@ -1,0 +1,24 @@
+(*---
+description: Checks eventually_action on the one_state machine under unfair fairness.
+ref: tlc2/tool/liveness/LiveCheck.java; tlc2/tool/liveness/Liveness.java
+features:
+  - liveness
+outcome: any
+config: |
+  SPECIFICATION Spec
+  PROPERTY Prop
+  CHECK_DEADLOCK FALSE
+---*)
+---- MODULE live_one_state__unfair__eventually_action ----
+EXTENDS Integers
+VARIABLE x
+Next == x' = x
+Spec == x = 0 /\ [][Next]_x
+Prop == <><<x' = x + 1>>_x
+====
+
+(*--- recorded
+all:
+  exit: 255
+  transcript: 2214:1 Temporal formulas containing actions must be of forms <>[]A or []<>A.
+---*)

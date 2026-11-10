@@ -1,3 +1,5 @@
+// The semantic nodes of SANY's tla2sany.semantic package that its XMLExporter writes out.
+
 export interface SanyLocation {
   file: string;
   beginLine: number;
@@ -6,6 +8,7 @@ export interface SanyLocation {
   endColumn: number;
 }
 
+// A location of undefined is SANY's unknown location, and a bare module name the whole module.
 export interface SanyMessage {
   location: SanyLocation | string | undefined;
   text: string;
@@ -13,6 +16,7 @@ export interface SanyMessage {
   code?: string;
 }
 
+// SANY keeps one copy of each message, and after TLC 1.7.4 one for each code.
 export const addSanyMessage = (messages: SanyMessage[], message: SanyMessage) => {
   const key = JSON.stringify(message);
   if (!messages.some((candidate) => JSON.stringify(candidate) === key)) messages.push(message);
@@ -158,19 +162,19 @@ export interface OpApplNode extends LevelFields {
 export const isAbsent = (node: LevelNode | undefined) =>
   node?.kind === "OpAppl" && node.isAbsent === true;
 
-interface NumeralNode extends LevelFields {
+export interface NumeralNode extends LevelFields {
   kind: "Numeral";
   value: string;
   location: SanyLocation;
 }
 
-interface StringNode extends LevelFields {
+export interface StringNode extends LevelFields {
   kind: "String";
   value: string;
   location: SanyLocation;
 }
 
-interface DecimalNode extends LevelFields {
+export interface DecimalNode extends LevelFields {
   kind: "Decimal";
   mantissa: string;
   exponent: string;
@@ -194,6 +198,7 @@ export interface LabelNode extends LevelFields {
   params: FormalParamNode[];
   body: LevelNode;
   labels: Map<string, LabelNode>;
+  isAssumeProve: boolean;
   location: SanyLocation;
 }
 
@@ -203,7 +208,7 @@ export interface OpArgNode extends LevelFields {
   location: SanyLocation;
 }
 
-interface AtNode extends LevelFields {
+export interface AtNode extends LevelFields {
   kind: "At";
   except: OpApplNode;
   component: OpApplNode;
@@ -325,6 +330,7 @@ type TopLevelNode = InstanceNode | AssumeNode | TheoremNode | UseOrHideNode;
 
 export type SemanticNode = SymbolNode | LevelNode | TopLevelNode | ProofPartNode;
 
+// SANY's lists of constants, variables and instantiated definitions follow the Hashtable's order.
 export interface Context {
   table: JavaHashtable;
   symbols: SymbolNode[];
@@ -389,6 +395,7 @@ const putHashtableValue = (table: JavaHashtable, key: string, value: SymbolNode,
   table.count++;
 };
 
+// The values in the order of Hashtable.elements(), from the last bucket to the first.
 export const getHashtableValues = (table: JavaHashtable) =>
   table.buckets.toReversed().flatMap((bucket) => bucket.map((entry) => entry.value));
 
@@ -418,6 +425,7 @@ export const getOpDefs = (module: ModuleNode) =>
     (symbol): symbol is OpDefNode => symbol.kind === "OpDef" && symbol.defKind === "UserDefined",
   );
 
+// ModuleNode.getConstantDecls and getVariableDecls reverse the Hashtable's order.
 export const getDeclarations = (module: ModuleNode, declKind: number) =>
   getHashtableValues(module.context.table)
     .filter(

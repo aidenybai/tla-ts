@@ -15,6 +15,8 @@ import { gunzipSync, gzipSync } from "node:zlib";
 export const STATECHART_DIRECTORY = join(import.meta.dirname, "../tests/fixtures/statechart");
 
 export interface StatechartCall {
+  // The arguments the skill passes to java, with {jar}, {spec}, and {work} for the jar, the folder
+  // of the spec, and the folder the skill writes its modules and configurations to.
   args: string[];
   status: number;
 }
@@ -28,6 +30,7 @@ export const getStatechartSpecs = () =>
 export const readStatechartCalls = (spec: string): StatechartCall[] =>
   JSON.parse(readFileSync(join(STATECHART_DIRECTORY, spec, "calls.json"), "utf8"));
 
+// SANY's XML is large, so the fixture keeps it compressed.
 const getExpectedPath = (spec: string, call: StatechartCall, index: number, kind: "out" | "dot") =>
   join(
     STATECHART_DIRECTORY,
@@ -63,6 +66,8 @@ export const getDumpPath = (args: string[]) => {
   return index === -1 ? undefined : `${args[index + 2]}.dot`;
 };
 
+// The skill writes nothing to the work folder of a spec it stops at before checking, and git
+// keeps no empty folder.
 export const prepareStatechart = (spec: string, jar: string) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "statechart-")));
   const folders = { spec: join(root, "spec"), work: join(root, "work") };
@@ -78,6 +83,7 @@ export const prepareStatechart = (spec: string, jar: string) => {
   return {
     root,
     work: folders.work,
+    // The skill creates the folder it names as Java's temporary directory before each call.
     getArgs: (call: StatechartCall) => {
       const args = call.args.map((arg) =>
         placeholders.reduce((text, [placeholder, path]) => text.replaceAll(placeholder, path), arg),
@@ -101,4 +107,5 @@ export const prepareStatechart = (spec: string, jar: string) => {
 
 const TEMPORARY_DIRECTORY = "-Djava.io.tmpdir=";
 
+// The messages in which TLC names its version, warns about the Java VM, and describes the machine.
 const ENVIRONMENT_MESSAGE = /@!@!@STARTMSG (2262|2401|2187):\d @!@!@\n.*?@!@!@ENDMSG \1 @!@!@\n/gs;

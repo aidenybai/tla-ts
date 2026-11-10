@@ -5,7 +5,6 @@ import {
   type CheckProgress,
   type CheckResult,
   type InitialStates,
-  type SearchStatistics,
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
 import { createEnvironment } from "./environment";
@@ -26,6 +25,7 @@ import {
   reportStartup,
 } from "./search";
 import { getInitialStates } from "./successors";
+import { setFingerprintPolynomial } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
@@ -35,7 +35,7 @@ import {
   freezeStringOrder,
   getUnorderedString,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
   type Value,
 } from "./values";
 import { spawnWorker, type Port } from "./worker";
@@ -50,9 +50,12 @@ export interface StartMessage {
   ports: (Port | undefined)[];
   seed: EncodedStates;
   isTool: boolean | undefined;
-  isTraceRecorded: boolean | undefined;
+  traceFile: string | undefined;
   isWarningEnabled: boolean | undefined;
   version: TlcVersion | undefined;
+  fingerprintPolynomial: number | undefined;
+  maxSetSize: number | undefined;
+  isLazyValueExpanded: boolean | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
   remaining: Int32Array;
@@ -64,11 +67,6 @@ interface LevelMessage {
   added: number;
   outDegrees: number[];
   fingerprints: BigInt64Array;
-}
-
-interface ParallelStatistics extends SearchStatistics {
-  initialStates: InitialStates | undefined;
-  outDegrees: number[];
 }
 
 export type WorkerMessage =
@@ -87,7 +85,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ? parseConfig(options.config, options.version)
       : options.config;
   const print = options.onPrint ?? console.log;
-  let printedCount = 0;
+  const printed = { count: 0 };
   const getKey = (progress: CheckProgress) =>
     [
       progress.kind,
@@ -100,29 +98,36 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     reported.add(getKey(progress));
     options.onProgress?.(progress);
   };
+  // The search on the calling thread prints and reports what this one did while it started, so it
+  // skips that.
   const fallBack = (createdString?: string) => {
     if (createdString !== undefined) {
       options.onProgress?.({ kind: "sequential-fallback", string: createdString });
     }
-    let skippedCount = printedCount;
+    const skipped = { count: printed.count };
     return checkSequentially({
       ...options,
       config,
-      onPrint: (text) => (skippedCount-- > 0 ? undefined : print(text)),
+      onPrint: (text) => (skipped.count-- > 0 ? undefined : print(text)),
       onProgress: (progress) => {
         if (!reported.has(getKey(progress))) options.onProgress?.(progress);
       },
     });
   };
   const workerCount = options.workers ?? 1;
+  // TLC's workers write the -dump state graph, and print the violations -continue goes on past, in
+  // whichever order they find them, so one worker does what a single TLC worker does. The
+  // coverage counts live in one worker's evaluators.
   const isSequential =
     workerCount < 2 ||
     typeof SharedArrayBuffer !== "function" ||
     options.dump !== undefined ||
+    options.coverage !== undefined ||
     options.isContinued === true ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||
-    config.possible.length > 0;
+    config.possible.length > 0 ||
+    (options.moduleOperators?.length ?? 0) > 0;
   if (isSequential) return fallBack();
   const modules = new Map<string, string | undefined>();
   const loadModule = (name: string) => {
@@ -138,7 +143,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   const order = createTlcOrder(options.source, loadModule);
   setStringOrder(order.getStringOrder(config));
-  setValueVersion(options.version);
+  setValueOptions(options);
+  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   freezeStringOrder();
   const specification = createEnvironment(config, {
     source: options.source,
@@ -146,12 +152,16 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     order,
     loadClass,
     print: (text) => {
-      printedCount++;
+      printed.count++;
       print(text);
     },
-    files: { readFile: options.readFile, writeFile: options.writeFile },
+    files: {
+      readFile: options.readFile,
+      writeFile: options.writeFile,
+      makeDirectory: options.makeDirectory,
+    },
     isTool: options.isTool,
-    isTraceRecorded: options.isTraceRecorded,
+    traceFile: options.traceSpec?.traceFile,
     isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
@@ -161,6 +171,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const search = createSearch(
     config,
     environment,
+    specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     report,
   );
@@ -176,15 +187,15 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   }
 
   const canonicalize = createCanonicalizer();
-  let sharedFingerprints = createSharedFingerprints();
+  const shared = { fingerprints: createSharedFingerprints() };
   const fingerprint = new Int32Array(2);
   const seeds = Array.from({ length: workerCount }, createStateEncoder);
-  const statistics: ParallelStatistics = {
+  const statistics = {
     generatedStates: 0,
     distinctStates: 0,
     queuedStates: 0,
     depth: 0,
-    initialStates: undefined,
+    initialStates: undefined as InitialStates | undefined,
     outDegrees: Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0),
   };
   const tlcFingerprints: BigInt64Array[] = [];
@@ -213,10 +224,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       canonicalize(state);
       statistics.generatedStates++;
       writeStateFingerprint(search.getFingerprintState(state), fingerprint);
-      if (isSharedFingerprintsFull(sharedFingerprints)) {
-        sharedFingerprints = growSharedFingerprints(sharedFingerprints);
+      if (isSharedFingerprintsFull(shared.fingerprints)) {
+        shared.fingerprints = growSharedFingerprints(shared.fingerprints);
       }
-      if (!insertSharedFingerprint(sharedFingerprints, fingerprint[0], fingerprint[1])) continue;
+      if (!insertSharedFingerprint(shared.fingerprints, fingerprint[0], fingerprint[1])) continue;
       if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
         return false;
       }
@@ -230,6 +241,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     );
     return true;
   };
+  // The sequential search reports a violation or a failed evaluation in the initial states.
   report({ kind: "initial-states-started" });
   try {
     if (!seedInitialStates(search.spec.init)) return fallBack();
@@ -248,18 +260,17 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   if (statistics.distinctStates === 0) return createSuccess();
 
   const reports: WorkerMessage[] = [];
-  let pendingCount = workerCount;
-  let resolveReports = (_reports: WorkerMessage[]) => {};
+  const pending = { count: workerCount, resolve: (_reports: WorkerMessage[]) => {} };
   const onMessage = (message: WorkerMessage) => {
     reports.push(message);
-    if (message.type === "abort" || reports.length === pendingCount) {
-      resolveReports(reports.splice(0));
+    if (message.type === "abort" || reports.length === pending.count) {
+      pending.resolve(reports.splice(0));
     }
   };
   const waitForReports = (expected: number) =>
     new Promise<WorkerMessage[]>((resolve) => {
-      pendingCount = expected;
-      resolveReports = resolve;
+      pending.count = expected;
+      pending.resolve = resolve;
     });
   const ready = waitForReports(workerCount);
   const requests = new Int32Array(new SharedArrayBuffer(workerCount * 4));
@@ -275,11 +286,11 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   );
   const terminate = () => workers.forEach((worker) => worker.terminate());
   const channels = new Map<string, MessageChannel>();
-  const getPort = (fromIndex: number, toIndex: number) => {
-    const key = fromIndex < toIndex ? `${fromIndex}:${toIndex}` : `${toIndex}:${fromIndex}`;
+  const getPort = (from: number, to: number) => {
+    const key = from < to ? `${from}:${to}` : `${to}:${from}`;
     const channel = channels.get(key) ?? new MessageChannel();
     channels.set(key, channel);
-    return (fromIndex < toIndex ? channel.port1 : channel.port2) as unknown as Port;
+    return (from < to ? channel.port1 : channel.port2) as unknown as Port;
   };
   workers.forEach((worker, index) => {
     const ports = Array.from({ length: workerCount }, (_, peer) =>
@@ -296,10 +307,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ports,
       seed,
       isTool: options.isTool,
-      isTraceRecorded: options.isTraceRecorded,
+      traceFile: options.traceSpec?.traceFile,
       isWarningEnabled: options.isWarningEnabled,
       version: options.version,
-      fingerprints: sharedFingerprints,
+      fingerprintPolynomial: options.fingerprintPolynomial,
+      maxSetSize: options.maxSetSize,
+      isLazyValueExpanded: options.isLazyValueExpanded,
+      fingerprints: shared.fingerprints,
       requests,
       remaining,
     };
@@ -309,12 +323,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     messages.some((message) => message.type === "abort");
   const send = (message: CoordinatorMessage) =>
     workers.forEach((worker) => worker.postMessage(message));
+  // Workers pause when the shared table needs to grow, and resume once it has.
   const collectLevels = async (messages: WorkerMessage[]): Promise<WorkerMessage[]> => {
-    const pausedCount = messages.filter((message) => message.type === "paused").length;
-    if (pausedCount === 0 || isAborted(messages)) return messages;
-    sharedFingerprints = growSharedFingerprints(sharedFingerprints);
-    const resumed = waitForReports(pausedCount);
-    send({ type: "resize", fingerprints: sharedFingerprints });
+    const paused = messages.filter((message) => message.type === "paused").length;
+    if (paused === 0 || isAborted(messages)) return messages;
+    shared.fingerprints = growSharedFingerprints(shared.fingerprints);
+    const resumed = waitForReports(paused);
+    send({ type: "resize", fingerprints: shared.fingerprints });
     const reported = messages.filter((message) => message.type !== "paused");
     return [...reported, ...(await collectLevels(await resumed))];
   };
@@ -324,6 +339,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   }
   for (;;) {
     const reported = waitForReports(workerCount);
+    // Every worker is idle, so peers can ask any of them for states once the level starts.
     requests.forEach((_, index) => Atomics.store(requests, index, 0));
     send({ type: "level" });
     const messages = await collectLevels(await reported);

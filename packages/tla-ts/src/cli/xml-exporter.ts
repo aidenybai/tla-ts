@@ -89,22 +89,24 @@ interface XmlExportArgs {
   error: "missing-include" | "several-files" | undefined;
 }
 
+// XMLExporter reads the flags before the last argument, which names the module, and skips an
+// argument it does not know, which then counts as another module.
 const parseXmlExportArgs = (args: string[], flagNames: Set<string>): XmlExportArgs => {
   const parsed: XmlExportArgs = { flags: new Set(), includes: [], error: undefined };
-  let lastFlagIndex = -1;
+  const lastFlag = { index: -1 };
   for (let index = 0; index < args.length - 1; index++) {
     if (flagNames.has(args[index])) {
       parsed.flags.add(args[index]);
-      lastFlagIndex = index;
+      lastFlag.index = index;
       continue;
     }
     if (args[index] !== "-I") continue;
     index++;
     if (index > args.length - 2) return { ...parsed, error: "missing-include" };
     parsed.includes.push(args[index]);
-    lastFlagIndex = index;
+    lastFlag.index = index;
   }
-  return lastFlagIndex === args.length - 2 ? parsed : { ...parsed, error: "several-files" };
+  return lastFlag.index === args.length - 2 ? parsed : { ...parsed, error: "several-files" };
 };
 
 export const exportXml = (args: string[]) => {
@@ -124,6 +126,7 @@ export const exportXml = (args: string[]) => {
     return EXIT_STATUS.success;
   }
   const fileName = name.endsWith(".tla") ? name : `${name}.tla`;
+  // XMLExporter passes the -I directories in place of TLA-Library.
   const directories = [".", ...parsed.includes];
   const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
   if (path === undefined && !SANY_STANDARD_MODULES.has(fileName.slice(0, -".tla".length))) {
@@ -153,6 +156,8 @@ const printXmlExporterException = (exception: string, line: number) => {
   return XML_EXPORT_EXIT_CODE.uncaughtException;
 };
 
+// TLC 1.7.4's XMLExporter takes only -o, as it can't validate the XML without fetching its
+// schema, and -I, and exports a specification that SANY finds errors in.
 export const exportXml174 = (args: string[], jar: string | undefined) => {
   if (args.length === 0) {
     return printXmlExporterException(
@@ -175,6 +180,7 @@ export const exportXml174 = (args: string[], jar: string | undefined) => {
   }
   const name = args[args.length - 1];
   const fileName = `${name.replace(/\.tla$/i, "")}.tla`;
+  // With no -I directories, SimpleFilenameToStream looks in the root directory.
   const libraries = (parsed.includes.length === 0 ? ["/"] : parsed.includes).map(toLibraryPath);
   const directories = [".", ...libraries];
   const printMissingFile = (moduleFileName: string) =>

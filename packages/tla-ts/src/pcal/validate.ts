@@ -23,10 +23,13 @@ type PcalValidationResult =
 // Java's \s, which unlike JavaScript's matches no Unicode spaces.
 const SPACE = "[ \\t\\n\\x0B\\f\\r]";
 
+// Validator.CHECKSUM_PATTERN, whose (?i) groups become character classes.
 const CHECKSUM_PATTERN = new RegExp(
   `\\\\\\* BEGIN TRANSLATION${SPACE}+\\(${SPACE}*([cC][hH]([eE][cC])?[kK][sS][uU][mM]\\([pP]([lL][uU][sS])?[cC][aA][lL]\\))${SPACE}*(=${SPACE}*"(?<pcal>[0-9A-Fa-f]*)"|\\\\in${SPACE}*STRING)${SPACE}*\\/\\\\${SPACE}*([cC][hH]([eE][cC])?[kK][sS][uU][mM]\\([tT][lL][aA]\\+?\\))${SPACE}*(=${SPACE}*"(?<tla>[0-9A-Fa-f]*)"|\\\\in${SPACE}*STRING)${SPACE}*\\)`,
 );
 
+// CRC32 in Long.toHexString's unpadded lowercase hex. Only a spec with PlusCal needs node:zlib,
+// so it loads then rather than at startup.
 const getChecksum = (text: string) =>
   process.getBuiltinModule("node:zlib").crc32(Buffer.from(text, "utf8")).toString(16);
 
@@ -41,6 +44,7 @@ const reportPcalError = (session: PcalSession, error: PcalError) =>
       : `${error.message}\n    at ${getPcalLocation(error.node)}`,
   );
 
+// trans.removeTabs: tabs reach the next multiple of 8, and every line gets a trailing space.
 const removeTabs = (lines: string[]) =>
   lines.map(
     (line) =>
@@ -104,14 +108,14 @@ const findToken = (lines: string[], location: PcalSearchLocation, token: string)
 const reportCommandLineError = (session: PcalSession, message: string) =>
   reportUnrecoverableError(session, `Command-line error: ${message}`);
 
+// These options set the translator's options for the rest of SANY's run.
 const processOptionArguments = (session: PcalSession, args: string[]) => {
   const params = session.params;
-  let isFirstFairness = true;
-  let isExplicitNof = false;
+  const fairness = { isFirst: true, isExplicitNof: false };
   const setFairness = (option: string) => {
-    if (isFirstFairness) {
+    if (fairness.isFirst) {
       params.fairnessOption = "";
-      isFirstFairness = false;
+      fairness.isFirst = false;
     }
     if (params.fairnessOption !== "") {
       reportCommandLineError(session, "Can only have one of -wf, -sf, -wfNext, and -nof options");
@@ -165,7 +169,7 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
       case "-nof":
       case "nof":
         if (!setFairness(option.replace(/^-/, ""))) return;
-        if (option.endsWith("nof")) isExplicitNof = true;
+        if (option.endsWith("nof")) fairness.isExplicitNof = true;
         continue;
       case "-label":
       case "label":
@@ -209,6 +213,7 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
         continue;
       }
       case "-lineWidth":
+        // PcalTLAGen's line width only shapes the translation's text.
         if (!/^[+-]?\d+$/.test(argument ?? "") || Number(argument) < 60) {
           reportCommandLineError(
             session,
@@ -226,7 +231,7 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
         return;
     }
   }
-  if (params.checkTermination && params.fairnessOption === "" && !isExplicitNof) {
+  if (params.checkTermination && params.fairnessOption === "" && !fairness.isExplicitNof) {
     params.fairnessOption = "wf";
   }
 };
@@ -260,56 +265,56 @@ const processOptions = (session: PcalSession, lines: string[], location: PcalSea
 };
 
 const uncomment = (lines: string[], startLine: number, startColumn: number) => {
-  let depth = 0;
-  let isDone = false;
-  let isInString = false;
-  for (let index = startLine; !isDone && index < lines.length; index++) {
+  const scan = { depth: 0, isDone: false, isInString: false };
+  for (let index = startLine; !scan.isDone && index < lines.length; index++) {
     const line = lines[index];
     const start = index === startLine ? startColumn : 0;
     const output = [line.slice(0, start)];
-    isInString = false;
-    for (let column = start; !isDone && column < line.length; column++) {
+    scan.isInString = false;
+    for (let column = start; !scan.isDone && column < line.length; column++) {
       const char = line[column];
       const pair = line.slice(column, column + 2);
-      if (pair === "(*" && !isInString) {
-        depth += 1;
+      if (pair === "(*" && !scan.isInString) {
+        scan.depth += 1;
         output.push("  ");
         column += 1;
         continue;
       }
-      if (pair === "*)" && !isInString && depth === 0) {
+      if (pair === "*)" && !scan.isInString && scan.depth === 0) {
         output.push(pair);
-        isDone = true;
+        scan.isDone = true;
         continue;
       }
-      if (pair === "*)" && !isInString) {
-        depth -= 1;
+      if (pair === "*)" && !scan.isInString) {
+        scan.depth -= 1;
         output.push("  ");
         column += 1;
         continue;
       }
-      if (depth > 0) {
+      if (scan.depth > 0) {
         output.push(" ");
         continue;
       }
-      if (isInString && char === "\\" && pair.length === 2) {
+      if (scan.isInString && char === "\\" && pair.length === 2) {
         output.push(pair);
         column += 1;
         continue;
       }
-      if (!isInString && pair === "\\*") {
+      if (!scan.isInString && pair === "\\*") {
         output.push(" ");
         break;
       }
-      if (char === '"') isInString = !isInString;
+      if (char === '"') scan.isInString = !scan.isInString;
       output.push(char);
     }
-    if (isInString) return new PcalError(`Unterminated string in line ${index + 1}`);
+    if (scan.isInString) return new PcalError(`Unterminated string in line ${index + 1}`);
     lines[index] = output.join("");
   }
   return undefined;
 };
 
+// Vector.get on an index out of its range, whose message names the vector's capacity: the 10 it
+// starts with, doubled as it grows.
 const throwIndexOutOfBounds = (index: number, size: number): never => {
   const capacity = 10 * 2 ** Math.max(0, Math.ceil(Math.log2(size / 10)));
   throw new PcalRuntimeError(
@@ -336,25 +341,23 @@ export const validatePcalModule = (
       break;
     }
   }
-  let beginLine = 0;
-  let beginColumn = -1;
-  let isBeginFound = false;
-  let isFair = false;
-  for (; beginLine < lines.length; beginLine++) {
-    const line = lines[beginLine];
-    // TLAConstants.MODULE_CLOSING_REGEX never matches: removeTabs adds a trailing space.
+  const begin = { line: 0, column: -1, isFound: false, isFair: false };
+  for (; begin.line < lines.length; begin.line++) {
+    const line = lines[begin.line];
+    // TLAConstants.MODULE_CLOSING_REGEX, which the trailing space removeTabs adds keeps from
+    // matching.
     if (/^=+$/.test(line)) break;
     const algorithmColumn = line.indexOf("--algorithm");
     const fairColumn = line.indexOf("--fair");
     if (algorithmColumn !== -1) {
-      beginColumn = algorithmColumn + "--algorithm".length;
-      isBeginFound = true;
+      begin.column = algorithmColumn + "--algorithm".length;
+      begin.isFound = true;
       break;
     }
     if (fairColumn !== -1) {
-      beginColumn = fairColumn + "--fair".length;
-      isBeginFound = true;
-      isFair = true;
+      begin.column = fairColumn + "--fair".length;
+      begin.isFound = true;
+      begin.isFair = true;
       break;
     }
   }
@@ -364,25 +367,25 @@ export const validatePcalModule = (
   const endTranslationLine = findTokenPair(lines, translationLine + 1, "END", "TRANSLATION");
   if (endTranslationLine === -1) results.add("NO_TRANSLATION_EXISTS");
   if (translationLine === -1 && endTranslationLine === -1) return results;
-  if (!isBeginFound) {
+  if (!begin.isFound) {
     results.add("NO_PLUSCAL_EXISTS");
     return results;
   }
-  const uncommentError = uncomment(lines, beginLine, beginColumn);
+  const uncommentError = uncomment(lines, begin.line, begin.column);
   if (uncommentError !== undefined) {
     reportPcalError(session, uncommentError);
     return new Set(["ERROR_ENCOUNTERED"]);
   }
-  let ast: PcalAlgorithm | undefined;
+  const parsed: { ast: PcalAlgorithm | undefined } = { ast: undefined };
   // HACK: Validator reports the exceptions of ParseAlgorithm.getAlgorithm and PCalTLAGenerator
   // and goes on to compare the checksums.
   try {
     const result = parsePcalAlgorithm(
       session,
-      createPcalCharReader(lines, beginLine, beginColumn),
-      isFair,
+      createPcalCharReader(lines, begin.line, begin.column),
+      begin.isFair,
     );
-    ast = result.ast;
+    parsed.ast = result.ast;
     translatePcalAlgorithm(result.ast, result.omitPC, result.hasDefaultInitialization, session.log);
   } catch (error) {
     if (!(error instanceof PcalError)) throw error;
@@ -395,13 +398,14 @@ export const validatePcalModule = (
     return results;
   }
   const pcalChecksum = match.groups?.pcal;
-  // The Java checksums the string "fair" for a --fair algorithm, unlike TLC 1.7.4's.
+  // The Java checksums the string "fair" for a --fair algorithm, unlike TLC 1.7.4's, and a failed
+  // parse leaves an AST whose text, Object.toString's class name and hash code, matches no checksum.
   const algorithmText =
-    isFair && version !== "1.7.4"
+    begin.isFair && version !== "1.7.4"
       ? "fair"
-      : ast === undefined
+      : parsed.ast === undefined
         ? undefined
-        : formatPcalNode(ast, session.params.inputVersionNumber, version);
+        : formatPcalNode(parsed.ast, session.params.inputVersionNumber, version);
   if (
     pcalChecksum !== undefined &&
     (algorithmText === undefined || pcalChecksum !== getChecksum(algorithmText))

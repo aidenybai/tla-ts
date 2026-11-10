@@ -1,7 +1,11 @@
+// The script forks itself with --worker, and a worker does the work on each module the parent
+// sends it, by index.
+
 import { fork } from "node:child_process";
 import { getOption } from "./corpora";
 import type { ModuleProofRecord } from "./proof-records";
 
+// In a worker, it never resolves. A worker wraps each result, as a process can't send undefined.
 export const runModuleWorkers = async <Result>(
   records: ModuleProofRecord[],
   work: (record: ModuleProofRecord) => Promise<Result>,
@@ -11,7 +15,9 @@ export const runModuleWorkers = async <Result>(
     process.on("message", (index: number) => {
       void work(records[index]).then((result) => process.send?.({ result }));
     });
-    // Node exits with code 13 when the event loop empties under a pending top-level await.
+    // The script's top-level await on this promise never settles in a worker, and Node warns and
+    // exits with code 13 when the event loop empties under one. So the worker exits once the parent
+    // lets it go.
     process.once("disconnect", () => process.exit(0));
     return new Promise(() => {});
   }
@@ -21,6 +27,7 @@ export const runModuleWorkers = async <Result>(
     .toSorted((left, right) => right.size - left.size)
     .map((entry) => entry.index);
   const byModule = new Map<number, Result>();
+  // A worker that exits mid-module, as when a backend overflows the stack, gives way to a new one.
   await Promise.all(
     Array.from({ length: Math.min(jobs, queue.length) }, async () => {
       while (queue.length > 0) {

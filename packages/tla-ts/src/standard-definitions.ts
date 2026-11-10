@@ -1,6 +1,9 @@
 import type { SourceRange } from "./ast";
 import type { OperatorLevels } from "./levels";
 
+// SANY's view of the dummy definitions in tla2sany/StandardModules of the operators tla-ts
+// implements natively: their levels, and where SANY reports a spec that defines one again.
+
 type Signature =
   | [string, number, number[], number[], number[]]
   | [string, number, number[], number[], number[], number[][], string[]];

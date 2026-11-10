@@ -12,6 +12,8 @@ export default defineConfig({
       "packages/tla-ts/tests/conformance/sany.json",
       "packages/tla-ts/tests/conformance/tlapm.json",
       "packages/tla-ts/tests/conformance/proofs.json",
+      "packages/conformance/test",
+      "packages/conformance/baselines",
     ],
   },
   lint: {

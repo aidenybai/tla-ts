@@ -1,13 +1,16 @@
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import {
+  TlaEndOfInputError,
+  TlaEvaluationError,
+  TlaModuleError,
+  TlaNullPointerError,
+} from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import {
   formatValue,
   getFunctionClass,
-  getSequenceElements,
-  isEnumerable,
-  isFunctionValue,
+  isFingerprintedSince,
+  isOverriddenSet,
   isSetValue,
-  toFiniteFunction,
   MAXIMUM_INTEGER,
   MINIMUM_INTEGER,
   setTrace,
@@ -15,6 +18,8 @@ import {
   type Value,
 } from "./values";
 
+// TLC evaluates these in its core, or its Java code takes integers, so a wrong argument is an
+// evaluation failure. Every other standard-module operator raises an EvalException.
 const CORE_OPERATOR_NAMES = new Set([
   "=",
   "#",
@@ -41,7 +46,6 @@ const CORE_OPERATOR_NAMES = new Set([
   "..",
   "Seq",
   "IsFiniteSet",
-  "RandomElement",
 ]);
 
 const createArgumentError = (name: string, message: string) =>
@@ -57,6 +61,15 @@ export const createModuleArgumentError = (
     `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${formatValue(value)}`,
   );
 
+export const toEnumeratedSet = (value: Value, name: string, reported = value) => {
+  if (!isSetValue(value) || isOverriddenSet(value)) {
+    throw new TlaModuleError(
+      `Applying ${name} to the following value,\nwhich is not a finite set:\n${formatValue(reported)}`,
+    );
+  }
+  return toFiniteSet(value);
+};
+
 const isOperatorValue = (argument: BuiltinArgument): argument is OperatorValue =>
   typeof argument === "object" && argument.kind === "Operator";
 
@@ -68,66 +81,12 @@ export const getValue = (args: BuiltinArgument[], index: number, name: string): 
   return argument;
 };
 
-export const getNumber = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (typeof value !== "number") {
-    throw createArgumentError(
-      name,
-      `${name} expects an integer but received ${formatValue(value)}`,
-    );
-  }
-  return value;
-};
-
 export const getBoolean = (args: BuiltinArgument[], index: number, name: string) => {
   const value = getValue(args, index, name);
   if (typeof value !== "boolean") {
     throw createArgumentError(name, `${name} expects a boolean but received ${formatValue(value)}`);
   }
   return value;
-};
-
-export const getSet = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (!isSetValue(value))
-    throw createArgumentError(name, `${name} expects a set but received ${formatValue(value)}`);
-  return value;
-};
-
-export const getEnumerableSet = (args: BuiltinArgument[], index: number, name: string) => {
-  const set = getSet(args, index, name);
-  if (!isEnumerable(set)) {
-    throw createArgumentError(
-      name,
-      `${name} cannot enumerate the non-enumerable set ${formatValue(set)}`,
-    );
-  }
-  return set;
-};
-
-export const getElements = (args: BuiltinArgument[], index: number, name: string) =>
-  toFiniteSet(getEnumerableSet(args, index, name)).elements;
-
-export const getSequence = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  const elements = getSequenceElements(value);
-  if (!elements)
-    throw createArgumentError(
-      name,
-      `${name} expects a sequence but received ${formatValue(value)}`,
-    );
-  return elements;
-};
-
-export const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (!isFunctionValue(value)) {
-    throw createArgumentError(
-      name,
-      `${name} expects a function but received ${formatValue(value)}`,
-    );
-  }
-  return toFiniteFunction(value);
 };
 
 export const getOperator = (args: BuiltinArgument[], index: number, name: string) => {
@@ -267,11 +226,15 @@ export const getJavaClassName = (value: Value) => {
 
 export const getKindString = (value: Value) => KIND_STRINGS[getJavaClassName(value)];
 
-export const createJavaOverrideError = (signature: string, message: string) =>
-  new TlaEvaluationError(
-    `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`,
-  );
+const getJavaOverrideMessage = (signature: string, message: string) =>
+  `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`;
 
+export const createJavaOverrideError = (signature: string, message: string) =>
+  new TlaEvaluationError(getJavaOverrideMessage(signature, message));
+
+// TLC reports a failure inside an operator's Java method as a failure of the method, except an
+// EvalException the method raises itself, and a NullPointerException as an EvalException. A method
+// that evaluates its own arguments reports every failure as a failure of the method.
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
   const reportAsJavaFailure =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
@@ -280,17 +243,30 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
       try {
         return compute(...args);
       } catch (error) {
-        const isWrapped =
-          error instanceof TlaEvaluationError &&
-          (builtin.isLazy === true || !(error instanceof TlaModuleError));
-        if (!isWrapped) throw error;
+        if (!(error instanceof TlaEvaluationError) || error instanceof TlaEndOfInputError) {
+          throw error;
+        }
+        const isFingerprinted = isFingerprintedSince(depth);
+        // The wrapping error replaces the FingerprintException.
         if (setTrace.sets) setTrace.sets.length = depth;
+        const isWrapped =
+          builtin.isLazy === true || !(error instanceof TlaModuleError) || isFingerprinted;
+        if (!isWrapped) throw error;
+        if (builtin.isLazy !== true && error instanceof TlaNullPointerError) {
+          throw new TlaModuleError(getJavaOverrideMessage(signature, error.message));
+        }
         throw createJavaOverrideError(signature, error.message);
       }
     };
+  const evaluate = reportAsJavaFailure(builtin.evaluate);
   return {
     ...builtin,
-    evaluate: reportAsJavaFailure(builtin.evaluate),
+    evaluate: (args, context) => {
+      if (args.length !== builtin.arity) {
+        throw createJavaOverrideError(signature, `array is not of length ${builtin.arity}`);
+      }
+      return evaluate(args, context);
+    },
     evaluateUnary: builtin.evaluateUnary && reportAsJavaFailure(builtin.evaluateUnary),
     evaluateBinary: builtin.evaluateBinary && reportAsJavaFailure(builtin.evaluateBinary),
   };
@@ -317,8 +293,9 @@ export const defineArithmetic = (
 ) => {
   const signature = getJavaSignature(module, method, "IntValue", 2);
   return defineBinary(name, (left, right) => {
-    const leftNumber = getJavaInteger(left, signature);
+    // TLC's MethodHandle casts the last argument first.
     const rightNumber = getJavaInteger(right, signature);
+    const leftNumber = getJavaInteger(left, signature);
     const result = compute(leftNumber, rightNumber);
     if (isOutOfRange(result)) throw createOverflowError(`${leftNumber}${name}${rightNumber}`);
     return result;
@@ -334,6 +311,7 @@ const getIntegerArgument = (value: Value, position: string, name: string) => {
   return value;
 };
 
+// The error of an argument that isn't an integer names the operator as TLC's method does.
 export const defineComparison = (
   name: string,
   compare: (left: number, right: number) => boolean,

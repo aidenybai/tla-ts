@@ -1,4 +1,4 @@
-import type { Expression } from "./ast";
+import type { BoundPattern, Expression } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -39,6 +39,8 @@ const composePermutations = (first: Images, second: Images) => {
   return composed;
 };
 
+// Tool#getSymmetryPerms fails with a RuntimeException as TLC starts, which TLC reports as one it
+// did not expect.
 const createSymmetryError = (message: string) =>
   setExitCode(new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${message}`), EXIT_STATUS.error);
 
@@ -55,8 +57,33 @@ const toImages = (value: Value) => {
   return permutation;
 };
 
+// SyntaxTreeNode.getHumanReadableImage, which joins the tokens of an expression without spaces.
+const getBoundImage = (pattern: BoundPattern, set: Expression | undefined) => {
+  const names = pattern.kind === "Name" ? pattern.name : `<<${pattern.names.join(",")}>>`;
+  return set ? `${names}\\in${getExpressionImage(set)}` : names;
+};
+
 const getExpressionImage = (expression: Expression): string => {
   if (expression.kind === "Identifier") return expression.name;
+  if (expression.kind === "Number") return expression.text ?? String(expression.value);
+  if (expression.kind === "SetEnumeration") {
+    return `{${expression.elements.map(getExpressionImage).join(",")}}`;
+  }
+  if (expression.kind === "Choose") {
+    return `CHOOSE${getBoundImage(expression.pattern, expression.set)}:${getExpressionImage(expression.body)}`;
+  }
+  if (expression.kind === "Tuple")
+    return `<<${expression.elements.map(getExpressionImage).join(",")}>>`;
+  if (expression.kind === "Record") {
+    const fields = expression.fields.map(
+      (field) => `${field.name}|->${getExpressionImage(field.value)}`,
+    );
+    return `[${fields.join(",")}]`;
+  }
+  if (expression.kind === "FunctionConstruction") {
+    const bounds = expression.bounds.map((bound) => getBoundImage(bound.pattern, bound.set));
+    return `[${bounds.join(",")}|->${getExpressionImage(expression.body)}]`;
+  }
   if (expression.kind !== "Apply") return "";
   const args = expression.args.map(getExpressionImage);
   return /^[A-Za-z_]/.test(expression.operator)
@@ -95,8 +122,11 @@ export const getSymmetryGroup = (
   if (!elements.every(isFunctionValue)) {
     throw createSymmetryError("The symmetry values must be function records.");
   }
-  const permutations = elements.map(toImages);
-  const permutedSets = definition.body.kind === "Apply" ? definition.body.args : [];
+  // Tool#getSymmetryPerms warns about each permuted set with fewer than two elements, by the name
+  // the config substitutes for it. As many permuted sets as permutations means none has two.
+  const body = definition.body;
+  const permutedSets =
+    body.kind === "Apply" ? body.args : body.kind === "SetEnumeration" ? body.elements : [];
   const configNames = new Map(
     substitutions
       .filter((substitution) => substitution.module === undefined)
@@ -119,26 +149,28 @@ export const getSymmetryGroup = (
     return undefined;
   }
   const group = new Map<string, Images>();
-  permutations.forEach((permutation) => {
+  elements.map(toImages).forEach((permutation) => {
     if (permutation.size > 0) group.set(getPermutationKey(permutation), permutation);
   });
   const generators = [...group.values()];
-  let frontierStart = 0;
-  while (frontierStart < group.size) {
+  const frontier = { start: 0 };
+  while (frontier.start < group.size) {
     const members = [...group.values()];
     const end = members.length;
     generators.forEach((generator) =>
-      members.slice(frontierStart, end).forEach((member) => {
+      members.slice(frontier.start, end).forEach((member) => {
         const composed = composePermutations(generator, member);
         const key = getPermutationKey(composed);
         if (composed.size > 0 && !group.has(key)) group.set(key, composed);
       }),
     );
-    frontierStart = end;
+    frontier.start = end;
   }
   const movedNames = new Set(
     [...group.values()].flatMap((images) => [...images.values()].map((image) => image.name)),
   );
+  // Only a permutation of a constant that TLC holds as an enumerated set is checked. TLC binds a
+  // constant the config substitutes with <- to the definition, which it skips.
   const substitutedNames = new Set(substitutions.map((substitution) => substitution.name));
   warnSmallSets(
     permutedSets.filter((node) => {
@@ -172,6 +204,8 @@ const permuteElements = (elements: Value[], images: Images) => {
   return undefined;
 };
 
+// A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
+// in order, so it sorts only the moved ones and merges them back.
 const permuteSortedElements = (elements: Value[], images: Images) => {
   const kept: Value[] = [];
   const moved: Value[] = [];
@@ -197,6 +231,8 @@ const permuteSortedElements = (elements: Value[], images: Images) => {
   return merged;
 };
 
+// Value#permute: the value with each model value replaced by its image. A value the permutation
+// doesn't move is returned itself, so that comparing it with itself stops at identity.
 const permuteValue = (value: Value, images: Images): Value => {
   if (typeof value !== "object") return value;
   const kind = value.kind;
@@ -213,6 +249,8 @@ const permuteValue = (value: Value, images: Images): Value => {
       const permuted = createFunction(
         domain.map((key, index): [Value, Value] => [key, range[index]]),
       );
+      // A permutation often maps the domain to itself, such as a function over the symmetric set.
+      // Sharing the original domain array lets comparisons with other images skip the domain.
       const isSameDomain = permuted.domain.every(
         (key, index) => key === functionValue.domain[index],
       );
@@ -228,6 +266,8 @@ const permuteValue = (value: Value, images: Images): Value => {
   return elements ? createSet(elements) : set;
 };
 
+// TLC permutes the state under each permutation, variable by variable, and moves on to the next
+// permutation as soon as a variable's image is larger than the smallest state's.
 export const getRepresentative = (
   state: Value[],
   permutations: Images[],

@@ -156,6 +156,7 @@ CopiesIn(e, B) ==
  5 Dec 98 : Initial version.
 `;
 
+// Verbatim from tla2tools.jar 2026.10.28, since SANY's XML locates every node and keeps comments.
 export const SANY_STANDARD_MODULES = new Map([
   ["Bags", BAGS],
   [

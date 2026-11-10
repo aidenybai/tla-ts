@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
@@ -17,7 +17,10 @@ describe("TLCGet matches TLC", () => {
     const result = await check({
       source: readFileSync(join(directory, `${name}.tla`), "utf8"),
       config: readFileSync(join(directory, `${name}.cfg`), "utf8"),
-      loadModule: (module) => readFileSync(join(directory, `${module}.tla`), "utf8"),
+      loadModule: (module) => {
+        const path = join(directory, `${module}.tla`);
+        return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+      },
     });
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual(counts);

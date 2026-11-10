@@ -193,6 +193,8 @@ const createLevelError = (message: string, expression: Expression) =>
 
 const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
 
+// SANY's OpApplNode.levelCheck rejects raw actions inside temporal formulas, but not inside a LET
+// or a label.
 const isOperatorApplication = (expression: Expression) =>
   expression.kind !== "Let" && expression.kind !== "Label";
 
@@ -212,6 +214,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const definition = context.getDefinition(name);
     if (definition) {
       const levels = analyzeDefinition(definition, new Map());
+      // SANY names a definition of an instance by its qualified name, as in I!Foo.
       const qualifiedName = context.getQualifiedName?.(name);
       return {
         kind: "Defined",
@@ -431,6 +434,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         data.params.add(name);
         return { data, declared: { name, arity: resolved.arity } };
       }
+      if (expression.kind === "OperatorReference") return { data: createData() };
     }
     return { data: analyze(expression, scope) };
   };
@@ -519,6 +523,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return data;
   };
 
+  // SANY reports a level error of an operator's arguments at the application.
   const analyze = (expression: Expression, scope: Scope): LevelData => {
     try {
       return analyzeNode(expression, scope);
@@ -684,6 +689,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             ? toOperand(expression.args[0], scope)
             : { data: applyBuiltin(SET_LEVELS, expression.args, scope) },
         ]);
+      // SANY's semantic checker rejects the expression without computing its level.
       case "Bracket":
         return createData();
       case "FieldAccess":
@@ -730,6 +736,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "Apply":
         visitOperator(expression.operator, expression.args);
         return names;
+      // SANY's LetInNode and OpArgNode don't carry the non-Leibniz parameters of their bodies.
       case "Lambda":
       case "Let":
         return names;
@@ -875,15 +882,10 @@ export const analyzeAssumeProve = (
   return data;
 };
 
-interface LevelCheck {
-  location: SourceLocation;
-  check: () => void;
-}
-
 export const checkModuleLevels = (
   module: Module,
   context: LevelContext,
-  instances: LevelCheck[],
+  instances: { location: SourceLocation; check: () => void }[],
   warnings: SanyError[],
 ) => {
   const analyzer = createLevelAnalyzer(context);
@@ -902,6 +904,7 @@ export const checkModuleLevels = (
       ? analyzeAssumeProve(body.statement, new Map(), analyzer).level
       : getLevel([body.statement]);
   };
+  // The proof of a temporal goal may only assume constants.
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []
@@ -927,6 +930,7 @@ export const checkModuleLevels = (
           }
           return step.body.kind === "Qed" ? checkTemporalGoal(step.proof) : [];
         });
+  // SANY checks each step as a theorem of its own after the steps of its proof.
   const checkProof = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []

@@ -189,14 +189,15 @@ describe("SANY XML export", () => {
     ]);
   });
 
+  // SANY's loop over the parameters keeps only the last one's check, so it accepts the first.
   it.each([
-    ["F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(Op, n - 1))", false],
-    ["F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))", true],
-    ["F(n, Op(_, _)) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))", true],
-  ])("analyzes a recursive call in %s as SANY does", (definition, isFailed) => {
+    "F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(Op, n - 1))",
+    "F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))",
+    "F(n, Op(_, _)) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))",
+  ])("rejects %s, whose RECURSIVE declaration has only plain parameters", (definition) => {
     expect(
       isRejected(`---- MODULE Fold ----\nEXTENDS Naturals\nRECURSIVE F(_, _)\n${definition}\n====`),
-    ).toBe(isFailed);
+    ).toBe(true);
   });
 
   it("fails as SANY does on the definition of a DEFINE step", () => {

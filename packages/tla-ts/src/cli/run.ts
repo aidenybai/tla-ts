@@ -5,6 +5,8 @@ import { runTlapm } from "./tlapm";
 import { checkSpecs } from "./tlc";
 import { exportXml, exportXml174 } from "./xml-exporter";
 
+// Tools that run TLC with Java can run tla-ts in place of java, as in
+// `tla-ts -DTLA-Library=lib -cp tla2tools.jar tlc2.TLC Spec`. Other JVM options are ignored.
 const JAVA_MAIN_CLASSES = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 
 const TLA_LIBRARY_PROPERTY = "-DTLA-Library=";
@@ -20,13 +22,10 @@ const getJavaLaunch = (args: string[]) => {
     if (arg === "-cp" || arg === "-classpath" || arg === "--class-path") {
       index++;
       java.classPath = args[index];
-      continue;
-    }
-    if (arg === "-jar") {
+    } else if (arg === "-jar") {
       java.classPath = args[index + 1];
       return { mainClass: "tlc2.TLC", args: args.slice(index + 2), java };
-    }
-    if (arg.startsWith(TLA_LIBRARY_PROPERTY)) {
+    } else if (arg.startsWith(TLA_LIBRARY_PROPERTY)) {
       java.libraries.push(...arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter));
     } else if (arg.startsWith(TEMPORARY_DIRECTORY_PROPERTY)) {
       java.temporaryDirectory = arg.slice(TEMPORARY_DIRECTORY_PROPERTY.length);

@@ -9,6 +9,8 @@ export interface PcalToken {
   type: number;
 }
 
+// For each line, the token of an earlier line it is aligned under, with that token's column when
+// the expression was normalized.
 export interface PcalExpr {
   tokens: PcalToken[][];
   anchorTokens: (PcalToken | undefined)[] | undefined;
@@ -20,6 +22,8 @@ interface PcalCoord {
   item: number;
 }
 
+// The Java keeps these in static fields that SANY never resets, so options one module sets carry
+// over to the modules SANY validates after it.
 export interface PcalParams {
   labelFlag: boolean;
   labelRoot: string;
@@ -42,21 +46,20 @@ export const createPcalParams = (): PcalParams => ({
   inputVersionNumber: PCAL_VERSION_WEIGHT,
 });
 
+// "1.5" is 1500, and -1 means a malformed version.
 export const getPcalVersionNumber = (text: string) => {
-  let result = 0;
-  let digitsAfterDecimal = 0;
-  let isAfterDecimal = false;
+  const state = { result: 0, digitsAfterDecimal: 0, isAfterDecimal: false };
   for (const char of text) {
     if (char === ".") {
-      isAfterDecimal = true;
+      state.isAfterDecimal = true;
       continue;
     }
     if (char < "0" || char > "9") return -1;
-    result = 10 * result + Number(char);
-    if (isAfterDecimal) digitsAfterDecimal += 1;
-    if (digitsAfterDecimal > 3) return -1;
+    state.result = 10 * state.result + Number(char);
+    if (state.isAfterDecimal) state.digitsAfterDecimal += 1;
+    if (state.digitsAfterDecimal > 3) return -1;
   }
-  return result * 10 ** Math.max(0, 3 - digitsAfterDecimal);
+  return state.result * 10 ** Math.max(0, 3 - state.digitsAfterDecimal);
 };
 
 interface PcalBase {
@@ -222,6 +225,7 @@ export interface PcalCall extends PcalBase {
   args: PcalExpr[];
 }
 
+// A Return or CallReturn outside a procedure has a null from, which Java prints as "null".
 export interface PcalReturn extends PcalBase {
   kind: "Return";
   from: string | undefined;
@@ -311,7 +315,8 @@ export const toLabeledStmt = (node: PcalStmt) => {
   return node;
 };
 
-export const getElement = <Item>(vector: Item[], index: number) => {
+// Vector.elementAt, which throws for an index out of bounds.
+export const getElement = <T>(vector: T[], index: number) => {
   if (index < 0 || index >= vector.length) {
     throw new PcalRuntimeError(`ArrayIndexOutOfBoundsException: ${index}`);
   }
@@ -324,6 +329,7 @@ export const createPcalToken = (string: string, column: number, type: number): P
   type,
 });
 
+// A string token's width counts its quotes.
 export const getPcalTokenWidth = (token: PcalToken) =>
   token.type === PCAL_TOKEN.string ? token.string.length + 2 : token.string.length;
 
@@ -444,10 +450,12 @@ export const stepPcalCoord = (expr: PcalExpr, coord: PcalCoord, steps: number) =
   return result;
 };
 
+// Skips a record field name, such as the a in r.a, [a |-> 1] or [a : S].
 const findNextInstance = (expr: PcalExpr, id: string, start: PcalCoord) => {
   for (let coord = expr.tokens.length === 0 ? undefined : { ...start }; coord !== undefined;) {
     const token = getPcalTokenAt(expr, coord);
     const isString = token.type === PCAL_TOKEN.string;
+    // The id is an identifier, so a token that is the id is none of the tokens skipped below.
     if (!isString && token.string === id) return coord;
     const afterNext =
       !isString && (token.string === "[" || token.string === ",")
@@ -484,10 +492,12 @@ const substituteAt = (
       ? tokenLine[coord.item + 1].column - (token.column + getPcalTokenWidth(token))
       : 0;
   const restOfLine = tokenLine.splice(coord.item + 1);
-  let lineIndex = coord.line;
-  let indent = (isParenthesized ? 1 : 0) + token.column;
-  let isInserting = !isParenthesized;
-  const getLine = () => expr.tokens[lineIndex];
+  const cursor = {
+    lineIndex: coord.line,
+    indent: (isParenthesized ? 1 : 0) + token.column,
+    isInserting: !isParenthesized,
+  };
+  const getLine = () => expr.tokens[cursor.lineIndex];
   if (isOneTokenPcalExpr(replacement)) {
     const replacementToken = replacement.tokens[0][0];
     token.string = replacementToken.string;
@@ -500,30 +510,30 @@ const substituteAt = (
     const newExpr = clonePcalExpr(replacement);
     newExpr.tokens.forEach((replacementLine, index) => {
       replacementLine.forEach((nextToken) => {
-        nextToken.column += indent;
-        if (!isInserting) {
+        nextToken.column += cursor.indent;
+        if (!cursor.isInserting) {
           getLine().push(nextToken);
           return;
         }
         token.string = nextToken.string;
         token.type = nextToken.type;
-        isInserting = false;
+        cursor.isInserting = false;
       });
       if (index + 1 >= newExpr.tokens.length) return;
-      indent = 0;
-      lineIndex += 1;
-      const currentLine = lineIndex;
+      cursor.indent = 0;
+      cursor.lineIndex += 1;
+      const currentLine = cursor.lineIndex;
       expr.tokens.splice(currentLine, 0, []);
       const oldAnchors = expr.anchorTokens ?? [];
       const oldColumns = expr.anchorTokCol ?? [];
-      expr.anchorTokens = expr.tokens.map((_line, item) =>
+      expr.anchorTokens = expr.tokens.map((_, item) =>
         item < currentLine
           ? oldAnchors[item]
           : item === currentLine
             ? newExpr.anchorTokens?.[index + 1]
             : oldAnchors[item - 1],
       );
-      expr.anchorTokCol = expr.tokens.map((_line, item) =>
+      expr.anchorTokCol = expr.tokens.map((_, item) =>
         item < currentLine
           ? oldColumns[item]
           : item === currentLine
@@ -539,7 +549,7 @@ const substituteAt = (
     }
   }
   const line = getLine();
-  const result = { line: lineIndex, item: line.length - 1 };
+  const result = { line: cursor.lineIndex, item: line.length - 1 };
   if (restOfLine.length > 0) {
     const previous = line[line.length - 1];
     const shift = previous.column + getPcalTokenWidth(previous) + spaces - restOfLine[0].column;
@@ -600,6 +610,7 @@ export const getSubstitutedPcalExpr = (expr: PcalExpr, args: PcalExpr[], params:
 export const substitutePcalExprs = (exprs: PcalExpr[], args: PcalExpr[], params: string[]) =>
   exprs.map((expr) => getSubstitutedPcalExpr(expr, args, params));
 
+// TLAExpr.toString, which names the column of a junction except in TLC 1.7.4.
 const formatPcalExpr = (expr: PcalExpr, version?: TlcVersion) => {
   const getColumn = (token: PcalToken) => (version === "1.7.4" ? "" : `(col${token.column}) `);
   const tokens = expr.tokens.map((line) =>
@@ -628,18 +639,19 @@ export const formatPcalNode = (
 ) => {
   const formatExpr = (expr: PcalExpr) => formatPcalExpr(expr, version);
   const columns = [0];
-  let depth = 0;
+  const depth = { value: 0 };
   const indent = (text: string) => {
-    columns[depth + 1] = columns[depth] + text.length;
-    depth += 1;
+    columns[depth.value + 1] = columns[depth.value] + text.length;
+    depth.value += 1;
     return text;
   };
   const endIndent = () => {
-    depth -= 1;
+    depth.value -= 1;
     return "";
   };
-  const newLine = () => `\n${" ".repeat(columns[depth])}`;
+  const newLine = () => `\n${" ".repeat(columns[depth.value])}`;
   const isOldVersion = inputVersionNumber < 1500;
+  // The separators' new lines take the indentation the elements before them leave.
   const formatSeq = (vector: (PcalNode | PcalExpr)[]) =>
     `${indent("<<")}${vector
       .map(

@@ -42,6 +42,8 @@ export interface IdentifierExpression {
   resolution?: LocalResolution;
 }
 
+// spelling holds the text of an operator written as a synonym, such as (+) for \oplus, which SANY
+// reports as written.
 export interface ApplyExpression {
   kind: "Apply";
   operator: string;
@@ -75,6 +77,8 @@ export interface JunctionExpression {
   kind: "And" | "Or";
   operands: Expression[];
   isBulleted?: boolean;
+  // SANY parses A /\ B /\ C as (A /\ B) /\ C, whose node of each prefix of two or more operands ends
+  // after the parentheses of its last operand.
   prefixEnds?: SourceLocation[];
   location: SourceLocation;
 }
@@ -114,6 +118,7 @@ export interface CaseExpression {
   kind: "Case";
   arms: CaseArm[];
   other: Expression | undefined;
+  otherRange?: SourceRange;
   location: SourceLocation;
 }
 
@@ -240,6 +245,7 @@ export interface FunctionApplicationExpression {
   location: SourceLocation;
 }
 
+// SANY parses [e1, ..., en] as a function application without the function, and rejects it.
 export interface BracketExpression {
   kind: "Bracket";
   args: Expression[];
@@ -285,6 +291,7 @@ export interface LabelExpression {
   name: string;
   params: string[];
   paramRanges?: SourceRange[];
+  head?: SourceRange;
   body: Expression;
   location: SourceLocation;
 }
@@ -353,6 +360,7 @@ export interface OperatorDefinition {
   params: OperatorParam[];
   body: Expression;
   bodyRange?: SourceRange;
+  head?: SourceRange;
   isLocal: boolean;
   isRecursive: boolean;
   location: SourceLocation;
@@ -490,7 +498,7 @@ export interface Theorem {
 
 export type ModuleUnit =
   | { kind: "Constants" | "Variables"; declarations: Declaration[]; location: SourceLocation }
-  | { kind: "Recursive"; declarations: Declaration[] }
+  | { kind: "Recursive"; declarations: Declaration[]; location: SourceLocation }
   | { kind: "Definition"; definition: Definition }
   | { kind: "Instance"; instance: Instance }
   | { kind: "Assumption"; assumption: Assumption }

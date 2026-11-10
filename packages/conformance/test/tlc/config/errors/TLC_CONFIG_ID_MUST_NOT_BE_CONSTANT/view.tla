@@ -1,0 +1,22 @@
+(*---
+description: "A constant-level definition evaluates to a value, which isn't accepted here: VIEW K."
+ref: tlc2/tool/impl/Spec.java#getViewSpec
+outcome: config-error
+config: |
+  INIT Init
+  NEXT Next
+  VIEW K
+---*)
+---- MODULE view ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = (x + 1) % 3
+K == TRUE
+====
+
+(*--- recorded
+all:
+  exit: 151
+  transcript: 2233:1 The view function K cannot be a constant.
+---*)

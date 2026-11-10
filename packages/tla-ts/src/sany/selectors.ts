@@ -21,6 +21,9 @@ import {
   type ThmOrAssumpDefNode,
 } from "./nodes";
 
+// A port of SANY's Generator.selectorToNode, following the algorithm of SANY's Subexpression.tla.
+
+// Named after SANY's NameSel, NullSel, GGSel, LLSel, ColonSel and AtSel; !i is the number i.
 type SelectorOp = number | "Name" | "Null" | ">>" | "<<" | ":" | "@";
 
 export interface SelectorItem {
@@ -36,7 +39,7 @@ interface SelectorGenerator {
   resolveSymbol: (name: string) => SymbolNode | undefined;
   resolveSynonym: (name: string) => string;
   generateExpression: (expression: Expression) => ExprNode;
-  generateExprOrOpArg: (
+  generateArgument: (
     operator: SymbolNode,
     index: number,
     argument: Expression,
@@ -71,7 +74,8 @@ const PROOF_STEP_OPERATORS = new Map([
   ["$Suffices", "SUFFICES"],
 ]);
 
-const getNameParts = (name: string) => {
+const getNameParts = (name: string): string[] => {
+  if (name.length > 3 && name.endsWith("!!!")) return [...getNameParts(name.slice(0, -3)), "!!"];
   const parts = name.split("!");
   return parts.some((part) => part.length === 0) ? [name] : parts;
 };
@@ -84,11 +88,11 @@ export const getSelectorItems = (expression: Expression): SelectorItem[] | undef
       const parts = getNameParts(expression.operator);
       const counts =
         expression.argumentCounts ??
-        parts.map((_part, index) => (index === parts.length - 1 ? expression.args.length : 0));
-      let cursor = 0;
+        parts.map((_, index) => (index === parts.length - 1 ? expression.args.length : 0));
+      const cursor = { value: 0 };
       return parts.map((name, index) => {
-        const args = expression.args.slice(cursor, cursor + counts[index]);
-        cursor += counts[index];
+        const args = expression.args.slice(cursor.value, cursor.value + counts[index]);
+        cursor.value += counts[index];
         return { op: "Name", name, args: args.length > 0 ? args : undefined };
       });
     }
@@ -123,10 +127,10 @@ export const isGeneralId = (items: SelectorItem[]) => {
 const getSelectorItemName = (item: SelectorItem) =>
   typeof item.op === "number" ? `argument selector ${item.name}` : item.name;
 
-const getArgNumber = (selector: SelectorOp, arity: number) => {
-  if (typeof selector === "number") return selector > 0 && selector <= arity ? selector : -1;
-  if (selector === "<<") return arity > 0 ? 1 : -1;
-  if (selector === ">>") return arity === 2 ? 2 : -1;
+const getArgNumber = (op: SelectorOp, arity: number) => {
+  if (typeof op === "number") return op > 0 && op <= arity ? op : -1;
+  if (op === "<<") return arity > 0 ? 1 : -1;
+  if (op === ">>") return arity === 2 ? 2 : -1;
   return -1;
 };
 
@@ -163,6 +167,8 @@ const getQuantifierSymbols = (node: OpApplNode) =>
 const extendLocation = (name: SanyLocation | undefined, part: SanyLocation): SanyLocation =>
   name === undefined ? part : { ...name, endLine: part.endLine, endColumn: part.endColumn };
 
+// With expectedArity 0 a selector names an expression, with a positive one an operator argument,
+// and with -1 the definition a DEF clause names.
 export const createSelectorResolver =
   (generator: SelectorGenerator) =>
   (
@@ -235,6 +241,8 @@ export const createSelectorResolver =
               walk.index++;
             }
           }
+          // TLC 1.7.4's SANY names only the last item of a selector it can't resolve, which fails on an
+          // argument selector that isn't a number.
           if (symbol === undefined && generator.version === "1.7.4") {
             const last = items.length - 1;
             return generator.addError(
@@ -274,7 +282,7 @@ export const createSelectorResolver =
             }
             collectedArgs.forEach((argument, argumentIndex) =>
               walk.definitionArgs.push(
-                generator.generateExprOrOpArg(
+                generator.generateArgument(
                   symbol,
                   argumentIndex + walk.definitionArityFound,
                   argument,
@@ -652,7 +660,7 @@ export const createSelectorResolver =
       if (params.length + substInPrefix.length > 0) {
         const operator = current.op;
         params.push(
-          ...Array.from({ length: getSymbolArity(operator) }, (_element, paramIndex) =>
+          ...Array.from({ length: getSymbolArity(operator) }, (_, paramIndex) =>
             generator.createFormalParam(`NewParam${paramIndex}`, 0, undefined),
           ),
         );
@@ -660,7 +668,10 @@ export const createSelectorResolver =
       }
     }
     if (!isFact) {
-      if (current.kind === "ThmOrAssumpDef" && current.body.kind === "AssumeProve")
+      const isAssumeProve =
+        (current.kind === "ThmOrAssumpDef" && current.body.kind === "AssumeProve") ||
+        (current.kind === "Label" && current.isAssumeProve);
+      if (isAssumeProve)
         return generator.addError(location, "ASSUME/PROVE used where an expression is required.");
       if (current.kind === "ThmOrAssumpDef" && current.body.kind === "OpAppl") {
         const step = PROOF_STEP_OPERATORS.get(current.body.operator.name);

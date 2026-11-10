@@ -7,6 +7,8 @@ import {
   type SemanticNode,
 } from "./nodes";
 
+// A port of SANY's tla2sany.linter.Linter.
+
 const getChildren = (node: SemanticNode): (SemanticNode | undefined)[] => {
   switch (node.kind) {
     case "OpAppl":
@@ -67,6 +69,7 @@ const getFieldName = (pair: OpApplNode) => {
   return name?.kind === "String" ? name : undefined;
 };
 
+// Records.sameDomain, given that SANY rejects a record with two fields of the same name.
 const getDomain = (record: OpApplNode) =>
   JSON.stringify([
     record.operands.length,

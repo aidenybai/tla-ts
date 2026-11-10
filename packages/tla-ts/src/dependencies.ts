@@ -7,17 +7,26 @@ interface DefinitionNames extends Pick<
   "definitions" | "substitutions" | "constants" | "variableIndex" | "builtins" | "variables"
 > {}
 
+// Each fact is reachability over the definitions a definition calls, so one pass over the call
+// graph computes them all. A row's first word holds the flags below, and the rest a bitset of the
+// variables the definition reads.
 export interface DefinitionFacts {
   ids: Map<Definition, number>;
   rows: Uint32Array;
   words: number;
 }
 
+// The definition reads a variable, a state-level builtin, or an action or temporal operator.
 const NONCONSTANT = 1;
+// Evaluating the definition again can print, assert, read the clock or choose at random.
 const IMPURE = 2;
+// Like IMPURE, but an Assert that held holds again, so repeating it looks the same.
 const REPEATED_EFFECT = 4;
+// The definition builds a set with UNION or \cup, which streams until TLC caches it.
 const STREAMED = 8;
+// The variables the definition reads don't decide its value: it has an effect, or it is an action.
 const READS_IMPURE = 16;
+// The liveness level of the definition, as thresholds so that reachability is a bitwise or.
 const VARIABLE_LEVEL_FLAGS = 32;
 const ACTION_LEVEL_FLAGS = VARIABLE_LEVEL_FLAGS | 64;
 const TEMPORAL_LEVEL_FLAGS = ACTION_LEVEL_FLAGS | 128;
@@ -36,6 +45,7 @@ const TEMPORAL_KINDS = new Set<Expression["kind"]>([
   "StrongFairness",
 ]);
 
+// TLC bounds the level of every action and temporal operator above constant, whatever its operands.
 const NONCONSTANT_KINDS = new Set<Expression["kind"]>([
   ...ACTION_KINDS,
   ...TEMPORAL_KINDS,
@@ -56,6 +66,8 @@ const IMPURE_BUILTINS = new Set([
   "TLCSet",
 ]);
 
+// UNION and \cup stream the sets they combine until TLC caches them, and TLC builds a new one at
+// each evaluation.
 const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
 
 const getReferencedName = (expression: Expression) => {
@@ -70,7 +82,11 @@ const isImpureBuiltin = (name: string, environment: DefinitionNames) =>
 
 interface Edge {
   callee: Definition;
+  // The configuration replaces the name by a constant value, which TLC's level and variable
+  // analyses take for a constant and its effect analysis evaluates.
   isOverridden: boolean;
+  // Outside every action and temporal operator, where the level of the callee counts. An operator
+  // such as ENABLED fixes the level of what it holds.
   isLevelCounted: boolean;
 }
 
@@ -81,6 +97,8 @@ const collectLocalFacts = (
 ) => {
   const row = new Uint32Array(words);
   const edges: Edge[] = [];
+  // Undefined for a node whose level the nodes it holds decide. Nothing below an action or temporal
+  // operator, or ENABLED, counts towards the level, variables and callees included.
   const getOwnLevelFlags = (node: Expression) => {
     const kind = node.kind;
     if (ACTION_KINDS.has(kind) || (kind === "Apply" && node.operator === "\\cdot")) {
@@ -115,7 +133,12 @@ const collectLocalFacts = (
       const definition = environment.definitions.get(target);
       const isOverridden = environment.constants.has(name);
       const variableIndex = environment.variableIndex.get(name);
-      if (variableIndex !== undefined || environment.builtins.get(name)?.isStateLevel) {
+      // TLC's level bound takes an instance's definition named like a variable for the variable.
+      if (
+        variableIndex !== undefined ||
+        environment.builtins.get(name)?.isStateLevel ||
+        (definition && environment.variableIndex.has(definition.name))
+      ) {
         row[0] |= NONCONSTANT;
       }
       if (variableIndex !== undefined) {
@@ -138,7 +161,7 @@ const collectLocalFacts = (
           builtin?.isStateLevel &&
           !builtin.isLevelConstant
         ) {
-          row[0] |= VARIABLE_LEVEL_FLAGS;
+          row[0] |= builtin.isActionLevel ? ACTION_LEVEL_FLAGS : VARIABLE_LEVEL_FLAGS;
         }
       }
     }
@@ -153,6 +176,8 @@ const getDefinitionExpressions = (definition: Definition) =>
     ? [...definition.bounds.map((bound) => bound.set), definition.body]
     : [definition.body];
 
+// Tarjan's algorithm lists the strongly connected components with the callees first, so each
+// component ors in components that are already final.
 const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask: number) => {
   const count = edges.length;
   const closed = local.slice();
@@ -187,6 +212,7 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
         if (index[callee] === -1) {
           enter(callee);
         } else if (component[callee] === -1) {
+          // A visited node without a component is still on the stack.
           lowLink[node] = Math.min(lowLink[node], index[callee]);
         }
         continue;
@@ -197,6 +223,7 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
         lowLink[caller] = Math.min(lowLink[caller], lowLink[node]);
       }
       if (lowLink[node] !== index[node]) continue;
+      // The component's members share one row, which ors in their callees' rows.
       const members: number[] = [];
       for (;;) {
         const member = stack.pop() ?? node;
@@ -223,19 +250,21 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 
+// TLC evaluates a constant definition without parameters once, so only other definitions pass
+// on the side effects and random choices of the builtins they call.
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
   definition.kind === "Operator" && definition.params.length === 0 && (flags & NONCONSTANT) === 0;
 
 export const createDefinitionFacts = (environment: DefinitionNames): DefinitionFacts => {
   const definitions = [...new Set(environment.definitions.values())];
-  const ids = new Map(definitions.map((definition, definitionId) => [definition, definitionId]));
+  const ids = new Map(definitions.map((definition, id) => [definition, id]));
   const words = 1 + ((environment.variables.length + 31) >>> 5);
   const local = new Uint32Array(definitions.length * words);
   const localImpurity = new Uint32Array(definitions.length * words);
-  const edges = definitions.map((definition, definitionId) => {
+  const edges = definitions.map((definition, id) => {
     const facts = collectLocalFacts(getDefinitionExpressions(definition), environment, words);
-    local.set(facts.row, definitionId * words);
-    localImpurity[definitionId * words] = facts.row[0] & PURITY_MASK;
+    local.set(facts.row, id * words);
+    localImpurity[id * words] = facts.row[0] & PURITY_MASK;
     return facts.edges;
   });
   const getId = (edge: Edge) => ids.get(edge.callee) ?? -1;
@@ -269,10 +298,10 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
 
 const getRow = (definition: Definition, environment: Environment): Uint32Array => {
   const facts = environment.facts;
-  const definitionId = facts.ids.get(definition);
-  return definitionId === undefined
+  const id = facts.ids.get(definition);
+  return id === undefined
     ? getExpressionsRow(getDefinitionExpressions(definition), environment)
-    : facts.rows.subarray(definitionId * facts.words, (definitionId + 1) * facts.words);
+    : facts.rows.subarray(id * facts.words, (id + 1) * facts.words);
 };
 
 const getExpressionsRow = (expressions: Expression[], environment: Environment) => {
@@ -323,6 +352,7 @@ const toVariables = (row: Uint32Array) => {
   return variables;
 };
 
+// Undefined when the expression has an effect or is an action.
 export const getReadVariables = (
   expression: Expression,
   environment: Environment,

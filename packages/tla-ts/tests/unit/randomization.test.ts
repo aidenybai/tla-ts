@@ -88,19 +88,16 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     expect(await getSummary("RandomSubsetSetOfFcns", 1n)).toEqual(["success", 2000, 1000]);
   });
 
-  it("evaluates a random constant definition once, as Github648 expects", async () => {
-    expect(
-      await Promise.all(
-        [1n, -2252017213236477395n, 8006642976694192746n].map((seed) =>
-          getSummary("Github648", seed),
-        ),
-      ),
-    ).toEqual([
-      ["success", 1332, 36],
-      ["success", 4160, 64],
-      ["success", 90, 9],
-    ]);
-  });
+  it.each([
+    [1n, ["success", 1332, 36]],
+    [-2252017213236477395n, ["success", 4160, 64]],
+    [8006642976694192746n, ["success", 90, 9]],
+  ])(
+    "evaluates a random constant definition once with seed %s, as Github648 expects",
+    async (seed, summary) => {
+      expect(await getSummary("Github648", seed)).toEqual(summary);
+    },
+  );
 
   it("reseeds from the tokens TLC interns model values with", async () => {
     const result = await checkWithSeed("RandomModelValue", 1n);

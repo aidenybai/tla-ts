@@ -8,6 +8,7 @@ const directories: string[] = [];
 
 afterAll(() => directories.forEach((directory) => rmSync(directory, { recursive: true })));
 
+// Writes each module to its own file, then reports on the first one.
 const getReport = (modules: Record<string, string>, options?: SanyReportOptions) => {
   const directory = mkdtempSync(join(tmpdir(), "sany-report-"));
   directories.push(directory);
@@ -22,8 +23,9 @@ const getReport = (modules: Record<string, string>, options?: SanyReportOptions)
   return { text: report.text, isFailed: report.isFailed };
 };
 
-const joinLines = (lines: string[]) => lines.map((line) => `${line}\n`).join("");
+const toText = (lines: string[]) => lines.map((line) => `${line}\n`).join("");
 
+// The expected reports are what SANY prints for the same modules.
 describe("getSanyReport", () => {
   it("reports nothing for a specification SANY accepts", () => {
     const report = getReport({
@@ -55,7 +57,7 @@ Spec == Init /\\ [][Next]_x
     );
     const order = ["D", "A", "E", "B", "F", "G", "C", "Root"];
     expect(report).toEqual({
-      text: joinLines([
+      text: toText([
         ...["Root", "A", "B", "C", "F", "E", "G", "D"].map((name) => `Parsing file ${name}.tla`),
         ...order.map((name) => `Semantic processing of module ${name}`),
         ...order.map((name) => `Linting of module ${name}`),
@@ -68,7 +70,7 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({ Infix: "---- MODULE Infix ----\nVARIABLE x\nOp == x @@ x\n====\n" });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 2",
@@ -117,7 +119,7 @@ Spec == Init /\\ [][Next]_x
     });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 2",
@@ -136,6 +138,7 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  // The messages come from SANY.
   it.each([
     ["x == {|}", "line 2, col 7 to line 2, col 7", "Unknown operator: `|'."],
     ["x == @@(1, 2)", "line 2, col 6 to line 2, col 7", "Unknown operator: `@@'."],
@@ -211,18 +214,24 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  // SANY also reports the nullOpArg it substitutes after each error, at its builtins.
   it("reports an operator substitution that doesn't fit as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nF(y) == y\nI == INSTANCE R WITH Op <- F(1)!C\nJ == INSTANCE R WITH Op <- F(1)\n====\n",
       R: "---- MODULE R ----\nCONSTANT Op(_)\n====\n",
     });
     expect(report.text).toContain(
-      joinLines([
-        "*** Errors: 2",
+      toText([
+        "*** Errors: 3",
         "",
         "line 3, col 28 to line 3, col 28 of module M",
         "",
         "Selector `F' should not have argument(s).",
+        "",
+        "",
+        "In module --TLA+ BUILTINS--",
+        "",
+        "An operator must be substituted for symbol 'Op', and it must have arity 1.",
         "",
         "",
         "line 4, col 28 to line 4, col 31 of module M",
@@ -261,6 +270,8 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  // OpDefNode.setParams keeps the arity of the RECURSIVE declaration, so only OpDefNode.match
+  // finds the number of arguments wrong.
   it.each([
     ["RECURSIVE F(_)\nF == 1\nA == F(1)", "line 5, col 6 to line 5, col 9", 1, 0],
     ["RECURSIVE F\nF(x) == 1\nA == F", "line 5, col 6 to line 5, col 6", 0, 1],
@@ -291,7 +302,7 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({ Twice: "---- MODULE Twice ----\nOp == 1\nOp == 2\n====\n" });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "*** Warnings: 1",
         "",
         "line 3, col 1 to line 3, col 7 of module Twice",
@@ -324,7 +335,7 @@ Spec == Init /\\ [][Next]_x
     const location = `line 2, col 1 to line 2, col ${definition.length} of module Prefix`;
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 2",
@@ -349,7 +360,7 @@ Spec == Init /\\ [][Next]_x
     });
     expect(report.isFailed).toBe(false);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "line 3, col 7 to line 3, col 9 of module Fields",
         "",
         'The field name "foo" in the record constructor is identical to the existing definition or declaration',
@@ -381,7 +392,7 @@ Spec == Init /\\ [][Next]_x
     });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "",
         "Fatal errors while parsing TLA+ spec in file Cycle",
         "",
@@ -427,7 +438,7 @@ Spec == Init /\\ [][Next]_x
     });
     expect(report.isFailed).toBe(true);
     expect(report.text).toContain(
-      joinLines([
+      toText([
         "*** Errors: 2",
         "",
         "line 3, col 6 to line 3, col 13 of module Box",
@@ -465,7 +476,7 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({ Headless: "Nothing here\n" });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "***Parse Error***",
         'Was expecting "---- MODULE (beginning of module)"',
         'Encountered "<EOF>" at line 1, column 13 and token "" ',
@@ -498,7 +509,7 @@ Spec == Init /\\ [][Next]_x
     });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 2",
@@ -532,6 +543,8 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  // The argument exceeds both the operator's level and its operator argument's, which SANY files
+  // under two error codes, and TLC 1.7.4's SANY by their text.
   it.each([
     ["1.7.4", 1],
     ["master", 2],
@@ -612,7 +625,7 @@ Spec == Init /\\ [][Next]_x
       Fold: "---- MODULE Fold ----\nF(it, S) == LET it[s \\in S] == s IN it\n====\n",
     });
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 2",
@@ -636,7 +649,7 @@ Spec == Init /\\ [][Next]_x
       Twice: "---- MODULE Twice ----\nf[x \\in {1}] == x\nf[x \\in {1}] == x\n====\n",
     });
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 1",
@@ -661,7 +674,7 @@ Spec == Init /\\ [][Next]_x
   it("reports a module in a fact that isn't extended or instantiated, and leaves it out", () => {
     const report = getReport({ Facts: "---- MODULE Facts ----\nUSE DEF MODULE Nope\n====\n" });
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 2",
@@ -685,7 +698,7 @@ Spec == Init /\\ [][Next]_x
       Defs: "---- MODULE Defs ----\nA == 1\nTHEOREM TRUE BY A DEF UNION A, A + 1, (A), A(1), A\n====\n",
     });
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 14",
@@ -789,7 +802,7 @@ Spec == Init /\\ [][Next]_x
       At: "---- MODULE At ----\nVARIABLE @\nA == @ + 1\nB == \\A @ \\in {} : @\n====\n",
     });
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 5",
@@ -831,7 +844,7 @@ Spec == Init /\\ [][Next]_x
     });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 1",
@@ -882,7 +895,7 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({ M: `---- MODULE M ----\n${body}\n====\n` });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines(["Semantic errors:", "", "*** Errors: 1", "", ...error, "", ""]),
+      toText(["Semantic errors:", "", "*** Errors: 1", "", ...error, "", ""]),
     );
   });
 
@@ -891,7 +904,7 @@ Spec == Init /\\ [][Next]_x
       M: "---- MODULE M ----\nVARIABLE x\nTHEOREM TRUE BY DEF x\n====\n",
     });
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 2",
@@ -911,6 +924,7 @@ Spec == Init /\\ [][Next]_x
   });
 });
 
+// The checksums are the ones pcal.trans wrote when it translated the algorithm.
 const COUNTER = `---- MODULE Counter ----
 EXTENDS Naturals
 (* --algorithm Counter
@@ -950,8 +964,9 @@ Termination == <>(pc = "Done")
 ====
 `;
 
+// What SANY prints for a module whose PlusCal or translation changed after the translation.
 const getDivergenceText = (root: string, module: string, message: string) =>
-  joinLines([
+  toText([
     "Labels added.",
     `Warnings (1) during syntax parsing of ${root}:`,
     "",
@@ -964,6 +979,7 @@ const getDivergenceText = (root: string, module: string, message: string) =>
     "",
   ]);
 
+// The expected reports are what SANY prints for the same modules.
 describe("getSanyReport on PlusCal", () => {
   it("reports the labels the translator adds to an algorithm that matches its checksums", () => {
     expect(getReport({ Counter: COUNTER })).toEqual({ text: "Labels added.\n", isFailed: false });
@@ -1072,7 +1088,7 @@ VARIABLE x
     });
     expect(report.isFailed).toBe(false);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "",
         "Unrecoverable error:",
         " -- Assignment to undeclared variable y",
@@ -1105,7 +1121,7 @@ end algorithm; *)
     });
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "",
         "Unrecoverable error:",
         " -- Unterminated string in line 4.",
@@ -1123,6 +1139,8 @@ end algorithm; *)
   });
 });
 
+// A --fair algorithm with a disjunction, with the checksum of TLC 1.7.4's SANY, which leaves out
+// the columns of its junctions and that it is fair.
 const FAIR = `---- MODULE Fair ----
 EXTENDS Naturals
 (* --fair algorithm Fair
@@ -1163,6 +1181,7 @@ Termination == <>(pc = "Done")
 ====
 `;
 
+// The expected reports are what the SANY of TLC 1.7.4's tla2tools.jar prints.
 describe("getSanyReport for TLC 1.7.4", () => {
   const options: SanyReportOptions = { version: "1.7.4" };
 
@@ -1180,7 +1199,7 @@ Unknown == Missing
     );
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Semantic errors:",
         "",
         "*** Errors: 2",
@@ -1242,7 +1261,7 @@ X == "✓"
     );
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         'Lexical error at line 2, column 7.  Encountered: "\\u2713" (10003), after : "\\""',
         "",
         "Fatal errors while parsing TLA+ spec in file Checked",
@@ -1265,7 +1284,7 @@ X == "✓"
       { ...options, describeFile: (name) => `${name}.tla` },
     );
     expect(report).toEqual({
-      text: joinLines([
+      text: toText([
         "Parsing file Counter.tla",
         "Labels added.",
         "!! WARNING: The PlusCal algorithm in module Counter has changed since its last translation.",
@@ -1280,7 +1299,7 @@ X == "✓"
   it("warns in its own words that both the algorithm and its translation changed", () => {
     const report = getReport({ Counter: COUNTER.replaceAll("x < 3", "x < 4") }, options);
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "Labels added.",
         "!! WARNING: The PlusCal algorithm and its TLA+ translation in module Counter filename since the last translation.",
       ]),
@@ -1305,7 +1324,7 @@ EXTENDS Absent
       options,
     );
     expect(report.text).toBe(
-      joinLines([
+      toText([
         "",
         "Fatal errors while parsing TLA+ spec in file Lonely",
         "",

@@ -1,5 +1,7 @@
 import { TlaError } from "../errors";
 
+// An emulation of the token manager that JavaCC generates for SANY's grammar, javacc/tla+.jj.
+
 export interface SanyToken {
   kind: number;
   image: string;
@@ -8,6 +10,7 @@ export interface SanyToken {
   next: SanyToken | undefined;
 }
 
+// In TLAplusParserConstants order, by which JavaCC breaks a tie between matches of one length.
 const KINDS: [string, ...string[]][] = [
   ["EOF"],
   ["BEGIN_PRAGMA", "--->"],
@@ -223,6 +226,7 @@ const KIND_INDEXES = new Map(
   KIND_NAMES.map((name, kind): [string, number] => [name, kind]).reverse(),
 );
 
+// The anonymous infix operators share the name "infix", which no caller looks up.
 export const getKind = (name: string) => {
   const kind = KIND_INDEXES.get(name);
   if (kind === undefined) throw new TlaError(`Unknown SANY token kind ${name}`);
@@ -235,7 +239,7 @@ const LITERALS = new Map(
 const LONGEST_LITERAL = Math.max(...[...LITERALS.keys()].map((image) => image.length));
 const LITERAL_LENGTHS = Array.from(
   { length: LONGEST_LITERAL },
-  (_element, index) => LONGEST_LITERAL - index,
+  (_, index) => LONGEST_LITERAL - index,
 );
 
 const BEGIN_MODULE = /----+ *MODULE/y;
@@ -323,30 +327,27 @@ export const getTabStop = (column: number) => column + 8 - (column % 8);
 const getPositions = (source: string) => {
   const lines: number[] = [];
   const columns: number[] = [];
-  let line = 1;
-  let column = 0;
-  let isAfterCr = false;
-  let isAfterLf = false;
+  const state = { line: 1, column: 0, isAfterCr: false, isAfterLf: false };
   for (const character of source) {
     for (let unit = 0; unit < character.length; unit++) {
-      column++;
-      if (isAfterLf) {
-        isAfterLf = false;
-        line++;
-        column = 1;
-      } else if (isAfterCr) {
-        isAfterCr = false;
-        if (character === "\n") isAfterLf = true;
+      state.column++;
+      if (state.isAfterLf) {
+        state.isAfterLf = false;
+        state.line++;
+        state.column = 1;
+      } else if (state.isAfterCr) {
+        state.isAfterCr = false;
+        if (character === "\n") state.isAfterLf = true;
         else {
-          line++;
-          column = 1;
+          state.line++;
+          state.column = 1;
         }
       }
-      if (character === "\r") isAfterCr = true;
-      else if (character === "\n") isAfterLf = true;
-      else if (character === "\t") column = getTabStop(column - 1);
-      lines.push(line);
-      columns.push(column);
+      if (character === "\r") state.isAfterCr = true;
+      else if (character === "\n") state.isAfterLf = true;
+      else if (character === "\t") state.column = getTabStop(state.column - 1);
+      lines.push(state.line);
+      columns.push(state.column);
     }
   }
   return { lines, columns };
@@ -355,7 +356,7 @@ const getPositions = (source: string) => {
 const STRING_PREFIX = /"(?:[^"\n\r\\]|\\[ntrf\\"])*\\?/y;
 const LITERAL_PREFIXES = new Set(
   [...LITERALS.keys()].flatMap((image) =>
-    Array.from({ length: image.length - 1 }, (_element, index) => image.slice(0, index + 1)),
+    Array.from({ length: image.length - 1 }, (_, index) => image.slice(0, index + 1)),
   ),
 );
 
@@ -370,8 +371,7 @@ const getTokenPrefix = (source: string, offset: number) => {
 
 export const createSanyLexer = (source: string) => {
   const positions = getPositions(source);
-  let cursor = 0;
-  let mode = "DEFAULT";
+  const state = { offset: 0, mode: "DEFAULT" };
   const createToken = (kind: number, start: number, length: number): SanyToken => ({
     kind,
     image: source.slice(start, start + length),
@@ -379,7 +379,10 @@ export const createSanyLexer = (source: string) => {
     beginColumn: positions.columns[start] ?? 0,
     next: undefined,
   });
+  // JavaCC places the end of the file at the file's last character.
   const getEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
+  // TLAplusParser.parse reports the end of the file in a token that starts on an earlier line as an
+  // open comment.
   const getLexicalError = (start: number, end: number, after: string) => {
     const index = end - 1;
     const line = positions.lines[index];
@@ -392,12 +395,13 @@ export const createSanyLexer = (source: string) => {
       ? formatLexicalError(line + 1, 0, undefined, after)
       : formatLexicalError(line, column + 1, undefined, after);
   };
+  // The end of the file right after a nested comment bracket ends the token stream.
   const skipComment = () => {
-    const start = cursor;
+    const start = state.offset;
     if (source.startsWith("\\*", start)) {
       const end = source.slice(start).search(/[\n\r]/);
       if (end === -1) return getLexicalError(start, source.length, "");
-      cursor += end + 1;
+      state.offset += end + 1;
       return undefined;
     }
     let depth = 0;
@@ -413,40 +417,41 @@ export const createSanyLexer = (source: string) => {
         offset += 2;
         chainStart = offset;
         if (depth === 0) {
-          cursor = offset;
+          state.offset = offset;
           return undefined;
         }
       } else offset++;
     }
-    cursor = offset;
+    state.offset = offset;
     return chainStart === source.length ? undefined : getLexicalError(chainStart, offset, "");
   };
   const getSkippingToken = (patterns: [string, RegExp[]][]): SanyToken => {
-    while (cursor < source.length) {
-      const match = matchPatterns(patterns, source, cursor);
+    while (state.offset < source.length) {
+      const match = matchPatterns(patterns, source, state.offset);
       if (match.length > 0) {
-        const token = createToken(match.kind, cursor, match.length);
-        cursor += match.length;
-        if (KIND_NAMES[match.kind].startsWith("_BM")) mode = "SPEC";
-        if (KIND_NAMES[match.kind] === "BEGIN_PRAGMA") mode = "PRAGMA";
+        const token = createToken(match.kind, state.offset, match.length);
+        state.offset += match.length;
+        if (KIND_NAMES[match.kind].startsWith("_BM")) state.mode = "SPEC";
+        if (KIND_NAMES[match.kind] === "BEGIN_PRAGMA") state.mode = "PRAGMA";
         return token;
       }
-      cursor++;
+      state.offset++;
     }
     return getEndOfFile();
   };
   const getNextToken = (): SanyToken | string => {
-    if (mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
-    if (mode === "PRAGMA") return getSkippingToken(PRAGMA_PATTERNS);
-    while (cursor < source.length) {
-      const offset = cursor;
-      if (" \t\n\r".includes(source[offset])) cursor++;
+    if (state.mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
+    if (state.mode === "PRAGMA") return getSkippingToken(PRAGMA_PATTERNS);
+    while (state.offset < source.length) {
+      const offset = state.offset;
+      if (" \t\n\r".includes(source[offset])) state.offset++;
       else if (source.startsWith("(*", offset) || source.startsWith("\\*", offset)) {
         const error = skipComment();
         if (error !== undefined) return error;
       } else {
         const match = matchSpecToken(source, offset);
         if (match.length === 0) {
+          // JavaCC reads on while a token could continue, and one more character.
           const prefix = getTokenPrefix(source, offset);
           const end = Math.min(offset + prefix.length + 1, source.length);
           const read = source.slice(offset, end);
@@ -454,7 +459,7 @@ export const createSanyLexer = (source: string) => {
           return getLexicalError(offset, end, after);
         }
         const token = createToken(match.kind, offset, match.length);
-        cursor += match.length;
+        state.offset += match.length;
         return token;
       }
     }
@@ -491,6 +496,8 @@ export const formatLexicalError = (
 ) =>
   `Lexical error at line ${line}, column ${column}.  Encountered: ${character === undefined ? "<EOF> " : `"${escapeLexeme(character)}" (${character.charCodeAt(0)}), `}after : "${escapeLexeme(after)}"`;
 
+// TLC 1.7.4's lexer, generated without UNICODE_INPUT, reads a character past U+00FF outside a
+// comment by its low byte, and stops at one whose low byte is below 0x80.
 export const getSany174LexicalError = (source: string) => {
   const readToken = createSanyLexer(source);
   for (

@@ -1,23 +1,28 @@
+// tlapm reports a proof it reuses from an earlier obligation with the same fingerprint without a
+// time, so each such obligation must share its fingerprint with an earlier one in its module that
+// the same prover concluded about.
+
 import { join } from "node:path";
 import { TlaError } from "../src";
 import { getFingerprint } from "../src/prover/prep/fingerprint";
 import { CORPORA_DIRECTORY } from "./corpora";
-import { getObligationsById, readProofRecords } from "./proof-records";
+import { getModuleObligations, readProofRecords } from "./proof-records";
 
 const counts = { reused: 0, unmatched: 0, shared: 0, unloaded: 0 };
 for (const record of readProofRecords()) {
-  const byId = (() => {
+  const obligations = (() => {
     try {
-      return getObligationsById(join(CORPORA_DIRECTORY, record.id));
+      return getModuleObligations(join(CORPORA_DIRECTORY, record.id));
     } catch (error) {
       if (!(error instanceof TlaError)) throw error;
       return undefined;
     }
   })();
-  if (!byId) {
+  if (!obligations) {
     counts.unloaded++;
     continue;
   }
+  const byId = new Map(obligations.map((obligation) => [obligation.id, obligation]));
   const seen = new Map<string, { id: number; provers: Set<string> }>();
   record.obligations.forEach((expected) => {
     const obligation = byId.get(expected.id);

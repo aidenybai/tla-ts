@@ -1,7 +1,6 @@
 import { TlaEvaluationError } from "./errors";
 import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
-  createTautologyError,
   evaluateLive,
   evaluateOnLasso,
   toLiveExpression,
@@ -28,11 +27,16 @@ export interface LiveSuccessor {
 export interface Lasso {
   prefix: number[];
   cycle: number[];
+  // TLC warns that a stuttering counterexample to a liveness property may come from a missing
+  // fairness constraint.
   isCycleConstrained: boolean;
 }
 
 export interface LivenessChecker {
+  // How many solutions of the negated properties TLC checks, which it calls branches.
   branches: number;
+  // With a tracing environment, the checks record their call stack as TLC's replay of a failed
+  // check does.
   addInitialState: (index: number, state: Value[], tracing?: Environment) => void;
   addState: (
     index: number,
@@ -49,6 +53,8 @@ interface SearchGraph {
   getSuccessors: (index: number, state: Value[]) => LiveSuccessor[];
 }
 
+// Numbers in a typed array that doubles as it fills, so a graph of millions of nodes takes a few
+// bytes for each.
 interface Pool<Data extends Int32Array | Uint8Array> {
   data: Data;
   length: number;
@@ -60,12 +66,17 @@ interface BehaviorGraph {
   actionIds: Int32Array;
   nodeStates: number[];
   nodeTableaux: number[];
+  // Where a node's edges start in edgeTargets, or UNWRITTEN until TLC writes the node with its
+  // successors, and how many it has.
   edgeStarts: number[];
   edgeCounts: number[];
   edgeTargets: Pool<Int32Array>;
+  // The results of the action checks on each edge, and of the state checks on each state, which
+  // are the same for every node of the state.
   edgeActions: Pool<Uint8Array>;
   stateResults: Pool<Uint8Array>;
   initial: number[];
+  // The nodes of each state in the order they are recorded, a list through nextSiblings.
   firstNodes: Pool<Int32Array>;
   lastNodes: Pool<Int32Array>;
   nextSiblings: number[];
@@ -126,7 +137,8 @@ const writeToPool = <Data extends Int32Array | Uint8Array>(
 
 const NO_NODE = -1;
 
-// A Map holds at most 2^24 entries, so an open-addressing table holds the nodes.
+// A Map holds at most 2^24 entries, so each tableau node of a state finds its node in an
+// open-addressing table of (state plus one, tableau node, node) triples.
 interface NodeTable {
   slots: Int32Array;
   size: number;
@@ -208,17 +220,14 @@ export const createLivenessChecker = (
   const formula =
     fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
   const solutions = getSolutions(formula);
-  if (solutions.length === 0) {
-    throw createTautologyError();
-  }
   const actionIds = new Map<string, number>();
   const behaviors = solutions.map((solution): BehaviorGraph => ({
     solution,
     actionIds: Int32Array.from(solution.actionChecks, (predicate) => {
       const key = getTermKey(predicate);
-      const actionId = actionIds.get(key) ?? actionIds.size;
-      actionIds.set(key, actionId);
-      return actionId;
+      const id = actionIds.get(key) ?? actionIds.size;
+      actionIds.set(key, id);
+      return id;
     }),
     nodeStates: [],
     nodeTableaux: [],
@@ -235,17 +244,23 @@ export const createLivenessChecker = (
     isDone: [],
     errorNode: undefined,
   }));
-  let capacityMultiplier = 1;
+  const capacity = { multiplier: 1 };
 
+  // TLC evaluates every check on its own. Without side effects the order can't show, so the
+  // checks of one state share their results.
   const isShared = !hasRepeatedEffects(environment);
-  let liveEnvironment = environment;
-  const sharedStates = new Map<Value[], Map<LiveExpression, boolean>>();
-  const sharedActions = new Map<Value[], Map<Value[], Int8Array>>();
+  const evaluation = { environment };
+  const shared = {
+    states: new Map<Value[], Map<LiveExpression, boolean>>(),
+    actions: new Map<Value[], Map<Value[], Int8Array>>(),
+  };
   const getStateCache = (state: Value[]) => {
-    const cache = sharedStates.get(state) ?? new Map<LiveExpression, boolean>();
-    sharedStates.set(state, cache);
+    const cache = shared.states.get(state) ?? new Map<LiveExpression, boolean>();
+    shared.states.set(state, cache);
     return cache;
   };
+  // TLCGet("level") reads the level of the state whose successors the checks run on.
+  // A check that fails leaves no source, so the failure's trace reads the levels of the search.
   const evaluateFrom = <Result>(source: number | undefined, evaluate: () => Result) => {
     environment.runtime.setLivenessSource(source);
     try {
@@ -259,7 +274,7 @@ export const createLivenessChecker = (
       predicate,
       state,
       undefined,
-      liveEnvironment,
+      evaluation.environment,
       isShared ? getStateCache(state) : new Map(),
     );
   const checkState = (behavior: BehaviorGraph, source: number, state: Value[]) =>
@@ -278,27 +293,27 @@ export const createLivenessChecker = (
       const predicates = behavior.solution.actionChecks;
       if (!isShared) {
         return Uint8Array.from(predicates, (predicate) =>
-          evaluateLive(predicate, state, successor, liveEnvironment, new Map()) ? 1 : 0,
+          evaluateLive(predicate, state, successor, evaluation.environment, new Map()) ? 1 : 0,
         );
       }
       const stateCache = getStateCache(state);
-      const results = sharedActions.get(state) ?? new Map<Value[], Int8Array>();
-      sharedActions.set(state, results);
+      const results = shared.actions.get(state) ?? new Map<Value[], Int8Array>();
+      shared.actions.set(state, results);
       const known = results.get(successor) ?? new Int8Array(actionIds.size).fill(-1);
       results.set(successor, known);
-      return Uint8Array.from(behavior.actionIds, (actionId, position) => {
-        if (known[actionId] === -1) {
-          known[actionId] = evaluateLive(
+      return Uint8Array.from(behavior.actionIds, (id, position) => {
+        if (known[id] === -1) {
+          known[id] = evaluateLive(
             predicates[position],
             state,
             successor,
-            liveEnvironment,
+            evaluation.environment,
             stateCache,
           )
             ? 1
             : 0;
         }
-        return known[actionId];
+        return known[id];
       });
     });
   const isConsistent = (
@@ -310,6 +325,8 @@ export const createLivenessChecker = (
     evaluateFrom(source, () =>
       tableau.nodes[node].statePredicates.every((predicate) => evaluateState(predicate, state)),
     );
+  // TLC 1.7.4 doesn't stop at a tableau node that accepts every behavior, so it finds a violation
+  // of a property like a safety property only in its liveness checks.
   const isAccepting = (tableau: Tableau, node: number) => {
     if (environment.runtime.version === "1.7.4") return false;
     const tableauNode = tableau.nodes[node];
@@ -378,12 +395,16 @@ export const createLivenessChecker = (
     behavior.edgeCounts[node] = targets.length;
   };
 
-  // TLC iterates a state's successors in the slot order of its SetOfStates hash set.
+  // TLC collects a state's successors and the state itself in a SetOfStates, a hash set it
+  // iterates in slot order. Its capacity starts at 16 times a factor that grows with every set
+  // that outgrows it.
   const getSuccessorSet = (index: number, state: Value[], successors: LiveSuccessor[]) => {
-    let tableSlots = Array.from<LiveSuccessor | undefined>({
-      length: SUCCESSOR_CAPACITY * capacityMultiplier,
-    });
-    let tableCount = 0;
+    const table = {
+      slots: Array.from<LiveSuccessor | undefined>({
+        length: SUCCESSOR_CAPACITY * capacity.multiplier,
+      }),
+      count: 0,
+    };
     const insertSuccessor = (slots: (LiveSuccessor | undefined)[], successor: LiveSuccessor) => {
       for (
         let slot = (search.getFingerprint(successor) & 0x7fffffff) % slots.length;
@@ -400,17 +421,17 @@ export const createLivenessChecker = (
       }
     };
     const addSuccessor = (successor: LiveSuccessor) => {
-      if (tableCount >= tableSlots.length >> 1) {
-        const old = tableSlots;
-        tableSlots = Array.from<LiveSuccessor | undefined>({ length: 2 * old.length + 1 });
-        for (const entry of old) if (entry) insertSuccessor(tableSlots, entry);
+      if (table.count >= table.slots.length >> 1) {
+        const old = table.slots;
+        table.slots = Array.from<LiveSuccessor | undefined>({ length: 2 * old.length + 1 });
+        for (const entry of old) if (entry) insertSuccessor(table.slots, entry);
       }
-      if (insertSuccessor(tableSlots, successor)) tableCount++;
+      if (insertSuccessor(table.slots, successor)) table.count++;
     };
     successors.forEach(addSuccessor);
     addSuccessor({ index, state });
-    if (tableSlots.length > SUCCESSOR_CAPACITY * capacityMultiplier) capacityMultiplier++;
-    return tableSlots.filter((entry): entry is LiveSuccessor => entry !== undefined);
+    if (table.slots.length > SUCCESSOR_CAPACITY * capacity.multiplier) capacity.multiplier++;
+    return table.slots.filter((entry): entry is LiveSuccessor => entry !== undefined);
   };
 
   const expandLate = (
@@ -450,6 +471,8 @@ export const createLivenessChecker = (
       const isDone = behavior.isDone[successor.index] === true;
       for (const next of tableauNode.successors) {
         if (!isConsistent(tableau, next, index, successor.state)) continue;
+        // A successor the search never stored follows a violation or an error, after which nothing
+        // checks the graph. TLC records its node, which it never expands.
         if (successor.index === -1) continue;
         const existing = getNodeId(behavior, successor.index, next);
         if (existing !== undefined && successors.includes(existing)) continue;
@@ -548,6 +571,7 @@ export const createLivenessChecker = (
     throw new TlaEvaluationError(`Couldn't re-create liveness trace (path) starting at: ${target}`);
   };
 
+  // TLC's LiveWorker#checkSccs, a Tarjan search that pushes every successor of a node at once.
   const findLassoInModel = (
     behavior: BehaviorGraph,
     model: Solution["models"][number],
@@ -604,6 +628,8 @@ export const createLivenessChecker = (
       return getLasso(root, members, membersByState);
     };
 
+    // TLC's LiveWorker#printTrace: a prefix to the root, a greedy walk through the component until it
+    // satisfies every check, and a breadth-first path back to the root.
     const getLasso = (
       root: number,
       members: Set<number>,
@@ -619,75 +645,74 @@ export const createLivenessChecker = (
       const stateDone = model.infinitelyOftenStates.map(() => false);
       const actionDone = model.infinitelyOftenActions.map(() => false);
       const promiseDone = solution.promises.map(() => false);
-      let remaining = stateDone.length + actionDone.length + promiseDone.length;
-      let current = root;
+      const remaining = { count: stateDone.length + actionDone.length + promiseDone.length };
+      const current = { node: root };
       const isMember = (node: number) => members.has(node);
       const moveTo = (next: number) => {
-        cycleStack.push(current);
-        current = next;
+        cycleStack.push(current.node);
+        current.node = next;
       };
-      while (remaining > 0) {
-        const countAtStart = remaining;
+      while (remaining.count > 0) {
+        const countAtStart = remaining.count;
         while (true) {
           model.infinitelyOftenStates.forEach((position, slot) => {
-            if (!stateDone[slot] && getStateResult(behavior, current, position)) {
+            if (!stateDone[slot] && getStateResult(behavior, current.node, position)) {
               stateDone[slot] = true;
-              remaining--;
+              remaining.count--;
             }
           });
           solution.promises.forEach((promise, position) => {
-            if (!promiseDone[position] && isFulfilled(current, promise)) {
+            if (!promiseDone[position] && isFulfilled(current.node, promise)) {
               promiseDone[position] = true;
-              remaining--;
+              remaining.count--;
             }
           });
-          if (remaining <= 0) break;
-          let lastMember = -1;
-          let unvisited = -1;
-          const countBeforeActions = remaining;
-          const isTaken = getNodeSuccessors(behavior, current).some((next, edge) => {
+          if (remaining.count <= 0) break;
+          const step = { last: -1, unvisited: -1 };
+          const countBeforeActions = remaining.count;
+          const taken = getNodeSuccessors(behavior, current.node).some((next, edge) => {
             if (membersByState.has(behavior.nodeStates[next])) {
-              if (!isMember(next) || !isAllowed(current, edge)) return false;
-              lastMember = next;
+              if (!isMember(next) || !isAllowed(current.node, edge)) return false;
+              step.last = next;
               model.infinitelyOftenActions.forEach((position, slot) => {
-                if (!actionDone[slot] && getAction(current, edge, position)) {
+                if (!actionDone[slot] && getAction(current.node, edge, position)) {
                   actionDone[slot] = true;
-                  remaining--;
+                  remaining.count--;
                 }
               });
             }
-            if (remaining < countBeforeActions) {
+            if (remaining.count < countBeforeActions) {
               moveTo(next);
               seen.clear();
               return true;
             }
-            if (isMember(next) && !seen.has(next)) unvisited = next;
+            if (isMember(next) && !seen.has(next)) step.unvisited = next;
             return false;
           });
-          if (isTaken) break;
-          if (remaining < countAtStart) {
-            moveTo(lastMember);
+          if (taken) break;
+          if (remaining.count < countAtStart) {
+            moveTo(step.last);
             seen.clear();
             break;
           }
-          while (unvisited === -1) {
+          while (step.unvisited === -1) {
             const previous = cycleStack.pop();
             if (previous === undefined) {
               throw new TlaEvaluationError(
                 "TLC failed to build the counterexample of a liveness property",
               );
             }
-            current = previous;
-            unvisited =
+            current.node = previous;
+            step.unvisited =
               getNodeSuccessors(behavior, previous).find(
                 (next) => isMember(next) && !seen.has(next),
               ) ?? -1;
           }
-          moveTo(unvisited);
-          seen.add(unvisited);
+          moveTo(step.unvisited);
+          seen.add(step.unvisited);
         }
       }
-      const postfix = getClosingPath(root, current, membersByState);
+      const postfix = getClosingPath(root, current.node, membersByState, isAllowed);
       for (let position = cycleStack.length - 1; position >= 0; position--) {
         const state = behavior.nodeStates[cycleStack[position]];
         if (postfix[postfix.length - 1] !== state) postfix.push(state);
@@ -701,7 +726,12 @@ export const createLivenessChecker = (
       };
     };
 
-    const getClosingPath = (root: number, end: number, membersByState: Map<number, number[]>) => {
+    const getClosingPath = (
+      root: number,
+      end: number,
+      membersByState: Map<number, number[]>,
+      isAllowedEdge: (node: number, edge: number) => boolean,
+    ) => {
       if (end === root) return [];
       const start = behavior.nodeStates[end];
       const parents = new Map<number, number>();
@@ -710,7 +740,7 @@ export const createLivenessChecker = (
       for (let state = start, parent = -1, position = 0; ; position++) {
         for (const node of membersByState.get(state) ?? []) {
           for (const [edge, next] of getNodeSuccessors(behavior, node).entries()) {
-            if (next === node || !isAllowed(node, edge)) continue;
+            if (next === node || !isAllowedEdge(node, edge)) continue;
             if (next === root) {
               const path: number[] = [];
               for (let item = state, itemParent = parent; item !== start;) {
@@ -741,7 +771,7 @@ export const createLivenessChecker = (
 
     for (let position = 0; position < queue.length; position++) {
       const stack = [queue[position], UNVISITED, 0];
-      let link = 0;
+      const counter = { link: 0 };
       while (stack.length >= 3) {
         const lowLink = stack.pop() ?? 0;
         const location = stack.pop();
@@ -758,10 +788,10 @@ export const createLivenessChecker = (
           stack.push(Math.min(lowLink, links[node]));
           continue;
         }
-        links[node] = link;
+        links[node] = counter.link;
         stack.push(lowLink, node, SCC_MARKER);
         components.push(node);
-        let nextLowLink = link++;
+        const nextLowLink = { value: counter.link++ };
         getNodeSuccessors(behavior, node).forEach((next, edge) => {
           if (!isWritten(behavior, next)) return;
           if (!isAllowed(node, edge)) {
@@ -769,9 +799,9 @@ export const createLivenessChecker = (
             return;
           }
           if (links[next] === UNVISITED) stack.push(next, UNVISITED);
-          else nextLowLink = Math.min(nextLowLink, links[next]);
+          else nextLowLink.value = Math.min(nextLowLink.value, links[next]);
         });
-        stack.push(nextLowLink);
+        stack.push(nextLowLink.value);
       }
     }
     return undefined;
@@ -780,9 +810,9 @@ export const createLivenessChecker = (
   return {
     branches: behaviors.length,
     addInitialState: (index, state, tracing) => {
-      liveEnvironment = tracing ?? environment;
-      sharedStates.clear();
-      sharedActions.clear();
+      evaluation.environment = tracing ?? environment;
+      shared.states.clear();
+      shared.actions.clear();
       try {
         for (const behavior of behaviors) {
           const tableau = behavior.solution.tableau;
@@ -798,13 +828,13 @@ export const createLivenessChecker = (
           }
         }
       } finally {
-        liveEnvironment = environment;
+        evaluation.environment = environment;
       }
     },
     addState: (index, state, successors, tracing) => {
-      liveEnvironment = tracing ?? environment;
-      sharedStates.clear();
-      sharedActions.clear();
+      evaluation.environment = tracing ?? environment;
+      shared.states.clear();
+      shared.actions.clear();
       try {
         const set = getSuccessorSet(index, state, successors);
         for (const behavior of behaviors) {
@@ -829,7 +859,7 @@ export const createLivenessChecker = (
         }
         return undefined;
       } finally {
-        liveEnvironment = environment;
+        evaluation.environment = environment;
       }
     },
     findViolation: () => {
@@ -841,6 +871,7 @@ export const createLivenessChecker = (
       }
       return undefined;
     },
+    // TLC names every property that the counterexample violates, once each.
     getViolatedProperties: (path, cycleStart) => [
       ...new Set(
         properties

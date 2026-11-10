@@ -9,7 +9,7 @@ import {
   type OperatorParam,
   type SourceLocation,
 } from "./ast";
-import { BUNDLED_MODULES } from "./bundled-modules";
+import type { ModuleOperator } from "./check";
 import type { ConfigValue, ModelConfig } from "./config";
 import type { FileSystem } from "./json";
 import {
@@ -19,17 +19,23 @@ import {
   formatSanyWarnings,
   TlaConfigError,
   TlaEvaluationError,
+  TlaFeatureUnsupportedError,
   TlaModuleError,
   TlaSyntaxError,
+  UNEXPECTED_EXCEPTION,
   type SanyError,
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
+  bindOperatorArguments,
   createBigNumberError,
   createRealNumberError,
   evaluate,
   getDefinition,
   type Builtin,
+  type BuiltinArgument,
+  type Closure,
+  type Context,
   type Environment,
 } from "./evaluate";
 import {
@@ -60,10 +66,10 @@ import {
 } from "./resolve";
 import { createRuntime } from "./runtime";
 import { getSanyStandardModules } from "./sany/modules";
-import { USER_STANDARD_MODULES } from "./tlc/jar-data";
 import { getSanyParseError } from "./sany/parse-error";
 import {
   CORE_OPERATORS,
+  getJavaOverrides,
   getStandardModule,
   getTraceSpecArithmetic,
   STANDARD_DEPENDENCIES,
@@ -78,9 +84,9 @@ import { createTlcOrder, type TlcOrder } from "./tlc/order";
 import {
   isTlcInteger,
   createModelValue,
-  createSet,
   formatValue,
   valuesEqual,
+  toFiniteSet,
   type Value,
   markNormalized,
 } from "./values";
@@ -94,20 +100,34 @@ interface EnvironmentOptions {
   print: (text: string) => void;
   files: FileSystem;
   seed?: bigint;
+  // Links the modules without a model, as SANY does, so a declared constant needs no value.
+  isUnconfigured?: boolean;
   isTool?: boolean;
-  isTraceRecorded?: boolean;
+  // TLC loads Integers for a trace exploration spec, whose methods then compute Naturals.
+  traceFile?: string;
   isSanyReported?: boolean;
   isWarningEnabled?: boolean;
   version?: TlcVersion;
+  moduleOperators?: ModuleOperator[];
 }
 
-interface Specification {
+export interface ResolvedModuleOperator extends ModuleOperator {
+  key: string | undefined;
+}
+
+export interface Specification {
   environment: Environment;
   assumptions: Assumption[];
   variableLocations: SourceLocation[];
   instanceActions: Map<string, InstanceAction>;
+  // The definitions TLC computes when it starts, in the order it computes them.
   startupDefinitions: Definition[];
+  rootConstants: Declaration[];
+  rootSymbols: Symbols;
+  // The methods of the modules' classes, in the order TLC loads the classes.
   javaOverrides: JavaOverride[];
+  moduleOperators: ResolvedModuleOperator[];
+  rootName: string;
 }
 
 export interface InstanceAction {
@@ -115,12 +135,17 @@ export interface InstanceAction {
   location: SourceLocation;
 }
 
+// The modules whose Java methods TLC binds through annotations rather than by name alone.
+const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
+
 const toValue = (value: ConfigValue): Value => {
   switch (value.kind) {
     case "Number":
+      // ModelConfig#parseValue lets Integer.parseInt fail on a number too big for TLC, where
+      // tla-ts reports it as TLC reports such a number in a module.
       if (!isTlcInteger(value.value)) {
         throw setExitCode(
-          new TlaModuleError(`Integer overflow: ${value.value} is outside TLC's 32-bit range`),
+          new TlaModuleError(`TLC can't handle a number this big.\n${value.value}`),
           EXIT_STATUS.error,
         );
       }
@@ -131,7 +156,26 @@ const toValue = (value: ConfigValue): Value => {
     case "ModelValue":
       return createModelValue(value.name);
     case "Set":
-      return createSet(value.elements.map(toValue));
+      return toFiniteSet({ kind: "MixedSet", elements: value.elements.map(toValue) });
+  }
+};
+
+// TLC sorts a config set as it starts, and reports a failure as an unexpected RuntimeException.
+const toConstantValue = (value: ConfigValue) => {
+  try {
+    return toValue(value);
+  } catch (error) {
+    if (
+      !(error instanceof TlaEvaluationError) ||
+      error instanceof TlaModuleError ||
+      error instanceof TlaFeatureUnsupportedError
+    ) {
+      throw error;
+    }
+    throw setExitCode(
+      new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
+      EXIT_STATUS.error,
+    );
   }
 };
 
@@ -147,6 +191,7 @@ interface LinkedModule {
   facts: Set<string>;
 }
 
+// SANY runs the level checks of a module's file only when it reports no error.
 interface ModuleScope {
   id: string;
   symbols: Symbols;
@@ -166,6 +211,7 @@ const getDeclarations = (linked: LinkedModule): Declaration[] => [
   })),
 ];
 
+// A module SANY rejects fails as in TLC: SANY's message, then a fatal error naming the module.
 const parseModuleFile = (source: string, name: string, order: TlcOrder) => {
   try {
     return order.parseModule(source);
@@ -198,6 +244,7 @@ const getModuleRedefinition = (module: Module, existing: Module): SanyError | un
     message: `Multiply-defined module '${module.name}': this definition or declaration conflicts \nwith the one at ${formatRange(existing.location.range)}.`,
   };
 
+// SANY names a definition or a parameter a definition, and any other symbol a declaration.
 const getNodeWord = (kind: SymbolKind) =>
   ["Builtin", "Definition", "Instance", "Parameter"].includes(kind) ? "definition" : "declaration";
 
@@ -291,6 +338,7 @@ export const createEnvironment = (
   const parameterized = new Map<string, boolean>();
   const copySources = new Map<string, { source: string; prefix: number }>();
   const substitutedDefinitions = new Set<Definition>();
+  const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
@@ -300,11 +348,12 @@ export const createEnvironment = (
   runtime.isTool = options.isTool ?? false;
   runtime.version = options.version ?? "master";
   const linkedModules = new Map<string, LinkedModule>();
-  const nestedModules = new Map<string, LinkedModule>();
+  // From the time its level checks run.
   const checkedModules = new Map<string, LinkedModule>();
   const linkOrder: LinkedModule[] = [];
   const dependencies = new Map<string, Set<string>>();
   const loading: Set<string>[] = [];
+  // To report a cycle of EXTENDS or INSTANCE.
   const linking: string[] = [];
 
   const useModule = (name: string, used: Iterable<string>) =>
@@ -312,8 +361,8 @@ export const createEnvironment = (
       closure.add(name);
       [...used].forEach((dependency) => closure.add(dependency));
     });
-  let copyCount = 0;
-  const createName = (name: string) => `${name}#${copyCount++}`;
+  const copyCount = { value: 0 };
+  const createName = (name: string) => `${name}#${copyCount.value++}`;
   const instanceChecks: InstanceCheck[] = [];
   const warnings: SanyError[] = [];
   const checkInstance = createInstanceChecker((name) => {
@@ -340,6 +389,7 @@ export const createEnvironment = (
     if (cached) return cached;
     const standardModule = getStandardModule(name, options.print, runtime, options.files, builtins);
     if (!standardModule) return undefined;
+    // The Java methods of a standard module's dependencies replace operators too, as Integers' do.
     STANDARD_DEPENDENCIES.get(name)?.forEach(addStandardModule);
     const exported: Symbols = new Map();
     standardModule.extends.forEach((extended) =>
@@ -362,15 +412,22 @@ export const createEnvironment = (
   };
 
   const getStandardSymbols = (name: string) => {
-    if (USER_STANDARD_MODULES.has(name) && options.loadModule?.(name) !== undefined)
+    const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
+    // SANY reads a user's module before a standard one, so a standard module using it is linked.
+    // TLCExt defines AssertEq and TLCGetAndSet in TLA+, so it is linked from its source too.
+    if (
+      name === "TLCExt" ||
+      [name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined)
+    )
       return undefined;
     const symbols = addStandardModule(name);
-    const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (symbols) useModule(name, dependencies);
+    // TLC loads each dependency's Java class, so using Integers overrides Naturals' arithmetic.
     if (symbols && dependencies.includes("Integers")) addStandardModule("Integers");
     return symbols;
   };
 
+  // Like TLC, reject a decimal or a big integer anywhere in a module, even where nothing evaluates it.
   const rejectModuleLiterals = (module: Module): Module => {
     rejectLiterals([
       ...module.definitions.flatMap((definition) =>
@@ -392,7 +449,7 @@ export const createEnvironment = (
   const loadModule = (name: string, importer: string) => {
     const source =
       options.loadModule?.(name) ??
-      BUNDLED_MODULES.get(name) ??
+      getSanyStandardModules(runtime.version).get(name) ??
       extractModule(options.source, name);
     if (source === undefined) throw createMissingModuleError(name, importer);
     const module = parseModuleFile(source, name, order);
@@ -452,12 +509,51 @@ export const createEnvironment = (
       return cached;
     }
     const top = linkTopLevel(loadModule(name, importer));
-    const standardModule = getSanyStandardModules(runtime.version).has(name)
-      ? getStandardModule(name, options.print, runtime, options.files, builtins)
-      : undefined;
-    standardModule?.operators.forEach((operator) => {
+    const replaced = new Map<string, Definition>();
+    const evaluateReplaced = (
+      operator: string,
+      args: BuiltinArgument[],
+      context: Context | undefined,
+    ) => {
+      const definition = replaced.get(operator);
+      const expressions = args.flatMap((arg) =>
+        typeof arg === "object" && arg.kind === "Operator" && arg.expression
+          ? [arg.expression]
+          : [],
+      );
+      if (definition?.kind !== "Operator" || !context || expressions.length !== args.length) {
+        throw new TlaEvaluationError(`No definition of ${operator} to fall back to`);
+      }
+      const closure: Closure = {
+        kind: "Closure",
+        name: definition.name,
+        params: definition.params,
+        body: definition.body,
+        scope: undefined,
+      };
+      return evaluate(definition.body, {
+        environment: context.environment,
+        scope: bindOperatorArguments(closure, expressions, context),
+        state: context.state,
+        next: context.next,
+        isKeepLazy: context.isKeepLazy,
+      });
+    };
+    // TLC replaces only the definitions that have Java methods, so a user's Bags.tla keeps the
+    // rest.
+    getJavaOverrides(
+      name,
+      options.print,
+      runtime,
+      options.files,
+      builtins,
+      evaluateReplaced,
+    )?.forEach((operator) => {
       const symbol = top.linked.visible.get(operator.name);
-      if (symbol?.kind !== "Definition" || symbol.arity !== operator.arity) return;
+      if (symbol?.kind !== "Definition") return;
+      if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
+      const definition = definitions.get(symbol.key);
+      if (definition) replaced.set(operator.name, definition);
       builtins.set(symbol.key, operator);
       definitions.delete(symbol.key);
     });
@@ -481,7 +577,7 @@ export const createEnvironment = (
       unit.facts.add(instance.name === undefined ? name : `${instance.name}!${name}`),
     );
     const declarations = getDeclarations(linked);
-    const suffix = `#${copyCount++}`;
+    const suffix = `#${copyCount.value++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
       resolveInstanceSubexpressions(instance, module),
@@ -496,8 +592,16 @@ export const createEnvironment = (
       substitutions,
       location: instance.location,
     });
+    const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
+    params.forEach((param) => instanceParams.add(param));
+    const substitutionRange = instance.definitionRange
+      ? {
+          ...instance.definitionRange,
+          start: { line: instance.location.line, column: instance.location.column },
+        }
+      : instance.instanceRange;
     const instantiation = createInstantiation({
-      params: instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` })),
+      params,
       substitutions: new Map(
         [...substitutions].map(([name, expression]) => [name, renameLocals(expression, renamed)]),
       ),
@@ -519,6 +623,13 @@ export const createEnvironment = (
         return key;
       },
       createName,
+      ...(declarations.length > 0 && {
+        frame: {
+          kind: "Identifier",
+          name: instance.name ?? instance.module,
+          location: { ...substitutionRange.start, range: substitutionRange },
+        },
+      }),
     });
     return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
       const copy =
@@ -541,6 +652,7 @@ export const createEnvironment = (
           ]),
         );
 
+  // SANY binds a copy of a definition that depends on the parameters at the INSTANCE.
   const getInstanceSymbols = (
     instance: Instance,
     exported: Symbols,
@@ -656,7 +768,7 @@ export const createEnvironment = (
       });
     }
     const linked = nested ?? getLinkedModule(instance.module, instancer);
-    const suffix = `#${copyCount++}`;
+    const suffix = `#${copyCount.value++}`;
     const explicitSubstitutions = new Map(
       instance.substitutions.map((item) => [item.name, item.expression]),
     );
@@ -713,6 +825,7 @@ export const createEnvironment = (
       ),
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
+      // Each substitution is a local definition, which the copies read by name.
       getOuterDefinition: () => undefined,
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (_source, name, create) => {
@@ -771,6 +884,8 @@ export const createEnvironment = (
     const importedAt = new Map<string, SourceLocation>();
     const extendsReport: ModuleReport = { location: MODULE_START, errors: [], warnings: [] };
     const reports = [extendsReport];
+    // SANY keeps the first symbol of a name the extended modules share, warns of two definitions
+    // or two declarations, and rejects a definition and a declaration.
     const mergeExtended = (symbols: Symbols) =>
       symbols.forEach((symbol, name) => {
         const current = exported.get(name);
@@ -805,8 +920,12 @@ export const createEnvironment = (
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const constants = [...parsed.constants];
-    const variables = parsed.variables.map((variable) => variable.name);
-    const variableLocations = parsed.variables.map((variable) => variable.location);
+    const declaredVariables = parsed.variables.filter(
+      (variable, index) =>
+        parsed.variables.findIndex((other) => other.name === variable.name) === index,
+    );
+    const variables = declaredVariables.map((variable) => variable.name);
+    const variableLocations = declaredVariables.map((variable) => variable.location);
     parsed.extends.forEach((name) => {
       const nested = scope.modules.get(name);
       const standardSymbols = nested ? undefined : getStandardSymbols(name);
@@ -816,12 +935,16 @@ export const createEnvironment = (
       }
       const linked = nested ?? getLinkedModule(name, parsed.name);
       constants.push(
-        ...linked.constants.filter((constant) =>
-          constants.every((existing) => existing.name !== constant.name),
+        ...linked.constants.filter(
+          (constant) =>
+            constants.every((existing) => existing.name !== constant.name) &&
+            !variables.includes(constant.name),
         ),
       );
       linked.variables.forEach((variable, index) => {
-        if (variables.includes(variable)) return;
+        const isDeclared =
+          variables.includes(variable) || constants.some((constant) => constant.name === variable);
+        if (isDeclared) return;
         variables.push(variable);
         variableLocations.push(linked.variableLocations[index]);
       });
@@ -856,14 +979,12 @@ export const createEnvironment = (
       parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
     const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
-    const isInstancedAfterDefinition = (nested: Module) => {
-      const first = parsed.instances.find((instance) => instance.module === nested.name);
-      return first !== undefined && isBefore(nested.location, first.location);
-    };
     const getLetModule = (instance: Instance) => {
       const ownModule = parsed.modules.find((nested) => nested.name === instance.module);
       if (!ownModule) return getVisibleModules().get(instance.module);
-      return isInstancedAfterDefinition(ownModule) ? modules.get(ownModule.name) : undefined;
+      return isBefore(ownModule.location, instance.location)
+        ? modules.get(ownModule.name)
+        : undefined;
     };
     const getUnit = (module: Module): ModuleUnit => ({
       imported: visible,
@@ -896,6 +1017,7 @@ export const createEnvironment = (
       reports,
       warnings: scope.warnings,
     });
+    // SANY keeps the first of two symbols of a name.
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
       [
         ...declarations
@@ -914,6 +1036,7 @@ export const createEnvironment = (
         (symbols, [name, symbol]) => (symbols.has(name) ? symbols : symbols.set(name, symbol)),
         new Map(visible),
       );
+    // SANY reports the errors of a nested module and goes on, then reports a module defined twice.
     const linkNested = (nested: Module) => {
       const visibleModules = getVisibleModules();
       const existing = visibleModules.get(nested.name);
@@ -933,7 +1056,6 @@ export const createEnvironment = (
       });
       if (redefinition) report.errors.push(redefinition);
       if (!existing) modules.set(nested.name, linked);
-      if (!nestedModules.has(nested.name)) nestedModules.set(nested.name, linked);
     };
     [
       ...parsed.instances.map((instance) => ({
@@ -975,6 +1097,7 @@ export const createEnvironment = (
       parameterized.set(key, !isParameterFree);
       const symbol = getDefinitionSymbol(definition);
       const importedLocation = importedAt.get(definition.name);
+      // SANY binds the name of a fact to a fact the module imports before it.
       if (
         symbol.kind === "Theorem" &&
         visible.get(definition.name)?.kind === "Theorem" &&
@@ -1000,6 +1123,7 @@ export const createEnvironment = (
       ]),
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
+    // SANY checks instances with definitions and theorems, so it reports their errors together.
     const checks = instanceChecks
       .splice(firstCheck)
       .map((check) => ({ location: check.location, check: () => checkInstance(check) }));
@@ -1021,11 +1145,39 @@ export const createEnvironment = (
   };
 
   const linkedRoot = linkTopLevel(root).linked;
+  const traceFile = options.traceFile;
+  // TLC records the binary trace of a trace exploration spec with a postcondition it adds last.
+  const traceOperators: ModuleOperator[] =
+    traceFile === undefined
+      ? []
+      : [
+          {
+            kind: "postcondition",
+            module: "_TLCTrace",
+            operator: "_TLCTraceSilent",
+            constants: { _TLCTraceFile: traceFile },
+          },
+        ];
+  // SANY reads these modules as extendees of the root, so TLC finishes them before the root.
+  const moduleOperators = [...(options.moduleOperators ?? []), ...traceOperators].map(
+    (operator): ResolvedModuleOperator => {
+      const symbol = getLinkedModule(operator.module, root.name).visible.get(operator.operator);
+      return { ...operator, key: symbol?.kind === "Definition" ? symbol.key : undefined };
+    },
+  );
+  linkOrder.push(...linkOrder.splice(linkOrder.indexOf(linkedRoot), 1));
   if (warnings.length > 0 && !options.isSanyReported) options.print(formatSanyWarnings(warnings));
   const getRootKey = (name: string) => linkedRoot.visible.get(name)?.key ?? name;
   linkedRoot.visible.forEach((symbol, name) => {
     const definition = definitions.get(symbol.key);
     if (definition && symbol.key !== name) definitions.set(name, definition);
+  });
+  // TLC adds a constraint or a view it names on the command line to the root's definitions.
+  moduleOperators.forEach((operator) => {
+    const definition = operator.key === undefined ? undefined : definitions.get(operator.key);
+    if (operator.kind !== "postcondition" && definition) {
+      definitions.set(operator.operator, definition);
+    }
   });
 
   const assumptions: Assumption[] = [];
@@ -1039,17 +1191,30 @@ export const createEnvironment = (
   const declaredConstants = linkedRoot.constants.map((constant) => constant.name);
   const variables = linkedRoot.variables;
 
-  const getScopedKeys = (item: { name: string; module?: string }) => {
-    if (item.module === undefined) return [item.name, getRootKey(item.name)];
-    if (item.module === root.name || declaredConstants.includes(item.name)) return [];
-    const linked = linkedModules.get(item.module) ?? nestedModules.get(item.module);
-    return [linked?.visible.get(item.name)?.key ?? item.name];
+  const moduleSymbols = new Map([
+    ...standardExports,
+    ...[...linkedModules].map(([name, linked]): [string, Symbols] => [name, linked.visible]),
+    [root.name, linkedRoot.visible],
+  ]);
+  const getScopedSymbol = (item: { name: string; module?: string }) => {
+    const symbol = moduleSymbols.get(item.module ?? "")?.get(item.name);
+    return symbol?.kind === "Definition" ? symbol : undefined;
   };
+  const getSubstitutedKeys = (item: { name: string; module?: string }) => {
+    if (item.module === undefined) return [item.name, getRootKey(item.name)];
+    const symbol = getScopedSymbol(item);
+    return symbol ? [symbol.key] : [];
+  };
+  // TLC ignores a scoped value for a definition of the root module, though not a scoped override.
+  const getScopedKeys = (item: { name: string; module?: string }) =>
+    item.module === root.name ? [] : getSubstitutedKeys(item);
   const getKeyArity = (key: string) => {
     const definition = definitions.get(key);
     return definition?.kind === "Operator"
       ? definition.params.length
-      : (linkedRoot.constants.find((constant) => constant.name === key)?.arity ?? 0);
+      : (linkedRoot.constants.find((constant) => constant.name === key)?.arity ??
+          builtins.get(key)?.arity ??
+          0);
   };
   const constants = new Map<string, Value>();
   const operatorKeys = new Set<string>();
@@ -1062,7 +1227,7 @@ export const createEnvironment = (
   config.constants
     .filter((assignment) => assignment.args === undefined)
     .forEach((assignment) => {
-      const value = toValue(assignment.value);
+      const value = toConstantValue(assignment.value);
       markNormalized(value);
       getScopedKeys(assignment).forEach((key) => {
         const arity = getKeyArity(key);
@@ -1098,20 +1263,38 @@ export const createEnvironment = (
   });
   tables.forEach((table) =>
     getScopedKeys(table).forEach((key) =>
-      setOperator(
-        key,
-        createOperatorTable(table.name, getKeyArity(key) || table.rows[0][0].length, table.rows),
-      ),
+      setOperator(key, createOperatorTable(table.name, getKeyArity(key), table.rows)),
     ),
   );
   const substitutions = new Map(
     config.substitutions.flatMap((substitution) =>
-      getScopedKeys(substitution).map((key): [string, string] => [
+      getSubstitutedKeys(substitution).map((key): [string, string] => [
         key,
         getRootKey(substitution.target),
       ]),
     ),
   );
+  [...substitutions.keys()].forEach((key) => constants.delete(key));
+  const checkSubstitutionTarget = (name: string, target: string, arity: number | undefined) => {
+    const targetKey = getRootKey(target);
+    const definition = definitions.get(targetKey);
+    const isDefined =
+      definition !== undefined ||
+      builtins.has(targetKey) ||
+      constants.has(targetKey) ||
+      declaredConstants.includes(target) ||
+      variables.includes(target);
+    if (!isDefined) {
+      throw new TlaConfigError(
+        `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
+      );
+    }
+    if (definition?.kind === "Operator" && definition.params.length !== arity) {
+      throw new TlaConfigError(
+        `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
+      );
+    }
+  };
   config.substitutions
     .filter((substitution) => substitution.module === undefined)
     .forEach((substitution) => {
@@ -1127,30 +1310,45 @@ export const createEnvironment = (
           `In the configuration file, the identifier ${target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
         );
       }
-      const targetKey = getRootKey(target);
-      const definition = definitions.get(targetKey);
-      const isDefined =
-        definition !== undefined ||
-        builtins.has(targetKey) ||
-        constants.has(targetKey) ||
-        declaredConstants.includes(target) ||
-        variables.includes(target);
-      if (!isDefined) {
-        throw new TlaConfigError(
-          `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
-        );
-      }
-      if (
-        definition?.kind === "Operator" &&
-        definition.params.length !==
-          (linkedRoot.constants.find((constant) => constant.name === name)?.arity ??
-            linkedRoot.visible.get(name)?.arity)
-      ) {
-        throw new TlaConfigError(
-          `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
-        );
-      }
+      checkSubstitutionTarget(
+        name,
+        target,
+        linkedRoot.constants.find((constant) => constant.name === name)?.arity ??
+          linkedRoot.visible.get(name)?.arity,
+      );
     });
+  // TLC replaces only the definitions of a named module, with definitions of the root module.
+  const scopedSubstitutions = config.substitutions.filter(
+    (substitution) => substitution.module !== undefined,
+  );
+  [...moduleSymbols.keys()].forEach((name) => {
+    const inModule = scopedSubstitutions.filter((substitution) => substitution.module === name);
+    inModule.forEach((substitution) => {
+      const symbol = getScopedSymbol(substitution);
+      if (!symbol) return;
+      if (inModule.some((other) => other.name === substitution.target)) {
+        throw new TlaConfigError(
+          `In the configuration file, the identifier ${substitution.target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
+        );
+      }
+      checkSubstitutionTarget(substitution.name, substitution.target, symbol.arity);
+    });
+    const missing = inModule.find((substitution) => !getScopedSymbol(substitution));
+    if (missing) {
+      throw new TlaConfigError(
+        `In the configuration file, the identifier ${missing.name} does not appear in the specification.`,
+      );
+    }
+  });
+  const unknownModule = scopedSubstitutions.find(
+    (substitution) => !moduleSymbols.has(substitution.module ?? ""),
+  );
+  if (unknownModule) {
+    throw new TlaConfigError(
+      `In the configuration file, the module name ${unknownModule.module} is not a module in the specification.`,
+    );
+  }
+  // TLC sets a module-scoped entry on the definition's body, which every instance shares.
   const scopedKeys = new Set(
     [...config.constants, ...config.substitutions]
       .filter((item) => item.module !== undefined)
@@ -1181,10 +1379,17 @@ export const createEnvironment = (
       if (symbol.key === key && name !== key) definitions.set(name, alias);
     });
   });
+  moduleOperators.forEach((operator) =>
+    getLinkedModule(operator.module, root.name).constants.forEach((constant) => {
+      const value = operator.constants?.[constant.name];
+      if (value !== undefined) constants.set(constant.name, value);
+    }),
+  );
   const unassigned = declaredConstants.filter(
     (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
   );
-  if (unassigned.length > 0) {
+  if (unassigned.length > 0 && !options.isUnconfigured) {
+    // TLC reports the first constant it finds unassigned in SANY's order of declarations.
     const name =
       order.getDeclarationOrder("constant").find((constant) => unassigned.includes(constant)) ??
       unassigned[0];
@@ -1193,7 +1398,7 @@ export const createEnvironment = (
     );
   }
 
-  if (options.isTraceRecorded) {
+  if (options.traceFile !== undefined) {
     builtins.forEach((builtin, name) => {
       const replacement = getTraceSpecArithmetic(builtin);
       if (replacement) builtins.set(name, replacement);
@@ -1224,10 +1429,13 @@ export const createEnvironment = (
     facts,
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     substitutedDefinitions,
+    instanceParams,
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),
     definitionEvaluators: new WeakMap(),
   };
+  // TLC rejects a substitute only when evaluating it at startup fails and its level bound is
+  // above constant. TLC's Java overrides with a minimum level count as variables.
   const analyzer = createLevelAnalyzer({
     constants: new Set(constants.keys()),
     variables: new Set([
@@ -1255,13 +1463,16 @@ export const createEnvironment = (
         ? getEvaluationError(definition.body)
         : undefined;
     if (error) {
+      // TLC's SpecProcessor adds the message of a TLCRuntimeException, not of an EvalException.
       const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
       throw new TlaConfigError(
         `The configuration file substitutes constant ${name} with non-constant ${target}${addendum}`,
       );
     }
   });
+  // TLC 1.7.4 processes the whole spec before it creates its model checker, which TLCGet reads.
   if (runtime.version !== "1.7.4") runtime.isStarted = true;
+  // TLC computes constant definitions in the order SANY finishes modules, except instantiated ones.
   const instantiated = new Set(
     linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
   );
@@ -1279,10 +1490,16 @@ export const createEnvironment = (
         getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
           (name) => {
             const definition = definitions.get(linked.visible.get(name)?.key ?? name);
+            // TLC doesn't compute the copy of a definition from a module instantiated with
+            // substitutions.
             return definition ? [definition] : [];
           },
         ),
       ),
+    rootConstants: linkedRoot.constants,
+    rootSymbols: linkedRoot.visible,
     javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
+    moduleOperators,
+    rootName: root.name,
   };
 };

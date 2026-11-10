@@ -1,12 +1,16 @@
+// TLC counts how many new states each expanded state yields in 32 buckets, the last of which
+// holds every count from 31 up.
 export const OUT_DEGREE_BUCKETS = 32;
 
 export const getOptimisticProbability = (distinctStates: number, generatedStates: number) =>
   distinctStates * ((generatedStates - distinctStates) / 2 ** 64);
 
+// TLC computes the estimate from the actual fingerprints only when the optimistic one is this high.
 const ACTUAL_PROBABILITY_THRESHOLD = 1e-10;
 
 const withDecimalPoint = (text: string) => (text.includes(".") ? text : `${text}.0`);
 
+// Java's Double.toString, which prints a number below 1E-3 or from 1E7 up in scientific notation.
 const toJavaString = (value: number) => {
   const magnitude = Math.abs(value);
   if (magnitude >= 1e-3 && magnitude < 1e7) return withDecimalPoint(String(value));
@@ -17,38 +21,37 @@ const toJavaString = (value: number) => {
 const isDigit = (character: string | undefined) =>
   character !== undefined && character >= "0" && character <= "9";
 
+// TLC's ProbabilityToString, which keeps two significant digits and drops a leading zero.
 export const formatProbability = (value: number) => {
   if (value === 0) return "0.0";
   const text = toJavaString(value);
-  let next = 0;
-  let digits = 0;
-  let result = "";
-  while (text[next] === "0") next++;
-  while (isDigit(text[next])) {
-    result += text[next++];
-    digits++;
+  const cursor = { next: 0, digits: 0, result: "" };
+  while (text[cursor.next] === "0") cursor.next++;
+  while (isDigit(text[cursor.next])) {
+    cursor.result += text[cursor.next++];
+    cursor.digits++;
   }
-  if (next === text.length) return result;
-  if (text[next] !== ".") return text;
-  next++;
-  if (digits >= 2) {
-    while (isDigit(text[next])) next++;
+  if (cursor.next === text.length) return cursor.result;
+  if (text[cursor.next] !== ".") return text;
+  cursor.next++;
+  if (cursor.digits >= 2) {
+    while (isDigit(text[cursor.next])) cursor.next++;
   } else {
-    result += ".";
-    if (digits === 0) {
-      while (text[next] === "0") result += text[next++];
+    cursor.result += ".";
+    if (cursor.digits === 0) {
+      while (text[cursor.next] === "0") cursor.result += text[cursor.next++];
     }
-    while (isDigit(text[next]) && digits < 2) {
-      result += text[next++];
-      digits++;
+    while (isDigit(text[cursor.next]) && cursor.digits < 2) {
+      cursor.result += text[cursor.next++];
+      cursor.digits++;
     }
-    if (isDigit(text[next]) && Number(text[next]) >= 5) {
-      result = roundUp(result);
+    if (isDigit(text[cursor.next]) && Number(text[cursor.next]) >= 5) {
+      cursor.result = roundUp(cursor.result);
     }
-    while (isDigit(text[next])) next++;
+    while (isDigit(text[cursor.next])) cursor.next++;
   }
-  if (next >= text.length) return result;
-  if (text[next] === "E") return `${result}${text.slice(next)}`;
+  if (cursor.next >= text.length) return cursor.result;
+  if (text[cursor.next] === "E") return `${cursor.result}${text.slice(cursor.next)}`;
   return text;
 };
 
@@ -62,15 +65,18 @@ const roundUp = (digits: string): string => {
   return `${front}${Number(last) + 1}`;
 };
 
+// 1 divided by the distance, rounded half up to two significant digits like Java's BigDecimal.
 export const getActualProbability = (distance: bigint) => {
-  let exponent = 0;
-  while (10n ** BigInt(exponent + 1) < distance * 10n) exponent++;
-  const scale = 10n ** BigInt(exponent + 1);
+  const exponent = { value: 0 };
+  while (10n ** BigInt(exponent.value + 1) < distance * 10n) exponent.value++;
+  const scale = 10n ** BigInt(exponent.value + 1);
   const quotient = scale / distance;
   const isRoundedUp = (scale % distance) * 2n >= distance;
-  return Number(`${quotient + (isRoundedUp ? 1n : 0n)}e-${exponent + 1}`);
+  return Number(`${quotient + (isRoundedUp ? 1n : 0n)}e-${exponent.value + 1}`);
 };
 
+// TLC splits its fingerprints into two sets by their top bit and reports the smallest distance
+// between two fingerprints in the same set. Sorted as signed integers, each set is contiguous.
 export const getFingerprintDistance = (
   distinctStates: number,
   generatedStates: number,
@@ -79,9 +85,10 @@ export const getFingerprintDistance = (
   const probability = getOptimisticProbability(distinctStates, generatedStates);
   if (probability < ACTUAL_PROBABILITY_THRESHOLD) return undefined;
   const fingerprints = getFingerprints().sort();
+  // A gap whose high words differ by at most 2^20 is below 2^53, so a number holds it exactly and
+  // only wider gaps need a BigInt.
   const words = new Int32Array(fingerprints.buffer);
-  let narrowGap = Number.POSITIVE_INFINITY;
-  let wideGap = 0x7fff_ffff_ffff_ffffn;
+  const nearest = { narrow: Number.POSITIVE_INFINITY, wide: 0x7fff_ffff_ffff_ffffn };
   for (let index = 1; index < fingerprints.length; index++) {
     const high = words[2 * index + 1];
     const previousHigh = words[2 * index - 1];
@@ -89,15 +96,15 @@ export const getFingerprintDistance = (
     const highGap = high - previousHigh;
     if (highGap <= 0x10_0000) {
       const gap = highGap * 0x1_0000_0000 + (words[2 * index] >>> 0) - (words[2 * index - 2] >>> 0);
-      narrowGap = Math.min(narrowGap, gap);
+      nearest.narrow = Math.min(nearest.narrow, gap);
     } else {
       const gap = fingerprints[index] - fingerprints[index - 1];
-      if (gap < wideGap) wideGap = gap;
+      if (gap < nearest.wide) nearest.wide = gap;
     }
   }
-  if (narrowGap === Number.POSITIVE_INFINITY) return wideGap;
-  const narrow = BigInt(narrowGap);
-  return narrow < wideGap ? narrow : wideGap;
+  if (nearest.narrow === Number.POSITIVE_INFINITY) return nearest.wide;
+  const narrow = BigInt(nearest.narrow);
+  return narrow < nearest.wide ? narrow : nearest.wide;
 };
 
 export const getOutDegreeSummary = (buckets: number[]) => {
@@ -106,10 +113,10 @@ export const getOutDegreeSummary = (buckets: number[]) => {
   const degrees = buckets.flatMap((count, degree) => (count > 0 ? [degree] : []));
   const total = buckets.reduce((sum, count, degree) => sum + count * degree, 0);
   const position = Math.floor(observations * 0.95);
-  let cumulativeCount = 0;
+  const cumulative = { count: 0 };
   const percentile = degrees.find((degree) => {
-    cumulativeCount += buckets[degree];
-    return cumulativeCount > position;
+    cumulative.count += buckets[degree];
+    return cumulative.count > position;
   });
   return `The average outdegree of the complete state graph is ${Math.round(total / observations)} (minimum is ${degrees[0]}, the maximum ${degrees[degrees.length - 1]} and the 95th percentile is ${percentile}).`;
 };

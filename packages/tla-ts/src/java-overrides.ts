@@ -35,6 +35,7 @@ const ACCESS_PUBLIC = 0x0001;
 const ACCESS_STATIC = 0x0008;
 const VALUE_PACKAGE = "tlc2/value/impl/";
 
+// The constant pool tags of the JVM specification, section 4.4.
 const POOL_TAG = {
   utf8: 1,
   integer: 3,
@@ -67,10 +68,10 @@ const OPCODE = {
 
 const createReader = (bytes: Uint8Array) => {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let offset = 0;
+  const cursor = { offset: 0 };
   const advance = (length: number) => {
-    const start = offset;
-    offset += length;
+    const start = cursor.offset;
+    cursor.offset += length;
     return start;
   };
   return {
@@ -78,7 +79,7 @@ const createReader = (bytes: Uint8Array) => {
     readUint16: () => view.getUint16(advance(2)),
     readUint32: () => view.getUint32(advance(4)),
     readInt32: () => view.getInt32(advance(4)),
-    readBytes: (length: number) => bytes.subarray(advance(length), offset),
+    readBytes: (length: number) => bytes.subarray(advance(length), cursor.offset),
   };
 };
 
@@ -94,6 +95,7 @@ const PRIMITIVE_TYPES = new Map([
   ["V", "void"],
 ]);
 
+// The modifiers Method#toString prints, in the order of Modifier#toString.
 const METHOD_MODIFIERS: [number, string][] = [
   [0x0001, "public"],
   [0x0004, "protected"],
@@ -117,6 +119,8 @@ const getClassName = (pool: PoolEntry[], index: number) => pool[pool[index].firs
 const getJavaClassName = (pool: PoolEntry[], index: number) =>
   getClassName(pool, index).replaceAll("/", ".");
 
+// In the order of the class file. Class#getDeclaredMethods orders them by where HotSpot allocated
+// the symbols of their names.
 const readClassFile = (bytes: Uint8Array) => {
   const reader = createReader(bytes);
   if (reader.readUint32() !== CLASS_MAGIC)
@@ -177,6 +181,7 @@ const readClassFile = (bytes: Uint8Array) => {
     const isOverride = (access & ACCESS_PUBLIC) !== 0 && (access & ACCESS_STATIC) !== 0;
     if (!isOverride) continue;
     const code = attributes.find((attribute) => attribute.name === "Code")?.reader;
+    // A Code attribute holds max_stack and max_locals before the length of the bytecode.
     code?.readBytes(4);
     const thrown = attributes.find((attribute) => attribute.name === "Exceptions")?.reader;
     const exceptions = thrown
