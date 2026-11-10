@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt. The final check of
-// theory_lra: the integer solver and its branches and cuts, then nla on nonlinear terms, whose
-// lemmas become clauses.
+// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_ADD, OP_GE, OP_LE, OP_MUL, OP_TO_REAL, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./context";
 import { TheoryJustification } from "./enode";
@@ -8,11 +6,11 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { getVar, Literal, negate } from "./literal";
 import { getGcd, getLcm, Rational } from "./rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LT, KIND_NE } from "./lp/constraints";
-import { Explanation } from "./lp/explanation";
+import type { Explanation } from "./lp/explanation";
 import { IntSolver } from "./lp/int-solver";
 import type { LarTerm } from "./lp/lar-term";
-import { NlaCore } from "./lp/nla-core";
-import { Ineq, Lemma } from "./lp/nla-types";
+import type { NlaCore } from "./lp/nla-core";
+import type { Ineq, Lemma } from "./lp/nla-types";
 import { TheoryLraModel } from "./theory-lra-model";
 
 export abstract class TheoryLraFinalCheck extends TheoryLraModel {
@@ -37,18 +35,14 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     let result = FC_DONE;
     const nlaStatus = this.checkNla(level);
     if (nlaStatus === FC_CONTINUE) return FC_CONTINUE;
-    // Nonlinear bound optimization may invalidate integer feasibility.
     if (nlaStatus === FC_DONE && !this.nla?.isUsingNraModel && solver.hasInfInt())
       return FC_CONTINUE;
     if (nlaStatus === FC_GIVEUP) result = FC_GIVEUP;
     if (this.assumeEqs()) return FC_CONTINUE;
     if (this.unsupportedTerms.length > 0) this.initVariableValues();
-    // eval_unsupported gives up on every term but powers, which are not supported here.
     return this.unsupportedTerms.some((term) => context.isRelevant(term)) ? FC_GIVEUP : result;
   }
 
-  // check_nla: whether the values of the monomials agree with their factors', or the lemmas that
-  // refine them.
   private checkNla(level: number) {
     if (this.context.checkCanceled()) return FC_GIVEUP;
     const nla = this.nla;
@@ -61,7 +55,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return status === L_TRUE ? FC_DONE : FC_GIVEUP;
   }
 
-  // check_idiv_bounds: the lemmas of the bounded divisions.
   private checkIdivBounds() {
     const nla = this.nla;
     if (nla === undefined) return true;
@@ -70,7 +63,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return nla.lemmas.length === 0;
   }
 
-  // propagate_nla and incremental_propagate_nla: the bounds nla derives for monomials.
   protected propagateNla(isIncremental: boolean) {
     const nla = this.nla;
     if (nla === undefined) return;
@@ -97,7 +89,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
       this.addEq(equality.first, equality.second, equality.explanation, false);
   }
 
-  // add_equality: a column fixed to a value, equal to the variable of the value's numeral.
   private addEquality(column: number, value: Rational, explanation: Explanation) {
     const thVar = value.equals(Rational.one)
       ? this.oneVar
@@ -108,9 +99,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     this.addEq(this.registerVar(thVar), column, explanation, true);
   }
 
-  // mk_literal: the literal of an inequality of nla, over a bound or equality atom.
   private mkNlaLiteral(ineq: Ineq) {
-    // scoped_auxiliary: the bounds of the atom are auxiliary constraints.
     const constraints = this.solver.constraints;
     constraints.isAuxiliaryMode = true;
     const literal = this.mkNlaLiteralCore(ineq);
@@ -130,7 +119,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return kind === KIND_LT || kind === KIND_GT ? negate(literal) : literal;
   }
 
-  // mk_eq: the atom term = offset.
   private mkTermEq(term: LarTerm, offset: Rational) {
     const manager = this.manager;
     const coeffs = this.getTermCoeffs(term);
@@ -145,8 +133,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return atom;
   }
 
-  // false_case_of_check_nla and set_conflict_or_lemma: the lemma as a theory axiom, unless one of
-  // its literals is already true.
   private falseCaseOfCheckNla(lemma: Lemma) {
     const context = this.context;
     const literals = lemma.ineqs.map((ineq) => negate(this.mkNlaLiteral(ineq)));
@@ -164,7 +150,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     context.mkThAxiom(clause);
   }
 
-  // check_lia: whether the integer solver found the integer columns integral.
   private isLiaSat() {
     if (this.context.checkCanceled()) return false;
     const move = this.lia.check();
@@ -185,7 +170,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return move.kind === "sat";
   }
 
-  // mk_bound: the atom of a bound on an lp term, over the theory variables of its columns.
   private mkBound(lpTerm: LarTerm, inputOffset: Rational, inputIsLower: boolean) {
     const manager = this.manager;
     const context = this.context;
@@ -226,8 +210,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return atom;
   }
 
-  // coeffs2app: the sum of the expressions of theory variables times coefficients, with Int
-  // expressions of a Real sum coerced to Real.
   private coeffsToApp(coeffs: [number, Rational][], isInt: boolean) {
     const manager = this.manager;
     const sort = isInt ? SORT_INT : SORT_REAL;

@@ -9,14 +9,13 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateKey } from "./expressions";
-import { and, DISABLED, type Formula, letIn, text, wrap, wrapEquated } from "./formula";
+import { and, createText, DISABLED, type Formula, letIn, wrap, wrapEquated } from "./formula";
 import { translateIf, translateSwitch, translateThrow } from "./functions";
 import { bindPattern, bindValues, type Scope } from "./scope";
 import { getKind } from "./types";
 
 interface Path {
   scope: Scope;
-  // State variables and mutable locals, which assignments may change.
   mutable: Set<ts.Symbol>;
   isAssigned: boolean;
 }
@@ -24,7 +23,6 @@ interface Path {
 interface Target {
   symbol: ts.Symbol;
   current: string;
-  // The path to the changed part, as an EXCEPT selector such as .field[2].
   selector: string;
 }
 
@@ -34,12 +32,9 @@ interface Removed {
 }
 
 interface Frame {
-  // What follows the statements once they complete.
   next: (path: Path) => Formula;
-  // What a return statement does: end the action, or leave an inlined helper.
   exit: (path: Path) => Formula;
   breakTo: ((path: Path) => Formula) | undefined;
-  // Helpers being inlined, to reject recursion.
   inlining: Set<ts.Declaration>;
 }
 
@@ -54,7 +49,6 @@ const INCREMENT_OPERATORS = new Map<ts.SyntaxKind, string>([
   [ts.SyntaxKind.MinusMinusToken, "-"],
 ]);
 
-// The current value of an assignment target, and how to replace it.
 const getTarget = (node: ts.Expression, path: Path, context: Context): Target => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
     return getTarget(node.expression, path, context);
@@ -113,8 +107,6 @@ const assign = (
   };
 };
 
-// Assigns a value to a target, or to each target in a destructuring pattern. Every value is read
-// before any target changes, so [a, b] = [b, a] swaps.
 const assignPattern = (
   target: ts.Expression,
   source: ts.Expression | undefined,
@@ -169,7 +161,6 @@ const assignPattern = (
   return assign(target, path, context, () => value);
 };
 
-// The value that a call like queue.shift() returns, before it changes the queue.
 const getRemovedValue = (
   node: ts.Expression,
   path: Path,
@@ -192,7 +183,6 @@ const getRemovedValue = (
   };
 };
 
-// The path after an assignment, such as x = 1, x += 1, or x++.
 const getAssignedPath = (expression: ts.Expression, path: Path, context: Context) => {
   if (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) {
     const operator = INCREMENT_OPERATORS.get(expression.operator);
@@ -236,11 +226,11 @@ const translateCallStatement = (
     const isConsole = receiver.getText() === "console";
     if (isConsole && method === "log") {
       const value = values.length === 1 ? values[0] : `<<${values.join(", ")}>>`;
-      return and([text(`PrintT(${value})`), continueWith(path)]);
+      return and([createText(`PrintT(${value})`), continueWith(path)]);
     }
     if (isConsole && method === "assert") {
       const message = values[1] ?? JSON.stringify("Assertion failed");
-      return and([text(`Assert(${values[0]}, ${message})`), continueWith(path)]);
+      return and([createText(`Assert(${values[0]}, ${message})`), continueWith(path)]);
     }
     if (MUTATING_METHODS.has(method)) {
       const kind = getKind(receiver, context);
@@ -255,7 +245,6 @@ const translateCallStatement = (
       );
     }
   }
-  // A helper that changes state runs inline, as part of the action.
   const helper = getTopLevelDeclaration(getSymbol(expression.expression, context.checker));
   const helperFunction = getFunction(helper);
   if (helper === undefined || helperFunction?.body === undefined) {
@@ -306,7 +295,6 @@ const translateExpressionStatement = (
   return continueWith(assigned);
 };
 
-// Binds each declared local to a LET definition. A let can change later, and a const can't.
 const translateDeclarations = (
   declarations: readonly ts.VariableDeclaration[],
   path: Path,
@@ -386,7 +374,9 @@ const translateStatements = (
     if (frame.breakTo === undefined) throw new TlaTypeScriptError("Unsupported break", statement);
     return frame.breakTo(path);
   }
-  if (ts.isThrowStatement(statement)) return text(translateThrow(statement, path.scope, context));
+  if (ts.isThrowStatement(statement)) {
+    return createText(translateThrow(statement, path.scope, context));
+  }
   if (ts.isSwitchStatement(statement)) {
     return translateSwitch(
       statement,
@@ -413,8 +403,6 @@ const translateStatements = (
   throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
 };
 
-// An action's body as a TLA+ action: each path that assigns a state variable becomes a step, and
-// every other path disables the action.
 export const translateAction = (
   statements: readonly ts.Statement[],
   scope: Scope,
@@ -430,9 +418,9 @@ export const translateAction = (
     return and([
       ...assignments
         .filter((assignment) => assignment.value !== assignment.name)
-        .map((assignment) => text(`${assignment.name}' = ${wrapEquated(assignment.value)}`)),
+        .map((assignment) => createText(`${assignment.name}' = ${wrapEquated(assignment.value)}`)),
       ...(unchanged.length > 0
-        ? [text(`UNCHANGED <<${unchanged.map((assignment) => assignment.name).join(", ")}>>`)]
+        ? [createText(`UNCHANGED <<${unchanged.map((assignment) => assignment.name).join(", ")}>>`)]
         : []),
     ]);
   };
@@ -456,7 +444,6 @@ const getRoot = (node: ts.Expression): ts.Expression => {
     : node;
 };
 
-// Whether a function assigns a state variable, directly or through a helper it calls.
 export const writesState = (
   node: ts.Node,
   context: Context,

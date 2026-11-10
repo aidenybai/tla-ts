@@ -1,13 +1,11 @@
 // Ported from Z3 (src/math/lp/lar_core_solver.h, src/math/lp/lp_core_solver_base.h,
 // src/math/lp/lp_primal_core_solver.h, src/math/lp/lp_primal_core_solver_tableau_def.h), MIT
-// license, see z3-license.txt. The tableau, the column values and bounds, and the primal simplex
-// that lar_solver runs with the tableau_rows strategy: the smallest infeasible basic column
-// leaves, and the entering column is the one in its row that frees the fewest bounded basics.
+// license, see z3-license.txt.
 import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector, VarHeap } from "./containers";
 import type { LpSettings } from "./lp-settings";
 import { Impq } from "./numeric-pair";
-import { RowCell, StaticMatrix } from "./static-matrix";
+import { type RowCell, StaticMatrix } from "./static-matrix";
 
 export const COLUMN_FREE = 0;
 export const COLUMN_LOWER = 1;
@@ -15,7 +13,6 @@ export const COLUMN_UPPER = 2;
 export const COLUMN_BOXED = 3;
 export const COLUMN_FIXED = 4;
 
-// column_type: which bounds a column has.
 export type ColumnType =
   | typeof COLUMN_FREE
   | typeof COLUMN_LOWER
@@ -47,7 +44,6 @@ export class CoreSolver {
   infRowIndex = -1;
   infeasibleSumSign = 0;
   infeasibleCombination: [Rational, number][] = [];
-  // m_d: the reduced costs while maximize_term runs the tableau_costs strategy, kept on pivots.
   reducedCosts: Rational[] | undefined;
   private isBlandMode = false;
   private leftBasis = new IndexedUintSet();
@@ -55,11 +51,6 @@ export class CoreSolver {
 
   constructor(readonly settings: LpSettings) {}
 
-  getColumnCount() {
-    return this.matrix.getColumnCount();
-  }
-
-  // add_new_var_to_core_fields_for_mpq: a column at zero, basic in a new row or nonbasic.
   addColumn(isBasic: boolean) {
     const column = this.matrix.getColumnCount();
     this.matrix.addColumn();
@@ -76,33 +67,30 @@ export class CoreSolver {
     this.nbasis.push(column);
   }
 
-  // remove_last_column_from_basis_tableau: the last column out of the basis or the nonbasic
-  // columns, once the tableau no longer holds it.
   removeLastColumn(column: number) {
     this.x.length = this.matrix.getColumnCount();
     const position = this.heading[column];
     if (position >= 0) {
       const lastPosition = this.basis.length - 1;
       if (position !== lastPosition) {
-        const moved = this.basis[lastPosition];
-        this.basis[position] = moved;
-        this.heading[moved] = position;
+        const movedColumn = this.basis[lastPosition];
+        this.basis[position] = movedColumn;
+        this.heading[movedColumn] = position;
       }
       this.basis.pop();
     } else {
       const index = -1 - position;
       const lastPosition = this.nbasis.length - 1;
       if (index !== lastPosition) {
-        const moved = this.nbasis[lastPosition];
-        this.nbasis[index] = moved;
-        this.heading[moved] = -index - 1;
+        const movedColumn = this.nbasis[lastPosition];
+        this.nbasis[index] = movedColumn;
+        this.heading[movedColumn] = -index - 1;
       }
       this.nbasis.pop();
     }
     this.heading.pop();
   }
 
-  // The action, with pivots not recording the rows they touch.
   withoutTouchedRows<T>(action: () => T) {
     const savedTouchedRows = this.touchedRows;
     this.touchedRows = null;
@@ -171,7 +159,6 @@ export class CoreSolver {
     this.trackColumnFeasibility(column);
   }
 
-  // make_column_feasible: moves the value of a column into its bounds, and returns the move.
   makeColumnFeasible(column: number) {
     const value = this.x[column];
     const lower = this.lowerBounds[column];
@@ -231,7 +218,6 @@ export class CoreSolver {
     return true;
   }
 
-  // pivot_column_tableau: makes the column a unit column with its one in the pivot row.
   pivotColumnTableau(column: number, pivotRow: number) {
     if (!this.divideRowByPivot(pivotRow, column)) return false;
     this.settings.stats.pivots++;
@@ -256,7 +242,6 @@ export class CoreSolver {
     return true;
   }
 
-  // pivot_to_reduced_costs_tableau: eliminates the reduced cost of the column that enters.
   private pivotToReducedCosts(reducedCosts: Rational[], pivotRow: number, column: number) {
     const alpha = reducedCosts[column];
     if (alpha.isZero()) return;
@@ -282,8 +267,6 @@ export class CoreSolver {
     this.matrix.transposeRows(first, second);
   }
 
-  // The simplex.
-
   private needsToGrow(basic: number) {
     const type = this.columnTypes.get(basic);
     return (
@@ -292,7 +275,7 @@ export class CoreSolver {
     );
   }
 
-  infSignOfColumn(basic: number) {
+  private infSignOfColumn(basic: number) {
     switch (this.columnTypes.get(basic)) {
       case COLUMN_FREE:
         return 0;
@@ -356,7 +339,6 @@ export class CoreSolver {
     return result;
   }
 
-  // find_beneficial_entering_tableau_rows: the cell of the entering column, or undefined.
   private findBeneficialEntering(rowIndex: number) {
     const row = this.matrix.rows[rowIndex];
     const basic = this.basis[rowIndex];
@@ -450,7 +432,6 @@ export class CoreSolver {
     if (this.isFeasible()) this.status = LP_OPTIMAL;
   }
 
-  // lp_primal_core_solver::solve, looking only for a feasible solution.
   private solveTableau() {
     if (this.isFeasible()) {
       this.status = LP_FEASIBLE;
@@ -473,7 +454,6 @@ export class CoreSolver {
     );
   }
 
-  // lar_core_solver::solve.
   solve() {
     if (this.isFeasible()) {
       this.status = LP_OPTIMAL;
@@ -497,8 +477,7 @@ export class CoreSolver {
 
   popScope(count: number) {
     this.columnTypes.popScope(count);
-    const columnCount = this.matrix.getColumnCount();
-    this.x.length = columnCount;
+    this.x.length = this.matrix.getColumnCount();
     this.infeasibleCombination = [];
   }
 }

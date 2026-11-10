@@ -1,15 +1,10 @@
-// Ported from Z3 (src/util/rlimit.h, src/util/rlimit.cpp, src/util/memory_manager.cpp), MIT
-// license, see z3-license.txt. The resource limit of an ast_manager, shared by every context and
-// rewriter that uses the manager. It cancels the work at the deadline, in milliseconds since the
-// epoch, when the signal aborts, or when the heap is nearly full.
+// Ported from Z3 (src/util/rlimit.h, src/util/rlimit.cpp, src/util/memory_manager.cpp), MIT license, see z3-license.txt.
 import type { GCProfiler } from "node:v8";
 import { SmtCanceledError } from "../../../errors";
 
 export class ResourceLimit {
-  // m_count: the steps taken, which MBQI also uses as a random seed.
   count = 0;
   private isCanceled = false;
-  // Watches for a full collection while the used size is past the threshold.
   private profiler: GCProfiler | null = null;
 
   constructor(
@@ -17,9 +12,6 @@ export class ResourceLimit {
     private signal?: AbortSignal,
   ) {}
 
-  // inc: counts a step and returns whether the work may go on. The clock and the heap are read on
-  // every 256th step, since a step costs less than reading them. A step can allocate kilobytes, so
-  // reading the heap less often lets it fill between two readings.
   inc() {
     this.count++;
     if (
@@ -33,13 +25,10 @@ export class ResourceLimit {
     return !this.isCanceled;
   }
 
-  // tactic::checkpoint: counts a step, and throws once the work is canceled.
   checkpoint() {
     if (!this.inc()) throw new SmtCanceledError();
   }
 
-  // The used size counts garbage, such as what earlier work left, until the collector runs. So once
-  // it passes the threshold, the size after the next full collection decides.
   private isHeapNearlyFull() {
     if (v8 === undefined) return false;
     const statistics = v8.getHeapStatistics();
@@ -62,22 +51,15 @@ export class ResourceLimit {
     return collection.afterGC.heapStatistics.usedHeapSize > threshold;
   }
 
-  // Stops watching the collector, which the work does when it ends.
   release() {
     this.profiler?.stop();
     this.profiler = null;
   }
 }
 
-// Z3 runs as its own process, where running out of memory ends only that process and tlapm counts
-// the obligation as failed. The solver shares its caller's process instead, which running out of
-// heap would end, so it stops before the heap fills, like Z3's max_memory in memory::allocate. The
-// heap statistics come from node:v8. In V8, which Node and Deno use, the used and the available
-// size add up to the heap limit. Bun reports the memory of the machine and no full collections,
-// and its getHeapStatistics walks every live object, which made a proof 100 times slower, so the
-// check is off there.
 const HEAP_FRACTION = 0.8;
 const CLOCK_CHECK_MASK = 255;
+// HACK: Bun's getHeapStatistics walks every live object, which made a proof 100 times slower.
 const v8 =
   typeof process === "undefined" || process.versions.bun !== undefined
     ? undefined

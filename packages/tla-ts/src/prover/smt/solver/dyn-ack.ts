@@ -1,13 +1,9 @@
-// Ported from Z3 (src/smt/dyn_ack.cpp), MIT license, see z3-license.txt. Dynamic Ackermann
-// reduction with Z3's default DACK_ROOT strategy: a pair of applications whose congruence is the
-// root of conflicts often enough gets the clause f(a) = f(b) or some a_i != b_i, so the search can
-// learn from it without the E-graph. dack.eq is off by default, so equalities are not tracked.
+// Ported from Z3 (src/smt/dyn_ack.cpp), MIT license, see z3-license.txt.
 import { OP_EQ } from "./ast";
 import { CLS_TH_LEMMA } from "./clause";
 import type { Context } from "./context";
 import { Literal, negate } from "./literal";
 
-// dyn_ack_params defaults: dack.threshold, dack.factor, dack.gc and dack.gc_inv_decay.
 const DACK_THRESHOLD = 10;
 const DACK_FACTOR = 0.1;
 const DACK_GC = 2000;
@@ -21,7 +17,6 @@ interface AppPair {
 
 export class DynAckManager {
   private appPair2NumOccs = new Map<string, number>();
-  // The pairs that hold references to their applications. A pair can appear more than once.
   private appPairs: AppPair[] = [];
   private toInstantiate: AppPair[] = [];
   private qhead = 0;
@@ -49,8 +44,6 @@ export class DynAckManager {
     this.numPropagationsSinceLastGc = 0;
   }
 
-  // cg_conflict_eh, which DACK_ROOT turns into cg_eh: the congruence of the two applications is the
-  // root of a conflict.
   cgConflictEh(inputFirst: number, inputSecond: number) {
     const manager = this.context.manager;
     if (manager.decls[inputFirst] === OP_EQ) return;
@@ -71,8 +64,6 @@ export class DynAckManager {
     if (numOccs === DACK_THRESHOLD) this.toInstantiate.push(pair);
   }
 
-  // gc: decays every count, drops the pairs that fall to 1 or below, and queues the frequent ones,
-  // most frequent first.
   private gc() {
     const manager = this.context.manager;
     this.toInstantiate = [];
@@ -132,7 +123,6 @@ export class DynAckManager {
           negate(this.mkEq(manager.getArg(pair.first, index), manager.getArg(pair.second, index))),
         );
     this.appPair2NumOccs.delete(pair.key);
-    // The pair stays in appPairs, which still holds its references.
     this.instantiated.add(pair.key);
     literals.push(this.mkEq(pair.first, pair.second));
     for (const literal of literals) context.markLiteralAsRelevant(literal);

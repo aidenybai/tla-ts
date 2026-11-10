@@ -233,7 +233,6 @@ interface Instantiation {
   substitutions: Map<string, Expression>;
   variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
-  // A definition of the instantiating module that a substitution names.
   getOuterDefinition: (name: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
@@ -241,7 +240,6 @@ interface Instantiation {
   frame?: Expression;
 }
 
-// LAMBDA is a keyword, so no name bound inside the instance can capture it.
 const LAMBDA_NAME = "LAMBDA";
 
 type RewriteMode = "Normal" | "Enabled" | "Primed";
@@ -252,8 +250,6 @@ interface Rewrite {
   copies: Map<string, string>;
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
-  // The substitutions an operator's copy reads, which it binds once, as TLC binds each to a lazy
-  // value when it evaluates the operator's body.
   bindings?: Map<string, Expression>;
 }
 
@@ -263,9 +259,6 @@ const isVariableAlias = (expression: Expression): boolean =>
   expression.kind === "Identifier" ||
   (expression.kind === "Tuple" && expression.elements.every(isVariableAlias));
 
-// A name, or a tuple of names, stays in place, so a step can assign it or leave it unchanged as
-// TLC does through its lazy value. An operator or a literal costs nothing to evaluate again. A name
-// of a definition that isn't such an alias is bound once.
 const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
   if (replacement.kind !== "Identifier") {
     return (
@@ -796,7 +789,6 @@ const expandLetInstances = (
   return { ...mapped, definitions };
 };
 
-// A named theorem's statement is linked as its definition.
 const getUnnamedStatement = (theorem: Theorem) =>
   theorem.name === undefined && theorem.statement.kind !== "AssumeProve"
     ? theorem.statement

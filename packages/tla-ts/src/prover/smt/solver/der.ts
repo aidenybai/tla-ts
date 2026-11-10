@@ -1,6 +1,4 @@
-// Ported from Z3 (src/ast/rewriter/der.cpp), MIT license, see z3-license.txt. Destructive equality
-// resolution: a quantified variable that a literal of the body defines is replaced by its
-// definition.
+// Ported from Z3 (src/ast/rewriter/der.cpp), MIT license, see z3-license.txt.
 import { KIND_QUANTIFIER, KIND_VAR, OP_EQ, SORT_BOOL, type AstManager } from "./ast";
 import { flattenAndVector, flattenOrVector } from "./ast-util";
 import { RefVector } from "./ref-vector";
@@ -11,7 +9,6 @@ interface VarDefinition {
   definition: number;
 }
 
-// der::is_var_diseq for a universal quantifier and der::is_var_eq for an existential one.
 const getVarDefinition = (
   manager: AstManager,
   literal: number,
@@ -60,8 +57,6 @@ const getVarDefinition = (
 export const isOccurring = (manager: AstManager, index: number, expr: number) =>
   collectUsedVars(manager, expr, index + 1)[index];
 
-// der_sort_vars: the definitions in an order where each only uses the ones before it, dropping the
-// definitions on a cycle.
 const getEliminationOrder = (manager: AstManager, definitions: (number | undefined)[]) => {
   for (let index = 0; index < definitions.length; index++) {
     const definition = definitions[index];
@@ -94,8 +89,7 @@ const getEliminationOrder = (manager: AstManager, definitions: (number | undefin
       return;
     }
     for (let index = 0; index < manager.getNumArgs(expr); index++) {
-      const arg = manager.getArg(expr, index);
-      visit(arg);
+      visit(manager.getArg(expr, index));
     }
     done.add(expr);
   };
@@ -105,8 +99,6 @@ const getEliminationOrder = (manager: AstManager, definitions: (number | undefin
   return order;
 };
 
-// der: destructive equality resolution. Its var_subst keeps the cache of its last substitution, and
-// m_map, m_subst_map and m_new_args keep their expressions, until der next fills them.
 export class Der {
   private subst: VarSubst;
   private map: RefVector;
@@ -120,8 +112,6 @@ export class Der {
     this.newArgs = new RefVector(manager);
   }
 
-  // der::operator(): reduces until nothing changes, then drops the eliminated variables. The result
-  // is a temporary.
   apply(expr: number) {
     const manager = this.manager;
     let current = expr;
@@ -132,7 +122,6 @@ export class Der {
     return current === expr ? expr : elimUnusedVars(manager, current);
   }
 
-  // ~der.
   release() {
     this.newArgs.reset();
     this.substMap.reset();
@@ -140,7 +129,6 @@ export class Der {
     this.subst.release();
   }
 
-  // der::reduce1.
   private reduce(expr: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
@@ -152,7 +140,6 @@ export class Der {
       !isOccurring(manager, single.index, single.definition)
     )
       return data.isForall ? manager.falseExpr : manager.trueExpr;
-    // The literals vector holds its expressions until reduce1 returns, and releases them in order.
     const vector = new RefVector(manager);
     manager.withoutTemporaries(() => {
       vector.push(data.body);
@@ -164,7 +151,6 @@ export class Der {
     return result;
   }
 
-  // The rest of der::reduce1, on the flattened literals of the body.
   private reduceLiterals(expr: number, literals: number[]) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
@@ -179,23 +165,18 @@ export class Der {
       return found.index;
     });
     if (positions.every((position) => position === -1)) return expr;
-    // der_sort_vars drops the definitions on a cycle from m_map.
     const definitions = map.items.map((definition) => (definition === -1 ? undefined : definition));
     const order = getEliminationOrder(manager, definitions);
     definitions.forEach((definition, index) => {
       if (definition === undefined && map.items[index] !== -1) map.set(index, -1);
     });
     if (order.length === 0) return expr;
-    // create_substitution: (:var i) becomes the entry at size - i - 1, with the definitions before it
-    // in the order substituted.
     const size = map.size;
     const substMap = this.substMap;
     substMap.reset();
     substMap.resize(size);
     for (const index of order)
       substMap.setOwned(size - index - 1, this.subst.apply(map.items[index], substMap.items));
-    // apply_substitution: m_new_args holds the kept literals, and the junction of them is held
-    // until it returns.
     this.newArgs.reset();
     literals.forEach((literal, position) => {
       const index = positions[position];

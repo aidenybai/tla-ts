@@ -12,7 +12,6 @@ const copies: string[] = [];
 
 afterAll(() => copies.forEach((copy) => rmSync(copy, { recursive: true, force: true })));
 
-// The CLI writes the TLA+ it compiles beside the TypeScript file, so each run works in a copy.
 const copyFixtures = (directory: string) => {
   const copy = mkdtempSync(join(tmpdir(), "tla-ts-typescript-"));
   copies.push(copy);

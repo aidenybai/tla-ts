@@ -1,14 +1,7 @@
-// The parts of OCaml's standard library whose exact behavior steers Zenon's search.
-//
-// Hashtbl.hash on the values Zenon hashes: strings, and the (int, string list) pairs that Expr
-// hashes. Zenon orders record fields by these hashes. Ints are 63-bit in OCaml, so an int is a
-// high part in [-2^30, 2^30) and a low part in [0, 2^32).
-
 const TWO_32 = 4294967296;
 const TWO_31 = 2147483648;
 const TWO_30 = 1073741824;
 
-// A block's header with its color bits cleared: two fields and tag 0, for a pair or a list cell.
 const PAIR_HEADER = 0x800;
 
 const MEANINGFUL_LIMIT = 10;
@@ -28,8 +21,6 @@ const finalMix = (hash: number) => {
   return ((second ^ (second >>> 16)) >>> 0) & 0x3fffffff;
 };
 
-// A string's UTF-8 bytes as the little-endian words that caml_hash_mix_string mixes, the last one
-// partial.
 interface StringWords {
   words: number[];
   length: number;
@@ -54,15 +45,12 @@ const mixWords = (hash: number, encoded: StringWords) => {
   return mixed ^ encoded.length;
 };
 
-// caml_hash_mix_intnat on the tagged value 2n + 1 of the int n.
 const mixInt = (hash: number, high: number, low: number) => {
   const taggedLow = (low * 2 + 1) % TWO_32;
   const taggedHigh = high * 2 + Math.floor((low * 2 + 1) / TWO_32);
   return mix(hash, (taggedHigh ^ (taggedHigh < 0 ? -1 : 0) ^ taggedLow) | 0);
 };
 
-// Hashtbl.hash on strings and on (int, string list) pairs. It keeps each string's words and hash,
-// because Zenon hashes the same variable names over and over.
 export const createHasher = () => {
   const stringWords = new Map<string, StringWords>();
   const stringHashes = new Map<string, number>();
@@ -103,7 +91,6 @@ export interface Int63 {
   low: number;
 }
 
-// Expr's combine: x + y * 131 + 1, wrapping like OCaml's 63-bit ints.
 export const combine = (left: Int63, right: Int63): Int63 => {
   const product = right.low * 131;
   const productCarry = Math.floor(product / TWO_32);
@@ -117,8 +104,6 @@ export const combine = (left: Int63, right: Int63): Int63 => {
 
 export const toInt63 = (value: number): Int63 => ({ high: 0, low: value });
 
-// The merges of OCaml's List.stable_sort, on arrays. Each returns its result reversed, as OCaml's
-// rev_merge and rev_merge_rev do.
 const mergeReversed = <Item>(
   first: Item[],
   second: Item[],
@@ -136,8 +121,7 @@ const mergeReversed = <Item>(
   return merged.reverse();
 };
 
-// OCaml's List.sort, step for step, so that a comparison that isn't a total order still gives
-// Zenon's result.
+// OCaml's List.sort, step for step, so that a comparison that isn't a total order still gives Zenon's result.
 export const stableSort = <Item>(items: Item[], compare: (left: Item, right: Item) => number) => {
   const sortRun = (count: number, start: number, isReversed: boolean): Item[] => {
     const isBefore = (left: Item, right: Item) =>

@@ -34,8 +34,6 @@ import { getInputPaths } from "./shared";
 
 const TLAPM_INTEGER_OPTIONS = new Set(["--toolbox", "--line", "--threads", "--nofpl"]);
 
-// tlapm searches the current directory, then its standard library at lib/tlapm/stdlib beside
-// bin/tlapm, then each -I directory, the last given first.
 const getLibraryDirectories = (parsed: ParsedArgs) => [
   ".",
   ...getTlapmPaths()
@@ -45,7 +43,6 @@ const getLibraryDirectories = (parsed: ParsedArgs) => [
   ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
 ];
 
-// A message of tlapm's toolbox protocol, which it writes to stderr.
 const printToolboxMessage = (fields: string[]) =>
   console.error(`@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`);
 
@@ -63,7 +60,6 @@ const TLAPM_VERSION = "9ed0376";
 const quoteShellArgument = (arg: string) =>
   /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
 
-// The most severe first.
 const STRICT_EXIT_STATUS = { failed: 10, incomplete: 11, emptyTarget: 12 };
 
 const checkStrictly = (module: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
@@ -113,7 +109,6 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
   }
 };
 
-// Toolbox.print_res_aux.
 const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
   const timeLimitMs = attempt.method.timeLimitMs;
   const used =
@@ -143,7 +138,6 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
   ]);
 };
 
-// Method.Fail, for an error obligation or one no method was tried on.
 const printFailedObligation = (obligation: PrintedObligation, reason: string) =>
   printObligationMessage(obligation, "failed", [
     "prover:fail",
@@ -161,7 +155,6 @@ interface ProvingSettings {
   fingerprints: FingerprintTable;
 }
 
-// Tlapm_lib.process_obs. Returns whether some obligation failed.
 const proveModule = async (
   module: ModuleObligations,
   theoryPath: string,
@@ -252,14 +245,12 @@ export const runTlapm = async (args: string[]) => {
       `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteShellArgument).join(" ")}\n`,
     );
   }
-  // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
   const lines = parsed.options.reduce<LineRange>((range, option) => {
     const [start, end] = option.values.map(Number);
     if (option.name === "--toolbox") return { start, end: end === 0 ? Infinity : end };
     if (option.name === "--line") return start === 0 ? WHOLE_MODULE : { start, end: start };
     return range;
   }, WHOLE_MODULE);
-  // tlapm also searches each module's directory. Without tlapm, TLAPS is tla-ts's copy.
   const directories = modulePaths.reduce(
     (found, path) => (found.includes(dirname(path)) ? found : [dirname(path), ...found]),
     getLibraryDirectories(parsed),
@@ -276,7 +267,6 @@ export const runTlapm = async (args: string[]) => {
       modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
       (name) => {
         moduleNames.add(name);
-        // tlapm names a file by joining its search directory and the name, as in ./Module.tla.
         const file = directories
           .map((directory) => `${directory}/${name}.tla`)
           .find((path) => existsSync(path));
@@ -315,7 +305,6 @@ export const runTlapm = async (args: string[]) => {
   };
   const statuses: number[] = [];
   for (const [index, module] of modules.entries()) {
-    // Tlapm_lib.mkdir_tlaps.
     const directory = `${cacheDirectory}/${module.name}.tlaps`;
     const fingerprintsPath = `${directory}/fingerprints`;
     const loadedPath = parsed.get("--usefp")?.[0] ?? fingerprintsPath;
@@ -348,7 +337,6 @@ export const runTlapm = async (args: string[]) => {
         ...checkStrictly(module, lines.start > 0 || lines.end < Infinity, parsed.has("--summary")),
       );
     if (!isProcessing) continue;
-    // tlapm's history holds the source of each module read so far.
     saveHistory(
       fingerprintsPath,
       [...moduleNames, ...modules.slice(0, index + 1).map((innerModule) => innerModule.name)].map(

@@ -1,10 +1,4 @@
-// Ported from Isabelle2025's Pure/type_infer_context.ML, Pure/type_infer.ML (fixate) and the
-// abbreviation expansion of Pure/consts.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Resolves the names of parsed propositions and infers their types together, as
-// Syntax.check_props does for the statement of a lemma: a free variable has one type across all
-// of them, and type parameters that stay open become the type variables 'a, 'b, and so on.
+// Ported from Isabelle2025's Pure/type_infer_context.ML, Pure/type_infer.ML and Pure/consts.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { bumpString } from "../pure/name";
@@ -29,18 +23,15 @@ import {
 import type { ConstInfo } from "../tla/logic";
 import type { Ast } from "./inner-syntax";
 
-// The name a type parameter carries until it is fixed, as Type_Infer.param does.
 const PARAM_NAME = "?'a";
 
 interface NameScope {
   readonly consts: ReadonlyMap<string, ConstInfo>;
-  // The constant an unqualified name stands for.
   readonly constNames: ReadonlyMap<string, string>;
 }
 
 export interface PropToCheck {
   readonly ast: Ast;
-  // The variables fixed where the proposition appears.
   readonly fixed: ReadonlySet<string>;
 }
 
@@ -50,7 +41,7 @@ interface Inference {
   nextParam: number;
 }
 
-const freshParam = (inference: Inference) => {
+const createParam = (inference: Inference) => {
   const param = mkTVar(PARAM_NAME, inference.nextParam);
   inference.nextParam += 1;
   return param;
@@ -118,7 +109,6 @@ const unify = (inference: Inference, left: Typ, right: Typ) => {
   throw new TlaIsabelleError("ERROR", "Type unification failed");
 };
 
-// A constant's declared type with fresh parameters for its type variables.
 const instantiateScheme = (inference: Inference, type: Typ) => {
   const params = new Map<string, Typ>();
   const instantiate = (current: Typ): Typ => {
@@ -126,20 +116,19 @@ const instantiateScheme = (inference: Inference, type: Typ) => {
     const key = current.kind === "TFree" ? current.name : `${current.name}.${current.index}`;
     const known = params.get(key);
     if (known !== undefined) return known;
-    const param = freshParam(inference);
+    const param = createParam(inference);
     params.set(key, param);
     return param;
   };
   return instantiate(type);
 };
 
-const constType = (scope: NameScope, name: string) => {
+const getConstType = (scope: NameScope, name: string) => {
   const info = scope.consts.get(name);
   if (info === undefined) throw new TlaIsabelleError("ERROR", `Undeclared constant: ${name}`);
   return info.type;
 };
 
-// Builds the term with parameter types and infers its type, constraining the parameters.
 const elaborate = (
   scope: NameScope,
   inference: Inference,
@@ -153,27 +142,27 @@ const elaborate = (
       if (index >= 0) return [mkBound(index), bound[index].type];
       const constant = fixed.has(ast.name) ? undefined : scope.constNames.get(ast.name);
       if (constant !== undefined) {
-        const type = instantiateScheme(inference, constType(scope, constant));
+        const type = instantiateScheme(inference, getConstType(scope, constant));
         return [mkConst(constant, type), type];
       }
       const known = inference.freeTypes.get(ast.name);
-      const type = known ?? freshParam(inference);
+      const type = known ?? createParam(inference);
       if (known === undefined) inference.freeTypes.set(ast.name, type);
       return [mkFree(ast.name, type), type];
     }
     case "const": {
-      const type = instantiateScheme(inference, constType(scope, ast.name));
+      const type = instantiateScheme(inference, getConstType(scope, ast.name));
       return [mkConst(ast.name, type), type];
     }
     case "app": {
       const [fun, funType] = elaborate(scope, inference, fixed, bound, ast.fun);
       const [arg, argType] = elaborate(scope, inference, fixed, bound, ast.arg);
-      const result = freshParam(inference);
+      const result = createParam(inference);
       unify(inference, funType, funT(argType, result));
       return [mkApp(fun, arg), result];
     }
     case "abs": {
-      const type = ast.type ?? freshParam(inference);
+      const type = ast.type ?? createParam(inference);
       const [body, bodyType] = elaborate(
         scope,
         inference,
@@ -211,7 +200,6 @@ const instantiateMatched = (type: Typ, instantiation: ReadonlyMap<string, Typ>):
       )
     : (instantiation.get(type.kind === "TFree" ? type.name : `${type.name}.${type.index}`) ?? type);
 
-// Consts.certify with normalize: unfolds abbreviations and applies them to their arguments.
 const expandAbbreviations = (scope: NameScope, term: Term): Term => {
   const [head, args] = stripComb(term);
   const expandedArgs = args.map((arg) => expandAbbreviations(scope, arg));
@@ -244,9 +232,7 @@ export const checkProps = (scope: NameScope, props: readonly PropToCheck[]): Ter
       mapTypes((type) => normalize(inference, type), term),
     ),
   );
-  // Type_Infer.fixate: the parameters left open become type variables named in order of their
-  // first appearance.
-  const params = expanded.reduce(
+  const params = expanded.reduce<number[]>(
     (result, term) =>
       foldTypes(
         (type, state: number[]) =>
@@ -261,7 +247,7 @@ export const checkProps = (scope: NameScope, props: readonly PropToCheck[]): Ter
         term,
         result,
       ),
-    [] as number[],
+    [],
   );
   const names = new Map<number, string>();
   params.reduce((name, param) => {

@@ -7,9 +7,6 @@ import { check, type CheckOptions } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
-// TLC 1.8.0 -dump output for each model, and TLC 1.7.4's for the files whose names end in 174,
-// recorded with -fp 0 so that its fingerprints match, or -fp 130 for Counter130, and with -seed 4
-// for RandomElementXandY.
 const readTlcDump = (name: string) => readFileSync(join(FIXTURES, "state-graph", name), "utf8");
 
 const dumpFixture = async (
@@ -156,7 +153,7 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("Doubled.dot")).toBe(readTlcDump("Doubled.dot"));
   });
 
-  // TLC keys an edge by the XOR of its fingerprints, so it writes one self loop in the graph.
+  // Deviation from TLC: it keys an edge by the XOR of its fingerprints and writes one self loop.
   it("keeps every self loop with strict, unlike TLC", async () => {
     const options = { path: "Excluded.dot", dot: true };
     const strict = await dumpFixture("state-graph", "Excluded", { ...options, strict: true });

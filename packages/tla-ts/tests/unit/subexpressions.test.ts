@@ -40,7 +40,6 @@ describe("subexpression references match TLC", () => {
   });
 });
 
-// TLC's test210 and variants of it, with the errors SANY reports for them.
 describe("subexpression references into theorems match SANY", () => {
   const SCOPE = "within the scope of a declaration\n from outside that declaration's scope.";
 

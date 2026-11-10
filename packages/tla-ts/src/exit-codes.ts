@@ -54,7 +54,6 @@ export const getMessageExitStatus = (code: number) =>
 
 const exitCodes = new WeakMap<Error, number>();
 
-// The innermost site that knows TLC's exit status for an error sets it first and wins.
 export const setExitCode = <Thrown>(error: Thrown, code: number) => {
   if (error instanceof Error && !exitCodes.has(error)) exitCodes.set(error, code);
   return error;
@@ -62,7 +61,6 @@ export const setExitCode = <Thrown>(error: Thrown, code: number) => {
 
 export const getExitCode = (error: Error) => exitCodes.get(error);
 
-// TLC exits with 255 when it fails to process or evaluate a liveness property, in any phase.
 const withErrorExitCode = <Result>(run: () => Result) => {
   try {
     return run();

@@ -1,26 +1,8 @@
 // Ported from Z3 (src/math/polynomial/polynomial.{h,cpp}, src/math/polynomial/polynomial_cache.cpp),
-// MIT license, see z3-license.txt. Multivariate polynomials over the integers for nlsat, with
-// Z3's factorization: univariate through upolynomial-factorization, quadratics through the square
-// root of the discriminant, and higher degrees through bivariate Hensel lifting. A polynomial keeps its monomials in the order Z3's som buffers
-// produce, with a monomial of maximal degree in the maximal variable first, because factorization
-// breaks ties on the order in which variables occur.
-//
-// Deviations from Z3, which only change the order of equal results:
-// - gcd computes with Z3's subresultant PRS (gcd_prs), not its modular algorithms (mod_gcd,
-//   uni_mod_gcd). Both return the same polynomial, normalized to a positive leading coefficient,
-//   but its monomials may come out in another order. Z3's modular gcd can also return a constant
-//   other than 1 for coprime primitive polynomials, gcd(2x - 3, 2x - 1) = 2
-//   (polynomial.cpp:4815), where this port returns 1. The callers in scope only test whether
-//   the gcd is constant.
-// - Polynomial ids count up from zero. Z3 recycles the ids of deleted polynomials, so where nlsat
-//   breaks a tie between two root functions on their ids it may pick the other one. Matching Z3
-//   would take explicit reference counts at its roughly 490 polynomial_ref sites in polynomial,
-//   algebraic_numbers, explain, levelwise and nra, and every pm routine allocating the same
-//   temporaries as Z3's, not just returning the same result. Random differential tests hit such a
-//   tie in about 1 of 300 levelwise and 1 of 3,000 explain programs, and no corpus trace yet.
+// MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
-import { UpolynomialManager } from "./upolynomial";
+import { floorDiv, UpolynomialManager } from "./upolynomial";
 import {
   DEFAULT_FACTOR_PARAMS,
   factorSquareFree,
@@ -30,21 +12,9 @@ import {
 
 export const NULL_VAR = -1;
 
-// s_factor_eval_values and s_factor_primes: the points multivariate factorization evaluates the
-// other variables at, and the primes it lifts modulo.
 const FACTOR_EVAL_VALUES = [0n, 1n, -1n, 2n, -2n, 3n, -3n];
 const FACTOR_PRIMES = [39103n, 104729n, 1000003n, 100000007n];
 
-// mpz div: rounds toward minus infinity.
-const floorDiv = (dividend: bigint, divisor: bigint) => {
-  const quotient = dividend / divisor;
-  return dividend % divisor !== 0n && dividend < 0n !== divisor < 0n ? quotient - 1n : quotient;
-};
-
-// Input outside what the port of nlsat supports so far: subresultants of polynomials of degree 2
-// or more in the variable being projected. The nra solver answers unknown on it, which is always
-// sound.
-// The arithmetic t_eval evaluates in: rationals, intervals or algebraic numbers.
 export interface ValueOps<T> {
   fromInteger(value: bigint): T;
   add(first: T, second: T): T;
@@ -65,7 +35,6 @@ const getMonomialKey = (vars: readonly number[], degrees: readonly number[]) =>
 class Monomial {
   readonly totalDegree: number;
 
-  // vars and degrees change only when the manager renames the variables.
   constructor(
     readonly id: number,
     public vars: readonly number[],
@@ -93,7 +62,6 @@ class Monomial {
     return index === -1 ? 0 : this.degrees[index];
   }
 
-  // max_smaller_than: the largest variable of the monomial below x.
   maxSmallerThan(variable: number) {
     let result = NULL_VAR;
     for (const current of this.vars) if (current < variable) result = current;
@@ -101,7 +69,6 @@ class Monomial {
   }
 }
 
-// lex_compare: the biggest variable dominates, then its degree.
 const lexCompare = (first: Monomial, second: Monomial) => {
   if (first === second) return 0;
   let firstIndex = first.size - 1;
@@ -131,7 +98,6 @@ const gradedLexCompare = (first: Monomial, second: Monomial) =>
       ? -1
       : 1;
 
-// po_gt: the order that puts a monomial with the maximal variable at its maximal degree first.
 const isPoGreater = (first: Monomial, second: Monomial) => {
   if (first.size === 0) return false;
   if (second.size === 0) return true;
@@ -150,7 +116,6 @@ export class Polynomial {
     this.makeFirstMaximal();
   }
 
-  // make_first_maximal: a monomial with the maximal variable at its maximal degree first.
   makeFirstMaximal() {
     if (this.ms.length <= 1) return;
     let maxPos = 0;
@@ -174,8 +139,7 @@ export class Polynomial {
     this.ms[position] = monomial;
   }
 
-  // lex_sort: puts the monomials in decreasing lexicographic order, which Z3 does in place whenever it
-  // hashes the polynomial.
+  // Z3 sorts in place whenever it hashes or evaluates the polynomial, so later reads see this order.
   lexSort() {
     if (this.isLexSorted) return;
     this.isLexSorted = true;
@@ -190,7 +154,6 @@ export class Polynomial {
     }
   }
 
-  // graded_lex_max_pos
   getGradedLexMaxPos() {
     if (this.ms.length === 0) return -1;
     let maxPos = 0;
@@ -214,8 +177,6 @@ export class Polynomial {
   }
 }
 
-// som_buffer: a sum of monomials, each kept at the position where it first appeared. Zero entries
-// stay until mk removes them.
 class SomBuffer {
   as: bigint[] = [];
   ms: Monomial[] = [];
@@ -253,7 +214,6 @@ class SomBuffer {
     }
   }
 
-  // addmul: adds a*m*p.
   addmul(coeff: bigint, monomial: Monomial, polynomial: Polynomial) {
     if (coeff === 0n) return;
     for (let index = 0; index < polynomial.size; index++) {
@@ -267,8 +227,7 @@ class SomBuffer {
     }
   }
 
-  // addmul(a, m, buffer): adds a*m times each entry of another buffer, zero entries included,
-  // which keeps their monomials at new positions as Z3 does.
+  // Like Z3, zero entries of the other buffer are added too, which keeps their monomials' positions.
   addmulBuffer(coeff: bigint, monomial: Monomial, buffer: SomBuffer) {
     if (coeff === 0n) return;
     for (let index = 0; index < buffer.ms.length; index++) {
@@ -291,7 +250,6 @@ class SomBuffer {
     return maxPos;
   }
 
-  // mk(normalize): the nonzero entries, divided by the gcd of their coefficients when normalizing.
   mk(isNormalized = false) {
     const as: bigint[] = [];
     const ms: Monomial[] = [];
@@ -306,7 +264,6 @@ class SomBuffer {
   }
 }
 
-// cheap_som_buffer: each monomial is added at most once, so it needs no position map.
 class CheapSomBuffer {
   private as: bigint[] = [];
   private ms: Monomial[] = [];
@@ -358,8 +315,6 @@ export class PolynomialManager {
     this.one = this.mkPolynomialCore([1n], [this.unit]);
   }
 
-  // Monomials.
-
   mkMonomial(vars: readonly number[], degrees: readonly number[]) {
     const key = getMonomialKey(vars, degrees);
     const existing = this.monomials.get(key);
@@ -369,10 +324,6 @@ export class PolynomialManager {
     return monomial;
   }
 
-  // rename: every variable x becomes permutation[x], in place in every monomial, as Z3 renames its
-  // monomial table. Z3 then moves a maximal monomial first in every live polynomial. Here that is
-  // the given polynomials, the ones nlsat keeps in its atoms. Others keep their order, which
-  // matches again once the order is restored.
   rename(permutation: readonly number[], polynomials: Iterable<Polynomial>) {
     const monomials = new Map<string, Monomial>();
     for (const monomial of this.monomials.values()) {
@@ -390,7 +341,6 @@ export class PolynomialManager {
     for (const polynomial of polynomials) polynomial.makeFirstMaximal();
   }
 
-  // mk_monomial(x, k): x^k, the unit for k = 0.
   mkPower(variable: number, power: number) {
     return power === 0 ? this.unit : this.mkMonomial([variable], [power]);
   }
@@ -419,7 +369,6 @@ export class PolynomialManager {
     return this.mkMonomial(vars, degrees);
   }
 
-  // div: m1/m2, or null when m2 does not divide m1.
   divMonomials(first: Monomial, second: Monomial) {
     const vars: number[] = [];
     const degrees: number[] = [];
@@ -439,7 +388,6 @@ export class PolynomialManager {
     return secondIndex < second.size ? null : this.mkMonomial(vars, degrees);
   }
 
-  // div_x_k: m/x^k.
   private divXk(monomial: Monomial, variable: number, power: number) {
     const vars: number[] = [];
     const degrees: number[] = [];
@@ -455,12 +403,9 @@ export class PolynomialManager {
     return this.mkMonomial(vars, degrees);
   }
 
-  // div_x: m with x removed.
   private divX(monomial: Monomial, variable: number) {
     return this.divXk(monomial, variable, monomial.degreeOf(variable));
   }
-
-  // Construction.
 
   mkPolynomialCore(as: bigint[], ms: Monomial[]) {
     return new Polynomial(this.nextPolynomialId++, as, ms);
@@ -482,7 +427,6 @@ export class PolynomialManager {
     return this.som.mk();
   }
 
-  // mk_linear: sum of as[i]*xs[i] plus c.
   mkLinear(as: readonly bigint[], vars: readonly number[], constant: bigint) {
     const coeffs: bigint[] = [];
     const ms: Monomial[] = [];
@@ -497,8 +441,6 @@ export class PolynomialManager {
     }
     return this.mkPolynomial(coeffs, ms);
   }
-
-  // Queries.
 
   isZero(polynomial: Polynomial) {
     return polynomial.size === 0;
@@ -532,7 +474,6 @@ export class PolynomialManager {
     return result;
   }
 
-  // eq: the same monomials with the same coefficients, in any order.
   eq(first: Polynomial, second: Polynomial) {
     if (first === second) return true;
     if (first.size !== second.size) return false;
@@ -546,8 +487,6 @@ export class PolynomialManager {
     return true;
   }
 
-  // The key of the hash-consing table. It lexicographically sorts the polynomial in place, as Z3's
-  // hash does.
   getKey(polynomial: Polynomial) {
     polynomial.lexSort();
     let key = "";
@@ -555,8 +494,6 @@ export class PolynomialManager {
       key += `${polynomial.as[index]}:${polynomial.ms[index].id};`;
     return key;
   }
-
-  // Arithmetic.
 
   private addmul(firstCoeff: bigint, first: Polynomial, secondCoeff: bigint, second: Polynomial) {
     this.som.reset();
@@ -581,7 +518,6 @@ export class PolynomialManager {
     return this.som.mk();
   }
 
-  // mul(a, m, p): a*m*p.
   mulTerm(coeff: bigint, monomial: Monomial, polynomial: Polynomial) {
     if (coeff === 0n) return this.zero;
     if (coeff === 1n && monomial === this.unit) return polynomial;
@@ -606,7 +542,6 @@ export class PolynomialManager {
     return result;
   }
 
-  // coeff: the coefficient of x^k, a polynomial in the other variables.
   coeff(polynomial: Polynomial, variable: number, power: number) {
     for (let index = 0; index < polynomial.size; index++) {
       const monomial = polynomial.ms[index];
@@ -616,7 +551,6 @@ export class PolynomialManager {
     return this.cheap.mk();
   }
 
-  // const_coeff: the coefficient of x^k when it is a number, else null.
   getConstCoeff(polynomial: Polynomial, variable: number, power: number) {
     let result = 0n;
     for (let index = 0; index < polynomial.size; index++) {
@@ -642,13 +576,11 @@ export class PolynomialManager {
     return this.cheap.mk();
   }
 
-  // flip_sign_if_lm_neg: negates p when its graded-lex leading coefficient is negative.
   flipSignIfLmNeg(polynomial: Polynomial) {
     if (polynomial.size === 0) return polynomial;
     return polynomial.as[polynomial.getGradedLexMaxPos()] < 0n ? this.neg(polynomial) : polynomial;
   }
 
-  // ic: the integer content, the gcd of the coefficients.
   private getIc(polynomial: Polynomial) {
     if (polynomial.size === 0) return 0n;
     if (this.isConst(polynomial)) return polynomial.as[0];
@@ -660,7 +592,6 @@ export class PolynomialManager {
     return result;
   }
 
-  // ic(p, a, c): p = a*c, with the coefficients of c coprime.
   private icWithContent(polynomial: Polynomial): [bigint, Polynomial] {
     if (polynomial.size === 0) return [0n, polynomial];
     if (this.isConst(polynomial)) return [polynomial.as[0], this.one];
@@ -672,7 +603,6 @@ export class PolynomialManager {
     return [content, this.cheap.mk()];
   }
 
-  // iccp: the integer content, the content and the primitive part of p with respect to x.
   iccp(polynomial: Polynomial, variable: number): [bigint, Polynomial, Polynomial] {
     if (polynomial.size === 0) return [0n, this.one, polynomial];
     if (this.isConst(polynomial)) return [polynomial.as[0], this.one, this.one];
@@ -681,7 +611,6 @@ export class PolynomialManager {
       const [integer, content] = this.icWithContent(polynomial);
       return [integer, content, this.one];
     }
-    // The quick filter: a power of x that occurs only as a pure power means the content is 1.
     const filter = Array.from({ length: degree + 1 }, () => 0);
     const powers: number[] = [];
     for (const monomial of polynomial.ms) {
@@ -704,8 +633,6 @@ export class PolynomialManager {
     return this.iccp(polynomial, variable)[2];
   }
 
-  // square_free: the integer content times the square-free parts of the content and the primitive
-  // part in the maximal variable, or p itself when it is square-free.
   squareFree(polynomial: Polynomial): Polynomial {
     if (this.isConst(polynomial)) return polynomial;
     const variable = this.maxVar(polynomial);
@@ -717,7 +644,6 @@ export class PolynomialManager {
     return this.mul(this.mulConst(integer, squareFreeContent), squareFreePrimitive);
   }
 
-  // normalize: p divided by the gcd of its coefficients.
   normalize(polynomial: Polynomial) {
     if (polynomial.size === 0) return polynomial;
     let g = 0n;
@@ -728,13 +654,11 @@ export class PolynomialManager {
     return this.cheap.mk();
   }
 
-  // nonzero_const_coeff: whether the coefficient of x^k is a nonzero number.
   isNonzeroConstCoeff(polynomial: Polynomial, variable: number, power: number) {
     const coeff = this.getConstCoeff(polynomial, variable, power);
     return coeff !== null && coeff !== 0n;
   }
 
-  // exact_div: p/q, where q divides p.
   exactDiv(polynomial: Polynomial, divisor: Polynomial) {
     if (polynomial.size === 0) return polynomial;
     const remainder = this.som;
@@ -759,8 +683,6 @@ export class PolynomialManager {
     }
   }
 
-  // exact_pseudo_division: Q and R with lc(q)^(deg(p) - deg(q) + 1) * p = Q*q + R. The
-  // quotient is only built when asked for, as in pseudo_division_core.
   exactPseudoDivision(
     polynomial: Polynomial,
     divisor: Polynomial,
@@ -770,7 +692,6 @@ export class PolynomialManager {
     return this.pseudoDivisionCore(polynomial, divisor, variable, true, isQuotient);
   }
 
-  // pseudo_remainder: R with lc(q)^d * p = Q*q + R, where d counts the division steps.
   pseudoRemainder(polynomial: Polynomial, divisor: Polynomial, variable: number) {
     return this.pseudoDivisionCore(polynomial, divisor, variable, false, false);
   }
@@ -835,7 +756,6 @@ export class PolynomialManager {
     return this.exactPseudoDivision(polynomial, divisor, variable, false).remainder;
   }
 
-  // The reduct of coeff(p, x, k, reduct): p without its x^k monomials.
   reduct(polynomial: Polynomial, variable: number, power: number) {
     for (let index = 0; index < polynomial.size; index++)
       if (polynomial.ms[index].degreeOf(variable) !== power)
@@ -843,18 +763,24 @@ export class PolynomialManager {
     return this.cheap.mk();
   }
 
-  // var_max_degrees, sorted by variable.
-  private getVarMaxDegrees(polynomial: Polynomial) {
+  private getMaxDegrees(polynomial: Polynomial) {
     const degrees = new Map<number, number>();
     for (const monomial of polynomial.ms)
       for (let index = 0; index < monomial.size; index++) {
         const variable = monomial.vars[index];
-        degrees.set(variable, Math.max(degrees.get(variable) ?? 0, monomial.degrees[index]));
+        if (monomial.degrees[index] > (degrees.get(variable) ?? 0))
+          degrees.set(variable, monomial.degrees[index]);
       }
-    return [...degrees.entries()].sort((first, second) => first[0] - second[0]);
+    return degrees;
   }
 
-  // gcd: the greatest common divisor, with a positive integer content and leading coefficient.
+  private getVarMaxDegrees(polynomial: Polynomial) {
+    return [...this.getMaxDegrees(polynomial).entries()].sort(
+      (first, second) => first[0] - second[0],
+    );
+  }
+
+  // Deviation from Z3: subresultant PRS (gcd_prs), not mod_gcd, which can return 2 for coprime inputs (polynomial.cpp:4815).
   gcd(first: Polynomial, second: Polynomial): Polynomial {
     if (first.size === 0) return this.flipSignIfLmNeg(second);
     if (second.size === 0) return this.flipSignIfLmNeg(first);
@@ -875,13 +801,11 @@ export class PolynomialManager {
     return this.gcdPrs(first, second, firstDegrees[size - 1][0]);
   }
 
-  // gcd_content: gcd(content(u, x), v).
   private gcdContent(polynomial: Polynomial, variable: number, other: Polynomial) {
     const [integer, content] = this.iccp(polynomial, variable);
     return this.gcd(this.mulConst(integer, content), other);
   }
 
-  // gcd_prs: Collins' subresultant polynomial remainder sequence.
   private gcdPrs(first: Polynomial, second: Polynomial, variable: number) {
     const [u, v] =
       this.degree(first, variable) < this.degree(second, variable)
@@ -914,18 +838,10 @@ export class PolynomialManager {
     }
   }
 
-  // get_min_degree_var: the first variable, in order of occurrence, of minimal degree.
   private getMinDegreeVar(polynomial: Polynomial) {
-    const degrees = new Map<number, number>();
-    for (const monomial of polynomial.ms)
-      for (let index = 0; index < monomial.size; index++) {
-        const variable = monomial.vars[index];
-        if (monomial.degrees[index] > (degrees.get(variable) ?? 0))
-          degrees.set(variable, monomial.degrees[index]);
-      }
     let result = NULL_VAR;
     let minDegree = Infinity;
-    for (const [variable, degree] of degrees)
+    for (const [variable, degree] of this.getMaxDegrees(polynomial))
       if (degree < minDegree) {
         result = variable;
         minDegree = degree;
@@ -933,8 +849,6 @@ export class PolynomialManager {
     return result;
   }
 
-  // factor: the constant and the irreducible factors, each with its multiplicity. A square-free
-  // primitive part of degree 2 or more in its variable of minimal degree is out of scope.
   factor(polynomial: Polynomial): Factors {
     const result: Factors = { constant: 1n, factors: [], degrees: [] };
     if (polynomial.size === 0) result.constant = 0n;
@@ -967,7 +881,6 @@ export class PolynomialManager {
     }
   }
 
-  // factor_sqf_pp: the factors of a primitive square-free p of positive degree in x.
   private factorSqfPp(polynomial: Polynomial, variable: number, k: number, result: Factors) {
     const degree = this.degree(polynomial, variable);
     if (degree === 1) this.pushFactor(result, polynomial, k);
@@ -982,9 +895,6 @@ export class PolynomialManager {
     result.degrees.push(k);
   }
 
-  // to_numeral_vector: the coefficients of a univariate p by degree. Z3 normalizes p first but
-  // reads the coefficients of p itself.
-  // to_numeral_vector: a univariate p as its coefficients, low to high.
   toCoeffs(polynomial: Polynomial) {
     const coeffs = Array.from({ length: this.totalDegree(polynomial) + 1 }, () => 0n);
     for (let index = 0; index < polynomial.size; index++)
@@ -992,14 +902,12 @@ export class PolynomialManager {
     return this.um.set(coeffs);
   }
 
-  // to_polynomial, mk_univariate: the monomials from the highest degree down.
   fromCoeffs(coeffs: readonly bigint[], variable: number) {
     for (let power = coeffs.length - 1; power >= 0; power--)
       this.cheap.add(coeffs[power], this.mkPower(variable, power));
     return this.cheap.mk();
   }
 
-  // factor_sqf_pp_univ
   private factorSqfPpUniv(polynomial: Polynomial, k: number, result: Factors) {
     const variable = this.maxVar(polynomial);
     const fs: UpolynomialFactors = { constant: 1n, factors: [], degrees: [] };
@@ -1013,8 +921,6 @@ export class PolynomialManager {
     if (fs.constant === -1n && k % 2 === 1) result.constant = -result.constant;
   }
 
-  // factor_2_sqf_pp: a*x^2 + b*x + c splits into the primitive parts of 2*a*x + b -/+ sqrt(disc)
-  // when the discriminant b^2 - 4*a*c is a square.
   private factorQuadratic(polynomial: Polynomial, variable: number, k: number, result: Factors) {
     let a = this.coeff(polynomial, variable, 2);
     let b = this.coeff(polynomial, variable, 1);
@@ -1036,15 +942,12 @@ export class PolynomialManager {
     this.pushFactor(result, this.pp(this.add(linear, root), variable), k);
   }
 
-  // is_perfect_square for the monomial at a position: the square root of its coefficient when the
-  // whole term is a square.
   private getTermSquareRoot(polynomial: Polynomial, position: number) {
     const monomial = polynomial.ms[position];
     if (monomial.degrees.some((degree) => degree % 2 === 1)) return null;
     return getExactSquareRoot(polynomial.as[position]);
   }
 
-  // sqrt: the square root of p with a positive graded-lex leading coefficient, or null.
   sqrt(polynomial: Polynomial) {
     if (polynomial.size === 0) return polynomial;
     if (this.getTermSquareRoot(polynomial, this.getGradedLexMinPos(polynomial)) === null)
@@ -1088,7 +991,6 @@ export class PolynomialManager {
     }
   }
 
-  // graded_lex_min_pos
   private getGradedLexMinPos(polynomial: Polynomial) {
     let minPos = 0;
     for (let index = 1; index < polynomial.size; index++)
@@ -1096,8 +998,6 @@ export class PolynomialManager {
     return minPos;
   }
 
-  // vars: the variables of p in order of occurrence.
-  // vars: the variables of p in the order they first occur.
   getVars(polynomial: Polynomial) {
     const vars: number[] = [];
     for (const monomial of polynomial.ms)
@@ -1105,7 +1005,6 @@ export class PolynomialManager {
     return vars;
   }
 
-  // substitute: p with each xs[i] replaced by the integer values[i].
   substitute(polynomial: Polynomial, vars: readonly number[], values: readonly bigint[]) {
     this.som.reset();
     for (let index = 0; index < polynomial.size; index++) {
@@ -1125,7 +1024,6 @@ export class PolynomialManager {
     return this.som.mk();
   }
 
-  // translate: p(x + v), by Horner on the coefficients of p in x.
   translate(polynomial: Polynomial, variable: number, value: bigint) {
     const degree = this.degree(polynomial, variable);
     if (degree === 0 || value === 0n) return polynomial;
@@ -1146,18 +1044,8 @@ export class PolynomialManager {
     return this.som.mk();
   }
 
-  // substitute(p, x2v): p with the rational values of its assigned variables, each term scaled by
-  // the denominators to the maximal degree of their variable, and the content divided out. p itself
-  // when it has no assigned variable.
   substituteRational(polynomial: Polynomial, values: readonly (Rational | undefined)[]) {
-    // Map keeps the order in which the variables first occur, as var_max_degree does.
-    const maxDegrees = new Map<number, number>();
-    for (const monomial of polynomial.ms)
-      for (let index = 0; index < monomial.size; index++) {
-        const variable = monomial.vars[index];
-        if (monomial.degrees[index] > (maxDegrees.get(variable) ?? 0))
-          maxDegrees.set(variable, monomial.degrees[index]);
-      }
+    const maxDegrees = this.getMaxDegrees(polynomial);
     if (![...maxDegrees.keys()].some((variable) => values[variable] !== undefined))
       return polynomial;
     this.som.reset();
@@ -1189,7 +1077,6 @@ export class PolynomialManager {
     return this.som.mk(true);
   }
 
-  // muladd: p*q + a.
   private muladd(first: Polynomial, second: Polynomial, constant: bigint) {
     if (first.size === 0 || second.size === 0) return this.mkConst(constant);
     this.som.reset();
@@ -1199,7 +1086,6 @@ export class PolynomialManager {
     return this.som.mk();
   }
 
-  // compose: p(q) for a univariate p, by Horner.
   private compose(polynomial: Polynomial, inner: Polynomial) {
     if (this.isConst(polynomial)) return polynomial;
     const variable = this.maxVar(polynomial);
@@ -1213,14 +1099,12 @@ export class PolynomialManager {
     return result;
   }
 
-  // compose_x_minus_y: p(x - y) for a univariate p in x.
   composeXMinusY(polynomial: Polynomial, variable: number) {
     const x = this.maxVar(polynomial);
     if (variable === x) return this.coeff(polynomial, x, 0);
     return this.compose(polynomial, this.mkLinear([1n, -1n], [x, variable], 0n));
   }
 
-  // compose_x_div_y: y^n * p(x/y) for a univariate p in x of degree n.
   composeXDivY(polynomial: Polynomial, variable: number) {
     if (this.isConst(polynomial)) return polynomial;
     const x = this.maxVar(polynomial);
@@ -1249,7 +1133,6 @@ export class PolynomialManager {
     return this.cheap.mk();
   }
 
-  // resultant: Res(p, q) in x, by the subresultant PRS on the primitive parts, times the contents.
   resultant(first: Polynomial, second: Polynomial, variable: number) {
     if (first.size === 0 || second.size === 0) return this.zero;
     if (this.isConst(first))
@@ -1302,10 +1185,6 @@ export class PolynomialManager {
     return this.eq(polynomial, this.pp(polynomial, variable));
   }
 
-  // factor_n_sqf_pp, try_multivar_factor: reduces p to two variables by evaluating the others,
-  // factors it at a point of the lifting variable, lifts a split of the univariate factors with
-  // Hensel's lemma and keeps it when the lifted factors multiply back to p. Returns false when no
-  // split lifts, leaving p unfactored.
   private factorMultivariate(polynomial: Polynomial, x: number, k: number, result: Factors) {
     const allVars = this.getVars(polynomial);
     const mainVars = [
@@ -1415,7 +1294,6 @@ export class PolynomialManager {
     return false;
   }
 
-  // The factors of a lifted part, splitting only linear and quadratic ones further.
   private pushSmallFactor(polynomial: Polynomial, x: number, k: number, result: Factors) {
     const degree = this.degree(polynomial, x);
     if (degree === 2 && this.isPrimitive(polynomial, x) && this.isSquareFreeIn(polynomial, x))
@@ -1428,9 +1306,6 @@ export class PolynomialManager {
     return polynomial.as[0] ?? 0n;
   }
 
-  // try_bivar_hensel_lift: lifts q(x, 0) = lc * h1 * h2 to q = F1 * F2 in Z_p[x][y] by linear
-  // Hensel lifting on the coefficients of y, then reads F1 and F2 back over Z. Null when h1 and h2
-  // are not coprime in Z_p, q is not bivariate, or the product of the lifted factors is not q.
   private liftBivariate(
     q: Polynomial,
     x: number,
@@ -1486,9 +1361,6 @@ export class PolynomialManager {
     return this.eq(this.mul(first, second), q) ? [first, second] : null;
   }
 
-  // psc_chain: the nonzero principal subresultant coefficients of p and q in x, the resultant
-  // first, or [0] when there are none. psc_chain_optimized: Ducos's subresultant chain with
-  // Lazard's dichotomous S_e.
   pscChain(first: Polynomial, second: Polynomial, variable: number) {
     const chain =
       this.degree(first, variable) >= this.degree(second, variable)
@@ -1505,7 +1377,6 @@ export class PolynomialManager {
     while (b.size > 0) {
       const d = this.degree(a, x);
       const e = this.degree(b, x);
-      // b is S_{d-1}.
       const principal = this.coeff(b, x, d - 1);
       if (principal.size > 0) chain.push(principal);
       let c = b;
@@ -1522,7 +1393,6 @@ export class PolynomialManager {
     return chain;
   }
 
-  // Se_Lazard: S_e from S_{d-1} and lc(S_d) by dichotomous Lazard.
   private getSeLazard(d: number, lcSd: Polynomial, sd1: Polynomial, x: number) {
     let n = d - this.degree(sd1, x) - 1;
     if (n === 0) return sd1;
@@ -1541,7 +1411,6 @@ export class PolynomialManager {
     return this.exactDiv(this.mul(c, sd1), lcSd);
   }
 
-  // optimized_S_e_1: S_{e-1} from A = S_{d+1}, S_{d-1}, S_e and s = lc(S_d).
   private getOptimizedSe1(
     d: number,
     e: number,
@@ -1573,10 +1442,6 @@ export class PolynomialManager {
     return (d - e + 1) % 2 === 1 ? this.neg(result) : result;
   }
 
-  // Evaluation.
-
-  // t_eval: p at the values of its variables, by Horner on the lexicographically sorted monomials,
-  // which sorts p in place as Z3 does.
   evaluateWith<T>(polynomial: Polynomial, ops: ValueOps<T>, getValue: (variable: number) => T) {
     if (polynomial.size === 0) return ops.fromInteger(0n);
     if (this.isConst(polynomial)) return ops.fromInteger(polynomial.as[0]);
@@ -1591,7 +1456,6 @@ export class PolynomialManager {
     );
   }
 
-  // t_eval_core: the monomials in [start, end), ignoring the variables above x.
   private evaluateCore<T>(
     polynomial: Polynomial,
     ops: ValueOps<T>,
@@ -1647,7 +1511,6 @@ export class PolynomialManager {
     return result;
   }
 
-  // max_smaller_than: the largest variable below x in the monomials in [start, end).
   private maxSmallerThan(polynomial: Polynomial, start: number, end: number, x: number) {
     let max = NULL_VAR;
     for (let index = start; index < end; index++)
@@ -1669,7 +1532,6 @@ export class PolynomialManager {
   }
 }
 
-// polynomial::cache: hash-conses polynomials and memoizes their subresultants and factors.
 export class PolynomialCache {
   private table = new Map<string, Polynomial>();
   private inCache = new Set<number>();
@@ -1710,7 +1572,6 @@ export class PolynomialCache {
     return chain;
   }
 
-  // factor: the distinct factors, without the constant.
   factor(polynomial: Polynomial) {
     const unique = this.mkUnique(polynomial);
     const cached = this.factorizations.get(unique.id);

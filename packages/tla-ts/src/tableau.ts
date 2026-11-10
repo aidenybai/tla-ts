@@ -78,6 +78,11 @@ interface Classification {
   formulas: LiveExpression[];
 }
 
+interface SolutionGroup {
+  formula: LiveExpression | undefined;
+  classifications: Classification[];
+}
+
 interface Triple {
   whole: LiveExpression;
   first: LiveExpression;
@@ -162,7 +167,7 @@ const containsAction = (expression: LiveExpression): boolean => {
 };
 
 const termKeys = new WeakMap<LiveExpression, string>();
-const atoms = { count: 0 };
+let atomCount = 0;
 
 export const getTermKey = (expression: LiveExpression): string => {
   const cached = termKeys.get(expression);
@@ -174,7 +179,7 @@ export const getTermKey = (expression: LiveExpression): string => {
       case "State":
       case "Enabled":
       case "Action":
-        return `#${atoms.count++}`;
+        return `#${atomCount++}`;
       case "And":
       case "Or":
         return `${expression.kind}(${expression.operands.map(getTermKey).join(",")})`;
@@ -276,7 +281,7 @@ const toDisjunctiveNormalForm = (expression: LiveExpression): LiveExpression => 
   switch (expression.kind) {
     case "And": {
       const items: LiveExpression[] = [];
-      const total = { value: 1 };
+      let total = 1;
       for (const operand of expression.operands) {
         const normal = toDisjunctiveNormalForm(operand);
         if (normal.kind === "And") {
@@ -284,8 +289,8 @@ const toDisjunctiveNormalForm = (expression: LiveExpression): LiveExpression => 
           continue;
         }
         if (normal.kind === "Or") {
-          total.value *= normal.operands.length;
-          if (total.value > MAXIMUM_DISJUNCTS) {
+          total *= normal.operands.length;
+          if (total > MAXIMUM_DISJUNCTS) {
             throw new TlaEvaluationError(
               "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.",
             );
@@ -293,24 +298,25 @@ const toDisjunctiveNormalForm = (expression: LiveExpression): LiveExpression => 
         }
         items.push(normal);
       }
-      if (total.value === 1) return { kind: "And", operands: items };
-      const conjunctions = Array.from({ length: total.value }, (): LiveExpression[] => []);
-      const progress = { groups: 1, repeat: total.value };
+      if (total === 1) return { kind: "And", operands: items };
+      const conjunctions = Array.from({ length: total }, (): LiveExpression[] => []);
+      let groups = 1;
+      let repeat = total;
       for (const item of items) {
         if (item.kind !== "Or") {
           conjunctions.forEach((conjunction) => conjunction.push(item));
           continue;
         }
-        progress.repeat /= item.operands.length;
-        const position = { value: 0 };
-        for (let group = 0; group < progress.groups; group++) {
+        repeat /= item.operands.length;
+        let position = 0;
+        for (let group = 0; group < groups; group++) {
           for (const operand of item.operands) {
-            for (let copy = 0; copy < progress.repeat; copy++) {
-              conjunctions[position.value++].push(operand);
+            for (let copy = 0; copy < repeat; copy++) {
+              conjunctions[position++].push(operand);
             }
           }
         }
-        progress.groups *= item.operands.length;
+        groups *= item.operands.length;
       }
       return {
         kind: "Or",
@@ -461,7 +467,6 @@ const getTriples = (
     return parts ? [{ whole: term, first: parts.first, second: parts.second }] : [];
   });
 
-// A particle is a set of terms, so its key ignores order and repeats.
 const getParticleKey = (particle: LiveExpression[]) =>
   [...new Set(particle.map(getTermKey))].sort().join("|");
 
@@ -502,9 +507,9 @@ const getParticleClosure = (terms: LiveExpression[]) => {
       if (!isMember(expanded, parts.first)) expanded.push(parts.first);
       if (!isMember(expanded, parts.second)) expanded.push(parts.second);
     }
-    const state = { isChanged: true };
-    while (state.isChanged) {
-      state.isChanged = false;
+    let isChanged = true;
+    while (isChanged) {
+      isChanged = false;
       for (const alpha of alphas) {
         const isImplied =
           isMember(expanded, alpha.first) &&
@@ -512,7 +517,7 @@ const getParticleClosure = (terms: LiveExpression[]) => {
           !isMember(expanded, alpha.whole);
         if (isImplied) {
           expanded.push(alpha.whole);
-          state.isChanged = true;
+          isChanged = true;
         }
       }
     }
@@ -526,8 +531,7 @@ const getParticleClosure = (terms: LiveExpression[]) => {
 const createTableauNode = (particle: LiveExpression[]): TableauNode => ({
   particle,
   successors: [],
-  // Constant terms count, as after TLC 1.7.4. That version checks only state atoms, so a node with a
-  // FALSE term stays in the graph and yields a bogus counterexample (tlaplus#604).
+  // Constant terms count even for TLC 1.7.4, whose FALSE terms yield a bogus counterexample (tlaplus#604).
   statePredicates: particle.filter((term) => getLiveLevel(term) <= VARIABLE_LEVEL),
 });
 
@@ -598,7 +602,7 @@ const addToBin = (bin: LiveExpression[], expression: LiveExpression) => {
 export const getSolutions = (formula: LiveExpression): Solution[] => {
   const normal = toDisjunctiveNormalForm(simplify(pushNegation(formula, false)));
   if (normal.kind === "Boolean" && !normal.value) return [];
-  const groups: { formula: LiveExpression | undefined; classifications: Classification[] }[] = [];
+  const groups: SolutionGroup[] = [];
   for (const disjunct of normal.kind === "Or" ? normal.operands : [normal]) {
     const flattened = flattenSingleJunctions(disjunct);
     const classification: Classification = {

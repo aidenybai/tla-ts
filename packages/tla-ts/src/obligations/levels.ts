@@ -1,5 +1,4 @@
-// Expr.Levels: the level of an expression (0 constant, 1 state, 2 action, 3 temporal, 4 undefined),
-// the weights of an operator's arguments, and the declared names the level depends on.
+// A port of tlapm's Expr.Levels.
 
 import { TlaProofError, TlapmBugError } from "../errors";
 import {
@@ -114,15 +113,14 @@ export const LEVEL_NUMBERS: Record<Level, number> = {
   Unknown: 0,
 };
 
-const union = (sets: Set<string>[]) => new Set(sets.flatMap((set) => [...set]));
+const getUnion = (sets: Set<string>[]) => new Set(sets.flatMap((set) => [...set]));
 
 const combineLevels = (infos: LevelInfo[]): LevelInfo => ({
   level: Math.max(0, ...infos.map((info) => info.level)),
   weights: [],
-  params: union(infos.map((info) => info.params)),
+  params: getUnion(infos.map((info) => info.params)),
 });
 
-// The level of each hypothesis depends only on the scope before it.
 const hypLevels = new WeakMap<Scope, LevelInfo>();
 
 const computeHypLevel = (scope: Scope): LevelInfo => {
@@ -170,7 +168,7 @@ const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
   return {
     level: Math.max(operator.level, ...weighted.map((arg) => arg.level)),
     weights: [],
-    params: union([operator.params, ...weighted.map((arg) => arg.params)]),
+    params: getUnion([operator.params, ...weighted.map((arg) => arg.params)]),
   };
 };
 
@@ -205,8 +203,6 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
     }
     case "Apply": {
       const operator = expression.operator;
-      // The action frontend commutes a prime onto an operator, and tlapm keeps the level that
-      // the application had.
       if (isBuiltinApply(operator, "Prime") && operator.args.length === 1) {
         return recurse({ ...expression, operator: operator.args[0] });
       }

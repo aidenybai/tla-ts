@@ -8,9 +8,8 @@ const DIRECTORY = join(import.meta.dirname, "../fixtures/trace-spec");
 
 const readFixture = (name: string) => readFileSync(join(DIRECTORY, name), "utf8");
 
-const withoutDate = (text: string | undefined) => text?.replace(/\\\* Generated on .*$/, "");
+const stripDate = (text: string | undefined) => text?.replace(/\\\* Generated on .*$/, "");
 
-// TLC's ValueOutputStream tags a record with 4.
 const RECORD_VALUE = 4;
 
 const checkFixture = async (name: string, module: string, traceFile?: string) => {
@@ -26,15 +25,14 @@ const checkFixture = async (name: string, module: string, traceFile?: string) =>
 };
 
 describe("trace exploration spec", () => {
-  // Each expected spec is what TLC writes, except that TLC adds a view to every lasso, which only
-  // one with a repeated state needs.
+  // Deviation from TLC: it adds a view to every lasso, which only one with a repeated state needs.
   it.each([
     ["Safety", "te_out"],
     ["Stuttering", "te"],
     ["Live", "te"],
   ])("writes the spec TLC writes for %s", async (name, module) => {
     const result = await checkFixture(name, module);
-    expect(withoutDate(result.traceSpec)).toBe(withoutDate(readFixture(`${name}_TTrace.tla`)));
+    expect(stripDate(result.traceSpec)).toBe(stripDate(readFixture(`${name}_TTrace.tla`)));
   });
 
   it("records the trace in TLC's binary format through _TLCTrace", async () => {

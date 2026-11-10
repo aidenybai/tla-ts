@@ -1,14 +1,10 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// Zenon's to_llproof for the TLA+ extension: each rule becomes an extension rule of the low-level
-// proof, named after the lemma in Zenon.thy that justifies it.
 
 import { TlaZenonError } from "../../../errors";
 import { difference, union, type Expr, type Expressions } from "../expr";
 import { connect, type Lemma, type LlProof, type LlRule } from "../llproof";
 import type { MlProof, Translated } from "../mltoll";
 
-// The lemma's name, the terms it's instantiated with, the conclusions it uses and its branches.
 type LlArgs = [string, Expr[], Expr[], Expr[][]];
 
 type Shape = (name: string, args: Expr[]) => LlArgs;
@@ -72,7 +68,6 @@ const binbeta: Shape = (name, args) => {
   return [`zenon_${name}`, rest, [first, second], [[hypothesisA], [hypothesisB]]];
 };
 
-// A conclusion, two terms and then the hypotheses, in one branch or one branch each.
 const withTerms =
   (isSplit: boolean): Shape =>
   (name, args) => {
@@ -86,7 +81,6 @@ const withTerms =
     ];
   };
 
-// A conclusion and then the hypotheses, in one branch or one branch each.
 const withoutTerms =
   (isSplit: boolean): Shape =>
   (name, args) => {
@@ -107,7 +101,6 @@ const getCaseBranches = (args: Expr[]): Expr[][] =>
       : [args]
     : [args.slice(0, 2), ...getCaseBranches(args.slice(2))];
 
-// Zenon's to_llargs, by rule name. The rules missing here take one hypothesis.
 const SHAPES: Record<string, Shape> = {
   in_emptyset: (name, args) => [`zenon_${name}`, args.slice(1), args.slice(0, 1), []],
   in_nat_0: close,
@@ -194,14 +187,12 @@ const SHAPES: Record<string, Shape> = {
   record_notisafcn: close,
 };
 
-// Zenon's Ext_tla.to_llproof, for a rule of the extension and its translated subproofs.
 export const getTlaLlProof = (
   translateExpr: (expression: Expr) => Expr,
   exprs: Expressions,
   proof: MlProof,
   subproofs: Translated[],
 ): Translated => {
-  const tr = translateExpr;
   const rule = proof.rule;
   const member = (element: Expr, set: Expr) => exprs.eapp("TLA.in", [element, set]);
   const equal = (left: Expr, right: Expr) => exprs.eapp("=", [left, right]);
@@ -213,18 +204,24 @@ export const getTlaLlProof = (
     branches: Expr[][],
     nodeSubproofs: LlProof[],
   ): LlProof => ({
-    conclusions: conclusions.map(tr),
+    conclusions: conclusions.map(translateExpr),
     rule: {
       kind: "extension",
       name,
-      args: args.map(tr),
-      conclusions: ruleConclusions.map(tr),
-      branches: branches.map((branch) => branch.map(tr)),
+      args: args.map(translateExpr),
+      conclusions: ruleConclusions.map(translateExpr),
+      branches: branches.map((branch) => branch.map(translateExpr)),
     },
     subproofs: nodeSubproofs,
   });
 
-  // The membership in an enumerated set, one element at a time.
+  const splitSet = (set: Expr, isSetOf: boolean) =>
+    set.kind === "app" &&
+    set.symbol === (isSetOf ? "TLA.set" : "TLA.addElt") &&
+    set.args.length >= (isSetOf ? 1 : 2)
+      ? [set.args[0], isSetOf ? exprs.eapp("TLA.set", set.args.slice(1)) : set.args[1]]
+      : undefined;
+
   const getMembership = (
     element: Expr,
     set: Expr,
@@ -240,12 +237,7 @@ export const getTlaLlProof = (
         extension(conclusions, "zenon_in_emptyset", [element], [member(element, set)], [], []),
         [],
       ];
-    const split =
-      set.kind === "app" &&
-      set.symbol === (isSetOf ? "TLA.set" : "TLA.addElt") &&
-      set.args.length >= (isSetOf ? 1 : 2)
-        ? [set.args[0], isSetOf ? exprs.eapp("TLA.set", set.args.slice(1)) : set.args[1]]
-        : undefined;
+    const split = splitSet(set, isSetOf);
     const first = remaining[0];
     if (split === undefined || first === undefined) {
       if (!isSetOf && remaining.length === 1) return remaining[0];
@@ -254,13 +246,13 @@ export const getTlaLlProof = (
     const value = split[0];
     const rest = split[1];
     const conclusion = member(element, set);
-    const isValue = equal(element, value);
-    const isInRest = member(element, rest);
+    const valueEquality = equal(element, value);
+    const restMembership = member(element, rest);
     const next = getMembership(
       element,
       rest,
       remaining.slice(1),
-      [isInRest, ...conclusions],
+      [restMembership, ...conclusions],
       isSetOf,
     );
     const extras = difference(union(first[1], next[1]), conclusions);
@@ -270,14 +262,13 @@ export const getTlaLlProof = (
         "zenon_in_addElt",
         [element, value, rest],
         [conclusion],
-        [[isValue], [isInRest]],
+        [[valueEquality], [restMembership]],
         [first[0], next[0]],
       ),
       extras,
     ];
   };
 
-  // The non-membership in an enumerated set, one element at a time.
   const getNonMembership = (
     element: Expr,
     set: Expr,
@@ -285,23 +276,18 @@ export const getTlaLlProof = (
     conclusions: Expr[],
     isSetOf: boolean,
   ): Translated => {
-    const split =
-      set.kind === "app" &&
-      set.symbol === (isSetOf ? "TLA.set" : "TLA.addElt") &&
-      set.args.length >= (isSetOf ? 1 : 2)
-        ? [set.args[0], isSetOf ? exprs.eapp("TLA.set", set.args.slice(1)) : set.args[1]]
-        : undefined;
+    const split = splitSet(set, isSetOf);
     if (split === undefined) return sub;
     const value = split[0];
     const rest = split[1];
     const conclusion = exprs.enot(member(element, set));
-    const isNotValue = exprs.enot(equal(element, value));
-    const isNotInRest = exprs.enot(member(element, rest));
+    const valueInequality = exprs.enot(equal(element, value));
+    const restNonMembership = exprs.enot(member(element, rest));
     const next = getNonMembership(
       element,
       rest,
       sub,
-      [isNotValue, isNotInRest, ...conclusions],
+      [valueInequality, restNonMembership, ...conclusions],
       isSetOf,
     );
     const extras = difference(next[1], conclusions);
@@ -311,7 +297,7 @@ export const getTlaLlProof = (
         "zenon_notin_addElt",
         [element, value, rest],
         [conclusion],
-        [[isNotValue, isNotInRest]],
+        [[valueInequality, restNonMembership]],
         [next[0]],
       ),
       extras,
@@ -367,10 +353,9 @@ export const getTlaLlProof = (
   }
 };
 
-// Zenon's Ext_tla.postprocess: the lemmas with each $notequiv written as a negated equivalence.
 export const postprocessTla = (exprs: Expressions, lemmas: Lemma[]): Lemma[] => {
   const cache = new Map<Expr, Expr>();
-  const pp = (expression: Expr): Expr => {
+  const postprocess = (expression: Expr): Expr => {
     const cached = cache.get(expression);
     if (cached !== undefined) return cached;
     const result = ((): Expr => {
@@ -383,35 +368,35 @@ export const postprocessTla = (exprs: Expressions, lemmas: Lemma[]): Lemma[] => 
           throw new TlaZenonError("Zenon: a metavariable in a low-level proof");
         case "app": {
           if (expression.symbol !== "$notequiv")
-            return exprs.eapp(expression.symbol, expression.args.map(pp));
+            return exprs.eapp(expression.symbol, expression.args.map(postprocess));
           if (expression.args.length !== 2)
             throw new TlaZenonError("Zenon: $notequiv without two arguments");
-          const right = pp(expression.args[1]);
-          return exprs.enot(exprs.eequiv(pp(expression.args[0]), right));
+          const right = postprocess(expression.args[1]);
+          return exprs.enot(exprs.eequiv(postprocess(expression.args[0]), right));
         }
         case "not":
-          return exprs.enot(pp(expression.args[0]));
+          return exprs.enot(postprocess(expression.args[0]));
         case "and":
         case "or":
         case "imply":
         case "equiv": {
-          const right = pp(expression.args[1]);
-          return connect(exprs, expression.kind, pp(expression.args[0]), right);
+          const right = postprocess(expression.args[1]);
+          return connect(exprs, expression.kind, postprocess(expression.args[0]), right);
         }
         case "all":
-          return exprs.eall(expression.args[0], expression.symbol, pp(expression.args[1]));
+          return exprs.eall(expression.args[0], expression.symbol, postprocess(expression.args[1]));
         case "ex":
-          return exprs.eex(expression.args[0], expression.symbol, pp(expression.args[1]));
+          return exprs.eex(expression.args[0], expression.symbol, postprocess(expression.args[1]));
         case "tau":
-          return exprs.etau(expression.args[0], expression.symbol, pp(expression.args[1]));
+          return exprs.etau(expression.args[0], expression.symbol, postprocess(expression.args[1]));
         case "lam":
-          return exprs.elam(expression.args[0], expression.symbol, pp(expression.args[1]));
+          return exprs.elam(expression.args[0], expression.symbol, postprocess(expression.args[1]));
       }
     })();
     cache.set(expression, result);
     return result;
   };
-  const ppRule = (rule: LlRule): LlRule => {
+  const postprocessRule = (rule: LlRule): LlRule => {
     switch (rule.kind) {
       case "false":
       case "nottrue":
@@ -419,62 +404,70 @@ export const postprocessTla = (exprs: Expressions, lemmas: Lemma[]): Lemma[] => 
       case "axiom":
       case "cut":
       case "notnot":
-        return { kind: rule.kind, formula: pp(rule.formula) };
+        return { kind: rule.kind, formula: postprocess(rule.formula) };
       case "noteq":
-        return { kind: "noteq", term: pp(rule.term) };
+        return { kind: "noteq", term: postprocess(rule.term) };
       case "eqsym":
       case "notequal":
-        return { kind: rule.kind, left: pp(rule.left), right: pp(rule.right) };
+        return { kind: rule.kind, left: postprocess(rule.left), right: postprocess(rule.right) };
       case "connect":
       case "notconnect":
         return {
           kind: rule.kind,
           connective: rule.connective,
-          left: pp(rule.left),
-          right: pp(rule.right),
+          left: postprocess(rule.left),
+          right: postprocess(rule.right),
         };
       case "ex":
       case "all":
       case "notex":
       case "notall":
-        return { kind: rule.kind, quantified: pp(rule.quantified), term: pp(rule.term) };
+        return {
+          kind: rule.kind,
+          quantified: postprocess(rule.quantified),
+          term: postprocess(rule.term),
+        };
       case "pnotp":
-        return { kind: "pnotp", positive: pp(rule.positive), negative: pp(rule.negative) };
+        return {
+          kind: "pnotp",
+          positive: postprocess(rule.positive),
+          negative: postprocess(rule.negative),
+        };
       case "congruencelr":
       case "congruencerl":
         return {
           kind: rule.kind,
-          context: pp(rule.context),
-          left: pp(rule.left),
-          right: pp(rule.right),
+          context: postprocess(rule.context),
+          left: postprocess(rule.left),
+          right: postprocess(rule.right),
         };
       case "definition":
         return {
           kind: "definition",
           name: rule.name,
-          folded: pp(rule.folded),
-          unfolded: pp(rule.unfolded),
+          folded: postprocess(rule.folded),
+          unfolded: postprocess(rule.unfolded),
         };
       case "extension":
         return {
           kind: "extension",
           name: rule.name,
-          args: rule.args.map(pp),
-          conclusions: rule.conclusions.map(pp),
-          branches: rule.branches.map((branch) => branch.map(pp)),
+          args: rule.args.map(postprocess),
+          conclusions: rule.conclusions.map(postprocess),
+          branches: rule.branches.map((branch) => branch.map(postprocess)),
         };
       case "lemma":
-        return { kind: "lemma", name: rule.name, args: rule.args.map(pp) };
+        return { kind: "lemma", name: rule.name, args: rule.args.map(postprocess) };
     }
   };
-  const ppTree = (tree: LlProof): LlProof => ({
-    conclusions: tree.conclusions.map(pp),
-    rule: ppRule(tree.rule),
-    subproofs: tree.subproofs.map(ppTree),
+  const postprocessTree = (tree: LlProof): LlProof => ({
+    conclusions: tree.conclusions.map(postprocess),
+    rule: postprocessRule(tree.rule),
+    subproofs: tree.subproofs.map(postprocessTree),
   });
   return lemmas.map((lemma) => ({
     name: lemma.name,
-    params: lemma.params.map((param): [string, Expr] => [param[0], pp(param[1])]),
-    proof: ppTree(lemma.proof),
+    params: lemma.params.map((param): [string, Expr] => [param[0], postprocess(param[1])]),
+    proof: postprocessTree(lemma.proof),
   }));
 };

@@ -41,32 +41,41 @@ import {
   PolynomialManager,
 } from "../../src/prover/smt/solver/nlsat/polynomial";
 
-const FIXTURES = join(__dirname, "../fixtures/nlsat");
+const FIXTURES = join(import.meta.dirname, "../fixtures/nlsat");
 
-// The harness syntax: terms separated by spaces, each coeff:var^degree,var^degree.
-const parsePolynomial = (pm: PolynomialManager, text: string) => {
+const readCases = (name: string): [string, string][] =>
+  JSON.parse(readFileSync(join(FIXTURES, `${name}.json`), "utf8"));
+
+const runProgram = (program: string, runCommand: (words: string[], index: number) => string) =>
+  program
+    .split("\n")
+    .map((line, index) => `${line.split(" ")[0]}${runCommand(line.split(" "), index)}`)
+    .join("\n");
+
+const parsePolynomial = (polynomialManager: PolynomialManager, text: string) => {
   const terms = text.trim() === "" ? [] : text.trim().split(/\s+/);
-  const as = terms.map((term) => BigInt(term.slice(0, term.indexOf(":"))));
-  const ms = terms.map((term) => {
+  const coefficients = terms.map((term) => BigInt(term.slice(0, term.indexOf(":"))));
+  const monomials = terms.map((term) => {
     const powers = term
       .slice(term.indexOf(":") + 1)
       .split(",")
       .filter((power) => power !== "")
       .map((power) => power.split("^").map(Number));
-    return pm.mkMonomial(
+    return polynomialManager.mkMonomial(
       powers.map((power) => power[0]),
       powers.map((power) => power[1]),
     );
   });
-  return pm.mkPolynomial(as, ms);
+  return polynomialManager.mkPolynomial(coefficients, monomials);
 };
 
-// Prints the monomials in the polynomial's own order, as the harness does.
-// an_show in the harness: a rational, or the defining polynomial, root index and isolating interval.
-const showAnum = (am: AlgebraicManager, anum: Anum) =>
+const parsePolynomials = (polynomialManager: PolynomialManager, text: string) =>
+  text.split(" ; ").map((part) => parsePolynomial(polynomialManager, part));
+
+const showAnum = (algebraicManager: AlgebraicManager, anum: Anum) =>
   anum.value instanceof Rational
     ? ` q${anum.value}`
-    : ` r[${anum.value.p.join(" ")}]#${am.getRootIndex(anum)}(${anum.value.lower},${anum.value.upper})`;
+    : ` r[${anum.value.p.join(" ")}]#${algebraicManager.getRootIndex(anum)}(${anum.value.lower},${anum.value.upper})`;
 
 const showPolynomial = (polynomial: Polynomial) =>
   `[${polynomial.ms
@@ -77,36 +86,30 @@ const showPolynomial = (polynomial: Polynomial) =>
     .join(" ")}]`;
 
 const runPolynomialCommand = (input: string) => {
-  const pm = new PolynomialManager();
-  const cache = new PolynomialCache(pm);
+  const polynomialManager = new PolynomialManager();
+  const cache = new PolynomialCache(polynomialManager);
   const command = input.slice(0, input.indexOf(" "));
   const rest = input.slice(command.length + 1);
   if (command === "factor") {
-    const factors = cache.factor(parsePolynomial(pm, rest));
+    const factors = cache.factor(parsePolynomial(polynomialManager, rest));
     return `factors${factors.map((factor) => ` ${showPolynomial(factor)}`).join("")}`;
   }
   if (command === "psc") {
     const variable = Number(rest.slice(0, rest.indexOf(" ")));
     const operands = rest.slice(rest.indexOf(" ") + 1).split(" ; ");
     const chain = cache.pscChain(
-      parsePolynomial(pm, operands[0]),
-      parsePolynomial(pm, operands[1]),
+      parsePolynomial(polynomialManager, operands[0]),
+      parsePolynomial(polynomialManager, operands[1]),
       variable,
     );
     return `psc${chain.map((element) => ` ${showPolynomial(element)}`).join("")}`;
   }
   const operands = rest.split(" ; ");
-  return `gcd ${showPolynomial(pm.gcd(parsePolynomial(pm, operands[0]), parsePolynomial(pm, operands[1])))}`;
+  return `gcd ${showPolynomial(polynomialManager.gcd(parsePolynomial(polynomialManager, operands[0]), parsePolynomial(polynomialManager, operands[1])))}`;
 };
 
 describe("nlsat polynomials", () => {
-  // Random polynomials of degree 2 or less, with the factors, subresultants and gcds that Z3's
-  // polynomial manager computes for them, monomial order included.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "polynomial.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (input, expected) => {
+  it.each(readCases("polynomial"))("%s", (input, expected) => {
     expect(runPolynomialCommand(input)).toBe(expected);
   });
 
@@ -124,29 +127,31 @@ const parseRational = (text: string) => {
   return Rational.of(BigInt(parts[0]), BigInt(parts[1] ?? "1"));
 };
 
-// The harness commands: select a b, and closest x s n v0 ... v(n-1) poly, which leaves x unassigned.
 const runAlgebraicCommand = (input: string) => {
   const words = input.split(" ");
-  const am = new AlgebraicManager();
+  const algebraicManager = new AlgebraicManager();
   if (words[0] === "select")
-    return `select ${am.select(new Anum(parseRational(words[1])), new Anum(parseRational(words[2]))).value}`;
+    return `select ${algebraicManager.select(new Anum(parseRational(words[1])), new Anum(parseRational(words[2]))).value}`;
   const variable = Number(words[1]);
   const count = Number(words[3]);
   const sample = words
     .slice(4, 4 + count)
     .map((word, index) => (index === variable ? undefined : new Anum(parseRational(word))));
-  const pm = new PolynomialManager();
-  const polynomial = parsePolynomial(pm, words.slice(4 + count).join(" "));
-  const closest = am.isolateRootsClosest(pm, polynomial, sample, parseRational(words[2]));
+  const polynomialManager = new PolynomialManager();
+  const polynomial = parsePolynomial(polynomialManager, words.slice(4 + count).join(" "));
+  const closest = algebraicManager.isolateRootsClosest(
+    polynomialManager,
+    polynomial,
+    sample,
+    parseRational(words[2]),
+  );
   const show = (root: Anum) => (root.value instanceof Rational ? `${root.value}` : "irrational");
   return `closest${closest.roots.map((root, index) => ` ${closest.indices[index]}@${show(root)}`).join("")}`;
 };
 
-// The harness's an programs: registers of real algebraic numbers, one command per line, each
-// printing its result, the numbers it refined, and roots as polynomial, index and interval.
 const runAnumProgram = (program: string) => {
-  const am = new AlgebraicManager();
-  const pm = new PolynomialManager();
+  const algebraicManager = new AlgebraicManager();
+  const polynomialManager = new PolynomialManager();
   const registers: Anum[] = [];
   const getRegister = (index: number) => {
     while (registers.length <= index) registers.push(new Anum(Rational.zero));
@@ -157,13 +162,17 @@ const runAnumProgram = (program: string) => {
     switch (words[0]) {
       case "q":
         registers[numbers[0]] = new Anum(parseRational(words[2]));
-        return showAnum(am, registers[numbers[0]]);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       case "root": {
-        const roots = am.isolateRoots(pm, pm.fromCoeffs(words.slice(3).map(BigInt), 0), []);
+        const roots = algebraicManager.isolateRoots(
+          polynomialManager,
+          polynomialManager.fromCoeffs(words.slice(3).map(BigInt), 0),
+          [],
+        );
         if (numbers[1] > roots.length) return " error";
         getRegister(numbers[0]);
         registers[numbers[0]] = roots[numbers[1] - 1];
-        return showAnum(am, registers[numbers[0]]);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       }
       case "add":
       case "mul":
@@ -171,18 +180,18 @@ const runAnumProgram = (program: string) => {
       case "sel": {
         const first = getRegister(numbers[1]);
         const second = getRegister(numbers[2]);
-        if (words[0] === "div" && am.isZero(second)) return " error";
+        if (words[0] === "div" && algebraicManager.isZero(second)) return " error";
         const result =
           words[0] === "add"
-            ? am.add(first, second)
+            ? algebraicManager.add(first, second)
             : words[0] === "mul"
-              ? am.mul(first, second)
+              ? algebraicManager.mul(first, second)
               : words[0] === "div"
-                ? am.div(first, second)
-                : am.select(first, second);
+                ? algebraicManager.div(first, second)
+                : algebraicManager.select(first, second);
         getRegister(numbers[0]);
-        registers[numbers[0]] = am.copy(result);
-        return showAnum(am, registers[numbers[0]]);
+        registers[numbers[0]] = algebraicManager.copy(result);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       }
       case "pow":
       case "intlt":
@@ -190,120 +199,132 @@ const runAnumProgram = (program: string) => {
         const anum = getRegister(numbers[1]);
         const result =
           words[0] === "pow"
-            ? am.power(anum, numbers[2])
+            ? algebraicManager.power(anum, numbers[2])
             : words[0] === "intlt"
-              ? am.intLt(anum)
-              : am.intGt(anum);
+              ? algebraicManager.intLt(anum)
+              : algebraicManager.intGt(anum);
         getRegister(numbers[0]);
-        registers[numbers[0]] = am.copy(result);
-        return showAnum(am, registers[numbers[0]]);
+        registers[numbers[0]] = algebraicManager.copy(result);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       }
       case "neg":
-        am.neg(getRegister(numbers[0]));
-        return showAnum(am, registers[numbers[0]]);
+        algebraicManager.neg(getRegister(numbers[0]));
+        return showAnum(algebraicManager, registers[numbers[0]]);
       case "inv":
-        if (am.isZero(getRegister(numbers[0]))) return " error";
-        am.inv(registers[numbers[0]]);
-        return showAnum(am, registers[numbers[0]]);
+        if (algebraicManager.isZero(getRegister(numbers[0]))) return " error";
+        algebraicManager.inv(registers[numbers[0]]);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       case "cmp": {
         const first = getRegister(numbers[0]);
         const second = getRegister(numbers[1]);
-        return ` ${am.compare(first, second)}${showAnum(am, first)}${showAnum(am, second)}`;
+        return ` ${algebraicManager.compare(first, second)}${showAnum(algebraicManager, first)}${showAnum(algebraicManager, second)}`;
       }
       case "isint":
       case "israt": {
         const anum = getRegister(numbers[0]);
-        return `${showFlag(words[0] === "isint" ? am.isInt(anum) : am.isRational(anum))}${showAnum(am, anum)}`;
+        return `${showFlag(words[0] === "isint" ? algebraicManager.isInt(anum) : algebraicManager.isRational(anum))}${showAnum(algebraicManager, anum)}`;
       }
       case "show":
-        return showAnum(am, getRegister(numbers[0]));
+        return showAnum(algebraicManager, getRegister(numbers[0]));
       default: {
         const rest = words[0] === "closest" ? words.slice(2) : words.slice(1);
         const separator = rest.indexOf(";");
-        const polynomial = parsePolynomial(pm, rest.slice(0, separator).join(" "));
+        const polynomial = parsePolynomial(polynomialManager, rest.slice(0, separator).join(" "));
         const bindings = rest.slice(separator + 1).map((word) => word.split("=").map(Number));
         const values: Anum[] = [];
-        for (const binding of bindings) values[binding[0]] = am.copy(getRegister(binding[1]));
+        for (const binding of bindings)
+          values[binding[0]] = algebraicManager.copy(getRegister(binding[1]));
         let output = "";
         let roots: Anum[] = [];
-        if (words[0] === "sign") output = ` ${am.evalSignAt(pm, polynomial, values)}`;
+        if (words[0] === "sign")
+          output = ` ${algebraicManager.evalSignAt(polynomialManager, polynomial, values)}`;
         else if (words[0] === "iso") {
-          roots = am.isolateRoots(pm, polynomial, values);
-          output = ` roots${roots.map((anum) => showAnum(am, anum)).join("")}`;
+          roots = algebraicManager.isolateRoots(polynomialManager, polynomial, values);
+          output = ` roots${roots.map((anum) => showAnum(algebraicManager, anum)).join("")}`;
         } else if (words[0] === "closest") {
-          const closest = am.isolateRootsClosest(pm, polynomial, values, parseRational(words[1]));
+          const closest = algebraicManager.isolateRootsClosest(
+            polynomialManager,
+            polynomial,
+            values,
+            parseRational(words[1]),
+          );
           roots = closest.roots;
-          output = ` roots${roots.map((anum) => showAnum(am, anum)).join("")} idx${closest.indices.map((index) => ` ${index}`).join("")}`;
+          output = ` roots${roots.map((anum) => showAnum(algebraicManager, anum)).join("")} idx${closest.indices.map((index) => ` ${index}`).join("")}`;
         } else {
-          const signed = am.isolateRootsWithSigns(pm, polynomial, values);
+          const signed = algebraicManager.isolateRootsWithSigns(
+            polynomialManager,
+            polynomial,
+            values,
+          );
           roots = signed.roots;
-          output = ` roots${roots.map((anum) => showAnum(am, anum)).join("")} signs${signed.signs.map((sign) => ` ${sign}`).join("")}`;
+          output = ` roots${roots.map((anum) => showAnum(algebraicManager, anum)).join("")} signs${signed.signs.map((sign) => ` ${sign}`).join("")}`;
         }
-        // The roots go to registers 8 and up, for later commands.
         roots.forEach((root, index) => {
           getRegister(8 + index);
-          registers[8 + index] = am.copy(root);
+          registers[8 + index] = algebraicManager.copy(root);
         });
         output += " after";
         for (const binding of bindings) {
-          registers[binding[1]] = am.copy(values[binding[0]]);
-          output += showAnum(am, registers[binding[1]]);
+          registers[binding[1]] = algebraicManager.copy(values[binding[0]]);
+          output += showAnum(algebraicManager, registers[binding[1]]);
         }
         return output;
       }
     }
   };
-  return program
-    .split("\n")
-    .map((line) => `${line.split(" ")[0]}${runCommand(line.split(" "))}`)
-    .join("\n");
+  return runProgram(program, runCommand);
 };
 
 describe("nlsat real algebraic numbers", () => {
-  // Random programs over roots of univariate polynomials and rationals: arithmetic, comparison,
-  // integrality, sample selection, and the roots and signs of polynomials at algebraic points.
-  // Each line prints Z3's result and the intervals its refinements left behind.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "algebraic-numbers.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (program, expected) => {
+  it.each(readCases("algebraic-numbers"))("%s", (program, expected) => {
     expect(runAnumProgram(program)).toBe(expected);
   });
 });
 
-// Rebuilds an atom from the harness's print of it: the solver normalizes atoms, which is not
-// the evaluator's job.
-const parseAtom = (pm: PolynomialManager, text: string): Atom => {
+const parseIneqKind = (text: string): IneqKind => {
+  if (text === "EQ" || text === "LT" || text === "GT") return text;
+  throw new Error(`${text} is not the kind of an inequality atom`);
+};
+
+const parseRootKind = (text: string): RootKind => {
+  if (
+    text === "ROOT_EQ" ||
+    text === "ROOT_LT" ||
+    text === "ROOT_GT" ||
+    text === "ROOT_LE" ||
+    text === "ROOT_GE"
+  )
+    return text;
+  throw new Error(`${text} is not the kind of a root atom`);
+};
+
+const parseAtom = (polynomialManager: PolynomialManager, text: string): Atom => {
   const words = text.trim().split(" ");
   const boolVar = Number(words[0].slice(1));
   const maxVar = Number(words[2]);
   const factors = [...text.matchAll(/([eoi]\d*) ?\[([^\]]*)\]/g)];
   if (words[1].startsWith("ROOT"))
     return {
-      kind: words[1] as RootKind,
+      kind: parseRootKind(words[1]),
       boolVar,
       maxVar,
       index: Number(factors[0][1].slice(1)),
-      polynomial: parsePolynomial(pm, factors[0][2]),
+      polynomial: parsePolynomial(polynomialManager, factors[0][2]),
     };
   return {
-    kind: words[1] as IneqKind,
+    kind: parseIneqKind(words[1]),
     boolVar,
     maxVar,
-    polynomials: factors.map((factor) => parsePolynomial(pm, factor[2])),
+    polynomials: factors.map((factor) => parsePolynomial(polynomialManager, factor[2])),
     isEven: factors.map((factor) => factor[1] === "e"),
   };
 };
 
-// The harness's ev programs: an assignment of real algebraic numbers, atoms over it, the
-// infeasible intervals of their literals, unions of those, and samples picked outside them. Each
-// line prints the sets with their exact bounds and the assignment its refinements left behind.
 const runEvaluatorProgram = (program: string, expected: string) => {
-  const am = new AlgebraicManager();
-  const pm = new PolynomialManager();
+  const algebraicManager = new AlgebraicManager();
+  const polynomialManager = new PolynomialManager();
   const assignment: (Anum | undefined)[] = [];
-  const evaluator = new Evaluator(pm, am, assignment);
+  const evaluator = new Evaluator(polynomialManager, algebraicManager, assignment);
   const registers: Anum[] = [];
   const sets: (IntervalSet | null)[] = [];
   const atoms: Atom[] = [];
@@ -314,8 +335,8 @@ const runEvaluatorProgram = (program: string, expected: string) => {
     if (set === null || set === undefined) return " {}";
     const intervals = set.intervals.map(
       (interval) =>
-        ` ${interval.isLowerOpen ? "(" : "["}${interval.lower === null ? " -oo" : showAnum(am, interval.lower)} ,` +
-        `${interval.upper === null ? " +oo" : showAnum(am, interval.upper)} ${interval.isUpperOpen ? ")" : "]"}` +
+        ` ${interval.isLowerOpen ? "(" : "["}${interval.lower === null ? " -oo" : showAnum(algebraicManager, interval.lower)} ,` +
+        `${interval.upper === null ? " +oo" : showAnum(algebraicManager, interval.upper)} ${interval.isUpperOpen ? ")" : "]"}` +
         `j${interval.justification}${interval.clause === null ? "" : "c"}`,
     );
     return ` {${set.isFull ? "full" : "part"}${intervals.join("")} }`;
@@ -323,7 +344,7 @@ const runEvaluatorProgram = (program: string, expected: string) => {
   const showAssignment = () =>
     ` after${Array.from({ length: variableCount }, (_, variable) => {
       const value = assignment[variable];
-      return value === undefined ? " _" : showAnum(am, value);
+      return value === undefined ? " _" : showAnum(algebraicManager, value);
     }).join("")}`;
   const runCommand = (words: string[], index: number) => {
     const numbers = words.slice(1).map(Number);
@@ -336,21 +357,26 @@ const runEvaluatorProgram = (program: string, expected: string) => {
         return "";
       case "q":
         registers[numbers[0]] = new Anum(parseRational(words[2]));
-        return showAnum(am, registers[numbers[0]]);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       case "root": {
         const coeffs = words.slice(3).map(BigInt);
         while (coeffs[coeffs.length - 1] === 0n) coeffs.pop();
-        registers[numbers[0]] = am.isolateRoots(pm, pm.fromCoeffs(coeffs, 0), [])[numbers[1] - 1];
-        return showAnum(am, registers[numbers[0]]);
+        registers[numbers[0]] = algebraicManager.isolateRoots(
+          polynomialManager,
+          polynomialManager.fromCoeffs(coeffs, 0),
+          [],
+        )[numbers[1] - 1];
+        return showAnum(algebraicManager, registers[numbers[0]]);
       }
       case "set":
-        // An unset register, such as 7 when every pick met a full set, is zero.
-        assignment[numbers[0]] = am.copy(registers[numbers[1]] ?? new Anum(Rational.zero));
+        assignment[numbers[0]] = algebraicManager.copy(
+          registers[numbers[1]] ?? new Anum(Rational.zero),
+        );
         return "";
       case "ineq":
       case "rootatom": {
         const printed = expectedLines[index].slice(words[0].length);
-        atoms.push(parseAtom(pm, printed));
+        atoms.push(parseAtom(polynomialManager, printed));
         return printed;
       }
       case "eval": {
@@ -382,32 +408,26 @@ const runEvaluatorProgram = (program: string, expected: string) => {
       case "pick": {
         const set = sets[numbers[0]] ?? null;
         if (evaluator.ism.isFull(set)) return " fullset";
-        // The picked number goes to register 7, for a later set.
         registers[7] = evaluator.ism.pickInComplement(set, numbers[2] === 1);
-        return `${showAnum(am, registers[7])}${showSet(set)}`;
+        return `${showAnum(algebraicManager, registers[7])}${showSet(set)}`;
       }
       case "pickmax": {
         const max = evaluator.ism.pickMaxInComplement(sets[numbers[0]] ?? null);
-        return `${max === null ? " 0" : ` 1${showAnum(am, max)}`}${showSet(sets[numbers[0]])}`;
+        return `${max === null ? " 0" : ` 1${showAnum(algebraicManager, max)}`}${showSet(sets[numbers[0]])}`;
       }
       default: {
         const max = evaluator.ism.queryMaxInComplement(sets[numbers[0]] ?? null);
-        return `${max === null ? " 0" : ` 1${showAnum(am, max.sup)}${showFlag(max.isAttained)}`}${showSet(sets[numbers[0]])}`;
+        return `${max === null ? " 0" : ` 1${showAnum(algebraicManager, max.sup)}${showFlag(max.isAttained)}`}${showSet(sets[numbers[0]])}`;
       }
     }
   };
-  return program
-    .split("\n")
-    .map((line, index) => `${line.split(" ")[0]}${runCommand(line.split(" "), index)}`)
-    .join("\n");
+  return runProgram(program, runCommand);
 };
 
-// The harness's lw programs: a sample of rationals and roots, then the cell intervals of the
-// levelwise single cell construction around it, and the sample its refinements left behind.
 const runLevelwiseProgram = (program: string) => {
-  const am = new AlgebraicManager();
-  const pm = new PolynomialManager();
-  const cache = new PolynomialCache(pm);
+  const algebraicManager = new AlgebraicManager();
+  const polynomialManager = new PolynomialManager();
+  const cache = new PolynomialCache(polynomialManager);
   const sample: Anum[] = [];
   const registers: Anum[] = [];
   let variableCount = 0;
@@ -421,26 +441,22 @@ const runLevelwiseProgram = (program: string) => {
         return "";
       case "q":
         registers[numbers[0]] = new Anum(parseRational(words[2]));
-        return showAnum(am, registers[numbers[0]]);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       case "root":
-        registers[numbers[0]] = am.isolateRoots(
-          pm,
-          pm.fromCoeffs(words.slice(3).map(BigInt), 0),
+        registers[numbers[0]] = algebraicManager.isolateRoots(
+          polynomialManager,
+          polynomialManager.fromCoeffs(words.slice(3).map(BigInt), 0),
           [],
         )[numbers[1] - 1];
-        return showAnum(am, registers[numbers[0]]);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       case "set":
-        sample[numbers[0]] = am.copy(registers[numbers[1]]);
+        sample[numbers[0]] = algebraicManager.copy(registers[numbers[1]]);
         return "";
       default: {
-        const polynomials = words
-          .slice(3)
-          .join(" ")
-          .split(" ; ")
-          .map((text) => parsePolynomial(pm, text));
+        const polynomials = parsePolynomials(polynomialManager, words.slice(3).join(" "));
         const cell = getSingleCell(
-          pm,
-          am,
+          polynomialManager,
+          algebraicManager,
           cache,
           polynomials,
           numbers[0],
@@ -453,31 +469,24 @@ const runLevelwiseProgram = (program: string) => {
             : ` (${showBound(interval.lower, interval.lowerIndex, "-oo")},${showBound(interval.upper, interval.upperIndex, "+oo")})`,
         );
         const values = Array.from({ length: variableCount }, (_, variable) =>
-          sample[variable] === undefined ? " _" : showAnum(am, sample[variable]),
+          sample[variable] === undefined ? " _" : showAnum(algebraicManager, sample[variable]),
         );
         return `${intervals.join("")} after${values.join("")}`;
       }
     }
   };
-  return program
-    .split("\n")
-    .map((line) => `${line.split(" ")[0]}${runCommand(line.split(" "))}`)
-    .join("\n");
+  return runProgram(program, runCommand);
 };
 
-// The harness's explain programs: a sample with the top variable unassigned, or every variable
-// assigned for the linear variant, atoms made by the solver's atom table, the equations Z3's
-// solver keeps for some assigned variables, then the explanations of sets of literals. Each
-// explanation prints its literals with their atoms, numbered as Z3 numbers them.
 const runExplainProgram = (program: string) => {
-  const am = new AlgebraicManager();
-  const pm = new PolynomialManager();
-  const cache = new PolynomialCache(pm);
-  const table = new AtomTable(pm, cache);
+  const algebraicManager = new AlgebraicManager();
+  const polynomialManager = new PolynomialManager();
+  const cache = new PolynomialCache(polynomialManager);
+  const table = new AtomTable(polynomialManager, cache);
   const sample: Anum[] = [];
   const var2eq: IneqAtom[] = [];
-  const evaluator = new Evaluator(pm, am, sample);
-  const explain = new Explain(pm, am, cache, {
+  const evaluator = new Evaluator(polynomialManager, algebraicManager, sample);
+  const explain = new Explain(polynomialManager, algebraicManager, cache, {
     atoms: table,
     sample,
     getValue: (literal) => {
@@ -490,7 +499,8 @@ const runExplainProgram = (program: string) => {
   const registers: Anum[] = [];
   const atoms: number[] = [];
   const showAtom = (boolVar: number) => {
-    const atom = table.atoms[boolVar]!;
+    const atom = table.atoms[boolVar];
+    if (atom === null) throw new Error(`b${boolVar} has no atom`);
     const body = isIneqAtom(atom)
       ? atom.polynomials
           .map(
@@ -506,39 +516,38 @@ const runExplainProgram = (program: string) => {
     switch (words[0]) {
       case "q":
         registers[numbers[0]] = new Anum(parseRational(words[2]));
-        return showAnum(am, registers[numbers[0]]);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       case "root":
-        registers[numbers[0]] = am.isolateRoots(
-          pm,
-          pm.fromCoeffs(words.slice(3).map(BigInt), 0),
+        registers[numbers[0]] = algebraicManager.isolateRoots(
+          polynomialManager,
+          polynomialManager.fromCoeffs(words.slice(3).map(BigInt), 0),
           [],
         )[numbers[1] - 1];
-        return showAnum(am, registers[numbers[0]]);
+        return showAnum(algebraicManager, registers[numbers[0]]);
       case "set":
-        sample[numbers[0]] = am.copy(registers[numbers[1]]);
+        sample[numbers[0]] = algebraicManager.copy(registers[numbers[1]]);
         return "";
       case "ineq": {
         const count = numbers[1];
-        const polynomials = words
-          .slice(3 + count)
-          .join(" ")
-          .split(" ; ")
-          .map((text) => parsePolynomial(pm, text));
+        const polynomials = parsePolynomials(polynomialManager, words.slice(3 + count).join(" "));
         const isEven = numbers.slice(2, 2 + count).map((flag) => flag === 1);
-        atoms.push(table.mkIneqAtom(words[1] as IneqKind, polynomials, isEven));
-        // The harness holds a reference to each atom it makes, as a clause would.
+        atoms.push(table.mkIneqAtom(parseIneqKind(words[1]), polynomials, isEven));
         table.incRef(2 * atoms[atoms.length - 1]);
         return showAtom(atoms[atoms.length - 1]);
       }
       case "rootatom": {
-        const polynomial = parsePolynomial(pm, words.slice(4).join(" "));
-        atoms.push(table.mkRootAtom(words[1] as RootKind, numbers[1], numbers[2], polynomial));
+        const polynomial = parsePolynomial(polynomialManager, words.slice(4).join(" "));
+        atoms.push(table.mkRootAtom(parseRootKind(words[1]), numbers[1], numbers[2], polynomial));
         table.incRef(2 * atoms[atoms.length - 1]);
         return showAtom(atoms[atoms.length - 1]);
       }
-      case "eq":
-        var2eq[numbers[0]] = table.atoms[atoms[numbers[1]]] as IneqAtom;
+      case "eq": {
+        const atom = table.atoms[atoms[numbers[1]]];
+        if (atom === null || !isIneqAtom(atom))
+          throw new Error(`atom ${numbers[1]} is not an inequality`);
+        var2eq[numbers[0]] = atom;
         return "";
+      }
       case "explain": {
         const literals = Array.from(
           { length: (numbers.length - 1) / 2 },
@@ -555,41 +564,21 @@ const runExplainProgram = (program: string) => {
         return "";
     }
   };
-  return program
-    .split("\n")
-    .map((line) => `${line.split(" ")[0]}${runCommand(line.split(" "))}`)
-    .join("\n");
+  return runProgram(program, runCommand);
 };
 
 describe("nlsat levelwise", () => {
-  // Random samples and polynomials, around the top variable left unassigned or, in the linear
-  // mode of check_assignment, every variable assigned. The last cases have four polynomials with
-  // roots on both sides of the sample, which take the spanning tree heuristic. Cases where Z3
-  // breaks a tie between equal roots by its recycled polynomial ids are left out, see levelwise.ts.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "levelwise.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (program, expected) => {
+  it.each(readCases("levelwise"))("%s", (program, expected) => {
     expect(runLevelwiseProgram(program)).toBe(expected);
   });
 });
 
 describe("nlsat explain", () => {
-  // Random samples, atoms and cores, with lower stage equations, leading coefficients that
-  // vanish at the sample, and factors whose every coefficient does, which restarts the
-  // explanation with all coefficients. Each program explains one or two cores, so the second
-  // reuses the Boolean variables the first freed.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "explain.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (program, expected) => {
+  it.each(readCases("explain"))("%s", (program, expected) => {
     expect(runExplainProgram(program)).toBe(expected);
   });
 
   it("throws a named error for a linear cell around an irrational section, where Z3 exits", () => {
-    // x0 is the root sqrt(2) of the equation x0^2 - 2, so the cell at x0 is an irrational section.
     const program = [
       "vars 2",
       "root 0 2 -2 0 1",
@@ -604,38 +593,19 @@ describe("nlsat explain", () => {
 });
 
 describe("nlsat evaluator", () => {
-  // Random programs with two or three variables, the top one unassigned until the end, as when
-  // nlsat decides it. Unions drop the clauses of the intervals they copy, as Z3's do.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "evaluator.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (program, expected) => {
+  it.each(readCases("evaluator"))("%s", (program, expected) => {
     expect(runEvaluatorProgram(program, expected)).toBe(expected);
   });
 });
 
 describe("nlsat polynomial factorization", () => {
-  // Products of random factors in two or three variables, up to degree 2 in each variable per
-  // factor, factored as Z3 does: univariate factorization, the square root of a discriminant, and
-  // bivariate Hensel lifting at evaluation points, monomial order included.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "polynomial-factorization.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (input, expected) => {
+  it.each(readCases("polynomial-factorization"))("%s", (input, expected) => {
     expect(runPolynomialCommand(input)).toBe(expected);
   });
 });
 
 describe("nlsat algebraic numbers", () => {
-  // Random rational intervals and polynomials of degree 1 in the root variable, with the numbers
-  // that Z3's algebraic number manager selects and isolates for them.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "algebraic.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (input, expected) => {
+  it.each(readCases("algebraic"))("%s", (input, expected) => {
     expect(runAlgebraicCommand(input)).toBe(expected);
   });
 
@@ -643,24 +613,37 @@ describe("nlsat algebraic numbers", () => {
     expect(runAlgebraicCommand("closest 1 3 2 2 0 1:1^2 -2:")).toBe("closest 2@irrational");
   });
 });
+
 const showCoeffs = (coeffs: readonly bigint[]) => ` [${coeffs.join(" ")}]`;
 
 const showFlag = (isTrue: boolean) => ` ${isTrue ? 1 : 0}`;
 
-// Isolates the roots of the square-free part, then makes each interval refinable, refines it to
-// width 1/2^20, and reports the root's index and the interval normalized around zero.
-const showIsolation = (um: UpolynomialManager, coeffs: readonly bigint[]) => {
-  const squareFree = um.squareFree(coeffs);
-  const isolated = um.sqfIsolateRoots(squareFree);
+const showIsolation = (upolynomialManager: UpolynomialManager, coeffs: readonly bigint[]) => {
+  const squareFree = upolynomialManager.squareFree(coeffs);
+  const isolated = upolynomialManager.sqfIsolateRoots(squareFree);
   const refined = isolated.lowers.map((lower, index) => {
-    const refinable = um.isolating2refinable(squareFree, lower, isolated.uppers[index]);
+    const refinable = upolynomialManager.isolating2refinable(
+      squareFree,
+      lower,
+      isolated.uppers[index],
+    );
     if (!refinable.isInterval) return ` root ${refinable.lower}`;
-    const result = um.refineToPrecision(squareFree, refinable.lower, refinable.upper, 20);
-    const rootId = um.getRootId(squareFree, result.lower);
+    const result = upolynomialManager.refineToPrecision(
+      squareFree,
+      refinable.lower,
+      refinable.upper,
+      20,
+    );
+    const rootId = upolynomialManager.getRootId(squareFree, result.lower);
     if (!result.isInterval)
       return ` int ${refinable.lower} ${refinable.upper} proot ${result.lower} id${rootId}`;
-    const signLower = um.evalSignAtBq(squareFree, result.lower);
-    const normalized = um.normalizeInterval(squareFree, result.lower, result.upper, signLower);
+    const signLower = upolynomialManager.evalSignAtBq(squareFree, result.lower);
+    const normalized = upolynomialManager.normalizeInterval(
+      squareFree,
+      result.lower,
+      result.upper,
+      signLower,
+    );
     const shownNormalized =
       normalized === null
         ? ` n0 ${result.lower} ${result.upper}`
@@ -670,89 +653,96 @@ const showIsolation = (um: UpolynomialManager, coeffs: readonly bigint[]) => {
   return `${showCoeffs(squareFree)} roots${isolated.roots.map((root) => ` ${root}`).join("")} intervals${isolated.lowers.map((lower, index) => ` ${lower} ${isolated.uppers[index]}`).join("")} refined${refined.join("")}`;
 };
 
-// The harness commands: <op> <coefficients from the constant term up> [; <operand>]. The ops
-// starting with z take a prime first and run over Z_p.
 const runUpolynomialCommand = (input: string) => {
   const words = input.split(" ");
-  const op = words[0];
-  const isModular = op.startsWith("z");
+  const operation = words[0];
+  const isModular = operation.startsWith("z");
   const operands = words
     .slice(isModular ? 2 : 1)
     .join(" ")
     .split(" ; ")
     .map((operand) => (operand === "" ? [] : operand.split(" ")));
-  const um = new UpolynomialManager();
-  const toCoeffs = (operand: string[]) => um.set(operand.map(BigInt));
-  const first = toCoeffs(operands[0]);
+  const upolynomialManager = new UpolynomialManager();
+  const parseCoeffs = (operand: string[]) => upolynomialManager.set(operand.map(BigInt));
+  const first = parseCoeffs(operands[0]);
   if (isModular)
-    return `${op}${um.withZp(BigInt(words[1]), () => {
-      const x = um.set(first);
-      const y = um.set(toCoeffs(operands[1]));
-      if (op === "zgcd") return showCoeffs(um.gcd(x, y));
-      if (op === "zextgcd") {
-        const result = um.extGcd(x, y);
+    return `${operation}${upolynomialManager.withZp(BigInt(words[1]), () => {
+      const left = upolynomialManager.set(first);
+      const right = upolynomialManager.set(parseCoeffs(operands[1]));
+      if (operation === "zgcd") return showCoeffs(upolynomialManager.gcd(left, right));
+      if (operation === "zextgcd") {
+        const result = upolynomialManager.extGcd(left, right);
         return showCoeffs(result.u) + showCoeffs(result.v) + showCoeffs(result.d);
       }
-      if (op === "zdivrem") {
-        const division = um.divRem(x, y);
+      if (operation === "zdivrem") {
+        const division = upolynomialManager.divRem(left, right);
         return showCoeffs(division.quotient) + showCoeffs(division.remainder);
       }
-      if (op === "zsqf") return showCoeffs(um.squareFree(x));
-      if (op === "zsqfp") return showFlag(um.isSquareFree(x));
-      if (op === "zmonic") return showCoeffs(um.mkMonic(x));
-      if (op === "zdivides") return showFlag(um.divides(x, y));
-      if (op === "zmul") return showCoeffs(um.mul(x, y));
-      const exact = um.exactDiv(x, y);
+      if (operation === "zsqf") return showCoeffs(upolynomialManager.squareFree(left));
+      if (operation === "zsqfp") return showFlag(upolynomialManager.isSquareFree(left));
+      if (operation === "zmonic") return showCoeffs(upolynomialManager.mkMonic(left));
+      if (operation === "zdivides") return showFlag(upolynomialManager.divides(left, right));
+      if (operation === "zmul") return showCoeffs(upolynomialManager.mul(left, right));
+      const exact = upolynomialManager.exactDiv(left, right);
       return exact === null ? " 0" : ` 1${showCoeffs(exact)}`;
     })}`;
   const second = operands[1] ?? [];
-  if (op === "isolate") return `isolate${showIsolation(um, first)}`;
-  if (op === "gcd") return `gcd${showCoeffs(um.gcd(first, toCoeffs(second)))}`;
-  if (op === "divrem") {
-    const division = um.divRem(first, toCoeffs(second));
+  if (operation === "isolate") return `isolate${showIsolation(upolynomialManager, first)}`;
+  if (operation === "gcd")
+    return `gcd${showCoeffs(upolynomialManager.gcd(first, parseCoeffs(second)))}`;
+  if (operation === "divrem") {
+    const division = upolynomialManager.divRem(first, parseCoeffs(second));
     return `divrem ${division.power}${showCoeffs(division.quotient)}${showCoeffs(division.remainder)}`;
   }
-  if (op === "srem") return `srem${showCoeffs(um.srem(first, toCoeffs(second)))}`;
-  if (op === "exact") {
-    const exact = um.exactDiv(first, toCoeffs(second));
+  if (operation === "srem")
+    return `srem${showCoeffs(upolynomialManager.srem(first, parseCoeffs(second)))}`;
+  if (operation === "exact") {
+    const exact = upolynomialManager.exactDiv(first, parseCoeffs(second));
     return exact === null ? "exact 0" : `exact 1${showCoeffs(exact)}`;
   }
-  if (op === "divides") return `divides${showFlag(um.divides(first, toCoeffs(second)))}`;
-  if (op === "sqf") return `sqf${showCoeffs(um.squareFree(first))}`;
-  if (op === "sqfp") return `sqfp${showFlag(um.isSquareFree(first))}`;
-  if (op === "sturm") return `sturm${um.sturmSeq(first).map(showCoeffs).join("")}`;
-  if (op === "tarski")
-    return `tarski${um.sturmTarskiSeq(first, toCoeffs(second)).map(showCoeffs).join("")}`;
-  if (op === "q2bq") {
-    const result = um.convertQ2bqInterval(
+  if (operation === "divides")
+    return `divides${showFlag(upolynomialManager.divides(first, parseCoeffs(second)))}`;
+  if (operation === "sqf") return `sqf${showCoeffs(upolynomialManager.squareFree(first))}`;
+  if (operation === "sqfp") return `sqfp${showFlag(upolynomialManager.isSquareFree(first))}`;
+  if (operation === "sturm")
+    return `sturm${upolynomialManager.sturmSeq(first).map(showCoeffs).join("")}`;
+  if (operation === "tarski")
+    return `tarski${upolynomialManager.sturmTarskiSeq(first, parseCoeffs(second)).map(showCoeffs).join("")}`;
+  if (operation === "q2bq") {
+    const result = upolynomialManager.convertQ2bqInterval(
       first,
       parseRational(second[0]),
       parseRational(second[1]),
     );
     return result.isInterval ? `q2bq 1 ${result.lower} ${result.upper}` : `q2bq 0 ${result.lower}`;
   }
-  if (op === "knuth")
-    return `knuth ${um.knuthPositiveRootUpperBound(first)} ${um.knuthNegativeRootUpperBound(first)} ${um.nonzeroRootLowerBound(first)}`;
-  if (op === "flips")
-    return `flips${showCoeffs(um.pMinusX(first))}${showCoeffs(um.p1DivX(first))}${showCoeffs(um.removeZeroRoots(first))}`;
-  if (op === "transq") return `transq${showCoeffs(um.translateQ(first, parseRational(second[0])))}`;
-  if (op === "compq") return `compq${showCoeffs(um.composePQX(first, parseRational(second[0])))}`;
-  if (op === "signq") return `signq ${um.evalSignAtQ(first, parseRational(second[0]))}`;
-  if (op === "signbq")
-    return `signbq ${um.evalSignAtBq(first, Mpbq.of(BigInt(second[0]), Number(second[1])))}`;
-  return `pw${showCoeffs(um.pw(first, Number(second[0])))}`;
+  if (operation === "knuth")
+    return `knuth ${upolynomialManager.knuthPositiveRootUpperBound(first)} ${upolynomialManager.knuthNegativeRootUpperBound(first)} ${upolynomialManager.nonzeroRootLowerBound(first)}`;
+  if (operation === "flips")
+    return `flips${showCoeffs(upolynomialManager.pMinusX(first))}${showCoeffs(upolynomialManager.p1DivX(first))}${showCoeffs(upolynomialManager.removeZeroRoots(first))}`;
+  if (operation === "transq")
+    return `transq${showCoeffs(upolynomialManager.translateQ(first, parseRational(second[0])))}`;
+  if (operation === "compq")
+    return `compq${showCoeffs(upolynomialManager.composePQX(first, parseRational(second[0])))}`;
+  if (operation === "signq")
+    return `signq ${upolynomialManager.evalSignAtQ(first, parseRational(second[0]))}`;
+  if (operation === "signbq")
+    return `signbq ${upolynomialManager.evalSignAtBq(first, Mpbq.of(BigInt(second[0]), Number(second[1])))}`;
+  return `pw${showCoeffs(upolynomialManager.pw(first, Number(second[0])))}`;
 };
 
-// factor <coefficients> with polynomial::factor_params(), afactor with the algebraic number
-// module's limits.
 const runFactorCommand = (input: string) => {
   const words = input.split(" ");
-  const um = new UpolynomialManager();
+  const upolynomialManager = new UpolynomialManager();
   const params =
     words[0] === "afactor"
       ? { maxPrime: 31, primeTrials: 1, maxSearchSize: 5000 }
       : DEFAULT_FACTOR_PARAMS;
-  const result = factorUpolynomial(um, um.set(words.slice(1).map(BigInt)), params);
+  const result = factorUpolynomial(
+    upolynomialManager,
+    upolynomialManager.set(words.slice(1).map(BigInt)),
+    params,
+  );
   const factors = result.factors.factors.map(
     (factor, index) => `${showCoeffs(factor)}^${result.factors.degrees[index]}`,
   );
@@ -760,19 +750,10 @@ const runFactorCommand = (input: string) => {
 };
 
 describe("nlsat univariate factorization", () => {
-  // Products of random factors up to degree 15, some with Swinnerton-Dyer style polynomials such
-  // as x^4 - 10x^2 + 1 that split modulo every prime, factored as Z3 does: Berlekamp in Z_p,
-  // Hensel lifting and the search over combinations of lifted factors.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "upolynomial-factorization.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (input, expected) => {
+  it.each(readCases("upolynomial-factorization"))("%s", (input, expected) => {
     expect(runFactorCommand(input)).toBe(expected);
   });
 
-  // A double's square root of a 60-digit discriminant is off by about 2^44, so a search from it
-  // does not end.
   it("factors a quadratic whose discriminant is past the precision of a double", () => {
     const root = 1234567890123456789012345678901n;
     expect(runFactorCommand(`factor ${5n * root} ${-(root + 5n)} 1`)).toBe(
@@ -785,28 +766,32 @@ describe("nlsat univariate factorization", () => {
 });
 
 describe("nlsat univariate polynomials", () => {
-  // Products of random factors up to degree 3, so with repeated, rational and irrational roots, and
-  // what Z3's upolynomial manager computes for them: root isolation and refinement, gcds over Z and
-  // Z_p, pseudo-division, Sturm sequences and the transformations algebraic numbers use.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "upolynomial.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (input, expected) => {
+  it.each(readCases("upolynomial"))("%s", (input, expected) => {
     expect(runUpolynomialCommand(input)).toBe(expected);
   });
 
   it("skips primes that divide a leading coefficient in the modular gcd", () => {
-    const um = new UpolynomialManager();
+    const upolynomialManager = new UpolynomialManager();
     const shared = [-2n, 39103n * 39107n];
-    const first = um.mul([3n, 5n, 7n * 39103n], shared);
-    const second = um.mul(shared, [7n, 1n, 39103n]);
-    expect(um.gcd(first, second)).toEqual(shared);
+    const first = upolynomialManager.mul([3n, 5n, 7n * 39103n], shared);
+    const second = upolynomialManager.mul(shared, [7n, 1n, 39103n]);
+    expect(upolynomialManager.gcd(first, second)).toEqual(shared);
   });
 });
 
-// The harness command: ca n, then int flags, one c KIND poly line per constraint, v x num den per
-// variable, and end. It prints each constraint's literal, then undef or the lemma.
+const createConstraintLiteral = (solver: NlsatSolver, kind: string, text: string) => {
+  const polynomial = parsePolynomial(solver.pm, text);
+  return kind === "LE"
+    ? solver.mkIneqLiteral("GT", [polynomial], [false]) ^ 1
+    : kind === "GE"
+      ? solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1
+      : solver.mkIneqLiteral(
+          kind === "EQ" ? "EQ" : kind === "LT" ? "LT" : "GT",
+          [polynomial],
+          [false],
+        );
+};
+
 const runCheckAssignment = (input: string) => {
   const solver = new NlsatSolver();
   const values: Anum[] = [];
@@ -821,18 +806,7 @@ const runCheckAssignment = (input: string) => {
     if (words[0] === "v")
       values[Number(words[1])] = new Anum(parseRational(`${words[2]}/${words[3]}`));
     if (words[0] !== "c") continue;
-    const polynomial = parsePolynomial(solver.pm, words.slice(2).join(" "));
-    const kind = words[1];
-    const literal =
-      kind === "LE"
-        ? solver.mkIneqLiteral("GT", [polynomial], [false]) ^ 1
-        : kind === "GE"
-          ? solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1
-          : solver.mkIneqLiteral(
-              kind === "EQ" ? "EQ" : kind === "LT" ? "LT" : "GT",
-              [polynomial],
-              [false],
-            );
+    const literal = createConstraintLiteral(solver, words[1], words.slice(2).join(" "));
     solver.mkExternalClause([literal], null);
     output.push(`lit ${literal}`);
   }
@@ -848,13 +822,7 @@ const runCheckAssignment = (input: string) => {
 };
 
 describe("nlsat check_assignment", () => {
-  // Random constraints of degree 2 or less, with the lemmas that Z3's nlsat solver returns for an
-  // assignment that violates them, literal numbering and monomial order included.
-  const cases: [string, string][] = JSON.parse(
-    readFileSync(join(FIXTURES, "check-assignment.json"), "utf8"),
-  );
-
-  it.each(cases)("%s", (input, expected) => {
+  it.each(readCases("check-assignment"))("%s", (input, expected) => {
     expect(runCheckAssignment(input)).toBe(expected);
   });
 
@@ -875,9 +843,6 @@ describe("nlsat check_assignment", () => {
   });
 });
 
-// The harness command: search n max_conflicts, then int flags, one a KIND poly line per atom, and
-// cl assumption refs per clause, a ref being a signed 1-based atom number. It prints each clause's
-// literals, the verdict, the nonzero statistics, and the model or the core.
 const runSearch = (input: string) => {
   const solver = new NlsatSolver();
   const atoms: number[] = [];
@@ -887,26 +852,13 @@ const runSearch = (input: string) => {
   for (const line of input.split("\n")) {
     const words = line.split(" ");
     if (words[0] === "int") for (const flag of words.slice(1)) solver.mkVar(flag === "1");
-    if (words[0] === "a") {
-      const polynomial = parsePolynomial(solver.pm, words.slice(2).join(" "));
-      const kind = words[1];
-      atoms.push(
-        kind === "LE"
-          ? solver.mkIneqLiteral("GT", [polynomial], [false]) ^ 1
-          : kind === "GE"
-            ? solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1
-            : solver.mkIneqLiteral(
-                kind === "EQ" ? "EQ" : kind === "LT" ? "LT" : "GT",
-                [polynomial],
-                [false],
-              ),
-      );
-    }
+    if (words[0] === "a")
+      atoms.push(createConstraintLiteral(solver, words[1], words.slice(2).join(" ")));
     if (words[0] !== "cl") continue;
     const literals = words
       .slice(2)
       .map(Number)
-      .map((ref) => (ref > 0 ? atoms[ref - 1] : atoms[-ref - 1] ^ 1));
+      .map((reference) => (reference > 0 ? atoms[reference - 1] : atoms[-reference - 1] ^ 1));
     output.push(`clause ${literals.join(" ")}`);
     solver.mkExternalClause(literals, words[1] === "-1" ? null : Number(words[1]));
   }
@@ -939,34 +891,29 @@ const runSearch = (input: string) => {
 };
 
 describe("nlsat search", () => {
-  // Random clauses over atoms of degree 4 or less, with the verdict, statistics, model and core of
-  // Z3's nlsat check.
-  const cases: [string, string][] = JSON.parse(readFileSync(join(FIXTURES, "search.json"), "utf8"));
-
-  it.each(cases)("%s", (input, expected) => {
+  it.each(readCases("search"))("%s", (input, expected) => {
     expect(runSearch(input)).toBe(expected);
   });
 });
 
 describe("nra check_assignment", () => {
-  // The monic m = x*y with x and y fixed by their bounds, and one more bound on m.
   const getCore = (
-    factors: (x: number, y: number) => number[],
+    getFactors: (xVariable: number, yVariable: number) => number[],
     kind: ConstraintKind,
     bound: bigint,
   ) => {
     const lra = new LarSolver(() => false);
-    const x = lra.addVar(0, false);
-    const y = lra.addVar(1, false);
-    const m = lra.addVar(2, false);
+    const xVariable = lra.addVar(0, false);
+    const yVariable = lra.addVar(1, false);
+    const monicVariable = lra.addVar(2, false);
     const core = new NlaCore(lra, new ResourceLimit(Infinity));
-    core.addMonic(m, factors(x, y));
+    core.addMonic(monicVariable, getFactors(xVariable, yVariable));
     const constraints = [
-      lra.mkVarBound(x, KIND_GE, Rational.of(2n)),
-      lra.mkVarBound(x, KIND_LE, Rational.of(2n)),
-      lra.mkVarBound(y, KIND_GE, Rational.of(1n)),
-      lra.mkVarBound(y, KIND_LE, Rational.of(1n)),
-      lra.mkVarBound(m, kind, Rational.of(bound)),
+      lra.mkVarBound(xVariable, KIND_GE, Rational.of(2n)),
+      lra.mkVarBound(xVariable, KIND_LE, Rational.of(2n)),
+      lra.mkVarBound(yVariable, KIND_GE, Rational.of(1n)),
+      lra.mkVarBound(yVariable, KIND_LE, Rational.of(1n)),
+      lra.mkVarBound(monicVariable, kind, Rational.of(bound)),
     ];
     for (const constraint of constraints) lra.activate(constraint);
     lra.findFeasibleSolution();
@@ -975,7 +922,7 @@ describe("nra check_assignment", () => {
   };
 
   it("refutes x*y <= 1 at x = 2 and y = 1 with a lemma", () => {
-    const result = getCore((x, y) => [x, y], KIND_LE, 1n);
+    const result = getCore((xVariable, yVariable) => [xVariable, yVariable], KIND_LE, 1n);
     expect(new NraSolver(result.core).checkAssignment()).toBe(L_FALSE);
     expect(result.core.lemmas).toHaveLength(1);
     expect([...result.core.lemmas[0].expl]).toContain(result.constraints[4]);
@@ -983,14 +930,14 @@ describe("nra check_assignment", () => {
   });
 
   it("refutes x*x <= 1 at x = 2 with a lemma, factoring x^2 - 1", () => {
-    const result = getCore((x) => [x, x], KIND_LE, 1n);
+    const result = getCore((xVariable) => [xVariable, xVariable], KIND_LE, 1n);
     expect(new NraSolver(result.core).checkAssignment()).toBe(L_FALSE);
     expect(result.core.lemmas).toHaveLength(1);
     expect([...result.core.lemmas[0].expl]).toContain(result.constraints[4]);
   });
 
   it("refutes x*x = 2 at x = 2 with a lemma, bounding the irrational root linearly", () => {
-    const result = getCore((x) => [x, x], KIND_EQ, 2n);
+    const result = getCore((xVariable) => [xVariable, xVariable], KIND_EQ, 2n);
     expect(new NraSolver(result.core).checkAssignment()).toBe(L_FALSE);
     expect(result.core.lemmas).toHaveLength(1);
     expect([...result.core.lemmas[0].expl]).toContain(result.constraints[4]);
@@ -998,21 +945,20 @@ describe("nra check_assignment", () => {
 });
 
 describe("nra check", () => {
-  // The monic m = x*x with the bounds x >= 1 and m kind bound.
   const getSquare = (kind: ConstraintKind, bound: bigint) => {
     const lra = new LarSolver(() => false);
-    const x = lra.addVar(0, false);
-    const m = lra.addVar(1, false);
+    const xVariable = lra.addVar(0, false);
+    const monicVariable = lra.addVar(1, false);
     const core = new NlaCore(lra, new ResourceLimit(Infinity));
-    core.addMonic(m, [x, x]);
+    core.addMonic(monicVariable, [xVariable, xVariable]);
     const constraints = [
-      lra.mkVarBound(x, KIND_GE, Rational.of(1n)),
-      lra.mkVarBound(m, kind, Rational.of(bound)),
+      lra.mkVarBound(xVariable, KIND_GE, Rational.of(1n)),
+      lra.mkVarBound(monicVariable, kind, Rational.of(bound)),
     ];
     for (const constraint of constraints) lra.activate(constraint);
     lra.findFeasibleSolution();
     core.initToRefine();
-    return { core, x, m, constraints };
+    return { core, xVariable, monicVariable, constraints };
   };
 
   it("refutes x*x < 1 with a lemma over the constraints of nlsat's core", () => {
@@ -1029,10 +975,10 @@ describe("nra check", () => {
     const nra = result.core.nra;
     expect(nra.check(Infinity, Infinity)).toBe(L_TRUE);
     expect(result.core.isUsingNraModel).toBe(true);
-    const value = nra.value(result.x);
+    const value = nra.value(result.xVariable);
     expect(nra.am.isRational(value)).toBe(false);
     expect(nra.am.compare(nra.am.mul(value, value), new Anum(Rational.of(2n)))).toBe(0);
-    expect(nra.value(result.m).value).toEqual(Rational.of(2n));
+    expect(nra.value(result.monicVariable).value).toEqual(Rational.of(2n));
   });
 
   it("throws a named error once the search takes more steps than its budget", () => {

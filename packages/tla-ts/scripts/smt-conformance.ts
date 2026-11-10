@@ -5,15 +5,10 @@ import { decideSmt } from "../src/prover/smt/solver/solver";
 import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
 import { getSmtVerdict, PROOF_INPUTS_DIRECTORY, type BackendVerdict } from "./proof-records";
 
-// "unsound" is an answer Z3 contradicts, "extra" a proof of an obligation Z3 gave up on.
 type Outcome = "proved" | "missed" | "extra" | "unsound" | "unproved";
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".smt-results.json");
 
-// tlapm gives Z3 5 s of wall-clock time per obligation. On a loaded machine wall-clock time
-// overstates the time on an idle core, so the solver runs with ten times that wall-clock limit, and
-// an answer counts as within the limit by its CPU time, which decides parity, or by its wall-clock
-// time.
 const TIME_LIMIT_MS = 5000;
 const WALL_LIMIT_MS = 10 * TIME_LIMIT_MS;
 
@@ -26,7 +21,6 @@ const listInputs = (directory: string): string[] =>
       return path.endsWith(".smt") || path.endsWith(".smt2") ? [path] : [];
     });
 
-// Z3 rejects malformed input with an error, which counts as unknown.
 const decide = (text: string) => {
   try {
     return decideSmt(text, { timeLimitMs: WALL_LIMIT_MS });
@@ -36,8 +30,6 @@ const decide = (text: string) => {
   }
 };
 
-// An answer that contradicts Z3 is unsound whenever it comes, and other answers count only within
-// the time limit.
 const getOutcome = (z3: BackendVerdict, ours: BackendVerdict, isInTime: boolean): Outcome => {
   if ((ours === "unsat" && z3 === "sat") || (ours === "sat" && z3 === "unsat")) return "unsound";
   if (ours === "unsat" && isInTime) return z3 === "unsat" ? "proved" : "extra";
@@ -90,7 +82,7 @@ const report = (title: string, outcomes: Outcome[], times: number[]) => {
   );
   return counts.get("unsound") ?? 0;
 };
-const numUnsound = report(
+const unsoundCount = report(
   "within 5 s of CPU time, the estimate for an idle core:",
   results.map((result) => result.outcome),
   results.map((result) => result.cpuMs),
@@ -101,4 +93,4 @@ report(
   results.map((result) => result.timeMs),
 );
 console.log(`inputs: ${results.length} (${basename(RESULTS_PATH)} has the details)`);
-if (numUnsound > 0) process.exitCode = 1;
+if (unsoundCount > 0) process.exitCode = 1;

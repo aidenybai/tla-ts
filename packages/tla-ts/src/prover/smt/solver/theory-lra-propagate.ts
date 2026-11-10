@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt. How theory_lra
-// propagates: asserted bounds go to the lp solver, the tableau is made feasible, and implied bounds
-// and equalities of fixed columns come back as literals and equalities.
+// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_ITE, OP_SUB, SORT_BOOL } from "./ast";
 import { TheoryJustification } from "./enode";
 import { getIdentityHash, ObjMap } from "./hashtable";
@@ -55,7 +53,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.propagateCore();
   }
 
-  // propagate_core: whether there was anything to propagate.
   protected propagateCore() {
     const context = this.context;
     this.isModelInitialized = false;
@@ -135,7 +132,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return true;
   }
 
-  // propagate_eqs: a bound that fixes a column, with the opposite bound of the same value.
   private propagateEqs(
     column: number,
     constraint: number,
@@ -151,7 +147,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.fixedVarEh(bound.thVar, column, mkJoin(mkLeaf(constraint), opposite), value);
   }
 
-  // set_bound: records the bound of a term column, or checks that a column has the bound.
   private setTermBound(column: number, constraint: number, value: Rational, isLower: boolean) {
     const solver = this.solver;
     if (!solver.hasTerm(column)) {
@@ -172,7 +167,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return true;
   }
 
-  // has_bound: the dependency of a bound of the column with the value, if it has one.
   private getFixingBound(
     column: number,
     value: Rational,
@@ -199,7 +193,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return this.getEnode(first).root === this.getEnode(second).root;
   }
 
-  // report_equality_of_fixed_vars: two columns fixed to the same value are equal.
   protected reportEqualityOfFixedVars(first: number, second: number) {
     const solver = this.solver;
     const v1 = solver.getExternal(first);
@@ -220,8 +213,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.assignEq(v1, v2);
   }
 
-  // fixed_var_eh: a column fixed to a value is equal to an offset term, or to the variable of the
-  // numeral with that value.
   private fixedVarEh(thVar: number, column: number, dep: Dependency, value: Rational) {
     if (this.propagateOffsetEq(column, dep, value)) return;
     const isInt = this.isIntVar(thVar);
@@ -238,7 +229,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.assignEq(thVar, other);
   }
 
-  // propagate_offset_eq: x - y fixed to 0 makes x and y equal.
   private propagateOffsetEq(column: number, dep: Dependency, value: Rational) {
     if (!value.isZero() || !this.solver.hasTerm(column)) return false;
     const coeffs = this.getTermCoeffs(this.solver.getTerm(column));
@@ -254,8 +244,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return true;
   }
 
-  // term2coeffs: the coefficients of the theory variables of a term, with term columns expanded,
-  // in the slot order of Z3's u_map.
   protected getTermCoeffs(term: LarTerm) {
     const coeffs = new ObjMap<Rational>(getIdentityHash);
     const visit = (current: LarTerm, coeff: Rational) => {
@@ -281,7 +269,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     });
   }
 
-  // add_eq: an equality that the lp solver implies, with its explanation.
   protected addEq(first: number, second: number, explanation: Explanation, isFixed: boolean) {
     if (this.context.isInconsistent()) return false;
     const v1 = this.solver.getExternal(first);
@@ -363,7 +350,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     }
   }
 
-  // is_bound_implied: the literal of the bound that the implied bound makes true or false.
   private isBoundImplied(kind: ConstraintKind, value: Rational, bound: ApiBound) {
     const literal = getAtomLiteral(bound);
     const comparison = value.compare(bound.value);

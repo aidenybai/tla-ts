@@ -7,12 +7,10 @@ import { TraceTable } from "./trace-table";
 
 const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 const SPINNER_INTERVAL_MS = 80;
-// The easing vaul's drawer uses.
 const DRAWER_EASING = "duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]";
 const CONTROL_CLASS_NAME =
   "flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-sm text-gray-1100 hover:bg-gray-300 hover:text-gray-1200";
 
-// Mounts only while a run is going, so the timer starts from zero each time.
 export const RunProgress = () => {
   const [elapsedMs, setElapsedMs] = useState(0);
 
@@ -38,21 +36,20 @@ interface RunStatusProps {
   onOpen: () => void;
 }
 
-// The last verdict, which reopens the drawer after it's closed.
-export const RunStatus = ({ result, onOpen }: RunStatusProps) => (
+export const RunStatus = (props: RunStatusProps) => (
   <button
     type="button"
-    onClick={onOpen}
+    onClick={props.onOpen}
     className={cn(
       "mr-1 flex h-8 min-w-0 items-center gap-1.5 self-center rounded-full px-3 text-sm",
-      result.isPassed
+      props.result.isPassed
         ? "bg-green-50 text-green-700 hover:bg-green-100"
         : "bg-red-50 text-red-600 hover:bg-red-100",
     )}
   >
-    <span aria-hidden>{result.isPassed ? "✓" : "✕"}</span>
+    <span aria-hidden>{props.result.isPassed ? "✓" : "✕"}</span>
     <span className="truncate max-[400px]:sr-only">
-      {result.isPassed ? "Passed" : (result.name ?? result.title)}
+      {props.result.isPassed ? "Passed" : (props.result.name ?? props.result.title)}
     </span>
   </button>
 );
@@ -63,9 +60,8 @@ interface RunDrawerProps {
   onClose: () => void;
 }
 
-// Slides up over the code inside the block, so the page never moves. Mount it once per result,
-// so a new trace plays from the start.
-export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
+export const RunDrawer = (props: RunDrawerProps) => {
+  const result = props.result;
   const stepCount = result ? Math.max(result.trace.length, result.rows.length) : 0;
   const playback = usePlayback(stepCount);
   if (result === undefined) return null;
@@ -74,19 +70,19 @@ export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
     <>
       <div
         aria-hidden
-        onClick={onClose}
+        onClick={props.onClose}
         className={cn(
           "absolute inset-0 z-10 bg-gray-1200/5 transition-opacity starting:opacity-0",
           DRAWER_EASING,
-          !isOpen && "pointer-events-none opacity-0",
+          !props.isOpen && "pointer-events-none opacity-0",
         )}
       />
       <section
-        inert={!isOpen}
+        inert={!props.isOpen}
         className={cn(
           "absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col rounded-t-xl bg-white shadow-[0_0_0_1px_#0000000f,0_-8px_24px_-12px_#00000029] transition-transform starting:translate-y-full",
           DRAWER_EASING,
-          !isOpen && "translate-y-full",
+          !props.isOpen && "translate-y-full",
         )}
       >
         <header className="flex items-start gap-3 py-2 pr-2 pl-4">
@@ -136,7 +132,7 @@ export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
           <button
             type="button"
             aria-label="Close results"
-            onClick={onClose}
+            onClick={props.onClose}
             className="flex size-7 shrink-0 items-center justify-center rounded-full text-gray-1000 hover:bg-gray-300 hover:text-gray-1200 active:scale-[0.94]"
           >
             <X className="size-4" />

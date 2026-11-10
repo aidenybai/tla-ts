@@ -2,10 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { TlaTypeScriptError } from "../errors";
 
-// Compiles a TypeScript file to the TLA+ spec and config of its module, beside it, and returns the
-// spec's path. A file there that tla-ts didn't generate is left alone.
 export const writeTypeScriptSpec = async (path: string) => {
-  // The TypeScript compiler takes a while to load, so only a TypeScript input loads it.
   const compiled = (await import("../typescript/compile")).compile(
     readFileSync(path, "utf8"),
     path,

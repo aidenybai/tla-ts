@@ -1,5 +1,3 @@
-// A worker of the decide pool: it decides each request with the backend its prover selects.
-
 import { TlaProverError } from "../errors";
 import { getParentPort } from "../worker";
 import { decide } from "./deciders";

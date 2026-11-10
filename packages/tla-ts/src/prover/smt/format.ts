@@ -1,8 +1,5 @@
-// backend/smtlib.ml's names and the SMT-LIB terms the encoding builds.
-
 import type { Builtin } from "../../obligations/expression";
 
-// Smtlib.format_smt: spells out each special character, then doubles each underscore.
 const SPELLED: Record<string, string> = {
   "\\": "backslash_",
   "+": "plussign_",
@@ -39,7 +36,6 @@ const SPELLED_WORDS = new RegExp(`(${[...UNSPELLED.keys()].join("|")})`, "g");
 
 export const tla = (name: string) => formatName(`TLA__${name}`);
 
-// The builtin a symbol that tla names stands for, or undefined for any other symbol.
 export const getTlaName = (symbol: string) =>
   symbol.startsWith(TLA_PREFIX)
     ? symbol
@@ -139,13 +135,12 @@ export const call = (symbol: string, args: string[]) =>
 export const declare = (symbol: string, arity: number, sort = "Idv", argSort = "Idv") =>
   `(declare-fun ${symbol} (${Array.from({ length: arity }, () => argSort).join(" ")}) ${sort})`;
 
-// The index of the parenthesis that closes the one at from.
 export const getClosing = (text: string, from: number) => {
-  const state = { depth: 0, index: from };
-  for (; state.index < text.length; state.index++) {
-    if (text[state.index] === "(") state.depth++;
-    if (text[state.index] === ")") state.depth--;
-    if (state.depth === 0) return state.index;
+  let depth = 0;
+  for (let index = from; index < text.length; index++) {
+    if (text[index] === "(") depth++;
+    if (text[index] === ")") depth--;
+    if (depth === 0) return index;
   }
   return text.length;
 };

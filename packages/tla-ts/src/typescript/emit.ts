@@ -2,7 +2,6 @@ import type { Context } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import type { Model } from "./model";
 
-// The parts of a spec and its config, in the order that the model declares them.
 export interface Sections {
   init: string[];
   actions: string[];

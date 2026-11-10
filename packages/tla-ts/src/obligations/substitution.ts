@@ -1,4 +1,4 @@
-// tlapm's E_subst: substitutions for de Bruijn indices, applied to every part of an expression.
+// A port of tlapm's E_subst.
 
 import { TlaProofError } from "../errors";
 import {
@@ -31,7 +31,6 @@ export const consSubstitution = (expression: Expr, rest: Substitution): Substitu
   rest,
 });
 
-// Binds the expressions in order, so the last one becomes index 1.
 export const consAll = (expressions: Expr[], rest: Substitution) =>
   expressions.reduce((inner, expression) => consSubstitution(expression, inner), rest);
 
@@ -63,7 +62,6 @@ const applyIndex = (substitution: Substitution, index: number, from: Expr): Expr
 export const substituteExprs = (substitution: Substitution, expressions: Expr[]) =>
   expressions.map((expression) => substituteExpr(substitution, expression));
 
-// Beta-reduces a lambda applied to arguments, as E_subst.normalize does.
 export const normalizeApply = (operator: Expr, args: Expr[]): ExprCore => {
   if (operator.kind === "Lambda") {
     if (operator.params.length !== args.length) throw new TlaProofError("Arity mismatch");
