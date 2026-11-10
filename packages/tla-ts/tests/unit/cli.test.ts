@@ -17,7 +17,6 @@ const copies: string[] = [];
 
 afterAll(() => copies.forEach((copy) => rmSync(copy, { recursive: true, force: true })));
 
-// tlapm keeps its cache in the directory it runs in, so each run works in a copy of the fixtures.
 const copyFixtures = (directory: string) => {
   const copy = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
   copies.push(copy);
@@ -39,6 +38,12 @@ const getCheckedSpecs = (output: string) =>
 const getStateLines = (output: string) =>
   output.split("\n").filter((line) => line.includes(" = ") && !line.startsWith("State"));
 
+const getToolSequence = (output: string) =>
+  output
+    .split("\n")
+    .filter((line) => line.startsWith("@!@!@STARTMSG") || line.startsWith("<<"))
+    .map((line) => line.match(/^@!@!@STARTMSG (\d+):/)?.[1] ?? line);
+
 describe("the CLI prints traces like TLC", () => {
   it("prints a state with one variable without a conjunction", () => {
     const result = runCli("counter", "Counter");
@@ -58,12 +63,9 @@ describe("the CLI prints traces like TLC", () => {
   });
 });
 
-// The lines in which TLC reports its version and runtime, and the files SANY parses.
 const STARTUP_LINE =
   /^(TLC2 Version |Running breadth-first search |Parsing file |Semantic processing of module |Linting of module )/;
 
-// TLC's output for the same models without -tool, with the time it ran and the dates it printed as _,
-// and without its startup lines.
 const getSteadyLines = (output: string) =>
   output
     .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
@@ -505,9 +507,6 @@ describe("the CLI reports results like TLC", () => {
     expect(getSteadyLines(result.stdout)).toEqual([...(lines ?? []), ""]);
   });
 
-  // TLC's output with one worker for the specs of its ContinueTest and
-  // DoInitFunctorInvariantContinueTest, for a spec whose violating states lead to more, and for one
-  // whose invariant reads TLCGet("level") after an ALIAS printed a trace.
   it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors", "ContinueAlias"])(
     "goes on past each violation in %s with -continue like TLC",
     (name) => {
@@ -625,7 +624,6 @@ describe("the CLI reports results like TLC", () => {
       /^Running breadth-first search Model-Checking with fp 0 and seed 7 with 2 workers on \d+ cores with \d+MB heap and 0MB offheap memory \[pid: \d+\] \(.+, Node\.js .+, MemFPSet, MemStateQueue\)\.$/,
     );
     expect(lines[2]).toBe(`Parsing file ${realpathSync(join(directory, "Success.tla"))}`);
-    // TLC's trace exploration spec adds _TLCTrace to the modules the spec extends.
     const standardModules = ["Naturals", "_TLCTrace", "TLC", "TLCExt", "Sequences", "FiniteSets"];
     expect(lines.slice(3, 10)).toEqual(
       [...standardModules, "Integers"].map((name) =>
@@ -649,7 +647,6 @@ describe("the CLI reports results like TLC", () => {
       "Linting of module _TLCTrace",
       "Linting of module Success",
     ]);
-    // TLC names its copies of the standard modules at random, and tla-ts the same way each run.
     expect(runCliWith("cli-output", args).stdout.split("\n")[3]).toBe(lines[3]);
     expect(
       runCliWith("cli-output", [...args, "-noTE"])
@@ -663,7 +660,6 @@ describe("the CLI reports results like TLC", () => {
   });
 });
 
-// What SANY's XMLExporter prints to standard error for the same modules, and its exit code.
 const XML_EXPORT_FAILURES = [
   [
     "Renamed.tla",
@@ -819,16 +815,12 @@ describe("the CLI exports XML like SANY's XMLExporter", () => {
     expect(result.stderr).toBe([...lines, ""].join("\n"));
   });
 
-  // Numbered.xml is what XMLExporter writes for Numbered.tla, which has a node of each kind SANY
-  // numbers out of the order of the spec's text.
   it("writes the XML that XMLExporter writes, with SANY's UIDs in the order of its HashMap", () => {
     const result = exportXml(["Numbered.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(readFileSync(join(FIXTURES, "xml-export", "Numbered.xml"), "utf8"));
   });
 
-  // Commented.xml is what XMLExporter writes for Commented.tla with -t, -r and -u: on one line,
-  // without what Commented has from Counted, and with the pre-comments out of their boxes.
   it("writes the XML of the root module alone, unboxed and on one line, as XMLExporter does", () => {
     const result = exportXml(["-t", "-r", "-u", "Commented.tla"]);
     expect(result.status).toBe(0);
@@ -871,7 +863,6 @@ describe("the CLI exports XML like SANY's XMLExporter", () => {
   });
 });
 
-// tla2tools-1.7.4.jar holds only the manifest of TLC 1.7.4's jar, which is all tla-ts reads of it.
 const JAR_174 = join(FIXTURES, "xml-export", "tla2tools-1.7.4.jar");
 
 const exportXml174 = (args: string[]) =>
@@ -880,7 +871,6 @@ const exportXml174 = (args: string[]) =>
 const getXmlExporterException = (exception: string, line: number) =>
   `Exception in thread "main" ${exception}\n\tat tla2sany.xml.XMLExporter.main(XMLExporter.java:${line})\n`;
 
-// The expected output is what XMLExporter prints with TLC 1.7.4's tla2tools.jar.
 describe("the CLI exports XML like TLC 1.7.4's XMLExporter when its jar is on the class path", () => {
   const standardModules = `jar:file:${pathToFileURL(JAR_174).pathname}!/tla2sany/StandardModules/`;
 
@@ -947,7 +937,6 @@ describe("the CLI exports XML like TLC 1.7.4's XMLExporter when its jar is on th
         ),
       ].join("\n"),
     );
-    // Numbered has a string that TLC 1.7.4's lexer cannot read.
     expect(exportXml174(["-o", "Numbered.tla"]).stderr).toContain(
       "spec null is malformed - does not have a root module",
     );
@@ -1214,7 +1203,6 @@ describe("the CLI takes several specs and globs", () => {
 });
 
 describe("tlapm -N prints obligations as tlapm does", () => {
-  // Each .toolbox file is what tlapm -N writes to stderr for the same arguments.
   const readExpected = (name: string) => readFileSync(join(FIXTURES, "obligations", name), "utf8");
 
   it("prints each obligation with its text", () => {
@@ -1268,7 +1256,6 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.stderr).toBe(readExpected("Warnings.toolbox"));
   });
 
-  // Each .strict file is what tlapm -N --strict writes to stderr.
   it("reports incomplete proofs under --strict", () => {
     const result = runTlapm("obligations", ["-N", "--strict", "Incomplete.tla"]);
     expect(result.status).toBe(11);
@@ -1281,7 +1268,6 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.stderr).toBe(readExpected("Proofs-2.strict"));
   });
 
-  // Notes.stdout and Notes.stderr are what tlapm -N writes.
   it("prints the notes tlapm prints outside toolbox mode", () => {
     const result = runTlapm("obligations", ["-N", "Notes.tla"]);
     expect(result.status).toBe(0);
@@ -1303,7 +1289,6 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.stdout + result.stderr).toBe("");
   });
 
-  // Each .summary file is what tlapm --summary writes to stdout.
   it("summarizes the missing and omitted proofs of each theorem", () => {
     const result = runTlapm("obligations", ["--summary", "Incomplete.tla"]);
     expect(result.status).toBe(0);
@@ -1311,7 +1296,6 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.stderr).toBe("");
   });
 
-  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace.
   it.each([
     "Declaration",
     "Hide",
@@ -1340,18 +1324,12 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   });
 });
 
-// Each file in tlapm-cli is what tlapm 9ed0376 wrote: .stdout and .stderr without options, .strict
-// to stderr with --strict, .toolbox to stderr with --threads 1 --toolbox 0 0, and .thy and
-// .fingerprints to its cache. .reused is what it wrote to stderr with --threads 1 --toolbox 0 0
-// over that cache, and .nofp and .cleanfp to stdout with --nofp and --cleanfp.
 const readRecording = (name: string) => readFileSync(join(FIXTURES, "tlapm-cli", name), "utf8");
 
-// tlapm copies to stdout what Zenon writes to stderr, which tla-ts's Zenon doesn't write.
-const withoutZenonOutput = (output: string) => output.replaceAll(/^Zenon error: .*\n/gm, "");
+const removeZenonOutput = (output: string) => output.replaceAll(/^Zenon error: .*\n/gm, "");
 
 describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () => {
-  // The time each backend took varies from run to run.
-  const withoutTimeUsed = (output: string) =>
+  const maskTimeUsed = (output: string) =>
     output.replaceAll(/time-used: [\d.]+ \(\d+%\)/g, "time-used: <time>");
 
   it("reports that every obligation is proved", () => {
@@ -1364,7 +1342,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
   it("prints the obligations it couldn't prove and ends abnormally", () => {
     const result = runTlapm("tlapm-cli", ["Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(withoutZenonOutput(readRecording("Failures.stdout")));
+    expect(result.stdout).toBe(removeZenonOutput(readRecording("Failures.stdout")));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
@@ -1380,13 +1358,13 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     expect(result.stdout).toMatch(
       /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
     );
-    expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
+    expect(maskTimeUsed(result.stderr)).toBe(maskTimeUsed(readRecording("Failures.toolbox")));
   });
 
   it("prints a failure it reuses for an obligation with the same fingerprint", () => {
     const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Twice.tla"]);
     expect(result.status).toBe(0);
-    expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Twice.toolbox")));
+    expect(maskTimeUsed(result.stderr)).toBe(maskTimeUsed(readRecording("Twice.toolbox")));
   });
 
   it("rejects the tlapm options it doesn't support", () => {
@@ -1399,7 +1377,6 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
 describe("tlapm shares its cache with tlapm", () => {
   const TLAPM = process.env.TLAPM;
 
-  // A copy of the fixtures whose cache holds the fingerprints tlapm wrote.
   const copyWithCache = () => {
     const directory = copyFixtures("tlapm-cli");
     mkdirSync(join(directory, ".tlacache/Failures.tlaps"), { recursive: true });
@@ -1410,7 +1387,6 @@ describe("tlapm shares its cache with tlapm", () => {
     return directory;
   };
 
-  // The fingerprints file without the date and the versions stored with each result.
   const readFingerprints = (path: string) => {
     const bytes = readFileSync(path);
     const table = readMarshaled(bytes, readMarshaled(bytes, 0).next).value;
@@ -1452,11 +1428,10 @@ describe("tlapm shares its cache with tlapm", () => {
   it.each(["--nofp", "--cleanfp"])("proves again under %s", (option) => {
     const result = runTlapmIn(copyWithCache(), [option, "Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(withoutZenonOutput(readRecording(`Failures.${option.slice(2)}`)));
+    expect(result.stdout).toBe(removeZenonOutput(readRecording(`Failures.${option.slice(2)}`)));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
-  // Set TLAPM to the path of tlapm to check it against the cache tla-ts writes.
   it.runIf(TLAPM !== undefined)("writes fingerprints tlapm reuses", () => {
     const directory = copyFixtures("tlapm-cli");
     runTlapmIn(directory, ["Failures.tla"]);
@@ -1469,13 +1444,6 @@ describe("tlapm shares its cache with tlapm", () => {
   });
 });
 
-// The message codes and the lines that Print writes, in the order TLC 1.8.0 prints them with -tool.
-const getToolSequence = (output: string) =>
-  output
-    .split("\n")
-    .filter((line) => line.startsWith("@!@!@STARTMSG") || line.startsWith("<<"))
-    .map((line) => line.match(/^@!@!@STARTMSG (\d+):/)?.[1] ?? line);
-
 describe("the CLI prints messages for a program to read like TLC", () => {
   const runTool = (name: string) =>
     runCli("tool-output", name, ["-tool", "-workers", "1", "-fp", "0", "-lncheck", "final"]);
@@ -1483,7 +1451,7 @@ describe("the CLI prints messages for a program to read like TLC", () => {
   it("prints again what the spec prints as it rebuilds a safety trace", () => {
     const result = runTool("Steps");
     expect(result.status).toBe(12);
-    const step = (count: number) => `<<"step", ${count}>>`;
+    const getStep = (count: number) => `<<"step", ${count}>>`;
     expect(getToolSequence(result.stdout)).toEqual([
       "2262",
       "2187",
@@ -1492,17 +1460,17 @@ describe("the CLI prints messages for a program to read like TLC", () => {
       "2185",
       "2189",
       "2190",
-      step(0),
-      step(1),
+      getStep(0),
+      getStep(1),
       "2110",
       "2121",
       "2217",
-      step(0),
+      getStep(0),
       "2217",
-      step(1),
+      getStep(1),
       "2217",
-      step(0),
-      step(1),
+      getStep(0),
+      getStep(1),
       "2200",
       "2199",
       "2194",
@@ -1533,7 +1501,7 @@ describe("the CLI prints messages for a program to read like TLC", () => {
   it("reports the temporal properties it checks on the complete state graph", () => {
     const result = runTool("Loop");
     expect(result.status).toBe(13);
-    const [init, up, reset] = ["init", "up", "reset"].map(
+    const [getInit, getUp, getReset] = ["init", "up", "reset"].map(
       (name) => (count: number) => `<<"${name}", ${count}>>`,
     );
     expect(getToolSequence(result.stdout)).toEqual([
@@ -1544,31 +1512,31 @@ describe("the CLI prints messages for a program to read like TLC", () => {
       "2185",
       "2212",
       "2189",
-      init(0),
+      getInit(0),
       "2190",
-      up(0),
-      up(0),
-      up(0),
-      up(0),
-      up(1),
-      up(1),
-      up(1),
-      up(1),
-      reset(2),
-      reset(2),
-      reset(2),
-      reset(2),
+      getUp(0),
+      getUp(0),
+      getUp(0),
+      getUp(0),
+      getUp(1),
+      getUp(1),
+      getUp(1),
+      getUp(1),
+      getReset(2),
+      getReset(2),
+      getReset(2),
+      getReset(2),
       "2200",
       "2192",
-      init(0),
-      up(0),
-      up(1),
+      getInit(0),
+      getUp(0),
+      getUp(1),
       "2116",
       "2264",
       "2217",
       "2217",
       "2217",
-      reset(2),
+      getReset(2),
       "2122",
       "2267",
       "2200",

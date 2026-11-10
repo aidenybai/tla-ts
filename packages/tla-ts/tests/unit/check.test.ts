@@ -34,10 +34,10 @@ const checkModule = (body: string, config = "") =>
     config: `${config}\nINIT Init\nNEXT Next`,
   });
 
-const checkFixture = (directory: string, name: string) =>
+const checkFixture = (directory: string, name: string, configName = name) =>
   check({
     source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-    config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
+    config: readFileSync(join(FIXTURES, directory, `${configName}.cfg`), "utf8"),
   });
 
 describe("check matches TLC", () => {
@@ -139,10 +139,7 @@ describe("check matches TLC", () => {
   it("checks invariants before action properties and constrained states", async () => {
     const results = await Promise.all(
       ["InvariantFirst", "ConstrainedInvariant"].map((name) =>
-        check({
-          source: readFileSync(join(FIXTURES, "ordering", "Ordering.tla"), "utf8"),
-          config: readFileSync(join(FIXTURES, "ordering", `${name}.cfg`), "utf8"),
-        }),
+        checkFixture("ordering", "Ordering", name),
       ),
     );
     expect(
@@ -183,7 +180,6 @@ describe("check matches TLC", () => {
     );
   });
 
-  // TLC checks this module without an error.
   it("reads each of SANY's Unicode operators as its ASCII spelling, and ℕ as a name", async () => {
     const result = await checkModule(
       [
@@ -213,12 +209,7 @@ describe("check matches TLC", () => {
 
   it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", async () => {
     const results = await Promise.all(
-      ["Runtime", "Distinct", "Generated"].map((name) =>
-        check({
-          source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
-          config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
-        }),
-      ),
+      ["Runtime", "Distinct", "Generated"].map((name) => checkFixture("runtime", "Runtime", name)),
     );
     expect(
       results.map((result) => [
@@ -542,7 +533,6 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  // A1 reaches a state with the same VIEW as the successor of A2 that violates the property.
   it("labels the successor that violates an action property by its values under a VIEW", async () => {
     const result = await check({
       source:
@@ -625,10 +615,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("lists a trace's variables in TLC's order", async () => {
-    const result = await check({
-      source: readFileSync(join(FIXTURES, "randomization", "RandomModelValue.tla"), "utf8"),
-      config: readFileSync(join(FIXTURES, "randomization", "RandomModelValue.cfg"), "utf8"),
-    });
+    const result = await checkFixture("randomization", "RandomModelValue");
     expect(Object.keys(result.violation?.trace[0].state ?? {})).toEqual(["owner", "zeta"]);
   });
 
@@ -704,12 +691,7 @@ ASSUME TLCFP(a) = -887695703
 
   it("implements the TLCExt operators", async () => {
     const results = await Promise.all(
-      ["Extensions", "ExtensionsShort"].map((name) =>
-        check({
-          source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
-          config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
-        }),
-      ),
+      ["Extensions", "ExtensionsShort"].map((name) => checkFixture("runtime", "Extensions", name)),
     );
     expect(
       results.map((result) => [result.status, result.generatedStates, result.distinctStates]),
@@ -892,7 +874,6 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("rejects a symmetry that names a constant", async () => {
-    // TLC reports it as a RuntimeException it did not expect, verified with TLC.
     const result = checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P");
     await expect(result).rejects.toThrow(TlaEvaluationError);
     await expect(result).rejects.toThrow(
@@ -959,7 +940,6 @@ ASSUME TLCFP(a) = -887695703
       TlaConfigError,
     );
     expect((await checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo")).status).toBe("success");
-    // TLC rejects a state-level substitute only when evaluating it at startup fails.
     expect(
       (await checkModule('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo")).status,
     ).toBe("success");
@@ -1017,10 +997,7 @@ ASSUME TLCFP(a) = -887695703
 
   it("checks the Github687spec configs from TLC's tests", async () => {
     const checkConfig = (name: string) =>
-      check({
-        source: readFileSync(join(FIXTURES, "github687", "Github687spec.tla"), "utf8"),
-        config: readFileSync(join(FIXTURES, "github687", `Github687spec${name}.cfg`), "utf8"),
-      });
+      checkFixture("github687", "Github687spec", `Github687spec${name}`);
     expect(
       await Promise.all(
         ["A", "B", "C", "InitNext", "Prime"].map(async (name) => {
@@ -1122,7 +1099,6 @@ ASSUME TLCFP(a) = -887695703
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = IF {x} \\subseteq {{}} THEN 1 ELSE 2\n====",
       config: "INIT Init\nNEXT Next",
     });
-    // TLC prints an expression it evaluates again in a row once.
     const frames = result.failure?.callStack
       ?.filter((expression, index, stack) => expression !== stack[index - 1])
       .map((expression) => {
@@ -1250,7 +1226,6 @@ describe("formatValue matches TLC", () => {
     );
   });
 
-  // TLC 1.7.4 prints an empty FcnRcdValue with a space, but an empty TupleValue without one.
   it.each([
     ["1.7.4" as const, ["<< >>", "<< >>", "<<>>", "<<>>", "<<<< >>>>"]],
     [undefined, ["<<>>", "<<>>", "<<>>", "<<>>", "<<<<>>>>"]],
@@ -1310,7 +1285,6 @@ const getFailureSummary = (result: CheckResult) => [
 ];
 
 describe("evaluation errors match TLC", () => {
-  // TLC words these by the Java class of the function, which follows how the spec built it.
   it.each([
     ['IF "a" :> 1 THEN 1 ELSE 2', "(a function  of the form (d1 :> e1 @@ ... @@ dN :> eN))"],
     [
@@ -1337,7 +1311,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
-  // Only a RecordValue compares itself as a record; a FcnRcdValue with strings for keys is a function.
   it.each([
     ["[a |-> 1]", "Attempted to check equality of record:\n[a |-> 1]\nwith non-record\n{}"],
     ['"a" :> 1', "Attempted to check equality of the function [a |-> 1] with the value:\n{}"],
@@ -1403,8 +1376,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.violation?.message).toBe(message);
   });
 
-  // TLC's etest15: TLC normalizes the value of a constant definition as it starts, and searches the
-  // sorted domain of a function over it.
   it("compares a value with the elements of a constant definition's set like TLC", async () => {
     const result = await checkModule(
       "S == {<<y>> : y \\in {1, 2, 3, 4}}\nASSUME [<<y>> \\in S |-> y + 1][2] = 3",
@@ -1414,8 +1385,6 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
-  // TLC's FingerprintExceptionHang: the replay of the failed expansion adds the successors TLC
-  // hasn't seen and checks their invariants, which fail to fingerprint.
   it("counts the states that the replay of a failed invariant adds", async () => {
     const result = await check({
       source:
@@ -1433,8 +1402,6 @@ describe("evaluation errors match TLC", () => {
     expect([result.distinctStates, result.failure?.exitCode]).toEqual([3, 75]);
   });
 
-  // A set with a source raises a FingerprintException when TLC's replay fails to enumerate it, unless
-  // a Java method that enumerates it wraps the failure.
   it.each([
     ["\\E n \\in ({1} \\cup 2) : x' = n", ["Apply"]],
     ["x' = x /\\ \\A n \\in ({1} \\cup 2) : TRUE", ["Apply"]],
@@ -1469,8 +1436,6 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // A tuple, record or set with a source raises a FingerprintException when the replay fails to
-  // apply it, but TLC fails before it applies a value that isn't a function.
   it.each([
     ["<<1, 2>>[3]", ["Tuple"]],
     ["[a |-> 1][1]", ["Record"]],
@@ -1488,8 +1453,6 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // Reducible#diff and cap of a set enumeration or interval with a source raise a
-  // FingerprintException when they fail to test an element for membership in the other set.
   it.each([
     ["{k : k \\in {3}} \\ (3 \\cup {1})", ["SetMap", "Apply"]],
     ["{k : k \\in {3}} \\cap (3 \\cup {1})", ["SetMap", "Apply"]],
@@ -1502,8 +1465,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
   });
 
-  // Reducible#cup, cap and diff test each element for membership in the other set, which a set
-  // enumeration TLC hasn't normalized checks with equals.
   it.each([
     ['{3} \\cup {"a"}', 'Attempted to check equality of integer 3 with non-integer:\n"a"'],
     ['(1..2) \\cap {"a"}', 'Attempted to check equality of string "a" with non-string:\n1'],
@@ -1516,8 +1477,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.fingerprint?.reason).toBe(reason);
   });
 
-  // The equals method of a member with a source heads the failure of a membership test, and the
-  // compareTo method of an element with a source the failure to sort a set.
   it.each([
     ["({<<1>>} \\cup {2}) = {}", ["SetEnumeration", "Tuple"]],
     ["({[a |-> 1]} \\cap {{1}}) = {}", ["SetEnumeration", "SetEnumeration", "SetEnumeration"]],
@@ -1531,8 +1490,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
   });
 
-  // TLC builds a function in a method of the FcnLambdaValue that CallStackTool gives a source, so
-  // the replay fails to fingerprint it when its body fails.
   it.each([
     ["x = [k \\in {1, 2} |-> k \\div 0]", "x' = x", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in 1..2 |-> k \\div 0]", ["FunctionConstruction"]],
@@ -1555,8 +1512,6 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // Value#equals of a value with a source raises a FingerprintException even when the stack froze
-  // where the filter failed, but an operand that fails fails before TLC compares.
   it.each([
     ["x' = Filter /\\ {} = x'", ["SetEnumeration"]],
     ["x' = 1 /\\ {1} # Filter", ["SetEnumeration"]],
@@ -1570,8 +1525,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual(sources);
   });
 
-  // TLC compares the sets as Value#equals does, and never takes tla-ts's faster comparison that
-  // fails first.
   it("records the replay of a filter that fails to compare once", async () => {
     const result = await check({
       source:
@@ -1586,8 +1539,6 @@ describe("evaluation errors match TLC", () => {
     expect(ranges?.at(-1)).toBe("34-41");
   });
 
-  // Tool.processUnchangedImplTuple puts the elements after the first in front of the conjuncts left,
-  // in order.
   it("records the variables of an UNCHANGED tuple in order", async () => {
     const result = await check({
       source:
@@ -1600,8 +1551,6 @@ describe("evaluation errors match TLC", () => {
     expect(names).toEqual(["a", "b", "c"]);
   });
 
-  // Tool.processUnchangedImplVar binds each unassigned variable and compares each assigned one, so a
-  // later variable that changed drops the variables bound before it.
   it("keeps nested tuples and operators in an UNCHANGED as TLC does", async () => {
     const result = await check({
       source:
@@ -1701,7 +1650,6 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // FcnLambdaValue#fingerPrint caches the FcnRcdValue that applies the function from then on.
   it.each([
     [
       "Start == x = [k \\in SUBSET {1} |-> 0]\nStep == x' = x /\\ x[{2}] = 0",
@@ -1740,8 +1688,6 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
-  // CallStackTool copies a SetPredValue without its source, so TLC reports where it evaluated the
-  // filter rather than where it built it.
   it.each([
     ["Nat", "TLC has found a state in which the value of a variable contains Nat", undefined],
     ["{Nat}", "TLC has found a state in which the value of a variable contains Nat", 1],
@@ -1794,8 +1740,6 @@ describe("evaluation errors match TLC", () => {
     expect(getFailureSummary(result)).toEqual(["error", ["0", "1"], [3, 2, 0, 2], 75]);
   });
 
-  // TLC builds a function over a domain other than a set enumeration or an interval lazily, so its
-  // body fails as TLC fingerprints the successor and again as TLC prints it.
   it.each([
     ["master" as const, "tlc2.tool.EvalException\n: The second argument"],
     ["1.7.4" as const, "java.lang.RuntimeException\n: tlc2.tool.EvalException: The second"],
@@ -1818,7 +1762,6 @@ describe("evaluation errors match TLC", () => {
     expect([result.status, result.failure]).toEqual(["deadlock", undefined]);
   });
 
-  // TLC evaluates the whole predicate, not each conjunct on its own.
   it.each(["INVARIANT", "CONSTRAINT"])(
     "fails at a non-boolean conjunct of %s P as the conjunction does",
     async (kind) => {
@@ -1841,7 +1784,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.traceOutput).toEqual(['<<"c", 2>>']);
   });
 
-  // TLC rebuilds the trace for the postcondition only after a violation.
   it.each([
     ["INVARIANT", "P == x < 2 \\/ 1 \\div 0 = 0"],
     ["PROPERTY", "P == [][x' < 2 \\/ 1 \\div 0 = 0]_x"],
@@ -1853,7 +1795,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.traceOutput).toEqual(['<<"s", 1>>']);
   });
 
-  // The rethrown error stops TLC 1.7.4's worker before it adds the state to the behavior graph.
   it("leaves out the state an action property fails on from the behavior graph in TLC 1.7.4", async () => {
     const result = await checkSteps(
       `Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x /\\ WF_x(Step)\nP == [][x' < 2 \\/ 1 \\div 0 = 0]_x\nL == <>(x = 3)`,
@@ -2080,7 +2021,6 @@ describe("evaluation errors match TLC", () => {
 
   const EXPECTED_BOOLEAN = "TLC expected a boolean expression,\nbut instead found";
 
-  // TLC evaluates the conjuncts left once every variable has a value, and walks the others.
   it.each([
     ["x = 0 /\\ 3", "x' = x", `In computing initial states, ${EXPECTED_BOOLEAN} 3.\n3`],
     [
@@ -2164,7 +2104,6 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
-  // TLC's enabled walks the action, and words a literal it walks to differently.
   it.each([
     ["3", "Attempted to compute ENABLED on a non-boolean expression.\n3"],
     [
@@ -2186,8 +2125,6 @@ describe("evaluation errors match TLC", () => {
       version,
     });
 
-  // TLC evaluates each property on the counterexample to name the ones it violates, which TLC 1.7.4
-  // doesn't name.
   it.each([
     ["1.7.4", 4],
     ["master", 5],
@@ -2215,8 +2152,6 @@ describe("evaluation errors match TLC", () => {
     expect([result.status, result.violation?.name]).toEqual(["invariant-violation", "Inv"]);
   });
 
-  // CallStackTool gives a set a source, so TLC's worker fails with a FingerprintException as it adds
-  // the state to the behavior graph again, which it doesn't catch, and TLC replays the next states.
   it("replays the next states when adding a state to the behavior graph fails to fingerprint", async () => {
     const result = await check({
       source:
@@ -2229,8 +2164,6 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
-  // TLC's worker adds the state to the behavior graph after it prints the trace, and again with its
-  // call stack when that fails. TLC 1.7.4 adds it once and replays the next-state relation.
   it.each([
     ["master", 9],
     ["1.7.4", 6],
@@ -2331,8 +2264,6 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // tlc2.module.Naturals#Divide rounds some negative quotients toward 0, and doesn't report an
-  // overflow, unlike tlc2.module.Integers#Divide.
   it.each([
     [false, "Naturals", ["<<0, 0, -2>>", "-2147483648"]],
     [true, "Naturals", ["<<-1, -1, -2>>"]],
@@ -2960,7 +2891,7 @@ describe("DOMAIN matches TLC", () => {
 });
 
 describe("rejecting literals matches TLC", () => {
-  const checkSource = (source: string) =>
+  const checkLiterals = (source: string) =>
     check({
       source: `---- MODULE M ----\n${source}\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
@@ -2988,13 +2919,13 @@ describe("rejecting literals matches TLC", () => {
       "VARIABLE x\n---- MODULE Inner ----\nHalf == 1.5\n====\nInit == x = 0",
     ],
   ])("rejects %s before checking", async (_, source) => {
-    const run = checkSource(source);
+    const run = checkLiterals(source);
     await expect(run).rejects.toThrow(TlaEvaluationError);
     await expect(run).rejects.toThrow(/^TLC can't handle real numbers: 1\.5/);
   });
 
   it("accepts decimals in proofs and ASSUME PROVE theorems", async () => {
-    const result = await checkSource(
+    const result = await checkLiterals(
       "VARIABLE x\nTHEOREM TRUE\n<1>1. 1.5 = 1.5\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nTHEOREM ASSUME NEW c PROVE c = 1.5\nInit == x = 0",
     );
     expect(result.status).toBe("success");
@@ -3009,26 +2940,26 @@ describe("rejecting literals matches TLC", () => {
       "VARIABLE x\n---- MODULE Inner ----\nBig == 2147483648\n====\nInit == x = 0",
     ],
   ])("rejects an integer literal too big for TLC in %s", async (_, source) => {
-    const run = checkSource(source);
+    const run = checkLiterals(source);
     await expect(run).rejects.toThrow(TlaEvaluationError);
     await expect(run).rejects.toThrow(/^TLC can't handle a number this big: 2147483648/);
   });
 
   it.each(["\\hFFFFFFFFF", "99999999999999999999"])("quotes %s as typed", async (literal) => {
-    await expect(checkSource(`VARIABLE x\nBig == ${literal}\nInit == x = 0`)).rejects.toThrow(
+    await expect(checkLiterals(`VARIABLE x\nBig == ${literal}\nInit == x = 0`)).rejects.toThrow(
       `TLC can't handle a number this big: ${literal} at line 3, column 8`,
     );
   });
 
   it("reads based numerals", async () => {
-    const result = await checkSource(
+    const result = await checkLiterals(
       "VARIABLE x\nASSUME \\h1F = 31 /\\ \\b101 = 5 /\\ \\o17 = 15\nInit == x = 0",
     );
     expect(result.status).toBe("success");
   });
 
   it("accepts the largest integer literal and big literals in proofs", async () => {
-    const result = await checkSource(
+    const result = await checkLiterals(
       "EXTENDS Naturals\nVARIABLE x\nTHEOREM TRUE\n<1>1. 2147483648 > 0\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nInit == x = 2147483647",
     );
     expect(result.status).toBe("success");
@@ -3036,14 +2967,14 @@ describe("rejecting literals matches TLC", () => {
 });
 
 describe("name resolution matches SANY", () => {
-  const checkSource = (source: string) =>
+  const checkNames = (source: string) =>
     check({
       source: `---- MODULE M ----\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
     });
 
   it("fails to parse a spec that imports a module it cannot find, such as Strings", async () => {
-    await expect(checkSource("EXTENDS Strings")).rejects.toThrow(
+    await expect(checkNames("EXTENDS Strings")).rejects.toThrow(
       createSanyError(
         [
           {
@@ -3054,7 +2985,7 @@ describe("name resolution matches SANY", () => {
         true,
       ),
     );
-    await expect(checkSource("N == INSTANCE Nowhere")).rejects.toThrow(
+    await expect(checkNames("N == INSTANCE Nowhere")).rejects.toThrow(
       createSanyError(
         [
           {
@@ -3093,18 +3024,18 @@ describe("name resolution matches SANY", () => {
       "THEOREM TRUE\n<1>1. ASSUME NEW c PROVE c = c\n  OBVIOUS\n<1>2. c = c\n<1> QED",
     ],
   ])("rejects %s", async (_, source) => {
-    await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
+    await expect(checkNames(source)).rejects.toThrow(TlaSyntaxError);
   });
 
   it("accepts USE and HIDE of theorems, assumptions, steps, and definitions", async () => {
-    const result = await checkSource(
+    const result = await checkNames(
       "EXTENDS Naturals\nfoo == 1\nUSE foo, foo > 0 DEF foo\nASSUME A == foo \\in Nat\nHIDE A\nTHEOREM T == foo = 1\nHIDE T DEF foo\nTHEOREM U == ASSUME NEW n \\in Nat PROVE n >= 0\n<1>1. n >= 0\n  OBVIOUS\n<1>2. HIDE <1>1, T\n<1> QED\n  BY <1>1",
     );
     expect(result.status).toBe("success");
   });
 
   it("resolves NEW, SUFFICES, PICK, DEFINE, and theorem labels in the steps they scope", async () => {
-    const result = await checkSource(
+    const result = await checkNames(
       [
         "EXTENDS Naturals",
         "THEOREM Thm == ASSUME NEW S PROVE lab :: S = S",
@@ -3161,39 +3092,39 @@ describe("name resolution matches SANY", () => {
       "D(Op(_)) == Op(42)\nG(a) == a\nF == D(G) = D(LAMBDA a : a)",
     ],
   ])("accepts %s", async (_, source) => {
-    expect((await checkSource(source)).status).toBe("success");
+    expect((await checkNames(source)).status).toBe("success");
   });
 
   it("defines prefix, postfix, and <: operators", async () => {
-    const result = await checkSource(
+    const result = await checkNames(
       "EXTENDS Naturals\nn ^+ == n + 1\n-. n == 10 - n\na <: b == a - b\nASSUME (2^+) = 3 /\\ -4 = 6 /\\ (5 <: 2) = 3",
     );
     expect(result.status).toBe("success");
   });
 
   it("applies operators in prefix form and reads keywords as field names", async () => {
-    const result = await checkSource(
+    const result = await checkNames(
       'EXTENDS Naturals\nn ^+ == n + 1\nASSUME +(4, 6) = 10 /\\ ^+(2) = 3\nASSUME [[x \\in {"THEN"} |-> 1] EXCEPT !.THEN = 2].THEN = 2',
     );
     expect(result.status).toBe("success");
   });
 
   it("takes infix operators as parameters", async () => {
-    const result = await checkSource(
+    const result = await checkNames(
       "EXTENDS Naturals\nFoo(a, _--_) == a -- 1\nASSUME Foo(7, +) = 8 /\\ Foo(7, *) = 7",
     );
     expect(result.status).toBe("success");
   });
 
   it("accepts recursive functions, named assumptions, and operator aliases", async () => {
-    const result = await checkSource(
+    const result = await checkNames(
       "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",
     );
     expect(result.status).toBe("success");
   });
 
   it("keeps a recursive function lazy, so it computes only the arguments a spec applies it to", async () => {
-    const result = await checkSource(
+    const result = await checkNames(
       "EXTENDS Naturals\nsteps[n \\in 0..20] == IF n = 1 THEN 0 ELSE IF n % 2 = 0 THEN 1 + steps[n \\div 2] ELSE 1 + steps[3 * n + 1]\nASSUME steps[5] = 5",
     );
     expect(result.status).toBe("success");
@@ -3201,7 +3132,7 @@ describe("name resolution matches SANY", () => {
 
   it("rejects RandomSubsetSet, which TLC's Randomization module does not define", async () => {
     await expect(
-      checkSource('EXTENDS Randomization\nASSUME RandomSubsetSet(2, "0.5", {1, 2}) = {}'),
+      checkNames('EXTENDS Randomization\nASSUME RandomSubsetSet(2, "0.5", {1, 2}) = {}'),
     ).rejects.toThrow(TlaSyntaxError);
   });
 
@@ -3549,7 +3480,7 @@ describe("name resolution matches SANY", () => {
       ],
     ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
-    await expect(checkSource(source)).rejects.toThrow(
+    await expect(checkNames(source)).rejects.toThrow(
       createSanyError(
         errors.map(([location, message]) => ({ location: `${location} of module M`, message })),
       ),
@@ -4265,7 +4196,7 @@ describe("name resolution matches SANY", () => {
       [],
     ],
   ])("rejects %s like SANY", async (_, source, errors, warnings) => {
-    await expect(checkSource(source)).rejects.toMatchObject({ sany: { errors, warnings } });
+    await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
 
   it.each([
@@ -4352,7 +4283,6 @@ describe("level checking matches SANY", () => {
       config: "INIT Init\nNEXT Next",
     });
 
-  // Cases from SANY's test215, which outlaws raw actions in temporal formulas.
   it.each([
     ["x' ~> []x", "Action used where only temporal formula or state predicate allowed"],
     ["[]x -+-> x'", "Action used where only temporal formula or state predicate allowed"],
@@ -4373,7 +4303,6 @@ describe("level checking matches SANY", () => {
     },
   );
 
-  // SANY bounds a sequence argument by the level its LAMBDA allows for the elements.
   it.each([
     "SelectSeq(s, LAMBDA a : a' = 1)",
     "SortSeq(s, LAMBDA a, b : a' = b)",
@@ -4577,29 +4506,39 @@ describe("parseConfig matches TLC", () => {
     ["CONSTANT N = -1", "CONSTANT S = {1,}"].forEach((source) =>
       expect(() => parseConfig(source)).toThrow(TlaConfigError),
     );
-    // SANY's lexer reads ℕ as a name.
     expect(parseConfig("INVARIANT ℕ").invariants).toEqual(["ℕ"]);
   });
 
   it("reports a malformed configuration with TLC's messages", () => {
-    const atLine = (line: number, detail: string) =>
+    const getLineError = (line: number, detail: string) =>
       `TLC found an error in the configuration file at line ${line}\n${detail}`;
-    const lexical = (detail: string) =>
+    const getLexicalError = (detail: string) =>
       `TLC found an error in the configuration file:\nLexical error at ${detail}`;
     const cases = [
-      ["INIT\n", atLine(1, "The keyword INIT was not followed by an identifier.")],
-      ["CONSTANT N = -1\nINIT Init\n", atLine(2, "It was expecting = or <-, but did not find it.")],
-      // TLC reads ← with SANY's lexer, and compares it as written with <-.
-      ["CONSTANT N ← 1\nINIT Init\n", atLine(1, "It was expecting = or <-, but did not find it.")],
-      ["CHECK_DEADLOCK 3\n", atLine(1, "It was expecting TRUE or FALSE, but did not find it.")],
-      ["CONSTANT N = {1, 2\nINIT Init\n", atLine(2, "It was expecting }, but did not find it.")],
-      ["CONSTANT N =\n", atLine(2, "It was expecting a value, but did not find it.")],
-      ["INIT Init ~\n", atLine(1, "It was expecting a keyword, but did not find it.")],
-      ["(* open\nINIT Init\n", lexical('line 4, column 0.  Encountered: <EOF> after : ""')],
-      ["INIT Init\n`x\n", lexical('line 2, column 1.  Encountered: "`" (96), after : ""')],
+      ["INIT\n", getLineError(1, "The keyword INIT was not followed by an identifier.")],
+      [
+        "CONSTANT N = -1\nINIT Init\n",
+        getLineError(2, "It was expecting = or <-, but did not find it."),
+      ],
+      [
+        "CONSTANT N ← 1\nINIT Init\n",
+        getLineError(1, "It was expecting = or <-, but did not find it."),
+      ],
+      [
+        "CHECK_DEADLOCK 3\n",
+        getLineError(1, "It was expecting TRUE or FALSE, but did not find it."),
+      ],
+      [
+        "CONSTANT N = {1, 2\nINIT Init\n",
+        getLineError(2, "It was expecting }, but did not find it."),
+      ],
+      ["CONSTANT N =\n", getLineError(2, "It was expecting a value, but did not find it.")],
+      ["INIT Init ~\n", getLineError(1, "It was expecting a keyword, but did not find it.")],
+      ["(* open\nINIT Init\n", getLexicalError('line 4, column 0.  Encountered: <EOF> after : ""')],
+      ["INIT Init\n`x\n", getLexicalError('line 2, column 1.  Encountered: "`" (96), after : ""')],
       [
         'CONSTANT N = "a\nINIT Init\n',
-        lexical('line 1, column 16.  Encountered: "\\n" (10), after : "\\"a"'),
+        getLexicalError('line 1, column 16.  Encountered: "\\n" (10), after : "\\"a"'),
       ],
     ];
     for (const item of cases) {
@@ -4632,8 +4571,11 @@ describe("parseConfig matches TLC 1.7.4", () => {
 });
 
 describe("initial predicate and next-state relation match TLC", () => {
+  const checkBody = (body: string, config: string) =>
+    check({ source: `---- MODULE M ----\n${body}\n====`, config });
+
   it("explores no states when a spec without variables has no initial predicate", async () => {
-    const result = await checkSource("ASSUME TRUE\nSpec == [][TRUE]_<<>>", "SPECIFICATION Spec");
+    const result = await checkBody("ASSUME TRUE\nSpec == [][TRUE]_<<>>", "SPECIFICATION Spec");
     expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
       "success",
       0,
@@ -4644,16 +4586,16 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("requires an initial predicate when the spec has variables", async () => {
     await expect(
-      checkSource("VARIABLE x\nSpec == [][x' = x]_x", "SPECIFICATION Spec"),
+      checkBody("VARIABLE x\nSpec == [][x' = x]_x", "SPECIFICATION Spec"),
     ).rejects.toThrow(/did not specify the initial state predicate/);
   });
 
   it("rejects a constant initial predicate or next-state action", async () => {
     await expect(
-      checkSource("VARIABLE x\nInit == TRUE\nNext == x' = x", "INIT Init\nNEXT Next"),
+      checkBody("VARIABLE x\nInit == TRUE\nNext == x' = x", "INIT Init\nNEXT Next"),
     ).rejects.toThrow(/The initial predicate Init cannot be a constant/);
     await expect(
-      checkSource("VARIABLE x\nInit == x = 0\nNext == TRUE", "INIT Init\nNEXT Next"),
+      checkBody("VARIABLE x\nInit == x = 0\nNext == TRUE", "INIT Init\nNEXT Next"),
     ).rejects.toThrow(/The next state action Next cannot be a constant/);
   });
 
@@ -4666,19 +4608,19 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("checks the configuration in the order TLC reads it, before any assumption", async () => {
     await expect(
-      checkSource(
+      checkBody(
         "VARIABLE x\nASSUME FALSE\nInit == x = 0\nNext == TRUE\nInv == {}",
         "INIT Init\nNEXT Next\nINVARIANT Inv\nPROPERTY Q",
       ),
     ).rejects.toThrow(new TlaConfigError("The invariant of Inv is equal to {}"));
     await expect(
-      checkSource(
+      checkBody(
         "VARIABLE x\nInit == x = 0\nNext == x' = x\nQ(a) == TRUE",
         "INIT Init\nNEXT Next\nPROPERTY Q\nCONSTRAINT Nope",
       ),
     ).rejects.toThrow(new TlaConfigError("TLC requires Q not to take any argument."));
     await expect(
-      checkSource(
+      checkBody(
         "VARIABLE x\nInit == x = 0\nNext == x' = x\nC == FALSE",
         "INIT Init\nNEXT Next\nCONSTRAINT C",
       ),
@@ -4702,7 +4644,7 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("rejects an invariant that is not a state predicate", async () => {
     await expect(
-      checkSource(
+      checkBody(
         "VARIABLE x\nInit == x = 0\nNext == x' = x\nInv == []TRUE",
         "INIT Init\nNEXT Next\nINVARIANT Inv",
       ),
@@ -4712,7 +4654,7 @@ describe("initial predicate and next-state relation match TLC", () => {
       ),
     );
     await expect(
-      checkSource(
+      checkBody(
         "VARIABLE x\nInit == x = 0\nNext == x' = x\nInv == x' = x",
         "INIT Init\nNEXT Next\nINVARIANT Inv",
       ),
@@ -4725,7 +4667,7 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("binds a variable once for each time a lazy UNION streams an element", async () => {
     const set = "UNION {SUBSET {1}, {{}}}";
-    const result = await checkSource(
+    const result = await checkBody(
       `VARIABLE x\nInit == x \\in ${set}\nNext == x' \\in ${set}`,
       "INIT Init\nNEXT Next",
     );
@@ -4734,7 +4676,7 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("keeps a set operation lazy unless TLC can reduce both sets", async () => {
     const getCounts = async (set: string) => {
-      const result = await checkSource(
+      const result = await checkBody(
         `EXTENDS Naturals\nVARIABLE x\nInit == x \\in ${set}\nNext == UNCHANGED x`,
         "INIT Init\nNEXT Next",
       );
@@ -4767,7 +4709,7 @@ describe("initial predicate and next-state relation match TLC", () => {
   });
 
   it("evaluates a LET definition's UNION again at each reference in an action", async () => {
-    const result = await checkSource(
+    const result = await checkBody(
       "EXTENDS Naturals, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET u == UNION {UNION {0..2, {1}}, {7}} IN Cardinality(u) > 0 /\\ y' \\in u /\\ UNCHANGED x",
       "INIT Init\nNEXT Next",
     );
@@ -4775,13 +4717,10 @@ describe("initial predicate and next-state relation match TLC", () => {
   });
 
   it("reports initial states without a next-state action", async () => {
-    await expect(checkSource("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
+    await expect(checkBody("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,
     );
   });
-
-  const checkSource = (body: string, config: string) =>
-    check({ source: `---- MODULE M ----\n${body}\n====`, config });
 
   it.each([
     ["[](FALSE)", "FALSE"],
@@ -4794,7 +4733,7 @@ describe("initial predicate and next-state relation match TLC", () => {
     ["\\A n \\in {0, 1} : x # n", "line 8, col 31 to line 8, col 35 of module M"],
     ["[](x < 9) /\\ [][x = 7]_x", "line 8, col 26 to line 8, col 36 of module M"],
   ])("names the part of property %s that fails as TLC does", async (property, name) => {
-    const result = await checkSource(
+    const result = await checkBody(
       `EXTENDS Integers\nVARIABLE x\nBad == x = 1\nOp(n) == x = n\nTwo(n) == x # n /\\ x # n + 1\nSpec == x = 0 /\\ [][x' = x + 1 /\\ x < 3]_x\nProperty == ${property}`,
       "SPECIFICATION Spec\nPROPERTY Property\nCHECK_DEADLOCK FALSE",
     );
@@ -4816,7 +4755,7 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("rejects a property that quantifies over no elements as a tautology", async () => {
     await expect(
-      checkSource(
+      checkBody(
         "VARIABLE x\nSpec == x = 0 /\\ [][x' = x]_x\nProperty == \\A n \\in {} : x # n",
         "SPECIFICATION Spec\nPROPERTY Property",
       ),
@@ -4828,7 +4767,7 @@ describe("initial predicate and next-state relation match TLC", () => {
     ["x \\in UNION UNION {SUBSET {1}, {{1}}}", "UNCHANGED x", [3, 1]],
     ["x = 0", "x = 0 /\\ x' \\in UNION UNION (SUBSET {{1}, {1, 2}})", [7, 3]],
   ])("streams a lazy UNION of a lazy UNION with Init %s", async (init, next, counts) => {
-    const result = await checkSource(
+    const result = await checkBody(
       `VARIABLE x\nInit == ${init}\nNext == ${next}`,
       "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
     );
@@ -4839,7 +4778,7 @@ describe("initial predicate and next-state relation match TLC", () => {
     ["UNION {UNION (SUBSET {{1}, {1, 2}}), {1}}", [8, 3]],
     ["UNION {{1}, UNION (SUBSET {{1}, {1, 2}})}", [6, 3]],
   ])("streams a lazy UNION in %s until a sort compares it as TLC does", async (set, counts) => {
-    const result = await checkSource(
+    const result = await checkBody(
       `VARIABLE x\nInit == x \\in ${set}\nNext == UNCHANGED x`,
       "INIT Init\nNEXT Next",
     );
@@ -4919,7 +4858,6 @@ describe("check matches TLC 1.7.4", () => {
       version,
     });
 
-  // TLC names a part of a property by its location, or by the definition it is the body of.
   it.each([
     [undefined, "P == []b", "b"],
     [undefined, "P == []FALSE", "FALSE"],
@@ -4944,7 +4882,6 @@ describe("check matches TLC 1.7.4", () => {
     },
   );
 
-  // TLC evaluates the constant parts of the properties as it builds the liveness checker.
   it.each([
     [
       "<>(1 \\notin SUBSET 1)",
@@ -5131,7 +5068,6 @@ describe("check matches TLC 1.7.4", () => {
     expect(error instanceof Error && getExitCode(error)).toBe(255);
   });
 
-  // TLC doesn't evaluate a definition with a temporal operator before it checks the property.
   it.each(["1.7.4" as const, "master" as const])(
     "reports a property quantified over no values as a tautology in TLC %s",
     async (version) => {
@@ -5147,7 +5083,6 @@ describe("check matches TLC 1.7.4", () => {
     },
   );
 
-  // An EvalException, which Java code throws, leaves its message out.
   it.each([
     [
       "1.7.4" as const,
@@ -5164,7 +5099,6 @@ describe("check matches TLC 1.7.4", () => {
       "\\E k \\in 0..1 : <>(2 \\in 1)",
       "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 32 of module M",
     ],
-    // TLC checks the formula as a whole when it can't enumerate the values to check it for.
     [
       "master" as const,
       "\\A k \\in 1 : <>(x = k)",
