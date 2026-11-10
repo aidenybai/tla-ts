@@ -162,7 +162,6 @@
   "tlapm/obligations/printing/integer_literals": "exit-mismatch",
   "tlapm/obligations/use_hide/module_use_suppressed": "text-mismatch",
   "tlapm/smoke/parse_error": "text-mismatch",
-  "tlc/checker/alias/format_field": "text-mismatch",
   "tlc/checker/alias/format_not_string": "message-mismatch",
   "tlc/checker/continue/assert_then_deadlock": "exit-mismatch",
   "tlc/checker/continue/invariant_error_stops": "exit-mismatch",

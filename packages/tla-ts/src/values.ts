@@ -3068,13 +3068,24 @@ const isUnchanged = (previous: Value | undefined, value: Value) => {
   }
 };
 
+const formatJava = (format: string, args: string[]) => {
+  const next = { index: 0 };
+  return format.replace(/%s|%n|%%/g, (match) =>
+    match === "%n" ? "\n" : match === "%%" ? "%" : (args[next.index++] ?? match),
+  );
+};
+
+// An ALIAS's _format field formats each other field, as PrintTLCState#toString does.
 export const formatState = (state: Record<string, Value>, previous?: Record<string, Value>) => {
   const entries = Object.entries(state);
+  const format = state._format;
+  const isFormatted = typeof format === "string";
+  const fallback = entries.length === 1 ? "%s = %s\n" : "/\\ %s = %s\n";
   return entries
+    .filter(([name]) => !(isFormatted && name === "_format"))
     .filter(([name, value]) => !previous || !isUnchanged(previous[name], value))
-    .map(
-      ([name, value]) =>
-        `${entries.length === 1 ? "" : "/\\ "}${name} = ${prettyPrint(formatValue(value))}\n`,
+    .map(([name, value]) =>
+      formatJava(isFormatted ? format : fallback, [name, prettyPrint(formatValue(value))]),
     )
     .join("");
 };
