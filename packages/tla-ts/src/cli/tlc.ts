@@ -950,7 +950,12 @@ const checkSpec = async (
     config.invariants.push(...invariants.names);
     const options: CheckOptions = {
       workers,
-      livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
+      livenessCheck:
+        livenessCheck === "off"
+          ? "off"
+          : ["final", "seqfinal"].includes(livenessCheck)
+            ? "final"
+            : "default",
       seed,
       dump,
       isTool: printer.isTool,

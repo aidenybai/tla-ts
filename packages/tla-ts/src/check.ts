@@ -109,8 +109,8 @@ export interface CheckOptions {
   writeFile?: (path: string, content: string) => void;
   seed?: bigint;
   workers?: number;
-  // TLC's -lncheck: "final" checks liveness only on the complete state graph.
-  livenessCheck?: "default" | "final";
+  // TLC's -lncheck: "final" checks liveness only on the complete graph, "off" never looks for a cycle.
+  livenessCheck?: "default" | "final" | "off";
   // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
   dump?: StateDump;
   // TLC's -tool, which changes the messages of TLC's errors.
@@ -1582,7 +1582,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             : createActionRecord(findSuccessorWithFingerprint(lastState, cycleStart)?.action),
     );
   };
-  const isPeriodic = liveness !== undefined && options.livenessCheck !== "final";
+  const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";
   const startedAt = performance.now();
   const periodic = { at: startedAt + PERIODIC_START, size: 1, time: 0 };
   const findPeriodicViolation = (expanded: number) => {
@@ -1631,20 +1631,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
 
   current.index = -1;
   current.candidate = undefined;
-  if (liveness) {
+  const finalLiveness = options.livenessCheck === "off" ? undefined : liveness;
+  if (finalLiveness) {
     options.onProgress?.({
       kind: "liveness-started",
-      branches: liveness.branches,
+      branches: finalLiveness.branches,
       isComplete: true,
       states: runtime.distinctStates,
       statistics: createResult("success"),
     });
   }
-  const lasso = liveness?.findViolation();
-  if (liveness && lasso) return reportLasso(liveness, lasso);
+  const lasso = finalLiveness?.findViolation();
+  if (finalLiveness && lasso) return reportLasso(finalLiveness, lasso);
 
   // TLC finishes the check of the temporal properties before it checks the postconditions.
-  if (liveness) options.onProgress?.({ kind: "liveness-finished" });
+  if (finalLiveness) options.onProgress?.({ kind: "liveness-finished" });
   const postcondition = search.findPostconditionViolation();
   if (postcondition) {
     return createResult("postcondition-violation", {

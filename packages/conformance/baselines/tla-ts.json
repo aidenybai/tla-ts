@@ -440,8 +440,6 @@
   "tlc/syntax/operators/nonfix_times_is_tlc_null_pointer": "exit-mismatch",
   "tlc/syntax/subexpressions/lambda_number_selector": "text-mismatch",
   "tlc/syntax/tuples/pattern_empty": "exit-mismatch",
-  "tlc/temporal/counterexample/lncheck_off_hides_violation": "exit-mismatch",
-  "tlc/temporal/counterexample/lncheck_off_safety_like_path_not_covered": "exit-mismatch",
   "tlc/temporal/counterexample/postcondition_after_liveness_violation": "text-mismatch",
   "tlc/temporal/counterexample/safety_like_continue": "exit-mismatch",
   "tlc/temporal/formula/enabled_lambda_higher_order": "exit-mismatch",
