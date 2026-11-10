@@ -22,6 +22,7 @@ import {
   type TheoremNode,
   type ProofPartNode,
   type InstanceNode,
+  type LevelFields,
   type UseOrHideNode,
 } from "./nodes";
 
@@ -60,8 +61,6 @@ const XML_ENTITIES: Record<string, string> = {
   "\r": "&#13;",
 };
 
-// Java's serializer writes a character outside the BMP, two chars in Java, as a character
-// reference.
 const escapeXml = (text: string) =>
   text.replace(/[&<>\r]|[\u{10000}-\u{10FFFF}]/gu, (character) =>
     character.length === 2 ? `&#${character.codePointAt(0)};` : XML_ENTITIES[character],
@@ -312,24 +311,19 @@ const getDefinitionFrames = (kind: ContextNode["kind"], location: string): JavaF
   ];
 };
 
-// java.util.HashMap lists SymbolContext's entries by the bucket of their Integer key, and a
-// bucket's entries in the order they were added.
 const getHashMapCapacity = (size: number, capacity = 16): number =>
   size > capacity * 0.75 ? getHashMapCapacity(size, capacity * 2) : capacity;
 
 const getHashMapBucket = (key: number, capacity: number) => (key ^ (key >>> 16)) & (capacity - 1);
 
-// Java's String.split, which drops the empty strings at the end.
 const splitLines = (text: string) => {
   const lines = text.split(/\r?\n/);
   while (lines.at(-1) === "") lines.pop();
   return lines;
 };
 
-// Java's String.trim, which removes the control characters and spaces at either end.
 const trimJava = (text: string) => text.replace(/^[\0-\x20]+|[\0-\x20]+$/g, "");
 
-// The characters of Java's Character.isWhitespace, which include four control characters.
 const TRAILING_WHITESPACE =
   // eslint-disable-next-line no-control-regex
   /[\t-\r\x1C-\x20\u1680\u2000-\u2006\u2008-\u200A\u2028\u2029\u205F\u3000]+$/;
@@ -353,7 +347,6 @@ const unboxComment = (text: string) => {
     .join("\n");
 };
 
-// SANY strips the \* only when at least half of the lines start with one.
 const unboxBackslashStarComment = (text: string) => {
   const lines = splitLines(text);
   const isCommentLine = (line: string) => trimJava(line).startsWith("\\*");
@@ -380,13 +373,9 @@ const exportSpecification = (
   options: XmlExportOptions,
 ) => {
   const isTlc174 = options.version === "1.7.4";
-  // SANY marks a node's UID as exported before it exports the node's definition, which can export
-  // other definitions, and adds the definition to its entries after them.
   const keys = new Set<number>();
   const entries = new Map<number, XmlElement>();
-  // SymbolContext's OTHER_BUG flag, which every copy of the context shares, so that from the first
-  // CASE with an OTHER arm on, a node missing its first operand exports it as $Other.
-  const otherBug = { isSet: false };
+  let isOtherBugSet = false;
   const javaStack: JavaFrame[] = [];
 
   const withFrames = <Result>(frames: JavaFrame[], run: () => Result) => {
@@ -397,8 +386,6 @@ const exportSpecification = (
     return result;
   };
 
-  // TLC 1.7.4's XMLExporter reports the exception at each node it unwinds before the JVM reports it
-  // uncaught.
   const getJavaException = (exception: string, frames: JavaFrame[]) => {
     const trace = [...javaStack, ...frames].reverse();
     const stackTrace = [exception, ...trace.map((frame) => `\tat tla2sany.${frame.at}`)].join("\n");
@@ -439,7 +426,7 @@ const exportSpecification = (
 
   const withLevel = (
     element: XmlElement,
-    node: { levelChecked: number; level: number },
+    node: LevelFields,
     location: SanyLocation | undefined,
   ) => {
     const level = node.levelChecked === 0 ? [] : [createText("level", node.level)];
@@ -493,7 +480,6 @@ const exportSpecification = (
           node.location,
         );
       case "OpDef": {
-        // SANY's XMLExporter fails on the definition of a proof step that a DEF clause names.
         if (node.defKind === "NumberedProofStep") {
           throw isTlc174
             ? getJavaException(getUnsupportedKind(37), [UNSUPPORTED_KIND_FRAME])
@@ -528,7 +514,6 @@ const exportSpecification = (
         }
         const body = node.body;
         const module = node.module;
-        // SANY leaves the body of an operator a RECURSIVE statement declares but nothing defines null.
         if (body === undefined && isTlc174) throw getNullPointerException(JAVA_CALLS.body);
         if (body === undefined || module === undefined) {
           throw new Error(`The definition of ${node.name} has no body`);
@@ -599,7 +584,6 @@ const exportSpecification = (
           node.location,
         );
       case "Assume":
-        // AssumeNode#getLevel is its body's, which fails before the body is level-checked.
         return createElement("AssumeNode", [
           getLocationElement(node.location),
           ...(node.body.levelChecked === 0 ? [] : [createText("level", node.body.level)]),
@@ -615,7 +599,6 @@ const exportSpecification = (
     }
   };
 
-  // Built in SANY's order, so that the context entries they add appear in the same order.
   const exportModuleChildren = (module: ModuleNode): XmlElement[] => {
     const isExported = (node: OpDeclNode | OpDefNode) =>
       !options.isRestricted || node.module === module;
@@ -651,7 +634,6 @@ const exportSpecification = (
     ];
   };
 
-  // A Subst is no SemanticNode, so it reports no exception that unwinds it.
   const exportSubst = (subst: Subst, call: JavaFrame) =>
     withFrames([call], () =>
       createElement("Subst", [
@@ -661,8 +643,6 @@ const exportSpecification = (
     );
 
   const exportApplication = (node: OpApplNode) => {
-    // TLC 1.7.4's XMLExporter exports a specification with semantic errors, and fails on the
-    // operator of the node SANY puts where it found one.
     if (node.isNull && isTlc174) {
       throw getJavaException(getUnsupportedKind(0), [
         JAVA_CALLS.operator,
@@ -678,11 +658,11 @@ const exportSpecification = (
       last.operator.name === "$Pair" &&
       last.operands[0] === undefined
     ) {
-      otherBug.isSet = true;
+      isOtherBugSet = true;
     }
     const operator = getReference(node.operator, JAVA_CALLS.operator);
     const operands = node.operands.map((operand, index) =>
-      operand === undefined || (index === 0 && otherBug.isSet && isAbsent(operand))
+      operand === undefined || (index === 0 && isOtherBugSet && isAbsent(operand))
         ? isTlc174
           ? createText("StringNode", "$Other")
           : createElement("StringNode", [createText("StringValue", "$Other")])
@@ -729,12 +709,14 @@ const exportSpecification = (
     if (node.kind === "OpAppl" && node.isAbsent && "nullType" in call) {
       throw getNullPointerException(call);
     }
-    const frames = [
-      call,
-      { at: SEMANTIC_EXPORT, failedFor: formatSanyLocation(node.location) },
-      { at: LEVEL_EXPORT },
-    ];
-    return withFrames(frames, () => exportLevelNode(node));
+    return withFrames(
+      [
+        call,
+        { at: SEMANTIC_EXPORT, failedFor: formatSanyLocation(node.location) },
+        { at: LEVEL_EXPORT },
+      ],
+      () => exportLevelNode(node),
+    );
   };
 
   const exportLevelNode = (node: ExportedNode): XmlElement => {
@@ -869,7 +851,6 @@ const exportSpecification = (
         return withLevel(
           createElement("NewSymbNode", [
             getReference(node.declaration, JAVA_CALLS.newDeclaration),
-            // TLC 1.7.4's NewSymbNode leaves out a set that is null.
             ...(node.set && !(isTlc174 && isAbsent(node.set))
               ? [exportExpression(node.set, JAVA_CALLS.newSet)]
               : []),

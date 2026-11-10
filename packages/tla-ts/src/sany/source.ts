@@ -5,8 +5,6 @@ import { getTabStop } from "./lexer";
 import { getSanyParseError } from "./parse-error";
 import type { SanyLocation } from "./nodes";
 
-// Finds the locations SANY gives to the names, brackets and parentheses that the tla-ts syntax
-// tree leaves out, and the comments SANY attaches to definitions.
 export interface SourceFile {
   name: string;
   source: string;
@@ -96,8 +94,6 @@ export const getRangeSpan = (file: SourceFile, range: SourceRange): TokenSpan =>
   end: getEndTokenIndex(file, range.end),
 });
 
-// Some nodes, such as a tuple in a subscript, have no range, so their span runs from their first
-// token to the bracket that closes it.
 export const getExpressionSpan = (file: SourceFile, expression: Expression): TokenSpan => {
   const range = expression.location.range;
   if (range) return getRangeSpan(file, range);
@@ -105,7 +101,6 @@ export const getExpressionSpan = (file: SourceFile, expression: Expression): Tok
   return { start, end: getMatchingIndex(file, start) };
 };
 
-// SANY locates a parenthesized operand by its parentheses.
 export const getParenthesizedSpan = (file: SourceFile, span: TokenSpan): TokenSpan => {
   const start = span.start - 1;
   const end = span.end + 1;
@@ -119,8 +114,6 @@ export const getParenthesizedSpan = (file: SourceFile, span: TokenSpan): TokenSp
   return span;
 };
 
-// SANY's parser keeps the parentheses around an operator's argument. Those of the operator's own
-// arguments follow its name.
 export const getArgumentSpan = (file: SourceFile, span: TokenSpan): TokenSpan => {
   const start = span.start - 1;
   const end = span.end + 1;
@@ -159,7 +152,6 @@ export const getTokenSource = (file: SourceFile, index: number) => {
   return file.source.slice(start, getOffset(file, token.line, token.endColumn) + 1);
 };
 
-// SANY lexes []ASSUME and []PROVE as single tokens.
 export const isBoxToken = (file: SourceFile, index: number) => {
   const box = file.tokens[index];
   const next = file.tokens[index + 1];
@@ -202,7 +194,6 @@ export const getPreComments = (file: SourceFile, index: number) => {
       comments.push(gap.slice(offset, end));
       offset = end;
     } else if (gap.startsWith("(*", offset)) {
-      // SANY's lexer ends a comment token at each (* and *) nested in a block comment.
       let depth = 1;
       let segmentStart = offset;
       let end = offset + 2;
