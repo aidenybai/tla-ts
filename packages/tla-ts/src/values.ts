@@ -378,14 +378,19 @@ export const setStringOrder = (texts: Iterable<string>) => {
 // TLC 1.7.4 prints and looks keys up in functions differently, so each check sets the version.
 const valueVersion = { is174: false };
 
+// TLCGlobals.expand, which TLC's -terse clears.
+const printing = { isExpanded: true };
+
 export interface ValueOptions {
   version?: TlcVersion;
   maxSetSize?: number;
+  isLazyValueExpanded?: boolean;
 }
 
 export const setValueOptions = (options: ValueOptions) => {
   valueVersion.is174 = options.version === "1.7.4";
   setBound.size = options.maxSetSize ?? DEFAULT_SET_BOUND;
+  printing.isExpanded = options.isLazyValueExpanded ?? true;
 };
 
 export const rankString = (text: string) => {
@@ -3029,7 +3034,7 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
     case "SetOperation":
     case "FilteredSet":
     case "Union": {
-      const expanded = getExpandedLazySet(value, isStrict);
+      const expanded = printing.isExpanded ? getExpandedLazySet(value, isStrict) : undefined;
       return expanded ? format(expanded) : formatLazySet(value, isStrict);
     }
 
@@ -3037,7 +3042,12 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       return `Seq(${format(value.base)})`;
     case "Function":
     case "LazyFunction": {
-      const functionValue = value.kind === "LazyFunction" ? toPrintedFunction(value) : value;
+      const functionValue =
+        value.kind !== "LazyFunction"
+          ? value
+          : printing.isExpanded || !value.source
+            ? toPrintedFunction(value)
+            : undefined;
       if (functionValue === undefined) {
         const source = value.kind === "LazyFunction" ? value.source : undefined;
         if (!source) return "<function>";

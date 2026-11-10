@@ -959,6 +959,7 @@ const checkSpec = async (
       seed,
       fingerprintPolynomial: args.fingerprintIndex,
       maxSetSize: args.maxSetSize,
+      isLazyValueExpanded: args.isLazyValueExpanded,
       dump,
       isTool: printer.isTool,
       isContinued: args.isContinued,

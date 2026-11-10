@@ -77,6 +77,7 @@ export const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {
   { flag: "-metadir <directory>" },
   { flag: "-nowarning" },
   { flag: "-seed <num>" },
+  { flag: "-terse" },
   { flag: "-tool" },
   { flag: "-workers <count|auto>" },
 ]);

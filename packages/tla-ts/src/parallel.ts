@@ -55,6 +55,7 @@ export interface StartMessage {
   version: TlcVersion | undefined;
   fingerprintPolynomial: number | undefined;
   maxSetSize: number | undefined;
+  isLazyValueExpanded: boolean | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
   remaining: Int32Array;
@@ -303,6 +304,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       version: options.version,
       fingerprintPolynomial: options.fingerprintPolynomial,
       maxSetSize: options.maxSetSize,
+      isLazyValueExpanded: options.isLazyValueExpanded,
       fingerprints: shared.fingerprints,
       requests,
       remaining,
