@@ -9,6 +9,15 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 25, col 8 to line 25, col 11 of module random_04041 failed.
+      2183:0 The second argument of SubSeq must be in the domain of its first argument:
+      <<3, 1, 2>>
+      , but instead it is
+      2147483647
 ---*)
 ---- MODULE random_04041 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC

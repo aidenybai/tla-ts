@@ -618,13 +618,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ...(checked.postcondition && { postcondition: checked.postcondition }),
     });
   };
-  // With -continue, TLC prints the trace of a violation without checking the postconditions.
-  const reportContinuedViolation = (status: CheckStatus, violation: Omit<Violation, "loopStart">) =>
+  // With -continue, TLC prints the trace of a violation without checking the postconditions. It
+  // never records the violation, and reports a success at the end, where tla-ts ends with the
+  // status of the first violation, as -dfid and -simulate do.
+  const continued = { status: undefined as CheckStatus | undefined };
+  const reportContinuedViolation = (
+    status: CheckStatus,
+    violation: Omit<Violation, "loopStart">,
+  ) => {
+    continued.status ??= status;
     options.onProgress?.({
       kind: "violation",
       status,
       violation: { ...violation, loopStart: undefined },
     });
+  };
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
   const specNextActions = { value: undefined as SpecAction[] | undefined };
@@ -1053,11 +1061,26 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       : lastSuccessor.action;
     return toTrace([...steps, { state: lastSuccessor.state, action }], path, { known: 2 });
   };
-  // TLC prints a lone initial state without the alias, but still rebuilds it, unlike TLC 1.7.4.
+  // TLC rebuilds a lone initial state, unlike TLC 1.7.4. TLCTrace#printTrace prints it without the
+  // alias, where tla-ts applies the alias as it does to every other trace.
   const getStateTrace = (index: number): Behavior =>
     parents[index] === -1
       ? {
-          trace: [{ action: undefined, label: undefined, state: toRecord(states[index]) }],
+          trace: [
+            {
+              action: undefined,
+              label: undefined,
+              state:
+                config.alias === undefined
+                  ? toRecord(states[index])
+                  : getAliasState(
+                      config.alias,
+                      [{ state: states[index], action: undefined }],
+                      0,
+                      undefined,
+                    ),
+            },
+          ],
           traceOutput: is174 ? [] : captureOutput(getSpecInitialStates).lines,
         }
       : getTrace(index);
@@ -1943,5 +1966,5 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       postcondition,
     });
   }
-  return createSuccess();
+  return continued.status ? createResult(continued.status) : createSuccess();
 };

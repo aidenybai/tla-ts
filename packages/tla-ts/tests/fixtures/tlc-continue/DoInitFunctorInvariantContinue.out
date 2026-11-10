@@ -42,11 +42,6 @@ x = 1
 State 2: <Next line 9, col 9 to line 9, col 14 of module DoInitFunctorInvariantContinue>
 x = 0
 
-Model checking completed. No error has been found.
-  Estimates of the probability that TLC did not check all reachable states
-  because two distinct states had the same fingerprint:
-  calculated (optimistic):  val = 6.0E-18
 21 states generated, 11 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 2.
-The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 1 and the 95th percentile is 1).
 Finished in _ at (_)

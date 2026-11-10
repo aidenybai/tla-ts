@@ -8,6 +8,12 @@ config: |
   INIT Init
   NEXT Next
   POSTCONDITION K
+correct:
+  all:
+    exit: 151
+    transcript: |-
+      2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+      2233:1 The post condition K cannot be a constant.
 ---*)
 ---- MODULE postcondition ----
 EXTENDS Naturals

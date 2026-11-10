@@ -90,7 +90,6 @@ export interface OperatorValue {
   arity: number;
   call: (args: Value[]) => Value;
   expression?: Expression;
-  literalBody?: Value;
 }
 
 export type BuiltinArgument = Value | OperatorValue;
@@ -394,8 +393,10 @@ export const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, val
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
-    // TLC's template for this message ends in a stray %1, which tla-ts leaves out.
-    throw new TlaEvaluationError("Argument mismatch in operator application.");
+    const range = pattern.ranges?.[0];
+    throw new TlaEvaluationError(
+      `Argument mismatch in operator application.${range ? formatRange(range) : ""}`,
+    );
   }
   return pattern.names.reduce<Scope | undefined>(
     (current, name, index) => bindValue(current, name, elements[index]),
@@ -614,7 +615,6 @@ const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambd
 export const getLazyFunction = (value: Value) =>
   isKeptLazyFunction(value) ? value.lambda : undefined;
 
-// Like TLC, ignore arguments beyond the parameters.
 export const bindLazyArguments = (
   lambda: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
@@ -639,12 +639,15 @@ export const bindLazyArguments = (
     typeof value.domain === "object" && value.domain.kind === "ProductSet"
       ? value.domain.factors
       : [];
-  if (elements === undefined || elements.length < bounds.length) {
-    throw new TlaEvaluationError(
-      `Attempted to apply a function to an argument not in its domain.\n${describeRange(expression.function)}`,
+  // FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores one
+  // longer, where this rejects the list.
+  const createListError = () =>
+    new TlaEvaluationError(
+      `In applying the function\n${prettyPrint(formatValue(value))},\nthe argument list is:\n${prettyPrint(formatValue(argument))}\nwhich does not match its formal parameter.\n`,
     );
-  }
+  if (elements === undefined) throw createListError();
   bounds.forEach((bound, index) => {
+    if (index >= elements.length) throw createListError();
     const element = elements[index];
     const ordinal = `argument number ${index + 1}`;
     if (!isElementOf(element, domains[index])) {
@@ -665,7 +668,8 @@ export const bindLazyArguments = (
       );
     }
   });
-  return bindArgument(bounds, lambda.scope, createTuple(elements.slice(0, bounds.length)));
+  if (elements.length > bounds.length) throw createListError();
+  return bindArgument(bounds, lambda.scope, argument);
 };
 
 // TLC prints a function it can't enumerate with only the first name of a group such as m, n.
@@ -983,11 +987,6 @@ const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
         name: operator.name,
         arity: getArity(operator),
         call: (args) => callOperatorWithValues(operator, args, context),
-        literalBody:
-          operator.kind === "Closure" &&
-          (operator.body.kind === "Number" || operator.body.kind === "String")
-            ? operator.body.value
-            : undefined,
       };
 
 const isOperatorArgument = (expression: Expression, context: Context) => {

@@ -27,6 +27,7 @@ import {
   TlaUnsupportedError,
 } from "../errors";
 import { parseSanyModule } from "../parser";
+import { isBefore } from "../resolve";
 import { BUILTIN_LOCATION, createBuiltins, createLevelFields } from "./builtins";
 import { getSany174LexicalError } from "./lexer";
 import { getSanyParseError } from "./parse-error";
@@ -246,15 +247,20 @@ const getProofInstances = (proof: Proof | undefined): Instance[] =>
         ...getProofInstances(step.proof),
       ]);
 
-// SANY resolves an INSTANCE to an inner module only when the module's first top-level INSTANCE
-// follows the inner module, and otherwise looks for a file.
-const isInternalInstance = (module: Module, name: string) => {
+// SANY resolves a top-level INSTANCE to an inner module only when the module's first top-level
+// INSTANCE follows the inner module, and otherwise looks for a file. It looks for a file for an
+// INSTANCE in a LET or a proof step too, where tla-ts takes an inner module defined before it.
+const isInternalInstance = (module: Module, instance: Instance) => {
   const seen = new Set<string>();
   for (const unit of module.units) {
     if (unit.kind === "Module") seen.add(unit.module.name);
-    if (unit.kind === "Instance" && unit.instance.module === name) return seen.has(name);
+    if (unit.kind === "Instance" && unit.instance.module === instance.module) {
+      return seen.has(instance.module);
+    }
   }
-  return false;
+  return module.modules.some(
+    (inner) => inner.name === instance.module && isBefore(inner.location, instance.location),
+  );
 };
 
 type LetUnit =
@@ -300,8 +306,8 @@ const getDependencies = (module: Module) => {
     });
     addImports(
       instances
-        .map((instance) => instance.module)
-        .filter((name) => isExternal(name) && !isInternalInstance(current, name)),
+        .filter((instance) => isExternal(instance.module) && !isInternalInstance(current, instance))
+        .map((instance) => instance.module),
       instancees,
     );
     const peers = new Map(context);
@@ -1749,10 +1755,8 @@ export const generateSanySpecification = (
         const params = getParams(definition, paramsSpan, true);
         const existing = resolveSymbol(symbolTable, name);
         if (existing?.kind === "OpDef" && existing.inRecursive && !existing.isDefined) {
-          // SANY compares only the arity of the last parameter.
           const isMatching =
-            existing.params?.length === params.length &&
-            (params.length === 0 || params[params.length - 1].arity === 0);
+            existing.params?.length === params.length && params.every((param) => param.arity === 0);
           if (existing.letInLevel !== state.curLevel) {
             addError(location, `Recursive operator ${name} defined at wrong LET/IN level.`);
           } else {

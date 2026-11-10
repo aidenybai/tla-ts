@@ -11,6 +11,12 @@ config: |
   CONSTANT n = n
   CONSTANT t_a = t_a
   CONSTANT t_b = t_b
+correct:
+  all:
+    exit: 255
+    transcript: |-
+      2265:1 TLC can't handle a number this big.
+      2147483648
 ---*)
 ---- MODULE cfg_assignment__too_big__equal_string ----
 EXTENDS Integers, Sequences, FiniteSets, TLC

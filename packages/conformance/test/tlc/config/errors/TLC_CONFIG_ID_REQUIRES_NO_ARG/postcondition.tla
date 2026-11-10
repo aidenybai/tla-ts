@@ -8,6 +8,12 @@ config: |
   INIT Init
   NEXT Next
   POSTCONDITION A
+correct:
+  all:
+    exit: 151
+    transcript: |-
+      2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+      2228:1 TLC requires post condition not to take any argument, but one was given: A
 ---*)
 ---- MODULE postcondition ----
 EXTENDS Naturals

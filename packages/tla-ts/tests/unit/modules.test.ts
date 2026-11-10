@@ -228,10 +228,6 @@ describe("nested module scoping matches SANY", () => {
       "a nested module named after a module loaded from the same file",
       "I == INSTANCE Inner\n---- MODULE Inner ----\nA == 1\n====",
     ],
-    [
-      "a nested module instantiated only inside LET",
-      "---- MODULE LetInner ----\nfoo == 42\n====\nop == LET Inst == INSTANCE LetInner IN Inst!foo",
-    ],
   ])("rejects %s", async (_, body) => {
     await expect(checkSource(body)).rejects.toThrow(TlaSyntaxError);
   });
@@ -282,20 +278,17 @@ describe("nested module scoping matches SANY", () => {
     );
   });
 
-  it("rejects a nested module that an unnamed theorem instantiates inside LET", async () => {
-    await expect(
-      checkSource(
-        "---- MODULE Inner ----\nA == TRUE\n====\nTHEOREM LET M == INSTANCE Inner IN M!A",
-      ),
-    ).rejects.toThrow(
-      createSanyError([
-        {
-          location: "line 2, col 1 to line 4, col 4 of module M",
-          message:
-            "Multiply-defined module 'Inner': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 3, col 4 of module Inner.",
-        },
-      ]),
-    );
+  it.each([
+    [
+      "LET",
+      "---- MODULE LetInner ----\nfoo == 42\n====\nASSUME LET Inst == INSTANCE LetInner IN Inst!foo = 42",
+    ],
+    [
+      "the LET of an unnamed theorem",
+      "---- MODULE Inner ----\nA == TRUE\n====\nTHEOREM LET M == INSTANCE Inner IN M!A",
+    ],
+  ])("instantiates a nested module inside %s", async (_, body) => {
+    expect((await checkSource(body)).status).toBe("success");
   });
 
   it("instantiates a nested module inside LET once a top-level instance follows it", async () => {

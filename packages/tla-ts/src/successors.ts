@@ -421,7 +421,22 @@ const compileConjunction = (
       if (index > 0 && isShortcut && isComplete(current)) {
         context ??= getContext(run, scope, current);
         for (let rest = index; rest < conjuncts.length; rest++) {
-          const expression = conjuncts[rest].expression;
+          const conjunct = conjuncts[rest];
+          // Tool#getNextStates0 takes this shortcut with warnings on, though its comment says the
+          // shortcut skips the warning for a changed UNCHANGED variable. tla-ts still warns.
+          const state = run.current;
+          const changed =
+            state && conjunct.kind === "Unchanged"
+              ? conjunct.variables.find((variable) => {
+                  const assigned = current[variable.index];
+                  return assigned !== undefined && !isEqualLikeTlc(assigned, state[variable.index]);
+                })
+              : undefined;
+          if (changed) {
+            warnChangedUnchanged(run.environment, changed.index, changed.expression);
+            return;
+          }
+          const expression = conjunct.expression;
           const value = evaluateCached(restEvaluators, rest, expression, context);
           if (!holdsValue(run, expression, value, false)) {
             run.onUnsatisfied?.(current, expression);
@@ -630,7 +645,23 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       );
       return;
     }
-    if (holds(run, unchanged, getContext(run, scope, partial))) onComplete(partial, action);
+    const context = getContext(run, scope, partial);
+    // Tool#enabledUnchanged fails on an operator application, as its comment says.
+    if (run.isEnabled && expression.kind === "Apply") {
+      const operator = resolveApplyOperator(expression, context);
+      if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
+        getRunner(getUnchangedWrapper(operator.body), environment, false)(
+          run,
+          bindOperatorArguments(operator, expression.args, context),
+          partial,
+          action,
+          isFixed,
+          onComplete,
+        );
+        return;
+      }
+    }
+    if (holds(run, unchanged, context)) onComplete(partial, action);
   };
 };
 

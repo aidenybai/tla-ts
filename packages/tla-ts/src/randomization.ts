@@ -127,10 +127,9 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
   overrideWithJava(
     defineOperator("RandomSubset", 2, (args) => {
       const count = getValue(args, 0, "RandomSubset");
-      if (typeof count !== "number") {
+      if (typeof count !== "number" || count < 0) {
         throw createModuleArgumentError("first", "RandomSubset", "nonnegative integer", count);
       }
-      if (count < 0) throw new TlaEvaluationError(String(count));
       const set = getValue(args, 1, "RandomSubset");
       if (!isTlcEnumerable(set) || !isFiniteSet(set)) {
         throw createModuleArgumentError("second", "RandomSubset", "a finite set", set);

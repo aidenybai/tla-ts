@@ -8,6 +8,18 @@ config: |
   INIT Init
   NEXT Next
   CONSTRAINT I
+correct:
+  all:
+    exit: 75
+    transcript: |-
+      2102:1 While working on the initial state:
+      x = 0
+      2215:0 TLC expected a boolean value, but did not find one. 3
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 27, column 9 to line 27, column 13 in constraint_constant
+      2199:0 1 states generated, 0 distinct states found, 0 states left on queue.
+      2194:0 The depth of the complete state graph search is 1.
 ---*)
 ---- MODULE constraint_constant ----
 EXTENDS Naturals

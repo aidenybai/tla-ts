@@ -674,7 +674,7 @@ const printResult = (result: CheckResult, printer: TlcPrinter, timing: Timing) =
     const additionalViolation = result.additionalViolation;
     if (additionalViolation) printViolation("property-violation", additionalViolation, printer);
     if (result.liveCallStack) printNestedExpressions(printer, result.liveCallStack);
-  } else {
+  } else if (result.status === "success") {
     printLivenessEnd(printer, timing);
     printSuccess(
       printer,

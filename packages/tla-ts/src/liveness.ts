@@ -69,6 +69,11 @@ const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionThunks = new WeakSet<Thunk>();
 
+const JUNCTIONS = new Map<string, "And" | "Or">([
+  ["/\\", "And"],
+  ["\\/", "Or"],
+]);
+
 const getConstantContext = (environment: Environment, scope: Scope | undefined): Context => ({
   environment,
   scope,
@@ -384,7 +389,11 @@ export const toLiveExpression = (
     const result = convert(body, bodyScope);
     expansion.depth--;
     const level = getLiveLevel(result);
-    return level > ACTION_LEVEL ? result : toAtom(expression, scope, level);
+    // For a constant body, Liveness#astToLive bounds the level of a temporal call by its own and
+    // takes the call for an action, which classifyExpr rejects. tla-ts keeps the constant.
+    const isConstantTemporal =
+      level === CONSTANT_LEVEL && getLevel(expression, scope, environment) > ACTION_LEVEL;
+    return level > ACTION_LEVEL || isConstantTemporal ? result : toAtom(expression, scope, level);
   };
 
   const convertCall = (
@@ -410,8 +419,16 @@ export const toLiveExpression = (
           : isLocallyResolved(expression)
             ? resolveOperator(name, context)
             : resolveGlobalOperator(name, environment);
-    if (operator?.kind !== "Closure") throw createCannotHandleError(expression);
     const args = expression.kind === "Apply" ? expression.args : [];
+    // An operator constant can be substituted by a conjunction or disjunction, whose arguments
+    // TLC translates as it translates its operands.
+    const junction =
+      operator?.kind === "Builtin" && args.length === 2 ? JUNCTIONS.get(operator.name) : undefined;
+    if (junction) {
+      const operands = args.map((arg) => convert(arg, scope));
+      return toWhole(expression, scope, createJunction(junction, operands));
+    }
+    if (operator?.kind !== "Closure") throw createCannotHandleError(expression);
     const isRecursive =
       !isLocallyResolved(expression) && getDefinition(name, environment)?.isRecursive === true;
     return expandCall(

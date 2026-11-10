@@ -2507,8 +2507,8 @@ const findKeyIndexLikeTlc = (
   return computeLikeTlcOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
 };
 
-// TLC checks each argument against its bound in turn. It indexes past an argument tuple shorter
-// than the bounds and ignores one longer, where this fails instead.
+// TLC checks each argument against its bound in turn. FcnLambdaValue#apply then indexes past an
+// argument tuple shorter than the bounds and ignores one longer, where this rejects the list.
 const checkBoundArguments = (
   functionValue: LazyFunctionValue,
   tupleLengths: (number | undefined)[],
@@ -2518,18 +2518,18 @@ const checkBoundArguments = (
   const elements = getSequenceElements(argument);
   const describe = (position: string, shown: Value, problem: string) =>
     `In applying the function\n${prettyPrint(formatValue(functionValue))},\nthe ${position} is:\n${prettyPrint(formatValue(shown))}\nwhich ${problem}.\n`;
-  if (elements === undefined) {
-    throw new TlaEvaluationError(
+  const createListError = () =>
+    new TlaEvaluationError(
       describe("argument list", argument, "does not match its formal parameter"),
     );
-  }
-  const describeOutside = () =>
-    `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`;
+  if (elements === undefined) throw createListError();
   if (typeof domain !== "object" || domain.kind !== "ProductSet") {
-    throw new TlaEvaluationError(describeOutside());
+    throw new TlaEvaluationError(
+      `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
+    );
   }
   tupleLengths.forEach((tupleLength, index) => {
-    if (index >= elements.length) throw new TlaEvaluationError(describeOutside());
+    if (index >= elements.length) throw createListError();
     const element = elements[index];
     const position = `argument number ${index + 1}`;
     if (!isElementOf(element, domain.factors[index])) {
@@ -2549,7 +2549,7 @@ const checkBoundArguments = (
       );
     }
   });
-  if (elements.length > tupleLengths.length) throw new TlaEvaluationError(describeOutside());
+  if (elements.length > tupleLengths.length) throw createListError();
 };
 
 // TLC checks that a FcnLambdaValue's domain holds the argument, and searches only the FcnRcdValue
