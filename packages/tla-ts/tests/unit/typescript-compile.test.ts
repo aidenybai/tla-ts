@@ -1802,6 +1802,27 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls a promise's resolve and reject through the variables that hold them", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      let resolveFirst: unknown = undefined;
+      let rejectSecond: unknown = undefined;
+      const first = new Promise<number>((resolve) => { resolveFirst = resolve; });
+      const second = new Promise<number>((resolve, reject) => { rejectSecond = reject; });
+      first.then((value: number) => { log = log + "f" + value; });
+      second.catch((value: number) => { log = log + "r" + value; });
+      log = log + typeof resolveFirst;
+      (rejectSecond as (value: number) => void)(2);
+      (resolveFirst as (value: number) => void)(1);
+      (resolveFirst as (value: number) => void)(3);
+      setTimeout(() => {
+        if (log !== "functionr2f1") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a timer finds a promise's handler threw", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

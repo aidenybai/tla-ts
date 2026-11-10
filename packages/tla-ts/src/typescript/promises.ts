@@ -29,7 +29,7 @@ import { getHeap } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { bindValues } from "./scope";
-import { apply, boolean, identifier, string } from "./tla";
+import { apply, boolean, identifier, number, string } from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
 // compiles, as JavaScript runs each job once the script and the jobs before it finish.
@@ -57,6 +57,8 @@ interface TrackedPromise {
   // Whether its resolving functions ran, after which they do nothing, though a promise that it
   // follows may not have settled.
   isResolved: boolean;
+  // The functions that new Promise passes its executor.
+  resolvers: { resolve: Expression; reject: Expression } | undefined;
   value: Expression | undefined;
   reactions: readonly Reaction[];
 }
@@ -272,44 +274,55 @@ const addReaction = (
   );
 };
 
+// Puts an object on the heap, which the path then holds.
+const allocateObject = (
+  path: Path,
+  node: ts.Node,
+  context: Context,
+  object: Expression,
+  continueWith: (path: Path, ref: Expression, name: string) => Formula,
+) => {
+  const heapSymbol = context.heap;
+  if (heapSymbol === undefined) throw new TlaTypeScriptError("Use promises only in scripts", node);
+  const name = context.names.getFresh("promise");
+  return bindOnce(
+    path,
+    name,
+    useJavaScript("Allocate", [getHeap(path.scope, node, context), object], context),
+    continueWith(
+      {
+        ...path,
+        scope: {
+          ...path.scope,
+          bindings: new Map([...path.scope.bindings, [heapSymbol, identifier(name)]]),
+        },
+      },
+      useJavaScript("Allocated", [identifier(name)], context),
+      name,
+    ),
+  );
+};
+
 // Makes a pending promise on the heap.
 const makePromise = (
   path: Path,
   node: ts.Node,
   context: Context,
   continueWith: (path: Path, name: string) => Formula,
-) => {
-  const heapSymbol = context.heap;
-  if (heapSymbol === undefined) throw new TlaTypeScriptError("Use promises only in scripts", node);
-  const name = context.names.getFresh("promise");
-  const heap = useJavaScript(
-    "Allocate",
-    [getHeap(path.scope, node, context), identifier("PromiseObject")],
-    context,
-  );
-  const made: Path = {
-    ...path,
-    scope: {
-      ...path.scope,
-      bindings: new Map([...path.scope.bindings, [heapSymbol, identifier(name)]]),
-    },
-  };
-  return bindOnce(
-    path,
-    name,
-    heap,
+) =>
+  allocateObject(path, node, context, identifier("PromiseObject"), (made, ref, name) =>
     continueWith(
       setPromise(made, node, name, {
-        ref: useJavaScript("Allocated", [identifier(name)], context),
+        ref,
         state: "pending",
         isResolved: false,
+        resolvers: undefined,
         value: undefined,
         reactions: [],
       }),
       name,
     ),
   );
-};
 
 // A function that a then or a catch takes, which runs as a job with the promise's value.
 const getHandler = (
@@ -326,20 +339,12 @@ const getHandler = (
   ) {
     return undefined;
   }
-  const resolver = getResolver(cast, context);
-  if (resolver !== undefined) {
-    const binding = path.scope.bindings.get(resolver.symbol);
+  if (isResolver(cast, context)) {
+    const callee = translateExpression(cast, path.scope, context);
     return {
       run: (current, value, onReturn) =>
-        callResolver(
-          node,
-          binding,
-          resolver.isRejecting,
-          value,
-          undefined,
-          current,
-          context,
-          (after) => onReturn(after, getUndefined(context)),
+        callResolver(node, callee, value, undefined, current, context, (after) =>
+          onReturn(after, getUndefined(context)),
         ),
     };
   }
@@ -446,52 +451,112 @@ export const isPromiseConstruction = (
 ): node is ts.NewExpression =>
   ts.isNewExpression(node) && getBuiltIn(node.expression, context) === "Promise";
 
-// A parameter of an executor that new Promise takes in place: its resolve, or its reject.
-const getResolver = (node: ts.Expression, context: Context) => {
-  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
-  if (symbol === undefined || declaration === undefined || !ts.isParameter(declaration)) {
-    return undefined;
-  }
-  const executor = declaration.parent;
+// Whether a node is a parameter of an executor that new Promise takes in place, which names the
+// promise's resolve or reject.
+const isResolverParameter = (node: ts.Node, context: Context) => {
+  if (!ts.isParameter(node)) return false;
+  const executor = node.parent;
   const construction = ts.findAncestor(
     executor.parent,
     (ancestor) => !ts.isParenthesizedExpression(ancestor),
   );
-  const position = executor.parameters.indexOf(declaration);
-  return (ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
+  return (
+    (ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
     construction !== undefined &&
     ts.isNewExpression(construction) &&
     isPromiseConstruction(construction, context) &&
     construction.arguments?.[0] !== undefined &&
     getCast(construction.arguments[0]) === executor &&
-    position <= 1
-    ? { symbol, isRejecting: position === 1 }
-    : undefined;
+    executor.parameters.indexOf(node) <= 1
+  );
 };
 
-// Calls a promise's resolve or reject, which does nothing once either has run.
+// The variables that a script assigns an executor's resolve or reject.
+const resolverHolders = new WeakMap<ts.SourceFile, ReadonlySet<ts.Symbol>>();
+
+const getResolverHolders = (sourceFile: ts.SourceFile, context: Context) => {
+  const known = resolverHolders.get(sourceFile);
+  if (known !== undefined) return known;
+  const holders = new Set<ts.Symbol>();
+  const isParameterValue = (node: ts.Expression | undefined) => {
+    const declaration =
+      node === undefined ? undefined : getSymbol(getCast(node), context.checker)?.valueDeclaration;
+    return declaration !== undefined && isResolverParameter(declaration, context);
+  };
+  const visit = (node: ts.Node): void => {
+    const held =
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      isParameterValue(node.right)
+        ? node.left
+        : ts.isVariableDeclaration(node) && isParameterValue(node.initializer)
+          ? node.name
+          : undefined;
+    const symbol = held && getSymbol(held, context.checker);
+    if (symbol !== undefined) holders.add(symbol);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  resolverHolders.set(sourceFile, holders);
+  return holders;
+};
+
+// Whether a function that a node names may be a promise's resolve or reject: a parameter of an
+// executor, or a variable that the script assigns one.
+const isResolver = (node: ts.Expression, context: Context) => {
+  const cast = getCast(node);
+  const symbol = ts.isIdentifier(cast) ? getSymbol(cast, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  return (
+    symbol !== undefined &&
+    ((declaration !== undefined && isResolverParameter(declaration, context)) ||
+      getResolverHolders(cast.getSourceFile(), context).has(symbol))
+  );
+};
+
+// Calls a promise's resolve or reject, which does nothing once either has run. The callee may be
+// any resolving function that the path follows.
 const callResolver = (
   node: ts.Node,
-  binding: Expression | undefined,
-  isRejecting: boolean,
+  callee: Expression,
   value: Expression,
   valueNode: ts.Expression | undefined,
   path: Path,
   context: Context,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  const name = binding === undefined ? undefined : findPromise(path, node, binding);
-  if (name === undefined) throw new TlaTypeScriptError("tla-ts can't follow this promise", node);
-  const promise = getPromise(path, node, name);
-  if (promise.isResolved) return continueWith(path);
-  const resolved = setPromise(path, node, name, { ...promise, isResolved: true });
-  return isRejecting
-    ? continueWith(settle(resolved, node, name, value, true, context))
-    : resolve(resolved, node, name, value, valueNode, context, continueWith);
+  const run = (name: string, isRejecting: boolean) => {
+    const promise = getPromise(path, node, name);
+    if (promise.isResolved) return continueWith(path);
+    const resolved = setPromise(path, node, name, { ...promise, isResolved: true });
+    return isRejecting
+      ? continueWith(settle(resolved, node, name, value, true, context))
+      : resolve(resolved, node, name, value, valueNode, context, continueWith);
+  };
+  const resolvers = [...getTasks(path, node).promises].flatMap((entry) => {
+    const functions = entry[1].resolvers;
+    return functions === undefined
+      ? []
+      : [
+          { name: entry[0], ref: functions.resolve, isRejecting: false },
+          { name: entry[0], ref: functions.reject, isRejecting: true },
+        ];
+  });
+  const found = resolvers.find((resolver) => isSameExpression(resolver.ref, callee));
+  if (found !== undefined) return run(found.name, found.isRejecting);
+  return resolvers.reduceRight(
+    (rest, resolver) =>
+      ifThenElse(
+        useJavaScript("SameValue", [callee, resolver.ref], context),
+        run(resolver.name, resolver.isRejecting),
+        rest,
+      ),
+    leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which function this is")])),
+  );
 };
 
-// new Promise(executor), which runs the executor with the promise's resolve and reject.
+// new Promise(executor), which runs the executor with the promise's resolve and reject, two
+// functions on the heap.
 export const translatePromiseConstruction = (
   node: ts.NewExpression,
   path: Path,
@@ -518,73 +583,70 @@ export const translatePromiseConstruction = (
   ) {
     throw new TlaTypeScriptError("Name the executor's resolve and reject", executor);
   }
-  // A resolving function that the executor uses as a value, which tla-ts doesn't follow, only
-  // calls or passes to then.
-  const visit = (current: ts.Node): void => {
-    const resolver = ts.isIdentifier(current) ? getResolver(current, context) : undefined;
-    const parent = current.parent;
-    const isUsed =
-      ts.isCallExpression(parent) &&
-      (parent.expression === current ||
-        (getPromiseMethod(parent, context) !== undefined &&
-          parent.arguments.some((argument) => getCast(argument) === current)));
-    if (resolver !== undefined && !ts.isParameter(parent) && !isUsed) {
-      throw new TlaTypeScriptError("tla-ts can't follow a promise's resolve as a value", current);
-    }
-    ts.forEachChild(current, visit);
-  };
-  visit(executor.body);
-  return makePromise(path, node, context, (made, name) => {
-    const ref = getPromise(made, node, name).ref;
-    const back = (after: Path) =>
-      continueWith(
-        {
-          ...after,
-          scope: {
-            ...after.scope,
-            previous: made.scope.previous,
-            isCatching: made.scope.isCatching,
-            receiver: made.scope.receiver,
+  const resolvingFunction = useJavaScript(
+    "ArrowObject",
+    [translateBuiltInValue("Function.prototype", node, context), string(""), number(1)],
+    context,
+  );
+  return makePromise(path, node, context, (made, name) =>
+    allocateObject(made, node, context, resolvingFunction, (withResolve, resolveRef) =>
+      allocateObject(withResolve, node, context, resolvingFunction, (withReject, rejectRef) => {
+        const promise = getPromise(withReject, node, name);
+        const start = setPromise(withReject, node, name, {
+          ...promise,
+          resolvers: { resolve: resolveRef, reject: rejectRef },
+        });
+        const back = (after: Path) =>
+          continueWith(
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                previous: start.scope.previous,
+                isCatching: start.scope.isCatching,
+                receiver: start.scope.receiver,
+              },
+            },
+            promise.ref,
+          );
+        const bindings = new Map([
+          ...start.scope.bindings,
+          ...executor.parameters.flatMap((parameter, position): [ts.Symbol, Expression][] => {
+            const symbol = getSymbol(parameter.name, context.checker);
+            return symbol === undefined ? [] : [[symbol, position === 0 ? resolveRef : rejectRef]];
+          }),
+        ]);
+        return translateStatements(
+          getBody(executor),
+          {
+            ...start,
+            scope: {
+              ...start.scope,
+              bindings,
+              isCatching: true,
+              receiver: ts.isArrowFunction(executor) ? start.scope.receiver : undefined,
+            },
           },
-        },
-        ref,
-      );
-    const bindings = new Map([
-      ...made.scope.bindings,
-      ...executor.parameters.flatMap((parameter): [ts.Symbol, Expression][] => {
-        const symbol = getSymbol(parameter.name, context.checker);
-        return symbol === undefined ? [] : [[symbol, ref]];
+          context,
+          {
+            next: back,
+            exit: back,
+            breakTo: undefined,
+            continueTo: undefined,
+            throwTo: (after, thrown) =>
+              callResolver(node, rejectRef, thrown.value, undefined, after, context, back),
+            yieldTo: undefined,
+            awaitTo: undefined,
+            inlining: new Set([...frame.inlining, executor]),
+          },
+        );
       }),
-    ]);
-    return translateStatements(
-      getBody(executor),
-      {
-        ...made,
-        scope: {
-          ...made.scope,
-          bindings,
-          isCatching: true,
-          receiver: ts.isArrowFunction(executor) ? made.scope.receiver : undefined,
-        },
-      },
-      context,
-      {
-        next: back,
-        exit: back,
-        breakTo: undefined,
-        continueTo: undefined,
-        throwTo: (after, thrown) =>
-          callResolver(node, ref, true, thrown.value, undefined, after, context, back),
-        yieldTo: undefined,
-        awaitTo: undefined,
-        inlining: new Set([...frame.inlining, executor]),
-      },
-    );
-  });
+    ),
+  );
 };
 
 export const isPromiseCall = (node: ts.CallExpression, context: Context) =>
-  getResolver(node.expression, context) !== undefined ||
+  isResolver(node.expression, context) ||
   getPromiseFunction(node, context) !== undefined ||
   getPromiseMethod(node, context) !== undefined ||
   isTimerCall(node, context);
@@ -641,12 +703,10 @@ export const translatePromiseCall = (
   if (node.arguments.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError("Pass a promise's functions without spreads", node);
   }
-  const resolver = getResolver(node.expression, context);
-  if (resolver !== undefined) {
+  if (isResolver(node.expression, context)) {
     return callResolver(
       node,
-      path.scope.bindings.get(resolver.symbol),
-      resolver.isRejecting,
+      translateExpression(node.expression, path.scope, context),
       argument === undefined
         ? getUndefined(context)
         : translateExpression(argument, path.scope, context),
