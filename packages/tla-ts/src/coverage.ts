@@ -630,7 +630,6 @@ const getLeadingZeros = (value: bigint) => {
   return high === 0 ? 32 + Math.clz32(Number(value & 0xffffffffn)) : Math.clz32(high);
 };
 
-// TLC's HyperLogLog over the fingerprints of each variable's values in the states it enqueues.
 export const countCoverageVariables = (coverage: Coverage, state: Value[]) =>
   state.forEach((value, variable) => {
     const fingerprint = getTlcFingerprint([value]);

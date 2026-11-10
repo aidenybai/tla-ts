@@ -352,7 +352,6 @@ const visitValue = (
   node: number,
 ) => isTrue(value) && proceed(replay, items, partial, node);
 
-// The operators SANY builds in, which TLC evaluates and counts rather than calling as operators.
 const BUILT_IN_OPERATORS = new Set([
   "=",
   "#",

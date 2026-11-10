@@ -413,7 +413,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     options.coverage === undefined
       ? undefined
       : createCoverage(specification.environment.variables.length);
-  // Coverage counts in evaluators of its own, so the check without it evaluates as before.
   const environment: Environment = coverage
     ? {
         ...specification.environment,
