@@ -1648,7 +1648,5 @@
   "tlapm/proofs/status/zenon_exhausted": "text-mismatch",
   "tlapm/proofs/status/zenon_unsupported_fairness": "text-mismatch",
   "tlapm/proofs/status/zenon_unsupported_operator": "text-mismatch",
-  "tlapm/smoke/parse_error": "message-mismatch",
-  "tlc/generated/random/003/random_01576#assume": "time-limit",
-  "tlc/generated/random/016/random_08023#assume": "time-limit"
+  "tlapm/smoke/parse_error": "message-mismatch"
 }
