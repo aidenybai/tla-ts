@@ -12,8 +12,8 @@ import {
   isFiniteSet,
   isOverriddenSet,
   isSetValue,
-  SET_BOUND,
-  SET_BOUND_MESSAGE,
+  getMaximumSetSize,
+  getSetBoundMessage,
   toFiniteSet,
   type Value,
 } from "./values";
@@ -141,8 +141,8 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
           (total, factor) => total * toFiniteSet(factor).elements.length,
           1,
         );
-        if (size > SET_BOUND) {
-          throw new TlaEvaluationError(SET_BOUND_MESSAGE);
+        if (size > getMaximumSetSize()) {
+          throw new TlaEvaluationError(getSetBoundMessage());
         }
       }
       return createSet(getRandomSubset(count, set, runtime.getRandom(), runtime.version));

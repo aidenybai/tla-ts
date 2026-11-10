@@ -35,7 +35,7 @@ import {
   getRankedString,
   getRankedStringCount,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
   type Value,
 } from "./values";
 import { spawnWorker, type Port } from "./worker";
@@ -54,6 +54,7 @@ export interface StartMessage {
   isWarningEnabled: boolean | undefined;
   version: TlcVersion | undefined;
   fingerprintPolynomial: number | undefined;
+  maxSetSize: number | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
   remaining: Int32Array;
@@ -138,7 +139,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   const order = createTlcOrder(options.source, loadModule);
   setStringOrder(order.getStringOrder(config));
-  setValueVersion(options.version);
+  setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(config, {
@@ -301,6 +302,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       isWarningEnabled: options.isWarningEnabled,
       version: options.version,
       fingerprintPolynomial: options.fingerprintPolynomial,
+      maxSetSize: options.maxSetSize,
       fingerprints: shared.fingerprints,
       requests,
       remaining,

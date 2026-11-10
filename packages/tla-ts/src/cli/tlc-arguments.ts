@@ -10,6 +10,7 @@ export interface TlcArguments {
   livenessCheck: string;
   dump: string[] | undefined;
   fingerprintIndex: number;
+  maxSetSize: number | undefined;
   metadir: string | undefined;
   isRecovering: boolean;
   mode: "model-check" | "simulate" | "generate";
@@ -133,6 +134,7 @@ const createDefaults = (): TlcArguments => ({
   livenessCheck: "default",
   dump: undefined,
   fingerprintIndex: 0,
+  maxSetSize: undefined,
   metadir: undefined,
   isRecovering: false,
   mode: "model-check",
@@ -462,6 +464,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
           `Error: Value in interval [0, ${MAXIMUM_INT}] for maxSetSize required. But encountered ${text}`,
         );
       }
+      parsed.maxSetSize = Number(bound);
       continue;
     }
     if (flag === "-recover" || flag === "-metadir") {

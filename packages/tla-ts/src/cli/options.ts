@@ -73,6 +73,7 @@ export const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {
   },
   { flag: "-fp <num>" },
   { flag: "-lncheck <final|default|off>" },
+  { flag: "-maxSetSize <num>" },
   { flag: "-metadir <directory>" },
   { flag: "-nowarning" },
   { flag: "-seed <num>" },

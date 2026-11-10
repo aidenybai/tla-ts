@@ -17,7 +17,7 @@ import {
   getRankedString,
   getRankedStringCount,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
   type Value,
 } from "./values";
 import { createBreak, getParentPort, type Port } from "./worker";
@@ -45,7 +45,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   const classes = new Map(start.classes);
   const order = createTlcOrder(start.source, loadModule);
   setStringOrder(order.getStringOrder(start.config));
-  setValueVersion(start.version);
+  setValueOptions(start);
   setFingerprintPolynomial(start.fingerprintPolynomial ?? 0);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(start.config, {

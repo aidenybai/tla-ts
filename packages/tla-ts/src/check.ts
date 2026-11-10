@@ -95,7 +95,7 @@ import {
   isSameValue,
   markFingerprinted,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
   type Value,
 } from "./values";
 
@@ -114,6 +114,8 @@ export interface CheckOptions {
   livenessCheck?: "default" | "final" | "off";
   // TLC's -fp: the index of the polynomial in TLC's FP64.Polys that fingerprints states.
   fingerprintPolynomial?: number;
+  // TLC's -maxSetSize: the most elements TLC enumerates into a set, or states into a list of them.
+  maxSetSize?: number;
   // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
   dump?: StateDump;
   // TLC's -tool, which changes the messages of TLC's errors.
@@ -374,7 +376,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const order = createTlcOrder(options.source, options.loadModule);
   setStringOrder(order.getStringOrder(config));
-  setValueVersion(options.version);
+  setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const specification = createEnvironment(config, {
     source: options.source,

@@ -67,7 +67,7 @@ import {
   isFunctionValue,
   isUpdatedElementOf,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
   toFiniteFunction,
   type Value,
 } from "./values";
@@ -791,7 +791,7 @@ export const prepareSearch = (options: CheckOptions) => {
       : options.config;
   const order = createTlcOrder(options.source, options.loadModule);
   setStringOrder(order.getStringOrder(config));
-  setValueVersion(options.version);
+  setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const specification = createEnvironment(config, {
     source: options.source,
