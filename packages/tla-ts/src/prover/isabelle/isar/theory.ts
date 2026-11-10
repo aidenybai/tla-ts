@@ -1,12 +1,3 @@
-// Reads the outer syntax of the theories tlapm writes (Isabelle.thy_temp in isabelle.ml): the
-// header, the constants it declares, and one lemma with its proof.
-//
-//   theory NAME imports Constant Zenon begin
-//   consts "name" :: type ...
-//   lemma NAME: fixes ... assumes NAME: "prop" ... shows "prop" (is "PROP ?NAME")
-//   proof - show "PROP ?NAME" [using assms] by METHOD [METHOD] qed
-//   end
-
 import { TlaIsabelleError } from "../../../errors";
 
 export type OuterToken =
@@ -24,13 +15,11 @@ export interface TheoryText {
   readonly elements: readonly StatementElement[];
   readonly shows: string;
   readonly isUsingAssms: boolean;
-  // The method of by, then the terminal method if there is one, as outer tokens.
   readonly method: readonly OuterToken[];
 }
 
 const isWordChar = (char: string) => /[A-Za-z0-9_'.]/.test(char);
 
-// Outer strings unescape \" and \\; symbols such as \<in> stay as they are.
 const readString = (text: string, start: number): [string, number] => {
   let result = "";
   let position = start + 1;
@@ -120,62 +109,62 @@ export const parseTheory = (text: string): TheoryText => {
     if (peek()?.kind !== "symbol" || peek().text !== symbol) throw syntaxError();
     position += 1;
   };
-  const name = () => {
+  const expectName = () => {
     const token = peek();
     if (token?.kind !== "word" || KEYWORDS.has(token.text)) throw syntaxError();
     position += 1;
     return token.text;
   };
-  const string = () => {
+  const expectString = () => {
     const token = peek();
     if (token?.kind !== "string") throw syntaxError();
     position += 1;
     return token.text;
   };
-  const nameOrString = () => (peek()?.kind === "string" ? string() : name());
+  const expectNameOrString = () => (peek()?.kind === "string" ? expectString() : expectName());
 
   expectWord("theory");
-  const theoryName = name();
+  const theoryName = expectName();
   expectWord("imports");
-  while (!isWord("begin")) name();
+  while (!isWord("begin")) expectName();
   expectWord("begin");
   const consts: { name: string; type: string }[] = [];
   if (isWord("consts")) {
     position += 1;
     while (peek()?.kind === "string") {
-      const constName = string();
+      const constName = expectString();
       expectSymbol(":");
       expectSymbol(":");
-      consts.push({ name: constName, type: nameOrString() });
+      consts.push({ name: constName, type: expectNameOrString() });
     }
   }
   expectWord("lemma");
-  name();
+  expectName();
   expectSymbol(":");
   const elements: StatementElement[] = [];
   while (isWord("fixes") || isWord("assumes")) {
     if (isWord("fixes")) {
       position += 1;
-      const names = [name()];
-      while (peek()?.kind === "word" && !KEYWORDS.has(peek().text)) names.push(name());
+      const names = [expectName()];
+      while (peek()?.kind === "word" && !KEYWORDS.has(peek().text)) names.push(expectName());
       elements.push({ kind: "fixes", names });
     } else {
       position += 1;
-      const assumption = name();
+      const assumption = expectName();
       expectSymbol(":");
-      elements.push({ kind: "assumes", name: assumption, prop: string() });
+      elements.push({ kind: "assumes", name: assumption, prop: expectString() });
     }
   }
   expectWord("shows");
-  const shows = string();
+  const shows = expectString();
   expectSymbol("(");
   expectWord("is");
-  string();
+  expectString();
   expectSymbol(")");
   expectWord("proof");
   expectSymbol("-");
   expectWord("show");
-  string();
+  expectString();
   const isUsingAssms = isWord("using");
   if (isUsingAssms) {
     position += 1;

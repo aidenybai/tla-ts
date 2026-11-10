@@ -1,6 +1,3 @@
-// The Isabelle/TLA+ object logic that tlapm ships, decoded from logic-data.ts: its constants, the
-// theorems its theories prove, and the order of the simpset and the classical rule nets.
-
 import { axiomThm, type Thm } from "../pure/thm";
 import type { ClassicalRule } from "../provers/classical";
 import {
@@ -13,9 +10,10 @@ import {
   mkTVar,
   mkType,
   mkVar,
+  type Term,
+  type Typ,
 } from "../pure/term";
 import { typargsOf, type TypargPosition } from "../pure/consts";
-import type { Term, Typ } from "../pure/term";
 import { LOGIC_DATA } from "./logic-data";
 
 type TypeNode = [0, number, ...number[]] | [1, number] | [2, number, number];
@@ -26,7 +24,6 @@ type TermNode =
   | [3, number]
   | [4, number, number, number]
   | [5, number, number];
-// A rule of a claset or of the context rules, by theorem id, with its insertion tag.
 type NetItem = [number, 0 | 1, number];
 type ExtraNetItem = [number, number, 0 | 1, number];
 type RawRule = [number, number, number[], number, number[]];
@@ -61,7 +58,6 @@ interface LogicJson {
 export interface ConstInfo {
   readonly type: Typ;
   readonly typargs: readonly TypargPosition[];
-  // The right-hand side of an abbreviation, which parsing unfolds.
   readonly abbreviation: Term | undefined;
 }
 
@@ -82,11 +78,9 @@ export interface LogicNetPair<Item> {
 
 export interface TlaLogic {
   readonly consts: ReadonlyMap<string, ConstInfo>;
-  // The constant each unqualified name stands for.
   readonly constNames: ReadonlyMap<string, string>;
   readonly facts: ReadonlyMap<string, readonly Thm[]>;
   readonly factNames: ReadonlyMap<string, string>;
-  // The simpset's rewrite rules, in the order of Net.entries.
   readonly simps: readonly Thm[];
   readonly congs: readonly {
     readonly isConst: boolean;
@@ -209,7 +203,6 @@ const parseLogic = (): TlaLogic => {
   };
 };
 
-const loaded: { logic?: TlaLogic } = {};
+let loadedLogic: TlaLogic | undefined;
 
-// Nothing changes the logic, so it parses once.
-export const loadLogic = (): TlaLogic => (loaded.logic ??= parseLogic());
+export const loadLogic = (): TlaLogic => (loadedLogic ??= parseLogic());
