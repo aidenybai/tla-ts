@@ -25,6 +25,7 @@ interface Metadata {
   flags: string[];
   isNegative: boolean;
   isSyntaxError: boolean;
+  isModule: boolean;
 }
 
 const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
@@ -32,7 +33,11 @@ const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
 const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
 
 // Compiled TypeScript is a strict mode module.
-const SKIPPED_FLAGS = new Set(["noStrict", "raw", "module"]);
+const SKIPPED_FLAGS = new Set(["noStrict", "raw"]);
+
+// A module that imports or exports, which the corpus pairs with fixture files, and whose exported
+// functions tla-ts would read as a spec's actions.
+const LINKED_MODULE = /^\s*(?:import|export)\b|\bimport\s*[(.]/m;
 // Includes that the harness already defines, as compareArray.js is now part of assert.js.
 const HARNESS_INCLUDES = new Set(["compareArray.js"]);
 // Includes that tla-ts compiles from a TypeScript port.
@@ -78,13 +83,15 @@ const getMetadata = (source: string): Metadata => {
     const block = new RegExp(`^${key}:\\s*\\n((?:\\s+-.*\\n?)*)`, "m").exec(frontmatter);
     return block === null ? [] : [...block[1].matchAll(/-\s*(\S+)/g)].map((match) => match[1]);
   };
+  const flags = getList("flags");
   return {
     includes: getList("includes"),
-    flags: getList("flags"),
+    flags,
     isNegative: /^negative:/m.test(frontmatter),
     isSyntaxError: /^negative:\s*\n\s*phase:\s*(parse|early)\s*\n\s*type:\s*SyntaxError\s*$/m.test(
       frontmatter,
     ),
+    isModule: flags.includes("module"),
   };
 };
 
@@ -132,6 +139,21 @@ const getNodeError = async (source: string) => {
   } catch (error) {
     return String(error);
   }
+};
+
+// Runs a module test in a Node of its own, as a module's body can await. Node reports a rejected
+// body as it reports an uncaught error, and a body that never settles with its own exit.
+const getModuleError = (source: string) => {
+  const output = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
+  }).outputText;
+  const run = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--unhandled-rejections=none", "-"],
+    { input: output, encoding: "utf8" },
+  );
+  if (run.status === 0) return undefined;
+  return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
 
 const getFirstLine = (text: string) => text.split("\n")[0];
@@ -623,6 +645,9 @@ const EARLY_ERRORS = new Set([
 const isEarlyError = (code: number) =>
   (code >= 1000 && code < 2000) || (code >= 17000 && code < 18000) || EARLY_ERRORS.has(code);
 
+const isModuleSyntaxError = (source: string) =>
+  spawnSync(process.execPath, ["--input-type=module", "--check"], { input: source }).status !== 0;
+
 const isNodeSyntaxError = (source: string) => {
   try {
     new Script(source);
@@ -635,7 +660,10 @@ const isNodeSyntaxError = (source: string) => {
 // A test that expects a SyntaxError passes when tla-ts rejects the program with one.
 const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun => {
   const strict = metadata.flags.includes("onlyStrict") ? '"use strict";\n' : "";
-  if (!isNodeSyntaxError(`${strict}${source}`)) {
+  const isRejected = metadata.isModule
+    ? isModuleSyntaxError(source)
+    : isNodeSyntaxError(`${strict}${source}`);
+  if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
   const program = `${getHarness(metadata)}\n${source}`;
@@ -654,15 +682,13 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
       ? { id, outcome: "skipped", reason: `type error: ${reason}` }
       : { id, outcome: "untranslatable", reason };
   }
-  const isModule =
-    spawnSync(process.execPath, ["--input-type=module", "--check"], { input: source }).status === 0;
-  return isModule
-    ? {
+  return metadata.isModule || isModuleSyntaxError(source)
+    ? { id, outcome: "wrong", reason: "Compiled a program with a SyntaxError" }
+    : {
         id,
         outcome: "skipped",
         reason: "a SyntaxError only in scripts, and tla-ts compiles modules",
-      }
-    : { id, outcome: "wrong", reason: "Compiled a program with a SyntaxError" };
+      };
 };
 
 const runTest = async (path: string): Promise<TestRun> => {
@@ -672,6 +698,9 @@ const runTest = async (path: string): Promise<TestRun> => {
   const skipReason = NODE_CRASHES.has(id) ? "Node crashes" : getSkipReason(metadata);
   if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
   if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
+  if (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/")))) {
+    return { id, outcome: "skipped", reason: "a module that imports or exports" };
+  }
   // TypeScript itself fails on some syntax, such as import defer.
   const annotated = (() => {
     try {
@@ -682,7 +711,7 @@ const runTest = async (path: string): Promise<TestRun> => {
     }
   })();
   if (annotated === undefined) return { id, outcome: "skipped", reason: "TypeScript fails" };
-  const nodeError = await getNodeError(annotated);
+  const nodeError = metadata.isModule ? getModuleError(annotated) : await getNodeError(annotated);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
