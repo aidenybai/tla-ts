@@ -1,0 +1,34 @@
+/*---
+description: Ported from TypeScript's tests/cases/conformance/controlFlow/controlFlowCommaOperator.ts.
+outcome: success
+source: tests/cases/conformance/controlFlow/controlFlowCommaOperator.ts
+---*/
+// @target: es2015
+function f(x: string | number | boolean) {
+    let y: string | number | boolean = false;
+    let z: string | number | boolean = false;
+    if (y = "", typeof x === "string") {
+        x; // string
+        y; // string
+        z; // boolean
+    }
+    else if (z = 1, typeof x === "number") {
+        x; // number
+        y; // string
+        z; // number
+    }
+    else {
+        x; // boolean
+        y; // string
+        z; // number
+    }
+    x; // string | number | boolean
+    y; // string
+    z; // number | boolean
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

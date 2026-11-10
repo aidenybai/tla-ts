@@ -1,0 +1,36 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/accessors_spec_section-4.5_inference.ts.
+outcome: success
+source: tests/cases/compiler/accessors_spec_section-4.5_inference.ts
+---*/
+// @target: es2015
+class A { }
+class B extends A { }
+
+class LanguageSpec_section_4_5_inference {
+
+    public set InferredGetterFromSetterAnnotation(a: A) { }
+    public get InferredGetterFromSetterAnnotation() { return new B(); }
+
+    public get InferredGetterFromSetterAnnotation_GetterFirst() { return new B(); }
+    public set InferredGetterFromSetterAnnotation_GetterFirst(a: A) { }
+    
+
+    public get InferredFromGetter() { return new B(); }
+    public set InferredFromGetter(a) { }
+
+    public set InferredFromGetter_SetterFirst(a) { }
+    public get InferredFromGetter_SetterFirst() { return new B(); }
+
+    public set InferredSetterFromGetterAnnotation(a) { }
+    public get InferredSetterFromGetterAnnotation() : A { return new B(); }
+
+    public get InferredSetterFromGetterAnnotation_GetterFirst() : A { return new B(); }
+    public set InferredSetterFromGetterAnnotation_GetterFirst(a) { }
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

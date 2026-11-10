@@ -1,0 +1,47 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/controlFlowUnionContainingTypeParameter1.ts.
+outcome: success
+source: tests/cases/compiler/controlFlowUnionContainingTypeParameter1.ts
+---*/
+// @target: es2015
+// @strict: true
+// @noEmit: true
+
+// https://github.com/microsoft/TypeScript/issues/44814
+
+class TestClass<T> {
+  typeguard(val: unknown): val is T {
+    return true;
+  }
+  f(v: number): void {}
+  h(v: T): void {}
+  func(val: T | number): void {
+    if (this.typeguard(val)) {
+      this.h(val);
+      return;
+    }
+    this.f(val);
+  }
+}
+
+class TestClass2<T extends Date> {
+  typeguard(val: unknown): val is T {
+    return true;
+  }
+  f(v: number): void {}
+  h(v: T): void {}
+  func(val: T | number): void {
+    if (this.typeguard(val)) {
+      this.h(val);
+      return;
+    }
+    val;
+    this.f(val);
+  }
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

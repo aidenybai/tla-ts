@@ -1,0 +1,25 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/unusedTypeParametersWithUnderscore.ts.
+outcome: success
+source: tests/cases/compiler/unusedTypeParametersWithUnderscore.ts
+---*/
+// @target: es2015
+//@noUnusedParameters:true
+
+function f<_T, U>() { }
+
+type T<_T, U> = { };
+
+interface I<_T, U> { };
+
+class C<_T, U> {
+    public m<_V, W>() { }
+};
+
+let l = <_T, U>() => { };
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

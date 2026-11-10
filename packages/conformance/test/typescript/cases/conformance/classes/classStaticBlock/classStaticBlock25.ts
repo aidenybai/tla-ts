@@ -1,0 +1,34 @@
+/*---
+description: Ported from TypeScript's tests/cases/conformance/classes/classStaticBlock/classStaticBlock25.ts.
+outcome: success
+source: tests/cases/conformance/classes/classStaticBlock/classStaticBlock25.ts
+---*/
+// @target: esnext, es2022
+// @declaration: true
+// @declarationMap: true
+// @sourceMap: true
+
+const a = 1;
+const b = 2;
+
+class C {
+    static {
+        const a = 11;
+
+        a;
+        b;
+    }
+
+    static {
+        const a = 11;
+
+        a;
+        b;
+    }
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

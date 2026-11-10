@@ -1,0 +1,43 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/discriminantsAndTypePredicates.ts.
+outcome: success
+source: tests/cases/compiler/discriminantsAndTypePredicates.ts
+---*/
+// @target: es2015
+// Repro from #10145
+
+interface A { type: 'A' }
+interface B { type: 'B' }
+
+function isA(x: A | B): x is A { return x.type === 'A'; }
+function isB(x: A | B): x is B { return x.type === 'B'; }
+
+function foo1(x: A | B): any {
+    x;  // A | B
+    if (isA(x)) {
+        return x;  // A
+    }
+    x;  // B
+    if (isB(x)) {
+        return x;  // B
+    }
+    x;  // never
+}
+
+function foo2(x: A | B): any {
+    x;  // A | B
+    if (x.type === 'A') {
+        return x;  // A
+    }
+    x;  // B
+    if (x.type === 'B') {
+        return x;  // B
+    }
+    x;  // never
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

@@ -1,0 +1,21 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/library_ObjectPrototypeProperties.ts.
+outcome: success
+source: tests/cases/compiler/library_ObjectPrototypeProperties.ts
+---*/
+// @target: es2015
+// Properties of the Object Prototype Object as per ES5 spec
+// http://www.ecma-international.org/ecma-262/5.1/#sec-15.2.4
+Object.prototype.constructor;
+Object.prototype.toString();
+Object.prototype.toLocaleString();
+Object.prototype.valueOf();
+Object.prototype.hasOwnProperty("string");
+Object.prototype.isPrototypeOf(Object);
+Object.prototype.propertyIsEnumerable("string");
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/

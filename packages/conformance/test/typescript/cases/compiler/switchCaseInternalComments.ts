@@ -1,0 +1,19 @@
+/*---
+description: Ported from TypeScript's tests/cases/compiler/switchCaseInternalComments.ts.
+outcome: success
+source: tests/cases/compiler/switchCaseInternalComments.ts
+---*/
+// @target: es2015
+/*-1*/ foo /*0*/ : /*1*/ switch /*2*/ ( /*3*/ false /*4*/ ) /*5*/ {
+    /*6*/ case /*7*/ false /*8*/ : /*9*/
+        /*10*/ break /*11*/ foo /*12*/;
+    /*13*/ default /*14*/ : /*15*/
+    /*16*/ case /*17*/ false /*18*/ : /*19*/ { /*20*/
+    /*21*/ } /*22*/
+}
+
+/*--- recorded
+all:
+  exit: 0
+  transcript: success
+---*/
