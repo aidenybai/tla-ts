@@ -71,15 +71,18 @@ interface PendingTest {
   isOutcomeObserved: boolean;
 }
 
-// TLC's output for these leaks a Java exception or an internal name.
-const TLC_BUG_MODULES = new Set([
-  "PrintTraceException",
+// TLC's output for these leaks a Java exception or an internal name, or, with -continue, reports
+// that no error was found after a violation.
+const TLC_BUG_TESTS = new Set([
+  "PrintTraceExceptionTest",
+  "ContinueTest",
+  "DistributedDoInitFunctorInvariantContinueTest",
   "E4294_Module_Test",
   "sets_mistaken_set_filter_tuples_test",
 ]);
 
-const getFeatures = (feature: string, moduleName: string) =>
-  TLC_BUG_MODULES.has(moduleName) ? [feature, "tlc-bug"] : [feature];
+const getFeatures = (feature: string, testName: string) =>
+  TLC_BUG_TESTS.has(testName) ? [feature, "tlc-bug"] : [feature];
 
 const skipped: string[] = [];
 
@@ -215,7 +218,7 @@ const portModelTest = (javaPath: string): PendingTest | undefined => {
   const metadata: TestMetadata = {
     description: `Ported from TLC's ${className}.`,
     source: `${TOOLS_PATH}/${relative(toolsDirectory, javaPath)}`,
-    features: getFeatures(isSuite ? "tlc-suite" : "tlc-regression", specName),
+    features: getFeatures(isSuite ? "tlc-suite" : "tlc-regression", className),
     ...(moduleText.includes("AssertError(") ? { flags: ["exit-only"] } : {}),
     outcome,
     ...(!isEmbeddedConfig && existsSync(configPath)
