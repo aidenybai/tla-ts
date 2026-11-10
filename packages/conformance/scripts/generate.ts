@@ -12,6 +12,11 @@ interface Template {
   tlcBugValues?: string[];
 }
 
+// Bags.java reads a value that isn't a function as a null bag and throws a NullPointerException.
+const NON_FUNCTION_VALUES = VALUES.filter(
+  (value) => !/^(Fcn|Tuple|Record)/.test(value.valueClass),
+).map((value) => value.name);
+
 const UNARY_TEMPLATES: Template[] = [
   { name: "len", ref: "tlc2/module/Sequences.java#Len", render: (value) => `Len(${value})` },
   { name: "head", ref: "tlc2/module/Sequences.java#Head", render: (value) => `Head(${value})` },
@@ -368,16 +373,54 @@ const UNARY_TEMPLATES: Template[] = [
     ref: "tlc2/module/Bags.java#SetToBag",
     render: (value) => `SetToBag(${value})`,
   },
-  { name: "bag_in", ref: "tlc2/module/Bags.java#BagIn", render: (value) => `BagIn(1, ${value})` },
+  {
+    name: "bag_in",
+    ref: "tlc2/module/Bags.java#BagIn",
+    render: (value) => `BagIn(1, ${value})`,
+    tlcBugValues: NON_FUNCTION_VALUES,
+  },
   {
     name: "copies_in",
     ref: "tlc2/module/Bags.java#CopiesIn",
     render: (value) => `CopiesIn(1, ${value})`,
+    tlcBugValues: NON_FUNCTION_VALUES,
   },
   {
     name: "bag_plus",
     ref: "tlc2/module/Bags.java#BagUnion",
     render: (value) => `${value} (+) SetToBag({1})`,
+    tlcBugValues: [
+      "boolean_set",
+      "colon_greater",
+      "false",
+      "int",
+      "int_maximum",
+      "int_minimum",
+      "int_negative",
+      "int_one",
+      "int_zero",
+      "interval",
+      "interval_empty",
+      "model_value",
+      "nat",
+      "seq_set",
+      "set_cap",
+      "set_cup",
+      "set_diff",
+      "set_empty",
+      "set_filter",
+      "set_ints",
+      "set_map",
+      "set_mixed",
+      "set_nested",
+      "set_of_functions",
+      "set_of_records",
+      "string_a",
+      "string_empty",
+      "string_escapes",
+      "string_set",
+      "true",
+    ],
   },
   {
     name: "bag_minus",
