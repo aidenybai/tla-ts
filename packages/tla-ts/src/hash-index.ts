@@ -28,7 +28,7 @@ export const createHashIndex = () => {
     },
     add: (hash: number, position: number) => {
       index.size++;
-      if (index.size * 4 > index.slots.length) {
+      if (index.size * 8 > index.slots.length * 3) {
         const slots = index.slots;
         index.slots = new Int32Array(slots.length * 2);
         index.shift--;
