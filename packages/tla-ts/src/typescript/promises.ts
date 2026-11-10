@@ -11,7 +11,13 @@ import {
   translateCallStatement,
   translateStatements,
 } from "./actions";
-import { type Context, type FunctionNode, getSymbol, getUndefined } from "./context";
+import {
+  type Context,
+  type FunctionNode,
+  getLocalCaptures,
+  getSymbol,
+  getUndefined,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn } from "./formula";
@@ -273,9 +279,29 @@ const getHandler = (
   if (callee === undefined) {
     throw new TlaTypeScriptError("Pass then a function that tla-ts can follow", node);
   }
+  const captured = getLocalCaptures(callee, context);
+  const made = path.scope;
+  const keep = <Value>(runtime: Map<ts.Symbol, Value>, kept: Map<ts.Symbol, Value>) =>
+    new Map([...runtime, ...[...kept].filter((entry) => captured.has(entry[0]))]);
   return {
     run: (current, value, onReturn, onThrow) =>
-      callHandler(callee, value, current, context, frame, onReturn, onThrow),
+      callHandler(
+        callee,
+        value,
+        {
+          ...current,
+          scope: {
+            ...current.scope,
+            bindings: keep(current.scope.bindings, made.bindings),
+            functions: keep(current.scope.functions, made.functions),
+            receiver: ts.isArrowFunction(callee) ? made.receiver : undefined,
+          },
+        },
+        context,
+        frame,
+        onReturn,
+        onThrow,
+      ),
   };
 };
 

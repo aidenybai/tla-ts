@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { JAVASCRIPT_OPERATORS } from "./javascript";
+import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -403,6 +404,49 @@ const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean
     (target !== undefined && isWrittenBy(target, symbol, context)) ||
     (ts.forEachChild(node, (child) => isAssigned(symbol, child, context) || undefined) ?? false)
   );
+};
+
+// The names that a function reads from the functions around it, through the functions it names,
+// which a call of an enclosing function binds anew. A function that runs once that call returns
+// keeps the bindings where the script made it, which tla-ts follows only if nothing assigns them.
+export const getLocalCaptures = (node: FunctionNode, context: Context) => {
+  const captured = new Set<ts.Symbol>();
+  const visited = new Set<ts.Node>([node]);
+  const visit = (current: ts.Node, owner: ts.Node) => {
+    if (ts.isIdentifier(current)) {
+      const symbol = getSymbol(current, context.checker);
+      const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+      const isLocal =
+        declaration !== undefined &&
+        (ts.isVariableDeclaration(declaration) ||
+          ts.isParameter(declaration) ||
+          ts.isBindingElement(declaration) ||
+          ts.isFunctionDeclaration(declaration) ||
+          ts.isClassDeclaration(declaration)) &&
+        ts.findAncestor(declaration, (ancestor) => ancestor === owner) === undefined &&
+        ts.findAncestor(
+          declaration.parent,
+          (ancestor) => ts.isFunctionLike(ancestor) || ts.isClassStaticBlockDeclaration(ancestor),
+        ) !== undefined;
+      if (symbol !== undefined && declaration !== undefined && isLocal) {
+        if (isAssigned(symbol, current.getSourceFile(), context)) {
+          throw new TlaTypeScriptError(
+            "tla-ts can't follow a function that runs later and reads a local that changes",
+            current,
+          );
+        }
+        captured.add(symbol);
+        const named = getAnyFunction(declaration);
+        if (named !== undefined && !visited.has(named)) {
+          visited.add(named);
+          visit(named, named);
+        }
+      }
+    }
+    ts.forEachChild(current, (child) => visit(child, owner));
+  };
+  visit(node, node);
+  return captured;
 };
 
 // The function that a script evaluates once, which is a value with one identity, either as the

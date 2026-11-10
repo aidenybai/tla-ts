@@ -1718,6 +1718,35 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives a promise's callback the locals of the call that made it", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      function make(count: number) {
+        Promise.resolve(0).then(() => { log = log + count; });
+      }
+      make(1);
+      make(2);
+      setTimeout(() => {
+        if (log !== "12") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a promise's callback reads a local that changes", () => {
+    expect(() =>
+      compile(`
+        function make() {
+          let count = 1;
+          Promise.resolve(0).then(() => count);
+          count = 2;
+        }
+        make();
+      `),
+    ).toThrow("reads a local that changes");
+  });
+
   it("stops where a timer finds a promise's handler threw", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
