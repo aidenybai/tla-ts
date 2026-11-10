@@ -49,6 +49,10 @@ const PORTED_INCLUDES = new Map([
     "isConstructor.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-is-constructor.ts"), "utf8"),
   ],
+  [
+    "promiseHelper.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-promise-helper.ts"), "utf8"),
+  ],
 ]);
 
 // An async test's harness defines $DONE, as doneprintHandle.js does.
