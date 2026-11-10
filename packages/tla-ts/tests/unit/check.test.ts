@@ -2321,9 +2321,9 @@ describe("evaluation errors match TLC", () => {
   );
 
   // tlc2.module.Naturals#Divide rounds some negative quotients toward 0, and doesn't report an
-  // overflow, unlike tlc2.module.Integers#Divide.
+  // overflow. tla-ts floors and reports the overflow, as tlc2.module.Integers#Divide does.
   it.each([
-    [false, "Naturals", ["<<0, 0, -2>>", "-2147483648"]],
+    [false, "Naturals", ["<<-1, -1, -2>>"]],
     [true, "Naturals", ["<<-1, -1, -2>>"]],
     [false, "Integers", ["<<-1, -1, -2>>"]],
   ])(
