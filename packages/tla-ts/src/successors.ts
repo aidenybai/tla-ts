@@ -235,7 +235,7 @@ const getRuntimeVariableIndex = (
   }
   if (expression.kind !== "Identifier") return undefined;
   const binding = lookupScope(scope, expression.name);
-  if (binding?.kind === "Thunk") {
+  if (binding?.kind === "Thunk" && !binding.isReleased) {
     return getRuntimeVariableIndex(binding.expression, binding.scope, partial, run, isPrimed);
   }
   if (binding) return undefined;
@@ -634,7 +634,7 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding =
       expression.kind === "Identifier" ? lookupScope(scope, expression.name) : undefined;
-    if (binding?.kind === "Thunk") {
+    if (binding?.kind === "Thunk" && !binding.isReleased) {
       getRunner(getUnchangedWrapper(binding.expression), environment, false)(
         run,
         binding.scope,
@@ -721,7 +721,7 @@ const compileIdentifier = (
   const compiled = { body: undefined as Runner | undefined };
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding = lookupScope(scope, expression.name);
-    if (binding?.kind === "Thunk") {
+    if (binding?.kind === "Thunk" && !binding.isReleased) {
       getRunner(binding.expression, environment, isInit)(
         run,
         binding.scope,

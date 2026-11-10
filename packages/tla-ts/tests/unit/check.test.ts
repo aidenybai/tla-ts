@@ -871,6 +871,17 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([641, 80, 9]);
   });
 
+  it.each([
+    ["EqualStoredRecord", 'Attempted to compare an integer with non-integer:\n"a"'],
+    ["EqualStoredNested", 'Attempted to compare an integer with non-integer:\n"a"'],
+    ["EqualStoredSet", "Attempted to check equality of the set {1, 2} with the value:\n<<1, 2>>"],
+  ])("fails to compare stored values of different types in %s like TLC", async (name, message) => {
+    const result = await checkFixture("codegen", name);
+    expect(result.status).toBe("error");
+    expect(result.failure?.message).toContain(message);
+    expect([result.generatedStates, result.distinctStates]).toEqual([1, 1]);
+  });
+
   it("checks liveness on the symmetry-reduced graph", async () => {
     const result = await checkFixture("symmetry", "SymmetricLiveness");
     expect(result.status).toBe("liveness-violation");
@@ -2918,7 +2929,7 @@ describe("DOMAIN matches TLC", () => {
   const printDomain = async (expression: string) => {
     const printed: string[] = [];
     await check({
-      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nASSUME PrintT(${expression})\n====`,
+      source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nASSUME PrintT(${expression})\n====`,
       config: "",
       onPrint: (text) => printed.push(text),
     });
@@ -2937,6 +2948,11 @@ describe("DOMAIN matches TLC", () => {
     ["DOMAIN <<>>", "{}"],
     ["ToString(DOMAIN <<1, 2>>)", '"1..2"'],
     ["\\A i \\in DOMAIN <<1, 2, 3>> : i \\in DOMAIN <<4, 5, 6>>", "TRUE"],
+    ["ToString(DOMAIN [i \\in 1..2000 |-> i])", '"1..2000"'],
+    [
+      "LET f[n \\in 0..1100] == IF n = 0 THEN <<>> ELSE Append(f[n - 1], n) IN ToString(DOMAIN f[1100])",
+      '"1..1100"',
+    ],
   ])("prints %s as %s", async (expression, text) => {
     expect(await printDomain(expression)).toEqual([text]);
   });

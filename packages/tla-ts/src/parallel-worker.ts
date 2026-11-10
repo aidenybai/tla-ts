@@ -14,8 +14,8 @@ import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import {
   createCanonicalizer,
-  getRankedString,
-  getRankedStringCount,
+  freezeStringOrder,
+  getUnorderedString,
   setStringOrder,
   setValueOptions,
   type Value,
@@ -47,7 +47,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   setStringOrder(order.getStringOrder(start.config));
   setValueOptions(start);
   setFingerprintPolynomial(start.fingerprintPolynomial ?? 0);
-  const startupStrings = getRankedStringCount();
+  freezeStringOrder();
   const specification = createEnvironment(start.config, {
     source: start.source,
     loadModule,
@@ -225,9 +225,8 @@ const runWorker = (start: StartMessage, parent: Port) => {
       }
       if (!(await steal(expansion))) break;
     }
-    if (getRankedStringCount() !== startupStrings) {
-      return { type: "abort", string: getRankedString(startupStrings) };
-    }
+    const unorderedString = getUnorderedString();
+    if (unorderedString !== undefined) return { type: "abort", string: unorderedString };
     frontier.states = expansion.next;
     Atomics.store(remaining, workerIndex, frontier.states.length);
     return {

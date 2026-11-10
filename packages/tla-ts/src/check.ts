@@ -855,24 +855,27 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           // The constraints read the level of the state whose successors they check.
           const livenessSource = current.livenessSource;
           current.livenessSource = source;
-          forEachSuccessor(
-            spec.next,
-            state,
-            environment,
-            (successor) => {
-              canonicalizeState(successor.state);
-              const isInModel =
-                search.satisfiesConstraints(successor.state, state) &&
-                search.satisfiesActionConstraints(state, successor.state);
-              if (!isInModel) return false;
-              const fingerprintState = getFingerprintState(successor.state);
-              const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
-              successors.push({ index, state: successor.state });
-              return false;
-            },
-            spec.scope,
-          );
-          current.livenessSource = livenessSource;
+          try {
+            forEachSuccessor(
+              spec.next,
+              state,
+              environment,
+              (successor) => {
+                canonicalizeState(successor.state);
+                const isInModel =
+                  search.satisfiesConstraints(successor.state, state) &&
+                  search.satisfiesActionConstraints(state, successor.state);
+                if (!isInModel) return false;
+                const fingerprintState = getFingerprintState(successor.state);
+                const index = findStateIndex(getStateHash(fingerprintState), fingerprintState);
+                successors.push({ index, state: successor.state });
+                return false;
+              },
+              spec.scope,
+            );
+          } finally {
+            current.livenessSource = livenessSource;
+          }
           return successors;
         },
       }),
@@ -900,14 +903,22 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     position: number,
     loopStart: number | undefined,
   ) => {
-    // TLC evaluates TLCGet("level") and Trace in an alias at the state's position in the trace.
+    // TLC evaluates TLCGet("level") and Trace in an alias at the state's position in the trace. The
+    // search reads them again once the alias is evaluated, as it goes on with -continue.
+    const searchLevel = runtime.getLevel;
+    const searchBehavior = runtime.getBehavior;
     runtime.getLevel = () => position + 1;
     runtime.getBehavior = () => steps.slice(0, position + 1).map((step) => step.state);
-    return evaluateAlias(
-      alias,
-      steps[position].state,
-      (steps[position + 1] ?? steps[loopStart ?? position]).state,
-    );
+    try {
+      return evaluateAlias(
+        alias,
+        steps[position].state,
+        (steps[position + 1] ?? steps[loopStart ?? position]).state,
+      );
+    } finally {
+      runtime.getLevel = searchLevel;
+      runtime.getBehavior = searchBehavior;
+    }
   };
   const evaluateAlias = (alias: string, state: Value[], next: Value[] | undefined) =>
     search.evaluateAlias(alias, state, next, options.isTool ?? false);
@@ -924,19 +935,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
-    const action = coverage
-      ? coverageActions.find((item) =>
-          getCoveredSuccessors(item, previous).some((successor) =>
-            isSameState(getKey(successor.state), key),
-          ),
-        )
-      : actions.find((item) =>
-          getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
-            isSameState(getKey(successor.state), key),
-          ),
-        );
-    Object.assign(current, expanding);
-    return action;
+    try {
+      return coverage
+        ? coverageActions.find((item) =>
+            getCoveredSuccessors(item, previous).some((successor) =>
+              isSameState(getKey(successor.state), key),
+            ),
+          )
+        : actions.find((item) =>
+            getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
+              isSameState(getKey(successor.state), key),
+            ),
+          );
+    } finally {
+      Object.assign(current, expanding);
+    }
   };
   // TLC rebuilds the states it doesn't keep, all but the last `known`, from the initial predicate,
   // finds the action of each later step, and then rebuilds the trace once more, unless it is a

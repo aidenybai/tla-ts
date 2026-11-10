@@ -260,11 +260,14 @@ export const createLivenessChecker = (
     return cache;
   };
   // TLCGet("level") reads the level of the state whose successors the checks run on.
+  // A check that fails leaves no source, so the failure's trace reads the levels of the search.
   const evaluateFrom = <Result>(source: number | undefined, evaluate: () => Result) => {
     environment.runtime.setLivenessSource(source);
-    const result = evaluate();
-    environment.runtime.setLivenessSource(undefined);
-    return result;
+    try {
+      return evaluate();
+    } finally {
+      environment.runtime.setLivenessSource(undefined);
+    }
   };
   const evaluateState = (predicate: LiveExpression, state: Value[]) =>
     evaluateLive(
