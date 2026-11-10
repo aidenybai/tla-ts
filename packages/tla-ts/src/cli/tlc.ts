@@ -16,6 +16,7 @@ import { pathToFileURL } from "node:url";
 import { getHeapStatistics } from "node:v8";
 import { version } from "../../package.json";
 import type { Expression } from "../ast";
+import type { CoverageReport } from "../coverage";
 import { describeRange } from "../evaluate";
 import type {
   CheckOptions,
@@ -265,6 +266,52 @@ const printProgress = (
   );
 };
 
+const COVERAGE_CODES = {
+  init: MESSAGE_CODE.coverageInit,
+  next: MESSAGE_CODE.coverageNext,
+  invariant: MESSAGE_CODE.coverageProperty,
+  implied: MESSAGE_CODE.coverageProperty,
+  constraint: MESSAGE_CODE.coverageConstraint,
+};
+
+// TLC asks to turn coverage off once a check that reports it has run for five minutes.
+const COVERAGE_OVERHEAD = 5 * 60_000;
+
+const printCoverage = (printer: MessagePrinter, coverage: CoverageReport, startTime: number) => {
+  const print = (code: number, text: string) => printer.print(code, MESSAGE_LEVEL.none, text);
+  print(
+    MESSAGE_CODE.coverageStart,
+    `The coverage statistics at ${formatTlcDate(new Date())} (see https://explain.tlapl.us/module-coverage-statistics for how to interpret the following statistics).`,
+  );
+  coverage.variables.forEach((variable) =>
+    print(MESSAGE_CODE.coverageVariable, `<${variable.label}>: ${variable.distinct}`),
+  );
+  coverage.relations.forEach((relation) => {
+    const code = COVERAGE_CODES[relation.kind];
+    print(
+      code,
+      code === MESSAGE_CODE.coverageProperty
+        ? `<${relation.label}>`
+        : `<${relation.label}>: ${relation.distinct}:${relation.generated}`,
+    );
+    relation.expressions.forEach((expression) => {
+      const location = `  ${"|".repeat(expression.depth)}${expression.location}`;
+      if (expression.cost > 0) {
+        print(
+          MESSAGE_CODE.coverageValueCost,
+          `${location}: ${expression.count}:${expression.cost}`,
+        );
+      } else print(MESSAGE_CODE.coverageValue, `${location}: ${expression.count}`);
+    });
+  });
+  if (Date.now() - startTime > COVERAGE_OVERHEAD) {
+    print(
+      MESSAGE_CODE.coverageEndOverhead,
+      "End of statistics (please note that for performance reasons large models\nare best checked with coverage and cost statistics disabled).",
+    );
+  } else print(MESSAGE_CODE.coverageEnd, "End of statistics.");
+};
+
 const getClassPath = (directory: string, module: string) => join(directory, `${module}.class`);
 
 const printCheckProgress = (
@@ -346,6 +393,9 @@ const printCheckProgress = (
       return;
     case "progress":
       printProgress(printer, progress.statistics, timing.startTime);
+      if (progress.statistics.coverage) {
+        printCoverage(printer, progress.statistics.coverage, timing.startTime);
+      }
       return;
     case "liveness-started": {
       timing.livenessStartTime = Date.now();
@@ -633,6 +683,7 @@ const printResult = (result: CheckResult, printer: TlcPrinter, timing: Timing) =
   }
   if (result.failure?.isWithoutStatistics) return;
   if (result.status !== "success") printLivenessEnd(printer, timing);
+  if (result.coverage) printCoverage(printer, result.coverage, timing.startTime);
   if (printer.isTool) printProgress(printer, result, timing.startTime);
   print(
     MESSAGE_CODE.stats,
@@ -955,6 +1006,7 @@ const checkSpec = async (
       dump,
       isTool: printer.isTool,
       isContinued: args.isContinued,
+      coverage: args.coverage,
       isTraceRecorded: isRecorded,
       isSanyReported: true,
       isWarningEnabled: args.isWarningEnabled,

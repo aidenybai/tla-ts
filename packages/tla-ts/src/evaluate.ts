@@ -21,6 +21,7 @@ import {
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
+import { countCoverage, getCoverageNode, runAtCoverageNode, type Coverage } from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
 import {
@@ -155,6 +156,7 @@ export interface Environment {
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
   callStack?: CallStack;
+  coverage?: Coverage;
 }
 
 export interface CallStack {
@@ -874,7 +876,14 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     isStateWithin(context.state, thunk.state) &&
     isStateWithin(context.next, thunk.next);
   if (isCached) return cache;
-  const value = evaluate(thunk.expression, withScope(context, thunk.scope));
+  const coverage = context.environment.coverage;
+  const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
+  const value =
+    coverage && node !== undefined
+      ? runAtCoverageNode(coverage, node, () =>
+          evaluate(thunk.expression, withScope(context, thunk.scope)),
+        )
+      : evaluate(thunk.expression, withScope(context, thunk.scope));
   if (!thunk.isStreamed || isSettledValue(value)) {
     thunk.cache = value;
     thunk.state = context.state;
@@ -1029,6 +1038,15 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
     const binding: Binding = { kind: "Value", value: argument.value };
     return () => binding;
   }
+  // TLC counts an argument where the operator's body evaluates it, under the call.
+  const coverage = environment.coverage;
+  if (coverage) {
+    return (context) => {
+      const thunk = createThunk(argument, context);
+      if (coverage.current !== -1) coverage.values.set(thunk, coverage.current);
+      return thunk;
+    };
+  }
   if (argument.kind === "Identifier") {
     const global = isLocallyResolved(argument)
       ? undefined
@@ -1143,6 +1161,13 @@ export const bindDefinitions = (
               isStreamed: reevaluated?.streamed.has(definition) ?? false,
             };
   });
+  // TLC counts a LET definition under the node that encloses the LET.
+  const coverage = context.environment.coverage;
+  if (coverage && coverage.current !== -1) {
+    nodes.forEach((node) => {
+      if (node.binding.kind === "Thunk") coverage.values.set(node.binding, coverage.current);
+    });
+  }
   return scope;
 };
 
@@ -1316,6 +1341,7 @@ const headFingerprint = (callStack: CallStack, source: Expression, error: unknow
 // With evaluators of its own, since the environment's evaluators record nothing.
 export const createTracingEnvironment = (environment: Environment): Environment => ({
   ...environment,
+  coverage: undefined,
   evaluators: new WeakMap(),
   entryEvaluators: new WeakMap(),
   definitionEvaluators: new WeakMap(),
@@ -1346,6 +1372,27 @@ const traceFrames =
     }
   };
 
+// TLC counts an evaluation under the node of the expression in the tree of the check it counts,
+// or, when the tree has none there, under the node it evaluates in.
+const countEvaluator =
+  (expression: Expression, evaluator: Evaluator, coverage: Coverage): Evaluator =>
+  (context) => {
+    const outer = coverage.current;
+    if (outer === -1 || !coverage.covered.has(expression)) return evaluator(context);
+    const node = getCoverageNode(coverage, outer, expression);
+    countCoverage(coverage, node);
+    coverage.current = node;
+    try {
+      const value = evaluator(context);
+      if (typeof value === "object" && expression.kind === "SetEnumeration") {
+        coverage.values.set(value, node);
+      }
+      return value;
+    } finally {
+      coverage.current = outer;
+    }
+  };
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
@@ -1355,14 +1402,15 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
   const traced = callStack
     ? traceEvaluator(expression, compiled, environment, callStack)
     : compiled;
-  const evaluator =
-    callStack && frames ? traceFrames(expression, frames, traced, callStack) : traced;
+  const framed = callStack && frames ? traceFrames(expression, frames, traced, callStack) : traced;
+  const coverage = environment.coverage;
+  const evaluator = coverage ? countEvaluator(expression, framed, coverage) : framed;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
 
 export const getEntryEvaluator = (expression: Expression, environment: Environment) => {
-  if (environment.callStack) return getEvaluator(expression, environment);
+  if (environment.callStack || environment.coverage) return getEvaluator(expression, environment);
   const compiled = environment.entryEvaluators.get(expression);
   if (compiled) return compiled;
   const evaluator =
@@ -1807,10 +1855,21 @@ const compileSetComprehension = (
       predicate: formatRange(range),
     };
     const predicateNode = describeNode(expression.predicate);
+    const coverage = environment.coverage;
+    // TLC evaluates a lazy set's predicate under the set's node only as it enumerates the set,
+    // and costs each element it tests and each it keeps.
+    const testCovered = (node: number, isMember: boolean, test: () => Value) => {
+      if (!coverage || node === -1) return test();
+      if (!isMember) coverage.secondary[node]++;
+      const value = runAtCoverageNode(coverage, isMember ? -1 : node, test);
+      if (!isMember && value === true) coverage.secondary[node]++;
+      return value;
+    };
     const createFiltered = (
       base: Value,
       context: Context,
       evaluator: Evaluator,
+      node = -1,
     ): RebindableFilteredSet => ({
       kind: "FilteredSet",
       base,
@@ -1823,7 +1882,9 @@ const compileSetComprehension = (
             `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
           );
         }
-        const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
+        const value = testCovered(node, isMember, () =>
+          evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
+        );
         if (typeof value !== "boolean") {
           throw new TlaEvaluationError(
             `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
@@ -1842,7 +1903,9 @@ const compileSetComprehension = (
     return (context) => {
       const base = set(context);
       // TLC filters any value it can't enumerate lazily, and fails only when it uses the result.
-      if (!isReducibleSet(base)) return createFiltered(base, context, predicate);
+      if (!isReducibleSet(base)) {
+        return createFiltered(base, context, predicate, coverage?.current);
+      }
       const kept: Value[] = [];
       const visit = (element: Value) => {
         const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
@@ -1853,7 +1916,13 @@ const compileSetComprehension = (
         }
         if (value) addBoundedElement(kept, element);
       };
-      forEachElement(base.kind === "Interval" ? base : toFiniteSet(base).elements, visit);
+      const elements = base.kind === "Interval" ? base : toFiniteSet(base).elements;
+      forEachElement(elements, visit);
+      if (coverage && coverage.current !== -1) {
+        coverage.secondary[coverage.current] +=
+          (Array.isArray(elements) ? elements.length : elements.high - elements.low + 1) +
+          kept.length;
+      }
       return createNormalizedSet(kept);
     };
   }

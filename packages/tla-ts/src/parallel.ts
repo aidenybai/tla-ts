@@ -112,11 +112,13 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   const workerCount = options.workers ?? 1;
   // TLC's workers write the -dump state graph, and print the violations -continue goes on past, in
-  // whichever order they find them, so one worker does what a single TLC worker does.
+  // whichever order they find them, so one worker does what a single TLC worker does. The
+  // coverage counts live in one worker's evaluators.
   const isSequential =
     workerCount < 2 ||
     typeof SharedArrayBuffer !== "function" ||
     options.dump !== undefined ||
+    options.coverage !== undefined ||
     options.isContinued === true ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||

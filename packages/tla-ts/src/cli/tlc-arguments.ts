@@ -7,6 +7,7 @@ export interface TlcArguments {
   seed: bigint;
   aril: bigint;
   workers: number;
+  coverage: number | undefined;
   livenessCheck: string;
   dump: string[] | undefined;
   fingerprintIndex: number;
@@ -130,6 +131,7 @@ const createDefaults = (): TlcArguments => ({
   seed: 0n,
   aril: 0n,
   workers: 1,
+  coverage: undefined,
   livenessCheck: "default",
   dump: undefined,
   fingerprintIndex: 0,
@@ -425,6 +427,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       if (milliseconds < 0n) {
         return reject(`Error: expect a nonnegative integer for -${name} option.`);
       }
+      if (name === "coverage") parsed.coverage = Number(milliseconds) / 60_000;
       continue;
     }
     if (flag === "-depth") {

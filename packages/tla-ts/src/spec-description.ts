@@ -7,6 +7,7 @@ import {
   type SourceRange,
 } from "./ast";
 import type { ModelConfig } from "./config";
+import { getCoverageCounts, getDistinctCount, type CoverageKind } from "./coverage";
 import { substitutionFrames, withSubstitutionFrames } from "./instances";
 import type { InstanceAction } from "./environment";
 import { formatRange, TlaError } from "./errors";
@@ -70,17 +71,19 @@ const toLocationValue = (location: SourceLocation) => {
   ]);
 };
 
-export const toActionValue = (action: SpecAction) => {
+export const toActionValue = (action: SpecAction, coverage?: Value) => {
   const fields: [string, Value][] = [
     ["name", action.name],
     ["location", toLocationValue(action.location)],
   ];
-  if (action.parameters.length === 0) return createRecord(fields);
-  return createRecord([
-    ...fields,
-    ["context", createRecord(action.parameters)],
-    ["parameters", createTuple(action.parameters.map((parameter) => parameter[0]))],
-  ]);
+  if (action.parameters.length > 0) {
+    fields.push(
+      ["context", createRecord(action.parameters)],
+      ["parameters", createTuple(action.parameters.map((parameter) => parameter[0]))],
+    );
+  }
+  if (coverage !== undefined) fields.push(["coverage", coverage]);
+  return createRecord(fields);
 };
 
 const createAction = (name: string, expression: Expression): SpecAction => ({
@@ -585,7 +588,14 @@ export const getSpecificationValue = (
   instanceActions: Map<string, InstanceAction>,
 ): Value => {
   const description = getSpecDescription(config, environment, instanceActions);
-  const toSet = (actions: SpecAction[]) => createSet(actions.map(toActionValue));
+  const coverage = environment.coverage;
+  const toSet = (actions: SpecAction[], kind?: CoverageKind) =>
+    createSet(
+      actions.map((action) => {
+        const counts = coverage && kind && getCoverageCounts(coverage, kind, action.expression);
+        return toActionValue(action, counts && createRecord(counts));
+      }),
+    );
   const toDefinitionSet = (names: string[]) =>
     createSet(
       names.flatMap((name) => {
@@ -601,12 +611,12 @@ export const getSpecificationValue = (
       }),
     );
   return createRecord([
-    ["inits", toSet(description.inits)],
-    ["actions", toSet(description.actions)],
+    ["inits", toSet(description.inits, "init")],
+    ["actions", toSet(description.actions, "next")],
     ["temporals", toSet(description.temporals)],
-    ["invariants", toSet(description.invariants)],
-    ["impliedinits", toSet(description.impliedInits)],
-    ["impliedactions", toSet(description.impliedActions)],
+    ["invariants", toSet(description.invariants, "invariant")],
+    ["impliedinits", toSet(description.impliedInits, "implied")],
+    ["impliedactions", toSet(description.impliedActions, "implied")],
     ["impliedtemporals", toSet(description.impliedTemporals)],
     [
       "variables",
@@ -615,6 +625,14 @@ export const getSpecificationValue = (
           createRecord([
             ["name", name],
             ["location", toLocationValue(variableLocations[index])],
+            ...(coverage
+              ? [
+                  [
+                    "coverage",
+                    createRecord([["distinct", getDistinctCount(coverage, index)]]),
+                  ] satisfies [string, Value],
+                ]
+              : []),
           ]),
         ),
       ),
