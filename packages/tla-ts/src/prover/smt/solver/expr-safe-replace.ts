@@ -177,6 +177,13 @@ export class ExprSafeReplace {
     manager.decRef(body);
   }
 
+  reset() {
+    this.sources.reset();
+    this.targets.reset();
+    this.refs.reset();
+    this.cache.clear();
+  }
+
   release() {
     this.cache.clear();
     this.refs.reset();

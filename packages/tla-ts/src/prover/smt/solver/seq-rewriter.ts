@@ -22,23 +22,17 @@ import {
   OP_NOT,
   OP_OR,
   OP_RE_COMPLEMENT,
-  OP_RE_CONCAT,
-  OP_RE_DERIVATIVE,
-  OP_RE_DIFF,
+  OP_RE_EMPTY_SET,
+  OP_RE_FULL_CHAR_SET,
+  OP_RE_FULL_SEQ_SET,
   OP_RE_INTERSECT,
-  OP_RE_LOOP,
-  OP_RE_OPTION,
-  OP_RE_PLUS,
-  OP_RE_POWER,
-  OP_RE_RANGE,
-  OP_RE_REVERSE,
-  OP_RE_STAR,
+  OP_RE_OF_PRED,
   OP_RE_UNION,
-  OP_RE_XOR,
   OP_SELECT,
   OP_SEQ_AT,
   OP_SEQ_CONCAT,
   OP_SEQ_CONTAINS,
+  OP_SEQ_EMPTY,
   OP_SEQ_EXTRACT,
   OP_SEQ_FOLDL,
   OP_SEQ_FOLDLI,
@@ -55,8 +49,7 @@ import {
   OP_SEQ_PREFIX,
   OP_SEQ_REPLACE,
   OP_SEQ_REPLACE_ALL,
-  OP_SEQ_REPLACE_RE,
-  OP_SEQ_REPLACE_RE_ALL,
+  OP_SEQ_SKOLEM,
   OP_SEQ_SUFFIX,
   OP_SEQ_TO_RE,
   OP_SEQ_UNIT,
@@ -89,6 +82,7 @@ import {
   mkEmptySeq,
   mkSeqApp,
 } from "./seq-decl-plugin";
+import { type BoolRewriter, ReRewriter } from "./seq-re-rewriter";
 
 const BR_REWRITE1 = 1;
 const BR_REWRITE2 = 2;
@@ -110,57 +104,18 @@ const L_FALSE = -1;
 const L_UNDEF = 0;
 const L_TRUE = 1;
 
-const UNPORTED_OPS = new Set([
-  OP_RE_PLUS,
-  OP_RE_STAR,
-  OP_RE_OPTION,
-  OP_RE_REVERSE,
-  OP_RE_DERIVATIVE,
-  OP_RE_CONCAT,
-  OP_RE_UNION,
-  OP_RE_RANGE,
-  OP_RE_DIFF,
-  OP_RE_XOR,
-  OP_RE_INTERSECT,
-  OP_RE_COMPLEMENT,
-  OP_RE_LOOP,
-  OP_RE_POWER,
-  OP_SEQ_TO_RE,
-  OP_SEQ_IN_RE,
+const NON_LIFTING_OPS = new Set([
+  OP_SEQ_EMPTY,
+  OP_RE_EMPTY_SET,
+  OP_RE_FULL_SEQ_SET,
+  OP_RE_FULL_CHAR_SET,
+  OP_RE_OF_PRED,
+  OP_SEQ_SKOLEM,
+  OP_SEQ_NTH,
+  OP_SEQ_NTH_I,
 ]);
 
-const LIFTING_OPS = new Set([
-  OP_SEQ_UNIT,
-  OP_SEQ_CONCAT,
-  OP_SEQ_LENGTH,
-  OP_SEQ_POWER,
-  OP_SEQ_EXTRACT,
-  OP_SEQ_CONTAINS,
-  OP_SEQ_AT,
-  OP_SEQ_PREFIX,
-  OP_SEQ_SUFFIX,
-  OP_SEQ_INDEX,
-  OP_SEQ_LAST_INDEX,
-  OP_SEQ_REPLACE,
-  OP_SEQ_REPLACE_ALL,
-  OP_SEQ_MAP,
-  OP_SEQ_MAPI,
-  OP_SEQ_FOLDL,
-  OP_SEQ_FOLDLI,
-  OP_SEQ_REPLACE_RE,
-  OP_SEQ_REPLACE_RE_ALL,
-  OP_STRING_LE,
-  OP_STRING_LT,
-  OP_STRING_FROM_CODE,
-  OP_STRING_TO_CODE,
-  OP_STRING_IS_DIGIT,
-  OP_STRING_ITOS,
-  OP_STRING_STOI,
-  OP_STRING_UBVTOS,
-  OP_STRING_SBVTOS,
-]);
-
-type Result = number | Rewrite | undefined;
+export type Result = number | Rewrite | undefined;
 
 export interface SeqPair {
   left: number[];
@@ -236,10 +191,19 @@ const isSameBag = (first: Map<number, number>, second: Map<number, number>) =>
   first.size === second.size && [...first].every(([key, count]) => second.get(key) === count);
 
 export class SeqRewriter {
+  readonly re: ReRewriter;
+
   constructor(
     private manager: AstManager,
     private isCoalescingChars = true,
-  ) {}
+    bool?: BoolRewriter,
+  ) {
+    this.re = new ReRewriter(manager, this, bool);
+  }
+
+  release() {
+    this.re.release();
+  }
 
   private isOp(expr: number, op: number) {
     return this.manager.getOp(expr) === op;
@@ -392,13 +356,12 @@ export class SeqRewriter {
               .map((code) => this.mkUnit(code)),
             funcDecl.range,
           );
-    if (UNPORTED_OPS.has(op)) return undefined;
-    const result = this.mkSeqAppCore(op, args);
-    if (result !== undefined || !LIFTING_OPS.has(op)) return result;
+    const result = this.mkSeqAppCore(decl, op, args);
+    if (result !== undefined || NON_LIFTING_OPS.has(op)) return result;
     return this.liftItesThrottled(decl, args);
   }
 
-  private mkSeqAppCore(op: number, args: number[]): Result {
+  private mkSeqAppCore(decl: number, op: number, args: number[]): Result {
     switch (op) {
       case OP_SEQ_UNIT: {
         const code = this.manager.getChar(args[0]);
@@ -461,7 +424,7 @@ export class SeqRewriter {
       case OP_STRING_SBVTOS:
         return this.mkStrSbv2s(args[0]);
       default:
-        return undefined;
+        return this.re.mkAppCore(decl, op, args);
     }
   }
 
@@ -522,7 +485,7 @@ export class SeqRewriter {
     return undefined;
   }
 
-  private mkSeqConcat(first: number, second: number): Result {
+  mkSeqConcat(first: number, second: number): Result {
     const manager = this.manager;
     const firstChars = this.isCoalescingChars ? manager.getString(first) : undefined;
     const secondChars = this.isCoalescingChars ? manager.getString(second) : undefined;
@@ -1872,7 +1835,7 @@ export class SeqRewriter {
     return { isBounded, length };
   }
 
-  private getMaxLength(seq: number) {
+  getMaxLength(seq: number) {
     const manager = this.manager;
     const todo = [seq];
     let length = 0n;
@@ -1953,7 +1916,7 @@ export class SeqRewriter {
 
   mkEqCore(left: number, right: number): Result {
     const manager = this.manager;
-    if (manager.isReSort(manager.sorts[left])) return left === right ? manager.trueExpr : undefined;
+    if (manager.isReSort(manager.sorts[left])) return this.re.reduceReEq(left, right);
     const empty = this.reduceEqEmpty(left, right);
     if (empty !== undefined) return rewrite(empty, BR_REWRITE_FULL);
     if (
