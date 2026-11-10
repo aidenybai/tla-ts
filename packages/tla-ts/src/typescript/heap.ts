@@ -1020,9 +1020,11 @@ export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
 
 // The operators of the built-in functions that change an object's properties, with how many
 // arguments each takes and which of them must be objects.
+// The arguments that must be objects. A definition checks its target and descriptors itself, as
+// it throws a TypeError for any other value, but converts the properties it takes to an object.
 const OBJECT_CHANGES = new Map([
-  ["defineProperty", { operator: "DefineProperty", arity: 3, objects: [0, 2] }],
-  ["defineProperties", { operator: "DefineProperties", arity: 2, objects: [0, 1] }],
+  ["defineProperty", { operator: "DefineProperty", arity: 3, objects: [] }],
+  ["defineProperties", { operator: "DefineProperties", arity: 2, objects: [1] }],
   ["freeze", { operator: "Freeze", arity: 1, objects: [0] }],
   ["seal", { operator: "Seal", arity: 1, objects: [0] }],
   ["preventExtensions", { operator: "PreventExtensions", arity: 1, objects: [0] }],
@@ -1114,7 +1116,16 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
         (position === 0 && isBuiltInObject(argument, context)))
     );
   };
-  if (change === undefined || !change.objects.every(isObject)) {
+  // Arrays, sets, and maps that tla-ts keeps outside the heap are objects it can't read.
+  const isOutside = (argument: ts.Expression) =>
+    !isBuiltInObject(argument, context) &&
+    ["sequence", "set", "map"].includes(getKind(argument, context));
+  if (
+    change === undefined ||
+    node.arguments.length < change.arity ||
+    !change.objects.every(isObject) ||
+    node.arguments.slice(0, change.arity).some(isOutside)
+  ) {
     throw new TlaTypeScriptError(`Unsupported statement: ${node.getText()}`, node);
   }
   const values = node.arguments

@@ -2287,6 +2287,31 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("where a script replaced it");
   });
 
+  it("throws a TypeError where a definition takes a value that isn't an object", async () => {
+    const result = await checkModel(`
+      let log = "";
+      const attempt = (name: string, callback: () => void) => {
+        try {
+          callback();
+          log = log + name + "ok,";
+        } catch (error) {
+          log = log + name + (error instanceof TypeError ? "T," : "E,");
+        }
+      };
+      attempt("a", () => { Object.defineProperty(5, "foo", {}); });
+      attempt("b", () => { Object.defineProperty(undefined, "foo", {}); });
+      attempt("c", () => { Object.defineProperty("s", "foo", {}); });
+      attempt("d", () => { Object.defineProperty({}, "foo", true); });
+      const obj: { property?: unknown } = {};
+      attempt("e", () => { Object.defineProperty(obj, "property", Math); });
+      attempt("g", () => { Object.defineProperties(null, {}); });
+      const described = Object.getOwnPropertyDescriptor(obj, "property");
+      log = log + ("property" in obj) + String(obj.property) + (described!.writable === false);
+      if (log !== "aT,bT,cT,dT,eok,gT,trueundefinedtrue") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";
