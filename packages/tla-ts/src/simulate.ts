@@ -146,7 +146,7 @@ export const simulate = (options: SimulationOptions): number => {
           ["traces", Number(BigInt.asIntN(32, options.traceCount ?? (1n << 63n) - 1n))],
           ["deadlock", config.checkDeadlock],
           ["seed", String(seed)],
-          ["aril", "0"],
+          ["aril", String(options.aril)],
           ["worker", 1],
           ["install", "unknown"],
           ["sched", options.scheduler],
