@@ -162,7 +162,5 @@
   "tlapm/imported/zenon/test/test73.znn": "text-mismatch",
   "tlapm/obligations/printing/integer_literals": "exit-mismatch",
   "tlapm/obligations/use_hide/module_use_suppressed": "text-mismatch",
-  "tlapm/smoke/parse_error": "text-mismatch",
-  "tlc/generated/random/003/random_01576#assume": "time-limit",
-  "tlc/generated/random/016/random_08023#assume": "time-limit"
+  "tlapm/smoke/parse_error": "text-mismatch"
 }
