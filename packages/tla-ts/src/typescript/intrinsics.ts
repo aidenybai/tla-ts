@@ -202,6 +202,8 @@ const getBuiltInValue = (name: string, node: ts.Node, context: Context) => {
   return useJavaScript(":>", [identifier("Ref"), string(name)], context);
 };
 
+export type Collection = "Set" | "Map" | "WeakMap" | "WeakSet";
+
 // A built-in that the compiler names itself: Function.prototype, which the constructor object of a
 // class inherits from, Array.prototype, which an array that the heap holds inherits from, Array,
 // which the methods that make arrays expect as the constructor of the array they copy, or
@@ -218,7 +220,8 @@ export const translateBuiltInValue = (
     | "String.prototype"
     | "Symbol.prototype"
     | "Promise"
-    | "Promise.prototype",
+    | "Promise.prototype"
+    | `${Collection}.prototype${string}`,
   node: ts.Node,
   context: Context,
 ) => {

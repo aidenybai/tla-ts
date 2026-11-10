@@ -88,7 +88,7 @@ import {
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
-import { isBuiltInObject, translateBuiltInValue } from "./intrinsics";
+import { type Collection, getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import {
   forceHeap,
@@ -890,6 +890,43 @@ export const translateCallStatement = (
         }),
       );
     }
+  }
+  const misreceived = getMisreceivedCall(expression, context);
+  if (misreceived !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const prototype = `${misreceived.collection}.prototype` as const;
+    const method = `${prototype}.${misreceived.method}` as const;
+    return ifThenElse(
+      apply("/\\", [
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            heap,
+            translateBuiltInValue(prototype, expression, context),
+            string(misreceived.method),
+            string(method),
+          ],
+          context,
+        ),
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            heap,
+            translateBuiltInValue(method, expression, context),
+            string("call"),
+            string("Function.prototype.call"),
+          ],
+          context,
+        ),
+      ]),
+      throwTypeError(path, expression, context, frame),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call ${method} where a script replaced it`),
+        ]),
+      ),
+    );
   }
   const callee = called?.method ?? getCallback(expression.expression, path, context);
   if (callee?.body === undefined) {
@@ -2522,6 +2559,73 @@ const translateDelegatedYield = (
   );
 };
 
+// A value that evaluating can't throw or change.
+const isInert = (argument: ts.Expression): boolean =>
+  ts.isLiteralExpression(argument) ||
+  ts.isIdentifier(argument) ||
+  ts.isFunctionExpression(argument) ||
+  ts.isArrowFunction(argument) ||
+  [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+    argument.kind,
+  ) ||
+  (ts.isArrayLiteralExpression(argument) && argument.elements.every(isInert)) ||
+  (ts.isObjectLiteralExpression(argument) &&
+    argument.properties.every(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        !ts.isComputedPropertyName(property.name) &&
+        isInert(property.initializer),
+    ));
+
+const COLLECTIONS: readonly Collection[] = ["Set", "Map", "WeakMap", "WeakSet"];
+
+// A call of a collection's method through call, such as Set.prototype.add.call({}), on a receiver
+// that isn't that kind of collection, which the method rejects with a TypeError.
+const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  const receiver = node.arguments.at(0);
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    callee.name.text !== "call" ||
+    !ts.isPropertyAccessExpression(callee.expression) ||
+    receiver === undefined ||
+    !node.arguments.slice(1).every(isInert)
+  ) {
+    return undefined;
+  }
+  const method = callee.expression;
+  const owner = method.expression;
+  const kind = getKind(owner, context);
+  const ownerName =
+    ts.isPropertyAccessExpression(owner) && owner.name.text === "prototype"
+      ? getBuiltIn(owner.expression, context)
+      : kind === "set"
+        ? "Set"
+        : kind === "map"
+          ? "Map"
+          : undefined;
+  const collection = COLLECTIONS.find((candidate) => candidate === ownerName);
+  const cast = getCast(receiver);
+  const made =
+    ts.isNewExpression(cast) && (cast.arguments ?? []).length === 0
+      ? getBuiltIn(cast.expression, context)
+      : undefined;
+  const isSymbol =
+    ts.isCallExpression(cast) &&
+    getBuiltIn(cast.expression, context) === "Symbol" &&
+    cast.arguments.every(ts.isStringLiteral);
+  // A primitive, an object that a literal makes, a built-in prototype, or another collection.
+  const isOther =
+    (!ts.isIdentifier(cast) && isInert(cast)) ||
+    isUndefinedLiteral(cast, context) ||
+    isSymbol ||
+    (made !== collection && COLLECTIONS.some((candidate) => candidate === made)) ||
+    (ts.isPropertyAccessExpression(cast) &&
+      cast.name.text === "prototype" &&
+      getBuiltIn(cast.expression, context) !== undefined);
+  return collection !== undefined && isOther ? { collection, method: method.name.text } : undefined;
+};
+
 const translateExpressionStatement = (
   expression: ts.Expression,
   path: Path,
@@ -2715,22 +2819,6 @@ const translateExpressionStatement = (
   // A new of a value that isn't a class that the script declares, such as a built-in method,
   // throws a TypeError if the value isn't a constructor. tla-ts can't call one that is. Its
   // arguments run first, so they must be values that can't throw.
-  const isInert = (argument: ts.Expression): boolean =>
-    ts.isLiteralExpression(argument) ||
-    ts.isIdentifier(argument) ||
-    ts.isFunctionExpression(argument) ||
-    ts.isArrowFunction(argument) ||
-    [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
-      argument.kind,
-    ) ||
-    (ts.isArrayLiteralExpression(argument) && argument.elements.every(isInert)) ||
-    (ts.isObjectLiteralExpression(argument) &&
-      argument.properties.every(
-        (property) =>
-          ts.isPropertyAssignment(property) &&
-          !ts.isComputedPropertyName(property.name) &&
-          isInert(property.initializer),
-      ));
   if (
     ts.isNewExpression(expression) &&
     context.heap !== undefined &&

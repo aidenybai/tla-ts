@@ -2251,6 +2251,42 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws a TypeError where call gives a collection's method another receiver", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      const attempt = (callback: () => void) => {
+        try {
+          callback();
+        } catch (error) {
+          if (error instanceof TypeError) count = count + 1;
+        }
+      };
+      attempt(() => { Set.prototype.clear.call(false); });
+      attempt(() => { Set.prototype.add.call({}, 1); });
+      attempt(() => { Set.prototype.has.call(new Map(), 1); });
+      attempt(() => { Map.prototype.get.call([], 1); });
+      attempt(() => { Map.prototype.set.call(Map.prototype, 1, 2); });
+      attempt(() => { WeakMap.prototype.set.call({}, {}, 1); });
+      attempt(() => { WeakSet.prototype.add.call(Symbol(), {}); });
+      attempt(() => { Set.prototype.values.call(undefined); });
+      attempt(() => { Set.prototype.has.call(new WeakSet(), 1); });
+      attempt(() => {
+        const set = new Set<number>();
+        set.clear.call(0);
+      });
+      if (count !== 10) throw new Error(String(count));
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a script replaced a collection's method that call runs", async () => {
+    const result = await checkModel(`
+      Object.defineProperty(Set.prototype, "clear", { value: () => {} });
+      Set.prototype.clear.call(false);
+    `);
+    expect(result.failure?.message).toContain("where a script replaced it");
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";
