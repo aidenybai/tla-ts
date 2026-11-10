@@ -197,6 +197,15 @@ export class TlaFeatureUnsupportedError extends TlaEvaluationError {
   }
 }
 
+// TLC reads a checkpoint that isn't there with a Java exception.
+export class TlaMissingCheckpointError extends TlaEvaluationError {
+  constructor(directory: string) {
+    super(`The directory ${directory} holds no checkpoint to recover from.`);
+    this.name = "TlaEvaluationError";
+    setExitCode(this, EXIT_STATUS.error);
+  }
+}
+
 // An ALIAS's _format that can't print the trace, where TLC leaks a Java exception.
 export class TlaAliasFormatError extends TlaEvaluationError {
   constructor(message: string) {

@@ -38,6 +38,8 @@ import {
   TlaConfigError,
   TlaError,
   TlaEvaluationError,
+  TlaFeatureUnsupportedError,
+  TlaMissingCheckpointError,
   TlaSyntaxError,
   getUnexpectedException,
   UNEXPECTED_EXCEPTION,
@@ -941,6 +943,15 @@ const checkSpec = async (
   const seed = args.seed;
   const version = printer.version;
   printWelcome(printer);
+  // TLC reads the checkpoint's table of names first.
+  const recoverDirectory = args.recoverDirectory;
+  if (recoverDirectory !== undefined) {
+    throw existsSync(join(recoverDirectory, "vars.chkpt"))
+      ? new TlaFeatureUnsupportedError(
+          `tla-ts can't recover a model check from the checkpoint in ${recoverDirectory}.`,
+        )
+      : new TlaMissingCheckpointError(recoverDirectory);
+  }
   printStartupBanner(printer, args);
   const configPath = args.configPath ?? specPath.replace(/\.tla$/, ".cfg");
   if (!existsSync(configPath)) {
@@ -1203,10 +1214,6 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   }
   if (parsed.isUsage) {
     console.log(getTlcUsage());
-    return 1;
-  }
-  if (parsed.isRecovering) {
-    console.error("Error: tla-ts can't recover a model check from a checkpoint.");
     return 1;
   }
   // TLC opens the file of a -dump as it reads its arguments, in the meta directory it creates.

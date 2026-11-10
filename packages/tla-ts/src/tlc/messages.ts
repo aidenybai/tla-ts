@@ -192,6 +192,7 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
     true,
   ],
   [2156, "TLC supports at most %1% model values, but model value %2% exceeds this limit.", false],
+  [2156, "tla-ts can't recover a model check from the checkpoint in %1%.", false],
   [2165, "Choose can only deal with numbers up to %1%", false],
   [2169, "The %1% argument of %2% should be a %3%, but instead it is:\n%4%", true],
   [2170, "Argument mismatch in operator application.%1%", false],
