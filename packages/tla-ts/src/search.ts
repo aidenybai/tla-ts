@@ -14,7 +14,7 @@ import type {
   Violation,
 } from "./check";
 import type { ConfigValue, ModelConfig } from "./config";
-import { getReadVariables, isConstantLevel } from "./dependencies";
+import { getReadVariables, isConstantLevel, isExpressionImpure } from "./dependencies";
 import {
   isStackOverflow,
   TlaConfigError,
@@ -566,6 +566,8 @@ interface Search {
   ) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
+  // Whether a state's fingerprint state takes work to find and is the same each time.
+  isFingerprintStateReusable: boolean;
   // TLC drops a constraint that is a true constant formula.
   isConstrained: boolean;
   // With -continue, TLC goes on to the successors of a state that violates an invariant, and
@@ -821,6 +823,10 @@ export const createSearch = (
     properties,
     spec,
     isSymmetric: symmetryGroup !== undefined,
+    isFingerprintStateReusable:
+      view === undefined
+        ? symmetryGroup !== undefined
+        : !isExpressionImpure([view.expression], environment),
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,
     getStoredFingerprints: (count, getState, getFingerprints) => {

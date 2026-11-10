@@ -754,10 +754,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   );
   // TLC 1.7.4 creates its model checker, which TLCGet reads, once it has built the liveness checker.
   runtime.isStarted = true;
-  const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
+  const isRawIndexed = search.isFingerprintStateReusable;
+  const isCanonicalizedFirst = isRawIndexed || search.isSymmetric || liveness !== undefined;
 
   const store = createStateStore(search.isSymmetric);
   const seenStates = createHashIndex();
+  const rawStates = createHashIndex();
   const canonicalizeState = store.canonicalizeState;
 
   const toRecord = (state: Value[]): Record<string, Value> =>
@@ -1063,6 +1065,18 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       hash = combineHash(hash, getValueHash(state[index]));
     return hash & 0x3fffffff;
   };
+  // A successor that is itself a stored state has that state's fingerprint state, so it skips
+  // finding one. Hashing a lazy value would evaluate it, so a state with one isn't looked up.
+  const getRawHash = (state: Value[]) =>
+    state.some(
+      (value) =>
+        typeof value === "object" &&
+        value.kind !== "Set" &&
+        value.kind !== "Function" &&
+        value.kind !== "ModelValue",
+    )
+      ? -1
+      : getStateHash(state);
   // TLC fingerprints a state once it finds the state in the model.
   const fingerprintModelState = (state: Value[]) => {
     for (const value of state) {
@@ -1204,6 +1218,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     if (!isInModel) return undefined;
     markSeen(hash, store.getCount());
+    const rawHash = isRawIndexed ? getRawHash(state) : -1;
+    if (rawHash !== -1) rawStates.add(rawHash, store.getCount());
     addState(state, fingerprintState, -1, undefined, continuedInvariants.length > 0);
     return undefined;
   };
@@ -1220,15 +1236,20 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     current.candidate = successor.state;
     current.candidateLevel = depth + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
-    const fingerprintState = getFingerprintState(successor.state);
-    const hash = getStateHash(fingerprintState);
-    const foundIndex = findStateIndex(hash, fingerprintState);
+    const rawHash = isRawIndexed ? getRawHash(successor.state) : -1;
+    const rawIndex =
+      rawHash === -1 ? -1 : rawStates.find(rawHash, store.isStoredIdentically, successor.state);
+    // A stored state's values were fingerprinted when it was stored, and it's never new.
+    const isRawStored = rawIndex !== -1;
+    const fingerprintState = isRawStored ? successor.state : getFingerprintState(successor.state);
+    const hash = isRawStored ? -1 : getStateHash(fingerprintState);
+    const foundIndex = isRawStored ? rawIndex : findStateIndex(hash, fingerprintState);
     const isStateInModel = search.satisfiesConstraints(successor.state, state);
     if (isStateInModel) search.trackStatePossible(successor.state);
     const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
-      fingerprintModelState(fingerprintState);
+      if (!isRawStored) fingerprintModelState(fingerprintState);
       successor.state.forEach(markFingerprinted);
     }
     const existing = isInModel ? foundIndex : -1;
@@ -1293,6 +1314,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (!isNew) return undefined;
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
     markSeen(hash, store.getCount());
+    if (rawHash !== -1) rawStates.add(rawHash, store.getCount());
     addState(successor.state, fingerprintState, index, successor.action, checked.isViolating);
     runtime.queueSize++;
     return undefined;
