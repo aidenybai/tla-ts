@@ -2135,6 +2135,36 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs calls that change state inside expressions in order", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      function counter() {
+        count += 1;
+        return count;
+      }
+      const values = [counter(), counter()];
+      const object = { first: counter(), second: counter() + count };
+      if (counter() !== 5) throw new Error("if");
+      const total = values[0] + values[1] + object.first + object.second;
+      if (total !== 14) throw new Error("total");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects running a call before an operand that reads what it changes", () => {
+    expect(() =>
+      compile(`
+        let count = 0;
+        function counter() {
+          count += 1;
+          return count;
+        }
+        const total = count + counter();
+        if (total !== 1) throw new Error("total");
+      `),
+    ).toThrow("tla-ts can't run this before what reads what it changes");
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

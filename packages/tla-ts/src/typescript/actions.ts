@@ -4012,6 +4012,161 @@ const translateAwait = (
   );
 };
 
+const VALUE_KEYWORDS = new Set([
+  ts.SyntaxKind.TrueKeyword,
+  ts.SyntaxKind.FalseKeyword,
+  ts.SyntaxKind.NullKeyword,
+  ts.SyntaxKind.ThisKeyword,
+]);
+
+interface LeadingCall {
+  call: ts.CallExpression | undefined;
+  // Whether evaluation may stop or branch before what follows, which then can't run first.
+  isBlocked: boolean;
+}
+
+// The first call in a node's evaluation order that only statements can run, with the nodes that
+// evaluate before it, which can run it first unless they read what it changes.
+const findLeadingCall = (
+  node: ts.Node,
+  before: ts.Node[],
+  path: Path,
+  context: Context,
+): LeadingCall => {
+  const none = { call: undefined, isBlocked: false };
+  const blocked = { call: undefined, isBlocked: true };
+  const evaluate = (inner: ts.Node) => {
+    before.push(inner);
+    return none;
+  };
+  const inOrder = (nodes: readonly ts.Node[]): LeadingCall => {
+    for (const inner of nodes) {
+      const found = findLeadingCall(inner, before, path, context);
+      if (found.call !== undefined || found.isBlocked) return found;
+    }
+    return none;
+  };
+  if (ts.isExpression(node) && path.scope.results.has(node)) return none;
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isTypeOfExpression(node) ||
+    ts.isVoidExpression(node) ||
+    ts.isSpreadElement(node) ||
+    ts.isSpreadAssignment(node)
+  ) {
+    return findLeadingCall(node.expression, before, path, context);
+  }
+  if (ts.isPropertyAccessExpression(node)) {
+    const found = findLeadingCall(node.expression, before, path, context);
+    return found.call !== undefined || found.isBlocked ? found : evaluate(node);
+  }
+  if (ts.isElementAccessExpression(node)) {
+    const found = inOrder([node.expression, node.argumentExpression]);
+    return found.call !== undefined || found.isBlocked ? found : evaluate(node);
+  }
+  if (ts.isPrefixUnaryExpression(node)) {
+    return node.operator === ts.SyntaxKind.PlusPlusToken ||
+      node.operator === ts.SyntaxKind.MinusMinusToken
+      ? blocked
+      : findLeadingCall(node.operand, before, path, context);
+  }
+  if (ts.isArrayLiteralExpression(node)) return inOrder(node.elements);
+  if (ts.isObjectLiteralExpression(node)) {
+    return node.properties.every(
+      (property) =>
+        ts.isPropertyAssignment(property) ||
+        ts.isShorthandPropertyAssignment(property) ||
+        ts.isSpreadAssignment(property),
+    )
+      ? inOrder(
+          node.properties.flatMap((property): ts.Node[] =>
+            ts.isPropertyAssignment(property)
+              ? ts.isComputedPropertyName(property.name)
+                ? [property.name.expression, property.initializer]
+                : [property.initializer]
+              : ts.isShorthandPropertyAssignment(property)
+                ? [property.name]
+                : [property],
+          ),
+        )
+      : blocked;
+  }
+  if (ts.isTemplateExpression(node)) {
+    return inOrder(node.templateSpans.map((span) => span.expression));
+  }
+  if (ts.isConditionalExpression(node)) {
+    const found = findLeadingCall(node.condition, before, path, context);
+    return found.call !== undefined ? found : blocked;
+  }
+  if (ts.isBinaryExpression(node)) {
+    const kind = node.operatorToken.kind;
+    if (
+      kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      kind === ts.SyntaxKind.BarBarToken ||
+      kind === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      const found = findLeadingCall(node.left, before, path, context);
+      return found.call !== undefined ? found : blocked;
+    }
+    if (kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
+      return findLeadingCall(node.right, before, path, context);
+    }
+    const isAssignment =
+      kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+    return isAssignment ? blocked : inOrder([node.left, node.right]);
+  }
+  if (ts.isCallExpression(node)) {
+    if (!isPlainCallee(node.expression, context)) return blocked;
+    const found = inOrder(node.arguments);
+    if (found.call !== undefined || found.isBlocked) return found;
+    if (isGeneratorType(node, context)) return blocked;
+    return isStatementCall(node, path, context) ? { call: node, isBlocked: false } : evaluate(node);
+  }
+  return ts.isIdentifier(node) ||
+    ts.isLiteralExpression(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    VALUE_KEYWORDS.has(node.kind)
+    ? evaluate(node)
+    : blocked;
+};
+
+// The call inside a statement's expression that runs as its own statement first, other than one
+// that the statement itself runs.
+const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = ts.isExpressionStatement(statement)
+    ? statement.expression
+    : ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations[0]?.initializer
+      : ts.isIfStatement(statement)
+        ? statement.expression
+        : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
+          ? statement.expression
+          : undefined;
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const call = findLeadingCall(evaluated, before, path, context).call;
+  const outer = skipCasts(evaluated);
+  if (
+    call === undefined ||
+    call === outer ||
+    // The statement makes the objects that the call's arguments make.
+    getAllocated(call, context).length > 0 ||
+    (ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      skipCasts(outer.right) === call) ||
+    // A call's first argument already runs first.
+    (ts.isCallExpression(outer) && outer.arguments.at(0) === call)
+  ) {
+    return undefined;
+  }
+  rejectEarlyRun(call, [call], before, path, context);
+  return call;
+};
+
 const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Context) => {
   const results = path.scope.results;
   if (ts.isExpressionStatement(statement)) {
@@ -4061,6 +4216,26 @@ export const translateStatements = (
         {
           ...after,
           scope: { ...after.scope, results: new Map([...after.scope.results, [awaited, value]]) },
+        },
+        context,
+        frame,
+      ),
+    );
+  }
+  const hoistedCall = getHoistedCall(statement, path, context);
+  if (hoistedCall !== undefined) {
+    return translateCallStatement(hoistedCall, path, context, frame, (after, value) =>
+      translateStatements(
+        statements,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              [hoistedCall, value ?? getUndefined(context)],
+            ]),
+          },
         },
         context,
         frame,
