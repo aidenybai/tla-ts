@@ -9,7 +9,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { formatYaml, parseTest, SUITE_DIRECTORY, type TestMetadata } from "./test-file";
+import {
+  formatYaml,
+  keepCorrection,
+  parseTest,
+  SUITE_DIRECTORY,
+  type TestMetadata,
+} from "./test-file";
 
 export const GENERATED_DIRECTORY = join(SUITE_DIRECTORY, "tlc/generated");
 export const MODULES = "Integers, Sequences, FiniteSets, Bags, TLC";
@@ -89,13 +95,14 @@ export const writeTest = (
   const module = `---- MODULE ${moduleName} ----\n${body}\n====\n`;
   written.add(target);
   const existing = existsSync(target) ? parseTest(target, readFileSync(target, "utf8")) : undefined;
+  const kept = keepCorrection(existing, metadata, module);
   const isUnchanged =
     existing !== undefined &&
     existing.source.endsWith(`---*)\n${module}`) &&
-    isDeepStrictEqual(existing.metadata, JSON.parse(JSON.stringify(metadata)));
+    isDeepStrictEqual(existing.metadata, JSON.parse(JSON.stringify(kept)));
   if (isUnchanged) return;
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, `(*---\n${formatYaml(metadata)}\n---*)\n${module}`);
+  writeFileSync(target, `(*---\n${formatYaml(kept)}\n---*)\n${module}`);
 };
 
 const listFiles = (directory: string): string[] =>

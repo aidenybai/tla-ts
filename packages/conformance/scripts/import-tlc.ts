@@ -12,8 +12,10 @@ import { availableParallelism } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { getHost, runPool, runTest } from "./hosts";
 import {
+  findTests,
   formatYaml,
   isDeclaredOutcome,
+  keepCorrection,
   type Outcome,
   OUTCOME_EXITS,
   parseTest,
@@ -324,7 +326,13 @@ const writePending = (pending: PendingTest) => {
     cpSync(fixture.from, target);
   });
   const path = join(pending.directory, `${pending.moduleName}.tla`);
-  writeFileSync(path, renderTest(pending.metadata, pending.moduleText));
+  writeFileSync(
+    path,
+    renderTest(
+      keepCorrection(corrections.get(path), pending.metadata, pending.moduleText),
+      pending.moduleText,
+    ),
+  );
   return path;
 };
 
@@ -337,6 +345,7 @@ const pendingTests = [
     .flatMap((path) => portModelTest(path) ?? []),
 ];
 
+const corrections = new Map(findTests([importDirectory]).map((test) => [test.path, test]));
 rmSync(importDirectory, { recursive: true, force: true });
 
 const command = getHost("tlc");
@@ -364,7 +373,14 @@ await runPool(pendingTests, WORKERS, async (pending) => {
     return;
   }
   if (pending.isOutcomeObserved && observed) {
-    writeFileSync(path, renderTest({ ...pending.metadata, outcome: observed }, pending.moduleText));
+    const metadata = { ...pending.metadata, outcome: observed };
+    writeFileSync(
+      path,
+      renderTest(
+        keepCorrection(corrections.get(path), metadata, pending.moduleText),
+        pending.moduleText,
+      ),
+    );
   }
   kept.count += 1;
   if (kept.count % 100 === 0) console.log(`${kept.count}/${pendingTests.length}`);

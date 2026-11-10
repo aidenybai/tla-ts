@@ -37,6 +37,7 @@ export interface TestMetadata {
   args?: string[];
   includes?: string[];
   stack?: string;
+  correct?: Record<string, Recording>;
 }
 
 export interface Recording {
@@ -163,6 +164,18 @@ export const formatYaml = (value: unknown) =>
 
 export const getRecording = (test: SuiteTest, context: string) =>
   test.recordings?.[context] ?? test.recordings?.[ALL_CONTEXTS];
+
+export const getCorrection = (test: SuiteTest, context: string) =>
+  test.metadata.correct?.[context] ?? test.metadata.correct?.[ALL_CONTEXTS];
+
+export const keepCorrection = (
+  existing: SuiteTest | undefined,
+  metadata: TestMetadata,
+  moduleText: string,
+) =>
+  existing?.metadata.correct && existing.source.endsWith(`---*)\n${moduleText}`)
+    ? { ...metadata, correct: existing.metadata.correct }
+    : metadata;
 
 const isSameRecording = (left: Recording, right: Recording) =>
   left.exit === right.exit && left.transcript === right.transcript;
