@@ -724,6 +724,13 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left.kind === "Function" && right.kind === "Function")
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
+  // The sizes decide first, so an interval of another size never needs its elements.
+  if (left.kind === "Interval" && right.kind === "Set") {
+    if (getCardinality(left) !== right.elements.length) return false;
+  }
+  if (left.kind === "Set" && right.kind === "Interval") {
+    if (left.elements.length !== getCardinality(right)) return false;
+  }
   if (isModelValue(left) || isModelValue(right)) {
     // TLC enumerates a lambda, which can fail, before it compares it.
     if (left.kind === "LazyFunction") toFiniteFunction(left);
@@ -1222,6 +1229,17 @@ const isStrictlySorted = (elements: Value[]) => {
   return true;
 };
 
+const isAscendingIntegers = (elements: Value[]) => {
+  for (let index = 0; index < elements.length; index++) {
+    const element = elements[index];
+    const previous = index > 0 ? elements[index - 1] : undefined;
+    if (typeof element !== "number" || (typeof previous === "number" && previous >= element)) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export const createSet = (elements: Value[]): SetValue => {
   // TLC's sort compares each element after the first with those before it.
   for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
@@ -1236,6 +1254,7 @@ export const createSet = (elements: Value[]): SetValue => {
 
 // TLC builds a set enumeration unsorted, so one whose elements it can't compare still evaluates.
 export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
+  if (isAscendingIntegers(elements)) return createSortedSet(elements);
   const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
     createSet,
     (mixed) => ({ kind: "MixedSet", elements: mixed }),
@@ -2254,6 +2273,21 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   return isElement;
 };
 
+// Integers compare by subtraction, so a search that meets only integers needs no other comparison.
+const isIntegerInSortedSet = (element: number, set: SetValue) => {
+  const elements = set.elements;
+  const bounds = { low: 0, high: elements.length - 1 };
+  while (bounds.low <= bounds.high) {
+    const middle = (bounds.low + bounds.high) >> 1;
+    const probe = elements[middle];
+    if (typeof probe !== "number") return undefined;
+    if (probe === element) return true;
+    if (probe < element) bounds.low = middle + 1;
+    else bounds.high = middle - 1;
+  }
+  return false;
+};
+
 const isInSortedSet = (element: Value, set: SetValue) =>
   findSortedIndex(set.elements, element) !== -1;
 
@@ -2271,7 +2305,17 @@ const isModelValueMember = (modelValue: ModelValue, set: Value) => {
   return false;
 };
 
+// The common cases stay small enough for V8 to inline.
 const isElementOfSet = (element: Value, set: Value): boolean => {
+  if (typeof element === "number" && typeof set === "object") {
+    if (set.kind === "Set")
+      return isIntegerInSortedSet(element, set) ?? isElementOfAnySet(element, set);
+    if (set.kind === "Interval") return element >= set.low && element <= set.high;
+  }
+  return isElementOfAnySet(element, set);
+};
+
+const isElementOfAnySet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":

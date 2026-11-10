@@ -89,13 +89,6 @@ export const getBoolean = (args: BuiltinArgument[], index: number, name: string)
   return value;
 };
 
-export const getSet = (args: BuiltinArgument[], index: number, name: string) => {
-  const value = getValue(args, index, name);
-  if (!isSetValue(value))
-    throw createArgumentError(name, `${name} expects a set but received ${formatValue(value)}`);
-  return value;
-};
-
 export const getOperator = (args: BuiltinArgument[], index: number, name: string) => {
   const argument = args[index];
   if (argument === undefined || !isOperatorValue(argument)) {

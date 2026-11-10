@@ -348,7 +348,9 @@ export const getSubsetOperator =
         `Attempted to evaluate an expression of form S \\subseteq T, but S was not enumerable.\n${describeRange(expression)}`,
       );
     }
-    return builtin.evaluate([left, right]);
+    return builtin.evaluateBinary
+      ? builtin.evaluateBinary(left, right)
+      : builtin.evaluate([left, right]);
   };
 
 // TLC rejects a decimal, or an integer literal too big for it, while it processes the spec.

@@ -1,4 +1,4 @@
 {
-  "tlc/generated/random/003/random_01576#assume": "exit-mismatch",
+  "tlc/generated/random/003/random_01576#assume": "time-limit",
   "tlc/generated/random/016/random_08023#assume": "time-limit"
 }
