@@ -2433,6 +2433,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops where a nested pattern destructures an element that an array lacks", async () => {
+    const result = await checkModel(`
+      const values: { x: number }[][] = [[]];
+      const read = () => {
+        for (const [{ x }] of values) {
+          return;
+        }
+      };
+      read();
+      const other: { x: number }[][] = [[{ x: 1 }]];
+      for (const [{ x }] of other) {
+        if (x !== 1) throw new Error("x");
+      }
+    `);
+    expect(result.failure?.message).toContain("can't throw the TypeError of destructuring");
+  });
+
   it("stops where a promise resolves with an array that Array.prototype gives a then", async () => {
     const result = await checkModel(`
       Object.defineProperty(Array.prototype, "then", {

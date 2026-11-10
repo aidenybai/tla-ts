@@ -292,14 +292,12 @@ export const bindPatternInline = (
       initializer === undefined ? getField(value, key) : getOptionalField(value, key, context);
     return bindPatternInline(element.name, withDefault(part), current, context);
   }, scope);
-  if (
-    !ts.isObjectBindingPattern(pattern) ||
-    heapSymbol === undefined ||
-    !isHeapType(type, pattern, context)
-  ) {
-    return bound;
-  }
-  const keys = pattern.elements.flatMap((element) => {
+  if (heapSymbol === undefined) return bound;
+  const isHeapObject = ts.isObjectBindingPattern(pattern) && isHeapType(type, pattern, context);
+  // A nested pattern may destructure an element that an array lacks, which throws a TypeError
+  // that TLC would find only where something reads what the pattern binds.
+  if (!isHeapObject && !ts.isBindingElement(pattern.parent)) return bound;
+  const keys = (isHeapObject ? pattern.elements : []).flatMap((element) => {
     if (element.dotDotDotToken !== undefined) return [];
     const name = element.propertyName ?? element.name;
     const key =
