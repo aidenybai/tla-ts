@@ -657,12 +657,6 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     }
     return compareValues(left, right) === 0;
   }
-  const isHashed =
-    (left.kind === "Set" || left.kind === "Function") &&
-    (right.kind === "Set" || right.kind === "Function") &&
-    left.hash !== 0 &&
-    right.hash !== 0;
-  if (isHashed && left.hash !== right.hash) return false;
   if (left.kind === "Function" && right.kind === "Function")
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;

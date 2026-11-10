@@ -379,7 +379,6 @@
   "tlc/generated/random/014/random_07052#assume": "exit-mismatch",
   "tlc/generated/random/016/random_08023#assume": "time-limit",
   "tlc/generated/random/016/random_08304#assume": "exit-mismatch",
-  "tlc/generated/state_space/record/except/space_record__except__action_constraint": "exit-mismatch",
   "tlc/imported/sany/errors/E4294/E4294_Module_Test": "message-mismatch",
   "tlc/imported/sany/syntax/labels/labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885": "exit-mismatch",
   "tlc/imported/sany/syntax/sets/sets_mistaken_set_filter_tuples_test": "text-mismatch",
