@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import { join } from "node:path";
-import { getContexts, getRecording, parseTest, SUITE_DIRECTORY } from "../scripts/test-file";
+import {
+  getContexts,
+  getCorrection,
+  getRecording,
+  keepCorrection,
+  parseTest,
+  SUITE_DIRECTORY,
+} from "../scripts/test-file";
 import { getMessageCodes, normalizeTranscript } from "../scripts/transcript";
 
 const SOURCE = `(*---
@@ -36,6 +43,28 @@ describe("parseTest", () => {
   it("gives a recorded test the same source as an unrecorded one", () => {
     expect(parseSample(RECORDED).source).toBe(parseSample(SOURCE).source);
     expect(getRecording(parseSample(RECORDED), "next")).toEqual({ exit: 0 });
+  });
+});
+
+describe("getCorrection", () => {
+  const corrected = parseSample(
+    RECORDED.replace("outcome: success\n", "outcome: success\ncorrect:\n  all:\n    exit: 10\n"),
+  );
+
+  it("gives a test's correct outcome next to the recording of its oracle", () => {
+    expect([getCorrection(corrected, "next"), getRecording(corrected, "next")]).toEqual([
+      { exit: 10 },
+      { exit: 0 },
+    ]);
+  });
+
+  it("keeps the correct outcome while the module stays the same", () => {
+    const metadata = { description: "A test.", outcome: "success" };
+    const module = "---- MODULE sample ----\nTest == TRUE\n====\n";
+    expect(keepCorrection(corrected, metadata, module).correct).toEqual({ all: { exit: 10 } });
+    expect(keepCorrection(corrected, metadata, module.replace("TRUE", "FALSE")).correct).toBe(
+      undefined,
+    );
   });
 });
 

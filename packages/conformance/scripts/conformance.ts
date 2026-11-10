@@ -2,7 +2,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { getHost, getSuiteCommand, HOSTS, runPool, runTest, type HostResult } from "./hosts";
-import { findTests, getContexts, getRecording, getShard, type Recording } from "./test-file";
+import {
+  findTests,
+  getContexts,
+  getCorrection,
+  getRecording,
+  getShard,
+  type Recording,
+} from "./test-file";
 import { getMessageCodes } from "./transcript";
 
 type Verdict =
@@ -73,7 +80,9 @@ const results: ResultEntry[] = [];
 await runPool(tests, WORKERS, async (test) => {
   for (const context of getContexts(test)) {
     const actual = await runTest(host, test, context, limits);
-    const expected = getRecording(test, context.name);
+    const expected =
+      (hostName === test.suite ? undefined : getCorrection(test, context.name)) ??
+      getRecording(test, context.name);
     results.push({
       id: context.name === "model" ? test.id : `${test.id}#${context.name}`,
       verdict: getVerdict(expected, actual),
