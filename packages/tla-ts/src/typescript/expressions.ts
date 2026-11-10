@@ -1356,6 +1356,16 @@ const translateNode = (
   }
   if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
+  // The operand runs though nothing reads it, as a comma's left operand does.
+  if (ts.isVoidExpression(node)) {
+    if (ts.isLiteralExpression(node.expression)) return getUndefined(context);
+    const operand = translateExpression(node.expression, scope, context);
+    return ifExpression(
+      apply("=", [operand, operand]),
+      getUndefined(context),
+      getUndefined(context),
+    );
+  }
   const functionValue = getFunctionValue(node, context);
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
   const isHeapObject =

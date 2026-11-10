@@ -2473,6 +2473,17 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("evaluates the operand of void and gives undefined", async () => {
+    const result = await checkModel(`
+      const holder = { count: 1 };
+      const values = [void 0, void holder.count];
+      if (values[0] !== undefined || values[1] !== undefined || values.length !== 2) {
+        throw new Error("void");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("names a default function through parentheses but not through a comma", async () => {
     const result = await checkModel(`
       let log = "";
