@@ -1950,7 +1950,32 @@ export const isFiniteSet = (value: Value): boolean => {
   }
 };
 
+// Reads the rank of the key once, instead of in every comparison of a search of a sorted domain.
+const findStringIndex = (sortedValues: Value[], target: string, targetRank: number) => {
+  const ranks = stringOrder.ranks;
+  const bounds = { low: 0, high: sortedValues.length - 1 };
+  while (bounds.low <= bounds.high) {
+    const middle = (bounds.low + bounds.high) >> 1;
+    const element = sortedValues[middle];
+    const rank = typeof element === "string" ? ranks[element] : undefined;
+    const comparison = rank === undefined ? compareValues(element, target) : rank - targetRank;
+    if (comparison === 0) return middle;
+    if (comparison < 0) bounds.low = middle + 1;
+    else bounds.high = middle - 1;
+  }
+  return -1;
+};
+
 const findSortedIndex = (sortedValues: Value[], target: Value, compare = compareValues) => {
+  if (compare === compareValues && typeof target === "string") {
+    const targetRank = stringOrder.ranks[target];
+    // A worker notes a comparison of two strings ranked after it started, which a key ranked
+    // before then never makes.
+    const searchRank = stringOrder.searchRank;
+    if (targetRank !== undefined && (searchRank === undefined || targetRank < searchRank)) {
+      return findStringIndex(sortedValues, target, targetRank);
+    }
+  }
   const bounds = { low: 0, high: sortedValues.length - 1 };
   while (bounds.low <= bounds.high) {
     const middle = (bounds.low + bounds.high) >> 1;
