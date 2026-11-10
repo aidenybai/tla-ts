@@ -1099,6 +1099,7 @@ describe("errors", () => {
     ],
     ["an escape in new.target", "function make() {\n  return new.t\\u0061rget;\n}"],
     ["assigning arguments", "function make() {\n  [arguments] = [[]];\n}"],
+    ["an export name with a lone surrogate", 'function step() {}\nexport { step as "\\uD83D" };'],
   ])("rejects %s as a SyntaxError", (_, source) => {
     expect(() => compile(source)).toThrow(/^spec\.ts:\d+:\d+ SyntaxError: /);
   });

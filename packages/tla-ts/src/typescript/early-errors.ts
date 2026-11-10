@@ -140,6 +140,15 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     ) {
       reject("Unexpected private name in a pattern", node);
     }
+    if (
+      ts.isStringLiteral(node) &&
+      (ts.isExportSpecifier(node.parent) ||
+        ts.isImportSpecifier(node.parent) ||
+        ts.isNamespaceExport(node.parent)) &&
+      !node.text.isWellFormed()
+    ) {
+      reject("A module's export names can't have lone surrogates", node);
+    }
     if (ts.isMetaProperty(node) && node.name.getText() !== node.name.text) {
       reject("Keywords can't contain escapes", node.name);
     }
