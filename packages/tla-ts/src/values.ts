@@ -1769,13 +1769,31 @@ export const getNormalizedSetElements = (value: Value) => {
   return elements;
 };
 
-// TLC streams the sets a lazy set combines until it caches it, so a shared element repeats.
-export const getStreamedElements = (value: Value): Value[] => {
-  if (typeof value !== "object" || isCachedSet(value)) return toFiniteSet(value).elements;
+// TLC streams the sets a lazy set combines until it caches it, so a shared element repeats. Like
+// its enumerators, the stream stops at the first element visit accepts.
+export const someStreamedElement = (value: Value, visit: (element: Value) => boolean): boolean => {
+  if (typeof value !== "object" || isCachedSet(value)) {
+    return toFiniteSet(value).elements.some(visit);
+  }
   const sets = setTrace.sets;
   sets?.push(value);
-  const elements = streamElements(value);
+  // The set is enumerated only while it computes an element, not while visit looks at one.
+  const isFound = someElementOfStream(value, (element) => {
+    sets?.pop();
+    const isAccepted = visit(element);
+    sets?.push(value);
+    return isAccepted;
+  });
   sets?.pop();
+  return isFound;
+};
+
+export const getStreamedElements = (value: Value) => {
+  const elements: Value[] = [];
+  someStreamedElement(value, (element) => {
+    elements.push(element);
+    return false;
+  });
   return elements;
 };
 
@@ -1832,30 +1850,36 @@ const isStreamedApart = (value: Value): boolean => {
   return getCombinedSets(value)?.some(isStreamedApart) ?? false;
 };
 
-const streamElements = (value: ObjectValue): Value[] => {
+const someElementOfStream = (value: ObjectValue, visit: (element: Value) => boolean): boolean => {
   // TLC streams the sets of a UNION it hasn't enumerated, so a repeated set yields them twice.
   if (value.kind === "Union") {
-    return getUnionSets(value, getStreamedElements).flatMap((set, index) =>
-      getStreamedElements(getUnionSet(set, index, value)),
+    return getUnionSets(value, getStreamedElements).some((set, index) =>
+      someStreamedElement(getUnionSet(set, index, value), visit),
     );
   }
   if (value.kind === "FilteredSet" && isTlcEnumerable(value.base)) {
-    return getStreamedElements(value.base).filter((element) => value.test(element, false));
+    return someStreamedElement(
+      value.base,
+      (element) => value.test(element, false) && visit(element),
+    );
   }
   const components = getCombinedSets(value);
-  if (components?.some(isStreamedApart)) return enumerateSet(value, getStreamedElements);
-  if (value.kind !== "SetOperation") return toFiniteSet(value).elements;
+  if (components?.some(isStreamedApart)) {
+    return enumerateSet(value, getStreamedElements).some(visit);
+  }
+  if (value.kind !== "SetOperation") return toFiniteSet(value).elements.some(visit);
   if (value.operator === "\\cup") {
     return !isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)
-      ? toFiniteSet(value).elements
-      : [...getStreamedElements(value.left), ...getStreamedElements(value.right)];
+      ? toFiniteSet(value).elements.some(visit)
+      : someStreamedElement(value.left, visit) || someStreamedElement(value.right, visit);
   }
   const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
-  if (!isTlcEnumerable(enumerated)) return toFiniteSet(value).elements;
-  return getStreamedElements(enumerated).filter(
-    (element) => isElementOf(element, other) === (value.operator === "\\cap"),
+  if (!isTlcEnumerable(enumerated)) return toFiniteSet(value).elements.some(visit);
+  return someStreamedElement(
+    enumerated,
+    (element) => isElementOf(element, other) === (value.operator === "\\cap") && visit(element),
   );
 };
 
