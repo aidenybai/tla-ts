@@ -77,6 +77,7 @@ import {
 } from "./tlc/messages";
 import { createHashIndex } from "./hash-index";
 import { createStateStore } from "./state-store";
+import { getStoredTlcFingerprints } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -483,10 +484,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       runtime.generatedStates,
       () =>
         search
-          ? search.getStoredFingerprints(
-              store.getCount(),
-              store.getState,
-              store.getFingerprintState,
+          ? search.getStoredFingerprints(store.getCount(), store.getState, (order) =>
+              getStoredTlcFingerprints(store.getFingerprintCells(), order),
             )
           : BigInt64Array.from({ length: store.getCount() }, (_, index) =>
               runtime.getFingerprint(store.getState(index)),

@@ -49,7 +49,7 @@ import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import { MESSAGE_CODE, MISSING_INIT_174, withHeadline } from "./tlc/messages";
-import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
+import { getTlcFingerprint } from "./tlc/fingerprint";
 import { formatValue, isUpdatedElementOf, type Value } from "./values";
 
 interface NamedExpression {
@@ -557,10 +557,12 @@ interface Search {
   properties: Properties;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
+  // The fingerprints of the stored states, computed from their fingerprint states in TLC's
+  // variable order unless a view or a wide string makes TLC fingerprint the states themselves.
   getStoredFingerprints: (
     count: number,
     getState: (index: number) => Value[],
-    getFingerprintState: (index: number) => Value[],
+    getFingerprints: (order: number[]) => BigInt64Array,
   ) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
@@ -821,13 +823,13 @@ export const createSearch = (
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     getTlcOrder,
-    getStoredFingerprints: (count, getState, getFingerprintState) => {
+    getStoredFingerprints: (count, getState, getFingerprints) => {
       if (view !== undefined || isFingerprintedLikeTlc) {
         return BigInt64Array.from({ length: count }, (_, index) =>
           getTlcStateFingerprint(getState(index)),
         );
       }
-      return getTlcFingerprints(count, getFingerprintState, getTlcOrder());
+      return getFingerprints(getTlcOrder());
     },
     getFingerprintState: (state) => {
       if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
