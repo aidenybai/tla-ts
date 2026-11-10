@@ -18,6 +18,7 @@ import {
   formatSanyWarnings,
   TlaConfigError,
   TlaEvaluationError,
+  TlaFeatureUnsupportedError,
   TlaModuleError,
   TlaSyntaxError,
   UNEXPECTED_EXCEPTION,
@@ -155,7 +156,13 @@ const toConstantValue = (value: ConfigValue) => {
   try {
     return toValue(value);
   } catch (error) {
-    if (!(error instanceof TlaEvaluationError) || error instanceof TlaModuleError) throw error;
+    if (
+      !(error instanceof TlaEvaluationError) ||
+      error instanceof TlaModuleError ||
+      error instanceof TlaFeatureUnsupportedError
+    ) {
+      throw error;
+    }
     throw setExitCode(
       new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
       EXIT_STATUS.error,

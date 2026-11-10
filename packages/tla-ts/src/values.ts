@@ -1,4 +1,10 @@
-import { isStackOverflow, TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
+import {
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaFeatureUnsupportedError,
+  TlaModuleError,
+  TlaSetBoundError,
+} from "./errors";
 import { prettyPrint } from "./pretty-print";
 import { isEvalException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
@@ -505,10 +511,18 @@ export const compareValues = (left: Value, right: Value): number => {
 
 const modelValues = new Map<string, ModelValue>();
 
+// ModelValue's index is a short.
+const MAXIMUM_MODEL_VALUES = 32768;
+
 // setStringOrder clears the model values, so each check ranks and creates its own.
 export const createModelValue = (name: string): ModelValue => {
   const known = modelValues.get(name);
   if (known) return known;
+  if (modelValues.size === MAXIMUM_MODEL_VALUES) {
+    throw new TlaFeatureUnsupportedError(
+      `TLC supports at most ${MAXIMUM_MODEL_VALUES} model values, but model value ${name} exceeds this limit.`,
+    );
+  }
   const value: ModelValue = {
     kind: "ModelValue",
     name,
