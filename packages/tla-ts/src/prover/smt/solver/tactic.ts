@@ -23,6 +23,8 @@ import { runMaxBvSharing } from "./max-bv-sharing-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
+import { createDt2BvTactic } from "./dt2bv-tactic";
+import { runElimSmallBv } from "./elim-small-bv-tactic";
 import { domSimplify } from "./dom-simplify";
 import { factor } from "./factor";
 import { findGoalMacros } from "./macro-finder";
@@ -666,6 +668,23 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
   [
+    "elim-small-bv",
+    {
+      descrs: getDescrs("", [
+        ["max_memory", PARAM_UINT, UINT_MAX, true],
+        ["max_steps", PARAM_UINT, UINT_MAX, true],
+        ["max_bits", PARAM_UINT, 4, true],
+      ]),
+      build: (environment, params) =>
+        runElimSmallBv(
+          environment.manager,
+          getUint(params, "max_bits", 4),
+          getUint(params, "max_steps", UINT_MAX),
+        ),
+    },
+  ],
+  ["dt2bv", { descrs: new Map(), build: (environment) => createDt2BvTactic(environment.manager) }],
+  [
     "bit-blast",
     {
       descrs: getDescrs("", [
@@ -736,7 +755,7 @@ const UNPORTED_TACTICS = new Set(
     "ackermannize_bv add-bounds blast-term-ite bv_bound_chk bv-divrem-bounds " +
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
     "degree-shift demodulator diff-neq " +
-    "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
+    "elim-predicates elim-uncnstr2 eq2bv " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
     "nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
