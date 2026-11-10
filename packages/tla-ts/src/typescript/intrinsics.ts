@@ -9,7 +9,7 @@ import type { Scope } from "./scope";
 import type { Expression } from "../ast";
 import { BUILT_INS } from "./built-ins";
 import { boolean, functionFrom, identifier, number, record, string, tuple } from "./tla";
-import { getKind } from "./types";
+import { getCollection, getKind } from "./types";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
 // constants, which compare by identity.
@@ -85,8 +85,8 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   const kind = getKind(node, context);
   if (kind === "object") return undefined;
   if (kind === "sequence") return "Array.prototype";
-  if (kind === "set") return "Set.prototype";
-  if (kind === "map") return "Map.prototype";
+  const collection = getCollection(node, context);
+  if (collection !== undefined) return `${collection}.prototype`;
   const classes = getErrorClass(type.getSymbol(), checker);
   if (classes !== undefined) {
     return NATIVE_ERRORS.has(classes[0].name) && isLibrary(classes[0])

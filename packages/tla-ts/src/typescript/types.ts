@@ -54,9 +54,10 @@ export const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
 
 const getTypeName = (type: ts.Type) => type.getSymbol()?.getName() ?? "";
 
-const isSetType = (type: ts.Type) => ["Set", "ReadonlySet"].includes(getTypeName(type));
+// A weak collection holds its keys as a collection does, as nothing can list or count them.
+const isSetType = (type: ts.Type) => ["Set", "ReadonlySet", "WeakSet"].includes(getTypeName(type));
 
-const isMapType = (type: ts.Type) => ["Map", "ReadonlyMap"].includes(getTypeName(type));
+const isMapType = (type: ts.Type) => ["Map", "ReadonlyMap", "WeakMap"].includes(getTypeName(type));
 
 // Arrays, tuples, and unions of them, such as [] | [number] | [number, number].
 export const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean =>
@@ -175,6 +176,21 @@ export const isHeapArray = (node: ts.Expression, context: Context) => {
       ts.isBindingElement(declaration) &&
       context.heapArrays.has(declaration))
   );
+};
+
+// The built-in collection that a set or a map is, which a weak one's type names.
+export const getCollection = (node: ts.Expression, context: Context) => {
+  const kind = getKind(node, context);
+  const isWeak = getTypeName(context.checker.getTypeAtLocation(node)).startsWith("Weak");
+  return kind === "set"
+    ? isWeak
+      ? "WeakSet"
+      : "Set"
+    : kind === "map"
+      ? isWeak
+        ? "WeakMap"
+        : "Map"
+      : undefined;
 };
 
 export const getKind = (node: ts.Expression, context: Context): Kind => {

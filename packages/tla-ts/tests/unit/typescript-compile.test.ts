@@ -2473,6 +2473,60 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("keeps a WeakMap's and a WeakSet's object keys", async () => {
+    const result = await checkModel(`
+      const foo = {};
+      const bar = {};
+      let map = new WeakMap<object, number>([[foo, 42]]);
+      map.set(bar, 1);
+      map.delete(foo);
+      let seen = new WeakSet<object>();
+      seen.add(foo);
+      if (map.has(foo) || map.get(bar) !== 1 || !seen.has(foo) || seen.has(bar)) {
+        throw new Error("weak");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("throws a TypeError where a WeakMap's method gets a Map", async () => {
+    const result = await checkModel(`
+      const foo = {};
+      const map = new WeakMap<object, number>();
+      let threw = false;
+      try {
+        map.delete.call(new Map(), foo);
+      } catch (error) {
+        threw = error instanceof TypeError;
+      }
+      if (!threw) throw new Error("misreceived");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("gives a WeakMap WeakMap.prototype", async () => {
+    const result = await checkModel(`
+      const holder = {};
+      if (Object.getPrototypeOf(new WeakMap()) !== WeakMap.prototype) throw new Error("prototype");
+      if (Object.prototype.toString.call(new WeakSet()) !== "[object WeakSet]") {
+        throw new Error("tag");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects a script that assigns a collection's method", () => {
+    expect(() =>
+      compile(`
+        const holder = {};
+        const add = WeakSet.prototype.add;
+        WeakSet.prototype.add = function (value) {
+          return add.call(this, value);
+        };
+      `),
+    ).toThrow("tla-ts can't replace a collection's methods");
+  });
+
   it("evaluates the operand of void and gives undefined", async () => {
     const result = await checkModel(`
       const holder = { count: 1 };

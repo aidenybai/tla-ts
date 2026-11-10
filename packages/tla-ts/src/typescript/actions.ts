@@ -133,6 +133,7 @@ import {
   unchanged,
 } from "./tla";
 import {
+  getCollection,
   isBooleanLike,
   rejectAnyReceiver,
   getField,
@@ -372,6 +373,14 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
   if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
   if (ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)) return undefined;
   const receiver = node.expression;
+  // tla-ts translates a collection's methods itself, so it can't call the ones a script puts there.
+  if (
+    ts.isPropertyAccessExpression(receiver) &&
+    receiver.name.text === "prototype" &&
+    COLLECTIONS.some((collection) => collection === getBuiltIn(receiver.expression, context))
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't replace a collection's methods", node);
+  }
   const isBuiltIn = context.heap !== undefined && isBuiltInObject(receiver, context);
   rejectAnyReceiver(receiver, context);
   if (!isBuiltIn && getKind(receiver, context) !== "object") return undefined;
@@ -2601,15 +2610,10 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
   }
   const method = callee.expression;
   const owner = method.expression;
-  const kind = getKind(owner, context);
   const ownerName =
     ts.isPropertyAccessExpression(owner) && owner.name.text === "prototype"
       ? getBuiltIn(owner.expression, context)
-      : kind === "set"
-        ? "Set"
-        : kind === "map"
-          ? "Map"
-          : undefined;
+      : getCollection(owner, context);
   const collection = COLLECTIONS.find((candidate) => candidate === ownerName);
   const cast = getCast(receiver);
   const made =

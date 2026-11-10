@@ -102,6 +102,7 @@ import {
   tuple,
 } from "./tla";
 import {
+  getCollection,
   rejectAnyReceiver,
   getField,
   getKind,
@@ -668,6 +669,7 @@ const translateCall = (
   if (calledMethod === "toString" && node.arguments.length <= 1) {
     const argument = node.arguments.at(0);
     const kind = argument === undefined ? "other" : getKind(argument, context);
+    const collection = argument === undefined ? undefined : getCollection(argument, context);
     return useJavaScript(
       "ObjectToString",
       [
@@ -675,9 +677,7 @@ const translateCall = (
         argument === undefined
           ? getUndefined(context)
           : translateExpression(argument, scope, context),
-        string(
-          kind === "sequence" ? "Array" : kind === "set" ? "Set" : kind === "map" ? "Map" : "",
-        ),
+        string(kind === "sequence" ? "Array" : (collection ?? "")),
       ],
       context,
     );

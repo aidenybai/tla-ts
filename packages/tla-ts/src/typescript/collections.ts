@@ -1411,6 +1411,8 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
       apply("Assert", [boolean(false), string("TLA+ sequences can't have holes")]),
     );
   }
+  const kind = constructor === "WeakSet" ? "Set" : constructor === "WeakMap" ? "Map" : constructor;
+  // A weak collection's keys are objects and symbols, as it throws a TypeError on any other key.
   if (constructor === "Set" || constructor === "Map") {
     const kinds = getKeyKinds(node, context);
     if (kinds === undefined || kinds.size > 1) {
@@ -1420,14 +1422,14 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
       );
     }
   }
-  if (constructor === "Set") {
+  if (kind === "Set") {
     if (argument === undefined) return set([]);
     if (ts.isArrayLiteralExpression(argument) && !argument.elements.some(ts.isSpreadElement)) {
       return set(argument.elements.map((element) => translateSetKey(element, scope, context)));
     }
     return translateSet(argument, scope, context);
   }
-  if (constructor !== "Map") {
+  if (kind !== "Map") {
     return translateUnknown(node, `Unsupported constructor: new ${constructor}`, context);
   }
   if (argument === undefined) return tuple([]);
