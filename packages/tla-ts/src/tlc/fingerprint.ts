@@ -9,7 +9,7 @@ import {
 } from "../values";
 
 // FP64 with TLC's first irreducible polynomial, FP64.Polys[0], which `-fp 0` selects.
-const IRREDUCIBLE_POLYNOMIAL = 0x911498ae0e66bad6n;
+export const IRREDUCIBLE_POLYNOMIAL = 0x911498ae0e66bad6n;
 
 const BYTE_MOD_TABLE = (() => {
   const powers: bigint[] = [];

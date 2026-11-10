@@ -295,7 +295,7 @@ export const createJunctionError = (
 export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" }) => {
   const field = expression.field;
   const describeMissing = (record: Value) =>
-    `Attempted to select nonexistent field "${field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
+    `Attempted to select nonexistent field "${field}" from the record\n${prettyPrint(formatValue(record))}\n${describeRange(expression)}`;
   const describeNotInDomain = (functionValue: Value) =>
     `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument "${field}", which is not in the domain of the function.`;
   return (value: Value) => {
