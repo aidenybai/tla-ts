@@ -1,6 +1,69 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist-mono";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-ink: var(--ink);
+  --color-text-2: var(--text-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-rule: var(--rule);
+  --color-well: var(--well);
+  --color-well-2: var(--well-2);
+  --color-alarm: var(--alarm);
+  --color-syntax-comment: var(--syntax-comment);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-definition: var(--syntax-definition);
+  --color-syntax-type: var(--syntax-type);
+  --shadow-card: var(--card-shadow);
+  --shadow-focus: var(--card-shadow), 0 0 0 3px var(--well-2);
+}
+
+:root {
+  --ground: #ffffff;
+  --ink: #1c1917;
+  --text-2: #57534e;
+  --muted: #8a8580;
+  --faint: #bdb8b2;
+  --rule: #ebe9e6;
+  --well: #f4f3f1;
+  --well-2: #e9e7e3;
+  --alarm: #c0392b;
+  --syntax-comment: #6e7781;
+  --syntax-string: #0a3069;
+  --syntax-number: #0550ae;
+  --syntax-keyword: #cf222e;
+  --syntax-definition: #8250df;
+  --syntax-type: #953800;
+  --card-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.04), 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 8px -2px rgb(0 0 0 / 0.06);
+}
+
+:root.dark {
+  --ground: #0a0a0a;
+  --ink: #ededed;
+  --text-2: #a1a1a1;
+  --muted: #737373;
+  --faint: #4a4a4a;
+  --rule: #1f1f1f;
+  --well: #141414;
+  --well-2: #222222;
+  --alarm: #f06a5c;
+  --syntax-comment: #8b949e;
+  --syntax-string: #a5d6ff;
+  --syntax-number: #79c0ff;
+  --syntax-keyword: #ff7b72;
+  --syntax-definition: #d2a8ff;
+  --syntax-type: #ffa657;
+  --card-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.1), 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 8px -2px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -63,5 +126,35 @@
   }
   code {
     @apply font-mono;
+  }
+  .dark * {
+    scrollbar-color: var(--well-2) transparent;
+  }
+}
+
+@layer components {
+  .region {
+    --alpha: 0.14;
+    background-color: rgb(var(--region) / var(--alpha));
+    transition: background-color 120ms ease-out;
+  }
+  .region:is([data-kind="variable"], [data-kind="read"], [data-kind="write"], [data-chip]) {
+    --alpha: 0.3;
+    border-radius: 2px;
+  }
+  [data-has-active] .region:not([data-active]) {
+    --alpha: 0.05;
+  }
+  .region[data-active] {
+    --alpha: 0.32;
+  }
+  .region[data-active]:is(
+      [data-kind="variable"],
+      [data-kind="read"],
+      [data-kind="write"],
+      [data-chip]
+    ) {
+    --alpha: 0.55;
+    box-shadow: 0 0 0 1px rgb(var(--region));
   }
 }
