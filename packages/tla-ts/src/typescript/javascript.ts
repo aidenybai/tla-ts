@@ -806,6 +806,13 @@ StringOf(value) ==
     [] TypeOf(value) = "number" -> ToString(value)
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
 
+\\* Array.prototype.join of values that aren't all strings, which writes undefined and null as
+\\* empty strings.
+JoinValues(sequence, separator) ==
+  Join([position \\in DOMAIN sequence |->
+          IF sequence[position] \\in {Undefined, Null} THEN "" ELSE StringOf(sequence[position])],
+       separator)
+
 \\* The heap after Symbol(description) makes a symbol, which holds the symbol's description.
 NewSymbol(heap, description) ==
   IF Len(WellKnownSymbols) + Len(heap.symbols) < Len(Symbols)

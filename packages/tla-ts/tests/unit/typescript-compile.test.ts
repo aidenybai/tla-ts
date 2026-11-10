@@ -2349,6 +2349,16 @@ describe("errors", () => {
     );
   });
 
+  it("joins values that aren't all strings as JavaScript does", async () => {
+    const result = await checkModel(`
+      const values: unknown[] = [1, "a", undefined, null, true, 2];
+      const numbers = [1, 2, 3];
+      const label = values.join(",") + "|" + numbers.join("-") + "|" + [].join();
+      if (label !== "1,a,,,true,2|1-2-3|") throw new Error(label);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

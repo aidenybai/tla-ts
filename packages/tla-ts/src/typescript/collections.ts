@@ -783,14 +783,11 @@ const translateSequenceOperation = (
       () => {
         const isText = (type: ts.Type | undefined) =>
           type !== undefined && (type.flags & ts.TypeFlags.StringLike) !== 0;
-        if (
-          !isText(call.elementType) ||
-          (argument !== undefined && !isText(context.checker.getTypeAtLocation(argument)))
-        ) {
-          throw new TlaTypeScriptError("join() needs strings", node);
+        if (argument !== undefined && !isText(context.checker.getTypeAtLocation(argument))) {
+          throw new TlaTypeScriptError("join() needs a string separator", node);
         }
         return useJavaScript(
-          "Join",
+          isText(call.elementType) ? "Join" : "JoinValues",
           [sequence, argument === undefined ? string(",") : translate(argument)],
           context,
         );
