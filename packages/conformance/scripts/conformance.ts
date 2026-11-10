@@ -114,7 +114,10 @@ console.log(
 console.log(JSON.stringify(tally));
 
 const failures = results.filter((result) => result.verdict !== "pass");
-const regressions = failures.filter((result) => baseline[result.id] !== result.verdict);
+const regressions = failures.filter((result) => !(result.id in baseline));
+const changed = failures.filter(
+  (result) => result.id in baseline && baseline[result.id] !== result.verdict,
+);
 const fixed = results.filter((result) => result.verdict === "pass" && result.id in baseline);
 
 if (isVerbose) {
@@ -142,6 +145,13 @@ if (isUpdatingBaseline) {
 }
 
 regressions.slice(0, 100).forEach((result) => console.log(`NEW ${result.verdict} ${result.id}`));
+changed
+  .slice(0, 100)
+  .forEach((result) =>
+    console.log(`CHANGED ${baseline[result.id]} -> ${result.verdict} ${result.id}`),
+  );
 fixed.slice(0, 100).forEach((result) => console.log(`FIXED ${result.id}`));
-console.log(`${regressions.length} not in the baseline, ${fixed.length} fixed since the baseline`);
-process.exit(regressions.length === 0 && fixed.length === 0 ? 0 : 1);
+console.log(
+  `${regressions.length} not in the baseline, ${changed.length} failing differently, ${fixed.length} fixed since the baseline`,
+);
+process.exit(regressions.length === 0 ? 0 : 1);

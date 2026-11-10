@@ -145,7 +145,7 @@ The runner compares a host's output with the recording after it removes what dif
 
 ## Track known failures
 
-`baselines/<host>.json` lists each test a host fails and its verdict. A run exits 1 if a result differs from the baseline in either direction, so a regression and an unrecorded fix both fail. Update the file with `--update-baseline`.
+`baselines/<host>.json` lists each test a host fails and its verdict. A run exits 1 only if a test fails that the baseline doesn't list. It reports a listed test that now passes, or fails with a different verdict, without failing, so a test whose result depends on machine speed doesn't fail CI. Update the file with `--update-baseline`.
 
 A baseline entry says what fails, not what is right. When an oracle has a bug, keep the correct behavior in the host and leave the test in the baseline. Tests that pin a TLC bug have `features: [tlc-bug]`.
 
