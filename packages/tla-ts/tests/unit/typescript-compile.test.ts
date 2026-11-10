@@ -2015,6 +2015,49 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't close a generator that suspended in try or yield*");
   });
 
+  it("throws and returns from inside loops", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      let found = "";
+      const find = (values: number[], target: number) => {
+        for (const value of values) {
+          if (value === target) {
+            found = found + "found" + value;
+            return;
+          }
+          log = log + value;
+        }
+        found = found + "none";
+      };
+      find([1, 2, 3], 2);
+      find([4], 9);
+      log = log + found;
+      try {
+        for (let index = 0; index < 5; index++) {
+          log = log + "i" + index;
+          if (index === 2) throw new Error("e" + index);
+        }
+        log = log + "no";
+      } catch (error) {
+        log = log + (error as Error).message;
+      }
+      async function run() {
+        let count = 0;
+        while (count < 3) {
+          count = count + 1;
+          if (count === 2) throw "w" + count;
+        }
+        return count;
+      }
+      run().catch((error: string) => { log = log + error; });
+      setTimeout(() => {
+        if (log !== "14found2nonei0i1i2e2w2") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("destructures nested patterns inside try", async () => {
     const result = await checkModel(`
       let total = 0;

@@ -3574,7 +3574,17 @@ const translateIterations = (
       ]),
     },
   });
-  const done = (current: Path) => leaf(tuple(getValues(current)));
+  // A loop that a catch or a function's return can leave gives how its body ended: "next", or
+  // "throw" or "return" with a value, which the code after it then throws or returns.
+  const hasReturn = (node: ts.Node): boolean =>
+    ts.isReturnStatement(node) ||
+    (!ts.isFunctionLike(node) &&
+      !ts.isClassLike(node) &&
+      (ts.forEachChild(node, (child) => hasReturn(child) || undefined) ?? false));
+  const isEnded = frame.throwTo !== undefined || hasReturn(loop.statement);
+  const end = (current: Path, kind: string, value: Expression = getUndefined(context)) =>
+    leaf(tuple([...(isEnded ? [string(kind), value] : []), ...getValues(current)]));
+  const done = (current: Path) => end(current, "next");
   const repeat = (current: Path) =>
     leaf(
       call(name, [
@@ -3604,16 +3614,11 @@ const translateIterations = (
   const bodyFrame: Frame = {
     ...frame,
     next: ts.isDoStatement(loop) ? testAgain : advance,
-    exit: () => {
-      throw new TlaTypeScriptError("Return after the loop ends instead", loop);
-    },
+    exit: (current, value) =>
+      value === undefined ? end(current, "return") : end(current, "returnValue", value),
     breakTo: done,
     continueTo: ts.isDoStatement(loop) ? testAgain : advance,
-    throwTo:
-      frame.throwTo &&
-      (() => {
-        throw new TlaTypeScriptError("Catch inside the loop, or throw after it ends", loop);
-      }),
+    throwTo: frame.throwTo && ((current, thrown) => end(current, "throw", thrown.value)),
     yieldTo:
       frame.yieldTo &&
       (() => {
@@ -3663,10 +3668,37 @@ const translateIterations = (
     isRecursive: true,
   };
   const result = context.names.getFresh("loop");
-  const after = bindValues(
-    path,
-    changed.map((_, position) => index(identifier(result), [number(position + 1)])),
-  );
+  const offset = isEnded ? 2 : 0;
+  const after = {
+    ...bindValues(
+      path,
+      changed.map((_, position) => index(identifier(result), [number(position + offset + 1)])),
+    ),
+    isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+  };
+  const kind = index(identifier(result), [number(1)]);
+  const carried = index(identifier(result), [number(2)]);
+  const throwTo = frame.throwTo;
+  const ended = !isEnded
+    ? continueWith(after)
+    : ifThenElse(
+        apply("=", [kind, string("next")]),
+        continueWith(after),
+        ifThenElse(
+          apply("=", [kind, string("throw")]),
+          throwTo === undefined
+            ? leaf(boolean(false))
+            : throwTo(after, {
+                value: carried,
+                uncaught: apply("Assert", [boolean(false), string("A loop threw")]),
+              }),
+          ifThenElse(
+            apply("=", [kind, string("return")]),
+            frame.exit(after),
+            frame.exit(after, carried),
+          ),
+        ),
+      );
   return letIn(
     [
       ...(iterated === undefined
@@ -3694,10 +3726,7 @@ const translateIterations = (
       path,
       result,
       call(name, [...(iterated === undefined ? [] : [number(1)]), ...getValues(path)]),
-      continueWith({
-        ...after,
-        isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
-      }),
+      ended,
     ),
   );
 };
