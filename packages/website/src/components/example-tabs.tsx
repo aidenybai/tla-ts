@@ -8,10 +8,12 @@ interface ExampleTabsProps {
   examples: Example[];
 }
 
-export const ExampleTabs = ({ examples }: ExampleTabsProps) => (
-  <Tabs.Root defaultValue={examples[0].name} className="flex flex-col gap-3">
-    <TabList tabs={examples.map((example) => ({ value: example.name, label: example.name }))} />
-    {examples.map((example) => (
+export const ExampleTabs = (props: ExampleTabsProps) => (
+  <Tabs.Root defaultValue={props.examples[0].name} className="flex flex-col gap-3">
+    <TabList
+      tabs={props.examples.map((example) => ({ value: example.name, label: example.name }))}
+    />
+    {props.examples.map((example) => (
       <Tabs.Panel
         key={example.name}
         value={example.name}

@@ -4,9 +4,9 @@ interface TabListProps {
   tabs: { value: string; label: string }[];
 }
 
-export const TabList = ({ tabs }: TabListProps) => (
+export const TabList = (props: TabListProps) => (
   <Tabs.List className="relative flex w-fit max-w-full gap-0.5 overflow-x-auto rounded-lg bg-gray-300 p-0.5">
-    {tabs.map((tab) => (
+    {props.tabs.map((tab) => (
       <Tabs.Tab
         key={tab.value}
         value={tab.value}
