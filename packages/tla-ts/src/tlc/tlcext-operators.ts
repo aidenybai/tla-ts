@@ -7,12 +7,7 @@ import {
   getThunk,
   getValue,
 } from "../builtins";
-import {
-  TlaEvaluationError,
-  TlaModuleError,
-  TlaNullPointerError,
-  TlaUnsupportedError,
-} from "../errors";
+import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "../errors";
 import { getTlcFingerprint } from "./fingerprint";
 import { formatNestedMessage } from "./messages";
 import {
@@ -259,12 +254,10 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     defineLazyOperator("PickSuccessor", 1, (args, context) => {
       // Outside an action, TLC's successor is an empty state, which assigns none of the variables.
+      // TLCExt.tla promises TRUE for a successor not fully determined, where TLCExt#pickSuccessor
+      // fingerprints it first and fails.
       const next = context?.next ?? (context?.environment.variables ?? []).map(() => undefined);
-      if (!isCompleteState(next)) {
-        throw new TlaNullPointerError(
-          'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null',
-        );
-      }
+      if (!isCompleteState(next)) return true;
       if (context?.next && runtime.isSeen(next)) return true;
       const guard = getOperator(args, 0, "PickSuccessor");
       const isPicked = guard.call([]);

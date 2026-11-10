@@ -49,10 +49,8 @@ describe("TLCExt operators match TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 3, 3]);
   });
 
-  it("fails PickSuccessor without a complete successor state", async () => {
-    expect((await checkFixture("Pick", "PickIncomplete")).failure?.message).toContain(
-      'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null',
-    );
+  it("takes PickSuccessor without a complete successor state for TRUE", async () => {
+    expect((await checkFixture("Pick", "PickIncomplete")).status).toBe("success");
   });
 
   it("does not ask interactively for an unseen successor", async () => {
