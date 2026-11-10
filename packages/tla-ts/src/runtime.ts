@@ -29,7 +29,6 @@ export interface CheckerRuntime {
   version: TlcVersion;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
-  // The first action that takes the state to the successor, as TLC's PickSuccessor finds it.
   getSuccessorAction: (state: Value[], next: Value[]) => SpecAction | undefined;
   generatedStates: number;
   distinctStates: number;

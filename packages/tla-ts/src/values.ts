@@ -3162,7 +3162,6 @@ const getJavaHashCode = (text: string) =>
     0,
   );
 
-// Java's String.format of strings, or undefined when a conversion can't format a string.
 const formatJava = (format: string, args: string[]) => {
   const indices = { next: 0, last: -1 };
   const isFitting = { value: true };
