@@ -3,6 +3,7 @@ description: Ported from TLC's ModuleSemanticsAssumeTest.
 source: tlatools/org.lamport.tlatools/test/tlc2/tool/ModuleSemanticsAssumeTest.java
 features:
   - tlc-regression
+  - tlc-bug
 flags:
   - exit-only
 outcome: success
@@ -12,6 +13,9 @@ args:
   - -deadlock
 includes:
   - ModuleSemanticsCases.tla
+correct:
+  all:
+    exit: 10
 ---*)
 ------------------------ MODULE ModuleSemanticsAssume -----------------------
 \* TLC checks each shared proposition as a startup assumption. A false result

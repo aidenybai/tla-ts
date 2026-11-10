@@ -61,7 +61,6 @@ interface Operand {
   declared?: OperatorParam;
 }
 
-// The levels of tla2sany.semantic.LevelConstants.
 export const CONSTANT_LEVEL = 0;
 export const VARIABLE_LEVEL = 1;
 export const ACTION_LEVEL = 2;
@@ -185,7 +184,6 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
 
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
-// SANY reports a level error at the range of the expression it rejects.
 const createLevelError = (message: string, expression: Expression) =>
   expression.location.range
     ? createSemanticError(`${message}.`, expression.location.range)
@@ -436,6 +434,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         data.params.add(name);
         return { data, declared: { name, arity: resolved.arity } };
       }
+      if (expression.kind === "OperatorReference") return { data: createData() };
     }
     return { data: analyze(expression, scope) };
   };
@@ -905,7 +904,7 @@ export const checkModuleLevels = (
       ? analyzeAssumeProve(body.statement, new Map(), analyzer).level
       : getLevel([body.statement]);
   };
-  // SANY's TheoremNode.LevelCheckTemporal: the proof of a temporal goal may only assume constants.
+  // The proof of a temporal goal may only assume constants.
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []

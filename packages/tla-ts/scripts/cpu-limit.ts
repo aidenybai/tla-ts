@@ -1,8 +1,5 @@
-// Runs a backend until it has used its time limit in both wall-clock and CPU time. A loaded machine
-// stretches wall-clock time, so the CPU time of the thread that runs it estimates a run on an idle
-// core. The backends run synchronously, so the runs go to a thread of the built package's decide
-// pool worker, which this terminates once a limit has passed. Until then the thread stays warm for
-// the next run, so its compiled code carries over as it does in prove.
+// Runs a backend until it has used its time limit in both wall-clock and CPU time, as a loaded
+// machine stretches wall-clock time. The thread stays warm for the next run, as it does in prove.
 
 import { once } from "node:events";
 import { join } from "node:path";
@@ -24,7 +21,6 @@ const POLL_MS = 100;
 const getVerdict = (response: DecideResponse) =>
   "verdict" in response ? response.verdict : "unknown";
 
-// The thread that the last run left, if its limit didn't pass.
 const state: { warm: Worker | undefined } = { warm: undefined };
 
 const startWorker = async () => {

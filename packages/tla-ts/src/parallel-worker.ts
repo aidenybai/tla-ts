@@ -8,15 +8,16 @@ import {
 import type { CoordinatorMessage, StartMessage, WorkerMessage } from "./parallel";
 import { createSearch } from "./search";
 import { getSuccessors, type Successor } from "./successors";
+import { setFingerprintPolynomial } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import {
   createCanonicalizer,
-  getRankedString,
-  getRankedStringCount,
+  freezeStringOrder,
+  getUnorderedString,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
   type Value,
 } from "./values";
 import { createBreak, getParentPort, type Port } from "./worker";
@@ -44,22 +45,23 @@ const runWorker = (start: StartMessage, parent: Port) => {
   const classes = new Map(start.classes);
   const order = createTlcOrder(start.source, loadModule);
   setStringOrder(order.getStringOrder(start.config));
-  setValueVersion(start.version);
-  const startupStrings = getRankedStringCount();
+  setValueOptions(start);
+  setFingerprintPolynomial(start.fingerprintPolynomial ?? 0);
+  freezeStringOrder();
   const specification = createEnvironment(start.config, {
     source: start.source,
     loadModule,
     order,
     loadClass: (name) => classes.get(name),
     print: () => {},
-    files: { readFile: undefined, writeFile: undefined },
+    files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
     isTool: start.isTool,
-    isTraceRecorded: start.isTraceRecorded,
+    traceFile: start.traceFile,
     isWarningEnabled: start.isWarningEnabled,
     version: start.version,
   });
   const environment = specification.environment;
-  const search = createSearch(start.config, environment, () =>
+  const search = createSearch(start.config, environment, specification.variableLocations, () =>
     order.getDeclarationOrder("variable"),
   );
   const nextAction = search?.spec.next;
@@ -223,9 +225,8 @@ const runWorker = (start: StartMessage, parent: Port) => {
       }
       if (!(await steal(expansion))) break;
     }
-    if (getRankedStringCount() !== startupStrings) {
-      return { type: "abort", string: getRankedString(startupStrings) };
-    }
+    const unorderedString = getUnorderedString();
+    if (unorderedString !== undefined) return { type: "abort", string: unorderedString };
     frontier.states = expansion.next;
     Atomics.store(remaining, workerIndex, frontier.states.length);
     return {

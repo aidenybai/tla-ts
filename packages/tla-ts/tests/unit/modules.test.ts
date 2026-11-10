@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue, TlaConfigError, TlaSyntaxError } from "../../src";
@@ -16,7 +16,10 @@ const checkFixture = (name: string, configName = `${name}.cfg`) =>
   check({
     source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
-    loadModule: (module) => readFileSync(join(DIRECTORY, `${module}.tla`), "utf8"),
+    loadModule: (module) => {
+      const path = join(DIRECTORY, `${module}.tla`);
+      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+    },
   });
 
 const checkSource = (body: string, modules: Record<string, string> = {}) =>
@@ -139,6 +142,17 @@ describe("nested module scoping matches SANY", () => {
     results.forEach((result) => expect(result.status).toBe("success"));
   });
 
+  it("reads a Naturals that loadModule gives, for the standard modules that use it too", async () => {
+    const naturals = "---- MODULE Naturals ----\na + b == 42\nFromFile == 7\n====";
+    const result = await checkSource("EXTENDS Naturals\nASSUME 1 + 1 = 2 /\\ FromFile = 7", {
+      Naturals: naturals,
+    });
+    expect(result.status).toBe("success");
+    await expect(
+      checkSource("EXTENDS Sequences\nASSUME TRUE", { Naturals: naturals }),
+    ).rejects.toThrow("Unknown operator: `Nat'");
+  });
+
   it("replaces ToJson of a user's Json module on master, but not on TLC 1.7.4, which has no Json class", async () => {
     const checkJson = (version: "master" | "1.7.4", json: string) =>
       check({
@@ -214,10 +228,6 @@ describe("nested module scoping matches SANY", () => {
       "a nested module named after a module loaded from the same file",
       "I == INSTANCE Inner\n---- MODULE Inner ----\nA == 1\n====",
     ],
-    [
-      "a nested module instantiated only inside LET",
-      "---- MODULE LetInner ----\nfoo == 42\n====\nop == LET Inst == INSTANCE LetInner IN Inst!foo",
-    ],
   ])("rejects %s", async (_, body) => {
     await expect(checkSource(body)).rejects.toThrow(TlaSyntaxError);
   });
@@ -268,20 +278,17 @@ describe("nested module scoping matches SANY", () => {
     );
   });
 
-  it("rejects a nested module that an unnamed theorem instantiates inside LET", async () => {
-    await expect(
-      checkSource(
-        "---- MODULE Inner ----\nA == TRUE\n====\nTHEOREM LET M == INSTANCE Inner IN M!A",
-      ),
-    ).rejects.toThrow(
-      createSanyError([
-        {
-          location: "line 2, col 1 to line 4, col 4 of module M",
-          message:
-            "Multiply-defined module 'Inner': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 3, col 4 of module Inner.",
-        },
-      ]),
-    );
+  it.each([
+    [
+      "LET",
+      "---- MODULE LetInner ----\nfoo == 42\n====\nASSUME LET Inst == INSTANCE LetInner IN Inst!foo = 42",
+    ],
+    [
+      "the LET of an unnamed theorem",
+      "---- MODULE Inner ----\nA == TRUE\n====\nTHEOREM LET M == INSTANCE Inner IN M!A",
+    ],
+  ])("instantiates a nested module inside %s", async (_, body) => {
+    expect((await checkSource(body)).status).toBe("success");
   });
 
   it("instantiates a nested module inside LET once a top-level instance follows it", async () => {

@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,6 +24,13 @@ const runCliWith = (directory: string, args: string[]) =>
 const copies: string[] = [];
 
 afterAll(() => copies.forEach((copy) => rmSync(copy, { recursive: true, force: true })));
+
+// Like TLC, the CLI writes a trace exploration spec beside a spec it finds a violation in.
+afterAll(() =>
+  readdirSync(FIXTURES, { recursive: true, encoding: "utf8" })
+    .filter((path) => /_TTrace_\d+\.(tla|bin)$/.test(path))
+    .forEach((path) => rmSync(join(FIXTURES, path))),
+);
 
 // tlapm keeps its cache in the directory it runs in, so each run works in a copy of the fixtures.
 const copyFixtures = (directory: string) => {
@@ -67,6 +82,7 @@ const STARTUP_LINE =
 const getSteadyLines = (output: string) =>
   output
     .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
+    .replace(/_TTrace_\d+/g, "_TTrace__")
     .replace(/ in \d\ds at /g, " in _ at ")
     .split("\n")
     .filter((line) => !STARTUP_LINE.test(line));
@@ -136,6 +152,7 @@ const TLC_REPORTS = [
       "3 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./Lasso_TTrace__.tla",
     ],
   ],
   [
@@ -167,6 +184,7 @@ const TLC_REPORTS = [
       "4 states generated, 3 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 3.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./Lassos_TTrace__.tla",
     ],
   ],
   [
@@ -190,6 +208,7 @@ const TLC_REPORTS = [
       "3 states generated, 3 distinct states found, 1 states left on queue.",
       "The depth of the complete state graph search is 3.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./SafetyProperty_TTrace__.tla",
     ],
   ],
   [
@@ -215,6 +234,7 @@ const TLC_REPORTS = [
       "The depth of the complete state graph search is 3.",
       "The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./FailedInvariant_TTrace__.tla",
     ],
   ],
   [
@@ -265,6 +285,7 @@ const TLC_REPORTS = [
       "2 states generated, 2 distinct states found, 0 states left on queue.",
       "The depth of the complete state graph search is 2.",
       "Finished in _ at (_)",
+      "Trace exploration spec path: ./FailedAssert_TTrace__.tla",
     ],
   ],
   [
@@ -506,12 +527,14 @@ describe("the CLI reports results like TLC", () => {
   });
 
   // TLC's output with one worker for the specs of its ContinueTest and
-  // DoInitFunctorInvariantContinueTest, and for a spec whose violating states lead to more.
-  it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors"])(
+  // DoInitFunctorInvariantContinueTest, for a spec whose violating states lead to more, and for one
+  // whose invariant reads TLCGet("level") after an ALIAS printed a trace, without the success TLC
+  // reports after the violations.
+  it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors", "ContinueAlias"])(
     "goes on past each violation in %s with -continue like TLC",
     (name) => {
       const result = runCliWith("tlc-continue", [`${name}.tla`, "-continue"]);
-      expect(result.status).toBe(0);
+      expect(result.status).toBe(12);
       expect(getSteadyLines(result.stdout)).toEqual(
         readFileSync(join(FIXTURES, "tlc-continue", `${name}.out`), "utf8").split("\n"),
       );
@@ -1203,11 +1226,19 @@ describe("the CLI takes several specs and globs", () => {
     expect(getSteadyLines(result.stdout)).toEqual([...(lines ?? []), ""]);
   });
 
-  it("rejects -config with several specs", () => {
-    const result = runCliWith("cli-output", ["Lasso.tla", "Success.tla", "-config", "Success.cfg"]);
+  it("rejects -config with a glob of several specs", () => {
+    const result = runCliWith("cli-output", ["Lasso*.tla", "-config", "Success.cfg"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toBe(
       "Error: -config applies to one specification, but several were given.\n",
+    );
+  });
+
+  it("rejects -config with several specs as TLC does", () => {
+    const result = runCliWith("cli-output", ["Lasso.tla", "Success.tla", "-config", "Success.cfg"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "Error: more than one input files: Lasso and Success.tla\nUsage: java tlc2.TLC [-help] [-option] inputfile",
     );
   });
 });

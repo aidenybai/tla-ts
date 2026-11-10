@@ -9,6 +9,14 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 24, col 8 to line 24, col 11 of module random_01576 failed.
+      Attempted to compute the value of an expression of form
+      CHOOSE x \in S: P, but no element of S satisfied P.
+      line 23, col 19 to line 23, col 66 of module random_01576
 ---*)
 ---- MODULE random_01576 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC

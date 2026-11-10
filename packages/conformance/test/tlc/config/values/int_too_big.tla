@@ -6,6 +6,12 @@ features:
 outcome: tlc-error
 config: |
   CONSTANT N = 2147483648
+correct:
+  all:
+    exit: 255
+    transcript: |-
+      2265:1 TLC can't handle a number this big.
+      2147483648
 ---*)
 ---- MODULE int_too_big ----
 CONSTANT N

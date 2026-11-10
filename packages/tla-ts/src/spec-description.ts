@@ -7,11 +7,15 @@ import {
   type SourceRange,
 } from "./ast";
 import type { ModelConfig } from "./config";
+import { getCoverageCounts, getDistinctCount, type CoverageKind } from "./coverage";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { substitutionFrames, withSubstitutionFrames } from "./instances";
 import type { InstanceAction } from "./environment";
-import { formatRange, TlaError } from "./errors";
+import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
   bindDefinitions,
   bindOperatorArguments,
+  describeNode,
   evaluate,
   forEachBinding,
   getDefinition,
@@ -24,6 +28,7 @@ import {
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import { LITERAL_KINDS } from "./tlc/replay";
 import type { TlcVersion } from "./tlc/version";
 
 export interface SpecAction {
@@ -42,6 +47,12 @@ interface SpecDescription {
   impliedInits: SpecAction[];
   impliedActions: SpecAction[];
   impliedTemporals: SpecAction[];
+}
+
+interface NextItem {
+  expression: Expression;
+  scope: Scope | undefined;
+  frames: Expression[];
 }
 
 const UNNAMED_ACTION = "UnnamedAction";
@@ -63,26 +74,27 @@ const toLocationValue = (location: SourceLocation) => {
   ]);
 };
 
-// TLC's RecordValue(Action): the action's name and location, with the values of its parameters.
-export const toActionValue = (action: SpecAction) => {
+export const toActionValue = (action: SpecAction, coverage?: Value) => {
   const fields: [string, Value][] = [
     ["name", action.name],
     ["location", toLocationValue(action.location)],
   ];
-  if (action.parameters.length === 0) return createRecord(fields);
-  return createRecord([
-    ...fields,
-    ["context", createRecord(action.parameters)],
-    ["parameters", createTuple(action.parameters.map((parameter) => parameter[0]))],
-  ]);
+  if (action.parameters.length > 0) {
+    fields.push(
+      ["context", createRecord(action.parameters)],
+      ["parameters", createTuple(action.parameters.map((parameter) => parameter[0]))],
+    );
+  }
+  if (coverage !== undefined) fields.push(["coverage", coverage]);
+  return createRecord(fields);
 };
 
-const createAction = (name: string, expression: Expression): SpecAction => ({
+const createAction = (name: string, expression: Expression, scope?: Scope): SpecAction => ({
   name,
   location: expression.location,
   parameters: [],
   expression,
-  scope: undefined,
+  scope,
 });
 
 const getConstantContext = (environment: Environment, scope: Scope | undefined) => ({
@@ -130,13 +142,17 @@ const isEvaluable = (expression: Expression, environment: Environment) => {
   }
 };
 
-const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
+const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.params.length === 0 &&
-  definition.body.kind !== "Number" &&
-  definition.body.kind !== "String" &&
   isConstantLevel(definition, environment) &&
   isEvaluable(definition.body, environment);
+
+const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
+  definition?.kind === "Operator" &&
+  definition.body.kind !== "Number" &&
+  definition.body.kind !== "String" &&
+  isStartupValue(definition, environment);
 
 const isConstantDefinition = (closure: Closure, environment: Environment) => {
   const definition = getDefinition(closure.name, environment);
@@ -175,9 +191,11 @@ const getInstanceActions = (
   const callAction = (): SpecAction[] => [
     { name: instanceAction.name, location: expression.location, parameters: [], expression, scope },
   ];
-  if (!called || args.length === 0) {
-    return [{ ...instanceAction, parameters: [], expression, scope }];
+  // TLC's action is the SubstInNode the instance puts around the operator's body.
+  if (called && args.length === 0) {
+    return [{ ...instanceAction, parameters: [], expression: called.body, scope: called.scope }];
   }
+  if (!called) return [{ ...instanceAction, parameters: [], expression, scope }];
   if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
     return callAction();
   }
@@ -211,6 +229,14 @@ const getActions = (
     expression,
     scope,
   });
+  if (LITERAL_KINDS.has(expression.kind)) {
+    throw setExitCode(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${describeNode(expression)}`,
+      ),
+      EXIT_STATUS.error,
+    );
+  }
   switch (expression.kind) {
     case "Let":
       return getActions(
@@ -291,10 +317,14 @@ const describeSpecification = (
   scope: Scope | undefined,
   environment: Environment,
   description: SpecDescription,
-  next: { expression: Expression; scope: Scope | undefined }[],
+  next: NextItem[],
+  frames: Expression[] = [],
 ): void => {
-  const recurse = (inner: Expression, innerScope: Scope | undefined) =>
-    describeSpecification(inner, innerScope, environment, description, next);
+  const recurse = (inner: Expression, innerScope: Scope | undefined, innerFrames = frames) =>
+    describeSpecification(inner, innerScope, environment, description, next, innerFrames);
+  // TLC wraps each conjunct it takes from an instance in the instance's SubstInNode.
+  const createConjunct = (name: string, conjunct: Expression, conjunctScope: Scope | undefined) =>
+    createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope);
   if (expression.kind === "Let") {
     recurse(
       expression.body,
@@ -309,18 +339,22 @@ const describeSpecification = (
   }
   const called = resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
+  const calledFrames = called
+    ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
+    : frames;
   if (called && called.params.length === 0) {
     if (getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL) {
-      description.inits.push(createAction(called.name, called.body));
+      description.inits.push(createConjunct(called.name, called.body, called.scope));
       return;
     }
-    recurse(called.body, called.scope);
+    recurse(called.body, called.scope, calledFrames);
     return;
   }
   if (called && expression.kind === "Apply" && called.params.length === expression.args.length) {
     recurse(
       called.body,
       bindOperatorArguments(called, expression.args, getConstantContext(environment, scope)),
+      calledFrames,
     );
     return;
   }
@@ -330,16 +364,17 @@ const describeSpecification = (
   }
   if (expression.kind === "Always") {
     if (expression.expression.kind === "BoxAction") {
-      next.push({ expression: expression.expression.action, scope });
+      next.push({ expression: expression.expression.action, scope, frames });
       return;
     }
-    description.temporals.push(createAction(UNNAMED_ACTION, expression));
+    description.temporals.push(createConjunct(UNNAMED_ACTION, expression, scope));
     return;
   }
   const level = getLevel(expression, scope, environment);
-  if (level <= VARIABLE_LEVEL) description.inits.push(createAction(UNNAMED_ACTION, expression));
-  else if (level === TEMPORAL_LEVEL) {
-    description.temporals.push(createAction(UNNAMED_ACTION, expression));
+  if (level <= VARIABLE_LEVEL) {
+    description.inits.push(createConjunct(UNNAMED_ACTION, expression, scope));
+  } else if (level === TEMPORAL_LEVEL) {
+    description.temporals.push(createConjunct(UNNAMED_ACTION, expression, scope));
   }
 };
 
@@ -432,7 +467,7 @@ const getSpecDescription = (
     impliedActions: [],
     impliedTemporals: [],
   };
-  const next: { expression: Expression; scope: Scope | undefined }[] = [];
+  const next: NextItem[] = [];
   const specification =
     config.specification === undefined
       ? undefined
@@ -441,7 +476,18 @@ const getSpecDescription = (
     describeSpecification(specification.body, undefined, environment, description, next);
     next.forEach((item) =>
       description.actions.push(
-        ...getActions(item.expression, item.scope, undefined, environment, instanceActions),
+        // TLC takes an instance's SubstInNode as one action, located at the instance.
+        ...(item.frames.length > 0
+          ? [
+              {
+                name: UNNAMED_ACTION,
+                location: item.frames[0].location,
+                parameters: [],
+                expression: withSubstitutionFrames(item.expression, item.frames),
+                scope: item.scope,
+              },
+            ]
+          : getActions(item.expression, item.scope, undefined, environment, instanceActions)),
       ),
     );
   }
@@ -461,25 +507,74 @@ const getSpecDescription = (
       ),
     );
   }
-  config.invariants.forEach((name) => {
-    const definition = getOperatorDefinition(name, environment);
-    if (definition) description.invariants.push(createAction(name, definition.body));
-  });
-  config.properties.forEach((name) => {
-    const definition = getOperatorDefinition(name, environment);
-    if (definition) describeProperty(name, definition.body, undefined, environment, description);
-  });
   return description;
 };
 
-// TLC's initial predicates, which it conjoins to compute the initial states.
+export const getSubscriptVariables = (
+  subscript: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+) => {
+  const variables: string[] = [];
+  const collect = (expression: Expression, innerScope: Scope | undefined): boolean => {
+    if (
+      expression.kind === "Number" ||
+      expression.kind === "Decimal" ||
+      expression.kind === "String"
+    ) {
+      return false;
+    }
+    if (expression.kind === "Tuple") {
+      return expression.elements.every((element) => collect(element, innerScope));
+    }
+    if (expression.kind === "Label") return collect(expression.body, innerScope);
+    if (expression.kind === "Let") {
+      return collect(
+        expression.body,
+        bindDefinitions(expression.definitions, getConstantContext(environment, innerScope)),
+      );
+    }
+    const thunk = getThunk(expression, innerScope);
+    if (thunk) return collect(thunk.expression, thunk.scope);
+    const argument =
+      expression.kind === "Identifier" && isLocallyResolved(expression)
+        ? lookupScope(innerScope, expression.name)
+        : undefined;
+    if (argument?.kind === "Value" && argument.argument) {
+      return collect(argument.argument, innerScope);
+    }
+    if (
+      expression.kind === "Identifier" &&
+      !isLocallyResolved(expression) &&
+      environment.variableIndex.has(expression.name)
+    ) {
+      variables.push(expression.name);
+      return true;
+    }
+    const called = resolveClosure(expression, innerScope, environment);
+    if (!called || called.params.length !== getArguments(expression).length) return true;
+    const definition = getDefinition(called.name, environment);
+    if (definition?.body === called.body && isStartupValue(definition, environment)) return true;
+    return collect(
+      called.body,
+      expression.kind === "Apply"
+        ? bindOperatorArguments(
+            called,
+            expression.args,
+            getConstantContext(environment, innerScope),
+          )
+        : called.scope,
+    );
+  };
+  return collect(subscript, scope) ? variables : undefined;
+};
+
 export const getInitActions = (
   config: ModelConfig,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
 ) => getSpecDescription(config, environment, instanceActions).inits;
 
-// TLC's split of the next-state relation into the actions it names in a behavior.
 export const getNextActions = (
   config: ModelConfig,
   environment: Environment,
@@ -491,11 +586,9 @@ const formatParameters = (action: SpecAction) =>
     ? ""
     : `(${action.parameters.map((parameter) => formatValue(parameter[1])).join(",")})`;
 
-// TLC's Action.getLocation, which TLC 1.7.4 names the action in without its parameters.
-export const getActionLabel = (action: SpecAction, version?: TlcVersion) =>
-  `${action.name === UNNAMED_ACTION ? "Action" : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
+export const getActionLabel = (action: SpecAction, version?: TlcVersion, isInitial = false) =>
+  `${action.name === UNNAMED_ACTION ? (isInitial ? "Initial predicate" : "Action") : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
 
-// TLC's Action.getInvocationSignature, which names the action and the values of its parameters.
 export const getActionSignature = (action: SpecAction) =>
   `${action.name}${formatParameters(action)}`;
 
@@ -506,7 +599,24 @@ export const getSpecificationValue = (
   instanceActions: Map<string, InstanceAction>,
 ): Value => {
   const description = getSpecDescription(config, environment, instanceActions);
-  const toSet = (actions: SpecAction[]) => createSet(actions.map(toActionValue));
+  // Describing a checked formula evaluates the constant definitions it names, so only
+  // TLCGet("spec") describes them, not the actions TLC splits at startup.
+  config.invariants.forEach((name) => {
+    const definition = getOperatorDefinition(name, environment);
+    if (definition) description.invariants.push(createAction(name, definition.body));
+  });
+  config.properties.forEach((name) => {
+    const definition = getOperatorDefinition(name, environment);
+    if (definition) describeProperty(name, definition.body, undefined, environment, description);
+  });
+  const coverage = environment.coverage;
+  const toSet = (actions: SpecAction[], kind?: CoverageKind) =>
+    createSet(
+      actions.map((action) => {
+        const counts = coverage && kind && getCoverageCounts(coverage, kind, action.expression);
+        return toActionValue(action, counts && createRecord(counts));
+      }),
+    );
   const toDefinitionSet = (names: string[]) =>
     createSet(
       names.flatMap((name) => {
@@ -522,12 +632,12 @@ export const getSpecificationValue = (
       }),
     );
   return createRecord([
-    ["inits", toSet(description.inits)],
-    ["actions", toSet(description.actions)],
+    ["inits", toSet(description.inits, "init")],
+    ["actions", toSet(description.actions, "next")],
     ["temporals", toSet(description.temporals)],
-    ["invariants", toSet(description.invariants)],
-    ["impliedinits", toSet(description.impliedInits)],
-    ["impliedactions", toSet(description.impliedActions)],
+    ["invariants", toSet(description.invariants, "invariant")],
+    ["impliedinits", toSet(description.impliedInits, "implied")],
+    ["impliedactions", toSet(description.impliedActions, "implied")],
     ["impliedtemporals", toSet(description.impliedTemporals)],
     [
       "variables",
@@ -536,6 +646,14 @@ export const getSpecificationValue = (
           createRecord([
             ["name", name],
             ["location", toLocationValue(variableLocations[index])],
+            ...(coverage
+              ? [
+                  [
+                    "coverage",
+                    createRecord([["distinct", getDistinctCount(coverage, index)]]),
+                  ] satisfies [string, Value],
+                ]
+              : []),
           ]),
         ),
       ),

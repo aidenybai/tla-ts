@@ -430,6 +430,16 @@ export const TLC_RUNTIME_STRINGS = [
   "levelmean",
   "levelvariance",
   "bfs",
+  "beginLine",
+  "beginColumn",
+  "endLine",
+  "endColumn",
+  "module",
+  "name",
+  "location",
+  "context",
+  "parameters",
+  "_action",
 ];
 
 export const SANY_NODE_NAMES = [
@@ -549,10 +559,6 @@ export const SANY_NODE_NAMES = [
   "N_CaseStep",
   "N_AssertStep",
 ];
-
-// The standard modules that a spec may ship its own file of, such as CommunityModules' Json.tla,
-// which SANY reads in place of its own.
-export const USER_STANDARD_MODULES = new Set(["Bags", "Json", "Randomization", "TLCExt"]);
 
 export const TLC_MODULE_SOURCES = new Map([
   [
@@ -925,9 +931,57 @@ _PrintCounts == PrintT(_Counts)
   ],
 ]);
 
-// The Java methods that override standard module operators, as java.lang.reflect.Method prints
-// them in TLC's errors.
+// As java.lang.reflect.Method prints them in TLC's errors.
 export const TLC_JAVA_METHODS = new Map([
+  [
+    "Bags",
+    new Map([
+      [
+        "IsABag",
+        "public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value)",
+      ],
+      [
+        "BagCardinality",
+        "public static tlc2.value.impl.IntValue tlc2.module.Bags.BagCardinality(tlc2.value.impl.Value)",
+      ],
+      [
+        "BagIn",
+        "public static tlc2.value.IBoolValue tlc2.module.Bags.BagIn(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "CopiesIn",
+        "public static tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "\\oplus",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagCup(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "\\ominus",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagDiff(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "BagUnion",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagUnion(tlc2.value.impl.Value)",
+      ],
+      [
+        "\\sqsubseteq",
+        "public static tlc2.value.IBoolValue tlc2.module.Bags.SqSubseteq(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "BagOfAll",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagOfAll(tlc2.value.impl.Value,tlc2.value.impl.Value)",
+      ],
+      [
+        "BagToSet",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.BagToSet(tlc2.value.impl.Value)",
+      ],
+      [
+        "SetToBag",
+        "public static tlc2.value.impl.Value tlc2.module.Bags.SetToBag(tlc2.value.impl.Value)",
+      ],
+    ]),
+  ],
   [
     "FiniteSets",
     new Map([
@@ -1020,6 +1074,59 @@ export const TLC_JAVA_METHODS = new Map([
       [
         "TLCEval",
         "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+    ]),
+  ],
+  [
+    "TLCExt",
+    new Map([
+      [
+        "AssertError",
+        "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "PickSuccessor",
+        "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "ToTrace",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.lassoOrdinal(tlc2.value.impl.Value)",
+      ],
+      [
+        "CounterExample",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.error(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException",
+      ],
+      [
+        "Trace",
+        "public static tlc2.value.impl.TupleValue tlc2.module.TLCExt.getTrace(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel) throws java.io.IOException",
+      ],
+      [
+        "TLCDefer",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefer(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "TLCNoOp",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcNoOp(tlc2.value.impl.Value)",
+      ],
+      [
+        "TLCModelValue",
+        "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.tlcModelValue(tlc2.value.impl.Value)",
+      ],
+      [
+        "TLCCache",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcEval2(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "TLCFP",
+        "public static synchronized tlc2.value.impl.IntValue tlc2.module.TLCExt.tlcFingerprint(tlc2.value.impl.Value)",
+      ],
+      [
+        "TLCEvalDefinition",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcDefByName(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
+      ],
+      [
+        "TLCGetOrDefault",
+        "public static tlc2.value.impl.Value tlc2.module.TLCExt.tlcGetOrDefault(tlc2.value.impl.Value,tlc2.value.impl.Value)",
       ],
     ]),
   ],

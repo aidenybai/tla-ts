@@ -1,13 +1,11 @@
-// Runs a script's work on each recorded module in worker processes, --jobs of them at once, each
-// taking one module at a time, largest first. The script forks itself with --worker, and a worker
-// does the work on each module the parent sends it, by index.
+// The script forks itself with --worker, and a worker does the work on each module the parent
+// sends it, by index.
 
 import { fork } from "node:child_process";
 import { getOption } from "./corpora";
 import type { ModuleProofRecord } from "./proof-records";
 
-// The results by module index. A module whose worker exits mid-module has none. In a worker, it
-// never resolves. A worker wraps each result, as a process can't send undefined.
+// In a worker, it never resolves. A worker wraps each result, as a process can't send undefined.
 export const runModuleWorkers = async <Result>(
   records: ModuleProofRecord[],
   work: (record: ModuleProofRecord) => Promise<Result>,

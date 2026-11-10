@@ -5,8 +5,8 @@ import { getTabStop } from "./lexer";
 import { getSanyParseError } from "./parse-error";
 import type { SanyLocation } from "./nodes";
 
-// The tokens of one file, to find the locations SANY gives to names, brackets and parentheses that
-// the syntax tree of tla-ts leaves out, and the comments SANY attaches to definitions.
+// Finds the locations SANY gives to the names, brackets and parentheses that the tla-ts syntax
+// tree leaves out, and the comments SANY attaches to definitions.
 export interface SourceFile {
   name: string;
   source: string;
@@ -48,7 +48,6 @@ export const isToken = (file: SourceFile, index: number, text: string) =>
   file.tokens[index].text === text &&
   file.tokens[index].kind !== "String";
 
-// The number of tokens, in source order, before a position, or at or before it when isAtCounted.
 const countTokensBefore = (file: SourceFile, position: SourceLocation, isAtCounted: boolean) => {
   let low = 0;
   let high = file.tokens.length;
@@ -65,12 +64,10 @@ const countTokensBefore = (file: SourceFile, position: SourceLocation, isAtCount
   return low;
 };
 
-// The index of the first token at or after a position.
 export const getTokenIndex = (file: SourceFile, position: SourceLocation) =>
   file.tokenIndexes.get(getPositionKey(position.line, position.column)) ??
   Math.min(countTokensBefore(file, position, false), file.tokens.length - 1);
 
-// The index of the last token at or before a position.
 const getEndTokenIndex = (file: SourceFile, position: SourceLocation) =>
   Math.max(countTokensBefore(file, position, true) - 1, 0);
 
@@ -99,8 +96,8 @@ export const getRangeSpan = (file: SourceFile, range: SourceRange): TokenSpan =>
   end: getEndTokenIndex(file, range.end),
 });
 
-// The tokens of an expression. Some nodes, such as a tuple in a subscript, have no range, so their
-// span runs from their first token to the bracket that closes it.
+// Some nodes, such as a tuple in a subscript, have no range, so their span runs from their first
+// token to the bracket that closes it.
 export const getExpressionSpan = (file: SourceFile, expression: Expression): TokenSpan => {
   const range = expression.location.range;
   if (range) return getRangeSpan(file, range);
@@ -108,8 +105,7 @@ export const getExpressionSpan = (file: SourceFile, expression: Expression): Tok
   return { start, end: getMatchingIndex(file, start) };
 };
 
-// The span with the parentheses around it, as SANY locates a parenthesized operand by its
-// parentheses.
+// SANY locates a parenthesized operand by its parentheses.
 export const getParenthesizedSpan = (file: SourceFile, span: TokenSpan): TokenSpan => {
   const start = span.start - 1;
   const end = span.end + 1;
@@ -123,8 +119,8 @@ export const getParenthesizedSpan = (file: SourceFile, span: TokenSpan): TokenSp
   return span;
 };
 
-// SANY's parser keeps the parentheses around an argument of an operator, which the span of the
-// argument's expression leaves out. Those of the operator's own arguments follow its name.
+// SANY's parser keeps the parentheses around an operator's argument. Those of the operator's own
+// arguments follow its name.
 export const getArgumentSpan = (file: SourceFile, span: TokenSpan): TokenSpan => {
   const start = span.start - 1;
   const end = span.end + 1;
@@ -157,7 +153,6 @@ const getOffset = (file: SourceFile, line: number, column: number) => {
   return offset;
 };
 
-// The token as the source spells it, where the token's text is the name of the operator.
 export const getTokenSource = (file: SourceFile, index: number) => {
   const token = file.tokens[index];
   const start = getOffset(file, token.line, token.column);
@@ -179,8 +174,7 @@ export const isBoxToken = (file: SourceFile, index: number) => {
 };
 
 // HACK: the tla-ts parser has no []ASSUME or []PROVE, so it parses the source with each such []
-// blanked out, which keeps every other token where it was. SANY's parser takes them only in an
-// ASSUME/PROVE, which unboxing hides.
+// blanked out, which keeps every other token where it was.
 export const getUnboxedSource = (source: string) => {
   const file = createSourceFile("", source);
   const unboxed = file.tokens.reduce((text, token, index) => {
@@ -194,7 +188,6 @@ export const getUnboxedSource = (source: string) => {
   return unboxed;
 };
 
-// The comments between a token and the one before it, which SANY's parser attaches to the token.
 export const getPreComments = (file: SourceFile, index: number) => {
   const previous = file.tokens[index - 1];
   const token = file.tokens[index];

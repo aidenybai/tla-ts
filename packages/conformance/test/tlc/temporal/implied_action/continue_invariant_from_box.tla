@@ -1,7 +1,10 @@
 (*---
-description: 'With -continue, a []P property reports at each violating state and the run ends with exit 0, as TLC''s own ContinueTest expects.'
+description: 'With -continue, a []P property reports at each violating state and exploration goes on to the end. This is a TLC bug: with -continue a violation is printed but never recorded as the run''s error, so TLC also prints that no error was found and exits 0, as its own ContinueTest expects.'
 ref: tlc2/tool/Worker.java#doNextCheckInvariants
-features: [liveness, implied-action]
+features:
+  - liveness
+  - implied-action
+  - tlc-bug
 outcome: success
 config: |
   SPECIFICATION Spec
@@ -9,6 +12,31 @@ config: |
   CHECK_DEADLOCK FALSE
 args:
   - -continue
+correct:
+  all:
+    exit: 12
+    transcript: |-
+      2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+      2110:1 Invariant Prop is violated.
+      2121:1 The behavior up to this point is:
+      2217:4 1: <Initial predicate>
+      x = 0
+      2217:4 2: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
+      x = 1
+      2217:4 3: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
+      x = 2
+      2110:1 Invariant Prop is violated.
+      2121:1 The behavior up to this point is:
+      2217:4 1: <Initial predicate>
+      x = 0
+      2217:4 2: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
+      x = 1
+      2217:4 3: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
+      x = 2
+      2217:4 4: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
+      x = 3
+      2199:0 4 states generated, 4 distinct states found, 0 states left on queue.
+      2194:0 The depth of the complete state graph search is 4.
 ---*)
 ---- MODULE continue_invariant_from_box ----
 EXTENDS Naturals
@@ -27,19 +55,19 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 16, col 9 to line 16, col 27 of module continue_invariant_from_box>
+    2217:4 2: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
     x = 1
-    2217:4 3: <Next line 16, col 9 to line 16, col 27 of module continue_invariant_from_box>
+    2217:4 3: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
     x = 2
     2110:1 Invariant Prop is violated.
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 16, col 9 to line 16, col 27 of module continue_invariant_from_box>
+    2217:4 2: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
     x = 1
-    2217:4 3: <Next line 16, col 9 to line 16, col 27 of module continue_invariant_from_box>
+    2217:4 3: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
     x = 2
-    2217:4 4: <Next line 16, col 9 to line 16, col 27 of module continue_invariant_from_box>
+    2217:4 4: <Next line 44, col 9 to line 44, col 27 of module continue_invariant_from_box>
     x = 3
     2193:0 Model checking completed. No error has been found.
       Estimates of the probability that TLC did not check all reachable states

@@ -9,6 +9,13 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 23, col 8 to line 23, col 11 of module random_03717 failed.
+      Attempted to check equality of the set {} with the value:
+      Nat
 ---*)
 ---- MODULE random_03717 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
