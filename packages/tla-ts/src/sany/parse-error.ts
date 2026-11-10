@@ -502,9 +502,11 @@ const getArguments = (heirs: SyntaxNode[]) => {
   return node.kind === "OpArgs" ? node : undefined;
 };
 
+// SANY also takes A!B!lbl(x) for a label, its bug tlaplus/tlaplus#885.
 const isLabel = (node: SyntaxNode) => {
   if (node.kind === "GeneralId") return true;
-  const opArgs = node.kind === "OpApplication" ? getArguments(node.heirs) : undefined;
+  const opArgs =
+    node.kind === "OpApplication" && node.heirs.length === 2 ? getArguments(node.heirs) : undefined;
   return (
     opArgs !== undefined &&
     opArgs.heirs.every((argument, index) => index % 2 === 0 || argument.kind === "GeneralId")
