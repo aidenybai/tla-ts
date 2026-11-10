@@ -614,6 +614,23 @@ const visitUnchanged = (
         return;
       }
     }
+    // Tool#enabledUnchanged evaluates an operator application in the partial next state, which
+    // fails on a variable it hasn't assigned, as its comment says. tla-ts walks the operator's
+    // body as it walks a definition without parameters.
+    if (replay.isEnabled && expression.kind === "Apply") {
+      const context = getContext(replay, scope, partial);
+      const operator = resolveApplyOperator(expression, context);
+      if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
+        visitUnchanged(
+          replay,
+          operator.body,
+          items,
+          bindOperatorArguments(operator, expression.args, context),
+          partial,
+        );
+        return;
+      }
+    }
     const environment = replay.environment;
     const before = evaluate(expression, {
       environment,

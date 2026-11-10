@@ -641,7 +641,23 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       );
       return;
     }
-    if (holds(run, unchanged, getContext(run, scope, partial))) onComplete(partial, action);
+    const context = getContext(run, scope, partial);
+    // Tool#enabledUnchanged fails on an operator application, as its comment says.
+    if (run.isEnabled && expression.kind === "Apply") {
+      const operator = resolveApplyOperator(expression, context);
+      if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
+        getRunner(getUnchangedWrapper(operator.body), environment, false)(
+          run,
+          bindOperatorArguments(operator, expression.args, context),
+          partial,
+          action,
+          isFixed,
+          onComplete,
+        );
+        return;
+      }
+    }
+    if (holds(run, unchanged, context)) onComplete(partial, action);
   };
 };
 
