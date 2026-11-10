@@ -2138,10 +2138,16 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const action = getChildEvaluator(expression.action);
       const unchanged = compileUnchanged(getChildEvaluator(expression.subscript));
       const isBox = expression.kind === "BoxAction";
-      return (context) =>
-        isBox
-          ? expectBoolean(action(context), "an action") || unchanged(context)
-          : expectBoolean(action(context), "an action") && !unchanged(context);
+      const form = isBox ? "[A]_e" : "<A>_e";
+      return (context) => {
+        const value = action(context);
+        if (typeof value !== "boolean") {
+          throw new TlaEvaluationError(
+            `Attempted to evaluate an expression of form ${form}, but A was not a boolean.\n${describeRange(expression)}`,
+          );
+        }
+        return isBox ? value || unchanged(context) : value && !unchanged(context);
+      };
     }
     case "Enabled": {
       const action = expression.expression;

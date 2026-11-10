@@ -233,7 +233,6 @@
   "tlc/errors/TLC_COVERAGE_VALUE_COST/subset_enumerated_in_next": "message-mismatch",
   "tlc/errors/TLC_COVERAGE_VAR/one_line_per_variable": "message-mismatch",
   "tlc/errors/TLC_FEATURE_UNSUPPORTED/too_many_model_values": "exit-mismatch",
-  "tlc/errors/TLC_LIVE_ENCOUNTERED_NONBOOL_PREDICATE/integer_body_of_box_action": "text-mismatch",
   "tlc/errors/TLC_TE_SPEC_GENERATION_COMPLETE/written_after_violation": "message-mismatch",
   "tlc/errors/TLC_TE_SPEC_GENERATION_ERROR/output_under_a_file": "message-mismatch",
   "tlc/errors/TLC_TOO_MNY_POSSIBLE_STATES/dfid_successors": "exit-mismatch",
