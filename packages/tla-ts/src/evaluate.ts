@@ -927,12 +927,13 @@ const isOperatorArgument = (expression: Expression, context: Context) => {
   return operator !== undefined && getArity(operator) > 0;
 };
 
+const evaluateBuiltinArgument = (arg: Expression, context: Context) =>
+  isOperatorArgument(arg, context)
+    ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
+    : evaluate(arg, context);
+
 const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
-  args.map((arg) =>
-    isOperatorArgument(arg, context)
-      ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
-      : evaluate(arg, context),
-  );
+  args.map((arg) => evaluateBuiltinArgument(arg, context));
 
 const createArityError = (closure: Closure, count: number) =>
   new TlaEvaluationError(
@@ -1358,7 +1359,18 @@ const compileBuiltinCall = (
     const right = getEvaluator(args[1], environment);
     return (context) => binary(left(context), right(context));
   }
-  return (context) => builtin.evaluate(evaluateBuiltinArguments(args, context), context);
+  // A local identifier can name an operator parameter, so only its binding tells whether it passes
+  // an operator.
+  const argumentEvaluators = args.map((arg): ((context: Context) => Value | OperatorValue) =>
+    isValueArgument(arg, environment) && !(arg.kind === "Identifier" && isLocallyResolved(arg))
+      ? getEvaluator(arg, environment)
+      : (context) => evaluateBuiltinArgument(arg, context),
+  );
+  return (context) =>
+    builtin.evaluate(
+      argumentEvaluators.map((evaluator) => evaluator(context)),
+      context,
+    );
 };
 
 export const compileArgumentScope = (
