@@ -15,7 +15,6 @@ import {
   OP_RE_UNION,
 } from "./ast";
 import {
-  getMaxChar,
   isFullChar,
   isReBinary,
   isReEmpty,
@@ -27,12 +26,11 @@ import {
 
 export type RangePredicate = number[];
 
-export const mkTopRange = (): RangePredicate => [0, getMaxChar()];
+export const mkTopRange = (manager: AstManager): RangePredicate => [0, manager.maxChar];
 
 export const mkSingletonRange = (code: number): RangePredicate => [code, code];
 
-export const mkRangeOf = (lo: number, hi: number): RangePredicate => {
-  const maxChar = getMaxChar();
+export const mkRangeOf = (lo: number, hi: number, maxChar: number): RangePredicate => {
   return lo <= hi && lo <= maxChar ? [lo, Math.min(hi, maxChar)] : [];
 };
 
@@ -80,8 +78,7 @@ export const intersectRanges = (first: RangePredicate, second: RangePredicate) =
   return result;
 };
 
-export const complementRanges = (ranges: RangePredicate) => {
-  const maxChar = getMaxChar();
+export const complementRanges = (ranges: RangePredicate, maxChar: number) => {
   const result: RangePredicate = [];
   let cursor = 0;
   for (let index = 0; index < ranges.length; index += 2) {
@@ -122,7 +119,7 @@ export const guardToRangePredicate = (
   variable: number,
   guard: number,
 ): RangePredicate | undefined => {
-  if (manager.isTrue(guard)) return mkTopRange();
+  if (manager.isTrue(guard)) return mkTopRange(manager);
   if (manager.isFalse(guard)) return [];
   const op = manager.getOp(guard);
   if (op === OP_EQ) {
@@ -138,17 +135,17 @@ export const guardToRangePredicate = (
     const first = manager.getArg(guard, 0);
     const second = manager.getArg(guard, 1);
     if (second === variable && manager.getChar(first) !== -1)
-      return mkRangeOf(manager.getChar(first), getMaxChar());
+      return mkRangeOf(manager.getChar(first), manager.maxChar, manager.maxChar);
     if (first === variable && manager.getChar(second) !== -1)
-      return mkRangeOf(0, manager.getChar(second));
+      return mkRangeOf(0, manager.getChar(second), manager.maxChar);
     return undefined;
   }
   if (op === OP_NOT) {
     const inner = guardToRangePredicate(manager, variable, manager.getArg(guard, 0));
-    return inner === undefined ? undefined : complementRanges(inner);
+    return inner === undefined ? undefined : complementRanges(inner, manager.maxChar);
   }
   if (op !== OP_AND && op !== OP_OR) return undefined;
-  let result = op === OP_AND ? mkTopRange() : [];
+  let result = op === OP_AND ? mkTopRange(manager) : [];
   for (const arg of manager.getArgs(guard)) {
     const ranges = guardToRangePredicate(manager, variable, arg);
     if (ranges === undefined) return undefined;
@@ -173,12 +170,12 @@ export const regexToRangePredicate = (
   if (!manager.isReSort(sort) || !manager.isStringSort(manager.getReSeqSort(sort)))
     return undefined;
   if (isReEmpty(manager, regex)) return [];
-  if (isFullChar(manager, regex)) return mkTopRange();
+  if (isFullChar(manager, regex)) return mkTopRange(manager);
   if (isReBinary(manager, regex, OP_RE_RANGE)) {
     const lo = getRangeBound(manager, manager.getArg(regex, 0));
     const hi = getRangeBound(manager, manager.getArg(regex, 1));
     if (lo === -1 || hi === -1) return undefined;
-    return lo > hi ? [] : mkRangeOf(lo, hi);
+    return lo > hi ? [] : mkRangeOf(lo, hi, manager.maxChar);
   }
   const getPair = (first: number, second: number) => {
     const left = regexToRangePredicate(manager, first);

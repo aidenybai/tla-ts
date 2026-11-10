@@ -69,7 +69,7 @@ export class GuardSet {
     private cache?: GuardSetCache,
   ) {
     this.isChar = manager.isCharSort(sort);
-    this.ranges = this.isChar ? mkTopRange() : [];
+    this.ranges = this.isChar ? mkTopRange(manager) : [];
     if (!this.isChar) this.guard = assign(manager, -1, manager.trueExpr);
   }
 

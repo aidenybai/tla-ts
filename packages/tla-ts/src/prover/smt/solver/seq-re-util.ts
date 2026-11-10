@@ -34,7 +34,7 @@ import {
 } from "./ast";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { RefVector } from "./ref-vector";
-import { MAX_CHAR, isBinaryApp, isEmptySeq, mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
+import { isBinaryApp, isEmptySeq, mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
 
 export const UINT_MAX = 0xffffffff;
 const MAX_PERIOD = 64;
@@ -596,8 +596,6 @@ export const getLoopLower = (manager: AstManager, expr: number): LoopBounds | un
   return { body: manager.getArg(expr, 0), lo: parameters[0], hi: UINT_MAX };
 };
 
-export const getMaxChar = () => MAX_CHAR;
-
 export const mkRe = (manager: AstManager, op: number, args: number[], parameters: number[] = []) =>
   mkSeqApp(manager, op, args, parameters);
 
@@ -620,7 +618,7 @@ export const mkReLoop = (manager: AstManager, body: number, lo: number, hi?: num
 
 export const mkReRange = (manager: AstManager, reSort: number, lo: number, hi: number) => {
   if (lo > hi) return mkReEmpty(manager, reSort);
-  if (lo === 0 && hi === getMaxChar()) return mkFullChar(manager, reSort);
+  if (lo === 0 && hi === manager.maxChar) return mkFullChar(manager, reSort);
   const loString = manager.mkString([lo]);
   if (lo === hi) return mkToRe(manager, loString);
   return mkSeqApp(manager, OP_RE_RANGE, [loString, manager.mkString([hi])]);
@@ -731,7 +729,7 @@ export const getCharConstRange = (
     if (first === variable && manager.getChar(second) !== -1)
       return { lo: 0, hi: manager.getChar(second), isNegated };
     if (second === variable && manager.getChar(first) !== -1)
-      return { lo: manager.getChar(first), hi: getMaxChar(), isNegated };
+      return { lo: manager.getChar(first), hi: manager.maxChar, isNegated };
     return undefined;
   }
   if (op !== OP_AND || manager.getNumArgs(atom) !== 2) return undefined;
@@ -765,7 +763,7 @@ export const mkCharLe = (manager: AstManager, first: number, second: number) => 
   const secondCode = manager.getChar(second);
   if (firstCode !== -1 && secondCode !== -1)
     return firstCode <= secondCode ? manager.trueExpr : manager.falseExpr;
-  if (firstCode === 0 || secondCode === getMaxChar()) return manager.trueExpr;
+  if (firstCode === 0 || secondCode === manager.maxChar) return manager.trueExpr;
   return mkSeqApp(manager, OP_CHAR_LE, [first, second]);
 };
 

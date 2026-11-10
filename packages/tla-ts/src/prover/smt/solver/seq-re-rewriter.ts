@@ -62,7 +62,6 @@ import {
   getCharConstRange,
   getLoopBounds,
   getLoopLower,
-  getMaxChar,
   getRangeChars,
   ReInfoCache,
   isDotPlus,
@@ -1110,7 +1109,7 @@ export class ReRewriter {
 
   elimCondition(element: number, inputCondition: number) {
     const manager = this.manager;
-    const maxChar = getMaxChar();
+    const maxChar = this.manager.maxChar;
     const conds = new RefVector(manager);
     const rangeConds = new RefVector(manager);
     conds.push(inputCondition);

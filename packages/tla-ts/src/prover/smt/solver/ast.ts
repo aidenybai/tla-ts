@@ -694,6 +694,8 @@ export class AstManager {
   readonly piExpr: number;
   readonly eulerExpr: number;
   isHiDiv0 = true;
+  maxChar = 196607;
+  charBits = 18;
   isSeqUsed = false;
   isReUsed = false;
 

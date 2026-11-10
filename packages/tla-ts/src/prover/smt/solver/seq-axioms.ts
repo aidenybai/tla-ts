@@ -34,14 +34,7 @@ import {
   SORT_INT,
 } from "./ast";
 import { FALSE_LITERAL, type Literal, TRUE_LITERAL, negate } from "./literal";
-import {
-  MAX_CHAR,
-  isBinaryApp,
-  isEmptySeq,
-  mkConcatOf,
-  mkEmptySeq,
-  mkSeqApp,
-} from "./seq-decl-plugin";
+import { isBinaryApp, isEmptySeq, mkConcatOf, mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
 import { SeqSkolem } from "./seq-skolem";
 
 export interface SeqAxiomsHost {
@@ -814,7 +807,7 @@ export class SeqAxioms {
     this.addClause([this.mkNot(isLengthOne), this.mkGe(expr, 0)]);
     {
       const notOne = this.mkNot(isLengthOne);
-      this.addClause([notOne, this.mkLe(expr, MAX_CHAR)]);
+      this.addClause([notOne, this.mkLe(expr, this.manager.maxChar)]);
     }
     {
       const notOne = this.mkNot(isLengthOne);
@@ -833,7 +826,7 @@ export class SeqAxioms {
     const manager = this.manager;
     const code = manager.getArg(expr, 0);
     const isNonNegative = this.mkGe(code, 0);
-    const isAtMostMax = this.mkLe(code, MAX_CHAR);
+    const isAtMostMax = this.mkLe(code, this.manager.maxChar);
     const isEmpty = this.mkEq(expr, this.mkEmpty(manager.sorts[expr]));
     {
       const length = this.mkLenAxiom(expr);

@@ -48,7 +48,6 @@ import {
   getCharConstRange,
   getLoopBounds,
   getLoopLower,
-  getMaxChar,
   ReInfoCache,
   getUnitStringChar,
   isDotPlus,
@@ -202,7 +201,7 @@ export class Derive {
   private resetPath() {
     this.pathConds.length = 0;
     this.pathSigns.length = 0;
-    this.intervals = [0, getMaxChar()];
+    this.intervals = [0, this.manager.maxChar];
     this.intervalsStart = 0;
     this.pathExpr = assign(this.manager, this.pathExpr, this.manager.trueExpr);
   }
@@ -511,7 +510,7 @@ export class Derive {
     const hiUnit = loUnit === -1 ? -1 : getUnitStringChar(manager, hi);
     if (loUnit !== -1 && hiUnit !== -1) {
       const isLoTrivial = manager.getChar(loUnit) === 0;
-      const isHiTrivial = manager.getChar(hiUnit) === getMaxChar();
+      const isHiTrivial = manager.getChar(hiUnit) === this.manager.maxChar;
       if (isLoTrivial && isHiTrivial) return epsilon;
       const isInRange = isLoTrivial
         ? mkCharLe(manager, this.element, hiUnit)
@@ -583,7 +582,7 @@ export class Derive {
     if (!isFirstNegated && !isSecondNegated)
       return secondRange.lo <= firstRange.lo && firstRange.hi <= secondRange.hi;
     if (!isFirstNegated) return firstRange.hi < secondRange.lo || secondRange.hi < firstRange.lo;
-    return secondRange.lo === 0 && secondRange.hi >= getMaxChar();
+    return secondRange.lo === 0 && secondRange.hi >= this.manager.maxChar;
   }
 
   private mkXor(first: number, second: number): number {
@@ -1034,7 +1033,7 @@ export class Derive {
       const lhs = manager.getChar(manager.getArg(condition, 0));
       const rhs = manager.getChar(manager.getArg(condition, 1));
       if (lhs !== -1 && rhs !== -1) return lhs <= rhs ? L_TRUE : L_FALSE;
-      if (lhs === 0 || rhs === getMaxChar()) return L_TRUE;
+      if (lhs === 0 || rhs === this.manager.maxChar) return L_TRUE;
     }
     if (op === OP_NOT) return -this.evalCond(manager.getArg(condition, 0));
     if (op !== OP_AND && op !== OP_OR) return L_UNDEF;
@@ -1091,7 +1090,7 @@ export class Derive {
   }
 
   private excludeInterval(lo: number, hi: number) {
-    const maxChar = getMaxChar();
+    const maxChar = this.manager.maxChar;
     const intervals = this.intervals;
     if (lo === 0 && hi >= maxChar) {
       this.intervalsStart = intervals.length / 2;

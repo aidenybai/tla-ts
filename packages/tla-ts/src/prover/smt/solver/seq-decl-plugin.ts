@@ -82,8 +82,13 @@ import {
   SORT_INT,
 } from "./ast";
 
-export const MAX_CHAR = 196607;
-export const CHAR_BITS = 18;
+export const UNICODE_ENCODING = { maxChar: 196607, charBits: 18 };
+
+export const ENCODINGS = new Map([
+  ["unicode", UNICODE_ENCODING],
+  ["bmp", { maxChar: 65535, charBits: 16 }],
+  ["ascii", { maxChar: 255, charBits: 8 }],
+]);
 
 const P_VAR = 0;
 const P_INT = 1;
@@ -470,7 +475,7 @@ const getCharSignature = (
     if (domain.length !== 0)
       return `incorrect number of arguments passed. Expected 0, received ${domain.length}`;
     if (parameters[0] < 0) return "non-negative parameter expected";
-    if (parameters[0] > MAX_CHAR) return "parameter expected within character range";
+    if (parameters[0] > manager.maxChar) return "parameter expected within character range";
     return mkSignature(kind, "Char", [], charSort, [...parameters]);
   }
   if (parameters.length !== 0)
@@ -481,10 +486,10 @@ const getCharSignature = (
   if (kind === OP_CHAR_IS_DIGIT) return mkSignature(kind, "char.is_digit", domain, SORT_BOOL);
   if (kind === OP_CHAR_TO_BV) {
     if (domain[0] !== charSort) return "expected character sort argument";
-    return mkSignature(kind, "char.to_bv", domain, manager.mkBvSort(CHAR_BITS));
+    return mkSignature(kind, "char.to_bv", domain, manager.mkBvSort(manager.charBits));
   }
-  if (!manager.isBvSort(domain[0]) || manager.getBvSize(domain[0]) !== CHAR_BITS)
-    return `expected bit-vector sort argument with ${CHAR_BITS}`;
+  if (!manager.isBvSort(domain[0]) || manager.getBvSize(domain[0]) !== manager.charBits)
+    return `expected bit-vector sort argument with ${manager.charBits}`;
   return mkSignature(kind, "char.from_bv", domain, charSort);
 };
 
@@ -618,7 +623,7 @@ export const getSeqSignature = (
     case OP_INTERNAL_STRING_FROM_CHAR:
       if (parameters.length !== 1) return "character literal expects integer parameter";
       if (parameters[0] < 0) return "character literal expects a non-negative integer parameter";
-      if (parameters[0] > MAX_CHAR) return "character literal is out of bounds";
+      if (parameters[0] > manager.maxChar) return "character literal is out of bounds";
       return getStringConstSignature(manager, [parameters[0]]);
     case OP_SEQ_LAST_INDEX:
       if (domain.length !== 2) return "two arguments expected tin last_indexof";
@@ -666,7 +671,7 @@ export const mkSeqAppOf = (manager: AstManager, signature: SeqSignature, args: n
         );
 };
 
-export const parseZstring = (text: string): number[] => {
+export const parseZstring = (text: string, maxChar: number): number[] => {
   const bytes = new TextEncoder().encode(text);
   const chars: number[] = [];
   const getHexDigit = (byte: number | undefined) =>
@@ -683,7 +688,7 @@ export const parseZstring = (text: string): number[] => {
     if (bytes[index] === 0) break;
     const escape =
       bytes[index] === 92 && bytes[index + 1] === 117
-        ? readEscape(bytes, index, getHexDigit)
+        ? readEscape(bytes, index, maxChar, getHexDigit)
         : undefined;
     if (escape !== undefined) {
       chars.push(escape.char);
@@ -699,6 +704,7 @@ export const parseZstring = (text: string): number[] => {
 const readEscape = (
   bytes: Uint8Array,
   index: number,
+  maxChar: number,
   getHexDigit: (byte: number | undefined) => number,
 ) => {
   if (bytes[index + 2] === 123 && bytes[index + 3] !== 125) {
@@ -710,7 +716,7 @@ const readEscape = (
         result = 16 * result + digit;
         continue;
       }
-      if (byte !== 125 || result > MAX_CHAR) return undefined;
+      if (byte !== 125 || result > maxChar) return undefined;
       return { char: result, next: index + 4 + offset };
     }
     return undefined;
@@ -718,7 +724,7 @@ const readEscape = (
   const digits = [2, 3, 4, 5].map((offset) => getHexDigit(bytes[index + offset]));
   if (digits.some((digit) => digit < 0)) return undefined;
   const result = digits.reduce((value, digit) => 16 * value + digit, 0);
-  return result > MAX_CHAR ? undefined : { char: result, next: index + 6 };
+  return result > maxChar ? undefined : { char: result, next: index + 6 };
 };
 
 export const formatZstring = (chars: readonly number[]) => {

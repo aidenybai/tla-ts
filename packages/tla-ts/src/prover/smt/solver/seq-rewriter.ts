@@ -73,7 +73,6 @@ import { getCompositeHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import type { Rewrite } from "./rewriter-tpl";
 import {
-  MAX_CHAR,
   getConcat,
   getConcatUnits,
   isBinaryApp,
@@ -437,7 +436,7 @@ export class SeqRewriter {
         const second = manager.getChar(args[1]);
         if (second === -1) return undefined;
         if (first > 0) return this.mkBool(first <= second);
-        return second === MAX_CHAR ? manager.trueExpr : undefined;
+        return second === this.manager.maxChar ? manager.trueExpr : undefined;
       }
       case OP_CHAR_TO_INT: {
         const code = manager.getChar(args[0]);
@@ -446,7 +445,7 @@ export class SeqRewriter {
       case OP_CHAR_FROM_BV: {
         if (!manager.isBvNumeral(args[0])) return undefined;
         const value = manager.getBvNumeralValue(args[0]);
-        return value <= BigInt(MAX_CHAR) ? manager.mkChar(Number(value)) : undefined;
+        return value <= BigInt(this.manager.maxChar) ? manager.mkChar(Number(value)) : undefined;
       }
       case OP_CHAR_IS_DIGIT: {
         const code = manager.getChar(args[0]);
@@ -1653,7 +1652,9 @@ export class SeqRewriter {
   private mkStrFromCode(code: number): Result {
     const value = this.getInt(code);
     if (value === undefined) return undefined;
-    return this.manager.mkString(value < 0n || value > BigInt(MAX_CHAR) ? [] : [Number(value)]);
+    return this.manager.mkString(
+      value < 0n || value > BigInt(this.manager.maxChar) ? [] : [Number(value)],
+    );
   }
 
   private mkStrToCode(seq: number): Result {

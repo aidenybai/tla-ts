@@ -378,7 +378,7 @@ export class ProtoModel {
   }
 
   getCharFactory() {
-    this.charFactory ??= new CharFactory();
+    this.charFactory ??= new CharFactory(this.manager);
     return this.charFactory;
   }
 
