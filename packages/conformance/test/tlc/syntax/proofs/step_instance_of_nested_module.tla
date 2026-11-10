@@ -30,7 +30,7 @@ all:
   transcript: |-
     | Semantic errors:
     | *** Errors: 1
-    | line 8, col 1 to line 10, col 4 of module step_instance_of_nested_module
+    | line 19, col 1 to line 21, col 4 of module step_instance_of_nested_module
     | Multiply-defined module 'I': this definition or declaration conflicts 
     | with the one at line 1, col 1 to line 3, col 4 of module I.
     3002:1 Parsing or semantic analysis failed.

@@ -39,9 +39,9 @@ init:
     Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 20, column 9 to line 20, column 32 in pick_state_level_null_fingerprint
-    1. Line 20, column 29 to line 20, column 32 in pick_state_level_null_fingerprint
-    2. Line 18, column 9 to line 18, column 27 in pick_state_level_null_fingerprint
+    0. Line 30, column 9 to line 30, column 32 in pick_state_level_null_fingerprint
+    1. Line 30, column 29 to line 30, column 32 in pick_state_level_null_fingerprint
+    2. Line 28, column 9 to line 28, column 27 in pick_state_level_null_fingerprint
 next:
   exit: 75
   transcript: |-
@@ -59,9 +59,9 @@ next:
     conformance_state = TRUE
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 21, column 9 to line 21, column 33 in pick_state_level_null_fingerprint
-    1. Line 21, column 30 to line 21, column 33 in pick_state_level_null_fingerprint
-    2. Line 18, column 9 to line 18, column 27 in pick_state_level_null_fingerprint
+    0. Line 31, column 9 to line 31, column 33 in pick_state_level_null_fingerprint
+    1. Line 31, column 30 to line 31, column 33 in pick_state_level_null_fingerprint
+    2. Line 28, column 9 to line 28, column 27 in pick_state_level_null_fingerprint
 invariant:
   exit: 75
   transcript: |-
@@ -73,10 +73,10 @@ invariant:
     Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 20, column 9 to line 20, column 32 in pick_state_level_null_fingerprint
-    1. Line 22, column 8 to line 22, column 32 in pick_state_level_null_fingerprint
-    2. Line 22, column 29 to line 22, column 32 in pick_state_level_null_fingerprint
-    3. Line 18, column 9 to line 18, column 27 in pick_state_level_null_fingerprint
+    0. Line 30, column 9 to line 30, column 32 in pick_state_level_null_fingerprint
+    1. Line 32, column 8 to line 32, column 32 in pick_state_level_null_fingerprint
+    2. Line 32, column 29 to line 32, column 32 in pick_state_level_null_fingerprint
+    3. Line 28, column 9 to line 28, column 27 in pick_state_level_null_fingerprint
 property:
   exit: 255
   transcript: 2214:1 Temporal formulas containing actions must be of forms <>[]A or []<>A.

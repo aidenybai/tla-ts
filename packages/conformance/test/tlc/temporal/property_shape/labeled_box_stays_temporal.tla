@@ -40,9 +40,9 @@ all:
     2264:1 The following behavior constitutes a counter-example:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 14, col 9 to line 14, col 27 of module labeled_box_stays_temporal>
+    2217:4 2: <Next line 27, col 9 to line 27, col 27 of module labeled_box_stays_temporal>
     x = 1
-    2217:4 3: <Next line 14, col 9 to line 14, col 27 of module labeled_box_stays_temporal>
+    2217:4 3: <Next line 27, col 9 to line 27, col 27 of module labeled_box_stays_temporal>
     x = 2
     2218:4 4: Stuttering
     2267:0 Finished checking temporal properties in <time> at <date>

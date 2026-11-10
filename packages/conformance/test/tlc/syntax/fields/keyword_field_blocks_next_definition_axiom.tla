@@ -26,9 +26,9 @@ all:
   transcript: |-
     | ***Parse Error***
     | Was expecting "==== or more Module body"
-    | Encountered "Next" at line 9, column 1 and token "AXIOM" 
+    | Encountered "Next" at line 20, column 1 and token "AXIOM" 
     | Residual stack trace follows:
-    | Module definition starting at line 7, column 1.
+    | Module definition starting at line 18, column 1.
     | Fatal errors while parsing TLA+ spec in file keyword_field_blocks_next_definition_axiom
     | In module keyword_field_blocks_next_definition_axiom
     | Could not parse module keyword_field_blocks_next_definition_axiom from file keyword_field_blocks_next_definition_axiom.tla

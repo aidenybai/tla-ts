@@ -75,7 +75,7 @@ Test == {<<a, b>> \in {1} : TRUE} # {}
 assume:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 11, col 8 to line 11, col 11 of module tuple_binder_reducible_non_tuple failed.
+    2105:1 Evaluating assumption line 72, col 8 to line 72, col 11 of module tuple_binder_reducible_non_tuple failed.
     class tlc2.value.impl.IntValue cannot be cast to class tlc2.value.impl.TupleValue (tlc2.value.impl.IntValue and tlc2.value.impl.TupleValue are in unnamed module of loader 'app')
 init:
   exit: 75

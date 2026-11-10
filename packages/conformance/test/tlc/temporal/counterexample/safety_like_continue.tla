@@ -44,9 +44,9 @@ all:
     2264:1 The following behavior constitutes a counter-example:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 16, col 9 to line 16, col 27 of module safety_like_continue>
+    2217:4 2: <Next line 32, col 9 to line 32, col 27 of module safety_like_continue>
     x = 1
-    2217:4 3: <Next line 16, col 9 to line 16, col 27 of module safety_like_continue>
+    2217:4 3: <Next line 32, col 9 to line 32, col 27 of module safety_like_continue>
     x = 2
     1000:1 TLC threw an unexpected exception.
     This was probably caused by an error in the spec or model.
@@ -56,9 +56,9 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 16, col 9 to line 16, col 27 of module safety_like_continue>
+    2217:4 2: <Next line 32, col 9 to line 32, col 27 of module safety_like_continue>
     x = 1
-    2217:4 3: <Next line 16, col 9 to line 16, col 27 of module safety_like_continue>
+    2217:4 3: <Next line 32, col 9 to line 32, col 27 of module safety_like_continue>
     x = 2
     2199:0 3 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.

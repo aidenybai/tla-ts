@@ -76,7 +76,7 @@ Test == CopiesIn(1, 3) = 0
 assume:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 14, col 8 to line 14, col 11 of module copies_in_non_function failed.
+    2105:1 Evaluating assumption line 73, col 8 to line 73, col 11 of module copies_in_non_function failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
@@ -91,10 +91,10 @@ init:
     Cannot read field "values" because "fcn" is null
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 15, column 9 to line 15, column 32 in copies_in_non_function
-    1. Line 15, column 29 to line 15, column 32 in copies_in_non_function
-    2. Line 13, column 9 to line 13, column 26 in copies_in_non_function
-    3. Line 13, column 9 to line 13, column 22 in copies_in_non_function
+    0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+    1. Line 74, column 29 to line 74, column 32 in copies_in_non_function
+    2. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+    3. Line 72, column 9 to line 72, column 22 in copies_in_non_function
 next:
   exit: 255
   transcript: |-
@@ -107,10 +107,10 @@ next:
     conformance_state = TRUE
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 16, column 9 to line 16, column 33 in copies_in_non_function
-    1. Line 16, column 30 to line 16, column 33 in copies_in_non_function
-    2. Line 13, column 9 to line 13, column 26 in copies_in_non_function
-    3. Line 13, column 9 to line 13, column 22 in copies_in_non_function
+    0. Line 75, column 9 to line 75, column 33 in copies_in_non_function
+    1. Line 75, column 30 to line 75, column 33 in copies_in_non_function
+    2. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+    3. Line 72, column 9 to line 72, column 22 in copies_in_non_function
 invariant:
   exit: 75
   transcript: |-
@@ -121,11 +121,11 @@ invariant:
     Cannot read field "values" because "fcn" is null
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 15, column 9 to line 15, column 32 in copies_in_non_function
-    1. Line 17, column 8 to line 17, column 32 in copies_in_non_function
-    2. Line 17, column 29 to line 17, column 32 in copies_in_non_function
-    3. Line 13, column 9 to line 13, column 26 in copies_in_non_function
-    4. Line 13, column 9 to line 13, column 22 in copies_in_non_function
+    0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+    1. Line 76, column 8 to line 76, column 32 in copies_in_non_function
+    2. Line 76, column 29 to line 76, column 32 in copies_in_non_function
+    3. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+    4. Line 72, column 9 to line 72, column 22 in copies_in_non_function
 property:
   exit: 75
   transcript: |-
@@ -136,9 +136,9 @@ property:
     Cannot read field "values" because "fcn" is null
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 15, column 9 to line 15, column 32 in copies_in_non_function
-    1. Line 16, column 12 to line 16, column 36 in copies_in_non_function
-    2. Line 16, column 33 to line 16, column 36 in copies_in_non_function
-    3. Line 13, column 9 to line 13, column 26 in copies_in_non_function
-    4. Line 13, column 9 to line 13, column 22 in copies_in_non_function
+    0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+    1. Line 75, column 12 to line 75, column 36 in copies_in_non_function
+    2. Line 75, column 33 to line 75, column 36 in copies_in_non_function
+    3. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+    4. Line 72, column 9 to line 72, column 22 in copies_in_non_function
 ---*)

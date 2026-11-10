@@ -42,7 +42,7 @@ all:
     2217:4 1: <Initial predicate>
     /\ x = 0
     /\ y = 0
-    2217:4 2: <Next line 17, col 9 to line 17, col 14 of module unassigned_stops>
+    2217:4 2: <Next line 32, col 9 to line 32, col 14 of module unassigned_stops>
     /\ x = 0
     /\ y = null
     1000:1 TLC threw an unexpected exception.
@@ -54,7 +54,7 @@ all:
     2217:4 1: <Initial predicate>
     /\ x = 0
     /\ y = 0
-    2217:4 2: <Next line 17, col 9 to line 17, col 14 of module unassigned_stops>
+    2217:4 2: <Next line 32, col 9 to line 32, col 14 of module unassigned_stops>
     /\ x = 0
     /\ y = null
     2109:1 Successor state is not completely specified by the next-state action. The following variable is not defined: y.
@@ -62,7 +62,7 @@ all:
     2217:4 1: <Initial predicate>
     /\ x = 0
     /\ y = 0
-    2217:4 2: <Next line 17, col 9 to line 17, col 14 of module unassigned_stops>
+    2217:4 2: <Next line 32, col 9 to line 32, col 14 of module unassigned_stops>
     /\ x = 0
     /\ y = null
     2199:0 2 states generated, 1 distinct states found, 0 states left on queue.

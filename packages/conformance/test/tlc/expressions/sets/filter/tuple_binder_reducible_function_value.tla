@@ -17,7 +17,7 @@ Test == {<<a, b>> \in {[i \in 1..2 |-> i]} : TRUE} # {}
 assume:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 11, col 8 to line 11, col 11 of module tuple_binder_reducible_function_value failed.
+    2105:1 Evaluating assumption line 14, col 8 to line 14, col 11 of module tuple_binder_reducible_function_value failed.
     class tlc2.value.impl.FcnRcdValue cannot be cast to class tlc2.value.impl.TupleValue (tlc2.value.impl.FcnRcdValue and tlc2.value.impl.TupleValue are in unnamed module of loader 'app')
 init:
   exit: 75

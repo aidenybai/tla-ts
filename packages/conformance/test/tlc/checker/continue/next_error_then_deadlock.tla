@@ -42,13 +42,13 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 16, col 9 to line 16, col 27 of module next_error_then_deadlock>
+    2217:4 2: <Next line 33, col 9 to line 33, col 27 of module next_error_then_deadlock>
     x = 1
     2114:1 Deadlock reached.
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 16, col 9 to line 16, col 27 of module next_error_then_deadlock>
+    2217:4 2: <Next line 33, col 9 to line 33, col 27 of module next_error_then_deadlock>
     x = 1
     2199:0 2 states generated, 2 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 2.

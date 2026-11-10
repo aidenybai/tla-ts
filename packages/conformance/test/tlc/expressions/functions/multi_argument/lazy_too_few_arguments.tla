@@ -95,7 +95,7 @@ Test == [x, y \in Nat |-> x + y][<<1>>] = 0
 assume:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 11, col 8 to line 11, col 11 of module lazy_too_few_arguments failed.
+    2105:1 Evaluating assumption line 92, col 8 to line 92, col 11 of module lazy_too_few_arguments failed.
     Index 1 out of bounds for length 1
 init:
   exit: 75

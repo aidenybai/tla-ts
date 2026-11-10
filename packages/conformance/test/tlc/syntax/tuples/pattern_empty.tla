@@ -23,6 +23,6 @@ ASSUME \A <<>> \in {<<>>} : TRUE
 all:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 8, col 8 to line 8, col 32 of module pattern_empty failed.
+    2105:1 Evaluating assumption line 19, col 8 to line 19, col 32 of module pattern_empty failed.
     2170:0 Argument mismatch in operator application.%1
 ---*)

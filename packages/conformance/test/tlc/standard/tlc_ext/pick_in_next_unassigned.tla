@@ -48,8 +48,8 @@ all:
     x = 0
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 16, column 9 to line 17, column 17 in pick_in_next_unassigned
-    1. Line 16, column 12 to line 16, column 33 in pick_in_next_unassigned
+    0. Line 28, column 9 to line 29, column 17 in pick_in_next_unassigned
+    1. Line 28, column 12 to line 28, column 33 in pick_in_next_unassigned
     2199:0 1 states generated, 1 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 1.
 ---*)

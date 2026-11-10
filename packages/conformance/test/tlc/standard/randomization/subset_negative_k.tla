@@ -76,7 +76,7 @@ Test == RandomSubset(-1, {1}) = {}
 assume:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 14, col 8 to line 14, col 11 of module subset_negative_k failed.
+    2105:1 Evaluating assumption line 73, col 8 to line 73, col 11 of module subset_negative_k failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value),
     but it produced the following error:
@@ -91,10 +91,10 @@ init:
     -1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 15, column 9 to line 15, column 32 in subset_negative_k
-    1. Line 15, column 29 to line 15, column 32 in subset_negative_k
-    2. Line 13, column 9 to line 13, column 34 in subset_negative_k
-    3. Line 13, column 9 to line 13, column 29 in subset_negative_k
+    0. Line 74, column 9 to line 74, column 32 in subset_negative_k
+    1. Line 74, column 29 to line 74, column 32 in subset_negative_k
+    2. Line 72, column 9 to line 72, column 34 in subset_negative_k
+    3. Line 72, column 9 to line 72, column 29 in subset_negative_k
 next:
   exit: 75
   transcript: |-
@@ -112,10 +112,10 @@ next:
     conformance_state = TRUE
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 16, column 9 to line 16, column 33 in subset_negative_k
-    1. Line 16, column 30 to line 16, column 33 in subset_negative_k
-    2. Line 13, column 9 to line 13, column 34 in subset_negative_k
-    3. Line 13, column 9 to line 13, column 29 in subset_negative_k
+    0. Line 75, column 9 to line 75, column 33 in subset_negative_k
+    1. Line 75, column 30 to line 75, column 33 in subset_negative_k
+    2. Line 72, column 9 to line 72, column 34 in subset_negative_k
+    3. Line 72, column 9 to line 72, column 29 in subset_negative_k
 invariant:
   exit: 75
   transcript: |-
@@ -127,11 +127,11 @@ invariant:
     -1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 15, column 9 to line 15, column 32 in subset_negative_k
-    1. Line 17, column 8 to line 17, column 32 in subset_negative_k
-    2. Line 17, column 29 to line 17, column 32 in subset_negative_k
-    3. Line 13, column 9 to line 13, column 34 in subset_negative_k
-    4. Line 13, column 9 to line 13, column 29 in subset_negative_k
+    0. Line 74, column 9 to line 74, column 32 in subset_negative_k
+    1. Line 76, column 8 to line 76, column 32 in subset_negative_k
+    2. Line 76, column 29 to line 76, column 32 in subset_negative_k
+    3. Line 72, column 9 to line 72, column 34 in subset_negative_k
+    4. Line 72, column 9 to line 72, column 29 in subset_negative_k
 property:
   exit: 75
   transcript: |-
@@ -143,9 +143,9 @@ property:
     -1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 15, column 9 to line 15, column 32 in subset_negative_k
-    1. Line 16, column 12 to line 16, column 36 in subset_negative_k
-    2. Line 16, column 33 to line 16, column 36 in subset_negative_k
-    3. Line 13, column 9 to line 13, column 34 in subset_negative_k
-    4. Line 13, column 9 to line 13, column 29 in subset_negative_k
+    0. Line 74, column 9 to line 74, column 32 in subset_negative_k
+    1. Line 75, column 12 to line 75, column 36 in subset_negative_k
+    2. Line 75, column 33 to line 75, column 36 in subset_negative_k
+    3. Line 72, column 9 to line 72, column 34 in subset_negative_k
+    4. Line 72, column 9 to line 72, column 29 in subset_negative_k
 ---*)

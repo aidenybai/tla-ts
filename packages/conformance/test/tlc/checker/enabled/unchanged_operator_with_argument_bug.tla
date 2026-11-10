@@ -40,13 +40,13 @@ all:
     2148:0 The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable x occurring in the state formula v.
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 15, column 9 to line 15, column 13 in unchanged_operator_with_argument_bug
-    1. Line 18, column 8 to line 18, column 40 in unchanged_operator_with_argument_bug
-    2. Line 18, column 15 to line 18, column 39 in unchanged_operator_with_argument_bug
-    3. Line 18, column 24 to line 18, column 38 in unchanged_operator_with_argument_bug
-    4. Line 18, column 34 to line 18, column 38 in unchanged_operator_with_argument_bug
-    5. Line 17, column 10 to line 17, column 10 in unchanged_operator_with_argument_bug
-    6. Line 18, column 37 to line 18, column 37 in unchanged_operator_with_argument_bug
+    0. Line 28, column 9 to line 28, column 13 in unchanged_operator_with_argument_bug
+    1. Line 31, column 8 to line 31, column 40 in unchanged_operator_with_argument_bug
+    2. Line 31, column 15 to line 31, column 39 in unchanged_operator_with_argument_bug
+    3. Line 31, column 24 to line 31, column 38 in unchanged_operator_with_argument_bug
+    4. Line 31, column 34 to line 31, column 38 in unchanged_operator_with_argument_bug
+    5. Line 30, column 10 to line 30, column 10 in unchanged_operator_with_argument_bug
+    6. Line 31, column 37 to line 31, column 37 in unchanged_operator_with_argument_bug
     2199:0 1 states generated, 1 distinct states found, 1 states left on queue.
     2194:0 The depth of the complete state graph search is 1.
 ---*)

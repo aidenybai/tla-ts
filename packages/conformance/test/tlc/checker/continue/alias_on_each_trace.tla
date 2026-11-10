@@ -51,15 +51,15 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     p = 1
-    2217:4 2: <Next line 19, col 9 to line 19, col 39 of module alias_on_each_trace>
+    2217:4 2: <Next line 40, col 9 to line 40, col 39 of module alias_on_each_trace>
     p = 2
     2110:1 Invariant Inv is violated.
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     p = 1
-    2217:4 2: <Next line 19, col 9 to line 19, col 39 of module alias_on_each_trace>
+    2217:4 2: <Next line 40, col 9 to line 40, col 39 of module alias_on_each_trace>
     p = 2
-    2217:4 3: <Next line 19, col 9 to line 19, col 39 of module alias_on_each_trace>
+    2217:4 3: <Next line 40, col 9 to line 40, col 39 of module alias_on_each_trace>
     p = 3
     2193:0 Model checking completed. No error has been found.
       Estimates of the probability that TLC did not check all reachable states

@@ -25,6 +25,6 @@ Test == PrintT({a : <<a, b>> \in SUBSET {1, 2}})
 all:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 16, col 8 to line 16, col 11 of module tuple_pattern_subset failed.
+    2105:1 Evaluating assumption line 22, col 8 to line 22, col 11 of module tuple_pattern_subset failed.
     2170:0 Argument mismatch in operator application.%1
 ---*)

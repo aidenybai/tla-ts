@@ -31,11 +31,11 @@ all:
   transcript: |-
     | Semantic errors:
     | *** Errors: 3
-    | line 11, col 8 to line 11, col 15 of module sets_mistaken_set_filter_tuples_test
+    | line 24, col 8 to line 24, col 15 of module sets_mistaken_set_filter_tuples_test
     | Unexpected token found.
-    | line 11, col 8 to line 11, col 15 of module sets_mistaken_set_filter_tuples_test
+    | line 24, col 8 to line 24, col 15 of module sets_mistaken_set_filter_tuples_test
     | Need name or step number here, not `N_IdentifierTuple'.
-    | line 11, col 21 to line 11, col 23 of module sets_mistaken_set_filter_tuples_test
+    | line 24, col 21 to line 24, col 23 of module sets_mistaken_set_filter_tuples_test
     | Unknown operator: `Nat'.
     3002:1 Parsing or semantic analysis failed.
 ---*)

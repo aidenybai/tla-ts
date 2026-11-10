@@ -49,15 +49,15 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 18, col 9 to line 18, col 24 of module continue_flag>
+    2217:4 2: <Next line 39, col 9 to line 39, col 24 of module continue_flag>
     x = 1
     2110:1 Invariant Inv is violated.
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 18, col 9 to line 18, col 24 of module continue_flag>
+    2217:4 2: <Next line 39, col 9 to line 39, col 24 of module continue_flag>
     x = 1
-    2217:4 3: <Next line 18, col 9 to line 18, col 24 of module continue_flag>
+    2217:4 3: <Next line 39, col 9 to line 39, col 24 of module continue_flag>
     x = 2
     2193:0 Model checking completed. No error has been found.
       Estimates of the probability that TLC did not check all reachable states

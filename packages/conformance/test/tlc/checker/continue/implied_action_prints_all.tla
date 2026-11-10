@@ -53,19 +53,19 @@ all:
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 18, col 9 to line 18, col 39 of module implied_action_prints_all>
+    2217:4 2: <Next line 43, col 9 to line 43, col 39 of module implied_action_prints_all>
     x = 1
-    2217:4 3: <Next line 18, col 9 to line 18, col 39 of module implied_action_prints_all>
+    2217:4 3: <Next line 43, col 9 to line 43, col 39 of module implied_action_prints_all>
     x = 2
     2112:1 Action property Prop is violated.
     2121:1 The behavior up to this point is:
     2217:4 1: <Initial predicate>
     x = 0
-    2217:4 2: <Next line 18, col 9 to line 18, col 39 of module implied_action_prints_all>
+    2217:4 2: <Next line 43, col 9 to line 43, col 39 of module implied_action_prints_all>
     x = 1
-    2217:4 3: <Next line 18, col 9 to line 18, col 39 of module implied_action_prints_all>
+    2217:4 3: <Next line 43, col 9 to line 43, col 39 of module implied_action_prints_all>
     x = 2
-    2217:4 4: <Next line 18, col 9 to line 18, col 39 of module implied_action_prints_all>
+    2217:4 4: <Next line 43, col 9 to line 43, col 39 of module implied_action_prints_all>
     x = 3
     2193:0 Model checking completed. No error has been found.
       Estimates of the probability that TLC did not check all reachable states

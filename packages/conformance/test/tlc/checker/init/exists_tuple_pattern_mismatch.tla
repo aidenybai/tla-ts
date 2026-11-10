@@ -34,7 +34,7 @@ all:
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 15, column 9 to line 15, column 54 in exists_tuple_pattern_mismatch
+    0. Line 26, column 9 to line 26, column 54 in exists_tuple_pattern_mismatch
     2199:0 0 states generated, 0 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 0.
 ---*)

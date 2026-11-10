@@ -17,7 +17,7 @@ Test == \E <<a, b>> \in {(1 :> 5) @@ (2 :> 6)} : a = 5
 assume:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 11, col 8 to line 11, col 11 of module tuple_binder_rejects_colon_greater failed.
+    2105:1 Evaluating assumption line 14, col 8 to line 14, col 11 of module tuple_binder_rejects_colon_greater failed.
     2170:0 Argument mismatch in operator application.%1
 init:
   exit: 75
@@ -26,9 +26,9 @@ init:
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 12, column 9 to line 12, column 32 in tuple_binder_rejects_colon_greater
-    1. Line 12, column 29 to line 12, column 32 in tuple_binder_rejects_colon_greater
-    2. Line 10, column 9 to line 10, column 54 in tuple_binder_rejects_colon_greater
+    0. Line 15, column 9 to line 15, column 32 in tuple_binder_rejects_colon_greater
+    1. Line 15, column 29 to line 15, column 32 in tuple_binder_rejects_colon_greater
+    2. Line 13, column 9 to line 13, column 54 in tuple_binder_rejects_colon_greater
 next:
   exit: 75
   transcript: |-
@@ -43,9 +43,9 @@ next:
     conformance_state = TRUE
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 13, column 9 to line 13, column 33 in tuple_binder_rejects_colon_greater
-    1. Line 13, column 30 to line 13, column 33 in tuple_binder_rejects_colon_greater
-    2. Line 10, column 9 to line 10, column 54 in tuple_binder_rejects_colon_greater
+    0. Line 16, column 9 to line 16, column 33 in tuple_binder_rejects_colon_greater
+    1. Line 16, column 30 to line 16, column 33 in tuple_binder_rejects_colon_greater
+    2. Line 13, column 9 to line 13, column 54 in tuple_binder_rejects_colon_greater
 invariant:
   exit: 75
   transcript: |-
@@ -54,10 +54,10 @@ invariant:
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 12, column 9 to line 12, column 32 in tuple_binder_rejects_colon_greater
-    1. Line 14, column 8 to line 14, column 32 in tuple_binder_rejects_colon_greater
-    2. Line 14, column 29 to line 14, column 32 in tuple_binder_rejects_colon_greater
-    3. Line 10, column 9 to line 10, column 54 in tuple_binder_rejects_colon_greater
+    0. Line 15, column 9 to line 15, column 32 in tuple_binder_rejects_colon_greater
+    1. Line 17, column 8 to line 17, column 32 in tuple_binder_rejects_colon_greater
+    2. Line 17, column 29 to line 17, column 32 in tuple_binder_rejects_colon_greater
+    3. Line 13, column 9 to line 13, column 54 in tuple_binder_rejects_colon_greater
 property:
   exit: 75
   transcript: |-
@@ -66,8 +66,8 @@ property:
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 12, column 9 to line 12, column 32 in tuple_binder_rejects_colon_greater
-    1. Line 13, column 12 to line 13, column 36 in tuple_binder_rejects_colon_greater
-    2. Line 13, column 33 to line 13, column 36 in tuple_binder_rejects_colon_greater
-    3. Line 10, column 9 to line 10, column 54 in tuple_binder_rejects_colon_greater
+    0. Line 15, column 9 to line 15, column 32 in tuple_binder_rejects_colon_greater
+    1. Line 16, column 12 to line 16, column 36 in tuple_binder_rejects_colon_greater
+    2. Line 16, column 33 to line 16, column 36 in tuple_binder_rejects_colon_greater
+    3. Line 13, column 9 to line 13, column 54 in tuple_binder_rejects_colon_greater
 ---*)

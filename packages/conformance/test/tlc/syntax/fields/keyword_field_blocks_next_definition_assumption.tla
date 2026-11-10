@@ -26,9 +26,9 @@ all:
   transcript: |-
     | ***Parse Error***
     | Was expecting "==== or more Module body"
-    | Encountered "Next" at line 9, column 1 and token "ASSUMPTION" 
+    | Encountered "Next" at line 20, column 1 and token "ASSUMPTION" 
     | Residual stack trace follows:
-    | Module definition starting at line 7, column 1.
+    | Module definition starting at line 18, column 1.
     | Fatal errors while parsing TLA+ spec in file keyword_field_blocks_next_definition_assumption
     | In module keyword_field_blocks_next_definition_assumption
     | Could not parse module keyword_field_blocks_next_definition_assumption from file keyword_field_blocks_next_definition_assumption.tla

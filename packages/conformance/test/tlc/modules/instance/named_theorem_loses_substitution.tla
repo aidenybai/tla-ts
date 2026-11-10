@@ -28,6 +28,6 @@ ASSUME M!T
 all:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 13, col 8 to line 13, col 10 of module named_theorem_loses_substitution failed.
+    2105:1 Evaluating assumption line 24, col 8 to line 24, col 10 of module named_theorem_loses_substitution failed.
     Cannot invoke "Object.equals(Object)" because "arg1" is null
 ---*)

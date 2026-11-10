@@ -72,7 +72,7 @@ Test == \A <<a, b>> \in {<<1, 2, 3>>} : TRUE
 assume:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 12, col 8 to line 12, col 11 of module tuple_binder_too_long failed.
+    2105:1 Evaluating assumption line 69, col 8 to line 69, col 11 of module tuple_binder_too_long failed.
     2170:0 Argument mismatch in operator application.%1
 init:
   exit: 75
@@ -81,9 +81,9 @@ init:
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 13, column 9 to line 13, column 32 in tuple_binder_too_long
-    1. Line 13, column 29 to line 13, column 32 in tuple_binder_too_long
-    2. Line 11, column 9 to line 11, column 44 in tuple_binder_too_long
+    0. Line 70, column 9 to line 70, column 32 in tuple_binder_too_long
+    1. Line 70, column 29 to line 70, column 32 in tuple_binder_too_long
+    2. Line 68, column 9 to line 68, column 44 in tuple_binder_too_long
 next:
   exit: 75
   transcript: |-
@@ -98,9 +98,9 @@ next:
     conformance_state = TRUE
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 14, column 9 to line 14, column 33 in tuple_binder_too_long
-    1. Line 14, column 30 to line 14, column 33 in tuple_binder_too_long
-    2. Line 11, column 9 to line 11, column 44 in tuple_binder_too_long
+    0. Line 71, column 9 to line 71, column 33 in tuple_binder_too_long
+    1. Line 71, column 30 to line 71, column 33 in tuple_binder_too_long
+    2. Line 68, column 9 to line 68, column 44 in tuple_binder_too_long
 invariant:
   exit: 75
   transcript: |-
@@ -109,10 +109,10 @@ invariant:
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 13, column 9 to line 13, column 32 in tuple_binder_too_long
-    1. Line 15, column 8 to line 15, column 32 in tuple_binder_too_long
-    2. Line 15, column 29 to line 15, column 32 in tuple_binder_too_long
-    3. Line 11, column 9 to line 11, column 44 in tuple_binder_too_long
+    0. Line 70, column 9 to line 70, column 32 in tuple_binder_too_long
+    1. Line 72, column 8 to line 72, column 32 in tuple_binder_too_long
+    2. Line 72, column 29 to line 72, column 32 in tuple_binder_too_long
+    3. Line 68, column 9 to line 68, column 44 in tuple_binder_too_long
 property:
   exit: 75
   transcript: |-
@@ -121,8 +121,8 @@ property:
     2170:0 Argument mismatch in operator application.%1
     2103:1 The error occurred when TLC was evaluating the nested
     expressions at the following positions:
-    0. Line 13, column 9 to line 13, column 32 in tuple_binder_too_long
-    1. Line 14, column 12 to line 14, column 36 in tuple_binder_too_long
-    2. Line 14, column 33 to line 14, column 36 in tuple_binder_too_long
-    3. Line 11, column 9 to line 11, column 44 in tuple_binder_too_long
+    0. Line 70, column 9 to line 70, column 32 in tuple_binder_too_long
+    1. Line 71, column 12 to line 71, column 36 in tuple_binder_too_long
+    2. Line 71, column 33 to line 71, column 36 in tuple_binder_too_long
+    3. Line 68, column 9 to line 68, column 44 in tuple_binder_too_long
 ---*)

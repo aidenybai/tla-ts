@@ -26,9 +26,9 @@ all:
   transcript: |-
     | ***Parse Error***
     | Was expecting "==== or more Module body"
-    | Encountered "Next" at line 9, column 1 and token "LEMMA" 
+    | Encountered "Next" at line 20, column 1 and token "LEMMA" 
     | Residual stack trace follows:
-    | Module definition starting at line 7, column 1.
+    | Module definition starting at line 18, column 1.
     | Fatal errors while parsing TLA+ spec in file keyword_field_blocks_next_definition_lemma
     | In module keyword_field_blocks_next_definition_lemma
     | Could not parse module keyword_field_blocks_next_definition_lemma from file keyword_field_blocks_next_definition_lemma.tla

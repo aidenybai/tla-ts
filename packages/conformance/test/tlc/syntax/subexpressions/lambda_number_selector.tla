@@ -25,7 +25,7 @@ all:
   transcript: |-
     | Semantic errors:
     | *** Errors: 1
-    | line 10, col 14 to line 10, col 14 of module lambda_number_selector
+    | line 19, col 14 to line 19, col 14 of module lambda_number_selector
     | Cannot use !N_StructOp to select subexpression of a LAMBDA.
     3002:1 Parsing or semantic analysis failed.
 ---*)

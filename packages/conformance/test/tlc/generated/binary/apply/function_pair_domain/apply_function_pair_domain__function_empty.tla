@@ -29,6 +29,6 @@ Test == PrintT(([x \in {1}, y \in {2} |-> x + y])[[x \in {} |-> x]])
 all:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 16, col 8 to line 16, col 11 of module apply_function_pair_domain__function_empty failed.
+    2105:1 Evaluating assumption line 26, col 8 to line 26, col 11 of module apply_function_pair_domain__function_empty failed.
     Index 0 out of bounds for length 0
 ---*)
