@@ -70,8 +70,8 @@ import {
   type SetValue,
   type Value,
   rankString,
-  SET_BOUND,
-  SET_BOUND_MESSAGE,
+  getMaximumSetSize,
+  getSetBoundMessage,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
 import { getSanyStandardModules } from "./sany/modules";
@@ -230,8 +230,8 @@ export const CORE_OPERATORS: Builtin[] = [
               const isSorted =
                 written === leftSet.elements &&
                 (added.length === 0 || compareValues(written[written.length - 1], added[0]) < 0);
-              if (written.length + added.length > SET_BOUND) {
-                throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+              if (written.length + added.length > getMaximumSetSize()) {
+                throw new TlaSetBoundError(getSetBoundMessage());
               }
               if (isSorted && !leftSet.isNormalized) return merged;
               const union = merged === leftSet ? createSortedSet(merged.elements) : merged;

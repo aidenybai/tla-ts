@@ -72,11 +72,14 @@ export const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {
     getArity: (rest) => (rest.length > 1 && rest[0].startsWith("dot") ? 2 : 1),
   },
   { flag: "-fp <num>" },
-  { flag: "-lncheck <final|default>" },
+  { flag: "-lncheck <final|default|off>" },
+  { flag: "-maxSetSize <num>" },
   { flag: "-metadir <directory>" },
   { flag: "-nowarning" },
   { flag: "-seed <num>" },
+  { flag: "-terse" },
   { flag: "-tool" },
+  { flag: "-view" },
   { flag: "-workers <count|auto>" },
 ]);
 

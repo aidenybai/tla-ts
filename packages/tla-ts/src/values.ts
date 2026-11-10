@@ -179,18 +179,29 @@ const isLazySet = (value: ObjectValue): value is ConvertibleSetValue =>
 
 export const MAXIMUM_INTEGER = 2147483647;
 
-// TLCGlobals.setBound: a ValueVec that TLC grows one element at a time holds at most this many.
-export const SET_BOUND = 1000000;
+const DEFAULT_SET_BOUND = 1000000;
+const VALUE_VEC_CAPACITY = 10;
 
-export const SET_BOUND_MESSAGE = `Attempted to construct a set with too many elements (>${SET_BOUND}).`;
+const setBound = { size: DEFAULT_SET_BOUND };
+
+export const getSetBound = () => setBound.size;
+
+// A ValueVec that TLC grows one element at a time starts with room for 10, and fails to grow once
+// its room reaches the bound.
+export const getMaximumSetSize = () => Math.max(setBound.size, VALUE_VEC_CAPACITY);
+
+export const getSetBoundMessage = () =>
+  `Attempted to construct a set with too many elements (>${setBound.size}).`;
 
 export const addBoundedElement = (elements: Value[], element: Value) => {
-  if (elements.length === SET_BOUND) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+  if (elements.length === getMaximumSetSize()) throw new TlaSetBoundError(getSetBoundMessage());
   elements.push(element);
 };
 
 export const isBeyondSetBound = (value: Value) =>
-  typeof value === "object" && value.kind === "Interval" && value.high - value.low >= SET_BOUND;
+  typeof value === "object" &&
+  value.kind === "Interval" &&
+  value.high - value.low >= getMaximumSetSize();
 
 // TLC steps through an interval without building its elements.
 export const forEachElement = (
@@ -366,8 +377,28 @@ export const setStringOrder = (texts: Iterable<string>) => {
 // TLC 1.7.4 prints and looks keys up in functions differently, so each check sets the version.
 const valueVersion = { is174: false };
 
-export const setValueVersion = (version: TlcVersion | undefined) => {
-  valueVersion.is174 = version === "1.7.4";
+const printing = { isExpanded: true, isViewPrinted: false };
+
+export interface ValueOptions {
+  version?: TlcVersion;
+  maxSetSize?: number;
+  isLazyValueExpanded?: boolean;
+  isViewPrinted?: boolean;
+}
+
+export const setValueOptions = (options: ValueOptions) => {
+  valueVersion.is174 = options.version === "1.7.4";
+  setBound.size = options.maxSetSize ?? DEFAULT_SET_BOUND;
+  printing.isExpanded = options.isLazyValueExpanded ?? true;
+  printing.isViewPrinted = options.isViewPrinted ?? false;
+};
+
+// TLC evaluates the VIEW of a state it prints as it prints it.
+const viewTexts = new WeakMap<Record<string, Value>, () => string>();
+
+export const setViewText = (state: Record<string, Value>, getText: () => string) => {
+  if (printing.isViewPrinted) viewTexts.set(state, getText);
+  return state;
 };
 
 export const rankString = (text: string) => {
@@ -1626,7 +1657,7 @@ const enumerateSet = (
       const elements: Value[] = [];
       getUnionSets(value).forEach((set, index) => {
         const unionSet = getUnionSet(set, index, value);
-        if (isBeyondSetBound(unionSet)) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+        if (isBeyondSetBound(unionSet)) throw new TlaSetBoundError(getSetBoundMessage());
         getStreamedElements(unionSet).forEach((element) => addBoundedElement(elements, element));
       });
       return toFiniteSet(createEnumeratedSet(elements)).elements;
@@ -1735,11 +1766,11 @@ const listUnionLikeTlc = (union: SetOperationValue) => {
   }
   openStream(union.left);
   openStream(union.right);
-  if (isBeyondSetBound(union.left)) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+  if (isBeyondSetBound(union.left)) throw new TlaSetBoundError(getSetBoundMessage());
   const left = getStreamedElements(union.left);
   const right = isBeyondSetBound(union.right) ? undefined : getStreamedElements(union.right);
-  if (!right || left.length + right.length > SET_BOUND) {
-    throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+  if (!right || left.length + right.length > getMaximumSetSize()) {
+    throw new TlaSetBoundError(getSetBoundMessage());
   }
   return [...left, ...right];
 };
@@ -2048,7 +2079,7 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 // A sorted set as TLC builds it unsorted, by adding each element it doesn't hold yet.
 export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   const elements = set.elements;
-  if (elements.length > SET_BOUND) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
+  if (elements.length > getMaximumSetSize()) throw new TlaSetBoundError(getSetBoundMessage());
   const isAdded = Array.from({ length: elements.length }, () => false);
   const written = added.filter((element) => {
     const index = findSortedIndex(elements, element);
@@ -3011,7 +3042,7 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
     case "SetOperation":
     case "FilteredSet":
     case "Union": {
-      const expanded = getExpandedLazySet(value, isStrict);
+      const expanded = printing.isExpanded ? getExpandedLazySet(value, isStrict) : undefined;
       return expanded ? format(expanded) : formatLazySet(value, isStrict);
     }
 
@@ -3019,7 +3050,12 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       return `Seq(${format(value.base)})`;
     case "Function":
     case "LazyFunction": {
-      const functionValue = value.kind === "LazyFunction" ? toPrintedFunction(value) : value;
+      const functionValue =
+        value.kind !== "LazyFunction"
+          ? value
+          : printing.isExpanded || !value.source
+            ? toPrintedFunction(value)
+            : undefined;
       if (functionValue === undefined) {
         const source = value.kind === "LazyFunction" ? value.source : undefined;
         if (!source) return "<function>";
@@ -3068,7 +3104,10 @@ const isUnchanged = (previous: Value | undefined, value: Value) => {
   }
 };
 
+// TLC prints the VIEW of a state, but not of one it prints as a difference from the previous.
 export const formatState = (state: Record<string, Value>, previous?: Record<string, Value>) => {
+  const getViewText = previous ? undefined : viewTexts.get(state);
+  if (getViewText) return getViewText();
   const entries = Object.entries(state);
   return entries
     .filter(([name, value]) => !previous || !isUnchanged(previous[name], value))

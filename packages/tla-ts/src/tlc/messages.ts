@@ -8,6 +8,7 @@ import {
   TlaStackOverflowError,
   TlaUncodedError,
   TlaWarningAsError,
+  TOO_MANY_STATES_MESSAGE,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
 } from "../errors";
@@ -181,6 +182,7 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
   [2169, "The %1% argument of %2% should be a %3%, but instead it is:\n%4%", true],
   [2170, "Argument mismatch in operator application.", false],
   [2171, "Parsing or semantic analysis failed.%1%", false],
+  [2172, TOO_MANY_STATES_MESSAGE, false],
   [2176, "Applying %1% to the following value,\nwhich is not %2%:\n%3%", true],
   [
     2177,

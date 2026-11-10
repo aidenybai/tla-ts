@@ -15,6 +15,7 @@ import {
 } from "./errors";
 import {
   createTracingEnvironment,
+  describeRange,
   formatRange,
   getDefinition,
   isImpure,
@@ -78,6 +79,7 @@ import {
   type FailureMessage,
 } from "./tlc/messages";
 import { createTautologyError } from "./liveness";
+import { setFingerprintPolynomial } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -94,7 +96,7 @@ import {
   isSameValue,
   markFingerprinted,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
   type Value,
 } from "./values";
 
@@ -109,8 +111,16 @@ export interface CheckOptions {
   writeFile?: (path: string, content: string) => void;
   seed?: bigint;
   workers?: number;
-  // TLC's -lncheck: "final" checks liveness only on the complete state graph.
-  livenessCheck?: "default" | "final";
+  // TLC's -lncheck: "final" checks liveness only on the complete graph, "off" never looks for a cycle.
+  livenessCheck?: "default" | "final" | "off";
+  // TLC's -fp: the index of the polynomial in TLC's FP64.Polys that fingerprints states.
+  fingerprintPolynomial?: number;
+  // False for TLC's -terse, which prints a lazy value, such as SUBSET S, without enumerating it.
+  isLazyValueExpanded?: boolean;
+  // TLC's -view: prints each state as the value of the configuration's VIEW.
+  isViewPrinted?: boolean;
+  // TLC's -maxSetSize: the most elements TLC enumerates into a set, or states into a list of them.
+  maxSetSize?: number;
   // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
   dump?: StateDump;
   // TLC's -tool, which changes the messages of TLC's errors.
@@ -371,7 +381,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const order = createTlcOrder(options.source, options.loadModule);
   setStringOrder(order.getStringOrder(config));
-  setValueVersion(options.version);
+  setValueOptions(options);
+  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,
@@ -640,9 +651,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
               source,
               getGraphState(next, depths[index] + 1),
               !isUnseen,
-              isNamingEdges
-                ? { name: action.name, signature: getActionSignature(action) }
-                : undefined,
+              isNamingEdges ? getGraphAction(action) : undefined,
             );
           }
           return isUnseen;
@@ -868,6 +877,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         }
       : getTrace(index);
   // TLC rebuilds the trace for the postcondition after a violation, but not after a failure.
+  // TLC fails again to fingerprint the successor in the trace, as an unexpected exception.
+  const isUnfingerprintable = (state: Value[]) => {
+    try {
+      return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
+    } catch (error) {
+      if (!(error instanceof TlaEvaluationError)) throw error;
+      return true;
+    }
+  };
   const getFailedTrace = (index: number, successor: Successor): Behavior => ({
     trace: getTrace(index, successor).trace,
   });
@@ -1091,6 +1109,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return current.isExpanding ? depths[current.index] + 1 : 0;
   };
 
+  const getGraphAction = (action: SpecAction) => ({
+    name: action.name,
+    signature: getActionSignature(action),
+  });
   const getGraphState = (state: Value[], level: number): GraphState => ({
     fingerprint: BigInt.asIntN(64, runtime.getFingerprint(state)),
     level,
@@ -1182,8 +1204,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         source,
         getGraphState(successor.state, depths[index] + 1),
         existing !== -1,
-        action && { name: action.name, signature: getActionSignature(action) },
+        action && getGraphAction(action),
       );
+    }
+    if (source && !isInModel && options.dump?.constrained) {
+      const excluded = getGraphState(successor.state, depths[index] + 1);
+      search
+        .getExcludingConstraints(state, successor.state)
+        .forEach((constraint) =>
+          stateWriter?.writeConstrained(
+            source,
+            excluded,
+            action && getGraphAction(action),
+            constraint,
+          ),
+        );
     }
     if (existing !== -1 && liveness) {
       const stored = states[existing];
@@ -1326,6 +1361,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   );
   const forEachActionSuccessor = (
     state: Value[],
+    onUnsatisfied:
+      | ((successor: Value[], conjunct: Expression, action?: SpecAction) => void)
+      | undefined,
     onSuccessor: (successor: Successor, action: SpecAction | undefined) => boolean,
   ) => {
     if (!isNamingEdges) {
@@ -1335,6 +1373,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         environment,
         (successor) => onSuccessor(successor, undefined),
         spec.scope,
+        undefined,
+        onUnsatisfied,
       );
     }
     const progress = { isStopped: false };
@@ -1351,6 +1391,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             return progress.isStopped;
           },
           action.scope,
+          undefined,
+          onUnsatisfied && ((successor, conjunct) => onUnsatisfied(successor, conjunct, action)),
         )
       );
     }, 0);
@@ -1404,7 +1446,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const state = states[index];
     const source = stateWriter && getGraphState(state, depths[index]);
-    const successorCount = forEachActionSuccessor(state, (successor, action) => {
+    const writeUnsatisfied =
+      source && options.dump?.constrained
+        ? (successor: Value[], conjunct: Expression, action?: SpecAction) =>
+            stateWriter?.writeConstrained(
+              source,
+              getGraphState(successor, depths[index] + 1),
+              action && getGraphAction(action),
+              describeRange(conjunct),
+            )
+        : undefined;
+    const successorCount = forEachActionSuccessor(state, writeUnsatisfied, (successor, action) => {
       try {
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
@@ -1425,10 +1477,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           );
           return true;
         }
-        // TLC fails again to fingerprint the successor in the trace, as an unexpected exception.
-        const isTraceFailed = getFingerprintState(successor.state).some(
-          (value) => getFingerprintError(value) !== undefined,
-        );
+        const isTraceFailed = isUnfingerprintable(successor.state);
         const traceFailure =
           isTraceFailed && error instanceof TlaEvaluationError
             ? getFailureMessage(
@@ -1462,7 +1511,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     if (result) return result;
     const addLiveState = () => {
-      if (liveness && source && is174) stateWriter?.writeStuttering(source);
+      if (liveness && source && (is174 || options.dump?.stuttering)) {
+        stateWriter?.writeStuttering(source);
+      }
       const accepted = liveness?.addState(index, state, liveSuccessors);
       if (!liveness || !accepted) return undefined;
       const steps = getPathSteps(accepted);
@@ -1582,7 +1633,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             : createActionRecord(findSuccessorWithFingerprint(lastState, cycleStart)?.action),
     );
   };
-  const isPeriodic = liveness !== undefined && options.livenessCheck !== "final";
+  const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";
   const startedAt = performance.now();
   const periodic = { at: startedAt + PERIODIC_START, size: 1, time: 0 };
   const findPeriodicViolation = (expanded: number) => {
@@ -1631,20 +1682,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
 
   current.index = -1;
   current.candidate = undefined;
-  if (liveness) {
+  const finalLiveness = options.livenessCheck === "off" ? undefined : liveness;
+  if (finalLiveness) {
     options.onProgress?.({
       kind: "liveness-started",
-      branches: liveness.branches,
+      branches: finalLiveness.branches,
       isComplete: true,
       states: runtime.distinctStates,
       statistics: createResult("success"),
     });
   }
-  const lasso = liveness?.findViolation();
-  if (liveness && lasso) return reportLasso(liveness, lasso);
+  const lasso = finalLiveness?.findViolation();
+  if (finalLiveness && lasso) return reportLasso(finalLiveness, lasso);
 
   // TLC finishes the check of the temporal properties before it checks the postconditions.
-  if (liveness) options.onProgress?.({ kind: "liveness-finished" });
+  if (finalLiveness) options.onProgress?.({ kind: "liveness-finished" });
   const postcondition = search.findPostconditionViolation();
   if (postcondition) {
     return createResult("postcondition-violation", {

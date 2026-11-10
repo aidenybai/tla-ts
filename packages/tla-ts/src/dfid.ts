@@ -7,6 +7,7 @@ import {
   TlaEvaluationError,
   TlaIncompleteSuccessorError,
   TlaStackOverflowError,
+  TlaTooManyStatesError,
   TlaUnsupportedError,
 } from "./errors";
 import { createTracingEnvironment } from "./evaluate";
@@ -27,7 +28,7 @@ import {
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import { replaySuccessors } from "./tlc/replay";
 import { getOptimisticProbability, getActualProbability } from "./tlc/summary";
-import { createModelValue, formatState, type Value } from "./values";
+import { createModelValue, formatState, getSetBound, type Value } from "./values";
 
 export interface DepthFirstOptions extends CheckOptions {
   maxDepth: number;
@@ -307,6 +308,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         state,
         environment,
         (successor) => {
+          if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
           successors.push(successor.state);
           return false;
         },
@@ -397,7 +399,10 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           if (isInModel) {
             result.isAllDone &&= (status & DONE) === DONE;
             result.isNoLeaf &&= !isLeafStatus(status);
-            if (!isCompleted(status)) successors.push({ state: successor, fingerprint });
+            if (!isCompleted(status)) {
+              if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
+              successors.push({ state: successor, fingerprint });
+            }
           }
           const failure = findCheckFailure(state, successor, status === 0);
           if (failure?.isViolated && isContinued) {

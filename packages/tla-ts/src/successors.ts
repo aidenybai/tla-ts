@@ -76,6 +76,7 @@ interface Run {
   isStopped: boolean;
   generator: JavaRandom | undefined;
   successors: number;
+  onUnsatisfied?: (state: Value[], conjunct: Expression) => void;
 }
 
 type Continuation = (partial: State, action: string | undefined) => void;
@@ -422,7 +423,10 @@ const compileConjunction = (
         for (let rest = index; rest < conjuncts.length; rest++) {
           const expression = conjuncts[rest].expression;
           const value = evaluateCached(restEvaluators, rest, expression, context);
-          if (!holdsValue(run, expression, value, false)) return;
+          if (!holdsValue(run, expression, value, false)) {
+            run.onUnsatisfied?.(current, expression);
+            return;
+          }
         }
         onComplete(current, action);
         return;
@@ -1277,6 +1281,7 @@ export const forEachSuccessor = (
   onSuccessor: (successor: Successor) => boolean,
   scope?: Scope,
   generator?: JavaRandom,
+  onUnsatisfied?: Run["onUnsatisfied"],
 ) => {
   const run: Run = {
     environment,
@@ -1286,6 +1291,7 @@ export const forEachSuccessor = (
     isStopped: false,
     generator,
     successors: 0,
+    onUnsatisfied,
   };
   getRunner(expression, environment, false)(
     run,

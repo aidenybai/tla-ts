@@ -5,6 +5,7 @@ import {
   TlaIncompleteSuccessorError,
   TlaModuleError,
   TlaStackOverflowError,
+  TlaTooManyStatesError,
   TlaUnsupportedError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
@@ -33,7 +34,14 @@ import {
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime } from "./tlc/random";
 import { createCounterExample } from "./tlc/tlcext-operators";
-import { createModelValue, createRecord, formatState, isSameValue, type Value } from "./values";
+import {
+  createModelValue,
+  createRecord,
+  formatState,
+  getSetBound,
+  isSameValue,
+  type Value,
+} from "./values";
 
 export interface SimulationOptions extends CheckOptions {
   traceDepth: number;
@@ -285,6 +293,7 @@ export const simulate = (options: SimulationOptions): number => {
   };
   const init = search.spec.init;
   const addGenerated = (state: (Value | undefined)[]) => {
+    if (generated.length === getSetBound()) throw new TlaTooManyStatesError();
     generated.push(state);
     return false;
   };
@@ -460,6 +469,7 @@ export const simulate = (options: SimulationOptions): number => {
           search.trackStatePossible(node.state);
           if (!search.satisfiesActionConstraints(current.state, node.state)) return false;
           search.trackActionPossible(current.state, node.state);
+          if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
           successors.push(node);
           return false;
         },

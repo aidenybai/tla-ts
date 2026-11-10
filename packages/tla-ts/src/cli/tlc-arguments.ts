@@ -10,6 +10,9 @@ export interface TlcArguments {
   livenessCheck: string;
   dump: string[] | undefined;
   fingerprintIndex: number;
+  maxSetSize: number | undefined;
+  isLazyValueExpanded: boolean;
+  isViewPrinted: boolean;
   metadir: string | undefined;
   isRecovering: boolean;
   mode: "model-check" | "simulate" | "generate";
@@ -133,6 +136,9 @@ const createDefaults = (): TlcArguments => ({
   livenessCheck: "default",
   dump: undefined,
   fingerprintIndex: 0,
+  maxSetSize: undefined,
+  isLazyValueExpanded: true,
+  isViewPrinted: false,
   metadir: undefined,
   isRecovering: false,
   mode: "model-check",
@@ -168,11 +174,15 @@ const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
     parsed.isWarningEnabled = false;
   },
   "-gzip": () => {},
-  "-terse": () => {},
+  "-terse": (parsed) => {
+    parsed.isLazyValueExpanded = false;
+  },
   "-continue": (parsed) => {
     parsed.isContinued = true;
   },
-  "-view": () => {},
+  "-view": (parsed) => {
+    parsed.isViewPrinted = true;
+  },
   "-debug": () => {},
   "-tool": (parsed) => {
     parsed.isTool = true;
@@ -462,6 +472,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
           `Error: Value in interval [0, ${MAXIMUM_INT}] for maxSetSize required. But encountered ${text}`,
         );
       }
+      parsed.maxSetSize = Number(bound);
       continue;
     }
     if (flag === "-recover" || flag === "-metadir") {

@@ -59,7 +59,7 @@ import {
   withHeadline,
 } from "./tlc/messages";
 import { createTlcOrder } from "./tlc/order";
-import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
+import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
   formatValue,
@@ -67,7 +67,8 @@ import {
   isFunctionValue,
   isUpdatedElementOf,
   setStringOrder,
-  setValueVersion,
+  setValueOptions,
+  setViewText,
   toFiniteFunction,
   type Value,
 } from "./values";
@@ -677,6 +678,7 @@ interface Search {
   findFailedInitialPredicate: (state: Value[]) => NamedExpression | undefined;
   findViolatedActionProperty: (state: Value[], next: Value[]) => ActionProperty | undefined;
   satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
+  getExcludingConstraints: (state: Value[], next: Value[]) => string[];
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
   findUnwitnessedPossible: () => Postcondition | undefined;
@@ -791,7 +793,8 @@ export const prepareSearch = (options: CheckOptions) => {
       : options.config;
   const order = createTlcOrder(options.source, options.loadModule);
   setStringOrder(order.getStringOrder(config));
-  setValueVersion(options.version);
+  setValueOptions(options);
+  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,
@@ -914,7 +917,10 @@ export const createSearch = (
     config.symmetry === undefined
       ? undefined
       : getSymmetryGroup(config.symmetry, environment, config.substitutions);
-  if (config.view !== undefined) getConfigDefinition("view function", config.view, environment);
+  const viewDefinition =
+    config.view === undefined
+      ? undefined
+      : getConfigDefinition("view function", config.view, environment);
   const view =
     config.view === undefined
       ? undefined
@@ -997,8 +1003,43 @@ export const createSearch = (
       counts: prettyPrint(formatValue(getPossibleCounts(runtime), true)),
     };
   };
-  const toRecord = (state: Value[]): Record<string, Value> =>
-    Object.fromEntries(getTlcOrder().map((index) => [environment.variables[index], state[index]]));
+  // TLC prints a tuple VIEW as a state when it has as many elements as the VIEW names variables and
+  // constants, labeling them in variable order, which mislabels <<y, x>> and <<x + 1>>. tla-ts
+  // prints only a tuple of distinct variables as a state, each with its own value.
+  const viewElements = viewDefinition?.body.kind === "Tuple" ? viewDefinition.body.elements : [];
+  const viewNames = viewElements.flatMap((element) =>
+    element.kind === "Identifier" && environment.variables.includes(element.name)
+      ? [element.name]
+      : [],
+  );
+  const isStateView =
+    viewDefinition?.body.kind === "Tuple" &&
+    viewNames.length === viewElements.length &&
+    new Set(viewNames).size === viewNames.length;
+  const getViewText = (expression: Expression, state: Value[]) =>
+    isStateView
+      ? getTlcOrder()
+          .filter((index) => viewNames.includes(environment.variables[index]))
+          .map(
+            (index) =>
+              `/\\ ${environment.variables[index]} = ${prettyPrint(formatValue(state[index]))}\n`,
+          )
+          .join("")
+      : prettyPrint(formatValue(getViewValue(expression, state)));
+  const holdsActionConstraint = (constraint: NamedExpression, state: Value[], next: Value[]) =>
+    holdsLikeTlc(
+      constraint.expression,
+      getContext(environment, state, next),
+      (expression) => `${UNEXPECTED_EXCEPTION}${getExpectedBoolean(expression, environment)}`,
+    );
+  const toRecord = (state: Value[]): Record<string, Value> => {
+    const record = Object.fromEntries(
+      getTlcOrder().map((index) => [environment.variables[index], state[index]]),
+    );
+    return view === undefined
+      ? record
+      : setViewText(record, () => getViewText(view.expression, state));
+  };
   return {
     properties,
     spec,
@@ -1125,13 +1166,19 @@ export const createSearch = (
         }
       }),
     satisfiesActionConstraints: (state, next) =>
-      actionConstraints.every((constraint) =>
-        holdsLikeTlc(
-          constraint.expression,
-          getContext(environment, state, next),
-          (expression) => `${UNEXPECTED_EXCEPTION}${getExpectedBoolean(expression, environment)}`,
+      actionConstraints.every((constraint) => holdsActionConstraint(constraint, state, next)),
+    getExcludingConstraints: (state, next) =>
+      [
+        ...constraints.filter(
+          (constraint) => !holdsAsConjunct(constraint, getContext(environment, next, undefined)),
         ),
-      ),
+        ...actionConstraints.filter(
+          (constraint) => !holdsActionConstraint(constraint, state, next),
+        ),
+      ].map((constraint) => {
+        const range = getBodyRange(constraint.name, environment);
+        return range ? formatRange(range) : constraint.name;
+      }),
     trackStatePossible:
       statePossible.length === 0
         ? ignorePossible

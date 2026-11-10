@@ -100,8 +100,6 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   error: EXIT_STATUS.error,
 };
 
-const UNSUPPORTED_DUMP_FORMATS = ["constrained", "stuttering", "strict"];
-
 const checkNotDirectory = (path: string) => {
   if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
     throw new TlaEvaluationError(`${path} (Is a directory)`);
@@ -120,6 +118,9 @@ const getStateDump = (values: string[]): StateDump => {
     colorize: format.includes("colorize"),
     actionLabels: format.includes("actionlabels"),
     snapshot: format.includes("snapshot"),
+    constrained: format.includes("constrained"),
+    stuttering: format.includes("stuttering"),
+    strict: format.includes("strict"),
   };
 };
 
@@ -718,7 +719,7 @@ const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
     printer.print(
       MESSAGE_CODE.depthFirstModelChecking,
       MESSAGE_LEVEL.none,
-      `Running depth-first search Model-Checking with fp 0 and seed ${args.seed} with ${workers}).`,
+      `Running depth-first search Model-Checking with fp ${args.fingerprintIndex} and seed ${args.seed} with ${workers}).`,
     );
     return;
   }
@@ -726,7 +727,7 @@ const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
     printer.print(
       MESSAGE_CODE.modelChecking,
       MESSAGE_LEVEL.none,
-      `Running breadth-first search Model-Checking with fp 0 and seed ${args.seed} with ${workers}, MemFPSet, MemStateQueue).`,
+      `Running breadth-first search Model-Checking with fp ${args.fingerprintIndex} and seed ${args.seed} with ${workers}, MemFPSet, MemStateQueue).`,
     );
     return;
   }
@@ -950,8 +951,17 @@ const checkSpec = async (
     config.invariants.push(...invariants.names);
     const options: CheckOptions = {
       workers,
-      livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
+      livenessCheck:
+        livenessCheck === "off"
+          ? "off"
+          : ["final", "seqfinal"].includes(livenessCheck)
+            ? "final"
+            : "default",
       seed,
+      fingerprintPolynomial: args.fingerprintIndex,
+      maxSetSize: args.maxSetSize,
+      isLazyValueExpanded: args.isLazyValueExpanded,
+      isViewPrinted: args.isViewPrinted,
       dump,
       isTool: printer.isTool,
       isContinued: args.isContinued,
@@ -1040,22 +1050,8 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     console.log(USAGE);
     return 1;
   }
-  const dumpValues = parsed.dump;
-  const unsupportedFormat =
-    dumpValues?.length === 2 &&
-    UNSUPPORTED_DUMP_FORMATS.find((format) => dumpValues[0].toLowerCase().includes(format));
-  if (unsupportedFormat) {
-    console.error(`Error: tla-ts does not support the -dump format ${unsupportedFormat}.`);
-    return 1;
-  }
   if (parsed.isRecovering) {
     console.error("Error: tla-ts can't recover a model check from a checkpoint.");
-    return 1;
-  }
-  if (parsed.fingerprintIndex !== 0) {
-    console.error(
-      `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${parsed.fingerprintIndex}.`,
-    );
     return 1;
   }
   // TLC opens the file of a -dump as it reads its arguments, in the meta directory it creates.

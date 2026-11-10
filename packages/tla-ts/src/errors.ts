@@ -196,6 +196,17 @@ export class TlaSetBoundError extends TlaEvaluationError {
   }
 }
 
+export const TOO_MANY_STATES_MESSAGE =
+  "Too many possible next states for the last state in the trace.";
+
+// TLC's StateVec fails to grow past -maxSetSize.
+export class TlaTooManyStatesError extends TlaEvaluationError {
+  constructor() {
+    super(TOO_MANY_STATES_MESSAGE);
+    this.name = "TlaEvaluationError";
+  }
+}
+
 export class TlaWarningAsError extends TlaEvaluationError {
   code: number;
 
