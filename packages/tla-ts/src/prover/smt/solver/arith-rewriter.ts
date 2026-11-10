@@ -408,11 +408,11 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  override mkAdd(args: number[]) {
-    if (!this.isAnumSimpTarget(args)) return super.mkAdd(args);
+  override mkAddCore(args: number[]) {
+    if (!this.isAnumSimpTarget(args)) return super.mkAddCore(args);
     const folded = this.foldAnums(args, true);
     if (typeof folded === "number") return folded;
-    return super.mkAdd(folded) ?? this.manager.mkApp(OP_ADD, folded, SORT_REAL);
+    return super.mkAddCore(folded) ?? this.manager.mkApp(OP_ADD, folded, SORT_REAL);
   }
 
   override mkMul(args: number[]) {

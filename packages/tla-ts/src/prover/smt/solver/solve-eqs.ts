@@ -63,7 +63,7 @@ interface NestedItem {
   parent: number;
 }
 
-class SubstReplacer extends RewriterTpl {
+export class SubstReplacer extends RewriterTpl {
   constructor(
     manager: AstManager,
     private substitution: ObjMap<number>,

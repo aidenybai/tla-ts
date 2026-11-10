@@ -58,6 +58,8 @@ export interface ArithRewriterOptions {
   readonly isExpandTan: boolean;
   readonly maxDegree: number;
   readonly isHoistIte?: boolean;
+  readonly isHoistMul?: boolean;
+  readonly isFlat?: boolean;
   readonly isElimRem?: boolean;
 }
 
@@ -228,7 +230,12 @@ export class PolyRewriter {
   }
 
   // The rewrites return undefined when they do not apply, like BR_FAILED.
-  mkAdd(args: number[]): number | undefined {
+  mkAdd(args: number[]) {
+    const result = this.mkAddCore(args);
+    return typeof result === "object" ? result.expr : result;
+  }
+
+  mkAddCore(args: number[]): number | Rewrite | undefined {
     if (args.length < 2) return undefined;
     const manager = this.manager;
     if (
@@ -242,7 +249,8 @@ export class PolyRewriter {
     )
       throw new SmtUnsupportedError("hoisting an if-then-else out of a sum");
     this.currSort = this.manager.sorts[args[0]];
-    if (!args.some((arg) => this.isAdd(arg))) return this.mkNflatAdd(args);
+    if (this.options.isFlat === false || !args.some((arg) => this.isAdd(arg)))
+      return this.mkNflatAdd(args);
     const flat: number[] = [];
     for (const arg of args) {
       if (this.isAdd(arg)) this.manager.pushArgs(arg, flat);
@@ -297,20 +305,79 @@ export class PolyRewriter {
           if (!coefficient.isZero()) newArgs.push(this.mkMulAppWith(coefficient, product));
         }
       }
-      return this.mkAddApp(
-        isSortSums ? this.sortMonomials(newArgs, constant.isZero() ? 0 : 1) : newArgs,
+      return this.hoistMultiplication(
+        this.mkAddApp(
+          isSortSums ? this.sortMonomials(newArgs, constant.isZero() ? 0 : 1) : newArgs,
+        ),
       );
     }
-    if (isOrdered) {
+    if (isOrdered && this.options.isHoistMul !== true) {
       if (numCoeffs === 0) return undefined;
       if (numCoeffs === 1 && this.isNumeral(args[0]) && !this.getValue(args[0]).isZero())
         return undefined;
     }
     const newArgs: number[] = constant.isZero() ? [] : [this.mkNumeral(constant)];
     for (const arg of args) if (!this.isNumeral(arg)) newArgs.push(arg);
-    return this.mkAddApp(
-      isOrdered ? newArgs : this.sortMonomials(newArgs, constant.isZero() ? 0 : 1),
+    return this.hoistMultiplication(
+      this.mkAddApp(isOrdered ? newArgs : this.sortMonomials(newArgs, constant.isZero() ? 0 : 1)),
     );
+  }
+
+  // TO_BUFFER: the first argument takes the place of the term, and the others go at the end.
+  private getFlatArgs(expr: number, isSplit: (expr: number) => boolean) {
+    const manager = this.manager;
+    const buffer = [expr];
+    for (let index = 0; index < buffer.length;) {
+      const item = buffer[index];
+      if (!isSplit(item)) {
+        index++;
+        continue;
+      }
+      buffer[index] = manager.getArg(item, 0);
+      for (let arg = 1; arg < manager.getNumArgs(item); arg++)
+        buffer.push(manager.getArg(item, arg));
+    }
+    return buffer;
+  }
+
+  private hoistMultiplication(sum: number): number | Rewrite {
+    if (this.options.isHoistMul !== true) return sum;
+    const isMul = (expr: number) => this.isMul(expr);
+    const adds = this.getFlatArgs(sum, (expr) => this.isAdd(expr));
+    const isValid = adds.map(() => true);
+    const positions = new Map<number, number>();
+    let isChanged = false;
+    for (let index = 0; index < adds.length; index++)
+      for (const factor of this.getFlatArgs(adds[index], isMul)) {
+        if (this.isNumeral(factor)) continue;
+        const position = positions.get(factor);
+        if (position === undefined || !isValid[position] || position === index) {
+          positions.set(factor, index);
+          continue;
+        }
+        this.currSort = this.manager.sorts[adds[index]];
+        const first = this.getFlatArgs(adds[position], isMul);
+        const second = this.getFlatArgs(adds[index], isMul);
+        let shared = 0;
+        for (let firstIndex = 0; firstIndex < first.length; firstIndex++) {
+          const match = second.indexOf(first[firstIndex], shared);
+          if (match === -1) continue;
+          [first[firstIndex], first[shared]] = [first[shared], first[firstIndex]];
+          [second[match], second[shared]] = [second[shared], second[match]];
+          shared++;
+        }
+        first[shared] = this.mkAddApp([
+          this.mkMulApp(first.slice(shared)),
+          this.mkMulApp(second.slice(shared)),
+        ]);
+        adds[position] = this.mkMulApp(first.slice(0, shared + 1));
+        adds[index] = this.mkNumeral(Rational.zero);
+        isValid[position] = false;
+        isValid[index] = false;
+        isChanged = true;
+        break;
+      }
+    return isChanged ? this.reduce(this.mkAddApp(adds), Infinity) : sum;
   }
 
   private growStamps(expr: number) {
@@ -330,7 +397,8 @@ export class PolyRewriter {
       args.length === 2 &&
       this.isNumeral(args[0]) &&
       !(this.isMul(args[1]) && this.isNumeral(this.manager.getArg(args[1], 0)));
-    if (isFlatMonomial || !args.some((arg) => this.isMul(arg))) return this.mkNflatMul(args);
+    if (this.options.isFlat === false || isFlatMonomial || !args.some((arg) => this.isMul(arg)))
+      return this.mkNflatMul(args);
     const flat: number[] = [];
     const collect = (arg: number) => {
       if (this.isMul(arg))

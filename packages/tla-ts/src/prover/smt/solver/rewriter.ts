@@ -5,6 +5,7 @@ import { mkRecFunApp } from "./recfun-rewriter";
 import { mkDatatypeAppCore, mkDatatypeEqCore } from "./datatype-rewriter";
 import { ArithRewriter, KERNEL_ARITH_OPTIONS, TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { type BvRewriterOptions, BvRewriter, DEFAULT_BV_OPTIONS } from "./bv-rewriter";
+import { isAssociativeBvOp } from "./bv-decl-plugin";
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
@@ -28,6 +29,8 @@ import {
   OP_AND,
   OP_BADD,
   OP_BAND,
+  OP_BCOMP,
+  OP_BMUL,
   OP_BOR,
   OP_BXOR,
   OP_DISTINCT,
@@ -76,6 +79,7 @@ export interface RewriterOptions {
   readonly arith: ArithRewriterOptions;
   readonly isRewritingPatterns: boolean;
   readonly isPullingCheapIte?: boolean;
+  readonly isPushingIteBv?: boolean;
   readonly isKeepingDistinct?: boolean;
   readonly blastDistinctThreshold?: number;
   readonly bv?: BvRewriterOptions;
@@ -192,13 +196,14 @@ export class Rewriter extends RewriterTpl {
   isFlatAssoc(decl: number) {
     const op = this.manager.funcDecls[decl].op;
     return (
-      op === OP_AND ||
-      op === OP_OR ||
-      op === OP_ADD ||
-      op === OP_BADD ||
-      op === OP_BOR ||
-      op === OP_BAND ||
-      op === OP_BXOR
+      this.options.arith.isFlat !== false &&
+      (op === OP_AND ||
+        op === OP_OR ||
+        op === OP_ADD ||
+        op === OP_BADD ||
+        op === OP_BOR ||
+        op === OP_BAND ||
+        op === OP_BXOR)
     );
   }
 
@@ -352,8 +357,23 @@ export class Rewriter extends RewriterTpl {
   // -1 is BR_FAILED.
   private reduceAppTop(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    const reduced = this.reduceAppCore(decl, args);
-    if (typeof reduced !== "number" || this.options.isPullingCheapIte !== true) return reduced;
+    const core = this.reduceAppCore(decl, args);
+    if (typeof core !== "number") return core;
+    const reduced =
+      this.options.isPushingIteBv !== true
+        ? core
+        : core === -1
+          ? decl === OP_ITE
+            ? (this.pushIte(args[0], args[1], args[2]) ?? -1)
+            : -1
+          : this.isIte(core)
+            ? (this.pushIte(
+                manager.getArg(core, 0),
+                manager.getArg(core, 1),
+                manager.getArg(core, 2),
+              ) ?? core)
+            : core;
+    if (this.options.isPullingCheapIte !== true) return reduced;
     if (reduced === -1)
       return (args.length === 2 ? this.pullIte(decl, args[0], args[1], sort) : undefined) ?? -1;
     return manager.kinds[reduced] === KIND_APP && manager.getNumArgs(reduced) === 2
@@ -364,6 +384,61 @@ export class Rewriter extends RewriterTpl {
           manager.sorts[reduced],
         ) ?? reduced)
       : reduced;
+  }
+
+  private pushIte(condition: number, thenExpr: number, elseExpr: number) {
+    const manager = this.manager;
+    const isBvApp = (expr: number) =>
+      manager.kinds[expr] === KIND_APP && manager.getFamily(expr) === FAMILY_BV;
+    const isThenApp = isBvApp(thenExpr);
+    if (!isThenApp && !isBvApp(elseExpr)) return undefined;
+    const app = isThenApp ? thenExpr : elseExpr;
+    const unified = this.unify(app, isThenApp ? elseExpr : thenExpr);
+    if (unified === undefined) return undefined;
+    const [newThen, newElse] = isThenApp ? unified.args : [unified.args[1], unified.args[0]];
+    const ite = manager.mkApp(OP_ITE, [condition, newThen, newElse], manager.sorts[newThen]);
+    const decl = manager.decls[app];
+    return manager.mkApp(
+      decl,
+      unified.isCommonFirst ? [unified.common, ite] : [ite, unified.common],
+      manager.funcDecls[decl].range,
+    );
+  }
+
+  // unify_core: the arguments that differ, in the order of app and other, and the one they share.
+  private unify(app: number, other: number) {
+    const manager = this.manager;
+    if (manager.getNumArgs(app) !== 2) return undefined;
+    const first = manager.getArg(app, 0);
+    const second = manager.getArg(app, 1);
+    const op = manager.getOp(app);
+    const getNeutral = () =>
+      op === OP_BADD || op === OP_BMUL
+        ? manager.mkBvNumeral(op === OP_BADD ? 0n : 1n, manager.getBvSize(manager.sorts[app]))
+        : undefined;
+    if (other === second || other === first) {
+      const neutral = getNeutral();
+      return neutral === undefined
+        ? undefined
+        : other === second
+          ? { args: [first, neutral], common: second, isCommonFirst: false }
+          : { args: [second, neutral], common: first, isCommonFirst: true };
+    }
+    if (manager.kinds[other] !== KIND_APP || manager.decls[other] !== manager.decls[app])
+      return undefined;
+    if (manager.getNumArgs(other) !== 2) return undefined;
+    const otherFirst = manager.getArg(other, 0);
+    const otherSecond = manager.getArg(other, 1);
+    if (second === otherSecond)
+      return { args: [first, otherFirst], common: second, isCommonFirst: false };
+    if (first === otherFirst)
+      return { args: [second, otherSecond], common: first, isCommonFirst: true };
+    if (!isAssociativeBvOp(op) && op !== OP_BCOMP) return undefined;
+    if (first === otherSecond)
+      return { args: [second, otherFirst], common: first, isCommonFirst: true };
+    if (second === otherFirst)
+      return { args: [first, otherSecond], common: second, isCommonFirst: false };
+    return undefined;
   }
 
   private pullIte(decl: number, first: number, second: number, sort: number): Rewrite | undefined {
@@ -520,7 +595,7 @@ export class Rewriter extends RewriterTpl {
       case OP_GT:
         return this.arith.mkGt(args[0], args[1]);
       case OP_ADD:
-        return this.arith.mkAdd(args) ?? -1;
+        return this.arith.mkAddCore(args) ?? -1;
       case OP_SUB:
         return this.arith.mkSub(args);
       case OP_UMINUS:

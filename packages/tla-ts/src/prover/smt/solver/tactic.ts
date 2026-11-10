@@ -20,6 +20,9 @@ import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { runBitBlast } from "./bit-blast-tactic";
 import { runMaxBvSharing } from "./max-bv-sharing-tactic";
+import { runBvDivremBounds } from "./bv-divrem-bounds";
+import { runBv1Blast } from "./bv1-blast";
+import { runReduceBvSize } from "./reduce-bv-size";
 import { elimUncnstr } from "./elim-uncnstr";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
@@ -107,7 +110,7 @@ const UINT_MAX = 4294967295;
 
 const REWRITER_DESCRS = getDescrs("rewriter", [
   ["ite_extra_rules", PARAM_BOOL, true],
-  ["flat", PARAM_BOOL, true],
+  ["flat", PARAM_BOOL, true, true],
   ["flat_and_or", PARAM_BOOL, true, true],
   ["sort_disjunctions", PARAM_BOOL, true],
   ["elim_and", PARAM_BOOL, false, true],
@@ -118,7 +121,7 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["blast_distinct_threshold", PARAM_UINT, UINT_MAX, true],
   ["som", PARAM_BOOL, false, true],
   ["som_blowup", PARAM_UINT, 10],
-  ["hoist_mul", PARAM_BOOL, false],
+  ["hoist_mul", PARAM_BOOL, false, true],
   ["hoist_ite", PARAM_BOOL, false, true],
   ["algebraic_number_evaluator", PARAM_BOOL, true, true],
   ["mul_to_power", PARAM_BOOL, false],
@@ -154,7 +157,7 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["max_memory", PARAM_UINT, UINT_MAX, true],
   ["max_steps", PARAM_UINT, UINT_MAX],
   ["push_ite_arith", PARAM_BOOL, false],
-  ["push_ite_bv", PARAM_BOOL, false],
+  ["push_ite_bv", PARAM_BOOL, false, true],
   ["pull_cheap_ite", PARAM_BOOL, false, true],
   ["bv_ineq_consistency_test_max", PARAM_UINT, 0],
   ["unfold_recursive_functions", PARAM_BOOL, false],
@@ -180,13 +183,14 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   isFlatAndOr: getBool(params, "flat_and_or", true),
   isSortingStore: getBool(params, "sort_store", false),
   isPullingCheapIte: getBool(params, "pull_cheap_ite", false),
+  isPushingIteBv: getBool(params, "push_ite_bv", false),
   isKeepingDistinct: !getBool(params, "blast_distinct", false),
   blastDistinctThreshold: getUint(params, "blast_distinct_threshold", UINT_MAX),
   localCtxLimit: getBool(params, "local_ctx", false)
     ? getUint(params, "local_ctx_limit", UINT_MAX)
     : undefined,
   arith: {
-    isSom: getBool(params, "som", false),
+    isSom: getBool(params, "flat", true) && getBool(params, "som", false),
     isSortSums: getBool(params, "sort_sums", false),
     isArithIneqLhs: getBool(params, "arith_lhs", false),
     isGcdRounding: getBool(params, "gcd_rounding", false),
@@ -194,6 +198,10 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
     isExpandPower: getBool(params, "expand_power", false),
     isExpandTan: getBool(params, "expand_tan", false),
     isHoistIte: getBool(params, "hoist_ite", false),
+    isHoistMul:
+      !(getBool(params, "flat", true) && getBool(params, "som", false)) &&
+      getBool(params, "hoist_mul", false),
+    isFlat: getBool(params, "flat", true),
     isElimRem: getBool(params, "elim_rem", false),
     maxDegree: getUint(params, "max_degree", 64),
   },
@@ -708,6 +716,24 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "max-bv-sharing",
     { descrs: new Map(), build: (environment) => runMaxBvSharing(environment.manager) },
   ],
+  [
+    "bv-divrem-bounds",
+    { descrs: new Map(), build: (environment) => runBvDivremBounds(environment.manager) },
+  ],
+  [
+    "reduce-bv-size",
+    { descrs: new Map(), build: (environment) => runReduceBvSize(environment.manager) },
+  ],
+  [
+    "bv1-blast",
+    {
+      descrs: getDescrs("", [
+        ["max_memory", PARAM_UINT, UINT_MAX, true],
+        ["max_steps", PARAM_UINT, UINT_MAX],
+      ]),
+      build: (environment) => runBv1Blast(environment.manager),
+    },
+  ],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
   [
     "snf",
@@ -752,8 +778,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "ackermannize_bv add-bounds blast-term-ite bv_bound_chk bv-divrem-bounds " +
-    "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
+    "ackermannize_bv add-bounds blast-term-ite bv_bound_chk " +
+    "bv-slice bvarray2uf cofactor-term-ite collect-statistics " +
     "degree-shift demodulator diff-neq " +
     "elim-predicates elim-uncnstr2 eq2bv " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
@@ -761,7 +787,7 @@ const UNPORTED_TACTICS = new Set(
     "nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
-    "qfufbv qfufbv_ackr qsat recover-01 reduce-args2 reduce-bv-size " +
+    "qfufbv qfufbv_ackr qsat recover-01 reduce-args2 " +
     "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
   ).split(" "),

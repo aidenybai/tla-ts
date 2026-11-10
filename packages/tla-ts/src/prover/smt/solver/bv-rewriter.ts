@@ -1082,7 +1082,7 @@ export class BvRewriter extends PolyRewriter {
           ),
         );
         isFusedNumeral = true;
-      } else if (this.isConcat(arg)) {
+      } else if (this.options.isFlat !== false && this.isConcat(arg)) {
         manager.pushArgs(arg, newArgs);
         isExpanded = true;
       } else if (
@@ -1162,7 +1162,8 @@ export class BvRewriter extends PolyRewriter {
   }
 
   private flattenAc(op: number, args: number[]) {
-    if (!args.some((arg) => this.manager.getOp(arg) === op)) return args;
+    if (this.options.isFlat === false || !args.some((arg) => this.manager.getOp(arg) === op))
+      return args;
     const flat: number[] = [];
     for (const arg of args)
       if (this.manager.getOp(arg) === op) this.manager.pushArgs(arg, flat);
@@ -1477,7 +1478,7 @@ export class BvRewriter extends PolyRewriter {
   }
 
   private mkBvAdd(args: number[]): Result {
-    const result = this.mkAdd(args);
+    const result = this.mkAddCore(args);
     if (result !== undefined && typeof result !== "number") return result;
     const sumArgs =
       result === undefined ? args : this.isAdd(result) ? this.manager.getArgs(result) : undefined;
