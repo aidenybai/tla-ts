@@ -80,6 +80,11 @@ const getMetadata = (source: string): Metadata => {
   };
 };
 
+// Tests that end Node itself, such as with a segmentation fault, which would end this script.
+const NODE_CRASHES = new Set([
+  "language/statements/await-using/syntax/await-using-invalid-assignment-next-expression-for.js",
+]);
+
 const getSkipReason = (metadata: Metadata) => {
   if (metadata.isNegative && !metadata.isSyntaxError) return "negative test";
   const flag = metadata.flags.find((candidate) => SKIPPED_FLAGS.has(candidate));
@@ -585,7 +590,7 @@ const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
   const source = readFileSync(path, "utf8");
   const metadata = getMetadata(source);
-  const skipReason = getSkipReason(metadata);
+  const skipReason = NODE_CRASHES.has(id) ? "Node crashes" : getSkipReason(metadata);
   if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
   if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
   // TypeScript itself fails on some syntax, such as import defer.
