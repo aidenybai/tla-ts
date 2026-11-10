@@ -2328,6 +2328,17 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("tells that a resolving function that a callback assigns is extensible", async () => {
+    const result = await checkModel(`
+      var resolveFunction;
+      new Promise(function (resolve) {
+        resolveFunction = resolve;
+      });
+      if (!Object.isExtensible(resolveFunction)) throw new Error("not extensible");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

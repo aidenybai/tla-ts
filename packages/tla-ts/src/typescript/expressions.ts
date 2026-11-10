@@ -586,7 +586,15 @@ const translateCall = (
       return useJavaScript(test, [getHeap(scope, node, context), value], context);
     }
     if (names?.every((name) => name !== "object" && name !== "function")) {
-      return boolean(method !== "isExtensible");
+      // TypeScript can't see a callback assign a variable without a type, so in a script the
+      // value may still be an object.
+      return context.heap === undefined
+        ? boolean(method !== "isExtensible")
+        : ifExpression(
+            useJavaScript("IsRef", [value], context),
+            useJavaScript(test, [getHeap(scope, node, context), value], context),
+            boolean(method !== "isExtensible"),
+          );
     }
     if (kind === "sequence" || kind === "set" || kind === "map") {
       return boolean(method === "isExtensible");
