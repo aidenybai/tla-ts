@@ -9,6 +9,12 @@ config: |
   INIT Init
   NEXT Next
   POSTCONDITION Post
+correct:
+  all:
+    exit: 151
+    transcript: |-
+      2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+      2233:1 The post condition Post cannot be a constant.
 ---*)
 ---- MODULE postcondition_constant ----
 EXTENDS TLCExt, TLC, Naturals, Sequences

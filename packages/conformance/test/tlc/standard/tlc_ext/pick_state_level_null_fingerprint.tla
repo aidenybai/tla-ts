@@ -12,6 +12,16 @@ contexts:
   - invariant
   - property
 outcome: evaluation-failure
+correct:
+  init:
+    exit: 0
+  next:
+    exit: 0
+  invariant:
+    exit: 0
+  property:
+    exit: 255
+    transcript: 2214:1 Temporal formulas containing actions must be of forms <>[]A or []<>A.
 ---*)
 ---- MODULE pick_state_level_null_fingerprint ----
 EXTENDS TLCExt, TLC, Naturals

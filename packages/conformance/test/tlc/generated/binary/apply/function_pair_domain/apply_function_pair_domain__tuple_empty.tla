@@ -9,6 +9,16 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 26, col 8 to line 26, col 11 of module apply_function_pair_domain__tuple_empty failed.
+      In applying the function
+      (<<1, 2>> :> 3),
+      the argument list is:
+      <<>>
+      which does not match its formal parameter.
 ---*)
 ---- MODULE apply_function_pair_domain__tuple_empty ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC

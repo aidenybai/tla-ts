@@ -3,6 +3,15 @@ description: "A nested module with a definition inside a recursive section stops
 ref: "tla2sany/semantic/Generator.java#checkIfInRecursiveSection"
 features: [recursive, tlc-bug]
 outcome: parse-error
+correct:
+  all:
+    exit: 150
+    transcript: |-
+      | Semantic errors:
+      | *** Errors: 1
+      | line 18, col 1 to line 20, col 4 of module section_nested_module_with_definition_crash
+      | A MODULE  may not appear within a recursive definition section.
+      3002:1 Parsing or semantic analysis failed.
 ---*)
 ---- MODULE section_nested_module_with_definition_crash ----
 RECURSIVE F

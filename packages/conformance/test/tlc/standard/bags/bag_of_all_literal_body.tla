@@ -7,6 +7,9 @@ features:
 flags:
   - expression
 outcome: evaluation-failure
+correct:
+  all:
+    exit: 0
 ---*)
 ---- MODULE bag_of_all_literal_body ----
 EXTENDS Bags, TLC, Naturals

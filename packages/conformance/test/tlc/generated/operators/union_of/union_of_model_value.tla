@@ -11,6 +11,16 @@ contexts:
 outcome: any
 config: |
   CONSTANT mv = mv
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 29, col 8 to line 29, col 11 of module union_of_model_value failed.
+      2154:0 Attempted to apply the operator overridden by the Java method
+      public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
+      but it produced the following error:
+      Attempted to enumerate the nonenumerable set:
+      UNION(mv)
 ---*)
 ---- MODULE union_of_model_value ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC

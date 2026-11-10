@@ -7,6 +7,61 @@ features:
 flags:
   - expression
 outcome: evaluation-failure
+correct:
+  assume:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 69, col 8 to line 69, col 11 of module bag_in_non_function failed.
+      2169:0 The second argument of BagIn should be a bag, but instead it is:
+      3
+  init:
+    exit: 75
+    transcript: |-
+      1000:1 
+      2169:0 The second argument of BagIn should be a bag, but instead it is:
+      3
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 70, column 9 to line 70, column 32 in bag_in_non_function
+      1. Line 70, column 29 to line 70, column 32 in bag_in_non_function
+      2. Line 68, column 9 to line 68, column 19 in bag_in_non_function
+  invariant:
+    exit: 75
+    transcript: |-
+      1000:1 
+      2169:0 The second argument of BagIn should be a bag, but instead it is:
+      3
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 70, column 9 to line 70, column 32 in bag_in_non_function
+      1. Line 72, column 8 to line 72, column 32 in bag_in_non_function
+      2. Line 72, column 29 to line 72, column 32 in bag_in_non_function
+      3. Line 68, column 9 to line 68, column 19 in bag_in_non_function
+  next:
+    exit: 255
+    transcript: |-
+      2169:1 The second argument of BagIn should be a bag, but instead it is:
+      3
+      2121:1 The behavior up to this point is:
+      2217:4 1: <Initial predicate>
+      conformance_state = TRUE
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 71, column 9 to line 71, column 33 in bag_in_non_function
+      1. Line 71, column 30 to line 71, column 33 in bag_in_non_function
+      2. Line 68, column 9 to line 68, column 19 in bag_in_non_function
+  property:
+    exit: 75
+    transcript: |-
+      1000:1 
+      2169:0 The second argument of BagIn should be a bag, but instead it is:
+      3
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 70, column 9 to line 70, column 32 in bag_in_non_function
+      1. Line 71, column 12 to line 71, column 36 in bag_in_non_function
+      2. Line 71, column 33 to line 71, column 36 in bag_in_non_function
+      3. Line 68, column 9 to line 68, column 19 in bag_in_non_function
 ---*)
 ---- MODULE bag_in_non_function ----
 EXTENDS Bags, TLC, Naturals

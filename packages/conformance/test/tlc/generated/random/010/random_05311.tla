@@ -9,6 +9,14 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2144:3 The EXCEPT was applied to non-existing fields of the value at
+      line 23, col 132 to line 23, col 135 of module random_05311
+      2105:1 Evaluating assumption line 24, col 8 to line 24, col 11 of module random_05311 failed.
+      Attempted to construct a set with too many elements (>1000000).
 ---*)
 ---- MODULE random_05311 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC

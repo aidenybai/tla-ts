@@ -4,6 +4,9 @@ ref: "tlc2/tool/ContextEnumerator.java#nextElement"
 features: [tlc-bug, tlc-bug]
 flags: [expression]
 outcome: evaluation-failure
+correct:
+  all:
+    exit: 0
 ---*)
 ---- MODULE tuple_binder_rejects_equal_function ----
 EXTENDS Integers

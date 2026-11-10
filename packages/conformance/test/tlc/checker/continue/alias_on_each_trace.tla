@@ -11,6 +11,27 @@ config: |
   ALIAS A
 args:
   - -continue
+correct:
+  all:
+    exit: 12
+    transcript: |-
+      2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+      2110:1 Invariant Inv is violated.
+      2121:1 The behavior up to this point is:
+      2217:4 1: <Initial predicate>
+      p = 1
+      2217:4 2: <Next line 40, col 9 to line 40, col 39 of module alias_on_each_trace>
+      p = 2
+      2110:1 Invariant Inv is violated.
+      2121:1 The behavior up to this point is:
+      2217:4 1: <Initial predicate>
+      p = 1
+      2217:4 2: <Next line 40, col 9 to line 40, col 39 of module alias_on_each_trace>
+      p = 2
+      2217:4 3: <Next line 40, col 9 to line 40, col 39 of module alias_on_each_trace>
+      p = 3
+      2199:0 4 states generated, 3 distinct states found, 0 states left on queue.
+      2194:0 The depth of the complete state graph search is 3.
 ---*)
 ---- MODULE alias_on_each_trace ----
 EXTENDS Naturals, TLC

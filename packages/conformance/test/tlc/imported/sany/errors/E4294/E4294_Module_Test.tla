@@ -5,6 +5,15 @@ features:
   - sany-errors
   - tlc-bug
 outcome: parse-error
+correct:
+  all:
+    exit: 150
+    transcript: |-
+      | Semantic errors:
+      | *** Errors: 1
+      | line 22, col 1 to line 23, col 4 of module E4294_Module_Test
+      | A MODULE  may not appear within a recursive definition section.
+      3002:1 Parsing or semantic analysis failed.
 ---*)
 Nested module declarations cannot occur in between the declaration of a
 recursive operator and its definition.

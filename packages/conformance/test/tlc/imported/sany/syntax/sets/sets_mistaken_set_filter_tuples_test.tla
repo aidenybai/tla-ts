@@ -5,6 +5,19 @@ features:
   - sany-syntax
   - tlc-bug
 outcome: parse-error
+correct:
+  all:
+    exit: 150
+    transcript: |-
+      | Semantic errors:
+      | *** Errors: 3
+      | line 24, col 10 to line 24, col 10 of module sets_mistaken_set_filter_tuples_test
+      | Unknown operator: `x'.
+      | line 24, col 13 to line 24, col 13 of module sets_mistaken_set_filter_tuples_test
+      | Unknown operator: `y'.
+      | line 24, col 21 to line 24, col 23 of module sets_mistaken_set_filter_tuples_test
+      | Unknown operator: `Nat'.
+      3002:1 Parsing or semantic analysis failed.
 ---*)
 ---- MODULE sets_mistaken_set_filter_tuples_test ----
 
