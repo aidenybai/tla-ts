@@ -402,6 +402,25 @@ describe("tags", () => {
     expect(result.status).toBe("success");
   });
 
+  it("reads the description after a @leadsTo target", async () => {
+    const result = await checkModel(`
+      /** @noDeadlock */
+      let count: 0 | 1 | 2 = 0;
+      /** @fair */
+      export const increment = () => {
+        if (count === 2) return;
+        count = count === 0 ? 1 : 2;
+      };
+      const isDone = () => count === 2;
+      /**
+       * @leadsTo isDone
+       * Counting always reaches two.
+       */
+      export const isCounting = () => count < 2;
+    `);
+    expect(result.status).toBe("success");
+  });
+
   it("reduces states with a symmetric type", async () => {
     const getDistinctStates = async (tag: string) =>
       (
