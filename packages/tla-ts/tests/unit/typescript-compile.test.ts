@@ -2197,6 +2197,26 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("returns the value of an await that calls an async method", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      class C {
+        static async #m(value: number) {
+          return await value;
+        }
+        static async m(value: number) {
+          return await this.#m(value);
+        }
+      }
+      C.m(1).then((value: number) => { log = log + value; });
+      setTimeout(() => {
+        if (log !== "1") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

@@ -4323,7 +4323,9 @@ export const translateStatements = (
       ) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }
-      if (hasCall(returned, context)) throw new TlaTypeScriptError("Unsupported return", statement);
+      if (hasCall(returned, context) && !inner.scope.results.has(skipCasts(returned))) {
+        throw new TlaTypeScriptError("Unsupported return", statement);
+      }
       return frame.exit(inner, translateExpression(returned, inner.scope, context));
     });
   }
