@@ -321,6 +321,19 @@ export const simulate = (options: SimulationOptions): number => {
         reportPostcondition(true);
         return EXIT_STATUS.safetyViolation;
       }
+      // Simulator#simulate checks no implied init, where tla-ts checks them as the model checker
+      // does, after the invariants.
+      const predicate = search.findFailedInitialPredicate(state);
+      if (predicate) {
+        const alias = toTraceSteps([node])[0].state;
+        message(
+          MESSAGE_CODE.propertyViolatedInitial,
+          `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
+        );
+        runtime.counterExample = getCounterExample([node]);
+        reportPostcondition(true);
+        return EXIT_STATUS.livenessViolation;
+      }
       if (search.satisfiesConstraints(state)) {
         search.trackStatePossible(state);
         initialStates.push(node);
