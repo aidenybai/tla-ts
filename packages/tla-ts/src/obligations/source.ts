@@ -1,6 +1,3 @@
-// Converts the tla-ts AST into tlapm's parse trees: expressions name operators opaquely until
-// anonymization resolves them, and proof steps get tlapm's levels and anonymous step numbers.
-
 import type {
   AssumeProve,
   Definition,
@@ -137,14 +134,12 @@ export const createSource = (
   const getMethod = (range: SourceRange | undefined) =>
     range && readOldMethod(lines, { line: range.end.line - 1, column: range.end.column });
 
-  // A method pragma belongs to the node it follows, whose locus then takes it in.
   const withMethod = (range: SourceRange) => {
     const method = getMethod(range);
     const location = getRangeLocus(range);
     return method ? { location: withPragma(location), method } : { location };
   };
 
-  // Module.Parser's with_meth, which wraps the expression a method follows.
   const withExpressionMethod = (expression: Expr, range: SourceRange | undefined): Expr => {
     const method = getMethod(range);
     return method ? at({ kind: "With", expression, method }, expression) : expression;
@@ -169,7 +164,6 @@ export const createSource = (
     });
   };
 
-  // A name with ! selects through instances, which anonymization resolves by joining the names.
   const convertName = (
     name: string,
     args: Expr[],
@@ -251,8 +245,6 @@ export const createSource = (
   const convertExpression = (expression: Expression, isExcept: boolean): Expr => {
     const location = getLocus(expression.location);
     const recurse = (inner: Expression) => convertExpression(inner, isExcept);
-    // tlapm locates an operator application by its operator and operands, and a parenthesized
-    // operand by what is inside the parentheses.
     const getOperatorLocus = (args: Expr[], fixity: Fixity) => {
       if (args.length === 2) return mergeLoci(args[0].location, args[1].location);
       if (args.length !== 1 || !args[0].location) return location;
@@ -286,8 +278,6 @@ export const createSource = (
         return at({ kind: "Num", integer, fraction }, { location });
       }
       case "String": {
-        // tlapm's lexer keeps a string's escapes as written. The location ends at the closing
-        // quote.
         const written = /"((?:[^"\\]|\\.)*)"$/.exec(
           (lines[location.endLine - 1] ?? "").slice(0, location.endColumn - 1),
         );
@@ -474,8 +464,7 @@ export const createSource = (
           { location },
         );
       case "Tuple":
-        // tlapm's tuple parser binds as (<< >>> elements) >>= ">>", which keeps only the location
-        // of the closing >>.
+        // tlapm's tuple parser keeps only the location of the closing >>.
         return at(
           { kind: "Tuple", elements: expression.elements.map(recurse) },
           {
@@ -678,7 +667,6 @@ export const createSource = (
         location,
       };
     }
-    // A prefix minus is the operator -.
     const name =
       definition.kind === "Operator" && definition.params.length === 1 && definition.name === "-"
         ? "-."
@@ -739,7 +727,6 @@ export const createSource = (
     };
   };
 
-  // Anonymization judges the time of each assumption once it resolves the names in it.
   const convertSequent = (statement: Expression | AssumeProve): Sequent => {
     if (statement.kind !== "AssumeProve")
       return { context: [], active: convertExpression(statement, false) };
@@ -759,7 +746,6 @@ export const createSource = (
     };
   };
 
-  // A labeled hypothesis is an Xlabel without parameters, not an Nlabel like a labeled expression.
   const convertFactLabel = (expression: Expression): Expr => {
     if (expression.kind !== "Label" || expression.params.length > 0)
       return convertExpression(expression, false);
@@ -804,7 +790,6 @@ export const createSource = (
       ? { kind: "Named", level, label: token[2], isAnonymous: false }
       : { kind: "Unnamed", level, id: getUnique(counter) };
 
-  // to_proof: a missing proof is implicitly omitted where the enclosing step is.
   const convertProof = (
     proof: ProofStep["proof"],
     level: number,
@@ -830,12 +815,9 @@ export const createSource = (
           method: getMethod(proof.location.range),
         };
       case "Steps": {
-        // A <*> first step takes the enclosing level only after PROOF, and the top level
-        // always counts as PROOF.
         const tokens = proof.steps.map((step) => STEP_PATTERN.exec(step.token));
         const first = tokens[0];
         const stepLevel = first && first[1] !== "*" && first[1] !== "+" ? Number(first[1]) : level;
-        // The parser ends the steps at the first QED.
         const steps = proof.steps
           .slice(0, -1)
           .map((step, index) =>
@@ -855,8 +837,6 @@ export const createSource = (
     }
   };
 
-  // tlapm locates a USE or HIDE by its keywords and DEF clause, since its parser drops the
-  // facts' location.
   const getUseLocus = (use: UseOrHide) =>
     mergeLoci(
       getRangeLocus(use.keyword),
