@@ -2671,6 +2671,33 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
   return collection !== undefined && isOther ? { collection, method: method.name.text } : undefined;
 };
 
+// Whether an expression only reads values, once the awaits in it settled: it calls, makes, and
+// changes nothing.
+const isRead = (node: ts.Node, results: ReadonlyMap<ts.Expression, Expression>): boolean => {
+  if (ts.isExpression(node) && results.has(node)) return true;
+  const isEffect =
+    ts.isCallExpression(node) ||
+    ts.isNewExpression(node) ||
+    ts.isTaggedTemplateExpression(node) ||
+    ts.isDeleteExpression(node) ||
+    ts.isYieldExpression(node) ||
+    ts.isAwaitExpression(node) ||
+    ts.isFunctionLike(node) ||
+    ts.isClassLike(node) ||
+    ts.isObjectLiteralExpression(node) ||
+    ts.isArrayLiteralExpression(node) ||
+    ts.isRegularExpressionLiteral(node) ||
+    ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      INCREMENT_OPERATORS.has(node.operator)) ||
+    (ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment);
+  return (
+    !isEffect &&
+    ts.forEachChild(node, (child) => !isRead(child, results) || undefined) === undefined
+  );
+};
+
 const translateExpressionStatement = (
   expression: ts.Expression,
   path: Path,
@@ -2889,6 +2916,14 @@ const translateExpressionStatement = (
       leaf(apply("Assert", [boolean(false), string("tla-ts can't call this constructor")])),
       throwTypeError(path, expression, context, frame),
     );
+  }
+  // A statement that only reads, such as void await x once x settles, evaluates its value and drops
+  // it, so that a getter it reads, which tla-ts can't call, stops the check.
+  if (isRead(expression, path.scope.results)) {
+    const value = translateExpression(expression, path.scope, context);
+    return context.heap === undefined
+      ? continueWith(path)
+      : ifThenElse(apply("=", [value, value]), continueWith(path), leaf(boolean(false)));
   }
   const assigned = getAssignedPath(expression, path, context);
   if (assigned === undefined) {

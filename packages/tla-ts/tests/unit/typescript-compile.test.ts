@@ -2526,6 +2526,16 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("evaluates a statement that only reads", async () => {
+    const result = await checkModel(`
+      const box = { get value(): number { throw new Error("getter"); } };
+      void await null;
+      typeof box;
+      box.value;
+    `);
+    expect(result.failure?.message).toContain("getter");
+  });
+
   it("fails where a module's body awaits a promise that rejects", async () => {
     const result = await checkModel(`
       const holder = {};
