@@ -182,7 +182,6 @@ export const MAXIMUM_INTEGER = 2147483647;
 const DEFAULT_SET_BOUND = 1000000;
 const VALUE_VEC_CAPACITY = 10;
 
-// TLCGlobals.setBound, which TLC's -maxSetSize sets.
 const setBound = { size: DEFAULT_SET_BOUND };
 
 export const getSetBound = () => setBound.size;
@@ -378,7 +377,6 @@ export const setStringOrder = (texts: Iterable<string>) => {
 // TLC 1.7.4 prints and looks keys up in functions differently, so each check sets the version.
 const valueVersion = { is174: false };
 
-// TLCGlobals.expand, which TLC's -terse clears, and TLCGlobals.useView, which -view sets.
 const printing = { isExpanded: true, isViewPrinted: false };
 
 export interface ValueOptions {
