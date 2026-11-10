@@ -118,6 +118,7 @@ export interface CaseExpression {
   kind: "Case";
   arms: CaseArm[];
   other: Expression | undefined;
+  otherRange?: SourceRange;
   location: SourceLocation;
 }
 
@@ -359,6 +360,7 @@ export interface OperatorDefinition {
   params: OperatorParam[];
   body: Expression;
   bodyRange?: SourceRange;
+  head?: SourceRange;
   isLocal: boolean;
   isRecursive: boolean;
   location: SourceLocation;

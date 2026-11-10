@@ -1051,9 +1051,17 @@ const parse = (
   const parseCase = (start: Token): Expression => {
     const arms: CaseArm[] = [];
     do {
+      const otherStart = cursor.index;
       if (accept("OTHER")) {
         expect("->");
-        return { kind: "Case", arms, other: parseExpression(), location: getLocation(start) };
+        const other = parseExpression();
+        return {
+          kind: "Case",
+          arms,
+          other,
+          otherRange: getRange(otherStart),
+          location: getLocation(start),
+        };
       }
       const condition = parseExpression();
       expect("->");
@@ -1507,11 +1515,13 @@ const parse = (
 
   const parseDefinitionUnit = (isLocal: boolean): Definition | Instance => {
     const token = peek();
+    const start = cursor.index;
     const location = getLocation(token);
     const parseOperator = (name: string, params: OperatorParam[]): Definition => ({
       kind: "Operator",
       name,
       params,
+      head: getRange(start, cursor.index - 2),
       ...parseBody(),
       isLocal,
       isRecursive: isRecursiveName(name),
