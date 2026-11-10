@@ -20,7 +20,7 @@ import {
   getCalledMethod,
   getCallee,
   getElement,
-  getFunctionOrGenerator,
+  getAnyFunction,
   isAsyncFunction,
   isAsyncGenerator,
   isAnyGenerator,
@@ -627,7 +627,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   if (!ts.isBinaryExpression(expression)) return undefined;
   const kind = expression.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
-    const assigned = getFunctionOrGenerator(expression.right);
+    const assigned = getAnyFunction(expression.right);
     const symbol = ts.isIdentifier(expression.left)
       ? getSymbol(expression.left, context.checker)
       : undefined;
@@ -771,7 +771,33 @@ export const translateCallStatement = (
   }
   const asyncCallee = getAsyncCallee(expression.expression, path, context);
   if (asyncCallee !== undefined) {
-    return translateAsyncCall(expression, asyncCallee, path, context, frame, continueWith);
+    return translateAsyncCall(
+      expression,
+      asyncCallee,
+      undefined,
+      path,
+      context,
+      frame,
+      continueWith,
+    );
+  }
+  const asyncMethod = getCalledMethod(expression.expression, context, isAsyncFunction);
+  if (asyncMethod !== undefined) {
+    return ifThenElse(
+      translateHoldsMethod(asyncMethod, path.scope, context),
+      translateAsyncCall(
+        expression,
+        asyncMethod.method,
+        getReceiver(path.scope, context, asyncMethod),
+        path,
+        context,
+        frame,
+        continueWith,
+      ),
+      leaf(
+        apply("Assert", [boolean(false), string("tla-ts can't tell which method this call runs")]),
+      ),
+    );
   }
   const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
     argumentNodes.map((argument) => translateExpression(argument, path.scope, context));
@@ -888,7 +914,10 @@ const getGeneratorCallee = (node: ts.Expression, path: Path, context: Context) =
     : getFunctionOfKind(node, context, isAnyGenerator);
 };
 
+// An async function that a callee names, other than a method, which a call runs only where the
+// object still holds it.
 const getAsyncCallee = (node: ts.Expression, path: Path, context: Context) => {
+  if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return undefined;
   const symbol = getSymbol(node, context.checker);
   const assigned = symbol && path.scope.functions.get(symbol);
   return assigned !== undefined && isAsyncFunction(assigned)
@@ -1915,7 +1944,7 @@ const isGeneratorStep = (node: ts.CallExpression, context: Context): node is Met
 
 // The generator that a call makes a generator object of, with the method it calls, if any.
 const getCreatedGenerator = (node: ts.CallExpression, path: Path, context: Context) => {
-  const called = getCalledMethod(node.expression, context, true);
+  const called = getCalledMethod(node.expression, context, isAnyGenerator);
   const generator = called?.method ?? getGeneratorCallee(node.expression, path, context);
   return generator === undefined ? undefined : { generator, called };
 };
@@ -2762,6 +2791,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   isPromiseCall(node, context) ||
   getCreatedGenerator(node, path, context) !== undefined ||
   getAsyncCallee(node.expression, path, context) !== undefined ||
+  getCalledMethod(node.expression, context, isAsyncFunction) !== undefined ||
   isHeapCall(node, path, context) ||
   getLoopCall(node, path, context) !== undefined ||
   isStateCall(node, path, context);
@@ -3081,7 +3111,9 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       getCallee(node, context) ??
       getFunctionOfKind(node, context, isAnyGenerator) ??
       getFunctionOfKind(node, context, isAsyncFunction) ??
-      getCalledMethod(node, context)?.method
+      getCalledMethod(node, context)?.method ??
+      getCalledMethod(node, context, isAnyGenerator)?.method ??
+      getCalledMethod(node, context, isAsyncFunction)?.method
     );
   };
   const visit = (node: ts.Node) => {
@@ -3683,6 +3715,14 @@ export const translateStatements = (
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
+  // An await statement whose promise fulfilled drops the value.
+  if (
+    ts.isExpressionStatement(statement) &&
+    ts.isAwaitExpression(skipCasts(statement.expression)) &&
+    path.scope.results.has(skipCasts(statement.expression))
+  ) {
+    return continueWith(path);
+  }
   const awaited = getStatementAwait(statement, path);
   if (awaited !== undefined) {
     return translateAwait(awaited, path, context, frame, (after, value) =>

@@ -28,7 +28,7 @@ import { type Formula, ifThenElse, leaf, letIn } from "./formula";
 import { getHeap } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { bindValues } from "./scope";
+import { bindValues, type Receiver } from "./scope";
 import { apply, boolean, identifier, number, string } from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
@@ -974,6 +974,7 @@ export const settleRequest = (
 export const translateAsyncCall = (
   node: ts.CallExpression,
   callee: FunctionNode,
+  receiver: Receiver | undefined,
   path: Path,
   context: Context,
   frame: Frame,
@@ -1009,7 +1010,7 @@ export const translateAsyncCall = (
       node,
       callee,
       node.arguments,
-      undefined,
+      receiver,
       catching,
       context,
       rejectFrame,

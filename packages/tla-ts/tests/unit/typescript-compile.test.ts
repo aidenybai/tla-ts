@@ -1848,6 +1848,47 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls async methods with their object as this", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const object = {
+        count: 1,
+        async method(step: number) {
+          log = log + "m" + this.count;
+          await 0;
+          this.count = this.count + step;
+          return this.count;
+        },
+      };
+      class C {
+        value = 5;
+        async get() {
+          return this.value;
+        }
+      }
+      object.method(2).then((value: number) => { log = log + "v" + value; });
+      new C().get().then((value: number) => { log = log + "c" + value; });
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "m1sc5v3") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a script replaces an async method before calling it", async () => {
+    const result = await checkModel(`
+      let log = "";
+      const object = {
+        async method() { log = log + "original"; },
+      };
+      object.method = async () => { log = log + "replaced"; };
+      object.method();
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell which method this call runs");
+  });
+
   it("stops where a timer finds a promise's handler threw", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

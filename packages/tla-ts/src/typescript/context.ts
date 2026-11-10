@@ -169,7 +169,7 @@ export const isAsyncGenerator = (node: FunctionNode) =>
 
 export const isAnyGenerator = (node: FunctionNode) => node.asteriskToken !== undefined;
 
-const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
+export const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
   if (node === undefined) return undefined;
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
     return node;
@@ -181,11 +181,6 @@ const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefined => 
 export const getFunction = (node: ts.Node | undefined) => {
   const found = getAnyFunction(node);
   return found !== undefined && isPlain(found) ? found : undefined;
-};
-
-export const getFunctionOrGenerator = (node: ts.Node | undefined) => {
-  const found = getAnyFunction(node);
-  return found !== undefined && !isAsync(found) ? found : undefined;
 };
 
 // A class whose definition and instances run no code, so only its methods matter.
@@ -274,10 +269,7 @@ export const isOnce = (node: ts.Node): boolean =>
   (!ts.isFunctionLike(node) && !ts.isIterationStatement(node, false) && isOnce(node.parent));
 
 const isMethodShape = (node: ts.Node): node is ts.MethodDeclaration =>
-  ts.isMethodDeclaration(node) &&
-  node.body !== undefined &&
-  !ts.isComputedPropertyName(node.name) &&
-  !(ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+  ts.isMethodDeclaration(node) && node.body !== undefined && !ts.isComputedPropertyName(node.name);
 
 export const isPrivateMember = (node: ts.Node) =>
   (ts.isClassElement(node) || ts.isAccessor(node)) &&
@@ -800,7 +792,7 @@ export interface CalledMethod {
 export const getCalledMethod = (
   node: ts.Expression,
   context: Context,
-  isGenerator = false,
+  isKind: (node: FunctionNode) => boolean = isPlain,
 ): CalledMethod | undefined => {
   const isAccess =
     context.heap !== undefined &&
@@ -821,7 +813,7 @@ export const getCalledMethod = (
       : undefined;
   const returned = getter === undefined ? undefined : getReturnedMethod(getter, context);
   const method = getObjectMethod(returned ?? declaration, context);
-  return method === undefined || (method.asteriskToken !== undefined) !== isGenerator
+  return method === undefined || !isKind(method)
     ? undefined
     : { method, receiver: node.expression, key: name.text, getter };
 };
