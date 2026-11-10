@@ -562,9 +562,18 @@ export const isFunctionObject = (
           (ts.isPropertyDeclaration(member) && !isStatic(member) && ts.isIdentifier(member.name)),
       ))) &&
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
-  (ts.isBindingElement(node.parent) || ts.isParameter(node.parent)) &&
-  node.parent.initializer === node &&
-  ts.isIdentifier(node.parent.name);
+  isDefault(node);
+
+// Whether a node gives a named binding's default, through parentheses and the commas that end in it.
+const isDefault = (node: ts.Node): boolean =>
+  ts.isParenthesizedExpression(node.parent) ||
+  (ts.isBinaryExpression(node.parent) &&
+    node.parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+    node.parent.right === node)
+    ? isDefault(node.parent)
+    : (ts.isBindingElement(node.parent) || ts.isParameter(node.parent)) &&
+      node.parent.initializer === node &&
+      ts.isIdentifier(node.parent.name);
 
 export type HeapFunction = ts.FunctionDeclaration | ts.FunctionExpression;
 

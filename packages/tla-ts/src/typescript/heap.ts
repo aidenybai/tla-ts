@@ -316,12 +316,14 @@ export const translateObject = (
   }, identifier("EmptyObject"));
 };
 
-// A function's or a class's name: its own, or that of the binding its definition initializes.
+// A function's or a class's name: its own, or that of the binding its definition initializes,
+// through parentheses but not through a comma.
 const getFunctionName = (node: HeapClass | ts.ArrowFunction) => {
-  const named = node.parent;
+  const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
   return (
     (ts.isArrowFunction(node) ? undefined : node.name?.text) ??
-    ((ts.isVariableDeclaration(named) || ts.isBindingElement(named) || ts.isParameter(named)) &&
+    (named !== undefined &&
+    (ts.isVariableDeclaration(named) || ts.isBindingElement(named) || ts.isParameter(named)) &&
     ts.isIdentifier(named.name)
       ? named.name.text
       : "")

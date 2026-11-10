@@ -2473,6 +2473,25 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("names a default function through parentheses but not through a comma", async () => {
+    const result = await checkModel(`
+      let log = "";
+      const holder = {};
+      const read = ([
+        cover = (function () {}),
+        // @ts-ignore
+        xCover = (0, function () {}),
+        // @ts-ignore
+        arrow = (0, () => 1),
+      ]: unknown[]) => {
+        log = log + (cover as Function).name + "," + (xCover as Function).name + "," + (arrow as Function).name;
+      };
+      read([]);
+      if (log !== "cover,,") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";
