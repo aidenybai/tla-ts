@@ -1939,6 +1939,49 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("iterates an async generator with for await, and returns it on break", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; })
+        .then(() => { log = log + "6"; })
+        .then(() => { log = log + "7"; })
+        .then(() => { log = log + "8"; })
+        .then(() => { log = log + "9"; });
+      const first = (async function* () {
+        yield* [1, 2];
+        yield 3;
+        log = log + "f";
+      })();
+      const second = (async function* () {
+        yield 4;
+        log = log + "no";
+      })();
+      async function run() {
+        for await (const value of first) {
+          log = log + "v" + value;
+        }
+        log = log + "a";
+        for await (const value of second) {
+          log = log + "w" + value;
+          break;
+        }
+        log = log + "b";
+      }
+      run().then(() => { log = log + "e"; });
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "s123v1456v2789v3faw4be") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a return would close a generator inside yield*", async () => {
     await expect(
       checkModel(`

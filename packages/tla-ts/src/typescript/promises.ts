@@ -61,6 +61,8 @@ interface TrackedPromise {
   resolvers: { resolve: Expression; reject: Expression } | undefined;
   value: Expression | undefined;
   reactions: readonly Reaction[];
+  // What the body of an async generator yielded or returned, for the promise of a request to it.
+  iteration: { value: Expression; isDone: boolean } | undefined;
 }
 
 // What a job does once a promise settles: call a handler, or pass the value on, and settle the
@@ -319,6 +321,7 @@ const makePromise = (
         resolvers: undefined,
         value: undefined,
         reactions: [],
+        iteration: undefined,
       }),
       name,
     ),
@@ -965,8 +968,28 @@ export const settleRequest = (
         node,
         context,
         useJavaScript("IteratorResult", [value, boolean(isDone)], context),
-        (made, ref) => resolve(made, node, request, ref, undefined, context, continueWith),
+        (made, ref) =>
+          resolve(
+            setPromise(made, node, request, {
+              ...getPromise(made, node, request),
+              iteration: { value, isDone },
+            }),
+            node,
+            request,
+            ref,
+            undefined,
+            context,
+            continueWith,
+          ),
       );
+
+// What the promise of a request to an async generator settled with, as tla-ts follows it.
+export const getIteration = (path: Path, node: ts.Node, request: Expression) => {
+  const iteration = getPromise(path, node, findPromise(path, node, request) ?? "").iteration;
+  if (iteration === undefined)
+    throw new TlaTypeScriptError("tla-ts can't follow this iterator", node);
+  return iteration;
+};
 
 // A call of an async function, which runs the body until it awaits and gives the promise that the
 // body settles once it returns or throws. The body leaves to the code that last ran it: the call,

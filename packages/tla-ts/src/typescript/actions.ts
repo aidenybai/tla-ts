@@ -61,6 +61,7 @@ import { getErrorClass, translateEngineError, translateThrown } from "./exceptio
 import {
   drainTasks,
   EMPTY_TASKS,
+  getIteration,
   isPromiseCall,
   isPromiseConstruction,
   makeRequest,
@@ -3387,11 +3388,79 @@ const translateForAwait = (
     throw new TlaTypeScriptError("Unsupported for await", loop);
   }
   const iterated = getCast(loop.expression);
-  if (
-    !ts.isArrayLiteralExpression(iterated) ||
-    iterated.elements.some((element) => ts.isSpreadElement(element))
-  ) {
-    throw new TlaTypeScriptError("for await iterates only arrays written in place", iterated);
+  const uncaught = apply("Assert", [boolean(false), string(loop.expression.getText())]);
+  const throwWith = (current: Path, value: Expression) => throwTo(current, { value, uncaught });
+  const runBody = (current: Path, value: Expression, bodyFrame: Frame) =>
+    bindIteration(loop.initializer, value, current, context, (bound) =>
+      translateStatements([loop.statement], bound, context, bodyFrame),
+    );
+  if (!ts.isArrayLiteralExpression(iterated)) {
+    if (hasCall(iterated, context)) {
+      throw new TlaTypeScriptError("for await iterates only arrays and async generators", iterated);
+    }
+    const receiver = translateExpression(iterated, path.scope, context);
+    // Calls the generator's next or return, and awaits the promise it gives.
+    const request = (
+      current: Path,
+      method: string,
+      onFulfilled: (path: Path, request: Expression) => Formula,
+      onRejected: (path: Path, reason: Expression) => Formula,
+    ) =>
+      resumeGenerator(
+        loop.expression,
+        receiver,
+        method,
+        undefined,
+        current,
+        context,
+        frame,
+        () => {
+          throw new TlaTypeScriptError(
+            "for await iterates only arrays and async generators",
+            iterated,
+          );
+        },
+        (requested, promise) =>
+          awaitTo(
+            requested,
+            promise,
+            undefined,
+            (fulfilled) => onFulfilled(fulfilled, promise),
+            onRejected,
+          ),
+      );
+    // Leaving the body early awaits the generator's return, though a throw keeps what it threw.
+    const close = (current: Path, exit: (path: Path) => Formula) =>
+      request(current, "return", exit, throwWith);
+    const iterate = (current: Path): Formula =>
+      request(
+        current,
+        "next",
+        (fulfilled, promise) => {
+          const iteration = getIteration(fulfilled, loop, promise);
+          return iteration.isDone
+            ? continueWith(fulfilled)
+            : runBody(fulfilled, iteration.value, {
+                ...guardYields(frame),
+                next: iterate,
+                continueTo: iterate,
+                breakTo: (after) => close(after, continueWith),
+                exit: (after, value) => close(after, (closed) => frame.exit(closed, value)),
+                throwTo: (after, thrown) =>
+                  request(
+                    after,
+                    "return",
+                    (closed) => throwTo(closed, thrown),
+                    (closed) => throwTo(closed, thrown),
+                  ),
+              });
+        },
+        throwWith,
+      );
+    return iterate(path);
+  }
+  if (iterated.elements.some((element) => ts.isSpreadElement(element))) {
+    throw new TlaTypeScriptError("for await iterates only arrays and async generators", iterated);
   }
   const sequence = context.names.getFresh("sequence");
   const tick = (current: Path, next: (path: Path) => Formula) =>
@@ -3413,19 +3482,8 @@ const translateForAwait = (
       current,
       index(identifier(sequence), [number(position + 1)]),
       ts.isOmittedExpression(element) ? undefined : element,
-      (fulfilled, value) =>
-        tick(fulfilled, (resumed) =>
-          bindIteration(loop.initializer, value, resumed, context, (bound) =>
-            translateStatements([loop.statement], bound, context, bodyFrame),
-          ),
-        ),
-      (rejected, reason) =>
-        tick(rejected, (resumed) =>
-          throwTo(resumed, {
-            value: reason,
-            uncaught: apply("Assert", [boolean(false), string(loop.expression.getText())]),
-          }),
-        ),
+      (fulfilled, value) => tick(fulfilled, (resumed) => runBody(resumed, value, bodyFrame)),
+      (rejected, reason) => tick(rejected, (resumed) => throwWith(resumed, reason)),
     );
   };
   return allocate(loop.expression, path, context, (inner) =>

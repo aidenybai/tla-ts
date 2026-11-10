@@ -213,7 +213,7 @@ const isAutoTyped = (node: ts.Identifier, context: Context) => {
 };
 
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
-// call of its methods, or into a comparison. Elsewhere, such as an array pattern, a spread, or a
+// call of its methods, into a comparison, or into a for await. Elsewhere, such as an array pattern, a spread, or a
 // function's parameter, code would iterate it in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
   if (!getMembers(node, context).some(isGeneratorMember)) return;
@@ -233,6 +233,9 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
           ts.SyntaxKind.ExclamationEqualsEqualsToken,
         ].includes(outer.operatorToken.kind)) ||
       (ts.isPropertyAccessExpression(outer) && isGeneratorType(node, context)) ||
+      (ts.isForOfStatement(outer) &&
+        outer.awaitModifier !== undefined &&
+        outer.expression === node) ||
       ts.isExpressionStatement(outer));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };
