@@ -512,13 +512,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ...(checked.postcondition && { postcondition: checked.postcondition }),
     });
   };
-  // With -continue, TLC prints the trace of a violation without checking the postconditions.
-  const reportContinuedViolation = (status: CheckStatus, violation: Omit<Violation, "loopStart">) =>
+  // With -continue, TLC prints the trace of a violation without checking the postconditions. It
+  // never records the violation, and reports a success at the end, where tla-ts ends with the
+  // status of the first violation, as -dfid and -simulate do.
+  const continued = { status: undefined as CheckStatus | undefined };
+  const reportContinuedViolation = (
+    status: CheckStatus,
+    violation: Omit<Violation, "loopStart">,
+  ) => {
+    continued.status ??= status;
     options.onProgress?.({
       kind: "violation",
       status,
       violation: { ...violation, loopStart: undefined },
     });
+  };
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
   const specNextActions = { value: undefined as SpecAction[] | undefined };
@@ -1655,5 +1663,5 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       postcondition,
     });
   }
-  return createSuccess();
+  return continued.status ? createResult(continued.status) : createSuccess();
 };

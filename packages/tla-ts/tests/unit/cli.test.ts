@@ -506,12 +506,13 @@ describe("the CLI reports results like TLC", () => {
   });
 
   // TLC's output with one worker for the specs of its ContinueTest and
-  // DoInitFunctorInvariantContinueTest, and for a spec whose violating states lead to more.
+  // DoInitFunctorInvariantContinueTest, and for a spec whose violating states lead to more,
+  // without the success TLC reports after the violations.
   it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors"])(
     "goes on past each violation in %s with -continue like TLC",
     (name) => {
       const result = runCliWith("tlc-continue", [`${name}.tla`, "-continue"]);
-      expect(result.status).toBe(0);
+      expect(result.status).toBe(12);
       expect(getSteadyLines(result.stdout)).toEqual(
         readFileSync(join(FIXTURES, "tlc-continue", `${name}.out`), "utf8").split("\n"),
       );
