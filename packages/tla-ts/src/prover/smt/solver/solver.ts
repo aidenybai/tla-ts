@@ -89,29 +89,35 @@ export const checkSmt = (
   const manager = new AstManager(
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
-  // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites it
-  // when it is asserted and keeps it, though check-sat then runs the tactic on the assertions. The
-  // kernel's model finder counts a step of the resource limit when it is made, and
-  // solver::assert_expr counts one for each assertion.
-  const incremental = new AssertedFormulas(manager);
-  manager.limit.inc();
-  const problem = parseSmtlib(
-    text,
-    manager,
-    (assertion) => {
-      manager.limit.inc();
-      incremental.assertExpr(assertion);
-    },
-    report,
-  );
-  if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
-  // cmd_context::check_sat bounds the steps of the search by the rlimit from the count so far.
-  manager.limit.push(problem.rlimit);
-  const solved = solveAssertions(manager, problem.assertions);
-  return {
-    verdict: getVerdict(solved.result),
-    numInstances: solved.context?.qmanager.getNumInstances() ?? 0,
-  };
+  // The limit stops watching the collector however the check ends, as an unsupported input or a
+  // problem without check-sat ends it early.
+  try {
+    // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites it
+    // when it is asserted and keeps it, though check-sat then runs the tactic on the assertions. The
+    // kernel's model finder counts a step of the resource limit when it is made, and
+    // solver::assert_expr counts one for each assertion.
+    const incremental = new AssertedFormulas(manager);
+    manager.limit.inc();
+    const problem = parseSmtlib(
+      text,
+      manager,
+      (assertion) => {
+        manager.limit.inc();
+        incremental.assertExpr(assertion);
+      },
+      report,
+    );
+    if (!problem.hasCheckSat) return { verdict: "unknown", numInstances: 0 };
+    // cmd_context::check_sat bounds the steps of the search by the rlimit from the count so far.
+    manager.limit.push(problem.rlimit);
+    const solved = solveAssertions(manager, problem.assertions);
+    return {
+      verdict: getVerdict(solved.result),
+      numInstances: solved.context?.qmanager.getNumInstances() ?? 0,
+    };
+  } finally {
+    manager.limit.release();
+  }
 };
 
 // report gets each SmtParseError, and Z3 goes on past one only when report returns. Anything else

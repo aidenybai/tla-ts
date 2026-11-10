@@ -607,6 +607,8 @@ export const createEnvironment = (
       ),
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
+      getOuterDefinition: (name) =>
+        module.definitions.find((definition) => definition.name === name),
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
         const key = createName(`${name}@${module.name}`);
@@ -823,6 +825,8 @@ export const createEnvironment = (
       ),
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
+      // Each substitution is a local definition, which the copies read by name.
+      getOuterDefinition: () => undefined,
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (_source, name, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;

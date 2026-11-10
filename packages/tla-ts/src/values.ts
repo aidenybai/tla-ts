@@ -205,7 +205,7 @@ export const addBoundedElement = (elements: Value[], element: Value) => {
   elements.push(element);
 };
 
-export const isBeyondSetBound = (value: Value) =>
+export const isBeyondSetBound = (value: Value): value is IntervalValue =>
   typeof value === "object" &&
   value.kind === "Interval" &&
   value.high - value.low >= getMaximumSetSize();
@@ -368,18 +368,37 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
   );
 };
 
+interface StringOrder {
+  ranks: Record<string, number>;
+  size: number;
+  // A parallel search's workers rank the strings they create in different orders, so the search
+  // notes the first string it orders against another string ranked from this rank on.
+  searchRank: number | undefined;
+  unorderedString: string | undefined;
+}
+
 // TLC orders strings and model values by first interning, so each check sets its order first.
-const stringOrder: { ranks: Record<string, number>; size: number } = {
+const stringOrder: StringOrder = {
   ranks: Object.create(null),
   size: 0,
+  searchRank: undefined,
+  unorderedString: undefined,
 };
 
 export const setStringOrder = (texts: Iterable<string>) => {
   stringOrder.ranks = Object.create(null);
   stringOrder.size = 0;
+  stringOrder.searchRank = undefined;
+  stringOrder.unorderedString = undefined;
   modelValues.clear();
   for (const text of texts) rankString(text);
 };
+
+export const freezeStringOrder = () => {
+  stringOrder.searchRank = stringOrder.size;
+};
+
+export const getUnorderedString = () => stringOrder.unorderedString;
 
 // TLC 1.7.4 prints and looks keys up in functions differently, so each check sets the version.
 const valueVersion = { is174: false };
@@ -421,11 +440,6 @@ export const rankString = (text: string) => {
   return text;
 };
 
-export const getRankedStringCount = () => stringOrder.size;
-
-export const getRankedString = (rank: number) =>
-  Object.keys(stringOrder.ranks).find((text) => stringOrder.ranks[text] === rank);
-
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
 const compareStrings = (left: string, right: string) => {
@@ -433,6 +447,14 @@ const compareStrings = (left: string, right: string) => {
   const ranks = stringOrder.ranks;
   const leftRank = ranks[left];
   const rightRank = ranks[right];
+  const searchRank = stringOrder.searchRank;
+  if (
+    searchRank !== undefined &&
+    (leftRank === undefined || leftRank >= searchRank) &&
+    (rightRank === undefined || rightRank >= searchRank)
+  ) {
+    stringOrder.unorderedString ??= left;
+  }
   if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
   if (leftRank !== undefined) return -1;
   if (rightRank !== undefined) return 1;
@@ -702,6 +724,13 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left.kind === "Function" && right.kind === "Function")
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
+  // The sizes decide first, so an interval of another size never needs its elements.
+  if (left.kind === "Interval" && right.kind === "Set") {
+    if (getCardinality(left) !== right.elements.length) return false;
+  }
+  if (left.kind === "Set" && right.kind === "Interval") {
+    if (left.elements.length !== getCardinality(right)) return false;
+  }
   if (isModelValue(left) || isModelValue(right)) {
     // TLC enumerates a lambda, which can fail, before it compares it.
     if (left.kind === "LazyFunction") toFiniteFunction(left);
@@ -1200,6 +1229,17 @@ const isStrictlySorted = (elements: Value[]) => {
   return true;
 };
 
+const isAscendingIntegers = (elements: Value[]) => {
+  for (let index = 0; index < elements.length; index++) {
+    const element = elements[index];
+    const previous = index > 0 ? elements[index - 1] : undefined;
+    if (typeof element !== "number" || (typeof previous === "number" && previous >= element)) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export const createSet = (elements: Value[]): SetValue => {
   // TLC's sort compares each element after the first with those before it.
   for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
@@ -1214,6 +1254,7 @@ export const createSet = (elements: Value[]): SetValue => {
 
 // TLC builds a set enumeration unsorted, so one whose elements it can't compare still evaluates.
 export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
+  if (isAscendingIntegers(elements)) return createSortedSet(elements);
   const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
     createSet,
     (mixed) => ({ kind: "MixedSet", elements: mixed }),
@@ -1347,17 +1388,22 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
       );
 };
 
+const MAX_SHARED_INTERVAL_LENGTH = 1024;
 const intervalDomains: Value[][] = [];
+const longIntervalDomains = new Map<number, WeakRef<Value[]>>();
 const intervalValues: IntervalValue[] = [];
 const intervalArrays = new WeakMap<Value[], IntervalValue>();
 
 // Every function over 1..n shares one domain array per length, so the array's identity records
-// the interval. Callers must not mutate the returned array.
+// the interval. Callers must not mutate the returned array. Longer domains are held weakly: a
+// sequence that grows one element at a time would otherwise keep an array of every length it
+// passed through, n * n / 2 numbers in all.
 const getIntervalDomain = (length: number): Value[] => {
-  const cached = intervalDomains[length];
+  const cached = intervalDomains[length] ?? longIntervalDomains.get(length)?.deref();
   if (cached) return cached;
   const domain = Array.from({ length }, (_, index) => index + 1);
-  intervalDomains[length] = domain;
+  if (length > MAX_SHARED_INTERVAL_LENGTH) longIntervalDomains.set(length, new WeakRef(domain));
+  else intervalDomains[length] = domain;
   return domain;
 };
 
@@ -1371,7 +1417,10 @@ export const getIntervalElements = (value: IntervalValue): Value[] => {
 };
 
 const isIntervalDomain = (domain: Value[]) =>
-  (domain.length > 0 && domain === intervalDomains[domain.length]) || intervalArrays.has(domain);
+  (domain.length > 0 &&
+    (domain === intervalDomains[domain.length] ||
+      domain === longIntervalDomains.get(domain.length)?.deref())) ||
+  intervalArrays.has(domain);
 
 // A set such as (1..2) \cap S, whose elements are the shared array, gets a copy.
 export const getFunctionDomain = (set: Value): Value[] => {
@@ -2224,6 +2273,21 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   return isElement;
 };
 
+// Integers compare by subtraction, so a search that meets only integers needs no other comparison.
+const isIntegerInSortedSet = (element: number, set: SetValue) => {
+  const elements = set.elements;
+  const bounds = { low: 0, high: elements.length - 1 };
+  while (bounds.low <= bounds.high) {
+    const middle = (bounds.low + bounds.high) >> 1;
+    const probe = elements[middle];
+    if (typeof probe !== "number") return undefined;
+    if (probe === element) return true;
+    if (probe < element) bounds.low = middle + 1;
+    else bounds.high = middle - 1;
+  }
+  return false;
+};
+
 const isInSortedSet = (element: Value, set: SetValue) =>
   findSortedIndex(set.elements, element) !== -1;
 
@@ -2241,7 +2305,17 @@ const isModelValueMember = (modelValue: ModelValue, set: Value) => {
   return false;
 };
 
+// The common cases stay small enough for V8 to inline.
 const isElementOfSet = (element: Value, set: Value): boolean => {
+  if (typeof element === "number" && typeof set === "object") {
+    if (set.kind === "Set")
+      return isIntegerInSortedSet(element, set) ?? isElementOfAnySet(element, set);
+    if (set.kind === "Interval") return element >= set.low && element <= set.high;
+  }
+  return isElementOfAnySet(element, set);
+};
+
+const isElementOfAnySet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":

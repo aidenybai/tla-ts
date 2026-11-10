@@ -9,6 +9,10 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 0
+    transcript: '| TRUE'
 ---*)
 ---- MODULE random_02309 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC

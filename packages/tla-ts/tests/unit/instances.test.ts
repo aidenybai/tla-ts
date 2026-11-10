@@ -6,14 +6,16 @@ import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
+const loadModule = (name: string) => {
+  const path = join(DIRECTORY, `${name}.tla`);
+  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+};
+
 const checkInstances = (configName: string, moduleName = "Instances") =>
   check({
     source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
-    loadModule: (name) => {
-      const path = join(DIRECTORY, `${name}.tla`);
-      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-    },
+    loadModule,
   });
 
 describe("INSTANCE matches TLC", () => {
@@ -34,6 +36,19 @@ describe("INSTANCE matches TLC", () => {
           : undefined,
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
+  it("evaluates a substitution once each time an instantiated operator is evaluated", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source: readFileSync(join(DIRECTORY, "SubstOnce.tla"), "utf8"),
+      config: readFileSync(join(DIRECTORY, "SubstOnce.cfg"), "utf8"),
+      loadModule,
+      onPrint: (text) => prints.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(result.generatedStates).toBe(3);
+    expect(prints).toEqual([1, 2, 2, 1, 3, 3, 2].map((value) => `<<"eval", ${value}>>  ${value}`));
   });
 
   it("reports violations through instantiated operators", async () => {

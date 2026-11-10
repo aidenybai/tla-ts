@@ -32,8 +32,8 @@ import { createStateEncoder, type EncodedStates } from "./transfer";
 import type { TlcVersion } from "./tlc/version";
 import {
   createCanonicalizer,
-  getRankedString,
-  getRankedStringCount,
+  freezeStringOrder,
+  getUnorderedString,
   setStringOrder,
   setValueOptions,
   type Value,
@@ -145,7 +145,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   setStringOrder(order.getStringOrder(config));
   setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
-  const startupStrings = getRankedStringCount();
+  freezeStringOrder();
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule,
@@ -249,7 +249,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     if (!(error instanceof TlaEvaluationError)) throw error;
     return fallBack();
   }
-  if (getRankedStringCount() !== startupStrings) return fallBack(getRankedString(startupStrings));
+  const unorderedString = getUnorderedString();
+  if (unorderedString !== undefined) return fallBack(unorderedString);
   statistics.depth = statistics.generatedStates === 0 ? 0 : 1;
   statistics.initialStates = {
     generated: statistics.generatedStates,

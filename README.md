@@ -34,8 +34,29 @@ npm install tla-ts
 
 ```shell
 npx tla-ts Spec.tla          # check a spec with TLC's options
+npx tla-ts bank.ts           # compile TypeScript to TLA+ and check it
 npx tla-ts tlapm Module.tla  # tlapm's command line, with tla-ts's provers
 ```
+
+## Check TypeScript
+
+tla-ts compiles a TypeScript file to a TLA+ spec and config, writes them beside the file, and checks them. Variables become state, exported functions that change state become actions, and exported functions that return a boolean become invariants.
+
+```ts
+// bank.ts
+type Account = "alice" | "bob";
+
+let balances: Record<Account, number> = { alice: 10, bob: 10 };
+
+export const transfer = (from: Account, to: Account, amount: 1 | 2 | 3) => {
+  balances[from] -= amount;
+  balances[to] += amount;
+};
+
+export const noOverdraft = () => balances.alice >= 0 && balances.bob >= 0;
+```
+
+`npx tla-ts bank.ts` writes `Bank.tla` and `Bank.cfg`, and reports that `noOverdraft` is violated after four transfers from `bob`. [Check TypeScript](https://github.com/aidenybai/tla-ts/blob/main/docs/typescript.md) lists every construct tla-ts compiles.
 
 ## API
 
@@ -54,7 +75,7 @@ result.violation?.trace;
 | `loadModule` | Returns the source of an imported module    |
 | `workers`    | The number of worker threads. Defaults to 1 |
 
-A check with several workers starts over on one worker when the search creates a string, such as with `\o` or `ToString`. TLC orders strings by when it first sees them, and workers share that order only for strings that exist before the search. The CLI prints a warning when this happens, and `check` passes `onProgress` a `sequential-fallback` event.
+A check with several workers starts over on one worker when it orders two strings that the search created, such as with `\o` or `ToString`. This happens when both strings go into one set or one function's domain. TLC orders strings by when it first sees them, and workers share that order only for strings that exist before the search. The CLI prints a warning when this happens, and `check` passes `onProgress` a `sequential-fallback` event.
 
 ### `prove`
 

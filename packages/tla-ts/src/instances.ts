@@ -233,6 +233,8 @@ interface Instantiation {
   substitutions: Map<string, Expression>;
   variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
+  // A definition of the instantiating module that a substitution names.
+  getOuterDefinition: (name: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
@@ -250,7 +252,39 @@ interface Rewrite {
   copies: Map<string, string>;
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
+  // The substitutions an operator's copy reads, which it binds once, as TLC binds each to a lazy
+  // value when it evaluates the operator's body.
+  bindings?: Map<string, Expression>;
 }
+
+const getSubstitutionName = (name: string) => `${name}@SUBSTITUTION`;
+
+const isVariableAlias = (expression: Expression): boolean =>
+  expression.kind === "Identifier" ||
+  (expression.kind === "Tuple" && expression.elements.every(isVariableAlias));
+
+// A name, or a tuple of names, stays in place, so a step can assign it or leave it unchanged as
+// TLC does through its lazy value. An operator or a literal costs nothing to evaluate again. A name
+// of a definition that isn't such an alias is bound once.
+const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
+  if (replacement.kind !== "Identifier") {
+    return (
+      !isVariableAlias(replacement) &&
+      replacement.kind !== "OperatorReference" &&
+      replacement.kind !== "Lambda" &&
+      replacement.kind !== "Number" &&
+      replacement.kind !== "String"
+    );
+  }
+  const definition = isLocallyResolved(replacement)
+    ? undefined
+    : instantiation.getOuterDefinition(replacement.name);
+  return (
+    definition?.kind === "Operator" &&
+    definition.params.length === 0 &&
+    !isVariableAlias(definition.body)
+  );
+};
 
 const getFreeNames = (expression: Expression, bound = new Set<string>()): string[] => {
   const name =
@@ -525,8 +559,14 @@ const substitute = (
   if (enabled) return enabled;
   if (expression.kind === "Identifier" && isFree(expression.name)) {
     const replacement = instantiation.substitutions.get(expression.name);
-    if (replacement) {
+    const bindings = rewrite.bindings;
+    if (replacement && (bindings === undefined || !isBoundOnce(replacement, instantiation))) {
       return withSubstitutionFrames(replacement, [expression]);
+    }
+    if (replacement && bindings) {
+      const name = getSubstitutionName(expression.name);
+      bindings.set(name, replacement);
+      return createLocalIdentifier(name, expression.location);
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
@@ -658,20 +698,40 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
   return instantiation.addDefinition(key, definition.name, (copyKey) => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
+    const bindings = new Map<string, Expression>();
+    const bodyRewrite =
+      definition.kind === "Operator" && rewrite.mode === "Normal"
+        ? { ...rewrite, bindings }
+        : rewrite;
     const mapped = renameParams(
       mapDefinition(definition, (child, bound) =>
-        substitute(child, rewrite, bindNames(new Map(), bound, rename)),
+        substitute(child, bodyRewrite, bindNames(new Map(), bound, rename)),
       ),
       rename,
     );
+    const body: Expression =
+      mapped.kind !== "Operator" || bindings.size === 0
+        ? mapped.body
+        : {
+            kind: "Let",
+            definitions: [...bindings].map(([name, replacement]): Definition => ({
+              kind: "Operator",
+              name,
+              params: [],
+              body: replacement,
+              isLocal: true,
+              isRecursive: false,
+              location: replacement.location,
+            })),
+            body: mapped.body,
+            // TLC has no such LET, so the call stack it prints has no position for it.
+            location: { line: mapped.body.location.line, column: mapped.body.location.column },
+          };
     const frame = instantiation.frame;
     // TLC's call stack holds the SubstInNode an instance puts around each definition it copies.
     if (frame)
-      substitutionFrames.set(mapped.body, [
-        frame,
-        ...(substitutionFrames.get(definition.body) ?? []),
-      ]);
-    return withInstanceParams(mapped, instantiation.params, definition.location);
+      substitutionFrames.set(body, [frame, ...(substitutionFrames.get(definition.body) ?? [])]);
+    return withInstanceParams({ ...mapped, body }, instantiation.params, definition.location);
   });
 };
 

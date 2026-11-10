@@ -62,7 +62,7 @@ export const defineCommand = (usage: string, specs: OptionSpec[]) => {
   };
 };
 
-export const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|glob>... {options}", [
+export const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|spec.ts|glob>... {options}", [
   { flag: "-config <Spec.cfg>" },
   { flag: "-continue" },
   { flag: "-deadlock" },

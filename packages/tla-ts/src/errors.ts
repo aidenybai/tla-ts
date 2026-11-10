@@ -1,3 +1,4 @@
+import type ts from "@typescript/typescript6";
 import type { SourceRange } from "./ast";
 import type { Locus } from "./obligations/expression";
 import { EXIT_STATUS, getExitCode, setExitCode } from "./exit-codes";
@@ -402,7 +403,7 @@ export class PddMemoryOutError extends TlaError {
   }
 }
 
-interface SmtPosition {
+export interface SmtPosition {
   line: number;
   column: number;
 }
@@ -463,5 +464,19 @@ export class PcalBugError extends TlaError {
       `You have discovered a bug in pcal.trans.\nSend the following information and the\ninput file to the current maintainer(s).\n\n -- ${message}.`,
     );
     this.name = "PcalBugError";
+  }
+}
+
+// TypeScript that tla-ts can't compile to TLA+, at the file, line and column of the construct.
+export class TlaTypeScriptError extends TlaError {
+  constructor(message: string, node?: ts.Node) {
+    const sourceFile = node?.getSourceFile();
+    const position = sourceFile?.getLineAndCharacterOfPosition(node?.getStart() ?? 0);
+    super(
+      sourceFile === undefined || position === undefined
+        ? message
+        : `${sourceFile.fileName}:${position.line + 1}:${position.character + 1} ${message}`,
+    );
+    this.name = "TlaTypeScriptError";
   }
 }

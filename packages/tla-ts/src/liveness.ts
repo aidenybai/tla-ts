@@ -106,7 +106,11 @@ export const getLevel = (
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
     if (binding.kind === "Value") return CONSTANT_LEVEL;
-    if (binding.kind === "Thunk") return getBodyLevel(binding, binding.expression, binding.scope);
+    if (binding.kind === "Thunk") {
+      return binding.isReleased
+        ? CONSTANT_LEVEL
+        : getBodyLevel(binding, binding.expression, binding.scope);
+    }
     const operator = binding.operator;
     return operator.kind === "Closure"
       ? getBodyLevel(operator, operator.body, operator.scope)
@@ -248,7 +252,7 @@ export const expandTemporal = (
   }
   if (expression.kind === "Identifier") {
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
-    if (binding?.kind === "Thunk") {
+    if (binding?.kind === "Thunk" && !binding.isReleased) {
       return expand(
         binding.expression,
         binding.scope,
@@ -407,7 +411,7 @@ export const toLiveExpression = (
       isLocallyResolved(expression) || getDefinition(name, environment) === undefined
         ? lookupScope(scope, name)
         : undefined;
-    if (binding?.kind === "Thunk" && definitionThunks.has(binding)) {
+    if (binding?.kind === "Thunk" && !binding.isReleased && definitionThunks.has(binding)) {
       return expandCall(expression, () =>
         expand(binding.expression, binding.scope, expression, scope),
       );

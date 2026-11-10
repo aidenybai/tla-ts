@@ -10,7 +10,6 @@ import {
   defineOperator,
   getBoolean,
   getOperator,
-  getSet,
   getThunk,
   getJavaSignature,
   getJavaInteger,
@@ -166,10 +165,11 @@ export const CORE_OPERATORS: Builtin[] = [
     2,
     (args) => !isElementOf(getValue(args, 0, "\\notin"), getValue(args, 1, "\\notin")),
   ),
-  defineOperator("\\subseteq", 2, (args) => {
-    const left = getSet(args, 0, "\\subseteq");
-    // TLC tests each element of the left set for membership in the right value.
-    const right = getValue(args, 1, "\\subseteq");
+  // TLC tests each element of the left set for membership in the right value.
+  defineBinary("\\subseteq", (left, right) => {
+    if (!isSetValue(left)) {
+      throw new TlaEvaluationError(`\\subseteq expects a set but received ${formatValue(left)}`);
+    }
     const isPowerSets =
       typeof left === "object" &&
       left.kind === "Subset" &&

@@ -89,12 +89,12 @@ export const toActionValue = (action: SpecAction, coverage?: Value) => {
   return createRecord(fields);
 };
 
-const createAction = (name: string, expression: Expression): SpecAction => ({
+const createAction = (name: string, expression: Expression, scope?: Scope): SpecAction => ({
   name,
   location: expression.location,
   parameters: [],
   expression,
-  scope: undefined,
+  scope,
 });
 
 const getConstantContext = (environment: Environment, scope: Scope | undefined) => ({
@@ -323,8 +323,8 @@ const describeSpecification = (
   const recurse = (inner: Expression, innerScope: Scope | undefined, innerFrames = frames) =>
     describeSpecification(inner, innerScope, environment, description, next, innerFrames);
   // TLC wraps each conjunct it takes from an instance in the instance's SubstInNode.
-  const createConjunct = (name: string, conjunct: Expression) =>
-    createAction(name, withSubstitutionFrames(conjunct, frames));
+  const createConjunct = (name: string, conjunct: Expression, conjunctScope: Scope | undefined) =>
+    createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope);
   if (expression.kind === "Let") {
     recurse(
       expression.body,
@@ -344,7 +344,7 @@ const describeSpecification = (
     : frames;
   if (called && called.params.length === 0) {
     if (getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL) {
-      description.inits.push(createConjunct(called.name, called.body));
+      description.inits.push(createConjunct(called.name, called.body, called.scope));
       return;
     }
     recurse(called.body, called.scope, calledFrames);
@@ -367,13 +367,14 @@ const describeSpecification = (
       next.push({ expression: expression.expression.action, scope, frames });
       return;
     }
-    description.temporals.push(createConjunct(UNNAMED_ACTION, expression));
+    description.temporals.push(createConjunct(UNNAMED_ACTION, expression, scope));
     return;
   }
   const level = getLevel(expression, scope, environment);
-  if (level <= VARIABLE_LEVEL) description.inits.push(createConjunct(UNNAMED_ACTION, expression));
-  else if (level === TEMPORAL_LEVEL) {
-    description.temporals.push(createConjunct(UNNAMED_ACTION, expression));
+  if (level <= VARIABLE_LEVEL) {
+    description.inits.push(createConjunct(UNNAMED_ACTION, expression, scope));
+  } else if (level === TEMPORAL_LEVEL) {
+    description.temporals.push(createConjunct(UNNAMED_ACTION, expression, scope));
   }
 };
 

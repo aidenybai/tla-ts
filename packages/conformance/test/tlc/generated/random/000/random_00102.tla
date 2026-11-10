@@ -9,6 +9,16 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 26, col 8 to line 26, col 11 of module random_00102 failed.
+      In applying the function
+      <<1, 2>>,
+      the first argument is:
+      21
+      which is not in its domain.
 ---*)
 ---- MODULE random_00102 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
