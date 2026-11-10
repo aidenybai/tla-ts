@@ -1160,6 +1160,9 @@ export const createSearch = (
           if (!definition) {
             return `The post condition ${name} specified in the configuration file\nis not defined in the specification.`;
           }
+          if (definition.kind === "Operator" && definition.params.length > 0) {
+            return `TLC requires post condition not to take any argument, but one was given: ${name}`;
+          }
           const isConstant =
             !isLiteralDefinition(definition) &&
             getStartupValue(definition, environment) !== undefined;
