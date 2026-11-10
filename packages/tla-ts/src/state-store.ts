@@ -16,7 +16,9 @@ interface Chunk {
 
 // An array of a chunk stays 16 bits until a value doesn't fit.
 const fit = (array: Uint16Array | Int32Array, value: number) =>
-  array instanceof Uint16Array && (value < 0 || value > MAX_NARROW) ? Int32Array.from(array) : array;
+  array instanceof Uint16Array && (value < 0 || value > MAX_NARROW)
+    ? Int32Array.from(array)
+    : array;
 
 // The states the checker has found, in chunks. Each state has its parent, its action, and a row of
 // cells: those of its variables, and those of its fingerprint state, when that differs from the
