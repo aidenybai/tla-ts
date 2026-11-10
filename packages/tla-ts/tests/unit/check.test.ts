@@ -871,6 +871,18 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([641, 80, 9]);
   });
 
+  it("calls operators in generated code with the arguments TLC evaluates", async () => {
+    const result = await checkFixture("codegen", "GeneratedCalls");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
+  });
+
+  it("evaluates operator parameters, literal sets, and pairs in generated code", async () => {
+    const result = await checkFixture("codegen", "GeneratedBindings");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
+  });
+
   it.each([
     ["EqualStoredRecord", 'Attempted to compare an integer with non-integer:\n"a"'],
     ["EqualStoredNested", 'Attempted to compare an integer with non-integer:\n"a"'],
