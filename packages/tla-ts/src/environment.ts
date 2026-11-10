@@ -922,12 +922,16 @@ export const createEnvironment = (
       }
       const linked = nested ?? getLinkedModule(name, parsed.name);
       constants.push(
-        ...linked.constants.filter((constant) =>
-          constants.every((existing) => existing.name !== constant.name),
+        ...linked.constants.filter(
+          (constant) =>
+            constants.every((existing) => existing.name !== constant.name) &&
+            !variables.includes(constant.name),
         ),
       );
       linked.variables.forEach((variable, index) => {
-        if (variables.includes(variable)) return;
+        const isDeclared =
+          variables.includes(variable) || constants.some((constant) => constant.name === variable);
+        if (isDeclared) return;
         variables.push(variable);
         variableLocations.push(linked.variableLocations[index]);
       });
