@@ -2504,6 +2504,20 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives whether a set or a map held the key it deletes", async () => {
+    const result = await checkModel(`
+      let seen = new Set<number>([1, 2]);
+      const gone = seen.delete(2);
+      const missing = seen.delete(3);
+      let named = new Map<string, number>([["a", 1]]);
+      const dropped = named.delete("a");
+      if (!gone || missing || seen.has(2) || !seen.has(1) || !dropped || named.has("a")) {
+        throw new Error("delete");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("gives a WeakMap WeakMap.prototype", async () => {
     const result = await checkModel(`
       const holder = {};

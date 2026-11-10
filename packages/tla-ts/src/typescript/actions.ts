@@ -55,6 +55,7 @@ import {
   translateCondition,
   translateExpression,
   translateKey,
+  translateSetKey,
   translateToString,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
@@ -629,9 +630,24 @@ const getRemovedValue = (
   }
   if (!isMethodCall(node)) return undefined;
   const method = node.expression.name.text;
-  if (method !== "shift" && method !== "pop") return undefined;
   const receiver = node.expression.expression;
-  if (getKind(receiver, context) !== "sequence") return undefined;
+  const kind = getKind(receiver, context);
+  // A set's or a map's delete gives whether it held the key.
+  if (method === "delete" && (kind === "set" || kind === "map") && node.arguments.length === 1) {
+    const collection = translateExpression(receiver, path.scope, context);
+    const key = translateSetKey(node.arguments[0], path.scope, context);
+    return {
+      value: apply("\\in", [key, kind === "map" ? apply("DOMAIN", [collection]) : collection]),
+      path: assign(
+        receiver,
+        path,
+        context,
+        (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
+      ),
+    };
+  }
+  if (method !== "shift" && method !== "pop") return undefined;
+  if (kind !== "sequence") return undefined;
   const sequence = translateExpression(receiver, path.scope, context);
   return {
     value:
