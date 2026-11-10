@@ -76,7 +76,11 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   context.inProgress.delete(declaration);
   const head =
     declared.length === 0 ? definition.name : `${definition.name}(${declared.join(", ")})`;
-  context.output.push(`${head} ==\n  ${indent(value, "  ")}`);
+  context.output.push({
+    name: definition.name,
+    text: `${head} ==\n  ${indent(value, "  ")}`,
+    node: declaration,
+  });
   return definition;
 };
 

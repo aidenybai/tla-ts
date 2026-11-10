@@ -60,11 +60,17 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const context = createContext(program.checker);
   const model = readModel(program.sourceFile, context);
   const sections = createSections();
-  sections.init.push(...model.variables.map((variable) => translateInitial(variable, context)));
+  sections.init.push(
+    ...model.variables.map((variable) => ({
+      name: variable.name,
+      text: translateInitial(variable, context),
+      node: variable.declaration,
+    })),
+  );
   for (const definition of model.exported) translateExported(definition, model, sections, context);
   const moduleName = basename(fileName, ".ts")
     .split(/[^A-Za-z0-9]+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join("");
-  return emit(moduleName, model, sections, context);
+  return emit(moduleName, program.sourceFile, model, sections, context);
 };
