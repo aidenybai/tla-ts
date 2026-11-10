@@ -8,6 +8,7 @@ import {
 } from "../../../errors";
 import { type AstManager, KIND_APP, OP_ITE, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
+import { createAigTactic } from "./aig-tactic";
 import { card2bv } from "./card2bv";
 import { Context } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
@@ -701,6 +702,13 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         runNnf(environment.manager, new Map([...params, ["mode", "full"]])),
     },
   ],
+  [
+    "aig",
+    {
+      descrs: getDescrs("", [["max_memory", PARAM_UINT, UINT_MAX, true]]),
+      build: (environment) => createAigTactic(environment.manager),
+    },
+  ],
   ["skip", { descrs: new Map(), build: () => (goal) => [goal] }],
   [
     "fail",
@@ -725,7 +733,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "ackermannize_bv add-bounds aig blast-term-ite bv_bound_chk bv-divrem-bounds " +
+    "ackermannize_bv add-bounds blast-term-ite bv_bound_chk bv-divrem-bounds " +
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
     "degree-shift demodulator diff-neq " +
     "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
