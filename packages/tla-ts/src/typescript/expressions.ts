@@ -51,7 +51,6 @@ const LOGICAL_OPERATORS = new Map([
   [ts.SyntaxKind.BarBarToken, "\\/"],
 ]);
 
-// The key of an element access, which counts from 1 in a sequence where JavaScript counts from 0.
 export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, context: Context) => {
   const key = node.argumentExpression;
   if (getKind(node.expression, context) !== "sequence") {
@@ -63,7 +62,6 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
 };
 
 const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, context: Context) => {
-  // Runs of plain elements become tuples, and each spread array stays a sequence of its own.
   const parts = node.elements.reduce<(string | string[])[]>((result, element) => {
     if (!ts.isSpreadElement(element)) {
       const value = translateExpression(element, scope, context);
@@ -126,7 +124,6 @@ const translateObjectLiteral = (
       }),
     );
   }
-  // { ...base, a: 1 } updates fields that base already has with EXCEPT.
   const base = node.properties[0];
   const updates = node.properties.slice(1);
   if (ts.isSpreadAssignment(base) && spreads.length === 1) {
@@ -149,7 +146,6 @@ const translateObjectLiteral = (
       return `[${wrap(value)} EXCEPT ${changes.join(", ")}]`;
     }
   }
-  // Otherwise each field takes its value from the last member that sets it.
   return formatRecord(
     checker
       .getTypeAtLocation(node)
@@ -255,7 +251,6 @@ const translateCall = (
   return constructed ?? translateMethod(node, scope, context, isDefined);
 };
 
-// A value as a string, as JavaScript converts it in a template or beside a string in +.
 const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
   return getKind(node, context) === "string" ? value : `ToString(${value})`;
@@ -325,7 +320,6 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   return `${translate(node.left)} ${operator} ${translate(node.right)}`;
 };
 
-// A field of the state before the step, which is the variable's unprimed value.
 const getPreviousVariable = (name: string, node: ts.Node, context: Context) => {
   const variable = [...context.variables].find((entry) => entry[0].name === name);
   if (variable === undefined) throw new TlaTypeScriptError(`Unknown variable: ${name}`, node);
@@ -343,7 +337,6 @@ const translateEnumMember = (node: ts.Node, symbol: ts.Symbol, context: Context)
   throw new TlaTypeScriptError("Unsupported enum member", node);
 };
 
-// The value that an enum or a top-level declaration gives a name.
 const translateDeclared = (
   node: ts.Node,
   symbol: ts.Symbol | undefined,
@@ -355,7 +348,6 @@ const translateDeclared = (
   }
   const declaration = getTopLevelDeclaration(symbol);
   if (declaration === undefined) return undefined;
-  // A function passes as its operator's name, and a constant as its value.
   return getFunction(declaration) === undefined
     ? translateHelperCall(declaration, undefined, scope, context)
     : getDefinition(declaration, context).name;
@@ -428,8 +420,6 @@ export const translateCondition = (node: ts.Expression, scope: Scope, context: C
   return translateExpression(node, scope, context);
 };
 
-// Negates a condition, cancelling ! and turning a negated || into a conjunction of guards, so that
-// TLC sees the same formula as a hand-written spec and counts the same successors.
 export const translateNegatedCondition = (
   node: ts.Expression,
   scope: Scope,
@@ -449,8 +439,6 @@ export const translateNegatedCondition = (
   return `~${wrap(translateCondition(node, scope, context))}`;
 };
 
-// An expression as a TLA+ expression. Under a non-null assertion, isDefined skips the check that a
-// lookup such as map.get(key) found a value.
 export const translateExpression = (
   node: ts.Expression,
   scope: Scope,
