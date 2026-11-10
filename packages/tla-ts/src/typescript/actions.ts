@@ -4157,24 +4157,61 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
           ? statement.expression
           : undefined;
   if (evaluated === undefined) return undefined;
-  const before: ts.Node[] = [];
-  const call = findLeadingCall(evaluated, before, path, context).call;
   const outer = skipCasts(evaluated);
-  if (
-    call === undefined ||
-    call === outer ||
-    // The statement makes the objects that the call's arguments make.
-    getAllocated(call, context).length > 0 ||
-    (ts.isBinaryExpression(outer) &&
-      outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      skipCasts(outer.right) === call) ||
-    // A call's first argument already runs first.
-    (ts.isCallExpression(outer) && outer.arguments.at(0) === call)
-  ) {
+  return getLeadingCall(
+    evaluated,
+    (call) =>
+      call !== outer &&
+      !(
+        ts.isBinaryExpression(outer) &&
+        outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        skipCasts(outer.right) === call
+      ) &&
+      // A call's first argument already runs first.
+      !(ts.isCallExpression(outer) && outer.arguments.at(0) === call),
+    path,
+    context,
+  );
+};
+
+const getLeadingCall = (
+  node: ts.Expression,
+  isHoisted: (call: ts.CallExpression) => boolean,
+  path: Path,
+  context: Context,
+) => {
+  const before: ts.Node[] = [];
+  const call = findLeadingCall(node, before, path, context).call;
+  // The statement makes the objects that the call's arguments make.
+  if (call === undefined || !isHoisted(call) || getAllocated(call, context).length > 0) {
     return undefined;
   }
   rejectEarlyRun(call, [call], before, path, context);
   return call;
+};
+
+// Runs the first call that a node evaluates that only statements can run, and then the rest with
+// its value, or gives undefined where there's none.
+export const runLeadingCall = (
+  node: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  rest: (path: Path) => Formula,
+) => {
+  const call = getLeadingCall(node, () => true, path, context);
+  return (
+    call &&
+    translateCallStatement(call, path, context, frame, (after, value) =>
+      rest({
+        ...after,
+        scope: {
+          ...after.scope,
+          results: new Map([...after.scope.results, [call, value ?? getUndefined(context)]]),
+        },
+      }),
+    )
+  );
 };
 
 const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Context) => {

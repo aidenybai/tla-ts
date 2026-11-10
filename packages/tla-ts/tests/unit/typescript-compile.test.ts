@@ -2217,6 +2217,40 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("fulfills Promise.all with each value, or rejects it with the first reason", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve()
+        .then(() => { log = log + "1"; })
+        .then(() => { log = log + "2"; })
+        .then(() => { log = log + "3"; })
+        .then(() => { log = log + "4"; })
+        .then(() => { log = log + "5"; });
+      const later = Promise.resolve(2).then((value: number) => value * 10);
+      async function make(value: number) {
+        await 0;
+        return value + 100;
+      }
+      Promise.all([1, later, make(3)]).then((values: number[]) => {
+        log = log + "a" + values[0] + "," + values[1] + "," + values[2];
+      });
+      Promise.all([]).then((values: number[]) => {
+        log = log + "e" + values.length;
+      });
+      const rejected = Promise.reject("r");
+      Promise.all([later, rejected, make(4)]).then(
+        () => { log = log + "no"; },
+        (reason: string) => { log = log + "c" + reason; },
+      );
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "s1e02cr3a1,20,10345") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

@@ -12,6 +12,7 @@ import {
   getCast,
   isSameExpression,
   type Path,
+  runLeadingCall,
   translateCallStatement,
   translateStatements,
 } from "./actions";
@@ -29,7 +30,7 @@ import { getHeap } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { bindValues, type Receiver } from "./scope";
-import { apply, boolean, identifier, number, string } from "./tla";
+import { apply, boolean, identifier, number, string, tuple } from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
 // compiles, as JavaScript runs each job once the script and the jobs before it finish.
@@ -63,6 +64,8 @@ interface TrackedPromise {
   reactions: readonly Reaction[];
   // What the body of an async generator yielded or returned, for the promise of a request to it.
   iteration: { value: Expression; isDone: boolean } | undefined;
+  // The values that the promise of Promise.all has so far, and how many it waits for.
+  combined: { values: readonly Expression[]; remaining: number } | undefined;
 }
 
 // What a job does once a promise settles: call a handler, or pass the value on, and settle the
@@ -322,6 +325,7 @@ const makePromise = (
         value: undefined,
         reactions: [],
         iteration: undefined,
+        combined: undefined,
       }),
       name,
     ),
@@ -414,14 +418,124 @@ const callHandler = (
   );
 };
 
-// Promise.resolve(value) or Promise.reject(value).
+// Promise.resolve(value), Promise.reject(value), or Promise.all(values).
 const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   return ts.isPropertyAccessExpression(callee) &&
     getBuiltIn(callee.expression, context) === "Promise" &&
-    (callee.name.text === "resolve" || callee.name.text === "reject")
+    ["resolve", "reject", "all"].includes(callee.name.text)
     ? callee.name.text
     : undefined;
+};
+
+// Promise.all of an array written in place: a promise that fulfills with the values of the
+// promises that PromiseResolve gives for the elements once each fulfills, or rejects with the
+// first reason.
+const translatePromiseAll = (
+  node: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const argument = node.arguments.at(0);
+  const elements = argument && getCast(argument);
+  if (
+    node.arguments.length !== 1 ||
+    elements === undefined ||
+    !ts.isArrayLiteralExpression(elements) ||
+    elements.elements.some(
+      (element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element),
+    )
+  ) {
+    throw new TlaTypeScriptError("Pass Promise.all an array written in place", node);
+  }
+  const ran = runLeadingCall(elements, path, context, frame, (after) =>
+    translatePromiseAll(node, after, context, frame, continueWith),
+  );
+  if (ran !== undefined) return ran;
+  return makePromise(path, node, context, (made, name) => {
+    const count = elements.elements.length;
+    // Takes an element's value, or none at the end, and fulfills the promise once none remain.
+    const take = (
+      current: Path,
+      position: number | undefined,
+      value: Expression,
+      next: (path: Path) => Formula,
+    ) => {
+      const promise = getPromise(current, node, name);
+      const combined = promise.combined;
+      if (combined === undefined) throw new TlaTypeScriptError("Unsupported Promise.all", node);
+      const values = combined.values.map((other, index) => (index === position ? value : other));
+      const remaining = combined.remaining - 1;
+      const taken = setPromise(current, node, name, {
+        ...promise,
+        combined: { values, remaining },
+      });
+      return remaining === 0
+        ? resolve(taken, node, name, tuple(values), undefined, context, next)
+        : next(taken);
+    };
+    const getReaction = (position: number): Reaction => ({
+      onFulfilled: {
+        run: (current, value, onReturn) =>
+          take(current, position, value, (after) => onReturn(after, getUndefined(context))),
+      },
+      onRejected: {
+        run: (current, reason, onReturn) =>
+          onReturn(settle(current, node, name, reason, true, context), getUndefined(context)),
+      },
+      derived: undefined,
+    });
+    const follow = (current: Path, position: number): Formula => {
+      if (position === count) {
+        return take(current, undefined, getUndefined(context), (after) =>
+          continueWith(after, getPromise(after, node, name).ref),
+        );
+      }
+      const element = elements.elements[position];
+      const value = translateExpression(element, current.scope, context);
+      const next = (after: Path, followed: string) =>
+        follow(addReaction(after, node, followed, getReaction(position), context), position + 1);
+      return dispatchPromise(
+        current,
+        node,
+        value,
+        element,
+        context,
+        (followed) =>
+          guardBuiltIns(
+            node,
+            "Promise.prototype",
+            ["constructor"],
+            current,
+            context,
+            next(current, followed),
+          ),
+        () =>
+          makePromise(current, node, context, (wrapped, wrapper) =>
+            resolve(wrapped, node, wrapper, value, undefined, context, (resolved) =>
+              next(resolved, wrapper),
+            ),
+          ),
+      );
+    };
+    const start = setPromise(made, node, name, {
+      ...getPromise(made, node, name),
+      combined: {
+        values: elements.elements.map(() => getUndefined(context)),
+        remaining: count + 1,
+      },
+    });
+    return guardBuiltIns(
+      node,
+      "Promise",
+      ["all", "resolve"],
+      start,
+      context,
+      guardBuiltIns(node, "Promise.prototype", ["then"], start, context, follow(start, 0)),
+    );
+  });
 };
 
 // A call of a promise's then or catch.
@@ -745,6 +859,9 @@ export const translatePromiseCall = (
     );
   }
   const promiseFunction = getPromiseFunction(node, context);
+  if (promiseFunction === "all") {
+    return translatePromiseAll(node, path, context, frame, continueWith);
+  }
   if (promiseFunction !== undefined) {
     const value =
       argument === undefined
