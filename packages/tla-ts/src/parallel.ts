@@ -25,6 +25,7 @@ import {
   reportStartup,
 } from "./search";
 import { getInitialStates } from "./successors";
+import { setFingerprintPolynomial } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
@@ -52,6 +53,7 @@ export interface StartMessage {
   isTraceRecorded: boolean | undefined;
   isWarningEnabled: boolean | undefined;
   version: TlcVersion | undefined;
+  fingerprintPolynomial: number | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
   remaining: Int32Array;
@@ -137,6 +139,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const order = createTlcOrder(options.source, loadModule);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
+  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const startupStrings = getRankedStringCount();
   const specification = createEnvironment(config, {
     source: options.source,
@@ -297,6 +300,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       isTraceRecorded: options.isTraceRecorded,
       isWarningEnabled: options.isWarningEnabled,
       version: options.version,
+      fingerprintPolynomial: options.fingerprintPolynomial,
       fingerprints: shared.fingerprints,
       requests,
       remaining,

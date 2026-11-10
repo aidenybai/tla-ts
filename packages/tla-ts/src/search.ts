@@ -59,7 +59,7 @@ import {
   withHeadline,
 } from "./tlc/messages";
 import { createTlcOrder } from "./tlc/order";
-import { getTlcFingerprint, getTlcFingerprints } from "./tlc/fingerprint";
+import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
   formatValue,
@@ -792,6 +792,7 @@ export const prepareSearch = (options: CheckOptions) => {
   const order = createTlcOrder(options.source, options.loadModule);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
+  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,

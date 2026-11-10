@@ -718,7 +718,7 @@ const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
     printer.print(
       MESSAGE_CODE.depthFirstModelChecking,
       MESSAGE_LEVEL.none,
-      `Running depth-first search Model-Checking with fp 0 and seed ${args.seed} with ${workers}).`,
+      `Running depth-first search Model-Checking with fp ${args.fingerprintIndex} and seed ${args.seed} with ${workers}).`,
     );
     return;
   }
@@ -726,7 +726,7 @@ const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
     printer.print(
       MESSAGE_CODE.modelChecking,
       MESSAGE_LEVEL.none,
-      `Running breadth-first search Model-Checking with fp 0 and seed ${args.seed} with ${workers}, MemFPSet, MemStateQueue).`,
+      `Running breadth-first search Model-Checking with fp ${args.fingerprintIndex} and seed ${args.seed} with ${workers}, MemFPSet, MemStateQueue).`,
     );
     return;
   }
@@ -957,6 +957,7 @@ const checkSpec = async (
             ? "final"
             : "default",
       seed,
+      fingerprintPolynomial: args.fingerprintIndex,
       dump,
       isTool: printer.isTool,
       isContinued: args.isContinued,
@@ -1055,12 +1056,6 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   }
   if (parsed.isRecovering) {
     console.error("Error: tla-ts can't recover a model check from a checkpoint.");
-    return 1;
-  }
-  if (parsed.fingerprintIndex !== 0) {
-    console.error(
-      `Error: tla-ts fingerprints states as TLC does with -fp 0, not -fp ${parsed.fingerprintIndex}.`,
-    );
     return 1;
   }
   // TLC opens the file of a -dump as it reads its arguments, in the meta directory it creates.

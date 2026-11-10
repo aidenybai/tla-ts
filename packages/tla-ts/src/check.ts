@@ -78,6 +78,7 @@ import {
   type FailureMessage,
 } from "./tlc/messages";
 import { createTautologyError } from "./liveness";
+import { setFingerprintPolynomial } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -111,6 +112,8 @@ export interface CheckOptions {
   workers?: number;
   // TLC's -lncheck: "final" checks liveness only on the complete graph, "off" never looks for a cycle.
   livenessCheck?: "default" | "final" | "off";
+  // TLC's -fp: the index of the polynomial in TLC's FP64.Polys that fingerprints states.
+  fingerprintPolynomial?: number;
   // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
   dump?: StateDump;
   // TLC's -tool, which changes the messages of TLC's errors.
@@ -372,6 +375,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const order = createTlcOrder(options.source, options.loadModule);
   setStringOrder(order.getStringOrder(config));
   setValueVersion(options.version);
+  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,

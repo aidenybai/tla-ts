@@ -8,7 +8,8 @@ import { check, type CheckOptions } from "../../src";
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
 // TLC 1.8.0 -dump output for each model, and TLC 1.7.4's for the files whose names end in 174,
-// recorded with -fp 0 so that its fingerprints match, and with -seed 4 for RandomElementXandY.
+// recorded with -fp 0 so that its fingerprints match, or -fp 130 for Counter130, and with -seed 4
+// for RandomElementXandY.
 const readTlcDump = (name: string) => readFileSync(join(FIXTURES, "state-graph", name), "utf8");
 
 const dumpFixture = async (
@@ -42,6 +43,16 @@ describe("check dumps the state graph like TLC's -dump", () => {
     });
     expect(dump.result.status).toBe("deadlock");
     expect(dump.written.get("Counter.dot")).toBe(readTlcDump("Counter.dot"));
+  });
+
+  it("fingerprints the states with the polynomial that -fp picks", async () => {
+    const dump = await dumpFixture(
+      "counter",
+      "Counter",
+      { path: "Counter130.dot", dot: true, actionLabels: true },
+      { fingerprintPolynomial: 130 },
+    );
+    expect(dump.written.get("Counter130.dot")).toBe(readTlcDump("Counter130.dot"));
   });
 
   it("colors every edge, self loops included, up to an invariant violation", async () => {

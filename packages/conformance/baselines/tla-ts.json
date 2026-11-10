@@ -199,8 +199,6 @@
   "tlc/cli/max_set_size/filter_past_default_capacity": "exit-mismatch",
   "tlc/cli/other/dump_trace_any_case": "text-mismatch",
   "tlc/cli/other/dump_trace_json": "text-mismatch",
-  "tlc/cli/other/fp_last_polynomial": "exit-mismatch",
-  "tlc/cli/other/fp_other_polynomial": "exit-mismatch",
   "tlc/cli/other/load_trace_missing_file": "exit-mismatch",
   "tlc/cli/other/recover_missing_directory": "exit-mismatch",
   "tlc/cli/post_condition/evaluation_error": "exit-mismatch",
