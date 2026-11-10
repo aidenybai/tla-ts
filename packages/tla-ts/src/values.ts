@@ -1750,7 +1750,7 @@ const openStream = (value: Value): void => {
       toFiniteSet(value);
       return;
     case "FilteredSet":
-      if (!isTlcEnumerable(value.base)) getStreamedElements(value);
+      if (!isTlcEnumerable(value.base)) toFiniteSet(value);
       return openStream(value.base);
     case "Union":
       if (!isEnumeratedSet(value.base) && isTlcEnumerable(value.base)) {
@@ -1761,7 +1761,13 @@ const openStream = (value: Value): void => {
         .forEach((set) => openStream(getUnionSet(set, 0, value)));
       return;
     case "SetOperation":
-      if (value.operator === "\\" && !isTlcEnumerable(value.left)) getStreamedElements(value);
+      if (value.operator === "\\" && !isTlcEnumerable(value.left)) toFiniteSet(value);
+      if (
+        value.operator === "\\cup" &&
+        (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right))
+      ) {
+        toFiniteSet(value);
+      }
       if (value.operator !== "\\cap" || isTlcEnumerable(value.left)) openStream(value.left);
       else openStream(value.right);
       if (value.operator === "\\cup") openStream(value.right);
@@ -1810,6 +1816,7 @@ export const someStreamedElement = (value: Value, visit: (element: Value) => boo
   }
   const sets = setTrace.sets;
   sets?.push(value);
+  openStream(value);
   // The set is enumerated only while it computes an element, not while visit looks at one.
   const isFound = someElementOfStream(value, (element) => {
     sets?.pop();

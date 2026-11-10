@@ -2046,6 +2046,10 @@ describe("evaluation errors match TLC", () => {
         "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]",
       ],
       ["{} \\subseteq 0", undefined],
+      [
+        "({1} \\cup {e \\in {1} \\cup TRUE : TRUE}) \\subseteq {}",
+        "Attempted to enumerate S \\cup T when S:\n{1}\nand T:\nTRUE\nare not both enumerable",
+      ],
     ];
     const messages = await Promise.all(
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
