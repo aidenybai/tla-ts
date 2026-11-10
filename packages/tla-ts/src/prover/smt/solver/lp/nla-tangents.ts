@@ -1,7 +1,5 @@
 // Ported from Z3 (src/math/lp/nla_tangent_lemmas.h, src/math/lp/nla_tangent_lemmas.cpp), MIT
-// license, see z3-license.txt. The tangent lemmas of nla: for a binary product whose value is
-// wrong, the lines through the point of its factors' values and two planes tangent to z = xy that
-// cut the point off.
+// license, see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
@@ -20,14 +18,11 @@ const mkPoint = (x: Rational, y: Rational): Point => ({ x, y });
 
 const TWO = Rational.of(2n);
 
-// tangent_imp: the lemmas for one monic and its binary factorization.
 class TangentImp {
   private a = mkPoint(Rational.zero, Rational.zero);
   private b = mkPoint(Rational.zero, Rational.zero);
   private readonly correctValue: Rational;
-  // Whether the wrong value is below the correct one.
   private readonly isBelow: boolean;
-  // Whether the tangent points are strictly inside the bound box.
   private isPlStrictInterior = true;
   private readonly monicVar: number;
   private readonly x: Factor;
@@ -154,7 +149,6 @@ class TangentImp {
     this.explain(lemma);
   }
 
-  // get_initial_points: two planes tangent to z = xy, at a and at b, that make a cut.
   private getInitialPoints() {
     const x = this.xy.x;
     const y = this.xy.y;
@@ -170,7 +164,6 @@ class TangentImp {
     this.b = mkPoint(x.add(delta), y.add(delta));
   }
 
-  // push_point: the point moved away from xy, doubling the distance, while the plane still cuts.
   private pushPoint(point: Point) {
     let result = point;
     let difference = mkPoint(point.x.sub(this.xy.x), point.y.sub(this.xy.y));
@@ -187,7 +180,6 @@ class TangentImp {
     return point.x.mul(this.xy.y).add(point.y.mul(this.xy.x)).sub(point.x.mul(point.y));
   }
 
-  // set_box_corners: McCormick points at the corners of the factors' bound box.
   private setBoxCorners() {
     const core = this.core;
     const xVar = this.xVar;

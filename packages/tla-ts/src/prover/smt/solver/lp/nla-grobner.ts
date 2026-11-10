@@ -1,8 +1,5 @@
-// Ported from Z3 (src/math/lp/nla_grobner.h, src/math/lp/nla_grobner.cpp), MIT license, see
-// z3-license.txt. nla's Grobner pass: the rows around the monomials to refine become polynomial
-// equations, which dd::solver saturates, and the equations then yield lemmas: interval conflicts,
-// quotient and residue bounds, failed gcd tests, fixed variables, factorizations, and new linear
-// rows. Z3's nlsat conflict check (is_nla_conflict) is not ported, nor are the statistics.
+// Ported from Z3 (src/math/lp/nla_grobner.h, src/math/lp/nla_grobner.cpp), MIT license, see z3-license.txt.
+// Deviation from Z3: its nlsat conflict check (is_nla_conflict) is not ported.
 import { PddMemoryOutError } from "../../../../errors";
 import { getEuclideanMod, getGcd, getLcm, Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
@@ -40,7 +37,6 @@ const ADAPTIVE_MAX = 4 * 16;
 const ADAPTIVE_BUMP_AFTER = 2;
 const DELAY_CAP = 1000000;
 
-// A dependency that pdd_expr and val_of_fixed_var_with_deps extend, where Z3 passes a reference.
 interface DepRef {
   dep: Dependency;
 }
@@ -63,11 +59,9 @@ const getRationalLcm = (first: Rational, second: Rational) =>
 
 const getDenominator = (value: Rational) => Rational.of(value.den);
 
-// divides: whether the integer a divides the integer b, where 0 divides only 0.
 const divides = (divisor: Rational, value: Rational) =>
   divisor.isZero() ? value.isZero() : value.num % divisor.num === 0n;
 
-// ps_root: the root a of a^2 * M^2, a perfect square with every variable of even multiplicity.
 const getPerfectSquareRoot = (coeff: Rational, vars: number[]) => {
   if (vars.length % 2 === 1) return undefined;
   const root = coeff.root(2);
@@ -80,8 +74,6 @@ const getPerfectSquareRoot = (coeff: Rational, vars: number[]) => {
   return root;
 };
 
-// ps_cross: whether (c12, v12) is the cross term -2ab*M1*M2 of the perfect squares a^2*M1^2 and
-// b^2*M2^2.
 const isPerfectSquareCross = (
   first: Rational,
   firstVars: number[],
@@ -112,12 +104,11 @@ export class Grobner {
   private readonly solver: PddSolver;
   private readonly nexCreator = new NexCreator();
   private readonly rows = new IndexedUintSet();
-  private quota: number = NLA_PARAMS.grQ;
+  private quota = NLA_PARAMS.grQ;
   private delayBase = 0;
   private delay = 0;
   private growthBoost = ADAPTIVE_UNIT;
   private hitStreak = 0;
-  private readonly isAddingAllEqs = false;
   private mon2var = new Map<string, number>();
 
   constructor(private core: NlaCore) {
@@ -125,7 +116,6 @@ export class Grobner {
     this.solver = new PddSolver(this.manager, () => core.isCanceled());
   }
 
-  // operator(): runs the pass, unless the quota of misses delays it.
   run() {
     if (this.core.lra.getColumnCount() > 5000) return;
     if (this.quota === 0) this.quota = NLA_PARAMS.grQ;
@@ -166,7 +156,6 @@ export class Grobner {
     if (this.quota > 0) this.quota--;
   }
 
-  // Z3 catches every exception here, of which a failed pdd allocation is the one that can occur.
   private catchMemoryOut(propagate: () => boolean) {
     try {
       return propagate();
@@ -176,8 +165,6 @@ export class Grobner {
     }
   }
 
-  // update_growth_boost: two productive runs in a row raise the boost by half, up to the cap, and a
-  // miss takes back a quarter of the excess over the unit.
   private updateGrowthBoost(isProductive: boolean) {
     if (isProductive) {
       if (++this.hitStreak < ADAPTIVE_BUMP_AFTER) return;
@@ -222,7 +209,6 @@ export class Grobner {
     return this.countPropagations((equation) => this.propagateQuotientsOf(equation));
   }
 
-  // propagate_fixed: k*x = 0 gives x = 0, and x + b = 0 gives x = -b.
   private propagateFixed(equation: Equation) {
     const poly = equation.poly;
     if (poly.isUnary()) {
@@ -246,7 +232,6 @@ export class Grobner {
     return true;
   }
 
-  // propagate_factorization: x*q = 0 gives x = 0 or q = 0, for a linear q.
   private propagateFactorizationOf(equation: Equation) {
     const factors = equation.poly.varFactors();
     if (factors.vars.length === 0 || !factors.poly.isLinear()) return false;
@@ -259,8 +244,6 @@ export class Grobner {
     return true;
   }
 
-  // linear_to_term: the linear polynomial times the lcm of its denominators, as a term and an
-  // offset.
   private linearToTerm(poly: Pdd): LinearTerm {
     let lcm = Rational.one;
     let current = poly;
@@ -289,8 +272,6 @@ export class Grobner {
     );
   }
 
-  // propagate_gcd_test: x^k - y = 0 limits y modulo k^2. For each residue r of x modulo k, the
-  // gcd of the coefficients of p with k*x + r for x must divide its constant term.
   private propagateGcdTestOf(equation: Equation) {
     let poly = equation.poly;
     if (poly.isLinear() || poly.isVal() || !this.isIntPoly(poly)) return false;
@@ -330,8 +311,6 @@ export class Grobner {
     return false;
   }
 
-  // propagate_quotients: for x*y + z = 0 over the integers, the residue of a linear variable and
-  // bounds that relate a factor to the rest.
   private propagateQuotientsOf(equation: Equation) {
     const poly = equation.poly;
     if (poly.isLinear() || poly.isVal() || !this.isIntPoly(poly)) return false;
@@ -355,8 +334,6 @@ export class Grobner {
     return isLemmaFound;
   }
 
-  // mod_residue: when every monomial but c_v*v is a multiple of M*c_v and the constant term is
-  // K*c_v, then v = -K modulo M, so 0 <= v < M forces v to the residue.
   private propagateModResidue(equation: Equation) {
     const poly = equation.poly;
     for (const linear of poly) {
@@ -399,14 +376,12 @@ export class Grobner {
     return false;
   }
 
-  // The lemmas of p = v*lc + r for a linear r, by the values of v, lc and r.
   private addQuotientLemma(equation: Equation, variable: number, lc: Pdd, rest: Pdd) {
     const variableValue = this.core.val(variable);
     const restValue = this.getValue(rest);
     const lcValue = this.getValue(lc);
     if (restValue.isZero()) {
       if (variableValue.isZero() || lcValue.isZero() || !lc.isLinear()) return false;
-      // v = 0 or lc = 0 or r != 0
       const lcTerm = this.linearToTerm(lc);
       const restTerm = this.linearToTerm(rest);
       this.addDependencies(new LemmaBuilder(this.core), equation)
@@ -416,7 +391,6 @@ export class Grobner {
       return true;
     }
     if (variableValue.isZero()) {
-      // v = 0 => r = 0
       const lemma = this.addDependencies(new LemmaBuilder(this.core), equation);
       const restTerm = this.linearToTerm(rest);
       lemma
@@ -426,7 +400,6 @@ export class Grobner {
     }
     if (lcValue.isZero()) {
       if (!lc.isLinear()) return false;
-      // lc = 0 => r = 0
       const lemma = this.addDependencies(new LemmaBuilder(this.core), equation);
       const lcTerm = this.linearToTerm(lc);
       const restTerm = this.linearToTerm(rest);
@@ -439,7 +412,6 @@ export class Grobner {
     const isVariablePositive = variableValue.isPositive();
     const isRestPositive = restValue.isPositive();
     if (variableValue.abs().compare(restValue.abs()) > 0) {
-      // v*c + t = 0 with |v| > |t| != 0: v changes sign, t changes sign, or |v| <= |t|
       const lemma = new LemmaBuilder(this.core);
       const restTerm = this.linearToTerm(rest);
       this.addDependencies(lemma, equation);
@@ -460,7 +432,6 @@ export class Grobner {
       variableValue.abs().compare(one) > 0 &&
       variableValue.abs().compare(restValue.abs()) >= 0
     ) {
-      // v*c + t = 0 & |c| > 1, |v| > 1 => |v| < |t|
       const lemma = new LemmaBuilder(this.core);
       const restTerm = this.linearToTerm(rest);
       const lcTerm = this.linearToTerm(lc);
@@ -497,7 +468,7 @@ export class Grobner {
 
   private configure() {
     this.solver.reset();
-    try {
+    const isLoaded = this.catchMemoryOut(() => {
       this.setLevel2var();
       for (const lpVar of this.core.activeVarSet.elems) {
         if (this.core.lra.isBase(lpVar)) {
@@ -505,10 +476,9 @@ export class Grobner {
         }
         if (this.core.isMonicVar(lpVar) && this.core.varIsFixed(lpVar)) this.addFixedMonic(lpVar);
       }
-    } catch (error) {
-      if (!(error instanceof PddMemoryOutError)) throw error;
-      return false;
-    }
+      return true;
+    });
+    if (!isLoaded) return false;
     const config = getDefaultPddSolverConfig();
     config.maxSteps = this.solver.equations().length;
     config.maxSimplified = NLA_PARAMS.grobnerMaxSimplified;
@@ -530,7 +500,6 @@ export class Grobner {
     return true;
   }
 
-  // equation_is_true: the equation holds at the values, or a free column can make it hold.
   private isEquationTrue(equation: Equation) {
     if (equation.poly.freeVars().some((variable) => this.core.lra.isFree(variable))) return true;
     return this.getValue(equation.poly).isZero();
@@ -542,8 +511,6 @@ export class Grobner {
     return interval;
   };
 
-  // is_conflicting: the interval of the polynomial excludes 0, or a cross-nested form or a
-  // perfect square shows that it does.
   private isEquationConflicting(equation: Equation) {
     if (this.isEquationTrue(equation)) return false;
     const interval = getPddInterval(equation.poly, "without-deps", this.getVarInterval);
@@ -563,7 +530,6 @@ export class Grobner {
     new LemmaBuilder(this.core).addExplanation(explanation);
   }
 
-  // monomial_interval: coeff times the product of the variables' intervals.
   private getMonomialInterval(coeff: Rational, vars: number[], mode: DepsMode) {
     const result = mkDepInterval();
     setValue(result, coeff);
@@ -580,8 +546,6 @@ export class Grobner {
     return result;
   }
 
-  // add_perfect_square_conflict: a triple of monomials a^2*M1^2, b^2*M2^2 and -2ab*M1*M2 is
-  // (a*M1 - b*M2)^2, at least 0, which replaces their interval when its lower bound is negative.
   private addPerfectSquareConflict(equation: Equation) {
     const monomials: SortedMonomial[] = [...equation.poly].map((monomial) => ({
       coeff: monomial.coeff,
@@ -632,7 +596,6 @@ export class Grobner {
       }
     }
     if (!isFound) return false;
-    // [0, oo) for the perfect squares is an unconditional bound, without a dependency.
     const sum = mkDepInterval();
     sum.isLowerInf = false;
     sum.lower = Rational.zero;
@@ -658,7 +621,6 @@ export class Grobner {
     return this.getMonomialInterval(monomial.coeff, monomial.vars, "without-deps");
   }
 
-  // add_horner_conflict: the cross-nested forms of the polynomial, whose intervals may exclude 0.
   private addHornerConflict(equation: Equation) {
     const nexCreator = this.nexCreator;
     const freeVars = equation.poly.freeVars();
@@ -688,8 +650,6 @@ export class Grobner {
     return crossNested.done();
   }
 
-  // propagate_linear_equations: an equation whose monomials all have columns and that the values
-  // violate becomes a new row fixed to its constant.
   private propagateLinearEquations() {
     this.mon2var.clear();
     for (const monic of this.core.emons.monics)
@@ -701,8 +661,7 @@ export class Grobner {
     return changed > 0;
   }
 
-  // The monomial's column: Z3 looks up the variables in the pdd's order in the sorted variables of
-  // the monics.
+  // Like Z3, the variables are looked up in the pdd's order among the monics' sorted variables.
   private getMonomialColumn(vars: number[]) {
     return this.mon2var.get(vars.join(","));
   }
@@ -739,7 +698,6 @@ export class Grobner {
     return true;
   }
 
-  // find_nl_cluster: the variables and rows reachable from the monomials to refine.
   private findNlCluster() {
     this.rows.clear();
     this.core.activeVarSet.clear();
@@ -749,7 +707,6 @@ export class Grobner {
     }
   }
 
-  // add_var_and_its_factors_to_q_and_collect_new_rows.
   private addVarAndItsFactorsToQueue(lpVar: number, queue: number[]) {
     const core = this.core;
     const lra = core.lra;
@@ -769,17 +726,12 @@ export class Grobner {
       if (this.rows.has(row)) continue;
       this.rows.add(row);
       const basic = lra.core.basis[row];
-      // A free column over the reals can be assigned.
       if (lra.isFree(basic) && basic !== lpVar) {
         if (!lra.isInt(basic)) continue;
-        // Free integer columns count only for the gcd test, the quotients, or all equations.
-        if (!this.isAddingAllEqs && !this.hasGcdTest && !this.propagatesQuotients) continue;
-        // A free integer column with integer coefficients can be assigned.
-        if (!this.isAddingAllEqs && lra.getRow(row).every((rowCell) => rowCell.coeff.isInt()))
-          continue;
+        if (!this.hasGcdTest && !this.propagatesQuotients) continue;
+        if (lra.getRow(row).every((rowCell) => rowCell.coeff.isInt())) continue;
       }
-      if (!this.isAddingAllEqs && lra.getRow(row).length > NLA_PARAMS.hornerRowLengthLimit)
-        continue;
+      if (lra.getRow(row).length > NLA_PARAMS.hornerRowLengthLimit) continue;
       for (const rowCell of lra.getRow(row)) this.addVarAndItsFactorsToQueue(rowCell.column, queue);
     }
   }
@@ -792,13 +744,11 @@ export class Grobner {
 
   private getTermPdd(term: LarTerm, ref: DepRef) {
     let result = this.manager.mkVal(Rational.zero);
-    for (const entry of term.coeffs) result = result.add(this.getPdd(entry[1], entry[0], ref));
+    for (const entry of term.coeffs) result = result.add(this.getPddExpr(entry[1], entry[0], ref));
     return result;
   }
 
-  // pdd_expr: coeff times the column, with fixed columns as values, terms expanded, and monics as
-  // the products of their variables.
-  private getPdd(coeff: Rational, lpVar: number, ref: DepRef) {
+  private getPddExpr(coeff: Rational, lpVar: number, ref: DepRef) {
     const core = this.core;
     let result = this.manager.mkVal(coeff);
     const vars = [lpVar];
@@ -822,8 +772,6 @@ export class Grobner {
     return result;
   }
 
-  // is_solved: p = 0 as v = r, for a linear p where v is the only variable bounded on one side
-  // while several are bounded on the other, so that r has no bound on that side.
   private getSolvedForm(poly: Pdd) {
     if (!poly.isLinear()) return null;
     let numLo = 0;
@@ -862,7 +810,6 @@ export class Grobner {
     };
   }
 
-  // add_eq: adds the equation in solved form when it has one.
   private addEq(poly: Pdd, dep: Dependency) {
     const simplified = this.solver.simplify(poly, dep);
     const solved = this.getSolvedForm(simplified.poly);
@@ -874,7 +821,7 @@ export class Grobner {
     const ref: DepRef = { dep: null };
     let product = this.manager.mkVal(Rational.one);
     for (const factor of this.core.emons.get(lpVar).vars) {
-      product = product.mul(this.getPdd(Rational.one, factor, ref));
+      product = product.mul(this.getPddExpr(Rational.one, factor, ref));
     }
     product = product.sub(this.getValOfFixedVarWithDeps(lpVar, ref));
     this.addEq(product, ref.dep);
@@ -883,11 +830,10 @@ export class Grobner {
   private addRow(row: RowCell[]) {
     const ref: DepRef = { dep: null };
     let sum = this.manager.mkVal(Rational.zero);
-    for (const cell of row) sum = sum.add(this.getPdd(cell.coeff, cell.column, ref));
+    for (const cell of row) sum = sum.add(this.getPddExpr(cell.coeff, cell.column, ref));
     this.addEq(sum, ref.dep);
   }
 
-  // set_level2var: the columns by weight, then index, from the lowest level.
   private setLevel2var() {
     const core = this.core;
     const count = core.lra.getColumnCount();

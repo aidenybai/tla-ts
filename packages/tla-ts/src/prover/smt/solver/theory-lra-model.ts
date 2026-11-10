@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt. The model of
-// theory_lra: the values of its variables, and the equalities between shared terms with equal
-// values that it assumes.
+// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_ARITH,
   FAMILY_BASIC,
@@ -13,7 +11,7 @@ import {
   OP_MOD0,
 } from "./ast";
 import { SmtUnsupportedError } from "../../../errors";
-import { Enode } from "./enode";
+import type { Enode } from "./enode";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { NULL_LPVAR } from "./lp/lar-solver";
@@ -30,9 +28,8 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
   protected initVariableValues() {
     this.isModelInitialized = false;
     if (this.context.checkCanceled() || this.getNumVars() === 0) return;
-    const saved = this.isModelInitialized;
     this.context.pushTrail(() => {
-      this.isModelInitialized = saved;
+      this.isModelInitialized = false;
     });
     this.isModelInitialized = this.solver.initModel();
   }
@@ -41,7 +38,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return this.context.isRelevant(node.owner) && this.isShared(node);
   }
 
-  // random_update: moves the values of shared variables that collide with others.
   private randomUpdate() {
     if (this.nla?.hasRelevantMonomial()) return;
     const solver = this.solver;
@@ -70,7 +66,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     if (columns.length > 0) randomUpdate(solver, columns);
   }
 
-  // assume_eqs: model-based theory combination.
   protected assumeEqs() {
     if (this.delayedAssumeEqs()) return true;
     this.randomUpdate();
@@ -86,7 +81,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       const thVar = (index + start) % numVars;
       if (!this.isRelevantAndShared(this.getEnode(thVar))) continue;
       const column = this.registerVar(thVar);
-      // m_model_eqs: with nlsat's model, the values are compared one by one.
       const key = `${this.isIntVar(thVar)}:${solver.getValue(column)}`;
       const other = this.nla?.isUsingNraModel
         ? representatives.find(
@@ -130,8 +124,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return false;
   }
 
-  // init_model: the model knows the value of every theory variable without δ, so fresh numbers
-  // avoid them. Like get_value(enode*, expr_ref&), it skips an integer with a fractional value.
   initModel(model: ProtoModel) {
     this.initVariableValues();
     if (!this.isModelInitialized) return;
@@ -144,7 +136,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     }
   }
 
-  // mk_value: the value of the class of a root, rounded down for an integer.
   mkValue(node: Enode) {
     if (node.thVar < 0) return undefined;
     const nla = this.nla;
@@ -154,7 +145,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       this.solver.externalToLocalColumn(node.thVar) === NULL_LPVAR
     )
       return this.getValueExpr(node.thVar);
-    // nlsat's value, zero for an integer whose value is not one.
     const value = this.getNlValue(nla, node.thVar).value;
     if (this.isIntVar(node.thVar))
       return this.manager.mkNumeral(value instanceof Rational && value.isInt() ? value.num : 0n);
@@ -162,7 +152,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return this.manager.mkRealNumeral(value);
   }
 
-  // is_eq: whether two variables have the same value, in nlsat's model when nla uses it.
   private isEq(first: number, second: number) {
     const nla = this.nla;
     if (nla !== undefined && nla.isUsingNraModel)
@@ -173,7 +162,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       .equals(solver.getValue(this.registerVar(second)));
   }
 
-  // nl_value: the value of a variable in nlsat's model, a term's the sum over its columns.
   private getNlValue(nla: NlaCore, thVar: number) {
     const solver = this.solver;
     const am = nla.nra.am;
@@ -181,8 +169,7 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     if (!solver.hasTerm(column)) return nla.nra.value(column);
     let result = new Anum(Rational.zero);
     const todo: [number, Rational][] = [[column, Rational.one]];
-    while (todo.length > 0) {
-      const pending = todo.pop()!;
+    for (let pending = todo.pop(); pending !== undefined; pending = todo.pop()) {
       for (const entry of solver.getTerm(pending[0]).coeffs) {
         const coeff = entry[1].mul(pending[1]);
         if (solver.hasTerm(entry[0])) todo.push([entry[0], coeff]);
@@ -216,7 +203,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return this.isSharedWithUnderspecified(root);
   }
 
-  // theory_lra::is_shared: whether the class is an argument of a division by a term or by zero.
   private isSharedWithUnderspecified(root: Enode) {
     const manager = this.manager;
     const count = this.underspecifiedTerms.length;
@@ -228,7 +214,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return root.parents.some((parent) => this.isUnderspecified(parent.owner));
   }
 
-  // arith_util::is_underspecified.
   private isUnderspecified(expr: number) {
     const op = this.manager.getOp(expr);
     return (

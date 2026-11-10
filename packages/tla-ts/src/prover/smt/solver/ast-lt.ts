@@ -1,6 +1,4 @@
-// Ported from Z3 (src/ast/ast_lt.cpp, src/util/symbol.cpp), MIT license, see z3-license.txt. A
-// total order on expressions that does not depend on their ids. The rewriter sorts a disjunction
-// only when its arguments are out of this order.
+// Ported from Z3 (src/ast/ast_lt.cpp, src/util/symbol.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_MODEL_VALUE,
   FAMILY_USER,
@@ -16,7 +14,6 @@ import {
 } from "./ast";
 import { Rational } from "./rational";
 
-// The parts of a func_decl that lt compares: its name, parameters, domain and range.
 interface DeclKey {
   name: SmtSymbol;
   parameters: (number | Rational)[];
@@ -24,7 +21,6 @@ interface DeclKey {
   range: number;
 }
 
-// Z3's PARAM_INT, PARAM_AST and PARAM_RATIONAL kinds order the parameters of builtin declarations.
 const PARAM_INT = 0;
 const PARAM_RATIONAL = 3;
 
@@ -38,7 +34,6 @@ const compareParameters = (first: number | Rational, second: number | Rational) 
       ? compareValues(first, second)
       : 0;
 
-// lt on symbols: numerical symbols come first, by number, and other names compare by their bytes.
 const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
   if (first === second) return 0;
   if (typeof first === "number")
@@ -52,7 +47,6 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   const range = manager.sorts[expr];
   if (decl.family === FAMILY_USER)
     return { name: decl.name, parameters: [], domain: decl.domain, range };
-  // A numeral's declaration has the parameters (value, is_int), and a model value's (index, sort).
   if (decl.op === OP_NUM) {
     const isInt = range === SORT_INT;
     return {
@@ -71,9 +65,6 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
 const compareSorts = (manager: AstManager, first: number, second: number) =>
   first === second ? 0 : compareNames(manager.sortNames[first], manager.sortNames[second]);
 
-// Whether two applications of the same declaration have the same key: a user declaration's is its
-// own, and a builtin's other than a numeral, model value or pattern follows from the sort of the
-// argument that getBuiltinSignature reads and the range.
 const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
   const decl = manager.funcDecls[manager.decls[first]];
   if (decl.family === FAMILY_USER) return true;
@@ -152,6 +143,5 @@ const compareAsts = (manager: AstManager, first: number, second: number): number
   return 0;
 };
 
-// lt: whether the first expression comes before the second.
 export const isAstLess = (manager: AstManager, first: number, second: number) =>
   compareAsts(manager, first, second) < 0;
