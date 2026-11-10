@@ -52,6 +52,10 @@ const IMPURE_BUILTINS = new Set([
   "Assert",
   "JavaTime",
   "RandomElement",
+  "RandomSubset",
+  "RandomSetOfSubsets",
+  "RandomSubsetSet",
+  "TestRandomSetOfSubsets",
   "TLCGet",
   "TLCSet",
 ]);
