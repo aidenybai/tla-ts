@@ -778,7 +778,7 @@ export const findAssumptionViolation = (
       environment,
     );
     if (failure) {
-      return { name: describeRange(assumption.expression), trace: [], message: failure.message };
+      return { name: describeNode(assumption.expression), trace: [], message: failure.message };
     }
   }
   return undefined;

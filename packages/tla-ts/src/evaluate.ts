@@ -463,7 +463,7 @@ export const isEquivalent = (left: Value, right: Value, expression: Expression) 
 export const expectBooleanBody = (value: Value, expression: Expression) => {
   if (typeof value !== "boolean") {
     throw new TlaEvaluationError(
-      `TLC expected a boolean value, but did not find one. ${describeRange(expression)}`,
+      `TLC expected a boolean value, but did not find one. ${describeNode(expression)}`,
     );
   }
   return value;
