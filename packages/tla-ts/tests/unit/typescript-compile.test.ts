@@ -2359,6 +2359,32 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("settles Promise.race with the first element and Promise.allSettled with each", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve().then(() => { log = log + "1"; }).then(() => { log = log + "2"; }).then(() => { log = log + "3"; }).then(() => { log = log + "4"; });
+      const later = Promise.resolve(2).then((value: number) => value * 10);
+      const rejected = Promise.reject("r");
+      Promise.race([later, 5]).then((value: number) => { log = log + "a" + value; });
+      Promise.race([rejected, later]).then(() => { log = log + "no"; }, (reason: string) => { log = log + "b" + reason; });
+      Promise.race([later, rejected]).then(() => { log = log + "no2"; }, (reason: string) => { log = log + "c" + reason; });
+      Promise.allSettled([1, rejected, later]).then((results) => {
+        const first = results[0];
+        const second = results[1];
+        const value: number = (first as PromiseFulfilledResult<number>).value;
+        const reason: string = (second as PromiseRejectedResult).reason;
+        log = log + "d" + first.status + value + second.status + reason + results.length;
+      });
+      Promise.allSettled([]).then((results) => { log = log + "e" + results.length; });
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "s1e02a5brcr3dfulfilled1rejectedr34") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

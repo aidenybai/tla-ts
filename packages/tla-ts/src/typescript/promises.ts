@@ -418,21 +418,25 @@ const callHandler = (
   );
 };
 
-// Promise.resolve(value), Promise.reject(value), or Promise.all(values).
+// Promise.resolve(value), Promise.reject(value), or a combinator such as Promise.all(values).
 const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   return ts.isPropertyAccessExpression(callee) &&
     getBuiltIn(callee.expression, context) === "Promise" &&
-    ["resolve", "reject", "all"].includes(callee.name.text)
+    ["resolve", "reject", ...COMBINATORS].includes(callee.name.text)
     ? callee.name.text
     : undefined;
 };
 
-// Promise.all of an array written in place: a promise that fulfills with the values of the
-// promises that PromiseResolve gives for the elements once each fulfills, or rejects with the
-// first reason.
-const translatePromiseAll = (
+const COMBINATORS = ["all", "allSettled", "race"];
+
+// A combinator of an array written in place, which follows the promises that PromiseResolve gives
+// for the elements. Promise.all fulfills with their values once each fulfills, or rejects with the
+// first reason. Promise.allSettled fulfills with an object for each once all settle. Promise.race
+// settles as the first does.
+const translatePromiseCombinator = (
   node: ts.CallExpression,
+  combinator: string,
   path: Path,
   context: Context,
   frame: Frame,
@@ -448,10 +452,10 @@ const translatePromiseAll = (
       (element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element),
     )
   ) {
-    throw new TlaTypeScriptError("Pass Promise.all an array written in place", node);
+    throw new TlaTypeScriptError(`Pass Promise.${combinator} an array written in place`, node);
   }
   const ran = runLeadingCall(elements, path, context, frame, (after) =>
-    translatePromiseAll(node, after, context, frame, continueWith),
+    translatePromiseCombinator(node, combinator, after, context, frame, continueWith),
   );
   if (ran !== undefined) return ran;
   return makePromise(path, node, context, (made, name) => {
@@ -465,7 +469,9 @@ const translatePromiseAll = (
     ) => {
       const promise = getPromise(current, node, name);
       const combined = promise.combined;
-      if (combined === undefined) throw new TlaTypeScriptError("Unsupported Promise.all", node);
+      if (combined === undefined) {
+        throw new TlaTypeScriptError(`Unsupported Promise.${combinator}`, node);
+      }
       const values = combined.values.map((other, index) => (index === position ? value : other));
       const remaining = combined.remaining - 1;
       const taken = setPromise(current, node, name, {
@@ -476,18 +482,59 @@ const translatePromiseAll = (
         ? resolve(taken, node, name, tuple(values), undefined, context, next)
         : next(taken);
     };
+    // Resolves or rejects the promise once, as Promise.race does with each element's value.
+    const settleOnce =
+      (isRejected: boolean): Handler["run"] =>
+      (current, value, onReturn) => {
+        const promise = getPromise(current, node, name);
+        const back = (after: Path) => onReturn(after, getUndefined(context));
+        if (promise.isResolved) return back(current);
+        const resolved = setPromise(current, node, name, { ...promise, isResolved: true });
+        return isRejected
+          ? back(settle(resolved, node, name, value, true, context))
+          : resolve(resolved, node, name, value, undefined, context, back);
+      };
+    // The object that Promise.allSettled gives for a promise that settles.
+    const takeSettled =
+      (position: number, field: "value" | "reason", status: string): Handler["run"] =>
+      (current, value, onReturn) => {
+        const define = (object: Expression, key: string, defined: Expression) =>
+          useJavaScript(
+            "Define",
+            [object, string(key), defined, boolean(true), boolean(true), boolean(true)],
+            context,
+          );
+        const object = define(
+          define(identifier("EmptyObject"), "status", string(status)),
+          field,
+          value,
+        );
+        return allocateObject(current, node, context, object, (allocated, ref) =>
+          take(allocated, position, ref, (after) => onReturn(after, getUndefined(context))),
+        );
+      };
     const getReaction = (position: number): Reaction => ({
       onFulfilled: {
-        run: (current, value, onReturn) =>
-          take(current, position, value, (after) => onReturn(after, getUndefined(context))),
+        run:
+          combinator === "allSettled"
+            ? takeSettled(position, "value", "fulfilled")
+            : combinator === "race"
+              ? settleOnce(false)
+              : (current, value, onReturn) =>
+                  take(current, position, value, (after) => onReturn(after, getUndefined(context))),
       },
       onRejected: {
-        run: (current, reason, onReturn) =>
-          onReturn(settle(current, node, name, reason, true, context), getUndefined(context)),
+        run:
+          combinator === "allSettled"
+            ? takeSettled(position, "reason", "rejected")
+            : settleOnce(true),
       },
       derived: undefined,
     });
     const follow = (current: Path, position: number): Formula => {
+      if (position === count && combinator === "race") {
+        return continueWith(current, getPromise(current, node, name).ref);
+      }
       if (position === count) {
         return take(current, undefined, getUndefined(context), (after) =>
           continueWith(after, getPromise(after, node, name).ref),
@@ -530,7 +577,7 @@ const translatePromiseAll = (
     return guardBuiltIns(
       node,
       "Promise",
-      ["all", "resolve"],
+      [combinator, "resolve"],
       start,
       context,
       guardBuiltIns(node, "Promise.prototype", ["then"], start, context, follow(start, 0)),
@@ -859,8 +906,8 @@ export const translatePromiseCall = (
     );
   }
   const promiseFunction = getPromiseFunction(node, context);
-  if (promiseFunction === "all") {
-    return translatePromiseAll(node, path, context, frame, continueWith);
+  if (promiseFunction !== undefined && COMBINATORS.includes(promiseFunction)) {
+    return translatePromiseCombinator(node, promiseFunction, path, context, frame, continueWith);
   }
   if (promiseFunction !== undefined) {
     const value =
