@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import ts from "@typescript/typescript6";
 import { check, type CheckResult, formatValue } from "../../src";
 import { describe, expect, it } from "vite-plus/test";
 import { compile } from "../../src/typescript/compile";
@@ -619,6 +620,27 @@ export const step = () => {
     ).toEqual(["count", "count", "count"]);
     expect(references.map((region) => region.output)).toEqual(
       references.map(() => declaration?.output),
+    );
+  });
+});
+
+describe("without a file system", () => {
+  const directory = dirname(ts.getDefaultLibFilePath({}));
+  const libraries = new Map(
+    readdirSync(directory)
+      .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
+      .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")]),
+  );
+
+  it("compiles with TypeScript's declaration files passed in", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/examples/die-hard/die-hard.ts");
+    const source = readFileSync(path, "utf8");
+    expect(compile(source, "die-hard.ts", libraries)).toEqual(compile(source, "die-hard.ts"));
+  });
+
+  it("reports type errors", () => {
+    expect(() => compile(`let count: number = "one";`, "spec.ts", libraries)).toThrow(
+      "spec.ts(1,5): error TS2322: Type 'string' is not assignable to type 'number'.",
     );
   });
 });

@@ -1,4 +1,3 @@
-import { dirname } from "node:path";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 
@@ -16,16 +15,38 @@ const COMPILER_OPTIONS: ts.CompilerOptions = {
   types: [],
 };
 
-const LIBRARY_DIRECTORY = dirname(ts.getDefaultLibFilePath(COMPILER_OPTIONS));
-
 // TypeScript's own declaration files, parsed once and shared by every program, since parsing them
 // takes most of a compile.
 const libraryFiles = new Map<string, ts.SourceFile>();
 
+const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerHost => ({
+  getSourceFile: (fileName, languageVersion) => {
+    const text = libraries.get(fileName);
+    return text === undefined ? undefined : ts.createSourceFile(fileName, text, languageVersion);
+  },
+  getDefaultLibFileName: (options) => ts.getDefaultLibFileName(options),
+  getDefaultLibLocation: () => "",
+  writeFile: () => undefined,
+  getCurrentDirectory: () => "",
+  getCanonicalFileName: (fileName) => fileName,
+  useCaseSensitiveFileNames: () => true,
+  getNewLine: () => "\n",
+  fileExists: (fileName) => libraries.has(fileName),
+  readFile: (fileName) => libraries.get(fileName),
+});
+
 // Type checks a model, with the files it imports, and throws its type errors.
-export const createProgram = (source: string, path: string) => {
+export const createProgram = (
+  source: string,
+  path: string,
+  libraries: ReadonlyMap<string, string> | undefined,
+) => {
   const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true);
-  const host = ts.createCompilerHost(COMPILER_OPTIONS);
+  const host =
+    libraries === undefined
+      ? ts.createCompilerHost(COMPILER_OPTIONS)
+      : createLibraryHost(libraries);
+  const libraryDirectory = host.getDefaultLibLocation?.() ?? "";
   const program = ts.createProgram({
     rootNames: [path],
     options: COMPILER_OPTIONS,
@@ -36,7 +57,7 @@ export const createProgram = (source: string, path: string) => {
         const cached = libraryFiles.get(fileName);
         if (cached !== undefined) return cached;
         const file = host.getSourceFile(fileName, languageVersion);
-        if (file !== undefined && fileName.startsWith(LIBRARY_DIRECTORY)) {
+        if (file !== undefined && fileName.startsWith(libraryDirectory)) {
           libraryFiles.set(fileName, file);
         }
         return file;
