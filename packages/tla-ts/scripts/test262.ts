@@ -32,7 +32,7 @@ const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
 const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
 
 // Compiled TypeScript is a strict mode module.
-const SKIPPED_FLAGS = new Set(["noStrict", "raw", "module", "async"]);
+const SKIPPED_FLAGS = new Set(["noStrict", "raw", "module"]);
 // Includes that the harness already defines, as compareArray.js is now part of assert.js.
 const HARNESS_INCLUDES = new Set(["compareArray.js"]);
 // Includes that tla-ts compiles from a TypeScript port.
@@ -47,10 +47,15 @@ const PORTED_INCLUDES = new Map([
   ],
 ]);
 
+// An async test's harness defines $DONE, as doneprintHandle.js does.
+const DONE_HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-done.ts"), "utf8");
+
 const getHarness = (metadata: Metadata) =>
-  [HARNESS, ...metadata.includes.flatMap((include) => PORTED_INCLUDES.get(include) ?? [])].join(
-    "\n",
-  );
+  [
+    HARNESS,
+    ...(metadata.flags.includes("async") ? [DONE_HARNESS] : []),
+    ...metadata.includes.flatMap((include) => PORTED_INCLUDES.get(include) ?? []),
+  ].join("\n");
 
 const getMetadata = (source: string): Metadata => {
   const frontmatter = /\/\*---([\s\S]*?)---\*\//.exec(source)?.[1] ?? "";
@@ -85,7 +90,13 @@ const getSkipReason = (metadata: Metadata) => {
   return includes.length > 0 ? `includes ${includes.join(", ")}` : undefined;
 };
 
-const getNodeError = (source: string) => {
+// A test may leave a promise rejected with no handler, which JavaScript allows, though Node's
+// default would end this script.
+process.on("unhandledRejection", () => {});
+
+// Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one.
+const getNodeError = async (source: string) => {
+  const timers: (() => void)[] = [];
   try {
     const output = ts.transpileModule(source, {
       compilerOptions: {
@@ -94,7 +105,16 @@ const getNodeError = (source: string) => {
         moduleDetection: ts.ModuleDetectionKind.Force,
       },
     }).outputText;
-    runInNewContext(output, { exports: {} });
+    runInNewContext(output, {
+      exports: {},
+      setTimeout: (callback: () => void) => {
+        timers.push(callback);
+      },
+    });
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    timers.forEach((timer) => timer());
     return undefined;
   } catch (error) {
     return String(error);
@@ -568,8 +588,17 @@ const runTest = async (path: string): Promise<TestRun> => {
   const skipReason = getSkipReason(metadata);
   if (skipReason !== undefined) return { id, outcome: "skipped", reason: skipReason };
   if (metadata.isSyntaxError) return runSyntaxTest(id, source, metadata);
-  const annotated = annotate(`${getHarness(metadata)}\n${source}`);
-  const nodeError = getNodeError(annotated);
+  // TypeScript itself fails on some syntax, such as import defer.
+  const annotated = (() => {
+    try {
+      return annotate(`${getHarness(metadata)}\n${source}`);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;
+      throw error;
+    }
+  })();
+  if (annotated === undefined) return { id, outcome: "skipped", reason: "TypeScript fails" };
+  const nodeError = await getNodeError(annotated);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
