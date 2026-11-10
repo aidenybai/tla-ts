@@ -3945,9 +3945,9 @@ export const translateStatements = (
   if (ts.isIterationStatement(statement, false)) {
     return translateLoop(statement, path, context, frame, continueWith);
   }
-  // A declared function without a body, such as setTimeout, which the host defines.
-  if (ts.isFunctionDeclaration(statement) && statement.body === undefined)
-    return continueWith(path);
+  // A function declaration runs nothing where it stands: calls find the function it declares, and
+  // one without a body, such as setTimeout, the host defines.
+  if (ts.isFunctionDeclaration(statement)) return continueWith(path);
   throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
 };
 

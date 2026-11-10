@@ -1889,6 +1889,20 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls a function that a function body declares", async () => {
+    const result = await checkModel(`
+      let log = "";
+      function outer() {
+        function inner() { log = log + "i"; }
+        inner();
+        inner();
+      }
+      outer();
+      if (log !== "ii") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls async methods with their object as this", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
