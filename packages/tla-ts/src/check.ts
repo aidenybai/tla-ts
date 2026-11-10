@@ -1,5 +1,14 @@
 import type { Expression } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
+import {
+  addCoverageRelation,
+  buildCoverage,
+  countCoverageVariables,
+  createCoverage,
+  getCoverageLabel,
+  getCoverageReport,
+  type CoverageReport,
+} from "./coverage";
 import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
@@ -84,7 +93,12 @@ import { KEY_SEPARATOR } from "./resolve";
 import { setFingerprintPolynomial } from "./tlc/fingerprint";
 import { writeTraceSpec } from "./tlc/trace-spec";
 import { createTlcOrder } from "./tlc/order";
-import { replayInitialStates, replaySuccessors } from "./tlc/replay";
+import {
+  getPrimedRanges,
+  replayInitialStates,
+  replaySuccessors,
+  walkSuccessors,
+} from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
 import type { TlcVersion } from "./tlc/version";
@@ -139,6 +153,8 @@ export interface CheckOptions {
   isSanyReported?: boolean;
   // False for TLC's -nowarning, which changes how TLC computes some successors.
   isWarningEnabled?: boolean;
+  // TLC's -coverage, in minutes.
+  coverage?: number;
   version?: TlcVersion;
   onProgress?: (progress: CheckProgress) => void;
 }
@@ -199,7 +215,7 @@ export type CheckProgress =
 
 export interface SearchStatistics extends Pick<
   CheckResult,
-  "generatedStates" | "distinctStates" | "queuedStates" | "depth"
+  "generatedStates" | "distinctStates" | "queuedStates" | "depth" | "coverage"
 > {}
 
 export type CheckStatus =
@@ -303,6 +319,11 @@ export interface CheckResult {
   // The outdegrees when TLC's workers stop on a violation that TLC 1.7.4 reports as a success.
   violationOutDegrees?: number[];
   traceSpec?: string;
+  coverage?: CoverageReport;
+}
+
+interface CoveredAction extends SpecAction {
+  node: number;
 }
 
 interface Behavior {
@@ -339,6 +360,7 @@ const NEXT_RECOVERY_FAILURE = "Failed to recover the next state from its fingerp
 
 // Stops a replay where TLC stops it without a failure, as at a violated invariant.
 const STOP_REPLAY = new Error("The replay stopped");
+const STOP_WALK = new Error("The walk stopped");
 
 // When TLC's replay of the initial states doesn't fail again, it exits with the error's code.
 const getInitialExitCode = (error: TlaEvaluationError) => {
@@ -424,7 +446,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     moduleOperators: options.moduleOperators,
   });
   reportStartup(specification, config, options.onProgress);
-  const environment = specification.environment;
+  const coverage =
+    options.coverage === undefined
+      ? undefined
+      : createCoverage(specification.environment.variables.length);
+  const environment: Environment = coverage
+    ? {
+        ...specification.environment,
+        evaluators: new WeakMap(),
+        entryEvaluators: new WeakMap(),
+        definitionEvaluators: new WeakMap(),
+        coverage,
+      }
+    : specification.environment;
   const runtime = environment.runtime;
   const is174 = runtime.version === "1.7.4";
   runtime.pause = options.onPause ?? (() => {});
@@ -473,6 +507,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       initialStates: statistics.initialStates,
       outDegrees: undefined,
       fingerprintDistance: undefined,
+      coverage: coverage?.relations.some((relation) => relation.kind === "next")
+        ? getCoverageReport(
+            coverage,
+            environment,
+            specification.variableLocations,
+            search?.getTlcOrder() ?? [],
+          )
+        : undefined,
       ...(traceSpec !== undefined && { traceSpec }),
     };
   };
@@ -588,6 +630,68 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const specNextActions = { value: undefined as SpecAction[] | undefined };
   const getSpecNextActions = () =>
     (specNextActions.value ??= getNextActions(config, environment, specification.instanceActions));
+  const addCoverageRelations = (kind: "init" | "next", actions: SpecAction[]) =>
+    actions.map((action): CoveredAction => ({
+      ...action,
+      node: coverage
+        ? addCoverageRelation(
+            coverage,
+            kind,
+            getCoverageLabel(action.name, action.expression, environment),
+            action.expression,
+            action.scope,
+          )
+        : -1,
+    }));
+  const coverageInits = addCoverageRelations(
+    "init",
+    coverage ? getInitActions(config, environment, specification.instanceActions) : [],
+  );
+  const coverageActions = addCoverageRelations("next", coverage ? getSpecNextActions() : []);
+  if (coverage) buildCoverage(coverage, environment, getPrimedRanges(coverageActions, environment));
+  const walkCoveredSuccessors = (
+    action: CoveredAction,
+    state: Value[],
+    onState: (successor: Value[]) => void,
+  ) =>
+    walkSuccessors(
+      action,
+      action.node,
+      state,
+      environment,
+      (successor) => {
+        if (coverage) coverage.primary[action.node]++;
+        onState(successor);
+      },
+      (partial) => {
+        const missing = environment.variables.filter((_, index) => partial[index] === undefined);
+        throw new TlaIncompleteSuccessorError(
+          `Successor state is not completely specified by action ${action.name}. The following variables are not assigned: ${missing.join(", ")}`,
+          partial,
+          action.name,
+          missing,
+        );
+      },
+    );
+  const getCoveredSuccessors = (action: CoveredAction, state: Value[]) => {
+    const successors: Successor[] = [];
+    walkCoveredSuccessors(action, state, (successor) =>
+      successors.push({ state: successor, action: action.name }),
+    );
+    return successors;
+  };
+  const getCoveredInitialStates = () => {
+    const initialStates: Value[][] = [];
+    replayInitialStates(
+      coverageInits,
+      environment,
+      (state) => initialStates.push(state),
+      (partial) => {
+        throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
+      },
+    );
+    return initialStates;
+  };
   const getReplayFailure = (replay: (tracing: Environment) => void): ReplayFailure | undefined => {
     const tracing = createTracingEnvironment(environment);
     const callStack = tracing.callStack;
@@ -804,11 +908,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
-    const action = actions.find((item) =>
-      getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
-        isSameState(getKey(successor.state), key),
-      ),
-    );
+    const action = coverage
+      ? coverageActions.find((item) =>
+          getCoveredSuccessors(item, previous).some((successor) =>
+            isSameState(getKey(successor.state), key),
+          ),
+        )
+      : actions.find((item) =>
+          getSuccessors(item.expression, previous, environment, item.scope).some((successor) =>
+            isSameState(getKey(successor.state), key),
+          ),
+        );
     Object.assign(current, expanding);
     return action;
   };
@@ -841,6 +951,24 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const loopStart = traceOptions.loopStart;
     // TLC 1.7.4 rebuilds a lasso up to its cycle at once, then each cycle state as it prints it.
     const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
+    // What the trace prints once comes from each time TLC rebuilds it, which coverage counts.
+    if (coverage && steps.length > 1) {
+      const isRebuiltAgain = known > 0 && !is174;
+      if (rebuilt > 0 && isRebuiltAgain) captureOutput(getSpecInitialStates);
+      if (isRebuiltAgain) {
+        steps.slice(1).forEach((step, position) => {
+          if (step.action === "Stuttering") return;
+          captureOutput(() =>
+            findStepAction(
+              path[position],
+              steps[position].state,
+              step.state,
+              known === 2 && position === steps.length - 2,
+            ),
+          );
+        });
+      }
+    }
     const prefixOutput = rebuilt > 0 ? [initialOutput, ...outputs.slice(1, rebuilt)].flat() : [];
     return {
       trace: steps.map((step, position) => {
@@ -862,8 +990,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       traceOutput: known > 0 && !is174 ? [initialOutput, ...outputs].flat() : [],
     };
   };
-  const getSpecInitialStates = () =>
-    spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
+  const getSpecInitialStates = () => {
+    if (coverage) return getCoveredInitialStates();
+    return spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
+  };
   // TLC rebuilds a successor action by action, up to the first that generates it. A trace keeps
   // what the spec prints as TLC rebuilds it, so finding its states prints nothing.
   const findTraceSuccessor = (state: Value[], isMatch: (successor: Successor) => boolean) =>
@@ -1285,6 +1415,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (isNew) {
       countDistinctState(depths[index] + 1);
       expansion.newStates++;
+      if (coverage) coverage.secondary[coveredAction.node]++;
     }
     if (existing === -1) {
       try {
@@ -1316,6 +1447,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     if (propertyViolation) reportContinuedViolation("liveness-violation", propertyViolation);
     if (!isNew) return undefined;
+    if (coverage) countCoverageVariables(coverage, successor.state);
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
     markSeen(hash, states.length);
     addState(successor.state, fingerprintState, index, successor.action);
@@ -1324,6 +1456,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
 
   const outcome: { result: CheckResult | undefined } = { result: undefined };
+  const coveredAction = { node: -1 };
   if (liveness) {
     options.onProgress?.({ kind: "liveness-prepared", branches: liveness.branches });
   }
@@ -1343,26 +1476,39 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       );
     };
     try {
-      forEachInitialState(
-        spec.init,
-        environment,
-        (state) => {
-          reportInitialStatesProgress(runtime.initialStates, options.onProgress);
-          if (overflow.state) {
-            runtime.generatedStates++;
-            runtime.initialStates++;
-            return false;
-          }
-          try {
-            outcome.result = visitInitialState(state);
-          } catch (error) {
-            if (isStackOverflow(error)) overflow.state = state;
-            else outcome.result = reportInitialFailure(error, state);
-          }
-          return outcome.result !== undefined;
-        },
-        spec.scope,
-      );
+      const onInitialState = (state: Value[]) => {
+        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        if (overflow.state) {
+          runtime.generatedStates++;
+          runtime.initialStates++;
+          return false;
+        }
+        try {
+          outcome.result = visitInitialState(state);
+        } catch (error) {
+          if (isStackOverflow(error)) overflow.state = state;
+          else outcome.result = reportInitialFailure(error, state);
+        }
+        return outcome.result !== undefined;
+      };
+      if (coverage) {
+        try {
+          replayInitialStates(
+            coverageInits,
+            environment,
+            (state) => {
+              if (onInitialState(state)) throw STOP_WALK;
+            },
+            (partial) => {
+              throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
+            },
+          );
+        } catch (error) {
+          if (error !== STOP_WALK) throw error;
+        }
+      } else {
+        forEachInitialState(spec.init, environment, onInitialState, spec.scope);
+      }
       if (overflow.state) {
         outcome.result = reportInitialFailure(createStackOverflowError(), overflow.state);
       }
@@ -1419,6 +1565,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       | undefined,
     onSuccessor: (successor: Successor, action: SpecAction | undefined) => boolean,
   ) => {
+    if (coverage) {
+      const progress = { count: 0 };
+      try {
+        coverageActions.forEach((action) => {
+          coveredAction.node = action.node;
+          walkCoveredSuccessors(action, state, (successor) => {
+            progress.count++;
+            if (onSuccessor({ state: successor, action: action.name }, action)) throw STOP_WALK;
+          });
+        });
+      } catch (error) {
+        if (error !== STOP_WALK) throw error;
+      }
+      return progress.count;
+    }
     if (!isNamingEdges) {
       return forEachSuccessor(
         next,
@@ -1688,7 +1849,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";
   const startedAt = performance.now();
-  const periodic = { at: startedAt + PERIODIC_START, size: 1, time: 0 };
+  const periodic = {
+    at: startedAt + PERIODIC_START,
+    size: 1,
+    time: 0,
+    coverageCount: Math.trunc(options.coverage ?? 0),
+  };
   const findPeriodicViolation = (expanded: number) => {
     const now = performance.now();
     const isGrown = (expanded - periodic.size) / periodic.size > LIVENESS_GROWTH;
@@ -1729,7 +1895,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       periodic.at = performance.now() + PROGRESS_INTERVAL;
       const lasso = isPeriodic ? findPeriodicViolation(index + 1) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
-      options.onProgress?.({ kind: "progress", statistics: createResult("success") });
+      // TLC reports the coverage with every report after the first `coverage` reports since the last.
+      const isCoverageDue = options.coverage !== undefined && periodic.coverageCount === 0;
+      periodic.coverageCount = isCoverageDue
+        ? Math.trunc(options.coverage ?? 0)
+        : periodic.coverageCount - 1;
+      const progress = createResult("success");
+      options.onProgress?.({
+        kind: "progress",
+        statistics: { ...progress, coverage: isCoverageDue ? progress.coverage : undefined },
+      });
     }
   }
 
