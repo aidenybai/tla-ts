@@ -117,6 +117,8 @@ const CASES = MACHINES.flatMap((machine) => [
   ),
 ]);
 
+const TLC_BUG_CASES = ["live_reset__weak__negated_leads_to"];
+
 export const generateTemporalMatrix = () =>
   CASES.forEach(({ machine, fairness, formula }) =>
     writeTest(
@@ -124,7 +126,9 @@ export const generateTemporalMatrix = () =>
       {
         description: `Checks ${formula.name} on the ${machine.name} machine under ${fairness.name} fairness.`,
         ref: CHECK_REF,
-        features: ["liveness"],
+        features: TLC_BUG_CASES.includes(`live_${machine.name}__${fairness.name}__${formula.name}`)
+          ? ["liveness", "tlc-bug"]
+          : ["liveness"],
         outcome: "any",
         config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE\n",
       },
