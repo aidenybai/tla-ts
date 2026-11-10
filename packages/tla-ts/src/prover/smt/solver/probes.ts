@@ -44,6 +44,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
+import { getAckrBound } from "./ackr-helper";
 import { BoundManager } from "./bound-manager";
 import type { Goal } from "./goal";
 import { isSymbol, type SExpr, type SmtToken } from "./smtlib-parser";
@@ -119,6 +120,15 @@ const isNonQfaufbv = (manager: AstManager, expr: number) => {
     !manager.isUninterpreted(expr)
   );
 };
+
+const isNonQfufbv = (manager: AstManager, expr: number) => {
+  if (!isApp(manager, expr)) return true;
+  if (manager.sorts[expr] !== SORT_BOOL && !manager.isBvSort(manager.sorts[expr])) return true;
+  const family = manager.getFamily(expr);
+  return family !== FAMILY_BASIC && family !== FAMILY_BV && !manager.isUninterpreted(expr);
+};
+
+export const isQfufbv = mkTest(isNonQfufbv);
 
 const isNonQfbvEq = (manager: AstManager, expr: number) =>
   manager.kinds[expr] !== KIND_APP ||
@@ -419,10 +429,11 @@ const NAMED_PROBES = new Map<string, Probe>([
   ["is-qffp", mkTest(mkNonQffp(false))],
   ["is-qffpbv", mkTest(mkNonQffp(false))],
   ["is-qffplra", mkTest(mkNonQffp(true))],
+  ["ackr-bound-probe", getAckrBound],
 ]);
 
 const UNPORTED_PROBES = new Set(
-  "memory arith-max-deg arith-avg-deg arith-max-bw arith-avg-bw ackr-bound-probe".split(" "),
+  "memory arith-max-deg arith-avg-deg arith-max-bw arith-avg-bw".split(" "),
 );
 
 const BINARY_PROBES = new Map<string, (first: number, second: number) => number>([

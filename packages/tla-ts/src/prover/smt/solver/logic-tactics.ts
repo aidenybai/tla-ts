@@ -126,6 +126,20 @@ const QFBV =
   "(if produce-proofs (and-then simplify smt) psat)) smt))) :elim_and true " +
   ":push_ite_bv true :blast_distinct true)";
 
+export const QFAUFBV =
+  "(using-params (and-then (and-then simplify propagate-values solve-eqs elim-uncnstr " +
+  "bv-divrem-bounds (if-no-proofs (if-no-unsat-cores reduce-bv-size)) (using-params simplify " +
+  ":som true :pull_cheap_ite true :push_ite_bv false :local_ctx true :local_ctx_limit 10000000) " +
+  "max-bv-sharing (if-no-proofs (if-no-unsat-cores ackermannize_bv))) (if is-qfbv qfbv smt)) " +
+  ":elim_and true :sort_store true)";
+
+export const QFUFBV_ACKR_PREAMBLE =
+  "(and-then (using-params simplify :flat_and_or false) (using-params propagate-values " +
+  ":flat_and_or false) (if-no-proofs (if-no-unsat-cores bv_bound_chk)) solve-eqs elim-uncnstr " +
+  "(if-no-proofs (if-no-unsat-cores reduce-bv-size)) max-bv-sharing (using-params simplify " +
+  ":pull_cheap_ite true :push_ite_bv false :local_ctx true :local_ctx_limit 10000000 " +
+  ":ite_extra_rules true :mul2concat true :flat_and_or false))";
+
 const QFAUFLIA =
   "(and-then (using-params (and-then simplify propagate-values solve-eqs elim-uncnstr simplify) " +
   ":elim_and true :som true :sort_store true) (using-params smt :array.simplify false))";
@@ -162,6 +176,7 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["ufbv", UFBV],
   ["bv", UFBV],
   ["qfbv", QFBV],
+  ["qfaufbv", QFAUFBV],
   ["qfauflia", QFAUFLIA],
   ["qfuf", QFUF],
   ["default", DEFAULT],

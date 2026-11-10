@@ -7,19 +7,22 @@ import {
   SmtUnsupportedError,
 } from "../../../errors";
 import { type AstManager, KIND_APP, OP_ITE, SORT_BOOL } from "./ast";
+import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
 import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
 import { card2bv } from "./card2bv";
 import { Context } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
-import type { Definition, Goal } from "./goal";
+import { type Definition, Goal } from "./goal";
+import type { AckrSolver } from "./lackr";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Der } from "./der";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { runBitBlast } from "./bit-blast-tactic";
 import { runMaxBvSharing } from "./max-bv-sharing-tactic";
+import { runBvBoundChk } from "./bv-bound-chk";
 import { runBvDivremBounds } from "./bv-divrem-bounds";
 import { runBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
@@ -41,7 +44,7 @@ import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
-import { compileProbe, formatProbeValue, type Probe } from "./probes";
+import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
 import { applyQeLite } from "./qe-lite";
 import { simplifyGoal } from "./quant-tactics";
 import { SolveEqs } from "./solve-eqs";
@@ -49,7 +52,7 @@ import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { lia2card } from "./lia2card";
-import { LOGIC_TACTICS } from "./logic-tactics";
+import { LOGIC_TACTICS, QFAUFBV, QFUFBV_ACKR_PREAMBLE } from "./logic-tactics";
 import {
   createCommandReader,
   isSymbol,
@@ -154,13 +157,13 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["expand_nested_stores", PARAM_BOOL, false],
   ["expand_select_ite", PARAM_BOOL, false],
   ["expand_store_eq", PARAM_BOOL, false],
-  ["sort_store", PARAM_BOOL, false],
+  ["sort_store", PARAM_BOOL, false, true],
   ["max_memory", PARAM_UINT, UINT_MAX, true],
   ["max_steps", PARAM_UINT, UINT_MAX],
   ["push_ite_arith", PARAM_BOOL, false],
   ["push_ite_bv", PARAM_BOOL, false, true],
   ["pull_cheap_ite", PARAM_BOOL, false, true],
-  ["bv_ineq_consistency_test_max", PARAM_UINT, 0],
+  ["bv_ineq_consistency_test_max", PARAM_UINT, 0, true],
   ["unfold_recursive_functions", PARAM_BOOL, false],
   ["cache_all", PARAM_BOOL, false],
   ["enable_der", PARAM_BOOL, true],
@@ -229,6 +232,30 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   if (solved.result === L_FALSE) goal.assert(environment.manager.falseExpr);
   else goal.model = solved.context.getModel();
   return [goal];
+};
+
+// tactic2solver: each check runs a fresh tactic on all the assertions.
+const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrSolver => {
+  const assertions = new RefVector(manager);
+  let model: ProtoModel | undefined;
+  return {
+    assert: (expr) => assertions.push(expr),
+    check: () => {
+      model?.decRef();
+      model = undefined;
+      const goal = new Goal(manager);
+      for (const assertion of assertions.items) goal.assert(assertion);
+      const checked = checkSatUsing(getTactic(), goal);
+      model = checked.model;
+      model?.incRef();
+      return checked.status;
+    },
+    getModel: () => model as ProtoModel,
+    release: () => {
+      model?.decRef();
+      assertions.reset();
+    },
+  };
 };
 
 // Each clause gets a fresh context, where Z3 pushes a scope on one context.
@@ -788,6 +815,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     { descrs: new Map(), build: (environment) => runMaxBvSharing(environment.manager) },
   ],
   [
+    "bv_bound_chk",
+    {
+      descrs: new Map(),
+      build: (environment, params) =>
+        runBvBoundChk(environment.manager, getUint(params, "bv_ineq_consistency_test_max", 0)),
+    },
+  ],
+  [
     "bv-divrem-bounds",
     { descrs: new Map(), build: (environment) => runBvDivremBounds(environment.manager) },
   ],
@@ -803,6 +838,39 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_steps", PARAM_UINT, UINT_MAX],
       ]),
       build: (environment) => runBv1Blast(environment.manager),
+    },
+  ],
+  [
+    "ackermannize_bv",
+    {
+      descrs: getDescrs("rewriter", [["div0_ackermann_limit", PARAM_UINT, 1000, true]]),
+      build: (environment, params) =>
+        runAckermannizeBv(
+          environment.manager,
+          getRewriterOptions(environment.manager, new Map()),
+          getUint(params, "div0_ackermann_limit", 1000),
+        ),
+    },
+  ],
+  [
+    "qfufbv_ackr",
+    {
+      descrs: new Map([...REWRITER_DESCRS, ...SMT_DESCRS]),
+      isRejectingUnknown: false,
+      build: (environment, params) => {
+        const manager = environment.manager;
+        const preamble = createCommandReader(QFUFBV_ACKR_PREAMBLE).read() as SmtList;
+        return runAndThen(
+          compile(environment, preamble, preamble.end, true).build(params),
+          runCond(
+            isQfufbv,
+            createQfufbvAckrTactic(manager, getRewriterOptions(manager, new Map()), true, () =>
+              createTacticSolver(manager, () => compileInternalTactic(environment, QFAUFBV)),
+            ),
+            runSmt(environment, params),
+          ),
+        );
+      },
     },
   ],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
@@ -865,7 +933,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "ackermannize_bv add-bounds blast-term-ite bv_bound_chk " +
+    "add-bounds blast-term-ite " +
     "bv-slice bvarray2uf cofactor-term-ite collect-statistics " +
     "degree-shift demodulator diff-neq " +
     "elim-predicates elim-uncnstr2 eq2bv " +
@@ -873,8 +941,8 @@ const UNPORTED_TACTICS = new Set(
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
     "nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
-    "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
-    "qfufbv qfufbv_ackr qsat recover-01 reduce-args2 " +
+    "qe qe_rec qe2 qfbv-sls qffd qffp qffpbv qffplra qfnra " +
+    "qfufbv qsat recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
   ).split(" "),
