@@ -42,6 +42,10 @@ const PORTED_INCLUDES = new Map([
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-property-helper.ts"), "utf8"),
   ],
   [
+    "asyncHelpers.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-async-helpers.ts"), "utf8"),
+  ],
+  [
     "isConstructor.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-is-constructor.ts"), "utf8"),
   ],
