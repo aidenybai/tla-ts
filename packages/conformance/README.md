@@ -93,6 +93,7 @@ The metadata has these fields:
 | `args`        | Extra TLC or tlapm flags.                                            |
 | `includes`    | Fixture files beside the test, which the runner copies with it.      |
 | `stack`       | TLC's JVM thread stack, such as `64m`. `2m` by default.              |
+| `correct`     | What a host must do where the oracle has a bug, by context.          |
 
 A file without metadata is a fixture and doesn't run on its own.
 
@@ -180,9 +181,9 @@ The runner compares a host's output with the recording after it removes what dif
 
 ## Track known failures
 
-`baselines/<host>.json` lists each test a host fails and its verdict. A run exits 1 if a result differs from the baseline in either direction, so a regression and an unrecorded fix both fail. Update the file with `--update-baseline`.
+`baselines/<host>.json` lists each test a host fails and its verdict. A run exits 1 only if a test fails that the baseline doesn't list. It reports a listed test that now passes, or fails with a different verdict, without failing, so a test whose result depends on machine speed doesn't fail CI. Update the file with `--update-baseline`.
 
-A baseline entry says what fails, not what is right. When an oracle has a bug, keep the correct behavior in the host and leave the test in the baseline. Tests that pin a bug have `features: [tlc-bug]` or `features: [tlapm-bug]`.
+A baseline entry says what fails, not what is right. When an oracle has a bug, keep the correct behavior in the host. Tests that pin a bug have `features: [tlc-bug]` or `features: [tlapm-bug]`, and a `correct` field next to their recording, which holds what a host must do instead, in the recording's form. The runner compares other hosts with `correct` and the oracle with the recording. Generators keep `correct` while a test's module stays the same.
 
 ## Add a test
 
