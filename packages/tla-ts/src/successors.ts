@@ -420,7 +420,22 @@ const compileConjunction = (
       if (index > 0 && isShortcut && isComplete(current)) {
         context ??= getContext(run, scope, current);
         for (let rest = index; rest < conjuncts.length; rest++) {
-          const expression = conjuncts[rest].expression;
+          const conjunct = conjuncts[rest];
+          // Tool#getNextStates0 takes this shortcut with warnings on, though its comment says the
+          // shortcut skips the warning for a changed UNCHANGED variable. tla-ts still warns.
+          const state = run.current;
+          const changed =
+            state && conjunct.kind === "Unchanged"
+              ? conjunct.variables.find((variable) => {
+                  const assigned = current[variable.index];
+                  return assigned !== undefined && !isEqualLikeTlc(assigned, state[variable.index]);
+                })
+              : undefined;
+          if (changed) {
+            warnChangedUnchanged(run.environment, changed.index, changed.expression);
+            return;
+          }
+          const expression = conjunct.expression;
           const value = evaluateCached(restEvaluators, rest, expression, context);
           if (!holdsValue(run, expression, value, false)) return;
         }
