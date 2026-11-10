@@ -2526,6 +2526,29 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads a hole as undefined where its array goes straight into a pattern", async () => {
+    const result = await checkModel(`
+      const holder = {};
+      let log = "";
+      const read = ([x = 23]: (number | undefined)[]) => {
+        log = log + x;
+      };
+      read([,]);
+      const [y = 5, z] = [, 2];
+      let w: number | undefined;
+      [w = 7] = [,];
+      log = log + y + z + w;
+      if (log !== "23527") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects a hole in an array that a script reads", () => {
+    expect(() => compile("const holder = {};\nconst items = [1, , 3];")).toThrow(
+      "Unsupported expression",
+    );
+  });
+
   it("evaluates a statement that only reads", async () => {
     const result = await checkModel(`
       const box = { get value(): number { throw new Error("getter"); } };

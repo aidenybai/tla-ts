@@ -1244,12 +1244,53 @@ export const translateExpression = (
   isDefined = false,
 ): Expression => locate(translateNode(node, scope, context, isDefined), getLocation(node));
 
+const readsArguments = (node: ts.Node): boolean =>
+  (ts.isIdentifier(node) && node.text === "arguments") ||
+  (ts.forEachChild(node, (child) => readsArguments(child) || undefined) ?? false);
+
+// Whether an array literal goes straight into an array pattern, which takes its elements in order,
+// so that nothing sees where it has holes.
+const isPatternSource = (node: ts.Expression, context: Context) => {
+  const parent = node.parent;
+  if (ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isBindingElement(parent)) {
+    return parent.initializer === node && ts.isArrayBindingPattern(parent.name);
+  }
+  if (ts.isBinaryExpression(parent)) {
+    return (
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.right === node &&
+      ts.isArrayLiteralExpression(parent.left)
+    );
+  }
+  if (!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) return false;
+  const position = parent.arguments?.indexOf(node) ?? -1;
+  if (position === -1 || parent.arguments?.slice(0, position).some(ts.isSpreadElement)) {
+    return false;
+  }
+  const declaration = context.checker.getResolvedSignature(parent)?.getDeclaration();
+  const parameter = declaration?.parameters.at(position);
+  return (
+    declaration !== undefined &&
+    parameter !== undefined &&
+    parameter.dotDotDotToken === undefined &&
+    ts.isArrayBindingPattern(parameter.name) &&
+    !readsArguments(declaration)
+  );
+};
+
 const translateNode = (
   node: ts.Expression,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ): Expression => {
+  if (
+    ts.isOmittedExpression(node) &&
+    ts.isArrayLiteralExpression(node.parent) &&
+    isPatternSource(node.parent, context)
+  ) {
+    return getUndefined(context);
+  }
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
