@@ -156,8 +156,6 @@ CopiesIn(e, B) ==
  5 Dec 98 : Initial version.
 `;
 
-// The standard modules of SANY's tla2sany/StandardModules (tla2tools.jar 2026.10.28), verbatim,
-// since the XML that SANY exports locates every node of them and keeps their comments.
 export const SANY_STANDARD_MODULES = new Map([
   ["Bags", BAGS],
   [
@@ -1289,8 +1287,6 @@ _TLCTrace ==
   ],
 ]);
 
-// The standard modules of TLC 1.7.4's tla2tools.jar, which has none of the later ones and older
-// Bags, Randomization and Toolbox modules.
 export const SANY_174_STANDARD_MODULES = new Map([
   ...[...SANY_STANDARD_MODULES].filter(([name]) =>
     ["FiniteSets", "Integers", "Naturals", "RealTime", "Reals", "Sequences", "TLC"].includes(name),
@@ -1393,6 +1389,5 @@ _TEPosition ==
   ],
 ]);
 
-// The standard modules of the SANY of a TLC.
 export const getSanyStandardModules = (version: TlcVersion = "master") =>
   version === "1.7.4" ? SANY_174_STANDARD_MODULES : SANY_STANDARD_MODULES;

@@ -1,8 +1,5 @@
 import { TlaError } from "../errors";
 
-// An emulation of the token manager that JavaCC generates for SANY's grammar, javacc/tla+.jj: the
-// tokens it produces, their kinds in TLAplusParserConstants order, and their positions.
-
 export interface SanyToken {
   kind: number;
   image: string;
@@ -11,8 +8,6 @@ export interface SanyToken {
   next: SanyToken | undefined;
 }
 
-// The token kinds, in the order of TLAplusParserConstants, each with the literal images that
-// produce it. JavaCC breaks a tie between matches of the same length by this order.
 const KINDS: [string, ...string[]][] = [
   ["EOF"],
   ["BEGIN_PRAGMA", "--->"],
@@ -228,7 +223,6 @@ const KIND_INDEXES = new Map(
   KIND_NAMES.map((name, kind): [string, number] => [name, kind]).reverse(),
 );
 
-// The anonymous infix operators share the name "infix", which no caller looks up.
 export const getKind = (name: string) => {
   const kind = KIND_INDEXES.get(name);
   if (kind === undefined) throw new TlaError(`Unknown SANY token kind ${name}`);
@@ -241,7 +235,7 @@ const LITERALS = new Map(
 const LONGEST_LITERAL = Math.max(...[...LITERALS.keys()].map((image) => image.length));
 const LITERAL_LENGTHS = Array.from(
   { length: LONGEST_LITERAL },
-  (_, index) => LONGEST_LITERAL - index,
+  (_element, index) => LONGEST_LITERAL - index,
 );
 
 const BEGIN_MODULE = /----+ *MODULE/y;
@@ -261,7 +255,6 @@ const BAND_PATTERNS = getJunctionPatterns(String.raw`\.\/\\`);
 const BOR_PATTERNS = getJunctionPatterns(String.raw`\.\\\/`);
 const STEP = String.raw`<(?:[0-9]+|\+|\*)>`;
 
-// The tokens of the SPEC lexical state that are not literals, with their kinds.
 const SPEC_PATTERNS: [string, RegExp[]][] = [
   ["_BM0", [BEGIN_MODULE]],
   ["SEPARATOR", [/----+/y]],
@@ -278,7 +271,6 @@ const SPEC_PATTERNS: [string, RegExp[]][] = [
   ["UnnumberedStepLexeme", [new RegExp(String.raw`${STEP}(?:\*\.*|-\.*|\.+)`, "y")]],
 ];
 
-// The tokens of the DEFAULT and PRAGMA lexical states, which skip every other character.
 const DEFAULT_PATTERNS: [string, RegExp[]][] = [
   ["BEGIN_PRAGMA", [/--->/y]],
   ["_BM1", [BEGIN_MODULE]],
@@ -296,7 +288,6 @@ const getMatchLength = (pattern: RegExp, source: string, offset: number) => {
   return pattern.exec(source)?.[0].length ?? 0;
 };
 
-// The longest match at offset, the earliest kind among matches of that length.
 const matchPatterns = (patterns: [string, RegExp[]][], source: string, offset: number) =>
   patterns
     .map(([name, regexes]) => ({
@@ -329,46 +320,45 @@ const matchSpecToken = (source: string, offset: number) => {
 
 export const getTabStop = (column: number) => column + 8 - (column % 8);
 
-// SimpleCharStream.UpdateLineColumn: the line and column of each character, with tabs stopping
-// at multiples of 8.
 const getPositions = (source: string) => {
   const lines: number[] = [];
   const columns: number[] = [];
-  const state = { line: 1, column: 0, isAfterCr: false, isAfterLf: false };
+  let line = 1;
+  let column = 0;
+  let isAfterCr = false;
+  let isAfterLf = false;
   for (const character of source) {
     for (let unit = 0; unit < character.length; unit++) {
-      state.column++;
-      if (state.isAfterLf) {
-        state.isAfterLf = false;
-        state.line++;
-        state.column = 1;
-      } else if (state.isAfterCr) {
-        state.isAfterCr = false;
-        if (character === "\n") state.isAfterLf = true;
+      column++;
+      if (isAfterLf) {
+        isAfterLf = false;
+        line++;
+        column = 1;
+      } else if (isAfterCr) {
+        isAfterCr = false;
+        if (character === "\n") isAfterLf = true;
         else {
-          state.line++;
-          state.column = 1;
+          line++;
+          column = 1;
         }
       }
-      if (character === "\r") state.isAfterCr = true;
-      else if (character === "\n") state.isAfterLf = true;
-      else if (character === "\t") state.column = getTabStop(state.column - 1);
-      lines.push(state.line);
-      columns.push(state.column);
+      if (character === "\r") isAfterCr = true;
+      else if (character === "\n") isAfterLf = true;
+      else if (character === "\t") column = getTabStop(column - 1);
+      lines.push(line);
+      columns.push(column);
     }
   }
   return { lines, columns };
 };
 
-// The characters of a string literal that a string literal could still continue.
 const STRING_PREFIX = /"(?:[^"\n\r\\]|\\[ntrf\\"])*\\?/y;
 const LITERAL_PREFIXES = new Set(
   [...LITERALS.keys()].flatMap((image) =>
-    Array.from({ length: image.length - 1 }, (_, index) => image.slice(0, index + 1)),
+    Array.from({ length: image.length - 1 }, (_element, index) => image.slice(0, index + 1)),
   ),
 );
 
-// The characters JavaCC's token manager reads at offset while some token could still continue.
 const getTokenPrefix = (source: string, offset: number) => {
   let length = 0;
   while (LITERAL_PREFIXES.has(source.slice(offset, offset + length + 1))) length++;
@@ -378,12 +368,10 @@ const getTokenPrefix = (source: string, offset: number) => {
   );
 };
 
-// A lazy token stream over source, which returns SANY's message for the TokenMgrError JavaCC's
-// token manager throws at a character no token continues with, or at the end of the file in a
-// comment.
 export const createSanyLexer = (source: string) => {
   const positions = getPositions(source);
-  const state = { offset: 0, mode: "DEFAULT" };
+  let cursor = 0;
+  let mode = "DEFAULT";
   const createToken = (kind: number, start: number, length: number): SanyToken => ({
     kind,
     image: source.slice(start, start + length),
@@ -391,10 +379,7 @@ export const createSanyLexer = (source: string) => {
     beginColumn: positions.columns[start] ?? 0,
     next: undefined,
   });
-  // JavaCC places the end of the file at the file's last character.
   const getEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
-  // The lexer read the characters from start to end, and TLAplusParser.parse reports the end of
-  // the file in a token that starts on an earlier line as an open comment.
   const getLexicalError = (start: number, end: number, after: string) => {
     const index = end - 1;
     const line = positions.lines[index];
@@ -407,14 +392,12 @@ export const createSanyLexer = (source: string) => {
       ? formatLexicalError(line + 1, 0, undefined, after)
       : formatLexicalError(line, column + 1, undefined, after);
   };
-  // A comment is a chain of MORE matches, which restarts after each nested comment bracket, and the
-  // end of the file right after a bracket ends the token stream.
   const skipComment = () => {
-    const start = state.offset;
+    const start = cursor;
     if (source.startsWith("\\*", start)) {
       const end = source.slice(start).search(/[\n\r]/);
       if (end === -1) return getLexicalError(start, source.length, "");
-      state.offset += end + 1;
+      cursor += end + 1;
       return undefined;
     }
     let depth = 0;
@@ -430,41 +413,40 @@ export const createSanyLexer = (source: string) => {
         offset += 2;
         chainStart = offset;
         if (depth === 0) {
-          state.offset = offset;
+          cursor = offset;
           return undefined;
         }
       } else offset++;
     }
-    state.offset = offset;
+    cursor = offset;
     return chainStart === source.length ? undefined : getLexicalError(chainStart, offset, "");
   };
   const getSkippingToken = (patterns: [string, RegExp[]][]): SanyToken => {
-    while (state.offset < source.length) {
-      const match = matchPatterns(patterns, source, state.offset);
+    while (cursor < source.length) {
+      const match = matchPatterns(patterns, source, cursor);
       if (match.length > 0) {
-        const token = createToken(match.kind, state.offset, match.length);
-        state.offset += match.length;
-        if (KIND_NAMES[match.kind].startsWith("_BM")) state.mode = "SPEC";
-        if (KIND_NAMES[match.kind] === "BEGIN_PRAGMA") state.mode = "PRAGMA";
+        const token = createToken(match.kind, cursor, match.length);
+        cursor += match.length;
+        if (KIND_NAMES[match.kind].startsWith("_BM")) mode = "SPEC";
+        if (KIND_NAMES[match.kind] === "BEGIN_PRAGMA") mode = "PRAGMA";
         return token;
       }
-      state.offset++;
+      cursor++;
     }
     return getEndOfFile();
   };
   const getNextToken = (): SanyToken | string => {
-    if (state.mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
-    if (state.mode === "PRAGMA") return getSkippingToken(PRAGMA_PATTERNS);
-    while (state.offset < source.length) {
-      const offset = state.offset;
-      if (" \t\n\r".includes(source[offset])) state.offset++;
+    if (mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
+    if (mode === "PRAGMA") return getSkippingToken(PRAGMA_PATTERNS);
+    while (cursor < source.length) {
+      const offset = cursor;
+      if (" \t\n\r".includes(source[offset])) cursor++;
       else if (source.startsWith("(*", offset) || source.startsWith("\\*", offset)) {
         const error = skipComment();
         if (error !== undefined) return error;
       } else {
         const match = matchSpecToken(source, offset);
         if (match.length === 0) {
-          // JavaCC reads on while a token could continue, and one more character.
           const prefix = getTokenPrefix(source, offset);
           const end = Math.min(offset + prefix.length + 1, source.length);
           const read = source.slice(offset, end);
@@ -472,7 +454,7 @@ export const createSanyLexer = (source: string) => {
           return getLexicalError(offset, end, after);
         }
         const token = createToken(match.kind, offset, match.length);
-        state.offset += match.length;
+        cursor += match.length;
         return token;
       }
     }
@@ -481,7 +463,6 @@ export const createSanyLexer = (source: string) => {
   return getNextToken;
 };
 
-// JavaCC's TokenMgrError.addEscapes, which escapes the characters of a lexical error's message.
 const LEXEME_ESCAPES = new Map([
   ["\b", "\\b"],
   ["\t", "\\t"],
@@ -502,8 +483,6 @@ export const escapeLexeme = (text: string) =>
       (character === "\0" ? "" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`),
   );
 
-// TokenMgrError.LexicalError: the character the lexer stopped at, or the end of the file, and the
-// characters of the token it had read.
 export const formatLexicalError = (
   line: number,
   column: number,
@@ -512,8 +491,6 @@ export const formatLexicalError = (
 ) =>
   `Lexical error at line ${line}, column ${column}.  Encountered: ${character === undefined ? "<EOF> " : `"${escapeLexeme(character)}" (${character.charCodeAt(0)}), `}after : "${escapeLexeme(after)}"`;
 
-// TLC 1.7.4's lexer, which JavaCC generated without UNICODE_INPUT, reads a character past U+00FF
-// outside a comment by its low byte, and stops at one whose low byte is below 0x80.
 export const getSany174LexicalError = (source: string) => {
   const readToken = createSanyLexer(source);
   for (

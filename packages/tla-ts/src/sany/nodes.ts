@@ -1,6 +1,3 @@
-// The semantic nodes of SANY's tla2sany.semantic package that its XMLExporter writes out, with the
-// fields that the export and SANY's level checking read.
-
 export interface SanyLocation {
   file: string;
   beginLine: number;
@@ -9,27 +6,21 @@ export interface SanyLocation {
   endColumn: number;
 }
 
-// An error or warning SANY reports, with the location its message names. A location of undefined
-// is SANY's unknown location, and one that is just a module name stands for the whole module.
 export interface SanyMessage {
   location: SanyLocation | string | undefined;
   text: string;
   isWarning: boolean;
-  // The ErrorCode SANY files a message under, where another check files the same text.
   code?: string;
 }
 
-// Errors.addMessage: SANY keeps one copy of each message, and after TLC 1.7.4 one for each code.
 export const addSanyMessage = (messages: SanyMessage[], message: SanyMessage) => {
   const key = JSON.stringify(message);
   if (!messages.some((candidate) => JSON.stringify(candidate) === key)) messages.push(message);
 };
 
-// Location.toString.
 export const formatSanyLocation = (location: SanyMessage["location"]) => {
   if (location === undefined) return "Unknown location";
   if (typeof location === "string") return `In module ${location}`;
-  // Location.toString names only the module of a location at line 0, column 0.
   if (
     location.beginLine === 0 &&
     location.beginColumn === 0 &&
@@ -41,23 +32,18 @@ export const formatSanyLocation = (location: SanyMessage["location"]) => {
   return `line ${location.beginLine}, col ${location.beginColumn} to line ${location.endLine}, col ${location.endColumn} of module ${location.file}`;
 };
 
-// SANY's ArgLevelParam: the level of argument index of operator op depends on param.
 export interface ArgLevelParam {
   op: SymbolNode;
   index: number;
   param: SymbolNode;
 }
 
-// SANY's ParamAndPosition with its level in a SetOfArgLevelConstraints: the argument at position of
-// operator param must be allowed a level of at least level.
 export interface ArgLevelConstraint {
   param: SymbolNode;
   position: number;
   level: number;
 }
 
-// The fields of SANY's LevelNode. levelChecked is 0 until levelCheck runs, and SANY exports a level
-// only for the nodes it has level-checked.
 export interface LevelFields {
   id: number;
   levelChecked: number;
@@ -67,12 +53,10 @@ export interface LevelFields {
   nonLeibnizParams: Set<SymbolNode>;
   argLevelParams: Map<string, ArgLevelParam>;
   levelCorrect: boolean;
-  // SetOfLevelConstraints: the highest level each parameter may have.
   levelConstraints: Map<SymbolNode, number>;
   argLevelConstraints: Map<string, ArgLevelConstraint>;
 }
 
-// SANY's kinds of declared symbols, from tla2sany.semantic.ASTConstants.
 export const CONSTANT_DECL_KIND = 2;
 export const VARIABLE_DECL_KIND = 3;
 export const NEW_CONSTANT_KIND = 24;
@@ -117,7 +101,6 @@ export interface OpDefNode extends LevelFields {
   maxLevels: number[];
   minMaxLevel: number[][] | undefined;
   labels: Map<string, LabelNode>;
-  // The DEFINE, USE, HIDE or INSTANCE step that a NumberedProofStep definition names.
   step: ProofStepNode | undefined;
 }
 
@@ -154,7 +137,6 @@ export interface ModuleNode {
   argLevelParams: Map<string, ArgLevelParam>;
   levelConstraints: Map<SymbolNode, number>;
   argLevelConstraints: Map<string, ArgLevelConstraint>;
-  // ModuleNode.getRecords: the record constructors and sets of records generated for the module.
   records: OpApplNode[];
 }
 
@@ -169,28 +151,26 @@ export interface OpApplNode extends LevelFields {
   tupleOrs: boolean[] | undefined;
   ranges: ExprNode[];
   location: SanyLocation;
-  // Generator.nullOAN, whose operator, nullODN, has no kind that the XMLExporter can export.
   isNull?: boolean;
-  // The null that SANY generates for an operator it cannot resolve.
   isAbsent?: boolean;
 }
 
 export const isAbsent = (node: LevelNode | undefined) =>
   node?.kind === "OpAppl" && node.isAbsent === true;
 
-export interface NumeralNode extends LevelFields {
+interface NumeralNode extends LevelFields {
   kind: "Numeral";
   value: string;
   location: SanyLocation;
 }
 
-export interface StringNode extends LevelFields {
+interface StringNode extends LevelFields {
   kind: "String";
   value: string;
   location: SanyLocation;
 }
 
-export interface DecimalNode extends LevelFields {
+interface DecimalNode extends LevelFields {
   kind: "Decimal";
   mantissa: string;
   exponent: string;
@@ -214,7 +194,6 @@ export interface LabelNode extends LevelFields {
   params: FormalParamNode[];
   body: LevelNode;
   labels: Map<string, LabelNode>;
-  isAssumeProve: boolean;
   location: SanyLocation;
 }
 
@@ -224,7 +203,7 @@ export interface OpArgNode extends LevelFields {
   location: SanyLocation;
 }
 
-export interface AtNode extends LevelFields {
+interface AtNode extends LevelFields {
   kind: "At";
   except: OpApplNode;
   component: OpApplNode;
@@ -272,8 +251,6 @@ export interface TheoremNode extends LevelFields {
   location: SanyLocation;
 }
 
-// A fact of a BY, USE or HIDE: an expression, an ASSUME/PROVE or NEW clause, a module, or the
-// definition of a module instance.
 export type FactNode = LevelNode | ModuleNode | OpDefNode;
 
 export interface LeafProofNode extends LevelFields {
@@ -348,9 +325,6 @@ type TopLevelNode = InstanceNode | AssumeNode | TheoremNode | UseOrHideNode;
 
 export type SemanticNode = SymbolNode | LevelNode | TopLevelNode | ProofPartNode;
 
-// SANY's Context: a java.util.Hashtable from names to symbols, whose iteration order SANY's lists
-// of constants, variables and instantiated definitions follow, and the symbols in the order they
-// were added.
 export interface Context {
   table: JavaHashtable;
   symbols: SymbolNode[];
@@ -368,7 +342,6 @@ interface JavaHashtable {
   threshold: number;
 }
 
-// java.lang.String.hashCode, over UTF-16 code units.
 const getJavaHash = (text: string) => {
   let hash = 0;
   for (let index = 0; index < text.length; index++) {
@@ -377,7 +350,6 @@ const getJavaHash = (text: string) => {
   return hash;
 };
 
-// A java.util.Hashtable with its default capacity of 11 and load factor of 0.75.
 const createJavaHashtable = (): JavaHashtable => ({
   buckets: Array.from({ length: 11 }, () => []),
   count: 0,
@@ -417,7 +389,6 @@ const putHashtableValue = (table: JavaHashtable, key: string, value: SymbolNode,
   table.count++;
 };
 
-// The values in the order of Hashtable.elements(), from the last bucket to the first.
 export const getHashtableValues = (table: JavaHashtable) =>
   table.buckets.toReversed().flatMap((bucket) => bucket.map((entry) => entry.value));
 
@@ -442,14 +413,11 @@ export const getContextSymbol = (context: Context, name: string) =>
 export const getContextModule = (context: Context, name: string) =>
   getHashtableValue(context.table, MODULE_KEY_PREFIX + name, name);
 
-// ModuleNode.getOpDefs: the definitions in the order they joined the context, without builtins
-// and module instances.
 export const getOpDefs = (module: ModuleNode) =>
   module.context.symbols.filter(
     (symbol): symbol is OpDefNode => symbol.kind === "OpDef" && symbol.defKind === "UserDefined",
   );
 
-// ModuleNode.getConstantDecls and getVariableDecls reverse the Hashtable's order.
 export const getDeclarations = (module: ModuleNode, declKind: number) =>
   getHashtableValues(module.context.table)
     .filter(

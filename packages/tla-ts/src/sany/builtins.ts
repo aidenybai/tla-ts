@@ -1,7 +1,5 @@
 import type { FormalParamNode, LevelFields, OpDefNode, SanyLocation } from "./nodes";
 
-// tla2sany.semantic.BuiltInOperators: name, arity, level, maximum argument levels and argument
-// weights. SANY leaves the levels of "." and \neg unset.
 const BUILTIN_OPERATORS: [string, number, number, number[] | undefined, number[] | undefined][] = [
   ["STRING", 0, 0, [], []],
   ["FALSE", 0, 0, [], []],
@@ -98,15 +96,13 @@ export const createLevelFields = (id: number): LevelFields => ({
   argLevelConstraints: new Map(),
 });
 
-// The builtin operators in the order SANY adds them to its global context. OpDefNode's constructor
-// for a builtin numbers the operator, then its phony parameters.
 export const createBuiltins = (getId: () => number) =>
   BUILTIN_OPERATORS.map(([name, arity, level, maxLevels, weights]): OpDefNode => {
     const id = getId();
     const params =
       arity < 0
         ? undefined
-        : Array.from({ length: arity }, (_, index): FormalParamNode => ({
+        : Array.from({ length: arity }, (_element, index): FormalParamNode => ({
             ...createLevelFields(getId()),
             kind: "FormalParam",
             name: `Formal_${index}`,

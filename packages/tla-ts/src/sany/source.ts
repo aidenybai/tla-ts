@@ -5,8 +5,6 @@ import { getTabStop } from "./lexer";
 import { getSanyParseError } from "./parse-error";
 import type { SanyLocation } from "./nodes";
 
-// The tokens of one file, to find the locations SANY gives to names, brackets and parentheses that
-// the syntax tree of tla-ts leaves out, and the comments SANY attaches to definitions.
 export interface SourceFile {
   name: string;
   source: string;
@@ -48,7 +46,6 @@ export const isToken = (file: SourceFile, index: number, text: string) =>
   file.tokens[index].text === text &&
   file.tokens[index].kind !== "String";
 
-// The number of tokens, in source order, before a position, or at or before it when isAtCounted.
 const countTokensBefore = (file: SourceFile, position: SourceLocation, isAtCounted: boolean) => {
   let low = 0;
   let high = file.tokens.length;
@@ -65,12 +62,10 @@ const countTokensBefore = (file: SourceFile, position: SourceLocation, isAtCount
   return low;
 };
 
-// The index of the first token at or after a position.
 export const getTokenIndex = (file: SourceFile, position: SourceLocation) =>
   file.tokenIndexes.get(getPositionKey(position.line, position.column)) ??
   Math.min(countTokensBefore(file, position, false), file.tokens.length - 1);
 
-// The index of the last token at or before a position.
 const getEndTokenIndex = (file: SourceFile, position: SourceLocation) =>
   Math.max(countTokensBefore(file, position, true) - 1, 0);
 
@@ -99,8 +94,6 @@ export const getRangeSpan = (file: SourceFile, range: SourceRange): TokenSpan =>
   end: getEndTokenIndex(file, range.end),
 });
 
-// The tokens of an expression. Some nodes, such as a tuple in a subscript, have no range, so their
-// span runs from their first token to the bracket that closes it.
 export const getExpressionSpan = (file: SourceFile, expression: Expression): TokenSpan => {
   const range = expression.location.range;
   if (range) return getRangeSpan(file, range);
@@ -108,8 +101,6 @@ export const getExpressionSpan = (file: SourceFile, expression: Expression): Tok
   return { start, end: getMatchingIndex(file, start) };
 };
 
-// The span with the parentheses around it, as SANY locates a parenthesized operand by its
-// parentheses.
 export const getParenthesizedSpan = (file: SourceFile, span: TokenSpan): TokenSpan => {
   const start = span.start - 1;
   const end = span.end + 1;
@@ -123,8 +114,6 @@ export const getParenthesizedSpan = (file: SourceFile, span: TokenSpan): TokenSp
   return span;
 };
 
-// SANY's parser keeps the parentheses around an argument of an operator, which the span of the
-// argument's expression leaves out. Those of the operator's own arguments follow its name.
 export const getArgumentSpan = (file: SourceFile, span: TokenSpan): TokenSpan => {
   const start = span.start - 1;
   const end = span.end + 1;
@@ -157,14 +146,12 @@ const getOffset = (file: SourceFile, line: number, column: number) => {
   return offset;
 };
 
-// The token as the source spells it, where the token's text is the name of the operator.
 export const getTokenSource = (file: SourceFile, index: number) => {
   const token = file.tokens[index];
   const start = getOffset(file, token.line, token.column);
   return file.source.slice(start, getOffset(file, token.line, token.endColumn) + 1);
 };
 
-// SANY lexes []ASSUME and []PROVE as single tokens.
 export const isBoxToken = (file: SourceFile, index: number) => {
   const box = file.tokens[index];
   const next = file.tokens[index + 1];
@@ -194,7 +181,6 @@ export const getUnboxedSource = (source: string) => {
   return unboxed;
 };
 
-// The comments between a token and the one before it, which SANY's parser attaches to the token.
 export const getPreComments = (file: SourceFile, index: number) => {
   const previous = file.tokens[index - 1];
   const token = file.tokens[index];
@@ -209,7 +195,6 @@ export const getPreComments = (file: SourceFile, index: number) => {
       comments.push(gap.slice(offset, end));
       offset = end;
     } else if (gap.startsWith("(*", offset)) {
-      // SANY's lexer ends a comment token at each (* and *) nested in a block comment.
       let depth = 1;
       let segmentStart = offset;
       let end = offset + 2;
