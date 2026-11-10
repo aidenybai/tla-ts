@@ -513,11 +513,71 @@ const loosen = () => {
   return edits.size > 0;
 };
 
+// A function that a test declares and passes by name, once, takes the parameter types of the
+// callback it's passed as, such as an array method's (value, index, array), which usage alone
+// doesn't give.
+const typeCallbacks = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const references = new Map<ts.FunctionDeclaration, ts.Identifier[]>();
+  const visit = (node: ts.Node) => {
+    const declaration = ts.isIdentifier(node)
+      ? checker.getSymbolAtLocation(node)?.valueDeclaration
+      : undefined;
+    if (
+      ts.isIdentifier(node) &&
+      declaration !== undefined &&
+      ts.isFunctionDeclaration(declaration) &&
+      declaration.name !== node
+    ) {
+      references.set(declaration, [...(references.get(declaration) ?? []), node]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  const edits = new Map<number, string>();
+  references.forEach((identifiers, declaration) => {
+    const passed = identifiers[0];
+    if (
+      identifiers.length !== 1 ||
+      !(ts.isCallExpression(passed.parent) || ts.isNewExpression(passed.parent)) ||
+      !passed.parent.arguments?.includes(passed)
+    ) {
+      return;
+    }
+    const signatures = checker.getContextualType(passed)?.getCallSignatures() ?? [];
+    if (signatures.length !== 1) return;
+    declaration.parameters.forEach((parameter, position) => {
+      const given = signatures[0].parameters.at(position);
+      if (
+        given === undefined ||
+        parameter.type !== undefined ||
+        parameter.initializer !== undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        !ts.isIdentifier(parameter.name)
+      ) {
+        return;
+      }
+      const type = checker.typeToString(
+        checker.getTypeOfSymbol(given),
+        undefined,
+        ts.TypeFormatFlags.NoTruncation,
+      );
+      if (/\b(?:any|this)\b/.test(type)) return;
+      edits.set(parameter.name.getEnd(), `: ${type}`);
+    });
+  });
+  if (edits.size > 0) applyEdits(edits);
+};
+
 // test262 is JavaScript, so its functions and variables have no types. This annotates them as
 // TypeScript's "Infer type from usage" fix does, with unknown where it infers any, then loosens
 // the types of the objects it describes.
 const annotate = (text: string) => {
   setText(text);
+  typeCallbacks();
   for (;;) {
     const fix = service
       .getSemanticDiagnostics(PROGRAM_PATH)
