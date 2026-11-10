@@ -17,7 +17,7 @@ import {
   createTuple,
   formatValue,
   getSequenceElements,
-  getWrittenPairs,
+  getPrintedPairs,
   isFunctionValue,
   isTlcEnumerable,
   toFiniteFunction,
@@ -77,7 +77,7 @@ const toJsonString = (text: string) =>
 const toArrayJson = (elements: Value[]) => `[${elements.map(toJson).join(",")}]`;
 
 const toObjectJson = (functionValue: FunctionValue) =>
-  `{${getWrittenPairs(functionValue)
+  `{${getPrintedPairs(functionValue)
     .map(
       (pair) =>
         `${toJsonString(typeof pair[0] === "string" ? pair[0] : formatValue(pair[0]))}:${toJson(pair[1])}`,

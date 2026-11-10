@@ -234,9 +234,9 @@ export const describeKind = (value: Value) => {
 export const isTlcInteger = (value: number) =>
   Number.isInteger(value) && value <= MAXIMUM_INTEGER && value >= MINIMUM_INTEGER;
 
-// TLC keeps a record, or a function @@ builds with a key other than an integer, in written order
-// until it sorts it to compare or fingerprint it. ToString, Assert, and error messages show that
-// order.
+// TLC keeps a record, or a function @@ builds, in written order until it sorts it to compare or
+// fingerprint it. It searches the function in that order, and ToString, Assert, and error
+// messages show it, unless every key is an integer.
 const writtenOrderUse = { isUsed: false };
 
 const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
@@ -245,11 +245,22 @@ const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
   return functionValue;
 };
 
-export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
-  const isSorted = functionValue.hash !== 0 || functionValue.fingerprint !== 0;
-  const keys = (isSorted ? undefined : functionValue.writtenKeys) ?? functionValue.domain;
-  return keys.map((key) => [key, functionValue.range[findSortedIndex(functionValue.domain, key)]]);
-};
+const getWrittenKeys = (functionValue: FunctionValue) =>
+  (functionValue.hash !== 0 || functionValue.fingerprint !== 0
+    ? undefined
+    : functionValue.writtenKeys) ?? functionValue.domain;
+
+export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] =>
+  getWrittenKeys(functionValue).map((key) => [
+    key,
+    functionValue.range[functionValue.domain.indexOf(key)],
+  ]);
+
+// TLC sorts a function whose keys are all integers to check whether it is a tuple.
+export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] =>
+  functionValue.domain.every((key) => typeof key === "number")
+    ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
+    : getWrittenPairs(functionValue);
 
 export const createWrittenRecord = (names: Value[], range: Value[], writtenNames: Value[]) =>
   setWrittenOrder(createSortedRecord(names, range), writtenNames);
@@ -397,7 +408,7 @@ const isOverriddenComparison = (left: Value, right: Value) =>
 const createComparisonError = (left: Value, right: Value) =>
   new TlaEvaluationError(
     isOverriddenSet(left)
-      ? `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right, true)}`
+      ? `Attempted to compare overridden value ${formatValue(left, true)} with non-overridden value:\n${formatValue(right)}`
       : `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
   );
 
@@ -1277,7 +1288,6 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
   const functionValue = createFunction(pairs);
   const isWrittenSorted =
     functionValue.domain.length !== pairs.length ||
-    pairs.every((pair) => typeof pair[0] === "number") ||
     pairs.every((pair, index) => pair[0] === functionValue.domain[index]);
   return isWrittenSorted
     ? functionValue
@@ -1607,7 +1617,11 @@ const enumerateSet = (
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${formatValue(value.base)}\nis not enumerable`,
         );
       }
-      return toFiniteSet(value.base).elements.filter((element) => value.test(element, false));
+      return toFiniteSet(
+        createEnumeratedSet(
+          getStreamedElements(value.base).filter((element) => value.test(element, false)),
+        ),
+      ).elements;
     case "Union": {
       const elements: Value[] = [];
       getUnionSets(value).forEach((set, index) => {
@@ -1686,17 +1700,42 @@ export const toFiniteSet = (value: Value): SetValue => {
   return set;
 };
 
+// TLC's enumerator of a set sorts the set enumerations it streams, and fails on a set it can't
+// enumerate, before it yields an element, so S \cup T fails on T before it streams S.
+const openStream = (value: Value): void => {
+  if (typeof value !== "object" || isCachedSet(value)) return;
+  switch (value.kind) {
+    case "MixedSet":
+      toFiniteSet(value);
+      return;
+    case "FilteredSet":
+      if (!isTlcEnumerable(value.base)) getStreamedElements(value);
+      return openStream(value.base);
+    case "Union":
+      if (!isEnumeratedSet(value.base) && isTlcEnumerable(value.base)) {
+        return openStream(value.base);
+      }
+      getUnionSets(value)
+        .slice(0, 1)
+        .forEach((set) => openStream(getUnionSet(set, 0, value)));
+      return;
+    case "SetOperation":
+      if (value.operator === "\\" && !isTlcEnumerable(value.left)) getStreamedElements(value);
+      if (value.operator !== "\\cap" || isTlcEnumerable(value.left)) openStream(value.left);
+      else openStream(value.right);
+      if (value.operator === "\\cup") openStream(value.right);
+  }
+};
+
 const listUnionLikeTlc = (union: SetOperationValue) => {
   if (!isTlcEnumerable(union.left) || !isTlcEnumerable(union.right)) {
     throw new TlaEvaluationError(
       `Attempted to enumerate S \\cup T when S:\n${formatValue(union.left)}\nand T:\n${formatValue(union.right)}\nare not both enumerable`,
     );
   }
-  if (isBeyondSetBound(union.left)) {
-    // TLC opens the right set's enumerator before it streams the left set past the bound.
-    getStreamedElements(union.right);
-    throw new TlaSetBoundError(SET_BOUND_MESSAGE);
-  }
+  openStream(union.left);
+  openStream(union.right);
+  if (isBeyondSetBound(union.left)) throw new TlaSetBoundError(SET_BOUND_MESSAGE);
   const left = getStreamedElements(union.left);
   const right = isBeyondSetBound(union.right) ? undefined : getStreamedElements(union.right);
   if (!right || left.length + right.length > SET_BOUND) {
@@ -2356,11 +2395,20 @@ export const createNonIntegerKeyError = (argument: Value) =>
 // TLC searches a domain this small linearly with equals, and a larger one with compareTo.
 const LINEAR_SEARCH_LIMIT = 32;
 
-const failKeyLikeTlc = (domain: Value[], argument: Value, error: TlaEvaluationError): never => {
-  if (valueVersion.is174 || domain.length < LINEAR_SEARCH_LIMIT) {
-    domain.forEach((key) => equalsLikeTlc(key, argument));
+const findDomainIndex = (functionValue: FunctionValue, argument: Value) =>
+  findSortedIndex(functionValue.domain, argument);
+
+// TLC searches a function it hasn't normalized linearly, in the order its keys were written.
+const failKeyLikeTlc = (
+  functionValue: FunctionValue,
+  argument: Value,
+  error: TlaEvaluationError,
+): never => {
+  const keys = getWrittenKeys(functionValue);
+  if (valueVersion.is174 || keys !== functionValue.domain || keys.length < LINEAR_SEARCH_LIMIT) {
+    keys.forEach((key) => equalsLikeTlc(key, argument));
   } else {
-    findSortedIndex(domain, argument, compareLikeTlc);
+    findSortedIndex(keys, argument, compareLikeTlc);
   }
   throw error;
 };
@@ -2391,10 +2439,11 @@ const findKeyIndexLikeTlc = (
   }
   const identical = findIdenticalKey(domain, argument);
   if (identical !== -1) return identical;
-  return computeLikeTlcOnFailure(findSortedIndex, failKeyLikeTlc, domain, argument);
+  return computeLikeTlcOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
 };
 
-// TLC indexes past an argument tuple shorter than the bounds and ignores one longer.
+// TLC checks each argument against its bound in turn. It indexes past an argument tuple shorter
+// than the bounds and ignores one longer, where this fails instead.
 const checkBoundArguments = (
   functionValue: LazyFunctionValue,
   tupleLengths: (number | undefined)[],
@@ -2409,16 +2458,13 @@ const checkBoundArguments = (
       describe("argument list", argument, "does not match its formal parameter"),
     );
   }
-  if (
-    elements.length !== tupleLengths.length ||
-    typeof domain !== "object" ||
-    domain.kind !== "ProductSet"
-  ) {
-    throw new TlaEvaluationError(
-      `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
-    );
+  const describeOutside = () =>
+    `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`;
+  if (typeof domain !== "object" || domain.kind !== "ProductSet") {
+    throw new TlaEvaluationError(describeOutside());
   }
   tupleLengths.forEach((tupleLength, index) => {
+    if (index >= elements.length) throw new TlaEvaluationError(describeOutside());
     const element = elements[index];
     const position = `argument number ${index + 1}`;
     if (!isElementOf(element, domain.factors[index])) {
@@ -2438,7 +2484,16 @@ const checkBoundArguments = (
       );
     }
   });
+  if (elements.length > tupleLengths.length) throw new TlaEvaluationError(describeOutside());
 };
+
+// TLC checks that a FcnLambdaValue's domain holds the argument, and searches only the FcnRcdValue
+// it converts the lambda to when it fingerprints it.
+const isOutsideLambdaDomain = (functionValue: FunctionValue, argument: Value) =>
+  functionValue.lambdaDomain !== undefined &&
+  functionValue.hash === 0 &&
+  functionValue.fingerprint === 0 &&
+  !isElementOf(argument, functionValue.lambdaDomain);
 
 export const applyFunction = (
   functionValue: Value,
@@ -2469,6 +2524,9 @@ export const applyFunction = (
     );
   }
   const describe = describeMissing ?? describeMissingArgument;
+  if (isOutsideLambdaDomain(functionValue, argument)) {
+    throw new TlaEvaluationError(describe(functionValue, argument));
+  }
   const position = findKeyIndexLikeTlc(functionValue, argument, describe);
   if (position === -1) throw new TlaEvaluationError(describe(functionValue, argument));
   return functionValue.range[position];
@@ -2505,7 +2563,7 @@ export const updateFunction = (
   const isLazy =
     typeof functionValue === "object" &&
     functionValue.kind === "LazyFunction" &&
-    (isKeptLazy || !isEnumerable(functionValue.domain));
+    (isKeptLazy || functionValue.enumerated === undefined);
   if (isLazy) {
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
@@ -2526,6 +2584,7 @@ export const updateFunction = (
     );
   }
   const finite = toFiniteFunction(functionValue);
+  if (isOutsideLambdaDomain(finite, argument)) return finite;
   const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
   if (position === -1) return finite;
   const range = [...finite.range];
@@ -2892,6 +2951,9 @@ export const formatNormalizedCopies = (values: Value[]) => {
       case "Function":
         value.range.forEach(normalize);
         return;
+      case "LazyFunction":
+        normalize(value.enumerated ?? value.domain);
+        return;
       case "SetOperation":
         normalize(value.left);
         normalize(value.right);
@@ -2982,7 +3044,7 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       }
       const pairs = isNormalized
         ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
-        : getWrittenPairs(functionValue);
+        : getPrintedPairs(functionValue);
       // A RecordValue always prints as a record, a FcnRcdValue only if its keys are names.
       if (
         getFunctionClass(value) === "record" ||

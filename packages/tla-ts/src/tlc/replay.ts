@@ -28,6 +28,7 @@ import {
   setTrace,
   type Value,
 } from "../values";
+import { substitutionFrames } from "../instances";
 import { MESSAGE_CODE } from "./messages";
 
 // Replays a failed computation as TLC's CallStackTool does, walking the predicates in the order
@@ -57,7 +58,9 @@ interface Replay {
 
 const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Result): Result => {
   const callStack = replay.callStack;
-  callStack.expressions.push(expression);
+  const isEntered = callStack.expressions.at(-1) === expression;
+  const frames = (!isEntered && substitutionFrames.get(expression)) || [];
+  callStack.expressions.push(...frames, expression);
   const outerSets = setTrace.sets;
   const sets = outerSets ?? [];
   const depth = sets.length;
@@ -69,7 +72,7 @@ const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Re
     freezeCallStack(callStack, sets.slice(depth), error);
     throw error;
   } finally {
-    if (!callStack.isFrozen) callStack.expressions.pop();
+    if (!callStack.isFrozen) callStack.expressions.length -= frames.length + 1;
     sets.length = depth;
     setTrace.sets = outerSets;
   }
@@ -195,7 +198,13 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
         : error;
     }
   })();
-  return !isEqualLikeTlc(before, after);
+  try {
+    return !isEqualLikeTlc(before, after);
+  } catch (error) {
+    // TLC's v0.equals(v1) raises a FingerprintException when v0 has a source.
+    freezeCallStack(replay.callStack, [before], error);
+    throw error;
+  }
 };
 
 const proceedAssigned = (replay: Replay, items: ActionItem | undefined, partial: Value[]): void => {
