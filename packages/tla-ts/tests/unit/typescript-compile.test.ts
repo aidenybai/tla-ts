@@ -2180,6 +2180,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("converts conditions to booleans in scripts as JavaScript does", async () => {
+    const result = await checkModel(`
+      let log = "";
+      const values: unknown[] = [0, 1, "", "a", null, undefined, {}, [], NaN, -0, false, true];
+      for (const value of values) {
+        if (value) log = log + "t";
+        else log = log + "f";
+        if (!value) log = log + "n";
+        log = log + (value ? "y" : "x");
+      }
+      let count = 3;
+      while (count) count = count - 1;
+      if (log !== "fnxtyfnxtyfnxfnxtytyfnxfnxfnxty" || count !== 0) throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

@@ -1187,11 +1187,14 @@ const translateElementAccess = (
   );
 };
 
+// A condition, which a script converts to a boolean as JavaScript does, while a spec compares
+// explicitly.
 export const translateCondition = (node: ts.Expression, scope: Scope, context: Context) => {
-  if (!isBooleanLike(node, context)) {
+  if (isBooleanLike(node, context)) return translateExpression(node, scope, context);
+  if (context.heap === undefined) {
     throw new TlaTypeScriptError("Conditions must be booleans, so compare explicitly", node);
   }
-  return translateExpression(node, scope, context);
+  return useJavaScript("ToBoolean", [translateExpression(node, scope, context)], context);
 };
 
 // Negates a condition, cancelling ! and turning a negated || into a conjunction of guards, so that
@@ -1275,10 +1278,10 @@ const translateNode = (
   }
   if (ts.isIdentifier(node)) return translateIdentifier(node, scope, context);
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
-    if (!isBooleanLike(node.operand, context)) {
+    if (!isBooleanLike(node.operand, context) && context.heap === undefined) {
       throw new TlaTypeScriptError("! needs a boolean, so compare explicitly", node);
     }
-    return not(translateExpression(node.operand, scope, context));
+    return not(translateCondition(node.operand, scope, context));
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
     const isLiteral = ts.isNumericLiteral(node.operand);
