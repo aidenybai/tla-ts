@@ -255,35 +255,38 @@ export const createTlcExtOperators = (
       return true;
     }),
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
-    defineLazyOperator("PickSuccessor", 1, (args, context) => {
-      // Outside an action, TLC's successor is an empty state, which assigns none of the variables.
-      // TLCExt.tla promises TRUE for a successor not fully determined, where TLCExt#pickSuccessor
-      // fingerprints it first and fails.
-      const next = context?.next ?? (context?.environment.variables ?? []).map(() => undefined);
-      if (!isCompleteState(next)) return true;
-      if (context?.next && runtime.isSeen(next)) return true;
-      const guard = getOperator(args, 0, "PickSuccessor");
-      const isPicked = guard.call([]);
-      if (typeof isPicked !== "boolean") {
-        throw new TlaEvaluationError(
-          `In evaluating TLCExt!PickSuccessor, a non-boolean expression (${getKindString(isPicked)}) was used as the condition of an IF.\n${guard.expression ? describeNode(guard.expression) : ""}`,
+    {
+      ...defineLazyOperator("PickSuccessor", 1, (args, context) => {
+        // Outside an action, TLC's successor is an empty state, which assigns none of the variables.
+        // TLCExt.tla promises TRUE for a successor not fully determined, where TLCExt#pickSuccessor
+        // fingerprints it first and fails.
+        const next = context?.next ?? (context?.environment.variables ?? []).map(() => undefined);
+        if (!isCompleteState(next)) return true;
+        if (context?.next && runtime.isSeen(next)) return true;
+        const guard = getOperator(args, 0, "PickSuccessor");
+        const isPicked = guard.call([]);
+        if (typeof isPicked !== "boolean") {
+          throw new TlaEvaluationError(
+            `In evaluating TLCExt!PickSuccessor, a non-boolean expression (${getKindString(isPicked)}) was used as the condition of an IF.\n${guard.expression ? describeNode(guard.expression) : ""}`,
+          );
+        }
+        if (isPicked || !context?.next || !context.state || !isCompleteState(context.state)) {
+          return true;
+        }
+        const action = runtime.getSuccessorAction(context.state, next);
+        print(
+          formatMessage(
+            runtime.isTool,
+            MESSAGE_CODE.moduleOverrideStdout,
+            MESSAGE_LEVEL.none,
+            `Extend behavior of length ${runtime.getLevel(context.state)} with a "${action?.name}" step [<Action ${action?.location.range && formatRange(action.location.range)}>]? (Yes/no/explored/states/diff):`,
+          ),
         );
-      }
-      if (isPicked || !context?.next || !context.state || !isCompleteState(context.state)) {
-        return true;
-      }
-      const action = runtime.getSuccessorAction(context.state, next);
-      print(
-        formatMessage(
-          runtime.isTool,
-          MESSAGE_CODE.moduleOverrideStdout,
-          MESSAGE_LEVEL.none,
-          `Extend behavior of length ${runtime.getLevel(context.state)} with a "${action?.name}" step [<Action ${action?.location.range && formatRange(action.location.range)}>]? (Yes/no/explored/states/diff):`,
-        ),
-      );
-      // tla-ts gives PickSuccessor no standard input to read an answer from.
-      throw new TlaEndOfInputError();
-    }),
+        // tla-ts gives PickSuccessor no standard input to read an answer from.
+        throw new TlaEndOfInputError();
+      }),
+      isActionLevel: true,
+    },
     defineLazyOperator("TLCCache", 2, (args, context) => {
       const expression = getOperator(args, 0, "TLCCache");
       const closure = getValueKey(getThunk(args, 1, "TLCCache")());

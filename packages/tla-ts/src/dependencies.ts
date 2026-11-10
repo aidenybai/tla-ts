@@ -161,7 +161,7 @@ const collectLocalFacts = (
           builtin?.isStateLevel &&
           !builtin.isLevelConstant
         ) {
-          row[0] |= VARIABLE_LEVEL_FLAGS;
+          row[0] |= builtin.isActionLevel ? ACTION_LEVEL_FLAGS : VARIABLE_LEVEL_FLAGS;
         }
       }
     }
