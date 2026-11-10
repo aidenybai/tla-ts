@@ -37,6 +37,13 @@ export default defineConfig({
         rules: { "no-unassigned-vars": "off", "no-constant-binary-expression": "off" },
       },
     ],
-    ignorePatterns: ["node_modules", "dist", "coverage", "pnpm-lock.yaml"],
+    // The conformance suite's TypeScript tests are other projects' code, kept as they wrote it.
+    ignorePatterns: [
+      "node_modules",
+      "dist",
+      "coverage",
+      "pnpm-lock.yaml",
+      "packages/conformance/test",
+    ],
   },
 });

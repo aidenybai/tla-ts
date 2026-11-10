@@ -168,6 +168,12 @@ pnpm --filter @tla-ts/conformance fetch-tlc
 pnpm --filter @tla-ts/conformance conformance
 ```
 
+The suite also model checks TypeScript. It runs TypeScript's single-file test cases, with Node as the oracle. It also checks each source file of TypeScript's compiler and of tla-ts. Fetch TypeScript first:
+
+```shell
+pnpm --filter @tla-ts/conformance fetch-typescript
+```
+
 Rerun the benchmarks with `TLA2TOOLS_JAR` set to the path of `tla2tools.jar`:
 
 ```shell

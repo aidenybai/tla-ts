@@ -44,6 +44,20 @@ describe("parseTest", () => {
     expect(parseSample(RECORDED).source).toBe(parseSample(SOURCE).source);
     expect(getRecording(parseSample(RECORDED), "next")).toEqual({ exit: 0 });
   });
+
+  it("reads a TypeScript test's metadata and recording from block comments", () => {
+    const test = parseTest(
+      join(SUITE_DIRECTORY, "typescript/cases/sample.ts"),
+      "/*---\ndescription: A test.\noutcome: throws\n---*/\nthrow new Error();\n\n/*--- recorded\nall:\n  exit: 1\n  transcript: throws\n---*/\n",
+    );
+    expect([test?.id, test?.suite, test?.metadata.outcome, test?.source]).toEqual([
+      "typescript/cases/sample",
+      "typescript",
+      "throws",
+      "/*---\ndescription: A test.\noutcome: throws\n---*/\nthrow new Error();\n",
+    ]);
+    expect(test && getRecording(test, "model")).toEqual({ exit: 1, transcript: "throws" });
+  });
 });
 
 describe("getCorrection", () => {
