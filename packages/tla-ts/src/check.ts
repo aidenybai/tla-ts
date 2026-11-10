@@ -524,6 +524,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const specNextActions = { value: undefined as SpecAction[] | undefined };
   const getSpecNextActions = () =>
     (specNextActions.value ??= getNextActions(config, environment, specification.instanceActions));
+  // Tool's constructor splits the next-state relation into actions before TLC checks anything.
+  getSpecNextActions();
   const getReplayFailure = (replay: (tracing: Environment) => void): ReplayFailure | undefined => {
     const tracing = createTracingEnvironment(environment);
     const callStack = tracing.callStack;

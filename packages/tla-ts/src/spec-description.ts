@@ -7,12 +7,14 @@ import {
   type SourceRange,
 } from "./ast";
 import type { ModelConfig } from "./config";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { substitutionFrames, withSubstitutionFrames } from "./instances";
 import type { InstanceAction } from "./environment";
-import { formatRange, TlaError } from "./errors";
+import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
   bindDefinitions,
   bindOperatorArguments,
+  describeNode,
   evaluate,
   forEachBinding,
   getDefinition,
@@ -25,6 +27,7 @@ import {
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import { LITERAL_KINDS } from "./tlc/replay";
 import type { TlcVersion } from "./tlc/version";
 
 export interface SpecAction {
@@ -223,6 +226,14 @@ const getActions = (
     expression,
     scope,
   });
+  if (LITERAL_KINDS.has(expression.kind)) {
+    throw setExitCode(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${describeNode(expression)}`,
+      ),
+      EXIT_STATUS.error,
+    );
+  }
   switch (expression.kind) {
     case "Let":
       return getActions(
@@ -492,14 +503,6 @@ const getSpecDescription = (
       ),
     );
   }
-  config.invariants.forEach((name) => {
-    const definition = getOperatorDefinition(name, environment);
-    if (definition) description.invariants.push(createAction(name, definition.body));
-  });
-  config.properties.forEach((name) => {
-    const definition = getOperatorDefinition(name, environment);
-    if (definition) describeProperty(name, definition.body, undefined, environment, description);
-  });
   return description;
 };
 
@@ -585,6 +588,16 @@ export const getSpecificationValue = (
   instanceActions: Map<string, InstanceAction>,
 ): Value => {
   const description = getSpecDescription(config, environment, instanceActions);
+  // Describing a checked formula evaluates the constant definitions it names, so only
+  // TLCGet("spec") describes them, not the actions TLC splits at startup.
+  config.invariants.forEach((name) => {
+    const definition = getOperatorDefinition(name, environment);
+    if (definition) description.invariants.push(createAction(name, definition.body));
+  });
+  config.properties.forEach((name) => {
+    const definition = getOperatorDefinition(name, environment);
+    if (definition) describeProperty(name, definition.body, undefined, environment, description);
+  });
   const toSet = (actions: SpecAction[]) => createSet(actions.map(toActionValue));
   const toDefinitionSet = (names: string[]) =>
     createSet(

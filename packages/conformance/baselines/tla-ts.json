@@ -175,7 +175,6 @@
   "tlc/checker/errors/error_with_view_print": "text-mismatch",
   "tlc/checker/generate/case_unsupported": "exit-mismatch",
   "tlc/checker/init/exists_tuple_pattern_mismatch": "text-mismatch",
-  "tlc/checker/next/numeral_next": "message-mismatch",
   "tlc/checker/possible/in_dfid": "exit-mismatch",
   "tlc/checker/postcondition/constant_rejected": "exit-mismatch",
   "tlc/checker/postcondition/undefined_name": "exit-mismatch",
