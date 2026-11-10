@@ -1,9 +1,6 @@
 import { PcalError, PcalBugError } from "../errors";
 import { createNormalizedPcalExpr, createPcalToken, PCAL_TOKEN, type PcalToken } from "./ast";
 
-// PcalCharReader: reads the algorithm's characters from a start position to the end of the lines,
-// returning "\n" at the end of each line and "\t" at the end of the input. Columns count code
-// points. The lines come without tabs, as trans.removeTabs replaced them.
 export interface PcalCharReader {
   lines: string[];
   currentLine: string[] | undefined;
@@ -55,8 +52,6 @@ const backspacePcalReader = (reader: PcalCharReader) => {
   reader.vcolumn = reader.column;
 };
 
-// PcalCharReader.peek: the rest of the line from the next character that is not white space, with
-// its "\n", or "\t" at the end of the input.
 export const peekPcalReader = (reader: PcalCharReader) => {
   for (;;) {
     const next = getNextPcalChar(reader);
@@ -67,11 +62,9 @@ export const peekPcalReader = (reader: PcalCharReader) => {
   return `${(reader.currentLine ?? []).slice(reader.column).join("")}\n`;
 };
 
-// Symbol.LEFT_PAREN and RIGHT_PAREN of PcalBuiltInSymbols' table.
 const LEFT_PARENS = new Set(["(", "[", "{", "<<", "⟨"]);
 const RIGHT_PARENS = new Set([">>_", "⟩_", "]_", ")", "}", "]", ">>", "⟩"]);
 
-// PcalBuiltInSymbols.buildHashTable.
 const BUILT_IN_SYMBOLS = new Set([
   ...LEFT_PARENS,
   ...RIGHT_PARENS,
@@ -95,35 +88,30 @@ const BUILT_IN_SYMBOLS = new Set([
   ),
 ]);
 
-// tla2tex.Misc.IsLetter, IsDigit and IsSpace, which only accept ASCII.
 const isLetter = (char: string) => /^[A-Za-z_]$/.test(char);
 const isDigit = (char: string) => /^[0-9]$/.test(char);
 const isSpace = (char: string) => char === " " || char === "\f" || char === "\r";
 
-// PcalBuiltInSymbols.buildPrefixHashTable: the prefixes of the symbols that are not words.
 const BUILT_IN_PREFIXES = new Set(
   [...BUILT_IN_SYMBOLS]
     .filter((symbol) => !isLetter(symbol[0]) && !(symbol[0] === "\\" && isLetter(symbol[1] ?? "")))
-    .flatMap((symbol) => Array.from(symbol, (_, index) => symbol.slice(0, symbol.length - index))),
+    .flatMap((symbol) =>
+      Array.from(symbol, (_character, index) => symbol.slice(0, symbol.length - index)),
+    ),
 );
 
-// PcalBuiltInSymbols.buildStringCharTable.
 const STRING_CHARS = new Set(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ~!@#$%^&*()_-+={}[]|:;<,>.?/`'0123456789",
 );
 
-// Tokenize.IsDelimiter: the words and symbols that end an expression of the algorithm.
 const DELIMITERS = new Set(
   "; do then := ≔ begin variable variables || ‖ end else elsif if either or while with call return goto print assert skip procedure define process fair".split(
     " ",
   ),
 );
 
-// tla2tex.Token's types, of which an expression allows the ones TLAToken shares.
 const TOKEN_TYPE = { ...PCAL_TOKEN, dashes: 6, endModule: 7 };
 
-// Tokenize's static Delimiter fields, the delimiter its last call ended at, and its comment depth,
-// which an error in a comment leaves set for the next call.
 export interface PcalTokenizerState {
   delimiter: string;
   delimiterLine: number;
@@ -138,114 +126,93 @@ export const createPcalTokenizerState = (): PcalTokenizerState => ({
   commentDepth: 0,
 });
 
-interface PcalScan {
-  lines: PcalToken[][];
-  line: PcalToken[];
-  token: string;
-  state: string;
-  column: number;
-  nextColumn: number;
-  nextChar: string;
-  parenDepth: number;
-  isInQuantifier: boolean;
-  isExprEnd: boolean;
-  previousToken: string;
-}
-
-// Tokenize.InnerTokenize in TLA mode: reads an expression up to the delimiter that ends it when
-// isExpr, and otherwise a single token of the algorithm, which becomes state.delimiter. A define
-// block's commas at the top level don't end it.
 const tokenize = (
   state: PcalTokenizerState,
   reader: PcalCharReader,
   isExpr: boolean,
   isInDefineBlock: boolean,
 ) => {
-  const scan: PcalScan = {
-    lines: [],
-    line: [],
-    token: "",
-    state: "start",
-    column: reader.vcolumn,
-    nextColumn: reader.vcolumn,
-    nextChar: getNextPcalChar(reader),
-    parenDepth: 0,
-    isInQuantifier: false,
-    isExprEnd: false,
-    previousToken: " ",
-  };
+  const lines: PcalToken[][] = [];
+  let line: PcalToken[] = [];
+  let token = "";
+  let scanState = "start";
+  let column = reader.vcolumn;
+  let nextColumn = reader.vcolumn;
+  let nextChar = getNextPcalChar(reader);
+  let parenDepth = 0;
+  let isInQuantifier = false;
+  let isExprEnd = false;
+  let previousToken = " ";
   const skipNextChar = () => {
-    scan.nextColumn = reader.vcolumn;
-    scan.nextChar = getNextPcalChar(reader);
+    nextColumn = reader.vcolumn;
+    nextChar = getNextPcalChar(reader);
   };
   const addNextChar = () => {
-    scan.token += scan.nextChar;
+    token += nextChar;
     skipNextChar();
   };
   const gotoStart = () => {
-    scan.state = "start";
-    scan.column = scan.nextColumn;
+    scanState = "start";
+    column = nextColumn;
   };
   const startNewLine = () => {
-    scan.lines.push(scan.line);
-    scan.line = [];
-    scan.column = 0;
+    lines.push(line);
+    line = [];
+    column = 0;
   };
   const throwTokenizingError = (message: string): never => {
     throw new PcalError(
-      `${message} \`${scan.token}' found at\n    line ${reader.line + 1}, column ${scan.column + 1}`,
+      `${message} \`${token}' found at\n    line ${reader.line + 1}, column ${column + 1}`,
     );
   };
   const endExpression = () => {
-    scan.isExprEnd = true;
-    state.delimiter = scan.token;
-    state.delimiterCol = scan.column;
-    state.delimiterLine = reader.line - (scan.nextChar === "\n" ? 1 : 0);
+    isExprEnd = true;
+    state.delimiter = token;
+    state.delimiterCol = column;
+    state.delimiterLine = reader.line - (nextChar === "\n" ? 1 : 0);
   };
-  // Tokenize.TokenOut.
   const tokenOut = (type: number) => {
     if (!isExpr) {
       endExpression();
-      scan.token = "";
+      token = "";
       return;
     }
     if (type > TOKEN_TYPE.ident) throwTokenizingError("Illegal token in an expression");
-    const token = scan.token;
     const isDelimiter =
       type !== TOKEN_TYPE.string &&
       ((DELIMITERS.has(token) &&
-        !(type === TOKEN_TYPE.ident && [".", "[", ","].includes(scan.previousToken))) ||
-        (((token === "," && !scan.isInQuantifier && !isInDefineBlock) ||
+        !(type === TOKEN_TYPE.ident && [".", "[", ","].includes(previousToken))) ||
+        (((token === "," && !isInQuantifier && !isInDefineBlock) ||
           token === ")" ||
           token === "}") &&
-          scan.parenDepth === 0));
+          parenDepth === 0));
     if (isDelimiter) {
-      if (scan.parenDepth !== 0) {
+      if (parenDepth !== 0) {
         throwTokenizingError("Expression with an unmatched (, [, {, or << followed by");
       }
-      if (scan.isInQuantifier) {
+      if (isInQuantifier) {
         throwTokenizingError("Expression with \\A or \\E but no following `:` followed by");
       }
       endExpression();
-      if (scan.line.length > 0) startNewLine();
+      if (line.length > 0) startNewLine();
       return;
     }
-    if (type === TOKEN_TYPE.builtin && LEFT_PARENS.has(token)) scan.parenDepth += 1;
+    if (type === TOKEN_TYPE.builtin && LEFT_PARENS.has(token)) parenDepth += 1;
     if (type === TOKEN_TYPE.builtin && RIGHT_PARENS.has(token)) {
-      scan.parenDepth -= 1;
-      if (scan.parenDepth < 0) throwTokenizingError("Extra (unmatching)");
+      parenDepth -= 1;
+      if (parenDepth < 0) throwTokenizingError("Extra (unmatching)");
     }
-    scan.previousToken = type === TOKEN_TYPE.string ? " " : token;
-    if (["\\A", "∀", "\\E", "∃"].includes(token) && scan.parenDepth === 0) {
-      scan.isInQuantifier = true;
+    previousToken = type === TOKEN_TYPE.string ? " " : token;
+    if (["\\A", "∀", "\\E", "∃"].includes(token) && parenDepth === 0) {
+      isInQuantifier = true;
     }
-    if (scan.isInQuantifier && token === ":" && scan.parenDepth === 0) {
-      scan.isInQuantifier = false;
+    if (isInQuantifier && token === ":" && parenDepth === 0) {
+      isInQuantifier = false;
     }
     if (token !== "" || type === TOKEN_TYPE.string) {
-      scan.line.push(createPcalToken(token, scan.column, type));
+      line.push(createPcalToken(token, column, type));
     }
-    scan.token = "";
+    token = "";
   };
   const outputToken = (type: number) => {
     tokenOut(type);
@@ -253,15 +220,14 @@ const tokenize = (
   };
   const addAndGoto = (nextState: string) => {
     addNextChar();
-    scan.state = nextState;
+    scanState = nextState;
   };
   const skipAndGoto = (nextState: string) => {
     skipNextChar();
-    scan.state = nextState;
+    scanState = nextState;
   };
-  // One transition of the state machine on the next character.
   const step = (next: string) => {
-    switch (scan.state) {
+    switch (scanState) {
       case "start":
         if (isSpace(next)) {
           skipNextChar();
@@ -285,17 +251,15 @@ const tokenize = (
         }
         if (BUILT_IN_PREFIXES.has(next)) return addAndGoto("builtIn");
         if (next === "\t") {
-          scan.state = "done";
+          scanState = "done";
           return;
         }
         addNextChar();
         return throwTokenizingError("Illegal lexeme");
       case "id":
-        if (scan.token === "WF_" || scan.token === "SF_") return outputToken(TOKEN_TYPE.builtin);
+        if (token === "WF_" || token === "SF_") return outputToken(TOKEN_TYPE.builtin);
         if (isLetter(next) || isDigit(next)) return addNextChar();
-        return outputToken(
-          BUILT_IN_SYMBOLS.has(scan.token) ? TOKEN_TYPE.builtin : TOKEN_TYPE.ident,
-        );
+        return outputToken(BUILT_IN_SYMBOLS.has(token) ? TOKEN_TYPE.builtin : TOKEN_TYPE.ident);
       case "numOrId":
         if (isDigit(next)) return addNextChar();
         if (isLetter(next)) return addAndGoto("id");
@@ -303,48 +267,47 @@ const tokenize = (
       case "bs":
         if (["b", "B", "o", "O", "h", "H"].includes(next)) return addAndGoto("numOrBi");
         if (isLetter(next)) {
-          scan.state = "bsBuiltIn";
+          scanState = "bsBuiltIn";
           return;
         }
         if (next === "*") {
           skipNextChar();
-          scan.token = "";
-          scan.state = "lineComment";
+          token = "";
+          scanState = "lineComment";
           return;
         }
-        scan.state = "builtIn";
+        scanState = "builtIn";
         return;
       case "numOrBi":
-        scan.state = isDigit(next) ? "num" : "bsBuiltIn";
+        scanState = isDigit(next) ? "num" : "bsBuiltIn";
         return;
       case "num":
         if (isDigit(next)) return addNextChar();
         if (!isLetter(next)) return outputToken(TOKEN_TYPE.number);
         addNextChar();
-        if (scan.token.startsWith("\\")) throwTokenizingError("Illegal lexeme");
-        scan.state = "id";
+        if (token.startsWith("\\")) throwTokenizingError("Illegal lexeme");
+        scanState = "id";
         return;
       case "bsBuiltIn":
         if (isLetter(next) && next !== "_") return addNextChar();
-        if (BUILT_IN_SYMBOLS.has(scan.token)) return outputToken(TOKEN_TYPE.builtin);
+        if (BUILT_IN_SYMBOLS.has(token)) return outputToken(TOKEN_TYPE.builtin);
         return throwTokenizingError("Illegal lexeme ");
       case "builtIn":
-        if (BUILT_IN_PREFIXES.has(scan.token + next)) return addNextChar();
-        // A prefix that is no symbol backs up to its longest symbol.
-        if (!BUILT_IN_SYMBOLS.has(scan.token)) {
+        if (BUILT_IN_PREFIXES.has(token + next)) return addNextChar();
+        if (!BUILT_IN_SYMBOLS.has(token)) {
           backspacePcalReader(reader);
-          while (!BUILT_IN_SYMBOLS.has(scan.token)) {
+          while (!BUILT_IN_SYMBOLS.has(token)) {
             backspacePcalReader(reader);
-            if (scan.token.length === 0) throwTokenizingError("Illegal lexeme");
-            scan.token = Array.from(scan.token).slice(0, -1).join("");
+            if (token.length === 0) throwTokenizingError("Illegal lexeme");
+            token = Array.from(token).slice(0, -1).join("");
           }
           skipNextChar();
         }
         return outputToken(TOKEN_TYPE.builtin);
       case "dash1":
       case "dash2":
-        if (next === "-") return addAndGoto(scan.state === "dash1" ? "dash2" : "dash3");
-        scan.state = "builtIn";
+        if (next === "-") return addAndGoto(scanState === "dash1" ? "dash2" : "dash3");
+        scanState = "builtIn";
         return;
       case "dash3":
         if (next !== "-") throwTokenizingError("Illegal lexeme");
@@ -353,8 +316,8 @@ const tokenize = (
         return next === "-" ? addNextChar() : outputToken(TOKEN_TYPE.dashes);
       case "eq1":
       case "eq2":
-        if (next === "=") return addAndGoto(scan.state === "eq1" ? "eq2" : "eq3");
-        scan.state = "builtIn";
+        if (next === "=") return addAndGoto(scanState === "eq1" ? "eq2" : "eq3");
+        scanState = "builtIn";
         return;
       case "eq3":
         if (next !== "=") throwTokenizingError("Illegal lexeme");
@@ -366,8 +329,8 @@ const tokenize = (
           state.commentDepth = 1;
           return skipAndGoto("comment");
         }
-        scan.token = "(";
-        scan.state = "builtIn";
+        token = "(";
+        scanState = "builtIn";
         return;
       case "string":
         if (next === "\\") return addAndGoto("escString");
@@ -383,13 +346,13 @@ const tokenize = (
         if (!['"', "\\", "t", "n", "f", "r"].includes(next)) {
           throwTokenizingError("Illegal character following \\ in string");
         }
-        scan.state = "string";
+        scanState = "string";
         return;
       case "lineComment":
         if (next === "(") return skipAndGoto("lineComParen");
         if (next === "*" && state.commentDepth > 0) return skipAndGoto("lineComStar");
         if (next === "\n" || next === "\t") {
-          scan.token = "";
+          token = "";
           state.commentDepth = 0;
           return gotoStart();
         }
@@ -399,8 +362,8 @@ const tokenize = (
           state.commentDepth += 1;
           return skipAndGoto("lineComment");
         }
-        if (state.commentDepth === 0) scan.token += "(";
-        scan.state = "lineComment";
+        if (state.commentDepth === 0) token += "(";
+        scanState = "lineComment";
         return;
       case "lineComStar":
         if (next === ")") {
@@ -410,20 +373,19 @@ const tokenize = (
           }
           return skipAndGoto("lineComment");
         }
-        if (state.commentDepth === 0) scan.token += "*";
-        scan.state = "lineComment";
+        if (state.commentDepth === 0) token += "*";
+        scanState = "lineComment";
         return;
-      // A comment that continues past its first line is an "or comment".
       case "comment":
       case "orComment": {
-        const isFirstLine = scan.state === "comment";
+        const isFirstLine = scanState === "comment";
         if (next === "*") return skipAndGoto(isFirstLine ? "commentStar" : "orCommentStar");
         if (next === "(") return skipAndGoto(isFirstLine ? "commentParen" : "orCommentParen");
         if (next === "\n") {
-          scan.token = "";
+          token = "";
           skipNextChar();
           startNewLine();
-          scan.state = "orComment";
+          scanState = "orComment";
           return;
         }
         if (next === "\t") {
@@ -437,10 +399,10 @@ const tokenize = (
       }
       case "commentStar":
       case "orCommentStar": {
-        const commentState = scan.state === "commentStar" ? "comment" : "orComment";
+        const commentState = scanState === "commentStar" ? "comment" : "orComment";
         if (next !== ")") {
-          if (state.commentDepth === 1) scan.token += "*";
-          scan.state = commentState;
+          if (state.commentDepth === 1) token += "*";
+          scanState = commentState;
           return;
         }
         skipNextChar();
@@ -449,38 +411,36 @@ const tokenize = (
           throw new PcalBugError("Assertion failure");
         }
         if (state.commentDepth !== 0) {
-          scan.state = commentState;
+          scanState = commentState;
           return;
         }
-        scan.token = "";
+        token = "";
         return gotoStart();
       }
       case "commentParen":
       case "orCommentParen": {
-        const commentState = scan.state === "commentParen" ? "comment" : "orComment";
+        const commentState = scanState === "commentParen" ? "comment" : "orComment";
         if (next === "*") {
           state.commentDepth += 1;
           return skipAndGoto(commentState);
         }
-        if (state.commentDepth === 1) scan.token += "(";
-        scan.state = commentState;
+        if (state.commentDepth === 1) token += "(";
+        scanState = commentState;
         return;
       }
     }
   };
-  while (scan.state !== "done" && !scan.isExprEnd) step(scan.nextChar);
-  if (scan.nextChar !== "\n") backspacePcalReader(reader);
-  return createNormalizedPcalExpr(scan.lines);
+  while (scanState !== "done" && !isExprEnd) step(nextChar);
+  if (nextChar !== "\n") backspacePcalReader(reader);
+  return createNormalizedPcalExpr(lines);
 };
 
-// Tokenize.TokenizeExpr and TokenizeDefineBlock.
 export const tokenizePcalExpr = (
   state: PcalTokenizerState,
   reader: PcalCharReader,
   isInDefineBlock: boolean,
 ) => tokenize(state, reader, true, isInDefineBlock);
 
-// Tokenize.GetAlgorithmToken.
 export const getPcalAlgorithmToken = (state: PcalTokenizerState, reader: PcalCharReader) => {
   tokenize(state, reader, false, false);
   return state.delimiter;
