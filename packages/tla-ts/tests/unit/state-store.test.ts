@@ -28,4 +28,29 @@ describe("state store", () => {
       [3, 5],
     ]);
   });
+
+  it("reads back each state's action, violation, and depth after its actions outgrow 16 bits", () => {
+    const store = createStateStore(false);
+    const count = 40_000;
+    Array.from({ length: count }, (_, index) => {
+      const state: Value[] = [index % 3];
+      store.canonicalizeState(state);
+      const parent = index < 2 ? -1 : Math.floor(index / 2) - 1;
+      store.add(state, state, parent, index < 2 ? undefined : `Action${index}`, index % 7 === 0);
+    });
+    const sampled = [0, 1, 2, 3, 6, 100, 32_769, 39_999];
+    expect(
+      sampled.map((index) => [
+        store.getAction(index),
+        store.isViolating(index),
+        store.getDepth(index),
+      ]),
+    ).toEqual(
+      sampled.map((index) => [
+        index < 2 ? undefined : `Action${index}`,
+        index % 7 === 0,
+        index < 2 ? 1 : Math.floor(Math.log2(index + 2)),
+      ]),
+    );
+  });
 });

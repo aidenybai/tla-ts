@@ -4,27 +4,38 @@ import { createValueTable, isSameValue, type Value } from "./values";
 // A chunk never moves, so adding a state doesn't copy the states before it.
 const CHUNK_BITS = 14;
 const CHUNK_MASK = (1 << CHUNK_BITS) - 1;
-const PARENT = 0;
-const DEPTH = 1;
-const ACTION = 2;
-const HEADER_LENGTH = 3;
-const MAX_NARROW_CELL = 0xffff;
-// Set in the action word of a state that violates an invariant, which TLC goes on past with
-// -continue.
-const VIOLATING = 1 << 30;
+const MAX_NARROW = 0xffff;
 
 interface Chunk {
-  headers: Int32Array;
+  parents: Int32Array;
+  // Twice each state's action id, plus one when the state violates an invariant, which TLC goes
+  // on past with -continue.
+  actions: Uint16Array | Int32Array;
   cells: Uint16Array | Int32Array;
 }
 
-// The states the checker has found, in chunks. Each state has a row of integers in its chunk's
-// headers, its parent, depth, and action, and a row of cells: those of its variables, and those of
-// its fingerprint state, when that differs from the state. A chunk keeps its cells in 16 bits until
-// one doesn't fit.
+// An array of a chunk stays 16 bits until a value doesn't fit.
+const fit = (array: Uint16Array | Int32Array, value: number) =>
+  array instanceof Uint16Array && (value < 0 || value > MAX_NARROW) ? Int32Array.from(array) : array;
+
+// The states the checker has found, in chunks. Each state has its parent, its action, and a row of
+// cells: those of its variables, and those of its fingerprint state, when that differs from the
+// state.
 export const createStateStore = (isSymmetric: boolean) => {
   const table = createValueTable();
   const chunks: Chunk[] = [];
+  // The index of the first state at each depth, since the search adds states in order of depth.
+  const levelStarts: number[] = [];
+  const getDepth = (index: number) => {
+    let low = 0;
+    let high = levelStarts.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (levelStarts[middle] <= index) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
   const actionIds = new Map<string, number>();
   const actionNames: (string | undefined)[] = [undefined];
   const layout = {
@@ -35,15 +46,11 @@ export const createStateStore = (isSymmetric: boolean) => {
     // A copy of the first state, which a state read back starts from, so its array is packed.
     stateTemplate: [] as Value[],
   };
-  const getHeaderStart = (index: number) => (index & CHUNK_MASK) * HEADER_LENGTH;
   const getRowStart = (index: number) => (index & CHUNK_MASK) * layout.cellLength;
   const getChunk = (index: number) => chunks[index >>> CHUNK_BITS];
-  const getHeader = (index: number, field: number) =>
-    getChunk(index).headers[getHeaderStart(index) + field];
+  const getActionWord = (index: number) => getChunk(index).actions[index & CHUNK_MASK];
   const setCell = (chunk: Chunk, offset: number, cell: number) => {
-    if (chunk.cells instanceof Uint16Array && (cell < 0 || cell > MAX_NARROW_CELL)) {
-      chunk.cells = Int32Array.from(chunk.cells);
-    }
+    chunk.cells = fit(chunk.cells, cell);
     chunk.cells[offset] = cell;
   };
   const getActionId = (action: string | undefined) => {
@@ -78,15 +85,17 @@ export const createStateStore = (isSymmetric: boolean) => {
       const index = layout.count++;
       if ((index & CHUNK_MASK) === 0) {
         chunks.push({
-          headers: new Int32Array((CHUNK_MASK + 1) * HEADER_LENGTH),
+          parents: new Int32Array(CHUNK_MASK + 1),
+          actions: new Uint16Array(CHUNK_MASK + 1),
           cells: new Uint16Array((CHUNK_MASK + 1) * layout.cellLength),
         });
       }
+      if ((parent === -1 ? 1 : getDepth(parent) + 1) > levelStarts.length) levelStarts.push(index);
       const chunk = getChunk(index);
-      const headerStart = getHeaderStart(index);
-      chunk.headers[headerStart + PARENT] = parent;
-      chunk.headers[headerStart + DEPTH] = parent === -1 ? 1 : getHeader(parent, DEPTH) + 1;
-      chunk.headers[headerStart + ACTION] = getActionId(action) | (isViolating ? VIOLATING : 0);
+      const actionWord = getActionId(action) * 2 + (isViolating ? 1 : 0);
+      chunk.parents[index & CHUNK_MASK] = parent;
+      chunk.actions = fit(chunk.actions, actionWord);
+      chunk.actions[index & CHUNK_MASK] = actionWord;
       const start = getRowStart(index);
       for (let position = 0; position < state.length; position++) {
         setCell(chunk, start + position, table.getCell(state[position]));
@@ -100,10 +109,10 @@ export const createStateStore = (isSymmetric: boolean) => {
         );
       }
     },
-    getParent: (index: number) => getHeader(index, PARENT),
-    getDepth: (index: number) => getHeader(index, DEPTH),
-    getAction: (index: number) => actionNames[getHeader(index, ACTION) & ~VIOLATING],
-    isViolating: (index: number) => (getHeader(index, ACTION) & VIOLATING) !== 0,
+    getParent: (index: number) => getChunk(index).parents[index & CHUNK_MASK],
+    getDepth,
+    getAction: (index: number) => actionNames[getActionWord(index) >>> 1],
+    isViolating: (index: number) => (getActionWord(index) & 1) !== 0,
     getState: (index: number) => {
       const cells = getChunk(index).cells;
       const cellStart = getRowStart(index);
