@@ -72,9 +72,9 @@ import {
   type MessagePrinter,
 } from "../tlc/messages";
 import { formatState } from "../values";
-import { USAGE } from "./options";
 import { addRuntimeInvariants } from "./runtime-invariants";
 import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
+import { getTlcUsage } from "./tlc-usage";
 import {
   createModuleLoader,
   findModuleFile,
@@ -1194,7 +1194,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     return printCommandLineError(createMessagePrinter(parsed.isTool, true, version), parsed.error);
   }
   if (parsed.isUsage) {
-    console.log(USAGE);
+    console.log(getTlcUsage());
     return 1;
   }
   if (parsed.isRecovering) {

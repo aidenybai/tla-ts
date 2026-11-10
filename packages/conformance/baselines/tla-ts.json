@@ -165,8 +165,6 @@
   "tlapm/smoke/parse_error": "text-mismatch",
   "tlc/checker/alias/format_not_string": "message-mismatch",
   "tlc/cli/other/recover_missing_directory": "exit-mismatch",
-  "tlc/cli/usage/h_prints_usage": "text-mismatch",
-  "tlc/cli/usage/help_prints_usage": "text-mismatch",
   "tlc/generated/random/000/random_00102#assume": "exit-mismatch",
   "tlc/generated/random/003/random_01576#assume": "exit-mismatch",
   "tlc/generated/random/004/random_02309#assume": "crash",
