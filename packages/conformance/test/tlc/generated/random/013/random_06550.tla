@@ -9,6 +9,16 @@ flags:
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 26, col 8 to line 26, col 11 of module random_06550 failed.
+      In applying the function
+      [x \in Nat |-> <expression line 25, col 112 to line 25, col 116 of module random_06550>],
+      the first argument is:
+      -1
+      which is not in its domain.
 ---*)
 ---- MODULE random_06550 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
