@@ -201,7 +201,8 @@ const isDescriptor = (type: ts.Type | undefined) =>
 // descriptor whose attributes aren't booleans, an object that Object.create makes, and a parameter
 // or variable with no type to infer. Each only adds types, so Node runs the same program.
 const isKeyType = (type: ts.Type) =>
-  (type.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike)) !== 0;
+  (type.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.ESSymbolLike)) !==
+  0;
 
 // The loosest type that a binding pattern reads: an element may be missing, and each name may
 // hold any value.
@@ -297,7 +298,7 @@ const loosen = () => {
         declaration.initializer !== undefined &&
         ts.isObjectLiteralExpression(declaration.initializer)
       ) {
-        edits.set(declaration.name.getEnd(), ": { [key: string]: unknown }");
+        edits.set(declaration.name.getEnd(), ": { [key: string | symbol]: unknown }");
       }
     }
     // Any other object, such as a built-in prototype, may get properties that its type lacks. An
@@ -327,7 +328,7 @@ const loosen = () => {
       )
     ) {
       edits.set(receiver.getStart(), "(");
-      edits.set(receiver.getEnd(), " as unknown as { [key: string]: unknown })");
+      edits.set(receiver.getEnd(), " as unknown as { [key: string | symbol]: unknown })");
     }
     // A parameter or variable whose type inferFromUsage can't infer may hold any value.
     const declared =
@@ -388,8 +389,8 @@ const loosen = () => {
       edits.set(
         receiving.parameters.pos,
         receiving.parameters.length === 0
-          ? "this: { [key: string]: unknown }"
-          : "this: { [key: string]: unknown }, ",
+          ? "this: { [key: string | symbol]: unknown }"
+          : "this: { [key: string | symbol]: unknown }, ",
       );
     }
     // A test may call new on a function that isn't a constructor, to check that it throws.
@@ -398,7 +399,7 @@ const loosen = () => {
       edits.set(created.expression.getStart(), "(");
       edits.set(
         created.expression.getEnd(),
-        " as unknown as new (...args: unknown[]) => { [key: string]: unknown })",
+        " as unknown as new (...args: unknown[]) => { [key: string | symbol]: unknown })",
       );
     }
     // A test may call a function with fewer arguments than it declares, which leaves the others
@@ -481,7 +482,7 @@ const loosen = () => {
       ts.isCallExpression(initializer) &&
       initializer.expression.getText() === "Object.create"
     ) {
-      edits.set(node.name.getEnd(), ": { [key: string]: unknown }");
+      edits.set(node.name.getEnd(), ": { [key: string | symbol]: unknown }");
     }
     ts.forEachChild(node, visit);
   };
@@ -524,7 +525,77 @@ const annotate = (text: string) => {
   }
   // A type that one loosening gives can show where another is needed.
   while (loosen());
+  ignoreSoundErrors();
   return file.text;
+};
+
+// TypeScript's errors that leave each expression the type it has: a property or element that an
+// object's type lacks, which reads as any, an unused operand of a comma, and a name that no
+// declaration binds, whose read tla-ts throws a ReferenceError for.
+const UNTYPED_READ_ERRORS = new Set([2339, 2551, 7053]);
+const UNUSED_OPERAND_ERROR = 2695;
+const UNRESOLVED_NAME_ERROR = 2304;
+
+// Ignores those errors where the line they're on starts outside a string or template, so that
+// // @ts-ignore above it changes nothing that Node runs. A read of a value that isn't an object,
+// such as undefined in a pattern, still throws, so its error stays.
+const ignoreSoundErrors = () => {
+  const program = service.getProgram();
+  const sourceFile = program?.getSourceFile(PROGRAM_PATH);
+  if (program === undefined || sourceFile === undefined) return;
+  const checker = program.getTypeChecker();
+  const getNode = (position: number) => {
+    const visit = (node: ts.Node): ts.Node =>
+      ts.forEachChild(node, (child) =>
+        child.getStart() <= position && position < child.getEnd() ? visit(child) : undefined,
+      ) ?? node;
+    return visit(sourceFile);
+  };
+  const isObjectRead = (node: ts.Node) => {
+    const read = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
+        ts.isPropertyAccessExpression(ancestor) || ts.isElementAccessExpression(ancestor),
+    );
+    const type = read && checker.getTypeAtLocation(read.expression);
+    return (
+      type !== undefined &&
+      !type.isUnion() &&
+      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      ts.findAncestor(node, ts.isBindingElement) === undefined
+    );
+  };
+  const lines = new Set(
+    service
+      .getSemanticDiagnostics(PROGRAM_PATH)
+      .filter((diagnostic) => {
+        const node = getNode(diagnostic.start ?? 0);
+        return (
+          diagnostic.code === UNUSED_OPERAND_ERROR ||
+          (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
+          // Node may define a global that TypeScript doesn't know, such as print.
+          (diagnostic.code === UNRESOLVED_NAME_ERROR &&
+            ts.isIdentifier(node) &&
+            !(node.text in globalThis))
+        );
+      })
+      .map((diagnostic) => sourceFile.getLineAndCharacterOfPosition(diagnostic.start ?? 0).line),
+  );
+  const starts = [...lines]
+    .map((line) => sourceFile.getPositionOfLineAndCharacter(line, 0))
+    .filter((start) => {
+      const node = getNode(start);
+      return !(
+        node.getStart() < start &&
+        (ts.isStringLiteral(node) ||
+          ts.isNoSubstitutionTemplateLiteral(node) ||
+          ts.isTemplateLiteralToken(node) ||
+          ts.isTemplateExpression(node))
+      );
+    });
+  if (starts.length > 0) {
+    applyEdits(new Map(starts.map((start) => [start, "// @ts-ignore\n"])));
+  }
 };
 
 // TLC stops when a value has no TLA+ form, which only a run finds, rather than giving a different
