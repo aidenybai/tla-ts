@@ -23,6 +23,7 @@ import { runMaxBvSharing } from "./max-bv-sharing-tactic";
 import { runBvDivremBounds } from "./bv-divrem-bounds";
 import { runBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
+import { createSatTactic } from "./sat/sat-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
@@ -339,6 +340,76 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   names.release();
   return [goal];
 };
+
+const SAT_DESCRS = getDescrs("sat", [
+  ["max_memory", PARAM_UINT, UINT_MAX, true],
+  ["ite_extra", PARAM_BOOL, true, true],
+  ["learned", PARAM_BOOL, false],
+  ["restart", PARAM_SYMBOL, "ema", true],
+  ["restart.fast", PARAM_BOOL, true, true],
+  ["phase", PARAM_SYMBOL, "caching", true],
+  ["rephase.base", PARAM_UINT, 1000, true],
+  ["search.sat.conflicts", PARAM_UINT, 400, true],
+  ["search.unsat.conflicts", PARAM_UINT, 400, true],
+  ["restart.initial", PARAM_UINT, 2, true],
+  ["random_seed", PARAM_UINT, 0, true],
+  ["burst_search", PARAM_UINT, 100, true],
+  ["enable_pre_simplify", PARAM_BOOL, false, true],
+  ["max_conflicts", PARAM_UINT, UINT_MAX, true],
+  ["simplify.delay", PARAM_UINT, 0, true],
+  ["gc", PARAM_SYMBOL, "glue_psm", true],
+  ["gc.initial", PARAM_UINT, 20000, true],
+  ["gc.increment", PARAM_UINT, 500, true],
+  ["gc.small_lbd", PARAM_UINT, 3, true],
+  ["gc.k", PARAM_UINT, 7, true],
+  ["gc.burst", PARAM_BOOL, false, true],
+  ["gc.defrag", PARAM_BOOL, true, true],
+  ["force_cleanup", PARAM_BOOL, false, true],
+  ["backtrack.scopes", PARAM_UINT, 100, true],
+  ["backtrack.conflicts", PARAM_UINT, 4000, true],
+  ["minimize_lemmas", PARAM_BOOL, true, true],
+  ["dyn_sub_res", PARAM_BOOL, true, true],
+  ["variable_decay", PARAM_UINT, 110, true],
+  ["scc", PARAM_BOOL, true, true],
+  ["scc.tr", PARAM_BOOL, true, true],
+  ["abce", PARAM_BOOL, false, true],
+  ["acce", PARAM_BOOL, false, true],
+  ["ate", PARAM_BOOL, true, true],
+  ["bce", PARAM_BOOL, false, true],
+  ["cce", PARAM_BOOL, false, true],
+  ["bce_at", PARAM_UINT, 2, true],
+  ["bce_delay", PARAM_UINT, 2, true],
+  ["blocked_clause_limit", PARAM_UINT, 100000000, true],
+  ["elim_vars", PARAM_BOOL, true, true],
+  ["subsumption", PARAM_BOOL, true, true],
+  ["subsumption.limit", PARAM_UINT, 100000000, true],
+  ["override_incremental", PARAM_BOOL, false, true],
+  ["resolution.limit", PARAM_UINT, 500000000, true],
+  ["resolution.occ_cutoff", PARAM_UINT, 10, true],
+  ["resolution.occ_cutoff_range1", PARAM_UINT, 8, true],
+  ["resolution.occ_cutoff_range2", PARAM_UINT, 5, true],
+  ["resolution.occ_cutoff_range3", PARAM_UINT, 3, true],
+  ["resolution.lit_cutoff_range1", PARAM_UINT, 700, true],
+  ["resolution.lit_cutoff_range2", PARAM_UINT, 400, true],
+  ["resolution.lit_cutoff_range3", PARAM_UINT, 300, true],
+  ["resolution.cls_cutoff1", PARAM_UINT, 100000000, true],
+  ["resolution.cls_cutoff2", PARAM_UINT, 700000000, true],
+  ["asymm_branch", PARAM_BOOL, true, true],
+  ["asymm_branch.rounds", PARAM_UINT, 2, true],
+  ["asymm_branch.delay", PARAM_UINT, 1, true],
+  ["asymm_branch.sampled", PARAM_BOOL, true, true],
+  ["asymm_branch.limit", PARAM_UINT, 100000000, true],
+  ["asymm_branch.all", PARAM_BOOL, false, true],
+  ["probing", PARAM_BOOL, true, true],
+  ["probing_limit", PARAM_UINT, 5000000, true],
+  ["probing_cache", PARAM_BOOL, true, true],
+  ["probing_cache_limit", PARAM_UINT, 1024, true],
+  ["probing_binary", PARAM_BOOL, true, true],
+  ["local_search", PARAM_BOOL, false],
+  ["threads", PARAM_UINT, 1],
+  ["euf", PARAM_BOOL, false],
+  ["cardinality.solver", PARAM_BOOL, true],
+]);
 
 const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
@@ -736,6 +807,22 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
   [
+    "sat",
+    {
+      descrs: SAT_DESCRS,
+      isRejectingUnknown: false,
+      build: (environment, params) => createSatTactic(environment.manager, params),
+    },
+  ],
+  [
+    "psat",
+    {
+      descrs: SAT_DESCRS,
+      isRejectingUnknown: false,
+      build: (environment, params) => createSatTactic(environment.manager, params),
+    },
+  ],
+  [
     "snf",
     { descrs: NNF_DESCRS, build: (environment, params) => runNnf(environment.manager, params) },
   ],
@@ -785,10 +872,10 @@ const UNPORTED_TACTICS = new Set(
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
     "nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
-    "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
+    "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
     "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat recover-01 reduce-args2 " +
-    "sat sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
+    "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
   ).split(" "),
 );
