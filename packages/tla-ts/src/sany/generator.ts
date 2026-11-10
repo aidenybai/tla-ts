@@ -1014,9 +1014,15 @@ export const generateSanySpecification = (
     const getOperatorArgumentName = (argument: Expression) =>
       argument.kind === "OperatorReference"
         ? argument.operator
-        : argument.kind === "Lambda" && argument.body.kind === "Apply"
-          ? argument.body.operator
-          : file.tokens[getTokenIndex(file, argument.location)].text;
+        : argument.kind === "Lambda" && argument.operator !== undefined
+          ? argument.operator
+          : argument.kind === "Lambda" && argument.body.kind === "Apply"
+            ? argument.body.operator
+            : file.tokens[getTokenIndex(file, argument.location)].text;
+    const isWrittenLambda = (argument: Expression): argument is Expression & { kind: "Lambda" } =>
+      argument.kind === "Lambda" &&
+      argument.location.range !== undefined &&
+      argument.operator === undefined;
 
     // Generator.generateOpArg: after an error, SANY gives its nullOpArg.
     const generateOperatorArgument = (
@@ -1025,8 +1031,7 @@ export const generateSanySpecification = (
     ): OpArgNode | OpApplNode => {
       const location = getLocation(argument);
       if (argument.kind === "Lambda") {
-        if (argument.location.range !== undefined)
-          return createOpArg(generateLambda(argument), location);
+        if (isWrittenLambda(argument)) return createOpArg(generateLambda(argument), location);
         return createOpArg(resolveName(getOperatorArgumentName(argument), location), location);
       }
       if (!isOperatorArgument(argument)) {
@@ -1082,7 +1087,7 @@ export const generateSanySpecification = (
           `Expected an operator argument at ${formatSanyLocation(location)}`,
         );
       }
-      if (argument.kind === "Lambda" && argument.location.range !== undefined) {
+      if (isWrittenLambda(argument)) {
         const lambda = generateLambda(argument);
         const arity = getSymbolArity(lambda);
         if (arity === expectedArity) return createOpArg(lambda, location);

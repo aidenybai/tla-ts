@@ -176,6 +176,34 @@ describe("SANY XML export", () => {
     expect(getBody("Bound").operands.map((operand) => operand?.kind)).toEqual(["Numeral"]);
   });
 
+  // From TLC's test52, which passes built-in prefix and postfix operators as arguments.
+  it("passes a built-in operator as an argument the way SANY's generateOpArg does", () => {
+    const root = getRoot(`---- MODULE BuiltInArguments ----
+VARIABLE x
+SetOpTest(Foo(_)) == Foo({{"b"}, {"c"}})
+DomainTest(Foo(_)) == Foo([i \\in {"a", "b"} |-> i])
+UnchangedTest(Foo(_)) == Foo(x)
+PrimeTest(Foo(_)) == Foo(x) = x
+Subsets == SetOpTest(SUBSET)
+Domain == DomainTest(DOMAIN)
+Unchanged == UnchangedTest(UNCHANGED)
+Primed == PrimeTest(')
+====`);
+    expect(
+      ["Subsets", "Domain", "Unchanged", "Primed"].map((name) => {
+        const body = getDefinition(root, name).body;
+        const argument = body?.kind === "OpAppl" ? body.operands[0] : undefined;
+        const operator = argument?.kind === "OpArg" ? argument.op : undefined;
+        return operator?.kind === "OpDef" ? [operator.defKind, operator.name] : [];
+      }),
+    ).toEqual([
+      ["BuiltIn", "SUBSET"],
+      ["BuiltIn", "DOMAIN"],
+      ["BuiltIn", "UNCHANGED"],
+      ["BuiltIn", "'"],
+    ]);
+  });
+
   it("finds parameters that a higher-order operator makes non-Leibniz", () => {
     const root = getRoot(HIGHER_ORDER);
     expect(
