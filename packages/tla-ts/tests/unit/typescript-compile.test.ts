@@ -2385,6 +2385,19 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops where a promise resolves with an array that Array.prototype gives a then", async () => {
+    const result = await checkModel(`
+      Object.defineProperty(Array.prototype, "then", {
+        value: (resolve: (value: unknown) => void) => { resolve(5); },
+        configurable: true,
+      });
+      Promise.all([]);
+    `);
+    expect(result.failure?.message).toContain(
+      "can't resolve a promise with an object that has a then",
+    );
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";

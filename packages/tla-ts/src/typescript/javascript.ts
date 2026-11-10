@@ -522,9 +522,14 @@ PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !
 
 \\* Whether resolving a promise with a value would call the value's then, which tla-ts doesn't, or
 \\* follow a promise that tla-ts can't tell.
-IsThenable(heap, value) ==
-  /\\ IsRef(value)
-  /\\ IF IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque THEN TRUE ELSE Has(heap, value, "then")
+\\* An object that tla-ts keeps outside the heap, such as an array, inherits from Array.prototype or
+\\* Object.prototype, which a script may give a then.
+IsThenable(heap, value, arrayPrototype, objectPrototype) ==
+  IF IsRef(value)
+  THEN IF IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque THEN TRUE ELSE Has(heap, value, "then")
+  ELSE /\\ value # Null
+       /\\ TypeOf(value) = "object"
+       /\\ Has(heap, arrayPrototype, "then") \\/ Has(heap, objectPrototype, "then")
 
 \\* An error is a record of its constructor, its message and its name.
 LOCAL IsError(value) ==

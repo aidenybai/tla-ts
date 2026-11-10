@@ -213,6 +213,7 @@ export const translateBuiltInValue = (
   name:
     | "Function.prototype"
     | "Array.prototype"
+    | "Object.prototype"
     | "Array"
     | "get Function.prototype.arguments"
     | "Boolean.prototype"

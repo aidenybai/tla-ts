@@ -234,7 +234,16 @@ const resolve = (
   };
   return dispatchPromise(path, node, value, valueNode, context, follow, () =>
     ifThenElse(
-      useJavaScript("IsThenable", [getHeap(path.scope, node, context), value], context),
+      useJavaScript(
+        "IsThenable",
+        [
+          getHeap(path.scope, node, context),
+          value,
+          translateBuiltInValue("Array.prototype", node, context),
+          translateBuiltInValue("Object.prototype", node, context),
+        ],
+        context,
+      ),
       leaf(
         apply("Assert", [
           boolean(false),
