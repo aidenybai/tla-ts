@@ -2,7 +2,7 @@
 // src/ast/rewriter/bit_blaster/bit_blaster.cpp,
 // src/ast/rewriter/bit_blaster/bit_blaster_rewriter.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
-import type { AstManager } from "./ast";
+import { OP_EQ, SORT_BOOL, type AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { assign, assignOwned, release } from "./expr-ref";
 import { Rewriter } from "./rewriter";
@@ -17,6 +17,22 @@ const BOOL_REWRITER_OPTIONS = {
 
 type Bits = readonly number[];
 
+// mk_not_core releases the negation of an equality's left side before it returns. Its callers hold
+// temporaries open.
+class BlasterBoolRewriter extends Rewriter {
+  mkNot(arg: number): number {
+    const manager = this.manager;
+    if (manager.getOp(arg) !== OP_EQ || manager.sorts[manager.getArg(arg, 0)] !== SORT_BOOL)
+      return super.mkNot(arg);
+    const outer = manager.beginTemporaries();
+    const result = this.mkEq(this.mkNot(manager.getArg(arg, 0)), manager.getArg(arg, 1));
+    manager.incRef(result);
+    manager.endTemporaries(outer);
+    manager.releaseLater(result);
+    return result;
+  }
+}
+
 export class BitBlaster {
   private rewriter: Rewriter;
 
@@ -26,10 +42,9 @@ export class BitBlaster {
     private manager: AstManager,
     private isBlasterCfg = false,
   ) {
-    this.rewriter = new Rewriter(manager, {
-      ...BOOL_REWRITER_OPTIONS,
-      isEliminatingAnd: isBlasterCfg,
-    });
+    this.rewriter = isBlasterCfg
+      ? new BlasterBoolRewriter(manager, { ...BOOL_REWRITER_OPTIONS, isEliminatingAnd: true })
+      : new Rewriter(manager, BOOL_REWRITER_OPTIONS);
   }
 
   private checkpoint() {
