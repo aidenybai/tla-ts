@@ -170,7 +170,5 @@
   "tlc/generated/random/016/random_08023#assume": "time-limit",
   "tlc/imported/sany/syntax/labels/labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885": "exit-mismatch",
   "tlc/standard/internal/possible_track_constant_folded": "message-mismatch",
-  "tlc/standard/tlc_ext/pick_state_level_null_fingerprint#property": "exit-mismatch",
-  "tlc/syntax/operators/nonfix_cross_is_tlc_null_pointer": "exit-mismatch",
-  "tlc/syntax/operators/nonfix_times_is_tlc_null_pointer": "exit-mismatch"
+  "tlc/standard/tlc_ext/pick_state_level_null_fingerprint#property": "exit-mismatch"
 }
