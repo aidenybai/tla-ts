@@ -197,6 +197,15 @@ export class TlaFeatureUnsupportedError extends TlaEvaluationError {
   }
 }
 
+// TLC's PickSuccessor fails to read an answer past the end of standard input with a Java exception.
+export class TlaEndOfInputError extends TlaUncodedError {
+  constructor() {
+    super(
+      "PickSuccessor reached the end of standard input without an answer whether to extend the behavior.",
+    );
+  }
+}
+
 // TLC reads a checkpoint that isn't there with a Java exception.
 export class TlaMissingCheckpointError extends TlaEvaluationError {
   constructor(directory: string) {

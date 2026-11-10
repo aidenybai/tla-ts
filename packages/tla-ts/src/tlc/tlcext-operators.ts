@@ -7,9 +7,9 @@ import {
   getThunk,
   getValue,
 } from "../builtins";
-import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "../errors";
+import { formatRange, TlaEndOfInputError, TlaEvaluationError, TlaModuleError } from "../errors";
 import { getTlcFingerprint } from "./fingerprint";
-import { formatNestedMessage } from "./messages";
+import { formatMessage, formatNestedMessage, MESSAGE_CODE, MESSAGE_LEVEL } from "./messages";
 import {
   describeRange,
   evaluate,
@@ -159,7 +159,10 @@ const getMentionedLevel = (
   return Math.max(CONSTANT_LEVEL, ...levels);
 };
 
-export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
+export const createTlcExtOperators = (
+  print: (text: string) => void,
+  runtime: CheckerRuntime,
+): Builtin[] => {
   const globalCaches = new Map<Expression, Map<string, Value>>();
   const stateCaches = new WeakMap<(Value | undefined)[], Map<Expression, Map<string, Value>>>();
   const getStateCaches = (state: (Value | undefined)[]) => {
@@ -266,10 +269,20 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
           `In evaluating TLCExt!PickSuccessor, a non-boolean expression (${getKindString(isPicked)}) was used as the condition of an IF.\n${guard.expression ? describeNode(guard.expression) : ""}`,
         );
       }
-      if (isPicked || !context?.next) return true;
-      throw new TlaUnsupportedError(
-        "PickSuccessor needs interactive input to extend the behavior with a new state",
+      if (isPicked || !context?.next || !context.state || !isCompleteState(context.state)) {
+        return true;
+      }
+      const action = runtime.getSuccessorAction(context.state, next);
+      print(
+        formatMessage(
+          runtime.isTool,
+          MESSAGE_CODE.moduleOverrideStdout,
+          MESSAGE_LEVEL.none,
+          `Extend behavior of length ${runtime.getLevel(context.state)} with a "${action?.name}" step [<Action ${action?.location.range && formatRange(action.location.range)}>]? (Yes/no/explored/states/diff):`,
+        ),
       );
+      // tla-ts gives PickSuccessor no standard input to read an answer from.
+      throw new TlaEndOfInputError();
     }),
     defineLazyOperator("TLCCache", 2, (args, context) => {
       const expression = getOperator(args, 0, "TLCCache");

@@ -100,6 +100,7 @@ export const MESSAGE_CODE = {
   possibleUnwitnessed: 2780,
   parsingFailed: 3002,
   configFileError: 5001,
+  moduleOverrideStdout: 20000,
 } as const;
 
 export const MESSAGE_LEVEL = { none: 0, error: 1, warning: 3, state: 4 } as const;
@@ -118,6 +119,11 @@ export interface MessagePrinter {
   version: TlcVersion;
   print: (code: number, level: MessageLevel, text: string) => void;
 }
+
+export const formatMessage = (isTool: boolean, code: number, level: MessageLevel, text: string) =>
+  isTool
+    ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
+    : `${LEVEL_PREFIXES[level]}${text}`;
 
 // With -tool, TLC wraps each message in markers of its code and level, and leaves lines such as
 // Print's bare. A warning prints once, -nowarning drops it, and without -tool the first one
@@ -144,9 +150,7 @@ export const createMessagePrinter = (
         isWarning && !isTool && warnings.size === 0
           ? "\n(Use the -nowarning option to disable this warning.)"
           : "";
-      const message = isTool
-        ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
-        : `${LEVEL_PREFIXES[level]}${text}${hint}`;
+      const message = formatMessage(isTool, code, level, `${text}${hint}`);
       if (isWarning && warnings.has(message)) return;
       if (isWarning) warnings.add(message);
       console.log(message);
@@ -509,7 +513,8 @@ export const getFailureMessage = (
       toolMessage: message,
     };
   }
-  const isUnexpected = isNextState && !message.startsWith(UNEXPECTED_HEADLINE);
+  const isUnexpected =
+    isNextState && !message.startsWith(UNEXPECTED_HEADLINE) && !(error instanceof TlaUncodedError);
   const exception =
     error instanceof TlaSetBoundError ? WRONG_INVOCATION_EXCEPTION : UNEXPECTED_EXCEPTION;
   const prefix = isUnexpected ? exception : "";

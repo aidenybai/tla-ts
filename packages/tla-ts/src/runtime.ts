@@ -1,6 +1,7 @@
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import { createJavaRandom, type JavaRandom } from "./tlc/random";
 import { createFunction, createRecord, type Value } from "./values";
+import type { SpecAction } from "./spec-description";
 import type { TlcVersion } from "./tlc/version";
 
 export interface CheckerRuntime {
@@ -28,6 +29,8 @@ export interface CheckerRuntime {
   version: TlcVersion;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
+  // The first action that takes the state to the successor, as TLC's PickSuccessor finds it.
+  getSuccessorAction: (state: Value[], next: Value[]) => SpecAction | undefined;
   generatedStates: number;
   distinctStates: number;
   initialStates: number;
@@ -58,6 +61,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     counterExample: undefined,
     deferred: undefined,
     isSeen: () => false,
+    getSuccessorAction: () => undefined,
     setLivenessSource: () => {},
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,

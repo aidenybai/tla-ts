@@ -651,7 +651,7 @@ export const getStandardModule = (
     case "TLCExt":
       return {
         extends: [],
-        operators: withJavaMethods("TLCExt", createTlcExtOperators(runtime)),
+        operators: withJavaMethods("TLCExt", createTlcExtOperators(print, runtime)),
       };
     default:
       return undefined;
