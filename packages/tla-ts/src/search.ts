@@ -68,6 +68,7 @@ import {
   isUpdatedElementOf,
   setStringOrder,
   setValueOptions,
+  setViewText,
   toFiniteFunction,
   type Value,
 } from "./values";
@@ -915,7 +916,10 @@ export const createSearch = (
     config.symmetry === undefined
       ? undefined
       : getSymmetryGroup(config.symmetry, environment, config.substitutions);
-  if (config.view !== undefined) getConfigDefinition("view function", config.view, environment);
+  const viewDefinition =
+    config.view === undefined
+      ? undefined
+      : getConfigDefinition("view function", config.view, environment);
   const view =
     config.view === undefined
       ? undefined
@@ -998,8 +1002,37 @@ export const createSearch = (
       counts: prettyPrint(formatValue(getPossibleCounts(runtime), true)),
     };
   };
-  const toRecord = (state: Value[]): Record<string, Value> =>
-    Object.fromEntries(getTlcOrder().map((index) => [environment.variables[index], state[index]]));
+  // TLC prints a tuple VIEW as a state when it has as many elements as the VIEW names variables and
+  // constants, labeling them in variable order, which mislabels <<y, x>> and <<x + 1>>. tla-ts
+  // prints only a tuple of distinct variables as a state, each with its own value.
+  const viewElements = viewDefinition?.body.kind === "Tuple" ? viewDefinition.body.elements : [];
+  const viewNames = viewElements.flatMap((element) =>
+    element.kind === "Identifier" && environment.variables.includes(element.name)
+      ? [element.name]
+      : [],
+  );
+  const isStateView =
+    viewDefinition?.body.kind === "Tuple" &&
+    viewNames.length === viewElements.length &&
+    new Set(viewNames).size === viewNames.length;
+  const getViewText = (expression: Expression, state: Value[]) =>
+    isStateView
+      ? getTlcOrder()
+          .filter((index) => viewNames.includes(environment.variables[index]))
+          .map(
+            (index) =>
+              `/\\ ${environment.variables[index]} = ${prettyPrint(formatValue(state[index]))}\n`,
+          )
+          .join("")
+      : prettyPrint(formatValue(getViewValue(expression, state)));
+  const toRecord = (state: Value[]): Record<string, Value> => {
+    const record = Object.fromEntries(
+      getTlcOrder().map((index) => [environment.variables[index], state[index]]),
+    );
+    return view === undefined
+      ? record
+      : setViewText(record, () => getViewText(view.expression, state));
+  };
   return {
     properties,
     spec,

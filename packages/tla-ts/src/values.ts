@@ -378,19 +378,29 @@ export const setStringOrder = (texts: Iterable<string>) => {
 // TLC 1.7.4 prints and looks keys up in functions differently, so each check sets the version.
 const valueVersion = { is174: false };
 
-// TLCGlobals.expand, which TLC's -terse clears.
-const printing = { isExpanded: true };
+// TLCGlobals.expand, which TLC's -terse clears, and TLCGlobals.useView, which -view sets.
+const printing = { isExpanded: true, isViewPrinted: false };
 
 export interface ValueOptions {
   version?: TlcVersion;
   maxSetSize?: number;
   isLazyValueExpanded?: boolean;
+  isViewPrinted?: boolean;
 }
 
 export const setValueOptions = (options: ValueOptions) => {
   valueVersion.is174 = options.version === "1.7.4";
   setBound.size = options.maxSetSize ?? DEFAULT_SET_BOUND;
   printing.isExpanded = options.isLazyValueExpanded ?? true;
+  printing.isViewPrinted = options.isViewPrinted ?? false;
+};
+
+// TLC evaluates the VIEW of a state it prints as it prints it.
+const viewTexts = new WeakMap<Record<string, Value>, () => string>();
+
+export const setViewText = (state: Record<string, Value>, getText: () => string) => {
+  if (printing.isViewPrinted) viewTexts.set(state, getText);
+  return state;
 };
 
 export const rankString = (text: string) => {
@@ -3096,7 +3106,10 @@ const isUnchanged = (previous: Value | undefined, value: Value) => {
   }
 };
 
+// TLC prints the VIEW of a state, but not of one it prints as a difference from the previous.
 export const formatState = (state: Record<string, Value>, previous?: Record<string, Value>) => {
+  const getViewText = previous ? undefined : viewTexts.get(state);
+  if (getViewText) return getViewText();
   const entries = Object.entries(state);
   return entries
     .filter(([name, value]) => !previous || !isUnchanged(previous[name], value))

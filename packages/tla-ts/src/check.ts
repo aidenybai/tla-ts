@@ -116,6 +116,8 @@ export interface CheckOptions {
   fingerprintPolynomial?: number;
   // False for TLC's -terse, which prints a lazy value, such as SUBSET S, without enumerating it.
   isLazyValueExpanded?: boolean;
+  // TLC's -view: prints each state as the value of the configuration's VIEW.
+  isViewPrinted?: boolean;
   // TLC's -maxSetSize: the most elements TLC enumerates into a set, or states into a list of them.
   maxSetSize?: number;
   // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.

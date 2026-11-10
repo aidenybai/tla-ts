@@ -960,6 +960,7 @@ const checkSpec = async (
       fingerprintPolynomial: args.fingerprintIndex,
       maxSetSize: args.maxSetSize,
       isLazyValueExpanded: args.isLazyValueExpanded,
+      isViewPrinted: args.isViewPrinted,
       dump,
       isTool: printer.isTool,
       isContinued: args.isContinued,

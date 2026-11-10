@@ -12,6 +12,7 @@ export interface TlcArguments {
   fingerprintIndex: number;
   maxSetSize: number | undefined;
   isLazyValueExpanded: boolean;
+  isViewPrinted: boolean;
   metadir: string | undefined;
   isRecovering: boolean;
   mode: "model-check" | "simulate" | "generate";
@@ -137,6 +138,7 @@ const createDefaults = (): TlcArguments => ({
   fingerprintIndex: 0,
   maxSetSize: undefined,
   isLazyValueExpanded: true,
+  isViewPrinted: false,
   metadir: undefined,
   isRecovering: false,
   mode: "model-check",
@@ -178,7 +180,9 @@ const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
   "-continue": (parsed) => {
     parsed.isContinued = true;
   },
-  "-view": () => {},
+  "-view": (parsed) => {
+    parsed.isViewPrinted = true;
+  },
   "-debug": () => {},
   "-tool": (parsed) => {
     parsed.isTool = true;
