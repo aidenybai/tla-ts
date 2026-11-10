@@ -101,6 +101,7 @@ import {
 } from "./functions";
 import {
   bindPattern,
+  bindPatternInline,
   type Bound,
   bindValues,
   createStateScope,
@@ -3173,7 +3174,16 @@ const bindDeclaration = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const declaration = declarations[0];
-  const bound = bindPattern(declaration.name, value, path.scope, context);
+  // A reference to an object that the statement made binds without a definition, so that code
+  // that follows the object by its reference, such as a promise's, finds it.
+  const isReference =
+    value.kind === "Apply" &&
+    value.operator === "Allocated" &&
+    value.args.every((argument) => argument.kind === "Identifier");
+  const bound =
+    isReference && ts.isIdentifier(declaration.name)
+      ? { definitions: [], scope: bindPatternInline(declaration.name, value, path.scope, context) }
+      : bindPattern(declaration.name, value, path.scope, context);
   const symbol = ts.isIdentifier(declaration.name)
     ? getSymbol(declaration.name, context.checker)
     : undefined;
