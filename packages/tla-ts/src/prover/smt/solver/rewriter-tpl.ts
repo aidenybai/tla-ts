@@ -360,6 +360,8 @@ class RewriterEngine extends SubstCore {
   private isSubstituting: boolean;
   private isExpandingMacros: boolean;
   private isCheckingSteps: boolean;
+  private isPreVisiting: boolean;
+  private isReducingVars: boolean;
   // The config's hooks, read once. Many configs share the engine, so a call through config at each
   // site sees all of their classes and goes megamorphic.
   private reduceAppHook: RewriterTpl["reduceApp"];
@@ -375,6 +377,8 @@ class RewriterEngine extends SubstCore {
     this.isSubstituting = config.getSubst !== RewriterTpl.prototype.getSubst;
     this.isExpandingMacros = config.getMacro !== RewriterTpl.prototype.getMacro;
     this.isCheckingSteps = config.checkMaxSteps !== RewriterTpl.prototype.checkMaxSteps;
+    this.isPreVisiting = config.preVisit !== RewriterTpl.prototype.preVisit;
+    this.isReducingVars = config.reduceVar !== RewriterTpl.prototype.reduceVar;
     this.reduceAppHook = config.reduceApp;
     this.isFlatAssocHook = config.isFlatAssoc;
     this.getMacroHook = config.getMacro;
@@ -489,6 +493,10 @@ class RewriterEngine extends SubstCore {
         return true;
       }
     }
+    if (this.isPreVisiting && !this.config.preVisit(expr)) {
+      this.pushResult(expr);
+      return true;
+    }
     const kind = manager.kinds[expr];
     if (kind === KIND_VAR) {
       this.processVar(expr);
@@ -564,6 +572,13 @@ class RewriterEngine extends SubstCore {
 
   private processVar(variable: number) {
     const manager = this.manager;
+    const reduced = this.isReducingVars ? this.config.reduceVar(variable) : -1;
+    if (reduced !== -1) {
+      this.pushResult(reduced);
+      manager.decRef(reduced);
+      this.setNewChildFlag(variable, -1);
+      return;
+    }
     const index = manager.values[variable];
     const position = this.bindings.length - index - 1;
     const binding = index < this.bindings.length ? this.bindings[position] : -1;
@@ -783,8 +798,8 @@ class RewriterEngine extends SubstCore {
 }
 
 // rewriter_tpl with default_rewriter_cfg. A configuration overrides the hooks. The results of
-// reduceApp and reduceQuantifier come with a reference, and -1 is Z3's BR_FAILED or false. A
-// Rewrite from reduceApp is rewritten again.
+// reduceApp, reduceQuantifier and reduceVar come with a reference, and -1 is Z3's BR_FAILED or
+// false. A Rewrite from reduceApp is rewritten again.
 export class RewriterTpl {
   readonly engine: RewriterEngine;
 
@@ -804,6 +819,10 @@ export class RewriterTpl {
     return undefined;
   }
 
+  preVisit(_expr: number) {
+    return true;
+  }
+
   reduceApp(_decl: number, _args: number[], _sort: number): number | Rewrite {
     return -1;
   }
@@ -820,6 +839,10 @@ export class RewriterTpl {
   }
 
   reduceQuantifier(_expr: number, _body: number, _patterns: number[]) {
+    return -1;
+  }
+
+  reduceVar(_variable: number) {
     return -1;
   }
 

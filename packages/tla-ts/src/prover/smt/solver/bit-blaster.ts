@@ -1,5 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/bit_blaster/bit_blaster_tpl_def.h,
-// src/ast/rewriter/bit_blaster/bit_blaster.cpp), MIT license, see z3-license.txt.
+// src/ast/rewriter/bit_blaster/bit_blaster.cpp,
+// src/ast/rewriter/bit_blaster/bit_blaster_rewriter.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
 import type { AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
@@ -19,8 +20,16 @@ type Bits = readonly number[];
 export class BitBlaster {
   private rewriter: Rewriter;
 
-  constructor(private manager: AstManager) {
-    this.rewriter = new Rewriter(manager, BOOL_REWRITER_OPTIONS);
+  // isBlasterCfg: the blaster_cfg of bit_blaster_rewriter, whose bool_rewriter eliminates and and
+  // whose xor3 and carry don't sort their arguments.
+  constructor(
+    private manager: AstManager,
+    private isBlasterCfg = false,
+  ) {
+    this.rewriter = new Rewriter(manager, {
+      ...BOOL_REWRITER_OPTIONS,
+      isEliminatingAnd: isBlasterCfg,
+    });
   }
 
   private checkpoint() {
@@ -44,20 +53,36 @@ export class BitBlaster {
     return expr === this.manager.trueExpr || expr === this.manager.falseExpr;
   }
 
+  // blaster_cfg's bool_rewriter releases the conjunction that eliminating and makes, so its
+  // temporaries are held until it returns.
+  private beginRewrite() {
+    return this.isBlasterCfg ? this.manager.beginTemporaries() : -1;
+  }
+
+  private endRewrite(result: number, outer: number) {
+    this.manager.incRef(result);
+    if (this.isBlasterCfg) this.manager.endTemporaries(outer);
+    return result;
+  }
+
   mkNot(arg: number) {
-    return this.own(this.rewriter.mkNot(arg));
+    const outer = this.beginRewrite();
+    return this.endRewrite(this.rewriter.mkNot(arg), outer);
   }
 
   mkAnd(args: number[]) {
-    return this.own(this.rewriter.mkAnd(args));
+    const outer = this.beginRewrite();
+    return this.endRewrite(this.rewriter.mkAnd(args), outer);
   }
 
   mkOr(args: number[]) {
-    return this.own(this.rewriter.mkOr(args));
+    const outer = this.beginRewrite();
+    return this.endRewrite(this.rewriter.mkOr(args), outer);
   }
 
   mkIff(first: number, second: number) {
-    return this.own(this.rewriter.mkEq(first, second));
+    const outer = this.beginRewrite();
+    return this.endRewrite(this.rewriter.mkEq(first, second), outer);
   }
 
   // previous: the argument's expr_ref Z3 assigns the result to, released before the temporaries.
@@ -71,8 +96,9 @@ export class BitBlaster {
   }
 
   mkIte(condition: number, thenExpr: number, elseExpr: number) {
+    const outer = this.beginRewrite();
     const result = this.rewriter.mkIte(condition, thenExpr, elseExpr);
-    return this.own(typeof result === "number" ? result : result.expr);
+    return this.endRewrite(typeof result === "number" ? result : result.expr, outer);
   }
 
   private mkNand(first: number, second: number) {
@@ -125,6 +151,12 @@ export class BitBlaster {
   }
 
   private mkXor3(first: number, second: number, third: number, previous = -1) {
+    if (this.isBlasterCfg) {
+      const partial = this.mkXor(second, third);
+      const result = this.mkXor(first, partial, previous);
+      this.drop(partial);
+      return result;
+    }
     const sorted = this.sortArgs(first, second, third);
     const partial = this.mkXor(sorted[0], sorted[1]);
     const result = this.mkXor(partial, sorted[2], previous);
@@ -133,7 +165,7 @@ export class BitBlaster {
   }
 
   private mkCarry(first: number, second: number, third: number) {
-    const sorted = this.sortArgs(first, second, third);
+    const sorted = this.isBlasterCfg ? [first, second, third] : this.sortArgs(first, second, third);
     const pair1 = this.mkAnd([sorted[0], sorted[1]]);
     const pair2 = this.mkAnd([sorted[0], sorted[2]]);
     const pair3 = this.mkAnd([sorted[1], sorted[2]]);
@@ -391,7 +423,7 @@ export class BitBlaster {
     this.dropAll(quotient);
   }
 
-  private mkMultiplexer(condition: number, thenBits: Bits, elseBits: Bits, out: number[]) {
+  mkMultiplexer(condition: number, thenBits: Bits, elseBits: Bits, out: number[]) {
     for (let index = 0; index < thenBits.length; index++)
       out.push(this.mkIte(condition, thenBits[index], elseBits[index]));
   }

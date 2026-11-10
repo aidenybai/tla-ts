@@ -316,7 +316,8 @@ const UNCACHED_BV_OPS: ReadonlySet<number> = new Set([
 
 export type SmtSymbol = string | number;
 
-const getSymbolName = (symbol: SmtSymbol) => (typeof symbol === "number" ? `k!${symbol}` : symbol);
+export const getSymbolName = (symbol: SmtSymbol) =>
+  typeof symbol === "number" ? `k!${symbol}` : symbol;
 
 export interface FuncDecl {
   name: SmtSymbol;

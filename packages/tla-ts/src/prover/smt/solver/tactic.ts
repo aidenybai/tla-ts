@@ -17,6 +17,8 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Der } from "./der";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
+import { runBitBlast } from "./bit-blast-tactic";
+import { runMaxBvSharing } from "./max-bv-sharing-tactic";
 import { elimUncnstr } from "./elim-uncnstr";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
@@ -662,6 +664,30 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
+  [
+    "bit-blast",
+    {
+      descrs: getDescrs("", [
+        ["max_memory", PARAM_UINT, UINT_MAX, true],
+        ["max_steps", PARAM_UINT, UINT_MAX],
+        ["blast_mul", PARAM_BOOL, true, true],
+        ["blast_add", PARAM_BOOL, true, true],
+        ["blast_quant", PARAM_BOOL, false, true],
+        ["blast_full", PARAM_BOOL, false, true],
+      ]),
+      build: (environment, params) =>
+        runBitBlast(environment.manager, {
+          isBlastingMul: getBool(params, "blast_mul", true),
+          isBlastingAdd: getBool(params, "blast_add", true),
+          isBlastingQuant: getBool(params, "blast_quant", false),
+          isBlastingFull: getBool(params, "blast_full", false),
+        }),
+    },
+  ],
+  [
+    "max-bv-sharing",
+    { descrs: new Map(), build: (environment) => runMaxBvSharing(environment.manager) },
+  ],
   ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
   [
     "snf",
@@ -699,13 +725,13 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "ackermannize_bv add-bounds aig bit-blast blast-term-ite bv_bound_chk bv-divrem-bounds " +
+    "ackermannize_bv add-bounds aig blast-term-ite bv_bound_chk bv-divrem-bounds " +
     "bv-slice bv1-blast bvarray2uf cofactor-term-ite collect-statistics " +
     "degree-shift demodulator diff-neq " +
     "dt2bv elim-predicates elim-small-bv elim-uncnstr2 eq2bv " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
-    "max-bv-sharing nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
+    "nla2bv nlqsat nlsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psat psmt " +
     "qe qe_rec qe2 qfaufbv qfbv-sls qffd qffp qffpbv qffplra qfnra " +
     "qfufbv qfufbv_ackr qsat recover-01 reduce-args2 reduce-bv-size " +
