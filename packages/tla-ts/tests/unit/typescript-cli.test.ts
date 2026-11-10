@@ -43,6 +43,12 @@ describe("the CLI with TypeScript files", () => {
     expect(readdirSync(directory)).toEqual(files);
   });
 
+  it("type checks a file of a project with the project's tsconfig.json", () => {
+    const result = runCli(copyFixtures("project"), ["counter.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("4 distinct states found");
+  });
+
   it("prints a counterexample as TLC does and exits with TLC's code", () => {
     const result = runCli(copyFixtures("failing"), ["overdraft.ts"]);
     expect(result.status).toBe(12);

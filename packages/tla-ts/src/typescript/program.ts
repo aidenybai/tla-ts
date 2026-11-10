@@ -36,20 +36,55 @@ const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerH
   readFile: (fileName) => libraries.get(fileName),
 });
 
-// Type checks a model, with the files it imports, and throws its type errors.
+// The project of the nearest tsconfig.json, where it holds the file, as an editor finds it.
+const getProject = (path: string) => {
+  if (!ts.sys.fileExists(path)) return undefined;
+  const file = ts.sys.resolvePath(path).replaceAll("\\", "/");
+  const configPath = ts.findConfigFile(file.slice(0, file.lastIndexOf("/")), ts.sys.fileExists);
+  const project =
+    configPath === undefined
+      ? undefined
+      : ts.getParsedCommandLineOfConfigFile(
+          configPath,
+          {},
+          { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} },
+        );
+  return project?.fileNames.includes(file) ? project : undefined;
+};
+
+// A project's options, with those that tla-ts needs: strict types, which it reads values by, every
+// file a module, and no output, which a program of one root file can't build.
+const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => ({
+  ...options,
+  strict: true,
+  strictNullChecks: true,
+  noImplicitAny: true,
+  moduleDetection: ts.ModuleDetectionKind.Force,
+  noEmit: true,
+  composite: false,
+  incremental: false,
+  declaration: false,
+  declarationMap: false,
+  emitDeclarationOnly: false,
+  isolatedDeclarations: false,
+});
+
+// Type checks a model, with the files it imports, and throws its type errors. A file of a project
+// on disk type checks with the project's options.
 export const createProgram = (
   source: string,
   path: string,
   libraries: ReadonlyMap<string, string> | undefined,
 ) => {
+  const project = libraries === undefined ? getProject(path) : undefined;
+  const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
   const host =
-    libraries === undefined
-      ? ts.createCompilerHost(COMPILER_OPTIONS)
-      : createLibraryHost(libraries);
+    libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
   const libraryDirectory = host.getDefaultLibLocation?.() ?? "";
   const program = ts.createProgram({
     rootNames: [path],
-    options: COMPILER_OPTIONS,
+    options,
+    projectReferences: project?.projectReferences,
     host: {
       ...host,
       // The program's options parse the model as a module, where await can start a statement.
