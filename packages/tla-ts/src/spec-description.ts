@@ -532,6 +532,13 @@ export const getSubscriptVariables = (
     }
     const thunk = getThunk(expression, innerScope);
     if (thunk) return collect(thunk.expression, thunk.scope);
+    const argument =
+      expression.kind === "Identifier" && isLocallyResolved(expression)
+        ? lookupScope(innerScope, expression.name)
+        : undefined;
+    if (argument?.kind === "Value" && argument.argument) {
+      return collect(argument.argument, innerScope);
+    }
     if (
       expression.kind === "Identifier" &&
       !isLocallyResolved(expression) &&

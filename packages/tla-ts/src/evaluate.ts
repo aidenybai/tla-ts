@@ -128,7 +128,11 @@ export interface Thunk {
   isStreamed: boolean;
 }
 
-type Binding = { kind: "Value"; value: Value } | Thunk | { kind: "Operator"; operator: Operator };
+type Binding =
+  // A literal argument keeps its expression, which TLC binds lazily like any other.
+  | { kind: "Value"; value: Value; argument?: Expression }
+  | Thunk
+  | { kind: "Operator"; operator: Operator };
 
 export interface Scope {
   name: string;
@@ -1026,7 +1030,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
   const isLiteral =
     argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
   if (isLiteral) {
-    const binding: Binding = { kind: "Value", value: argument.value };
+    const binding: Binding = { kind: "Value", value: argument.value, argument };
     return () => binding;
   }
   if (argument.kind === "Identifier") {

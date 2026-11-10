@@ -383,8 +383,6 @@
   "tlc/imported/sany/syntax/labels/labels_label_with_subexpression_prefix_gh_tlaplus_tlaplus_885": "exit-mismatch",
   "tlc/imported/sany/syntax/sets/sets_mistaken_set_filter_tuples_test": "text-mismatch",
   "tlc/imported/tlc/tool/DepthFirstDieHardTest/DieHard": "exit-mismatch",
-  "tlc/imported/tlc/tool/Github687specATest/Github687spec": "message-mismatch",
-  "tlc/imported/tlc/tool/Github687specDTest/Github687spec": "message-mismatch",
   "tlc/imported/tlc/tool/PrintTraceExceptionTest/PrintTraceException": "message-mismatch",
   "tlc/modules/instance/named_assumption_loses_substitution": "exit-mismatch",
   "tlc/modules/instance/named_theorem_loses_substitution": "exit-mismatch",
