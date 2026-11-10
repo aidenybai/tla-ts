@@ -1247,20 +1247,22 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
 
 const MAX_SHARED_INTERVAL_LENGTH = 1024;
 const intervalDomains: Value[][] = [];
-const longIntervalDomains = new Map<number, WeakRef<Value[]>>();
+const longIntervalDomains = new WeakSet<Value[]>();
 const intervalValues: IntervalValue[] = [];
 const intervalArrays = new WeakMap<Value[], IntervalValue>();
 
 // TLC keeps the domain of a tuple, or of a function built over an interval, as an interval. Every
-// function over 1..n shares one domain array per length, and the elements of any other interval
-// map to it, so the array's identity records it. Callers must not mutate the returned array.
-// Longer domains are held weakly: a sequence that grows one element at a time would otherwise keep
-// an array of every length it passed through, n * n / 2 numbers in all.
+// function over 1..n up to MAX_SHARED_INTERVAL_LENGTH shares one domain array per length, and the
+// elements of any other interval map to it, so the array's identity records it. A longer domain
+// belongs to its function alone and is marked in longIntervalDomains: shared, a sequence that grows
+// one element at a time would keep an array of every length it passed through, n * n / 2 numbers
+// in all. Callers must not mutate the returned array.
 const getIntervalDomain = (length: number): Value[] => {
-  const cached = intervalDomains[length] ?? longIntervalDomains.get(length)?.deref();
-  if (cached) return cached;
-  const domain = Array.from({ length }, (_, index) => index + 1);
-  if (length > MAX_SHARED_INTERVAL_LENGTH) longIntervalDomains.set(length, new WeakRef(domain));
+  const shared = intervalDomains[length];
+  if (shared) return shared;
+  const domain: Value[] = [];
+  for (let element = 1; element <= length; element++) domain.push(element);
+  if (length > MAX_SHARED_INTERVAL_LENGTH) longIntervalDomains.add(domain);
   else intervalDomains[length] = domain;
   return domain;
 };
@@ -1278,7 +1280,7 @@ export const getIntervalElements = (value: IntervalValue): Value[] => {
 const isIntervalDomain = (domain: Value[]) =>
   domain.length > 0 &&
   (domain === intervalDomains[domain.length] ||
-    domain === longIntervalDomains.get(domain.length)?.deref() ||
+    longIntervalDomains.has(domain) ||
     intervalArrays.has(domain));
 
 // TLC keeps an interval domain only for a function built over an interval itself, so a set
