@@ -6,7 +6,7 @@ import { MESSAGE_CODE } from "./tlc/messages";
 import { evaluate, type Environment } from "./evaluate";
 import {
   compareValues,
-  createFunction,
+  createModelValue,
   createSet,
   createSortedFunction,
   createSortedSet,
@@ -21,6 +21,8 @@ import {
 } from "./values";
 
 type Images = Map<string, ModelValue>;
+// The same images by the rank of each model value, which permuting a value looks up.
+type RankedImages = (ModelValue | undefined)[];
 
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
@@ -102,7 +104,7 @@ export const getSymmetryGroup = (
   name: string,
   environment: Environment,
   substitutions: Substitution[],
-): Images[] | undefined => {
+): RankedImages[] | undefined => {
   const definition = environment.definitions.get(name);
   if (definition === undefined && !environment.constants.has(name)) {
     throw new TlaConfigError(
@@ -186,10 +188,16 @@ export const getSymmetryGroup = (
     }),
   );
   if (group.size === 0) return undefined;
-  return [...group.values()];
+  return [...group.values()].map((images) => {
+    const ranked: (ModelValue | undefined)[] = [];
+    images.forEach((image, name) => {
+      ranked[createModelValue(name).rank] = image;
+    });
+    return ranked;
+  });
 };
 
-const permuteElements = (elements: Value[], images: Images) => {
+const permuteElements = (elements: Value[], images: RankedImages) => {
   for (let index = 0; index < elements.length; index++) {
     const element = elements[index];
     const permuted = permuteValue(element, images);
@@ -206,7 +214,7 @@ const permuteElements = (elements: Value[], images: Images) => {
 
 // A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
 // in order, so it sorts only the moved ones and merges them back.
-const permuteSortedElements = (elements: Value[], images: Images) => {
+const permuteSortedElements = (elements: Value[], images: RankedImages) => {
   const kept: Value[] = [];
   const moved: Value[] = [];
   for (const element of elements) {
@@ -233,28 +241,47 @@ const permuteSortedElements = (elements: Value[], images: Images) => {
 
 // Value#permute: the value with each model value replaced by its image. A value the permutation
 // doesn't move is returned itself, so that comparing it with itself stops at identity.
-const permuteValue = (value: Value, images: Images): Value => {
+const permuteValue = (value: Value, images: RankedImages): Value => {
   if (typeof value !== "object") return value;
   const kind = value.kind;
-  if (kind === "ModelValue") return images.get(value.name) ?? value;
+  if (kind === "ModelValue") return images[value.rank] ?? value;
   if (kind === "Set") {
     const elements = permuteSortedElements(value.elements, images);
     return elements ? createSortedSet(elements) : value;
   }
   if (kind === "Function" || (kind === "LazyFunction" && isEnumerable(value.domain))) {
     const functionValue = toFiniteFunction(value);
-    const domain = permuteElements(functionValue.domain, images);
+    // A record's field names are strings, which no permutation moves.
+    const domain =
+      functionValue.functionClass === "record"
+        ? undefined
+        : permuteElements(functionValue.domain, images);
     const range = permuteElements(functionValue.range, images) ?? functionValue.range;
     if (domain) {
-      const permuted = createFunction(
-        domain.map((key, index): [Value, Value] => [key, range[index]]),
-      );
+      // Sorts the keys and their values together by binary insertion, since a permuted domain is
+      // usually a few model values.
+      const values = range === functionValue.range ? range.slice() : range;
+      for (let index = 1; index < domain.length; index++) {
+        const key = domain[index];
+        const keyValue = values[index];
+        let low = 0;
+        let high = index;
+        while (low < high) {
+          const middle = (low + high) >>> 1;
+          if (compareValues(domain[middle], key) < 0) low = middle + 1;
+          else high = middle;
+        }
+        for (let position = index; position > low; position--) {
+          domain[position] = domain[position - 1];
+          values[position] = values[position - 1];
+        }
+        domain[low] = key;
+        values[low] = keyValue;
+      }
       // A permutation often maps the domain to itself, such as a function over the symmetric set.
       // Sharing the original domain array lets comparisons with other images skip the domain.
-      const isSameDomain = permuted.domain.every(
-        (key, index) => key === functionValue.domain[index],
-      );
-      return isSameDomain ? createSortedFunction(functionValue.domain, permuted.range) : permuted;
+      const isSameDomain = domain.every((key, index) => key === functionValue.domain[index]);
+      return createSortedFunction(isSameDomain ? functionValue.domain : domain, values);
     }
     return range === functionValue.range
       ? functionValue
@@ -270,7 +297,7 @@ const permuteValue = (value: Value, images: Images): Value => {
 // permutation as soon as a variable's image is larger than the smallest state's.
 export const getRepresentative = (
   state: Value[],
-  permutations: Images[],
+  permutations: RankedImages[],
   order: number[],
 ): Value[] => {
   let smallest = state;
