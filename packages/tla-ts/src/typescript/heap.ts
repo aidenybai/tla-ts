@@ -731,9 +731,11 @@ const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
   );
 };
 
+// Object.getOwnPropertyDescriptor, or Reflect's, which only differs where the target isn't an
+// object.
 export const isDescription = (node: ts.Node, context: Context) =>
   isMethodCall(node) &&
-  node.expression.expression.getText() === "Object" &&
+  ["Object", "Reflect"].includes(node.expression.expression.getText()) &&
   node.expression.name.text === "getOwnPropertyDescriptor" &&
   node.arguments.length >= 2 &&
   (getKind(node.arguments[0], context) === "object" || isBuiltInObject(node.arguments[0], context));

@@ -2165,6 +2165,21 @@ describe("errors", () => {
     ).toThrow("tla-ts can't run this before what reads what it changes");
   });
 
+  it("describes a property with Reflect.getOwnPropertyDescriptor", async () => {
+    const result = await checkModel(`
+      const object = {};
+      const getter = function () {};
+      Object.defineProperty(object, "p", { get: getter, configurable: true });
+      const accessor = Reflect.getOwnPropertyDescriptor(object, "p")!;
+      if (accessor.enumerable !== false || accessor.get !== getter) throw new Error("accessor");
+      const data = Reflect.getOwnPropertyDescriptor({ a: 1 }, "a")!;
+      if (data.value !== 1 || data.writable !== true) throw new Error("data");
+      const missing = Reflect.getOwnPropertyDescriptor({ a: 1 }, "b");
+      if (missing !== undefined) throw new Error("missing");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";
