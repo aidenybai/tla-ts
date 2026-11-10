@@ -747,6 +747,14 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
   const isString =
     getKind(node.left, context) === "string" || getKind(node.right, context) === "string";
+  // The left operand runs though nothing reads it, so that a getter it reads, which tla-ts can't
+  // call, stops the check. A literal can't stop it.
+  if (kind === ts.SyntaxKind.CommaToken) {
+    if (ts.isLiteralExpression(node.left)) return translate(node.right);
+    const left = translate(node.left);
+    const right = translate(node.right);
+    return ifExpression(apply("=", [left, left]), right, right);
+  }
   const logical = LOGICAL_OPERATORS.get(kind);
   if (logical !== undefined) {
     if (!isBooleanLike(node.left, context) || !isBooleanLike(node.right, context)) {

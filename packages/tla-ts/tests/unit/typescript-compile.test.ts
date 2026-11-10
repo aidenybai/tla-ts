@@ -2463,6 +2463,16 @@ describe("errors", () => {
     );
   });
 
+  it("evaluates the left operand of a comma and gives the right one", async () => {
+    const result = await checkModel(`
+      const holder = { count: 1 };
+      // @ts-ignore
+      const value = (holder.count, 2);
+      if (value !== 2) throw new Error("comma");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("calls a function that a function body declares", async () => {
     const result = await checkModel(`
       let log = "";
