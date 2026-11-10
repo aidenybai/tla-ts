@@ -1699,6 +1699,51 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't make more symbols");
   });
 
+  it("runs promise reactions as jobs in the order JavaScript queues them", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const first = Promise.resolve(1);
+      first.then(() => { log = log + "a"; }).then(() => { log = log + "b"; });
+      Promise.reject(2).catch(() => { log = log + "c"; }).then(() => { log = log + "d"; });
+      first.then(() => {
+        log = log + "e";
+        return Promise.resolve(5);
+      }).then((value: number) => { log = log + "f" + value; });
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "saceb" + "df5") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a timer finds a promise's handler threw", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let caught: unknown = undefined;
+      Promise.resolve(1)
+        .then(() => { throw new Error("handler"); })
+        .catch((error: unknown) => { caught = error; });
+      setTimeout(() => {
+        if (caught === undefined) throw new Error("not caught");
+        throw new Error("caught");
+      });
+    `);
+    expect(result.failure?.message).toContain("A timer threw an exception");
+  });
+
+  it("stops where a script replaces Promise.prototype.then", async () => {
+    const result = await checkModel(`
+      const original = Promise.prototype.then;
+      Promise.prototype.then = function (this: Promise<unknown>, onFulfilled: unknown) {
+        return original.call(this, onFulfilled as never);
+      } as never;
+      Promise.resolve(1).then(() => {});
+    `);
+    expect(result.failure?.message).toContain("where a script replaced it");
+  });
+
   it("runs a class's static fields and blocks in order as a script loads", async () => {
     const result = await check(
       compile(

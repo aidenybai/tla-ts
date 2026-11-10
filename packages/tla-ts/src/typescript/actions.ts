@@ -56,6 +56,13 @@ import {
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import { getErrorClass, translateEngineError, translateThrown } from "./exceptions";
 import {
+  drainTasks,
+  EMPTY_TASKS,
+  isPromiseCall,
+  type Tasks,
+  translatePromiseCall,
+} from "./promises";
+import {
   getAccessorValue,
   getAllocated,
   getHeap,
@@ -127,7 +134,7 @@ import {
   rejectGeneratorUse,
 } from "./types";
 
-interface Path {
+export interface Path {
   scope: Scope;
   // State variables and mutable locals, which assignments may change.
   mutable: Set<ts.Symbol>;
@@ -136,6 +143,8 @@ interface Path {
   isLooping: boolean;
   // The generator objects that the statements made, by name, with where each one's body suspended.
   generators: ReadonlyMap<string, Suspension>;
+  // The jobs and promises that the statements queued and made, or undefined in a loop's body.
+  tasks: Tasks | undefined;
 }
 
 interface KnownDefault {
@@ -175,7 +184,7 @@ interface Thrown {
   uncaught: Expression;
 }
 
-interface Frame {
+export interface Frame {
   // What follows the statements once they complete.
   next: (path: Path) => Formula;
   // What a return statement does: end the action, or leave an inlined helper with its value.
@@ -589,7 +598,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   );
 };
 
-const translateCallStatement = (
+export const translateCallStatement = (
   expression: ts.CallExpression,
   path: Path,
   context: Context,
@@ -626,6 +635,9 @@ const translateCallStatement = (
         continueWith,
       ),
     );
+  }
+  if (isPromiseCall(expression, context)) {
+    return translatePromiseCall(expression, path, context, frame, continueWith);
   }
   if (isGeneratorStep(expression, context)) {
     const receiver = getCast(expression.expression.expression);
@@ -759,7 +771,7 @@ const translateCallStatement = (
       );
 };
 
-const getCallback = (node: ts.Expression, path: Path, context: Context) => {
+export const getCallback = (node: ts.Expression, path: Path, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const assigned = symbol && path.scope.functions.get(symbol);
   if (assigned === undefined) return getCallee(node, context);
@@ -932,7 +944,7 @@ const bindCall = (
   );
 };
 
-const getBody = (callee: FunctionNode) => {
+export const getBody = (callee: FunctionNode) => {
   const calleeBody = callee.body;
   if (calleeBody === undefined) throw new TlaTypeScriptError("Give this a body", callee);
   return ts.isBlock(calleeBody)
@@ -1016,6 +1028,7 @@ const makeGenerator = (
       return {
         ...callerPath,
         isAssigned: current.isAssigned,
+        tasks: current.tasks,
         generators: new Map([
           ...current.generators,
           [
@@ -1042,6 +1055,7 @@ const makeGenerator = (
       isLast: resumer.isLast,
       mutable: new Set([...suspended.mutable, ...resumer.mutable]),
       generators: resumer.generators,
+      tasks: resumer.tasks,
       scope: {
         ...suspended.scope,
         bindings: new Map([
@@ -1562,7 +1576,7 @@ const isUndefinedLiteral = (node: ts.Expression, context: Context) =>
   node.text === "undefined" &&
   (context.checker.getTypeAtLocation(node).flags & ts.TypeFlags.Undefined) !== 0;
 
-const isSameExpression = (left: Expression, right: Expression) => {
+export const isSameExpression = (left: Expression, right: Expression) => {
   const withoutLocations = (key: string, value: unknown) =>
     key === "location" ? undefined : value;
   return JSON.stringify(left, withoutLocations) === JSON.stringify(right, withoutLocations);
@@ -1753,6 +1767,7 @@ const translateLoopCall = (
     isLooping: true,
     // A generator from before the loop resumes only outside it, as each iteration's path ends.
     generators: new Map(),
+    tasks: undefined,
   };
   const getChecked = (value: Expression, at: number) =>
     loop.isArrayLike
@@ -2399,13 +2414,14 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     node.expression.name.text !== "construct" &&
     isHeapType(context.checker.getTypeAtLocation(node), node, context)) ||
   isGeneratorStep(node, context) ||
+  isPromiseCall(node, context) ||
   getCreatedGenerator(node, path, context) !== undefined ||
   isHeapCall(node, path, context) ||
   getLoopCall(node, path, context) !== undefined ||
   isStateCall(node, path, context);
 
 // The expression that parentheses and casts wrap.
-const getCast = (node: ts.Expression): ts.Expression =>
+export const getCast = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) || ts.isAsExpression(node) ? getCast(node.expression) : node;
 
 // Whether a function has a try statement of its own, which only statements can run.
@@ -2470,7 +2486,7 @@ const allocateAll = (
 // the heap is read. An action binds it with \E, since it evaluates a LET definition that may call
 // Assert again at each reference, and each heap refers to the one before it. A loop's body gives
 // values rather than a formula, so it forces a LET definition in an IF instead.
-const bindOnce = (path: Path, name: string, value: Expression, rest: Formula) =>
+export const bindOnce = (path: Path, name: string, value: Expression, rest: Formula) =>
   path.isLooping
     ? letIn(
         [define(name, [], value)],
@@ -2802,6 +2818,7 @@ const translateJoined = (
     (exit) =>
       changed.every((symbol) => exit.path.scope.bindings.has(symbol)) &&
       exit.path.generators === path.generators &&
+      exit.path.tasks === path.tasks &&
       isKept(exit.path.scope.bindings, path.scope.bindings) &&
       isKept(exit.path.scope.functions, path.scope.functions),
   );
@@ -3000,6 +3017,7 @@ const translateIterations = (
     isLooping: true,
     // A generator from before the loop resumes only outside it, as each iteration's path ends.
     generators: new Map(),
+    tasks: undefined,
   };
   const operator: OperatorDefinition = {
     ...define(
@@ -3199,7 +3217,7 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
   return evaluated === undefined ? undefined : getLeadingAssignment(evaluated, results, context);
 };
 
-const translateStatements = (
+export const translateStatements = (
   statements: readonly ts.Statement[],
   path: Path,
   context: Context,
@@ -3287,7 +3305,10 @@ const translateStatements = (
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
     return allocate(returned, path, context, (inner) => {
-      if (ts.isCallExpression(returned) && !isLibraryCall(returned, context)) {
+      if (
+        ts.isCallExpression(returned) &&
+        (!isLibraryCall(returned, context) || isPromiseCall(returned, context))
+      ) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }
       if (hasCall(returned, context)) throw new TlaTypeScriptError("Unsupported return", statement);
@@ -3340,6 +3361,9 @@ const translateStatements = (
   if (ts.isIterationStatement(statement, false)) {
     return translateLoop(statement, path, context, frame, continueWith);
   }
+  // A declared function without a body, such as setTimeout, which the host defines.
+  if (ts.isFunctionDeclaration(statement) && statement.body === undefined)
+    return continueWith(path);
   throw new TlaTypeScriptError(`Unsupported statement: ${statement.getText()}`, statement);
 };
 
@@ -3375,6 +3399,7 @@ export const translateAction = (
       isLast: false,
       isLooping: false,
       generators: new Map(),
+      tasks: EMPTY_TASKS,
     },
     context,
     {
@@ -3441,11 +3466,12 @@ export const translateScript = (
       isLast,
       isLooping: false,
       generators: new Map(),
+      tasks: EMPTY_TASKS,
     },
     context,
     {
-      next: finish,
-      exit: finish,
+      next: (path) => drainTasks(path, finish),
+      exit: (path) => drainTasks(path, finish),
       breakTo: undefined,
       continueTo: undefined,
       throwTo: undefined,

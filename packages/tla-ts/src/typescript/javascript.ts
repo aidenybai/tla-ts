@@ -312,7 +312,7 @@ Lookup(heap, ref) ==
   CASE ref \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of " \\o ToString(ref))
     [] IsHeap(ref) /\\ heap.objects[ref[Ref]].isOpaque ->
-         Assert(FALSE, "tla-ts can't read the properties of a generator")
+         Assert(FALSE, "tla-ts can't read the properties of a generator or a promise")
     [] IsHeap(ref) -> heap.objects[ref[Ref]]
     [] IsBuiltIn(ref) /\\ BuiltInKey(ref) \\in DOMAIN heap.changed -> heap.changed[BuiltInKey(ref)]
     [] IsBuiltIn(ref) -> BuiltIns[BuiltInKey(ref)]
@@ -516,6 +516,15 @@ RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
   \\/ key \\in DOMAIN Own(heap, ref)
   \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
+
+\\* A promise that tla-ts follows as it compiles, whose properties the heap doesn't hold.
+PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !.isOpaque = TRUE]
+
+\\* Whether resolving a promise with a value would call the value's then, which tla-ts doesn't, or
+\\* follow a promise that tla-ts can't tell.
+IsThenable(heap, value) ==
+  /\\ IsRef(value)
+  /\\ IF IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque THEN TRUE ELSE Has(heap, value, "then")
 
 \\* An error is a record of its constructor, its message and its name.
 LOCAL IsError(value) ==
@@ -846,6 +855,9 @@ SymbolKey(symbol) ==
   ELSE symbol
 
 PropertyKey(value) == IF IsSymbol(value) THEN SymbolKey(value) ELSE StringOf(value)
+
+\\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
+HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
 
 \\* What a symbol's toString, valueOf, or description gives, where Symbol.prototype still holds the
 \\* built-in method or getter.

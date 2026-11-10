@@ -216,7 +216,9 @@ export const translateBuiltInValue = (
     | "Boolean.prototype"
     | "Number.prototype"
     | "String.prototype"
-    | "Symbol.prototype",
+    | "Symbol.prototype"
+    | "Promise"
+    | "Promise.prototype",
   node: ts.Node,
   context: Context,
 ) => {

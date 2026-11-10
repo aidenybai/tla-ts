@@ -91,7 +91,8 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
     (ts.isNewExpression(node) &&
       ts.isIdentifier(node.expression) &&
       ["Boolean", "Number", "String"].includes(node.expression.text)) ||
-    (ts.isIdentifier(node) && (node.text === "arguments" || node.text === "Symbol")) ||
+    (ts.isIdentifier(node) &&
+      ["arguments", "Symbol", "Promise", "setTimeout"].includes(node.text)) ||
     (ts.forEachChild(node, usesObjects) ?? false);
   if (heap !== undefined && isScript(sourceFile) && usesObjects(sourceFile)) {
     context.heap = heap;
