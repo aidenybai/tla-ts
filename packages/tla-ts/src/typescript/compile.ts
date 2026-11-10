@@ -132,18 +132,14 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
             ? 1
             : 0,
         );
-    const namesSymbol = (node: ts.Node): boolean =>
-      (ts.isIdentifier(node) && node.text === "Symbol") ||
-      (ts.forEachChild(node, namesSymbol) ?? false);
-    // Each call of Symbol may make a few symbols, as where a loop or a function runs it again.
-    context.symbols = namesSymbol(sourceFile)
-      ? [
-          ...WELL_KNOWN_SYMBOLS,
-          ...Array.from({ length: 4 * getSymbolCalls(sourceFile) }, () => ""),
-        ].map((name) =>
-          context.names.getFresh(`Symbol${name.charAt(0).toUpperCase()}${name.slice(1)}`),
-        )
-      : [];
+    // The built-in objects hold properties that the well-known symbols key. Each call of Symbol
+    // may make a few symbols, as where a loop or a function runs it again.
+    context.symbols = [
+      ...WELL_KNOWN_SYMBOLS,
+      ...Array.from({ length: 4 * getSymbolCalls(sourceFile) }, () => ""),
+    ].map((name) =>
+      context.names.getFresh(`Symbol${name.charAt(0).toUpperCase()}${name.slice(1)}`),
+    );
   }
   const model = readModel(sourceFile, context);
   rejectSharing(program.sourceFile, context);

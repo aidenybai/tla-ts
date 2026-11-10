@@ -89,9 +89,7 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
       : apply("ToString", [value]);
   }
   const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
-  if (names?.length === 1 && names[0] === "symbol") {
-    return useJavaScript("SymbolKey", [value], context);
-  }
+  if (names?.length === 1 && names[0] === "symbol") return value;
   if (names?.every((name) => ["string", "number", "symbol"].includes(name))) {
     return useJavaScript("PropertyKey", [value], context);
   }

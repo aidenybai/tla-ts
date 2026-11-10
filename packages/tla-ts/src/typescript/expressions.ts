@@ -185,9 +185,20 @@ const concatenate = (parts: Expression[]) =>
   parts.reduce((left, right) => apply("\\o", [left, right]));
 
 // The key of an element access, which counts from 1 in a sequence where JavaScript counts from 0.
+// Whether a key may be a symbol, which only an object's properties have.
+const isSymbolKey = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  return (type.isUnion() ? type.types : [type]).some(
+    (member) => (member.flags & ts.TypeFlags.ESSymbolLike) !== 0,
+  );
+};
+
 export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, context: Context) => {
   const key = node.argumentExpression;
   const kind = getKind(node.expression, context);
+  if (isSymbolKey(key, context)) {
+    throw new TlaTypeScriptError("tla-ts can't read what a symbol keys on this value", key);
+  }
   if (kind !== "sequence" && kind !== "string") return translateExpression(key, scope, context);
   if (!isNumberLike(key, context)) {
     throw new TlaTypeScriptError("Index arrays and strings with numbers", key);
@@ -1153,6 +1164,17 @@ const translateElementAccess = (
   if (getterRead !== undefined) return getterRead;
   const kind = getKind(node.expression, context);
   if (kind === "object" || isHeapBuiltIn(node.expression, scope, context)) {
+    // A built-in object's symbol may key an object whose type isn't one that the heap holds, such
+    // as Array.prototype[Symbol.unscopables].
+    const type = context.checker.getTypeAtLocation(node);
+    if (
+      isSymbolKey(node.argumentExpression, context) &&
+      getKind(node, context) === "other" &&
+      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      type.getCallSignatures().length === 0
+    ) {
+      throw new TlaTypeScriptError("tla-ts can't read this object through a symbol", node);
+    }
     return translateFoundGetter(
       node,
       getHeap(scope, node, context),

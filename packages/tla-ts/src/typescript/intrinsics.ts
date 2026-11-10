@@ -363,7 +363,9 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
           { name: "kind", value: string(kind) },
         ]);
       const translated = properties.map((property) => {
-        const key = string(property[0]);
+        const key = property[0].startsWith("@@")
+          ? useJavaScript("WellKnownSymbol", [string(property[0].slice(2))], context)
+          : string(property[0]);
         const flags = property[1];
         if (property.length === 4) {
           const accessor = record("Record", [

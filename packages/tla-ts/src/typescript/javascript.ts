@@ -48,8 +48,6 @@ IsSymbol(value) == \\E position \\in DOMAIN Symbols : Symbols[position] = value
 
 LOCAL SymbolPosition(symbol) == CHOOSE position \\in DOMAIN Symbols : Symbols[position] = symbol
 
-LOCAL IsWellKnown(value) == IsSymbol(value) /\\ SymbolPosition(value) <= Len(WellKnownSymbols)
-
 TypeOf(value) ==
   LET text == ToString(value)
       first == SubSeq(text, 1, 1)
@@ -417,6 +415,7 @@ DigitsBelow(left, right) ==
 
 \\* An array index is below 2^32 - 1, where TLC's integers hold only those below 2^31.
 LOCAL IsIndex(key) ==
+  /\\ ~IsSymbol(key)
   /\\ Len(key) > 0
   /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
   /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
@@ -468,11 +467,7 @@ ForInKeys(heap, ref) ==
 
 OwnPropertyNames(heap, ref) == OwnKeys(Lookup(heap, ref))
 
-\\* tla-ts doesn't record the properties of the built-in objects that well-known symbols key.
-OwnPropertySymbols(heap, ref) ==
-  IF IsHeap(ref)
-  THEN SelectSeq(Lookup(heap, ref).keys, IsSymbol)
-  ELSE Assert(FALSE, "tla-ts can't list the symbol keys of a built-in object")
+OwnPropertySymbols(heap, ref) == SelectSeq(Lookup(heap, ref).keys, IsSymbol)
 
 RECURSIVE PutAll(_, _, _)
 PutAll(object, values, keys) ==
@@ -862,14 +857,7 @@ SymbolString(heap, symbol) ==
   LET description == SymbolDescription(heap, symbol)
   IN "Symbol(" \\o (IF description = Undefined THEN "" ELSE description) \\o ")"
 
-\\* The key that a symbol gives. tla-ts doesn't know which properties of the built-in objects the
-\\* well-known symbols name, nor run what JavaScript runs through them, so it uses none as a key.
-SymbolKey(symbol) ==
-  IF IsWellKnown(symbol)
-  THEN Assert(FALSE, "tla-ts can't use a well-known symbol as a key")
-  ELSE symbol
-
-PropertyKey(value) == IF IsSymbol(value) THEN SymbolKey(value) ELSE StringOf(value)
+PropertyKey(value) == IF IsSymbol(value) THEN value ELSE StringOf(value)
 
 \\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
 HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
@@ -1150,33 +1138,6 @@ LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
 
 IsArray(heap, value) == IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
-\\* The built-in objects that have their own Symbol.toStringTag, by key, with its value.
-LOCAL ToStringTags ==
-  [key \\in {"Math", "JSON", "Reflect", "Atomics", "Symbol.prototype", "BigInt.prototype",
-            "Map.prototype", "Set.prototype", "WeakMap.prototype", "WeakSet.prototype",
-            "WeakRef.prototype", "FinalizationRegistry.prototype", "Promise.prototype",
-            "ArrayBuffer.prototype", "SharedArrayBuffer.prototype", "DataView.prototype"} |->
-     IF key \\in {"Math", "JSON", "Reflect", "Atomics"} THEN key ELSE SubSeq(key, 1, Len(key) - 10)]
-
-\\* The built-in prototypes that have no Symbol.toStringTag of their own.
-LOCAL UntaggedPrototypes ==
-  {"Object.prototype", "Array.prototype", "Boolean.prototype", "Number.prototype",
-   "String.prototype", "Date.prototype", "RegExp.prototype", "Error.prototype",
-   "TypeError.prototype", "RangeError.prototype", "SyntaxError.prototype",
-   "ReferenceError.prototype", "EvalError.prototype", "URIError.prototype",
-   "AggregateError.prototype"}
-
-\\* The Symbol.toStringTag that an object has or inherits, or "" where it has none. A script can't
-\\* define symbol keys, so only built-in objects have one.
-RECURSIVE TagOf(_, _)
-TagOf(heap, ref) ==
-  CASE ref = Null -> ""
-    [] IsHeap(ref) -> TagOf(heap, Prototype(heap, ref))
-    [] \\E key \\in DOMAIN ToStringTags : key = BuiltInKey(ref) -> ToStringTags[BuiltInKey(ref)]
-    [] IsBuiltIn(ref) /\\ (Lookup(heap, ref).isCallable \\/ \\E key \\in UntaggedPrototypes : key = BuiltInKey(ref)) ->
-         TagOf(heap, Prototype(heap, ref))
-    [] OTHER -> Assert(FALSE, "tla-ts can't read the Symbol.toStringTag of " \\o ToString(ref))
-
 \\* The kind that Object.prototype.toString gives an object without a Symbol.toStringTag.
 LOCAL ClassOf(heap, ref) ==
   CASE IsHeap(ref) /\\ IsArrayObject(Lookup(heap, ref)) -> "Array"
@@ -1193,7 +1154,10 @@ LOCAL ClassOf(heap, ref) ==
     [] BuiltInKey(ref) = "String.prototype" -> "String"
     [] OTHER -> "Object"
 
-LOCAL Tagged(heap, ref, kind) == IF TagOf(heap, ref) = "" THEN kind ELSE TagOf(heap, ref)
+\\* The Symbol.toStringTag that an object has or inherits where it's a string, or else its kind.
+LOCAL Tagged(heap, ref, kind) ==
+  LET tag == Get(heap, ref, WellKnownSymbol("toStringTag"))
+  IN IF TypeOf(tag) = "string" THEN tag ELSE kind
 
 \\* Object.prototype.toString, which gives "[object Kind]". A value that isn't on the heap gives the
 \\* kind of object that holds it, such as Array for a sequence.

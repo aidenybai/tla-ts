@@ -1681,12 +1681,35 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops where a script uses a well-known symbol as a key", async () => {
+  it("keys properties by well-known symbols, as the built-in objects do", async () => {
     const result = await checkModel(`
       const object: { [key: symbol]: number } = {};
       object[Symbol.iterator] = 1;
+      if (object[Symbol.iterator] !== 1) throw new Error("own");
+      if (Object.getOwnPropertySymbols(object).length !== 1) throw new Error("symbols");
+      if (Array.prototype[Symbol.iterator] !== Array.prototype.values) throw new Error("array");
+      if (Object.getOwnPropertySymbols(Array.prototype).length !== 2) throw new Error("listed");
+      if (Math[Symbol.toStringTag] !== "Math") throw new Error("tag");
+      const tagged: { [key: symbol]: string } = {};
+      tagged[Symbol.toStringTag] = "Tagged";
+      if (Object.prototype.toString.call(tagged) !== "[object Tagged]") throw new Error("own tag");
+      if (Object.prototype.toString.call(new Map()) !== "[object Map]") throw new Error("map tag");
     `);
-    expect(result.failure?.message).toContain("tla-ts can't use a well-known symbol as a key");
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects a symbol key on a value that isn't an object", () => {
+    expect(() => compile("const map = new Map();\nconst read = map[Symbol.iterator];")).toThrow(
+      "tla-ts can't read what a symbol keys on this value",
+    );
+  });
+
+  it("stops where a script reads a built-in getter that a well-known symbol keys", async () => {
+    const result = await checkModel(`
+      const holder = {};
+      const species = Array[Symbol.species];
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call getters");
   });
 
   it("stops where a script makes more symbols than it has calls of Symbol", async () => {
