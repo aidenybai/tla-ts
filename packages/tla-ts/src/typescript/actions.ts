@@ -21,6 +21,7 @@ import {
   getCallee,
   getElement,
   getFunctionOrGenerator,
+  isAsyncFunction,
   isGenerator,
   isPlain,
   getNewClass,
@@ -44,7 +45,7 @@ import {
   isStatementNew,
   share,
   isInlined,
-  getGenerator,
+  getFunctionOfKind,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -59,8 +60,11 @@ import {
   drainTasks,
   EMPTY_TASKS,
   isPromiseCall,
+  isPromiseConstruction,
   type Tasks,
+  translateAsyncCall,
   translatePromiseCall,
+  translatePromiseConstruction,
 } from "./promises";
 import {
   getAccessorValue,
@@ -195,6 +199,16 @@ export interface Frame {
   // What a yield does in a generator's body, with the statements after it.
   yieldTo:
     | ((path: Path, value: Expression | undefined, rest: (path: Path) => Formula) => Formula)
+    | undefined;
+  // What an await does in an async function's body, with what follows once the promise settles.
+  awaitTo:
+    | ((
+        path: Path,
+        value: Expression,
+        operand: ts.Expression,
+        onFulfilled: (path: Path, value: Expression) => Formula,
+        onRejected: (path: Path, value: Expression) => Formula,
+      ) => Formula)
     | undefined;
   // Functions being inlined, to reject recursion.
   inlining: Set<ts.Node>;
@@ -672,6 +686,10 @@ export const translateCallStatement = (
     rejectGeneratorUse(expression, context);
     return translateGeneratorCall(expression, created, path, context, frame, continueWith);
   }
+  const asyncCallee = getAsyncCallee(expression.expression, path, context);
+  if (asyncCallee !== undefined) {
+    return translateAsyncCall(expression, asyncCallee, path, context, frame, continueWith);
+  }
   const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
     argumentNodes.map((argument) => translateExpression(argument, path.scope, context));
   const heapSymbol = context.heap;
@@ -782,13 +800,23 @@ export const getCallback = (node: ts.Expression, path: Path, context: Context) =
 const getGeneratorCallee = (node: ts.Expression, path: Path, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const assigned = symbol && path.scope.functions.get(symbol);
-  return assigned !== undefined && isGenerator(assigned) ? assigned : getGenerator(node, context);
+  return assigned !== undefined && isGenerator(assigned)
+    ? assigned
+    : getFunctionOfKind(node, context, isGenerator);
+};
+
+const getAsyncCallee = (node: ts.Expression, path: Path, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const assigned = symbol && path.scope.functions.get(symbol);
+  return assigned !== undefined && isAsyncFunction(assigned)
+    ? assigned
+    : getFunctionOfKind(node, context, isAsyncFunction);
 };
 
 // Binds a call's arguments to its callee's parameters. A parameter's default makes its objects
 // whether or not the call passes the parameter, as making an object that nothing reads can't be
 // seen.
-const bindCall = (
+export const bindCall = (
   node: ts.Expression,
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
@@ -866,7 +894,8 @@ const bindCall = (
   }
   const callbacks = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
     const argument = argumentNodes.at(position);
-    const callback = argument && getCallback(argument, path, context);
+    const callback =
+      argument && (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context));
     const symbol = getSymbol(parameter.name, context.checker);
     return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
   });
@@ -983,6 +1012,7 @@ const inlineBody = (
             continueTo: undefined,
             throwTo: frame.throwTo,
             yieldTo: undefined,
+            awaitTo: undefined,
             inlining: new Set([...frame.inlining, callee]),
           }),
           leaf(boolean(false)),
@@ -991,6 +1021,50 @@ const inlineBody = (
       );
     }),
   );
+
+// The path of the code that resumed a function's body, with what the body changed outside itself.
+export const leaveBody = (
+  current: Path,
+  caller: Path,
+  changed: readonly ts.Symbol[],
+  isOuter: (symbol: ts.Symbol) => boolean,
+): Path => ({
+  ...caller,
+  isAssigned: current.isAssigned,
+  tasks: current.tasks,
+  generators: current.generators,
+  scope: {
+    ...caller.scope,
+    bindings: new Map([
+      ...caller.scope.bindings,
+      ...changed.flatMap((symbol): [ts.Symbol, Expression][] => {
+        const value = current.scope.bindings.get(symbol);
+        return isOuter(symbol) && value !== undefined ? [[symbol, value]] : [];
+      }),
+    ]),
+  },
+});
+
+// The path where a function's body resumes, with the state outside it as the resuming code sees.
+export const enterBody = (
+  resumer: Path,
+  suspended: Path,
+  isOuter: (symbol: ts.Symbol) => boolean,
+): Path => ({
+  ...suspended,
+  isAssigned: resumer.isAssigned,
+  isLast: resumer.isLast,
+  mutable: new Set([...suspended.mutable, ...resumer.mutable]),
+  generators: resumer.generators,
+  tasks: resumer.tasks,
+  scope: {
+    ...suspended.scope,
+    bindings: new Map([
+      ...suspended.scope.bindings,
+      ...[...resumer.scope.bindings].filter((entry) => isOuter(entry[0])),
+    ]),
+  },
+});
 
 // Makes the generator object that a call to a generator gives, whose body runs only as its
 // next, return, and throw methods resume it. A path tracks where each generator's body suspended,
@@ -1022,48 +1096,17 @@ const makeGenerator = (
       if (caller === undefined) throw new TlaTypeScriptError("Unsupported generator", node);
       return caller;
     };
-    // The path of the call that resumed the body, with what the body changed outside itself.
-    const leave = (current: Path, resume: Suspension["resume"]): Path => {
-      const callerPath = getCaller(current).path;
-      return {
-        ...callerPath,
-        isAssigned: current.isAssigned,
-        tasks: current.tasks,
-        generators: new Map([
-          ...current.generators,
-          [
-            name,
-            { ref, generator: callee, resume, isStarted: true, isInTry: current.scope.isCatching },
-          ],
-        ]),
-        scope: {
-          ...callerPath.scope,
-          bindings: new Map([
-            ...callerPath.scope.bindings,
-            ...changed.flatMap((symbol): [ts.Symbol, Expression][] => {
-              const value = current.scope.bindings.get(symbol);
-              return isOuter(symbol) && value !== undefined ? [[symbol, value]] : [];
-            }),
-          ]),
-        },
-      };
-    };
-    // The path where the body resumes, with the state outside it as the resuming call sees it.
-    const enter = (resumer: Path, suspended: Path): Path => ({
-      ...suspended,
-      isAssigned: resumer.isAssigned,
-      isLast: resumer.isLast,
-      mutable: new Set([...suspended.mutable, ...resumer.mutable]),
-      generators: resumer.generators,
-      tasks: resumer.tasks,
-      scope: {
-        ...suspended.scope,
-        bindings: new Map([
-          ...suspended.scope.bindings,
-          ...[...resumer.scope.bindings].filter((entry) => isOuter(entry[0])),
-        ]),
-      },
+    const leave = (current: Path, resume: Suspension["resume"]): Path => ({
+      ...leaveBody(current, getCaller(current).path, changed, isOuter),
+      generators: new Map([
+        ...current.generators,
+        [
+          name,
+          { ref, generator: callee, resume, isStarted: true, isInTry: current.scope.isCatching },
+        ],
+      ]),
     });
+    const enter = (resumer: Path, suspended: Path) => enterBody(resumer, suspended, isOuter);
     const finish = (current: Path, value?: Expression) =>
       getCaller(current).step(leave(current, undefined), value, true);
     const bodyFrame: Frame = {
@@ -1082,6 +1125,7 @@ const makeGenerator = (
           value,
           false,
         ),
+      awaitTo: undefined,
       inlining: new Set([...frame.inlining, callee]),
     };
     const start = { ...inner, scope: bound.scope };
@@ -1814,6 +1858,7 @@ const translateLoopCall = (
         );
       }),
     yieldTo: undefined,
+    awaitTo: undefined,
     inlining: new Set([...frame.inlining, callback]),
   };
   const isInRange = isReversed
@@ -1996,6 +2041,7 @@ const translateStaticElements = (
               continueTo: undefined,
               throwTo: frame.throwTo,
               yieldTo: undefined,
+              awaitTo: undefined,
               inlining: frame.inlining,
             },
           ),
@@ -2087,6 +2133,9 @@ const translateExpressionStatement = (
         : ifThenElse(apply("=", [value, value]), continueWith(after), leaf(boolean(false))),
     );
   }
+  if (isPromiseConstruction(expression, context)) {
+    return translatePromiseConstruction(expression, path, context, frame, continueWith);
+  }
   const constructor = getConstructorRun(expression, context);
   if (constructor !== undefined && ts.isNewExpression(expression)) {
     return translateConstruction(expression, constructor, path, context, frame, continueWith);
@@ -2155,6 +2204,17 @@ const translateExpressionStatement = (
     ts.isNewExpression(expression.right)
       ? expression.right
       : undefined;
+  if (
+    newAssigned !== undefined &&
+    isPromiseConstruction(newAssigned, context) &&
+    ts.isBinaryExpression(expression)
+  ) {
+    return translatePromiseConstruction(newAssigned, path, context, frame, (after, value) =>
+      continueWith(
+        assignPattern(expression.left, newAssigned, value ?? getUndefined(context), after, context),
+      ),
+    );
+  }
   const assignedConstructor = newAssigned && getConstructorRun(newAssigned, context);
   if (
     newAssigned !== undefined &&
@@ -2416,6 +2476,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   isGeneratorStep(node, context) ||
   isPromiseCall(node, context) ||
   getCreatedGenerator(node, path, context) !== undefined ||
+  getAsyncCallee(node.expression, path, context) !== undefined ||
   isHeapCall(node, path, context) ||
   getLoopCall(node, path, context) !== undefined ||
   isStateCall(node, path, context);
@@ -2603,6 +2664,19 @@ const translateDeclarations = (
     );
   }
   return allocate(initializer, path, context, (allocated) => {
+    const constructed = initializer && skipCasts(initializer);
+    if (constructed !== undefined && isPromiseConstruction(constructed, context)) {
+      return translatePromiseConstruction(constructed, allocated, context, frame, (after, value) =>
+        bindDeclaration(
+          declarations,
+          value ?? getUndefined(context),
+          after,
+          context,
+          frame,
+          continueWith,
+        ),
+      );
+    }
     const constructor = initializer && getConstructorRun(initializer, context);
     if (constructor !== undefined && initializer !== undefined && ts.isNewExpression(initializer)) {
       return translateConstruction(
@@ -2712,7 +2786,7 @@ const bindDeclaration = (
   );
 };
 
-const getChanged = (loop: ts.Node, path: Path, context: Context) => {
+export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
   const changed = new Set<ts.Symbol>();
   const visited = new Set<ts.Node>();
   const getFunctionNode = (node: ts.Expression) => {
@@ -2720,7 +2794,8 @@ const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     return (
       (symbol && path.scope.functions.get(symbol)) ??
       getCallee(node, context) ??
-      getGenerator(node, context) ??
+      getFunctionOfKind(node, context, isGenerator) ??
+      getFunctionOfKind(node, context, isAsyncFunction) ??
       getCalledMethod(node, context)?.method
     );
   };
@@ -2973,6 +3048,11 @@ const translateIterations = (
       (() => {
         throw new TlaTypeScriptError("Yield outside loops", loop);
       }),
+    awaitTo:
+      frame.awaitTo &&
+      (() => {
+        throw new TlaTypeScriptError("Await outside loops", loop);
+      }),
   };
   const translateBody = (current: Path) => {
     if (iterated === undefined) {
@@ -3201,6 +3281,90 @@ const getLeadingAssignment = (
     : undefined;
 };
 
+// The await that a node evaluates before anything else.
+const getLeadingAwait = (
+  node: ts.Expression,
+  results: ReadonlyMap<ts.Expression, Expression>,
+): ts.AwaitExpression | undefined => {
+  if (results.has(node)) return undefined;
+  if (ts.isAwaitExpression(node)) return getLeadingAwait(node.expression, results) ?? node;
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isTypeOfExpression(node) ||
+    ts.isVoidExpression(node) ||
+    ts.isPropertyAccessExpression(node) ||
+    ts.isElementAccessExpression(node)
+  ) {
+    return getLeadingAwait(node.expression, results);
+  }
+  if (ts.isPrefixUnaryExpression(node)) return getLeadingAwait(node.operand, results);
+  if (ts.isConditionalExpression(node)) return getLeadingAwait(node.condition, results);
+  if (!ts.isBinaryExpression(node)) return undefined;
+  const kind = node.operatorToken.kind;
+  if (kind === ts.SyntaxKind.EqualsToken) {
+    return ts.isIdentifier(node.left) ? getLeadingAwait(node.right, results) : undefined;
+  }
+  const isAssignment =
+    kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+  return isAssignment ? undefined : getLeadingAwait(node.left, results);
+};
+
+const getStatementAwait = (statement: ts.Statement, path: Path) => {
+  const evaluated = ts.isExpressionStatement(statement)
+    ? statement.expression
+    : ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations[0]?.initializer
+      : ts.isIfStatement(statement)
+        ? statement.expression
+        : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
+          ? statement.expression
+          : undefined;
+  return evaluated === undefined ? undefined : getLeadingAwait(evaluated, path.scope.results);
+};
+
+// An await, which suspends the async function's body until the promise of its value settles.
+const translateAwait = (
+  node: ts.AwaitExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+): Formula => {
+  const awaitTo = frame.awaitTo;
+  const throwTo = frame.throwTo;
+  if (awaitTo === undefined || throwTo === undefined) {
+    throw new TlaTypeScriptError("Unsupported await", node);
+  }
+  const operand = getCast(node.expression);
+  const settleWith = (current: Path, value: Expression) =>
+    awaitTo(current, value, operand, continueWith, (rejected, thrown) =>
+      throwTo(rejected, {
+        value: thrown,
+        uncaught: apply("Assert", [boolean(false), string(node.getText())]),
+      }),
+    );
+  if (isPromiseConstruction(operand, context)) {
+    return translatePromiseConstruction(operand, path, context, frame, (after, value) =>
+      settleWith(after, value ?? getUndefined(context)),
+    );
+  }
+  if (
+    ts.isCallExpression(operand) &&
+    !path.scope.results.has(operand) &&
+    isStatementCall(operand, path, context)
+  ) {
+    return translateCallStatement(operand, path, context, frame, (after, value) =>
+      settleWith(after, value ?? getUndefined(context)),
+    );
+  }
+  if (hasCall(operand, context)) throw new TlaTypeScriptError("Unsupported await", node);
+  return allocate(operand, path, context, (inner) =>
+    settleWith(inner, translateExpression(operand, inner.scope, context)),
+  );
+};
+
 const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Context) => {
   const results = path.scope.results;
   if (ts.isExpressionStatement(statement)) {
@@ -3234,6 +3398,20 @@ export const translateStatements = (
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
+  const awaited = getStatementAwait(statement, path);
+  if (awaited !== undefined) {
+    return translateAwait(awaited, path, context, frame, (after, value) =>
+      translateStatements(
+        statements,
+        {
+          ...after,
+          scope: { ...after.scope, results: new Map([...after.scope.results, [awaited, value]]) },
+        },
+        context,
+        frame,
+      ),
+    );
+  }
   const hoisted = getHoistedAssignment(statement, path, context);
   if (hoisted !== undefined) {
     const target = ts.isIdentifier(hoisted.left)
@@ -3305,6 +3483,10 @@ export const translateStatements = (
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
     return allocate(returned, path, context, (inner) => {
+      const constructed = getCast(returned);
+      if (isPromiseConstruction(constructed, context)) {
+        return translatePromiseConstruction(constructed, inner, context, frame, frame.exit);
+      }
       if (
         ts.isCallExpression(returned) &&
         (!isLibraryCall(returned, context) || isPromiseCall(returned, context))
@@ -3409,6 +3591,7 @@ export const translateAction = (
       continueTo: undefined,
       throwTo: undefined,
       yieldTo: undefined,
+      awaitTo: undefined,
       inlining: new Set(),
     },
   );
@@ -3476,6 +3659,7 @@ export const translateScript = (
       continueTo: undefined,
       throwTo: undefined,
       yieldTo: undefined,
+      awaitTo: undefined,
       inlining: new Set(),
     },
   );

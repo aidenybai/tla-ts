@@ -93,6 +93,7 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
       ["Boolean", "Number", "String"].includes(node.expression.text)) ||
     (ts.isIdentifier(node) &&
       ["arguments", "Symbol", "Promise", "setTimeout"].includes(node.text)) ||
+    node.kind === ts.SyntaxKind.AsyncKeyword ||
     (ts.forEachChild(node, usesObjects) ?? false);
   if (heap !== undefined && isScript(sourceFile) && usesObjects(sourceFile)) {
     context.heap = heap;

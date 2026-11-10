@@ -161,6 +161,9 @@ export const isPlain = (node: FunctionNode) => node.asteriskToken === undefined 
 export const isGenerator = (node: FunctionNode) =>
   node.asteriskToken !== undefined && !isAsync(node);
 
+export const isAsyncFunction = (node: FunctionNode) =>
+  node.asteriskToken === undefined && isAsync(node);
+
 const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
   if (node === undefined) return undefined;
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
@@ -830,9 +833,13 @@ export const getCallee = (node: ts.Expression, context: Context) => {
   return found !== undefined && isPlain(found) ? found : undefined;
 };
 
-export const getGenerator = (node: ts.Expression, context: Context) => {
+export const getFunctionOfKind = (
+  node: ts.Expression,
+  context: Context,
+  isKind: (node: FunctionNode) => boolean,
+) => {
   const found = resolve(node, context);
-  return found !== undefined && isGenerator(found) ? found : undefined;
+  return found !== undefined && isKind(found) ? found : undefined;
 };
 
 export const translateString = (value: string, context: Context) => {

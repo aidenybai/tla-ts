@@ -1747,6 +1747,61 @@ describe("errors", () => {
     ).toThrow("reads a local that changes");
   });
 
+  it("suspends an async function at each await until its promise settles", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      async function inner(value: number) {
+        log = log + "i" + value;
+        const got = await value;
+        log = log + "j" + got;
+        return got + 1;
+      }
+      async function outer() {
+        log = log + "o";
+        const first = await inner(1);
+        log = log + "p" + first;
+        try {
+          await Promise.reject(7);
+        } catch (error) {
+          log = log + "c" + error;
+        }
+        return "r";
+      }
+      outer().then((value: string) => { log = log + value; });
+      Promise.resolve(0).then(() => { log = log + "t"; }).then(() => { log = log + "u"; });
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "oi1sj1tp2uc7r") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("settles a promise from its executor once", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const first = new Promise<number>((resolve, reject) => {
+        log = log + "e";
+        resolve(1);
+        reject(2);
+      });
+      first.then((value: number) => { log = log + "f" + value; });
+      new Promise<number>(() => {
+        throw new Error("thrown");
+      }).catch(() => { log = log + "c"; });
+      new Promise<number>((resolve) => resolve(first)).then((value: number) => {
+        log = log + "a" + value;
+      });
+      log = log + "s";
+      setTimeout(() => {
+        if (log !== "esf1ca1") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a timer finds a promise's handler threw", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
