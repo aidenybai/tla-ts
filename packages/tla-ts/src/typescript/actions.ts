@@ -48,6 +48,7 @@ import {
   share,
   isInlined,
   getFunctionOfKind,
+  isUnresolved,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -1849,17 +1850,22 @@ const runCertainDefault = (
       scope: { ...path.scope, results: new Map([...path.scope.results, ...skipped]) },
     });
   }
-  const pending = known
+  const run = known
     .filter((entry) => entry.isRun)
     .map((entry) => getCast(entry.initializer))
-    .filter(
-      (initializer): initializer is ts.CallExpression =>
-        ts.isCallExpression(initializer) &&
-        !path.scope.results.has(initializer) &&
-        (isStatementCall(initializer, path, context) ||
-          (path.scope.isCatching && mayThrow(initializer, context))),
-    );
+    .filter((initializer) => !path.scope.results.has(initializer));
+  const pending = run.filter(
+    (initializer): initializer is ts.CallExpression =>
+      ts.isCallExpression(initializer) &&
+      (isStatementCall(initializer, path, context) ||
+        (path.scope.isCatching && mayThrow(initializer, context))),
+  );
+  // A default that names nothing that a declaration binds throws a ReferenceError as it runs.
+  const unresolved = run.findIndex((initializer) => isUnresolved(initializer, context));
   const first = pending.at(0);
+  if (unresolved !== -1 && (first === undefined || unresolved < run.indexOf(first))) {
+    return throwError("ReferenceError", path, run[unresolved], context, frame);
+  }
   if (first === undefined) return undefined;
   const bound = new Set(
     names
@@ -2636,6 +2642,10 @@ const translateExpressionStatement = (
   if (ts.isParenthesizedExpression(expression)) {
     return translateExpressionStatement(expression.expression, path, context, frame, continueWith);
   }
+  // A name that no declaration binds throws a ReferenceError where a statement reads it.
+  if (isUnresolved(expression, context)) {
+    return throwError("ReferenceError", path, expression, context, frame);
+  }
   // A call's value runs though the statement drops it, so that a getter it reads, which tla-ts
   // can't call, stops the check: TLC would read only a value that something uses.
   if (ts.isCallExpression(expression)) {
@@ -3061,7 +3071,7 @@ export const bindOnce = (path: Path, name: string, value: Expression, rest: Form
 
 // Throws the TypeError that JavaScript throws where a change to an object fails.
 const throwError = (
-  name: "TypeError" | "RangeError",
+  name: "TypeError" | "RangeError" | "ReferenceError",
   path: Path,
   node: ts.Node,
   context: Context,

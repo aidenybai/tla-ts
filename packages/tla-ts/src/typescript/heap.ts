@@ -22,6 +22,7 @@ import {
   isStatementNew,
   isMethodCall,
   type MethodCall,
+  isUnresolved,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor } from "./exceptions";
@@ -1051,6 +1052,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   ) {
     return ["TypeError", "RangeError"];
   }
+  if (isUnresolved(node, context)) return ["ReferenceError"];
   return isDefinition ||
     (isObjectChange(node) && isConstruct(node)) ||
     ts.isNewExpression(node) ||

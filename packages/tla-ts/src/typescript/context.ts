@@ -119,6 +119,10 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
     : owner;
 };
 
+// A name that no declaration binds, whose reading throws a ReferenceError.
+export const isUnresolved = (node: ts.Node, context: Context) =>
+  ts.isIdentifier(node) && context.checker.getSymbolAtLocation(node) === undefined;
+
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
   const symbol =
     ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node

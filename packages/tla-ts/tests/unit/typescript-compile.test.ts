@@ -2385,6 +2385,54 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws a ReferenceError where a statement reads a name that nothing declares", async () => {
+    const result = await checkModel(`
+      let log = "";
+      try {
+        // @ts-ignore
+        w;
+        log = log + "no";
+      } catch (error) {
+        log = log + (error instanceof ReferenceError ? "r" : "o");
+      }
+      const read = () => {
+        // @ts-ignore
+        x;
+      };
+      try {
+        read();
+      } catch (error) {
+        log = log + (error instanceof ReferenceError ? "R" : "O");
+      }
+      if (log !== "rR") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("throws a ReferenceError where a default that runs names nothing", async () => {
+    const result = await checkModel(`
+      let log = "";
+      class C {
+        // @ts-ignore
+        method([x = unresolvableReference]: unknown[] = []) {
+          log = log + "ran";
+        }
+        other({ y = 5 }: { y?: number } = {}) {
+          log = log + y;
+        }
+      }
+      try {
+        new C().method();
+      } catch (error) {
+        log = log + (error instanceof ReferenceError ? "r" : "o");
+      }
+      new C().method([1]);
+      new C().other();
+      if (log !== "rran5") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a promise resolves with an array that Array.prototype gives a then", async () => {
     const result = await checkModel(`
       Object.defineProperty(Array.prototype, "then", {
