@@ -313,7 +313,13 @@ const loosen = () => {
       const isRest = ts.isParameter(declared) && declared.dotDotDotToken !== undefined;
       const token = ts.isVariableDeclaration(declared) ? undefined : declared.questionToken;
       const end = token === undefined ? declared.name.getEnd() : token.getEnd();
-      edits.set(end, isRest ? ": unknown[]" : ": unknown");
+      // An arrow function's lone parameter needs parentheses for its type.
+      const arrow = declared.parent;
+      const isBare =
+        ts.isArrowFunction(arrow) &&
+        !arrow.getChildren().some((child) => child.kind === ts.SyntaxKind.OpenParenToken);
+      if (isBare) edits.set(declared.getStart(), "(");
+      edits.set(end, `${isRest ? ": unknown[]" : ": unknown"}${isBare ? ")" : ""}`);
     }
     // A parameter that destructures takes any value its pattern can read.
     const destructured =
