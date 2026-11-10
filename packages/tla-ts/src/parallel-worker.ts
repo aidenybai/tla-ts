@@ -12,7 +12,7 @@ import { createTlcOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
 import {
-  createCanonicalizer,
+  createValueTable,
   freezeStringOrder,
   getUnorderedString,
   setStringOrder,
@@ -66,7 +66,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   if (!search || nextAction === undefined)
     return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
   const workerIndex = start.index;
-  const canonicalize = createCanonicalizer();
+  const canonicalize = createValueTable().canonicalizeState;
   const decode = createStateDecoder(environment.variables.length);
   const shared = { fingerprints: start.fingerprints };
   const requests = start.requests;
@@ -232,7 +232,11 @@ const runWorker = (start: StartMessage, parent: Port) => {
       generated: expansion.generated,
       added: expansion.next.length,
       outDegrees: expansion.outDegrees,
-      fingerprints: search.getStoredFingerprints(expansion.next, expansion.fingerprintStates),
+      fingerprints: search.getStoredFingerprints(
+        expansion.next.length,
+        (index) => expansion.next[index],
+        (index) => expansion.fingerprintStates[index],
+      ),
     };
   };
 

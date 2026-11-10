@@ -33,7 +33,7 @@ describe("the fingerprints of stored states", () => {
       values.map((second, index) => [first, second, values[(index * 7) % values.length], first]),
     );
     const order = [2, 0, 1, 3];
-    expect([...getTlcFingerprints(states, order)]).toEqual(
+    expect([...getTlcFingerprints(states.length, (index) => states[index], order)]).toEqual(
       states.map((state) =>
         BigInt.asIntN(64, getTlcFingerprint(order.map((index) => state[index]))),
       ),

@@ -163,19 +163,24 @@ export const getTlcFingerprint = (state: Value[]) => {
 
 // TLCStateMut#fingerPrint of each state's variables in TLC's variable order, as the fingerprint
 // store reads them.
-export const getTlcFingerprints = (states: Value[][], order: number[]) => {
-  const fingerprints = new BigInt64Array(states.length);
+export const getTlcFingerprints = (
+  count: number,
+  getState: (index: number) => Value[],
+  order: number[],
+) => {
+  const fingerprints = new BigInt64Array(count);
   // Each fingerprint's low and high words, as a BigInt64Array is little-endian.
   const words = new Int32Array(fingerprints.buffer);
   const outerHigh = high;
   const outerLow = low;
-  states.forEach((state, position) => {
+  for (let position = 0; position < count; position++) {
+    const state = getState(position);
     high = INITIAL_HIGH;
     low = INITIAL_LOW;
     for (const index of order) extendValue(state[index]);
     words[2 * position] = low;
     words[2 * position + 1] = high;
-  });
+  }
   high = outerHigh;
   low = outerLow;
   return fingerprints;

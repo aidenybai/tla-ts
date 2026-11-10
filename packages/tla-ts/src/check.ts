@@ -75,6 +75,8 @@ import {
   withUnexpectedException,
   type FailureMessage,
 } from "./tlc/messages";
+import { createHashIndex } from "./hash-index";
+import { createStateStore } from "./state-store";
 import { createTlcOrder } from "./tlc/order";
 import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -82,7 +84,6 @@ import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators
 import type { TlcVersion } from "./tlc/version";
 import {
   combineHash,
-  createCanonicalizer,
   createModelValue,
   formatState,
   getFingerprintError,
@@ -482,8 +483,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       runtime.generatedStates,
       () =>
         search
-          ? search.getStoredFingerprints(states, fingerprintStates)
-          : BigInt64Array.from(states, runtime.getFingerprint),
+          ? search.getStoredFingerprints(
+              store.getCount(),
+              store.getState,
+              store.getFingerprintState,
+            )
+          : BigInt64Array.from({ length: store.getCount() }, (_, index) =>
+              runtime.getFingerprint(store.getState(index)),
+            ),
     ),
   });
 
@@ -648,7 +655,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             const addFingerprint = () => {
               if (!addReplayed(state, tracing.callStack)) return;
               runtime.queueSize++;
-              liveness?.addInitialState(states.length, state, tracing);
+              liveness?.addInitialState(store.getCount(), state, tracing);
             };
             const violation = search.checkReplayedInitialState(state, tracing, addFingerprint);
             if (violation) {
@@ -675,8 +682,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // the model to the -dump state graph again.
   const replayNext = (index: number) =>
     getReplayFailure((tracing) => {
-      const state = states[index];
-      const source = stateWriter && getGraphState(state, depths[index]);
+      const state = getStoredState(index);
+      const source = stateWriter && getGraphState(state, store.getDepth(index));
       const addReplayed = createReplayedStates();
       replaySuccessors(getSpecNextActions(), state, tracing, (next, action) => {
         const addFingerprint = () => {
@@ -684,7 +691,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           if (source) {
             stateWriter?.writeSuccessor(
               source,
-              getGraphState(next, depths[index] + 1),
+              getGraphState(next, store.getDepth(index) + 1),
               !isUnseen,
               isNamingEdges
                 ? { name: action.name, signature: getActionSignature(action) }
@@ -750,15 +757,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   runtime.isStarted = true;
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
 
-  const states: Value[][] = [];
-  const fingerprintStates: Value[][] = [];
-  const parents: number[] = [];
-  const actions: (string | undefined)[] = [];
-  const depths: number[] = [];
-  // A Map holds at most 2^24 entries, so an open-addressing table keeps each seen state's hash
-  // and its index plus one side by side, probed by the hash.
-  const seenStates = { slots: new Int32Array(1 << 17), size: 0, shift: 16 };
-  const canonicalizeState = createCanonicalizer();
+  const store = createStateStore(search.isSymmetric);
+  const seenStates = createHashIndex();
+  const canonicalizeState = store.canonicalizeState;
 
   const toRecord = (state: Value[]): Record<string, Value> =>
     Object.fromEntries(
@@ -806,7 +807,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
     const actions = getSpecNextActions();
     const expanding = { ...current };
-    Object.assign(current, { index, isExpanding: true, candidate: undefined });
+    Object.assign(current, {
+      index,
+      state: getStoredIndex(previous) === index ? previous : undefined,
+      isExpanding: true,
+      candidate: undefined,
+    });
     const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
     const key = getKey(state);
     try {
@@ -887,14 +893,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return undefined;
     }).result;
   const hasFingerprint = (state: Value[], index: number) =>
-    isSameState(getFingerprintState(state), fingerprintStates[index]);
+    store.isSameFingerprint(index, getFingerprintState(state));
   const findSuccessorWithFingerprint = (state: Value[], index: number) =>
     findTraceSuccessor(state, (successor) => hasFingerprint(successor.state, index));
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
         ? getSpecInitialStates().find((state) => hasFingerprint(state, path[0]))
-        : states[path[0]],
+        : getStoredState(path[0]),
     ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
     const steps: Successor[] = [{ state: initial, action: undefined }];
@@ -912,16 +918,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const getTrace = (index: number, lastSuccessor?: Successor) => {
     const path: number[] = [];
-    for (let position = index; position !== -1; position = parents[position]) {
+    for (let position = index; position !== -1; position = store.getParent(position)) {
       path.unshift(position);
     }
     const steps =
       isReducing && path.length > 1
         ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
-        : path.map((position) => ({ state: states[position], action: actions[position] }));
+        : path.map((position) => ({
+            state: getStoredState(position),
+            action: store.getAction(position),
+          }));
     if (!lastSuccessor) return toTrace(steps, path);
     const action = isReducing
-      ? findTraceSuccessor(states[index], (successor) =>
+      ? findTraceSuccessor(getStoredState(index), (successor) =>
           isSameState(successor.state, lastSuccessor.state),
         )?.action
       : lastSuccessor.action;
@@ -930,9 +939,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // TLC prints a lone initial state without the alias. TLCTrace#getTrace still recovers it from the
   // initial predicate, printing again, though TLC 1.7.4 doesn't.
   const getStateTrace = (index: number): Behavior =>
-    parents[index] === -1
+    store.getParent(index) === -1
       ? {
-          trace: [{ action: undefined, label: undefined, state: toRecord(states[index]) }],
+          trace: [{ action: undefined, label: undefined, state: toRecord(getStoredState(index)) }],
           traceOutput: is174 ? [] : captureOutput(getSpecInitialStates).lines,
         }
       : getTrace(index);
@@ -1068,79 +1077,59 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     return true;
   };
-  const getSlot = (hash: number) => (Math.imul(hash, 0x9e3779b1) >>> seenStates.shift) << 1;
-  const findStateIndex = (hash: number, state: Value[]) => {
-    const mask = seenStates.slots.length - 1;
-    for (let slot = getSlot(hash); ; slot = (slot + 2) & mask) {
-      const entry = seenStates.slots[slot + 1];
-      if (entry === 0) return -1;
-      if (seenStates.slots[slot] === hash && isSameState(fingerprintStates[entry - 1], state)) {
-        return entry - 1;
-      }
-    }
-  };
-  const insertSeen = (hash: number, entry: number) => {
-    const mask = seenStates.slots.length - 1;
-    let slot = getSlot(hash);
-    while (seenStates.slots[slot + 1] !== 0) slot = (slot + 2) & mask;
-    seenStates.slots[slot] = hash;
-    seenStates.slots[slot + 1] = entry;
-  };
-  const markSeen = (hash: number, index: number) => {
-    seenStates.size++;
-    if (seenStates.size * 4 > seenStates.slots.length) {
-      const slots = seenStates.slots;
-      seenStates.slots = new Int32Array(slots.length * 2);
-      seenStates.shift--;
-      for (let slot = 0; slot < slots.length; slot += 2) {
-        if (slots[slot + 1] !== 0) insertSeen(slots[slot], slots[slot + 1]);
-      }
-    }
-    insertSeen(hash, index + 1);
-  };
+  const findStateIndex = (hash: number, state: Value[]) =>
+    seenStates.find(hash, store.isSameFingerprint, state);
+  const markSeen = seenStates.add;
   // A new successor that TLC has added to its set of states before it checks the successor, which
   // the check stores after.
   const unstoredState = { fingerprint: undefined as Value[] | undefined };
   const countDistinctState = (depth: number) => {
-    runtime.distinctStates = states.length + 1;
+    runtime.distinctStates = store.getCount() + 1;
     statistics.depth = Math.max(statistics.depth, depth);
     runtime.diameter = Math.max(runtime.diameter, depth);
   };
+  const current = {
+    index: -1,
+    isExpanding: false,
+    state: undefined as Value[] | undefined,
+    candidate: undefined as Value[] | undefined,
+    candidateLevel: 0,
+    livenessSource: -1,
+  };
+  // A state read back from the store is a new array, so this tells a stored state from one that a
+  // trace rebuilt, whose values can be the same.
+  const storedIndexes = new WeakMap<object, number>();
+  const getStoredIndex = (state: readonly (Value | undefined)[]) =>
+    state === current.state ? current.index : (storedIndexes.get(state) ?? -1);
+  const readStoredState = (index: number) => {
+    const state = store.getState(index);
+    storedIndexes.set(state, index);
+    return state;
+  };
+  const getStoredState = (index: number) =>
+    index === current.index && current.state !== undefined ? current.state : readStoredState(index);
   const addState = (
     state: Value[],
     fingerprintState: Value[],
     parent: number,
     action: string | undefined,
+    isViolating: boolean,
   ) => {
-    const depth = parent === -1 ? 1 : depths[parent] + 1;
-    // A symmetry's representative or a view is a new state, which shares values with the others
-    // only once it is canonicalized too.
-    if (fingerprintState !== state) canonicalizeState(fingerprintState);
-    states.push(state);
-    fingerprintStates.push(fingerprintState);
-    parents.push(parent);
-    actions.push(action);
-    depths.push(depth);
-  };
-
-  const current = {
-    index: -1,
-    isExpanding: false,
-    candidate: undefined as Value[] | undefined,
-    candidateLevel: 0,
-    livenessSource: -1,
+    if (liveness) storedIndexes.set(state, store.getCount());
+    store.add(state, fingerprintState, parent, action, isViolating);
   };
   const getPath = (index: number): Value[][] =>
-    index === -1 ? [] : [...getPath(parents[index]), states[index]];
+    index === -1 ? [] : [...getPath(store.getParent(index)), getStoredState(index)];
   runtime.isSeen = (state) => {
     const fingerprintState = getFingerprintState(state);
     return findStateIndex(getStateHash(fingerprintState), fingerprintState) !== -1;
   };
   runtime.getBehavior = (state) => {
-    const index = state === current.candidate ? -1 : states.indexOf(state);
+    const index = state === current.candidate ? -1 : getStoredIndex(state);
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
-  runtime.getCurrentState = () => (current.index === -1 ? undefined : states[current.index]);
+  runtime.getCurrentState = () =>
+    current.index === -1 ? undefined : getStoredState(current.index);
   runtime.setLivenessSource = (index) => {
     current.livenessSource = index ?? -1;
   };
@@ -1149,13 +1138,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     // TLC 1.7.4 reads the level of the state its worker explores, whichever state it evaluates.
     if (is174) {
       const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
-      return explored === -1 ? 0 : depths[explored];
+      return explored === -1 ? 0 : store.getDepth(explored);
     }
-    if (source !== -1) return state === states[source] ? depths[source] : depths[source] + 1;
+    if (source !== -1) return store.getDepth(source) + (getStoredIndex(state) === source ? 0 : 1);
     if (state === current.candidate) return current.candidateLevel;
     if (current.index === -1) return 0;
-    if (state === states[current.index]) return depths[current.index];
-    return current.isExpanding ? depths[current.index] + 1 : 0;
+    if (getStoredIndex(state) === current.index) return store.getDepth(current.index);
+    return current.isExpanding ? store.getDepth(current.index) + 1 : 0;
   };
 
   const getGraphState = (state: Value[], level: number): GraphState => ({
@@ -1190,17 +1179,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (isInModel) {
       countDistinctState(1);
       runtime.queueSize++;
-      liveness?.addInitialState(states.length, state);
+      liveness?.addInitialState(store.getCount(), state);
       stateWriter?.writeInitialState(getGraphState(state, 1));
     }
-    if (options.isContinued) {
-      search.getViolatedInvariants(state).forEach((invariant) =>
-        reportContinuedViolation("invariant-violation", {
-          name: invariant.name,
-          ...toTrace([{ action: undefined, state }], []),
-        }),
-      );
-    }
+    const continuedInvariants = options.isContinued ? search.getViolatedInvariants(state) : [];
+    continuedInvariants.forEach((invariant) =>
+      reportContinuedViolation("invariant-violation", {
+        name: invariant.name,
+        ...toTrace([{ action: undefined, state }], []),
+      }),
+    );
     const violated = options.isContinued ? undefined : search.findViolatedInvariant(state);
     if (violated) {
       return reportViolation("invariant-violation", {
@@ -1216,8 +1204,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       });
     }
     if (!isInModel) return undefined;
-    markSeen(hash, states.length);
-    addState(state, fingerprintState, -1, undefined);
+    markSeen(hash, store.getCount());
+    addState(state, fingerprintState, -1, undefined, continuedInvariants.length > 0);
     return undefined;
   };
   const visitSuccessor = (
@@ -1227,10 +1215,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     source: GraphState | undefined,
     action: SpecAction | undefined,
   ) => {
-    const state = states[index];
+    const state = getStoredState(index);
+    const depth = store.getDepth(index);
     runtime.generatedStates++;
     current.candidate = successor.state;
-    current.candidateLevel = depths[index] + 1;
+    current.candidateLevel = depth + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
     const fingerprintState = getFingerprintState(successor.state);
     const hash = getStateHash(fingerprintState);
@@ -1247,27 +1236,34 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (source && isInModel) {
       stateWriter?.writeSuccessor(
         source,
-        getGraphState(successor.state, depths[index] + 1),
+        getGraphState(successor.state, depth + 1),
         existing !== -1,
         action && { name: action.name, signature: getActionSignature(action) },
       );
     }
     if (existing !== -1 && liveness) {
-      const stored = states[existing];
-      const isStored = stored.every((value, position) => value === successor.state[position]);
-      liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
+      if (store.isStoredIdentically(existing, successor.state)) {
+        storedIndexes.set(successor.state, existing);
+      }
+      liveSuccessors.push({ index: existing, state: successor.state });
     }
     const isNew = isInModel && existing === -1;
     // TLC adds a new state to the behavior graph's successors before it checks the invariants.
-    if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
+    if (isNew && liveness) liveSuccessors.push({ index: store.getCount(), state: successor.state });
     unstoredState.fingerprint = isNew ? fingerprintState : undefined;
     if (isNew) {
-      countDistinctState(depths[index] + 1);
+      countDistinctState(depth + 1);
       expansion.newStates++;
     }
+    const checked = { isViolating: false };
     if (existing === -1) {
       try {
-        const violated = search.findViolatedInvariant(successor.state, state);
+        const violated = search.findViolatedInvariant(
+          successor.state,
+          state,
+          store.isViolating(index),
+        );
+        checked.isViolating = violated !== undefined;
         const violation = violated && { name: violated.name, ...getTrace(index, successor) };
         if (violation && !options.isContinued) {
           return withOutDegrees(reportViolation("invariant-violation", violation));
@@ -1297,8 +1293,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (propertyViolation) reportContinuedViolation("liveness-violation", propertyViolation);
     if (!isNew) return undefined;
     if (!isCanonicalizedFirst) canonicalizeState(successor.state);
-    markSeen(hash, states.length);
-    addState(successor.state, fingerprintState, index, successor.action);
+    markSeen(hash, store.getCount());
+    addState(successor.state, fingerprintState, index, successor.action, checked.isViolating);
     runtime.queueSize++;
     return undefined;
   };
@@ -1368,7 +1364,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
 
   const next = spec.next;
   if (next === undefined) {
-    if (states.length > 0) {
+    if (store.getCount() > 0) {
       throw new TlaEvaluationError(
         "No next state actions defined to generate successor states from.",
       );
@@ -1417,7 +1413,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const getLiveCallStack = (index: number, liveSuccessors: LiveSuccessor[]) => {
     if (!liveness || is174) return undefined;
     const replay = getReplayFailure((tracing) =>
-      liveness.addState(index, states[index], liveSuccessors, tracing),
+      liveness.addState(index, getStoredState(index), liveSuccessors, tracing),
     );
     return replay?.callStack.length && !replay.fingerprint ? replay.callStack : undefined;
   };
@@ -1426,7 +1422,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // which TLC 1.7.4 doesn't.
   const addFailedLiveState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     try {
-      liveness?.addState(index, states[index], liveSuccessors);
+      liveness?.addState(index, getStoredState(index), liveSuccessors);
       return undefined;
     } catch (error) {
       if (!(error instanceof TlaEvaluationError)) throw error;
@@ -1461,8 +1457,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
   };
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
-    const state = states[index];
-    const source = stateWriter && getGraphState(state, depths[index]);
+    const state = getStoredState(index);
+    const source = stateWriter && getGraphState(state, store.getDepth(index));
     const successorCount = forEachActionSuccessor(state, (successor, action) => {
       try {
         outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
@@ -1626,7 +1622,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const loop =
       cycleStart === cycleEnd
         ? { result: undefined, lines: [] }
-        : captureOutput(() => findStepAction(cycleEnd, lastState, states[cycleStart], false));
+        : captureOutput(() =>
+            findStepAction(cycleEnd, lastState, getStoredState(cycleStart), false),
+          );
     const isStutteringWarned = cycleStart === cycleEnd && lasso.isCycleConstrained;
     return reportViolation(
       "liveness-violation",
@@ -1668,10 +1666,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     periodic.time += performance.now() - now;
     return lasso;
   };
-  for (let index = 0; index < states.length && !runtime.isStopped; index++) {
+  for (let index = 0; index < store.getCount() && !runtime.isStopped; index++) {
     current.index = index;
+    current.state = liveness ? readStoredState(index) : store.getState(index);
     current.candidate = undefined;
-    runtime.queueSize = states.length - index - 1;
+    runtime.queueSize = store.getCount() - index - 1;
     current.isExpanding = true;
     const liveSuccessors: LiveSuccessor[] = [];
     try {
