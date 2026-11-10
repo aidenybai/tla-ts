@@ -128,24 +128,27 @@ const extendScalar = (value: boolean | number | string | ModelValue) => {
   return 5;
 };
 
-// Value#fingerPrint for each of TLC's value classes.
-const extendValue = (value: Value) => {
-  if (typeof value !== "object" || isModelValue(value)) {
-    extendScalar(value);
-  } else if (isFunctionValue(value)) {
+// Value#fingerPrint for each of TLC's value classes, which returns how many bytes it extends the
+// fingerprint by.
+const extendValue = (value: Value): number => {
+  if (typeof value !== "object" || isModelValue(value)) return extendScalar(value);
+  if (isFunctionValue(value)) {
     const functionValue = toFiniteFunction(value);
     extendByte(FCN_RCD_VALUE);
     extendInt(functionValue.domain.length);
+    let length = 5;
     for (let index = 0; index < functionValue.domain.length; index++) {
-      extendValue(functionValue.domain[index]);
-      extendValue(functionValue.range[index]);
+      length += extendValue(functionValue.domain[index]);
+      length += extendValue(functionValue.range[index]);
     }
-  } else {
-    const elements = toFiniteSet(value).elements;
-    extendByte(SET_ENUM_VALUE);
-    extendInt(elements.length);
-    for (const element of elements) extendValue(element);
+    return length;
   }
+  const elements = toFiniteSet(value).elements;
+  extendByte(SET_ENUM_VALUE);
+  extendInt(elements.length);
+  let length = 5;
+  for (const element of elements) length += extendValue(element);
+  return length;
 };
 
 // TLCStateMut#fingerPrint of variable values in TLC's variable order. Evaluating a lazy value can
@@ -183,5 +186,132 @@ export const getTlcFingerprints = (
   }
   high = outerHigh;
   low = outerLow;
+  return fingerprints;
+};
+
+// Extending by zero bytes is linear too, so it adds what each byte of the fingerprint becomes. A
+// jump holds, for each of the 8 bytes, the image of each of its 256 values after 4 << level zero
+// bytes, so extending by n zero words takes a jump for each bit of n.
+interface ZeroJump {
+  highs: Int32Array;
+  lows: Int32Array;
+}
+
+const jumpZeros = (jump: ZeroJump) => {
+  const highs = jump.highs;
+  const lows = jump.lows;
+  const first = low & 0xff;
+  const second = 256 + ((low >>> 8) & 0xff);
+  const third = 512 + ((low >>> 16) & 0xff);
+  const fourth = 768 + (low >>> 24);
+  const fifth = 1024 + (high & 0xff);
+  const sixth = 1280 + ((high >>> 8) & 0xff);
+  const seventh = 1536 + ((high >>> 16) & 0xff);
+  const eighth = 1792 + (high >>> 24);
+  low =
+    lows[first] ^
+    lows[second] ^
+    lows[third] ^
+    lows[fourth] ^
+    lows[fifth] ^
+    lows[sixth] ^
+    lows[seventh] ^
+    lows[eighth];
+  high =
+    highs[first] ^
+    highs[second] ^
+    highs[third] ^
+    highs[fourth] ^
+    highs[fifth] ^
+    highs[sixth] ^
+    highs[seventh] ^
+    highs[eighth];
+};
+
+// Builds a jump with the fingerprint being extended, which it leaves as it was.
+const createJump = (extend: () => void): ZeroJump => {
+  const outer = { high, low };
+  const highs = new Int32Array(2048);
+  const lows = new Int32Array(2048);
+  for (let place = 0; place < 8; place++) {
+    for (let byte = 0; byte < 256; byte++) {
+      low = place < 4 ? byte << (8 * place) : 0;
+      high = place < 4 ? 0 : byte << (8 * (place - 4));
+      extend();
+      highs[place * 256 + byte] = high;
+      lows[place * 256 + byte] = low;
+    }
+  }
+  high = outer.high;
+  low = outer.low;
+  return { highs, lows };
+};
+
+export interface StoredCells {
+  count: number;
+  // A cell of a value other than an integer is odd, and half of it is below valueCount.
+  valueCount: number;
+  getCell: (index: number, position: number) => number;
+  getValue: (cell: number) => Value;
+}
+
+// TLCStateMut#fingerPrint of each stored state, whose cells are its variables in the order the
+// store keeps them. Extending is linear, so extending by a value's bytes is extending by as many
+// zero bytes and adding the value's fingerprint from zero. Stored states share their values, so
+// each is fingerprinted once, and only its length and that fingerprint are kept.
+export const getStoredTlcFingerprints = (stored: StoredCells, order: number[]) => {
+  const fingerprints = new BigInt64Array(stored.count);
+  // Each fingerprint's low and high words, as a BigInt64Array is little-endian.
+  const words = new Int32Array(fingerprints.buffer);
+  // Each value's length in bytes, 0 until it is fingerprinted, and its fingerprint from zero.
+  const lengths = new Int32Array(stored.valueCount);
+  const highs = new Int32Array(stored.valueCount);
+  const lows = new Int32Array(stored.valueCount);
+  const jumps = [createJump(() => extendInt(0))];
+  const outer = { high, low };
+  for (let position = 0; position < stored.count; position++) {
+    high = INITIAL_HIGH;
+    low = INITIAL_LOW;
+    for (const index of order) {
+      const cell = stored.getCell(position, index);
+      const value = stored.getValue(cell);
+      if (typeof value === "number") {
+        extendByte(INT_VALUE);
+        extendInt(value);
+        continue;
+      }
+      const slot = cell >>> 1;
+      if (lengths[slot] === 0) {
+        const state = { high, low };
+        high = 0;
+        low = 0;
+        lengths[slot] = extendValue(value);
+        highs[slot] = high;
+        lows[slot] = low;
+        high = state.high;
+        low = state.low;
+      }
+      const length = lengths[slot];
+      for (let zeroWords = length >>> 2, level = 0; zeroWords !== 0; zeroWords >>>= 1, level++) {
+        if (level === jumps.length) {
+          const previous = jumps[level - 1];
+          jumps.push(
+            createJump(() => {
+              jumpZeros(previous);
+              jumpZeros(previous);
+            }),
+          );
+        }
+        if ((zeroWords & 1) !== 0) jumpZeros(jumps[level]);
+      }
+      for (let step = length & ~3; step < length; step++) extendByte(0);
+      high ^= highs[slot];
+      low ^= lows[slot];
+    }
+    words[2 * position] = low;
+    words[2 * position + 1] = high;
+  }
+  high = outer.high;
+  low = outer.low;
   return fingerprints;
 };

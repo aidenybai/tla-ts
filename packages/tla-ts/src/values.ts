@@ -762,6 +762,7 @@ export const createValueTable = () => {
       return (getOtherId(value) << 1) | 1;
     },
     getValue: (cell: number): Value => ((cell & 1) === 0 ? cell >> 1 : values[cell >>> 1]),
+    getValueCount: () => values.length,
   };
 };
 

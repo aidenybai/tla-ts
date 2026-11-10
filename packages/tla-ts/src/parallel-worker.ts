@@ -8,6 +8,7 @@ import {
 import type { CoordinatorMessage, StartMessage, WorkerMessage } from "./parallel";
 import { createSearch } from "./search";
 import { getSuccessors, type Successor } from "./successors";
+import { getTlcFingerprints } from "./tlc/fingerprint";
 import { createTlcOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
@@ -235,7 +236,12 @@ const runWorker = (start: StartMessage, parent: Port) => {
       fingerprints: search.getStoredFingerprints(
         expansion.next.length,
         (index) => expansion.next[index],
-        (index) => expansion.fingerprintStates[index],
+        (order) =>
+          getTlcFingerprints(
+            expansion.fingerprintStates.length,
+            (index) => expansion.fingerprintStates[index],
+            order,
+          ),
       ),
     };
   };
