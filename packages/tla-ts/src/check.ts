@@ -37,6 +37,7 @@ import {
   type LiveSuccessor,
 } from "./liveness-checker";
 import {
+  createMissingOperatorError,
   createSearch,
   getIncompleteSuccessorMessage,
   findAssumptionViolation,
@@ -119,12 +120,20 @@ export interface CheckOptions {
   isContinued?: boolean;
   // Whether TLC records a binary trace for a trace exploration spec, for which it loads Integers.
   isTraceRecorded?: boolean;
+  moduleOperators?: ModuleOperator[];
   // Whether the caller printed SANY's report, its warnings included, before the check.
   isSanyReported?: boolean;
   // False for TLC's -nowarning, which changes how TLC computes some successors.
   isWarningEnabled?: boolean;
   version?: TlcVersion;
   onProgress?: (progress: CheckProgress) => void;
+}
+
+export interface ModuleOperator {
+  kind: "postcondition" | "constraint" | "view";
+  module: string;
+  operator: string;
+  constants?: Record<string, string>;
 }
 
 export interface InitialStatesProgress {
@@ -387,6 +396,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
+    moduleOperators: options.moduleOperators,
   });
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;
@@ -451,6 +461,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     specification.variableLocations,
     () => order.getDeclarationOrder("variable"),
     options.onProgress,
+    specification.moduleOperators,
   );
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);
@@ -467,7 +478,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
     return createSuccess();
   }
-  const hasPostconditions = config.postconditions.length > 0 || config.possible.length > 0;
+  const hasPostconditions =
+    config.postconditions.length > 0 ||
+    config.possible.length > 0 ||
+    specification.moduleOperators.some((operator) => operator.kind === "postcondition");
   // The state of each step without the alias, and its action, which CounterExample records.
   const traceSteps = new WeakMap<
     TraceStep,
@@ -1646,6 +1660,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
 
   // TLC finishes the check of the temporal properties before it checks the postconditions.
   if (liveness) options.onProgress?.({ kind: "liveness-finished" });
+  const missingPostcondition = specification.moduleOperators.find(
+    (operator) => operator.kind === "postcondition" && operator.key === undefined,
+  );
+  if (missingPostcondition) {
+    return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
+  }
   const postcondition = search.findPostconditionViolation();
   if (postcondition) {
     return createResult("postcondition-violation", {

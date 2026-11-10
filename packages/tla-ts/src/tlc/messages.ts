@@ -154,6 +154,7 @@ const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean]
     "In evaluating TLCExt!Trace, the state is not completely specified yet (variable%1% %2% undefined).",
     false,
   ],
+  [1000, "Could not find operator: %1% in module: %2%", false],
   [2117, "Failed to recover the next state from its fingerprint.", true],
   [2123, "Failed to recover the initial state from its fingerprint.", true],
   [2132, "The first argument of Assert evaluated to FALSE; the second argument was:\n%1%", true],

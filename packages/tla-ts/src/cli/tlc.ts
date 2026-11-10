@@ -21,6 +21,7 @@ import type {
   CheckOptions,
   CheckProgress,
   InitialStateViolation,
+  ModuleOperator,
   OutputLine,
   CheckResult,
   CheckStatus,
@@ -885,6 +886,10 @@ const checkSpec = async (
   const directories = [directory, ...java.libraries];
   const loadModule = createModuleLoader(directories);
   const isRecorded = isTraceRecorded(args, version);
+  const getOperatorModules = (kind: ModuleOperator["kind"]) =>
+    args.moduleOperators
+      .filter((operator) => operator.kind === kind)
+      .map((operator) => operator.module);
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   }
@@ -914,8 +919,11 @@ const checkSpec = async (
       version,
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
       rootExtendees: [
+        ...getOperatorModules("postcondition"),
         ...(isRecorded ? ["_TLCTrace"] : []),
         ...args.invariants.flatMap((invariant) => invariant.modules),
+        ...getOperatorModules("constraint"),
+        ...getOperatorModules("view").slice(0, 1),
       ],
       suppressedCodes: args.suppressedCodes,
       errorCodes: args.errorCodes,
@@ -957,6 +965,7 @@ const checkSpec = async (
       isTool: printer.isTool,
       isContinued: args.isContinued,
       isTraceRecorded: isRecorded,
+      moduleOperators: args.moduleOperators,
       isSanyReported: true,
       isWarningEnabled: args.isWarningEnabled,
       version,

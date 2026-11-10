@@ -120,7 +120,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     options.isContinued === true ||
     config.view !== undefined ||
     config.postconditions.length > 0 ||
-    config.possible.length > 0;
+    config.possible.length > 0 ||
+    (options.moduleOperators?.length ?? 0) > 0;
   if (isSequential) return fallBack();
   const modules = new Map<string, string | undefined>();
   const loadModule = (name: string) => {

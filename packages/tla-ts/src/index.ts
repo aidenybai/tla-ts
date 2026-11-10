@@ -4,6 +4,7 @@ export type {
   CheckResult,
   CheckStatus,
   EvaluationFailure,
+  ModuleOperator,
   TraceStep,
   Violation,
 } from "./check";

@@ -1,5 +1,6 @@
 import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
+import type { ModuleOperator } from "../check";
 
 export interface TlcArguments {
   specs: string[];
@@ -30,6 +31,7 @@ export interface TlcArguments {
   userFile: string | undefined;
   isUsage: boolean;
   invariants: RuntimeInvariant[];
+  moduleOperators: ModuleOperator[];
 }
 
 export interface RuntimeInvariant {
@@ -97,6 +99,46 @@ const SANY_WARNING_CODES = new Map([
   [4805, "PLUSCAL_TRANSLATION_CHANGED_SINCE_LAST_TRANSLATION"],
 ]);
 
+interface TraceFormat {
+  module: string;
+  constant: string;
+  operators: Pick<ModuleOperator, "kind" | "operator">[];
+}
+
+const getDumpedTrace = (module: string, operator: string, constant: string): TraceFormat => ({
+  module,
+  constant,
+  operators: [{ kind: "postcondition", operator }],
+});
+
+const DUMPED_TRACES: Record<string, TraceFormat> = {
+  json: getDumpedTrace("_JsonTrace", "_JsonTrace", "_JsonTraceFile"),
+  tla: getDumpedTrace(
+    "_TLAPlusCounterExample",
+    "_TLAPlusCounterExample",
+    "_TLAPlusCounterExampleFile",
+  ),
+  tlc: getDumpedTrace("_TLCTrace", "_TLCTrace", "_TLCTraceFile"),
+  tlcplain: getDumpedTrace("_TLCTracePlain", "_TLCTrace", "_TLCTraceFile"),
+  tlctespec: getDumpedTrace("_TLCTESpec", "_TLCTrace", "_TLCTraceFile"),
+  tlcaction: getDumpedTrace("_TLCActionTrace", "_TLCTrace", "_TLCTraceFile"),
+  dot: getDumpedTrace("_DotTrace", "_DotTrace", "_DotTraceFile"),
+};
+
+const getLoadedTrace = (module: string, prefix: string): TraceFormat => ({
+  module,
+  constant: `${prefix}InputFile`,
+  operators: [
+    { kind: "constraint", operator: `${prefix}Constraint` },
+    { kind: "view", operator: `${prefix}View` },
+  ],
+});
+
+const LOADED_TRACES: Record<string, TraceFormat> = {
+  tlc: getLoadedTrace("_TLCTrace", "_TLCTrace"),
+  json: getLoadedTrace("_JsonTrace", "_JsonTrace"),
+};
+
 const isInRanges = (ranges: number[][], code: number) =>
   ranges.some((range) => code >= range[0] && code <= range[1]);
 
@@ -153,6 +195,7 @@ const createDefaults = (): TlcArguments => ({
   userFile: undefined,
   isUsage: false,
   invariants: [],
+  moduleOperators: [],
 });
 
 const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
@@ -369,14 +412,19 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         );
       }
       const format = take();
-      const formats =
-        name === "-loadTrace"
-          ? ["tlc", "json"]
-          : ["json", "tla", "tlc", "tlcplain", "tlctespec", "tlcaction", "dot"];
-      if (!formats.includes(format.toLowerCase())) {
+      const path = take();
+      const traces = name === "-loadTrace" ? LOADED_TRACES : DUMPED_TRACES;
+      if (!Object.hasOwn(traces, format.toLowerCase())) {
         return reject(`Error: Unknown format ${format} given to ${name}.`);
       }
-      cursor.index++;
+      const trace = traces[format.toLowerCase()];
+      parsed.moduleOperators.push(
+        ...trace.operators.map((operator) => ({
+          ...operator,
+          module: trace.module,
+          constants: { [trace.constant]: path },
+        })),
+      );
       continue;
     }
     if (flag.toLowerCase() === "-postcondition") {
@@ -406,6 +454,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
           `Operator name for postCondition must not contain a dot. Encountered: ${parts[1]}`,
         );
       }
+      parsed.moduleOperators.push({ kind: "postcondition", module: parts[0], operator: parts[1] });
       continue;
     }
     if (flag === "-coverage" || flag === "-checkpoint") {
