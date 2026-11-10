@@ -72,6 +72,14 @@ const getExpressionImage = (expression: Expression): string => {
   if (expression.kind === "Choose") {
     return `CHOOSE${getBoundImage(expression.pattern, expression.set)}:${getExpressionImage(expression.body)}`;
   }
+  if (expression.kind === "Tuple")
+    return `<<${expression.elements.map(getExpressionImage).join(",")}>>`;
+  if (expression.kind === "Record") {
+    const fields = expression.fields.map(
+      (field) => `${field.name}|->${getExpressionImage(field.value)}`,
+    );
+    return `[${fields.join(",")}]`;
+  }
   if (expression.kind === "FunctionConstruction") {
     const bounds = expression.bounds.map((bound) => getBoundImage(bound.pattern, bound.set));
     return `[${bounds.join(",")}|->${getExpressionImage(expression.body)}]`;
