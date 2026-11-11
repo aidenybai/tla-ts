@@ -120,7 +120,6 @@ const elimBounds = (expression: Expr): Expr => {
   return mapChildren(expression, elimBounds);
 };
 
-// Rewrite.is_set
 const isSet = (expression: Expr) => {
   switch (expression.kind) {
     case "SetEnum":

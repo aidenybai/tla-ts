@@ -216,7 +216,6 @@ export const parseTheory = (text: string): TheoryText => {
     }
     return items;
   };
-  // Parse.vars: names that share an optional type.
   const variables = () => {
     const names = [name()];
     while (isName()) names.push(name());
