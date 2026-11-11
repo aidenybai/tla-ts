@@ -609,19 +609,60 @@ const assignPattern = (
   context: Context,
 ): Path => {
   if (ts.isArrayLiteralExpression(target)) {
-    if (isIteratedPattern(target, context) && !isTaken(value)) {
+    // A pattern destructures a list where it took values from an iterator, or where a rest element
+    // made the array.
+    const isList = ts.isSpreadElement(target.parent) || isTaken(value);
+    if (!isList && isIteratedPattern(target, context)) {
       throw new TlaTypeScriptError(
         "tla-ts can't destructure this object through its iterator",
         target,
       );
     }
-    if (isUntypedPattern(target, context) && !isTaken(value)) {
+    if (!isList && isUntypedPattern(target, context)) {
       throw new TlaTypeScriptError("Give this pattern's value an array type", target);
     }
     return target.elements.reduce((current, element, position) => {
       if (ts.isOmittedExpression(element)) return current;
       if (ts.isSpreadElement(element)) {
-        throw new TlaTypeScriptError("Rest elements can't be assigned", element);
+        const restTarget = element.expression;
+        const rest = apply("SubSeq", [value, number(position + 1), apply("Len", [value])]);
+        if (
+          !(ts.isIdentifier(restTarget) || ts.isArrayLiteralExpression(restTarget)) ||
+          position !== target.elements.length - 1 ||
+          context.checker.getTypeOfAssignmentPattern(target).flags & ts.TypeFlags.StringLike
+        ) {
+          throw new TlaTypeScriptError("Rest elements can't be assigned", element);
+        }
+        if (ts.isArrayLiteralExpression(restTarget)) {
+          return assignPattern(restTarget, undefined, rest, current, context);
+        }
+        // An array that a rest element makes is new, which a script that reads it only through
+        // its properties can't tell from a list.
+        const symbol = getSymbol(restTarget, context.checker);
+        const isSeen =
+          context.heap !== undefined &&
+          findNodes(
+            target.getSourceFile(),
+            (inner): inner is ts.Identifier =>
+              ts.isIdentifier(inner) &&
+              getSymbol(inner, context.checker) === symbol &&
+              !(
+                (ts.isPropertyAccessExpression(inner.parent) ||
+                  ts.isElementAccessExpression(inner.parent)) &&
+                inner.parent.expression === inner
+              ) &&
+              !(ts.isVariableDeclaration(inner.parent) && inner.parent.name === inner) &&
+              !(
+                ts.isSpreadElement(inner.parent) && ts.isArrayLiteralExpression(inner.parent.parent)
+              ),
+          ).length > 0;
+        if (isSeen) {
+          throw new TlaTypeScriptError(
+            "tla-ts can't assign a rest element to an array that a script reads as an object",
+            element,
+          );
+        }
+        return assign(restTarget, current, context, () => rest);
       }
       const defaulted = getDefaultedTarget(element);
       const sourceElement =

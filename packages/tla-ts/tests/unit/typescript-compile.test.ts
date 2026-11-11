@@ -2913,6 +2913,35 @@ describe("errors", () => {
     expect((await checkModel(getSource("first.done !== false"))).failure).toBeDefined();
   });
 
+  it("assigns the rest of an array to a rest element", async () => {
+    const getSource = (check: string) => `
+      const object = {};
+      let first = 0;
+      let rest: number[] = [];
+      let x: number | undefined = 0;
+      let y: number | undefined = 0;
+      [first, ...rest] = [1, 2, 3];
+      for ([...[x, y]] of [[4]]) {
+        if (${check}) throw new Error("rest");
+      }
+    `;
+    expect(
+      (
+        await checkModel(
+          getSource(
+            "first !== 1 || rest.length !== 2 || rest[1] !== 3 || x !== 4 || y !== undefined",
+          ),
+        )
+      ).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("rest.length !== 3"))).failure).toBeDefined();
+    expect(() =>
+      compile(
+        `const object = {};\nlet rest: number[] = [];\nconst source = [1];\n[...rest] = source;\nif (rest === source) throw new Error("same");`,
+      ),
+    ).toThrow("tla-ts can't assign a rest element to an array that a script reads as an object");
+  });
+
   it("makes a new function object each time a function makes one as a property's value", async () => {
     const getSource = (comparison: string) => `
       const make = function () {
