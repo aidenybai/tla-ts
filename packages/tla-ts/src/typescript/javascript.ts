@@ -216,6 +216,24 @@ BitwiseXor(left, right) == BitwiseOperation("xor", left, right)
 \\* JavaScript's ~.
 BitwiseNot(value) == -Int32(value) - 1
 
+\\* Math.imul: the low 32 bits of a product. Each integer splits into halves of 16 bits, and each
+\\* product of halves into bytes, so no step leaves TLC's 32 bits.
+Imul(left, right) ==
+  LET a == Int32(left)
+      b == Int32(right)
+      lowOf(value) == value % 65536
+      highOf(value) == (value \\div 65536) % 65536
+      byteOf(value) == value % 256
+      upperByteOf(value) == lowOf(value) \\div 256
+      \\* The low 16 bits of the product of two halves.
+      lowProduct(x, y) == (byteOf(x) * y + ((upperByteOf(x) * byteOf(y)) % 256) * 256) % 65536
+      middle == upperByteOf(a) * byteOf(b) + byteOf(a) * upperByteOf(b)
+      bottom == byteOf(a) * byteOf(b) + (middle % 256) * 256
+      high ==
+        (upperByteOf(a) * upperByteOf(b) + middle \\div 256 + bottom \\div 65536
+          + lowProduct(highOf(a), lowOf(b)) + lowProduct(lowOf(a), highOf(b))) % 65536
+  IN (IF high >= 32768 THEN high - 65536 ELSE high) * 65536 + (bottom % 65536)
+
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==
   LET a == Int32(left)

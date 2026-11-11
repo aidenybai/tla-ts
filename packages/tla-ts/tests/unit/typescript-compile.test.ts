@@ -699,6 +699,20 @@ describe("values", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("multiplies with Math.imul and reads a literal past 32 bits as ToInt32 does", async () => {
+    const result = await checkModel(`
+      const hash = (seed: number, value: number) => Math.imul(seed ^ value, 0x01000193);
+      if (Math.imul(-2147483647, 3) !== -2147483645 || Math.imul(65537, 65537) !== 131073) {
+        throw new Error("imul");
+      }
+      if (hash(3, 5) !== 100665714 || Math.imul(7, 0x85ebca6b) !== -1452111635) {
+        throw new Error("hash");
+      }
+      if ((0x85ebca6b ^ 0) !== -2048144789) throw new Error("literal");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("converts the objects that a bitwise operator takes in order", async () => {
     const result = await checkModel(`
       const log = { text: "" };

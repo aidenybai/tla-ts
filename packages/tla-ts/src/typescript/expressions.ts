@@ -375,6 +375,17 @@ const translateObjectLiteral = (
   );
 };
 
+// A numeric literal that an operator converts with ToInt32, which gives the same integer of 32 bits
+// for a literal that TLC can't hold, such as the 0x85ebca6b of a hash.
+const translateInt32Literal = (node: ts.Expression) => {
+  const literal = ts.isParenthesizedExpression(node) ? node.expression : node;
+  if (!ts.isNumericLiteral(literal)) return undefined;
+  const value = Math.trunc(Number(literal.text));
+  if (!Number.isFinite(value) || Math.abs(value) < 2 ** 31) return undefined;
+  const unsigned = ((value % 2 ** 32) + 2 ** 32) % 2 ** 32;
+  return number(unsigned >= 2 ** 31 ? unsigned - 2 ** 32 : unsigned);
+};
+
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
   const isSpecial = context.hasSpecialNumbers;
   // Math's functions convert their arguments to numbers. A statement converts the objects among
@@ -388,6 +399,13 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     return isSpecial ? converted : useJavaScript("PlainNumber", [converted], context);
   };
   const argument = node.arguments[0];
+  if (method === "imul" && node.arguments.length === 2) {
+    return useJavaScript(
+      "Imul",
+      node.arguments.map((inner) => translateInt32Literal(inner) ?? translate(inner)),
+      context,
+    );
+  }
   if (method === "pow" && node.arguments.length === 2) {
     return useJavaScript("Power", node.arguments.map(translate), context);
   }
@@ -1018,7 +1036,10 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   if (bitwise !== undefined) {
     return useJavaScript(
       bitwise,
-      [node.left, node.right].map((operand) => translateToNumber(operand, node, scope, context)),
+      [node.left, node.right].map(
+        (operand) =>
+          translateInt32Literal(operand) ?? translateToNumber(operand, node, scope, context),
+      ),
       context,
     );
   }
