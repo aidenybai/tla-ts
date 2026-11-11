@@ -26,10 +26,19 @@ const ITERATOR_KEYS = [ITERATOR_KEY, "next", "return", "value", "done"];
 export const isIteratedPattern = (
   pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   context: Context,
-) => {
-  const type = ts.isArrayBindingPattern(pattern)
-    ? context.checker.getTypeAtLocation(pattern)
-    : context.checker.getTypeOfAssignmentPattern(pattern);
+) =>
+  isIteratedType(
+    ts.isArrayBindingPattern(pattern)
+      ? context.checker.getTypeAtLocation(pattern)
+      : context.checker.getTypeOfAssignmentPattern(pattern),
+    context,
+  );
+
+// A value that a for-of iterates through its object's iterator, as a pattern would destructure it.
+export const isIteratedValue = (node: ts.Expression, context: Context) =>
+  isIteratedType(context.checker.getTypeAtLocation(node), context);
+
+const isIteratedType = (type: ts.Type, context: Context) => {
   const declarations = type.getSymbol()?.declarations ?? [];
   return (
     context.heap !== undefined &&
@@ -130,6 +139,115 @@ export const takeFromIterator = (
   );
 };
 
+const isObject = (site: ts.Node, path: Path, value: Expression, context: Context) =>
+  useJavaScript("IsObjectIn", [getHeap(path.scope, site, context), value], context);
+
+// Calls an object's Symbol.iterator method, and reads the next method of the iterator it makes.
+export const openIterator = (
+  site: ts.Node,
+  iterable: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  throwWith: (path: Path) => Formula,
+  continueWith: (path: Path, iterator: Expression, next: Expression) => Formula,
+) =>
+  bind(path, "iterable", iterable, context, (current, held) =>
+    read(site, held, ITERATOR_KEY, current, context, frame, (found, method) =>
+      ifThenElse(
+        isNullish(method, context),
+        throwWith(found),
+        callMethod(
+          site,
+          ITERATOR_KEY,
+          method,
+          held,
+          found,
+          context,
+          frame,
+          throwWith,
+          (made, result) =>
+            bind(made, "iterator", result, context, (bound, iterator) =>
+              ifThenElse(
+                isObject(site, bound, iterator, context),
+                read(site, iterator, "next", bound, context, frame, (after, next) =>
+                  continueWith(after, iterator, next),
+                ),
+                throwWith(bound),
+              ),
+            ),
+        ),
+      ),
+    ),
+  );
+
+// Calls an iterator's next, and goes on with the result where the iterator isn't done.
+export const stepIterator = (
+  site: ts.Node,
+  iterator: Expression,
+  next: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  throwWith: (path: Path) => Formula,
+  doneWith: (path: Path) => Formula,
+  continueWith: (path: Path, result: Expression) => Formula,
+) =>
+  callMethod(site, "next", next, iterator, path, context, frame, throwWith, (called, result) =>
+    bind(called, "result", result, context, (bound, held) =>
+      ifThenElse(
+        isObject(site, bound, held, context),
+        read(site, held, "done", bound, context, frame, (checked, done) =>
+          ifThenElse(
+            useJavaScript("ToBoolean", [done], context),
+            doneWith(checked),
+            continueWith(checked, held),
+          ),
+        ),
+        throwWith(bound),
+      ),
+    ),
+  );
+
+// Reads the value of an iterator's result.
+export const readValue = (
+  site: ts.Node,
+  result: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+) => read(site, result, "value", path, context, frame, continueWith);
+
+// Closes an iterator through its return, where it has one, which must give an object.
+export const closeIterator = (
+  site: ts.Node,
+  iterator: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  throwWith: (path: Path) => Formula,
+  continueWith: (path: Path) => Formula,
+) =>
+  read(site, iterator, "return", path, context, frame, (found, method) =>
+    ifThenElse(
+      isNullish(method, context),
+      continueWith(found),
+      callMethod(
+        site,
+        "return",
+        method,
+        iterator,
+        found,
+        context,
+        frame,
+        throwWith,
+        (after, result) =>
+          ifThenElse(isObject(site, after, result, context), continueWith(after), throwWith(after)),
+      ),
+    ),
+  );
+
 const takeAll = (
   pattern: ts.ArrayBindingPattern,
   iterable: Expression,
@@ -144,8 +262,6 @@ const takeAll = (
     (element) => ts.isBindingElement(element) && element.dotDotDotToken !== undefined,
   );
   const count = restAt === -1 ? elements.length : restAt;
-  const isObject = (current: Path, value: Expression) =>
-    useJavaScript("IsObjectIn", [getHeap(current.scope, pattern, context), value], context);
   const finish = (current: Path, values: Expression[]) =>
     continueWith(
       current,
@@ -154,32 +270,17 @@ const takeAll = (
         ...Array.from({ length: Math.max(0, count - values.length) }, () => getUndefined(context)),
       ]),
     );
-  const close = (current: Path, iterator: Expression, values: Expression[]) =>
-    read(pattern, iterator, "return", current, context, frame, (found, method) =>
-      ifThenElse(
-        isNullish(method, context),
-        finish(found, values),
-        callMethod(
-          pattern,
-          "return",
-          method,
-          iterator,
-          found,
-          context,
-          frame,
-          throwWith,
-          (after, result) =>
-            ifThenElse(isObject(after, result), finish(after, values), throwWith(after)),
-        ),
-      ),
-    );
   const step = (
     current: Path,
     iterator: Expression,
     next: Expression,
     values: Expression[],
   ): Formula => {
-    if (restAt === -1 && values.length === count) return close(current, iterator, values);
+    if (restAt === -1 && values.length === count) {
+      return closeIterator(pattern, iterator, current, context, frame, throwWith, (closed) =>
+        finish(closed, values),
+      );
+    }
     if (values.length >= count + REST_LIMIT) {
       return leaf(
         apply("Assert", [
@@ -188,62 +289,30 @@ const takeAll = (
         ]),
       );
     }
-    return callMethod(
+    return stepIterator(
       pattern,
-      "next",
-      next,
       iterator,
+      next,
       current,
       context,
       frame,
       throwWith,
-      (called, result) =>
-        bind(called, "result", result, context, (bound, held) =>
-          ifThenElse(
-            isObject(bound, held),
-            read(pattern, held, "done", bound, context, frame, (checked, done) =>
-              ifThenElse(
-                useJavaScript("ToBoolean", [done], context),
-                finish(checked, values),
-                elements[values.length] !== undefined &&
-                  ts.isOmittedExpression(elements[values.length])
-                  ? step(checked, iterator, next, [...values, getUndefined(context)])
-                  : read(pattern, held, "value", checked, context, frame, (taken, value) =>
-                      step(taken, iterator, next, [...values, value]),
-                    ),
-              ),
+      (done) => finish(done, values),
+      (stepped, result) =>
+        elements[values.length] !== undefined && ts.isOmittedExpression(elements[values.length])
+          ? step(stepped, iterator, next, [...values, getUndefined(context)])
+          : readValue(pattern, result, stepped, context, frame, (taken, value) =>
+              step(taken, iterator, next, [...values, value]),
             ),
-            throwWith(bound),
-          ),
-        ),
     );
   };
-  return bind(path, "iterable", iterable, context, (current, held) =>
-    read(pattern, held, ITERATOR_KEY, current, context, frame, (found, method) =>
-      ifThenElse(
-        isNullish(method, context),
-        throwWith(found),
-        callMethod(
-          pattern,
-          ITERATOR_KEY,
-          method,
-          held,
-          found,
-          context,
-          frame,
-          throwWith,
-          (made, result) =>
-            bind(made, "iterator", result, context, (bound, iterator) =>
-              ifThenElse(
-                isObject(bound, iterator),
-                read(pattern, iterator, "next", bound, context, frame, (after, next) =>
-                  step(after, iterator, next, []),
-                ),
-                throwWith(bound),
-              ),
-            ),
-        ),
-      ),
-    ),
+  return openIterator(
+    pattern,
+    iterable,
+    path,
+    context,
+    frame,
+    throwWith,
+    (opened, iterator, next) => step(opened, iterator, next, []),
   );
 };
