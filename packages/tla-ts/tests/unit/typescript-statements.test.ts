@@ -376,6 +376,17 @@ const CASES: Record<string, Case[]> = {
         "interface Box {\n  inner?: { value: number };\n}\nconst boxes: Record<string, Box> = { a: { inner: { value: 3 } }, b: { inner: undefined } };",
     },
   ],
+  "constant objects": [
+    {
+      variables: "count = 0",
+      statements: "const box = { value: 1 }; box.value += 2; count = box.value;",
+    },
+    {
+      variables: "count = 0",
+      statements:
+        "const items: number[] = []; items.push(4); items.push(5); count = items.length + items[0];",
+    },
+  ],
 };
 
 describe.each(Object.entries(CASES))("%s", (_, cases) => {
