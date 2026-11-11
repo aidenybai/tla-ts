@@ -500,7 +500,26 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     rejectBeforeDeclaration(node, path.scope, context);
     const symbol = getSymbol(node, context.checker);
     const current = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
-    if (symbol === undefined || current === undefined || !path.mutable.has(symbol)) {
+    const whole = ts.findAncestor(
+      node,
+      (ancestor) =>
+        !ts.isParenthesizedExpression(ancestor.parent) &&
+        !ts.isNonNullExpression(ancestor.parent) &&
+        !ts.isAsExpression(ancestor.parent),
+    );
+    // A parameter's object may be the caller's too, which a change in place would miss.
+    const isChangedInPlace =
+      symbol?.valueDeclaration !== undefined &&
+      ts.isParameter(symbol.valueDeclaration) &&
+      whole !== undefined &&
+      (ts.isPropertyAccessExpression(whole.parent) || ts.isElementAccessExpression(whole.parent)) &&
+      whole.parent.expression === whole;
+    if (
+      symbol === undefined ||
+      current === undefined ||
+      !path.mutable.has(symbol) ||
+      isChangedInPlace
+    ) {
       throw new TlaTypeScriptError(
         `Only state variables and local lets can change: ${node.text}`,
         node,
@@ -1753,6 +1772,19 @@ export const bindCall = (
     functions: new Map([...bound.scope.functions, ...callbacks]),
     receiver,
   };
+  // A parameter is a local binding, which the body may assign as it does a let.
+  const changeable = {
+    ...path,
+    mutable: new Set([
+      ...path.mutable,
+      ...parameters.flatMap((parameter, position) => {
+        const symbol = ts.isIdentifier(parameter.name)
+          ? getSymbol(parameter.name, context.checker)
+          : undefined;
+        return symbol !== undefined && isValue(position) ? [symbol] : [];
+      }),
+    ]),
+  };
   const body = callee.body;
   const isArgumentsNamed =
     body !== undefined &&
@@ -1761,7 +1793,7 @@ export const bindCall = (
       (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
     ).length > 0;
   if (!isArgumentsNamed || heapSymbol === undefined) {
-    return evaluateArguments(continueWith({ definitions: bound.definitions, scope }, path));
+    return evaluateArguments(continueWith({ definitions: bound.definitions, scope }, changeable));
   }
   if (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError("Unsupported arguments object", node);
@@ -1796,7 +1828,7 @@ export const bindCall = (
           ]),
         },
       },
-      path,
+      changeable,
     ),
   );
 };
@@ -6324,11 +6356,20 @@ export const translateLocalStatements = (
     }
     return leaf(value);
   };
+  const owner = body.parent;
   return translateStatements(
     body.statements,
     {
       scope,
-      mutable: new Set(),
+      // A parameter is a local binding, which the body may assign as it does a let.
+      mutable: new Set(
+        (ts.isFunctionLike(owner) ? owner.parameters : []).flatMap((parameter) => {
+          const symbol = ts.isIdentifier(parameter.name)
+            ? getSymbol(parameter.name, context.checker)
+            : undefined;
+          return symbol !== undefined && scope.bindings.has(symbol) ? [symbol] : [];
+        }),
+      ),
       isAssigned: false,
       isLast: false,
       // Its leaves are values, as a loop body's are.

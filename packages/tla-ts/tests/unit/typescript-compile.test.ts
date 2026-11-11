@@ -2662,6 +2662,46 @@ describe("errors", () => {
     ).toThrow("Unsupported expression: box.i++");
   });
 
+  it("assigns a parameter as a local binding", async () => {
+    const result = await checkModel(`
+      let state = 0;
+      const total = (n: number, sum: number) => {
+        while (n > 0) {
+          sum += n;
+          n--;
+        }
+        return sum;
+      };
+      const make = (x: number) => {
+        const read = () => x;
+        const first = read();
+        x = 5;
+        return [first, read()];
+      };
+      const bump = (by: number) => {
+        by = by * 2;
+        state += by;
+      };
+      const outer = 3;
+      bump(outer);
+      const pair = make(1);
+      if (total(3, 0) !== 6 || pair[0] !== 1 || pair[1] !== 5 || state !== 6 || outer !== 3) {
+        throw new Error("parameters");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    // The caller's array, which a copy that the parameter changes in place would miss.
+    expect(() =>
+      checkModel(`
+        const fill = (names: string[]) => {
+          names.push("a");
+        };
+        const names: string[] = [];
+        fill(names);
+      `),
+    ).toThrow("Only state variables and local lets can change: names");
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {
