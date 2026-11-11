@@ -41,10 +41,7 @@ const Source = () => (
   <main className="flex min-h-0 flex-col">
     <div className="min-h-0 flex-1">
       <ErrorBoundary FallbackComponent={Crash}>
-        <SourceMap>
-          <SourcePane pane="code" />
-          <SourcePane pane="module" />
-        </SourceMap>
+        <SourceMap code={<SourcePane pane="code" />} module={<SourcePane pane="module" />} />
       </ErrorBoundary>
     </div>
     <ErrorBoundary FallbackComponent={Crash}>

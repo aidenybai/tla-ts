@@ -1,4 +1,4 @@
-// The arcs measure the DOM while rendering, so the React Compiler must not cache them.
+// The ribbons measure the DOM while rendering, so the React Compiler must not cache them.
 "use no memo";
 
 import {
@@ -12,10 +12,10 @@ import {
   type SetStateAction,
 } from "react";
 import type { PlacedToken } from "@/hooks/use-token-boxes";
-import { routeArcs, type ArcRequest, type Span, type TextRow } from "@/lib/arcs";
+import { getLinks } from "@/lib/graph";
+import { clampSpan, getRibbonPaths, type Span } from "@/lib/ribbons";
 import type { Pane } from "@/model";
 import { useViewerStore } from "@/store/viewer";
-import { ArrowMarker } from "./arrow-marker";
 import { useViewer } from "./context";
 
 interface PaneLayout {
@@ -37,50 +37,38 @@ export const useSourceMap = (): SourceMapState => {
   return state;
 };
 
-// How far into the TypeScript pane's right padding the arcs may start, and how far into the TLA+
-// pane they end, short of its line numbers.
-const START_INSET = 24;
-const END_INSET = 8;
-
-// The middle of each node's first row, in the coordinates of the container.
-const getRowMiddles = (layout: PaneLayout, origin: DOMRect): Map<string, number> => {
-  const top = layout.wrapper.getBoundingClientRect().top - origin.top;
+// The lines of each node in a pane, in the coordinates of the gutter.
+const getNodeSpans = (layout: PaneLayout, origin: number): Map<string, Span> => {
+  const top = layout.wrapper.getBoundingClientRect().top - origin;
   return new Map(
-    layout.tokens.flatMap((token) => {
-      const row = token.rows[0];
-      return row === undefined
-        ? []
-        : token.mark.nodes.map((node) => [node.id, top + row.y + row.height / 2] as const);
-    }),
+    layout.tokens.flatMap((token) =>
+      token.mark.nodes.map(
+        (node) =>
+          [
+            node.id,
+            { top: top + token.lines.y, bottom: top + token.lines.y + token.lines.height },
+          ] as const,
+      ),
+    ),
   );
 };
 
-// The visual rows of the TypeScript lines in view, and where each one's text ends.
-const getTextRows = (wrapper: HTMLElement, origin: DOMRect, span: Span): TextRow[] => {
-  const lines = wrapper
-    .querySelector("diffs-container")
-    ?.shadowRoot?.querySelectorAll("[data-line]");
-  const range = document.createRange();
-  return [...(lines ?? [])].flatMap((line) => {
-    const box = line.getBoundingClientRect();
-    if (box.bottom - origin.top < span.top || box.top - origin.top > span.bottom) return [];
-    range.selectNodeContents(line);
-    return [...range.getClientRects()]
-      .filter((rect) => rect.width > 0)
-      .map((rect) => ({
-        top: rect.top - origin.top,
-        bottom: rect.bottom - origin.top,
-        right: rect.right - origin.left,
-      }));
-  });
+const getUnion = (nodeIds: string[], spans: Map<string, Span>): Span | null => {
+  const found = nodeIds.flatMap((nodeId) => spans.get(nodeId) ?? []);
+  return found.length === 0
+    ? null
+    : {
+        top: Math.min(...found.map((span) => span.top)),
+        bottom: Math.max(...found.map((span) => span.bottom)),
+      };
 };
 
-const getSpan = (wrapper: HTMLElement, origin: DOMRect): Span => {
-  const viewport = (wrapper.parentElement ?? wrapper).getBoundingClientRect();
-  return { top: viewport.top - origin.top, bottom: viewport.bottom - origin.top };
+const getView = (layout: PaneLayout, origin: number): Span => {
+  const viewport = (layout.wrapper.parentElement ?? layout.wrapper).getBoundingClientRect();
+  return { top: viewport.top - origin, bottom: viewport.bottom - origin };
 };
 
-// Renders again on every scroll and resize, so that the arcs follow the rows.
+// Renders again on every scroll and resize, so that the ribbons follow the lines.
 const useLayoutTick = (container: HTMLElement | null): void => {
   const [, setTick] = useState(0);
   useLayoutEffect(() => {
@@ -101,93 +89,105 @@ const useLayoutTick = (container: HTMLElement | null): void => {
   }, [container]);
 };
 
-interface ArcsProps {
-  container: HTMLElement;
+interface RibbonsProps {
+  gutter: HTMLElement;
   code: PaneLayout;
   module: PaneLayout;
 }
 
-const Arcs = ({ container, code, module }: ArcsProps) => {
-  const { view, colorByNodeId } = useViewer();
-  const markerId = useId();
+// One ribbon for each run of lines that the focused region links to, larger ones first so that
+// smaller ones stay visible on top.
+const Ribbons = ({ gutter, code, module }: RibbonsProps) => {
+  const { colorByNodeId } = useViewer();
+  const gradientId = useId();
   const index = useViewerStore((state) => state.index);
-  const causalNodeIds = useViewerStore((state) => state.causalNodeIds);
-  const origin = container.getBoundingClientRect();
-  if (causalNodeIds === null) return null;
-  const codeViewport = (code.wrapper.parentElement ?? code.wrapper).getBoundingClientRect();
-  const moduleViewport = (module.wrapper.parentElement ?? module.wrapper).getBoundingClientRect();
-  const source = getSpan(code.wrapper, origin);
-  const sources = getRowMiddles(code, origin);
-  const targets = getRowMiddles(module, origin);
-  const requests = view.edges.flatMap((edge): ArcRequest[] => {
-    const from = sources.get(edge.from);
-    const to = targets.get(edge.to);
-    const color = colorByNodeId.get(edge.from);
-    if (!causalNodeIds.has(edge.from) || !causalNodeIds.has(edge.to)) return [];
-    if (from === undefined || to === undefined || color === undefined) return [];
-    const isWrite = index.nodes.get(edge.from)?.kind === "write";
-    return [{ id: `${edge.from}-${edge.to}`, color, isWrite, from, to }];
-  });
-  const routes = routeArcs(requests, {
-    limit: codeViewport.right - origin.left - START_INSET,
-    end: moduleViewport.left - origin.left + END_INSET,
-    source,
-    target: getSpan(module.wrapper, origin),
-    rows: getTextRows(code.wrapper, origin, source),
-  });
+  const focusedNodeId = useViewerStore((state) => state.hoveredNodeId ?? state.selectedNodeId);
+  if (focusedNodeId === null) return null;
+  const bounds = gutter.getBoundingClientRect();
+  const sources = getNodeSpans(code, bounds.top);
+  const targets = getNodeSpans(module, bounds.top);
+  const codeView = getView(code, bounds.top);
+  const moduleView = getView(module, bounds.top);
+  const ribbons = getLinks(index, focusedNodeId)
+    .links.flatMap((link) => {
+      const from = getUnion(link.from, sources);
+      const to = getUnion(link.to, targets);
+      const color = colorByNodeId.get(link.from[0] ?? "");
+      if (!from || !to || color === undefined) return [];
+      const isWrite = link.from.some((nodeId) => index.nodes.get(nodeId)?.kind === "write");
+      return [{ id: `${link.from[0]}-${link.to[0]}`, from, to, color, isWrite }];
+    })
+    .map((ribbon) => ({
+      ...ribbon,
+      size: ribbon.from.bottom - ribbon.from.top + ribbon.to.bottom - ribbon.to.top,
+      from: clampSpan(ribbon.from, codeView),
+      to: clampSpan(ribbon.to, moduleView),
+    }))
+    .filter((ribbon) => !(ribbon.from.isPinned && ribbon.to.isPinned))
+    .toSorted((left, right) => right.size - left.size);
   return (
-    <svg
-      className="pointer-events-none absolute inset-0 overflow-hidden max-sm:hidden"
-      width="100%"
-      height="100%"
-    >
-      <defs>
-        <ArrowMarker id={`${markerId}solid`} size={7} />
-        <ArrowMarker id={`${markerId}hollow`} size={7} isHollow />
-      </defs>
-      {routes.leads.map((lead) => (
-        <g
-          key={lead.y}
-          className="text-muted-foreground"
-          stroke={lead.color ?? "currentColor"}
-          fill={lead.color ?? "currentColor"}
-        >
-          <circle cx={lead.x} cy={lead.y} r={2} stroke="none" />
-          <path d={lead.path} fill="none" strokeWidth={1.5} />
-        </g>
-      ))}
-      {routes.arcs.map((arc) => (
-        <path
-          key={arc.id}
-          d={arc.path}
-          fill="none"
-          stroke={arc.color}
-          strokeWidth={1.5}
-          strokeDasharray={arc.isWrite ? "4 3" : undefined}
-          markerEnd={`url(#${markerId}${arc.isWrite ? "hollow" : "solid"})`}
-        />
-      ))}
+    <svg className="absolute inset-0 overflow-hidden" width="100%" height="100%">
+      {ribbons.map((ribbon, ribbonIndex) => {
+        const paths = getRibbonPaths(ribbon.from, ribbon.to, bounds.width);
+        const fillId = `${gradientId}${ribbonIndex}`;
+        return (
+          <g key={ribbon.id}>
+            {/* A ribbon whose end is scrolled out of view fades toward that end. */}
+            <linearGradient id={fillId}>
+              <stop
+                offset="0"
+                stopColor={ribbon.color}
+                stopOpacity={ribbon.from.isPinned ? 0 : 1}
+              />
+              <stop offset="1" stopColor={ribbon.color} stopOpacity={ribbon.to.isPinned ? 0 : 1} />
+            </linearGradient>
+            <path
+              d={paths.fill}
+              fill={`url(#${fillId})`}
+              className="[fill-opacity:0.16] dark:[fill-opacity:0.18]"
+            />
+            {[paths.top, paths.bottom].map((path) => (
+              <path
+                key={path}
+                d={path}
+                fill="none"
+                stroke={`url(#${fillId})`}
+                strokeOpacity={0.5}
+                strokeWidth={1}
+                strokeDasharray={ribbon.isWrite ? "3 2" : undefined}
+              />
+            ))}
+          </g>
+        );
+      })}
     </svg>
   );
 };
 
-// Lays the TypeScript and its TLA+ side by side, or stacked on narrow screens. While a region is
-// focused, arcs cross the gutter from its TypeScript to its TLA+. Stacked panes have no gutter, so
-// they show no arcs.
-export const SourceMap = ({ children }: { children: ReactNode }) => {
-  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+interface SourceMapProps {
+  code: ReactNode;
+  module: ReactNode;
+}
+
+// Lays the TypeScript and its TLA+ side by side, with a gutter between them where ribbons join
+// the focused region's lines to the lines they become. Stacked panes on narrow screens have no
+// gutter, so they show no ribbons.
+export const SourceMap = ({ code, module }: SourceMapProps) => {
+  const [gutter, setGutter] = useState<HTMLDivElement | null>(null);
   const [layouts, setLayouts] = useState<Layouts>(new Map());
-  const code = layouts.get("code");
-  const module = layouts.get("module");
-  useLayoutTick(container);
+  const codeLayout = layouts.get("code");
+  const moduleLayout = layouts.get("module");
+  useLayoutTick(gutter?.parentElement ?? null);
   return (
     <SourceMapContext value={{ setLayouts }}>
-      <div
-        ref={setContainer}
-        className="relative grid h-full min-h-0 grid-rows-2 max-sm:divide-y sm:grid-cols-2 sm:grid-rows-1 sm:divide-x"
-      >
-        {children}
-        {container && code && module && <Arcs container={container} code={code} module={module} />}
+      <div className="grid h-full min-h-0 grid-rows-2 max-sm:divide-y sm:grid-cols-[minmax(0,1fr)_48px_minmax(0,1fr)] sm:grid-rows-1">
+        {code}
+        <div ref={setGutter} className="relative border-x max-sm:hidden">
+          {gutter && codeLayout && moduleLayout && (
+            <Ribbons gutter={gutter} code={codeLayout} module={moduleLayout} />
+          )}
+        </div>
+        {module}
       </div>
     </SourceMapContext>
   );

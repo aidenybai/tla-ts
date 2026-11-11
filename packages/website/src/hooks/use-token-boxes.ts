@@ -1,19 +1,13 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
 import type { Mark } from "@/lib/marks";
-import {
-  createLineLookup,
-  getBoundingBox,
-  getLinesBox,
-  getRangeRows,
-  type Box,
-} from "@/lib/positions";
+import { createLineLookup, getLinesBox, getRangeRows, type Box } from "@/lib/positions";
 
 export interface PlacedToken {
   mark: Mark;
   // The text the mark covers, one box per visual row.
   rows: Box[];
-  // For a bar, the full width of its lines. For a token, the bounds of its rows.
-  box: Box;
+  // The full width and height of the lines the mark covers.
+  lines: Box;
 }
 
 const measure = (wrapper: HTMLElement, marks: Mark[]): PlacedToken[] => {
@@ -22,9 +16,8 @@ const measure = (wrapper: HTMLElement, marks: Mark[]): PlacedToken[] => {
   const lookup = createLineLookup(host, wrapper);
   return marks.flatMap((mark) => {
     const loc = mark.nodes[0].loc;
-    const rows = getRangeRows(lookup, loc);
-    const box = mark.isBar ? getLinesBox(lookup, loc) : getBoundingBox(rows);
-    return box && box.height > 0 ? [{ mark, rows, box }] : [];
+    const lines = getLinesBox(lookup, loc);
+    return lines && lines.height > 0 ? [{ mark, rows: getRangeRows(lookup, loc), lines }] : [];
   });
 };
 
