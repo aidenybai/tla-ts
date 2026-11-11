@@ -1272,6 +1272,30 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("writes a value as JSON, with a replacer array and a gap", async () => {
+    const result = await checkModel(`
+      const value = { a: { b: [1, "x"] }, skipped: undefined, run: () => 1, n: null };
+      if (JSON.stringify(value) !== '{"a":{"b":[1,"x"]},"n":null}') throw new Error("plain");
+      if (JSON.stringify(value, ["n", "a"]) !== '{"n":null,"a":{}}') throw new Error("keys");
+      if (JSON.stringify(value.a, null, 2) !== '{\\n  "b": [\\n    1,\\n    "x"\\n  ]\\n}') {
+        throw new Error("gap");
+      }
+      if (JSON.stringify('"\\\\\\u0001\\ud800') !== '"\\\\"\\\\\\\\\\\\u0001\\\\ud800"') throw new Error("quote");
+      if (JSON.stringify(undefined) !== undefined || JSON.stringify(-0) !== "0") {
+        throw new Error("primitive");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where JSON.stringify would call a script's function", async () => {
+    const result = await checkModel(`
+      const value = { a: 1, toJSON: () => 2 };
+      const text = JSON.stringify(value);
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call toJSON");
+  });
+
   it("throws a TypeError where Object.assign can't write a property", async () => {
     const result = await checkModel(`
       const target: { [key: string]: unknown } = { a: 1 };

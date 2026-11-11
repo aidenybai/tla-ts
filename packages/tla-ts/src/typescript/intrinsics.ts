@@ -299,6 +299,7 @@ export const translateBuiltInValue = (
     | "Symbol.prototype"
     | "Promise"
     | "Promise.prototype"
+    | "JSON"
     | `${Collection}.prototype${string}`,
   node: ts.Node,
   context: Context,

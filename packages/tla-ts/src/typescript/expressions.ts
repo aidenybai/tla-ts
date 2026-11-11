@@ -40,6 +40,7 @@ import {
   isNestedFunction,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { translateJsonCall } from "./json";
 import {
   getConstructor,
   getErrorClass,
@@ -479,7 +480,9 @@ const translateCall = (
     return bound;
   }
   const converted =
-    translateConversion(node, scope, context) ?? translateIntrinsic(node, scope, context);
+    translateConversion(node, scope, context) ??
+    translateIntrinsic(node, scope, context) ??
+    translateJsonCall(node, scope, context);
   if (converted !== undefined) return converted;
   const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);

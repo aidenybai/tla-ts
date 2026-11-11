@@ -1546,6 +1546,147 @@ IsFrozen(heap, ref) ==
      /\\ \\A key \\in DOMAIN object.attributes :
           object.attributes[key].kind # "data" \\/ ~object.attributes[key].writable
 
+\\* Whether a code unit is a surrogate that JSON.stringify escapes, where escapes maps each code unit
+\\* that it escapes to its escape.
+LOCAL JSONSurrogate(escapes, unit) ==
+  IF unit \\in DOMAIN escapes /\\ Len(escapes[unit]) = 6 /\\ SubSeq(escapes[unit], 1, 3) = "\\\\ud"
+  THEN IF SubSeq(escapes[unit], 4, 4) \\in {"8", "9", "a", "b"} THEN "high" ELSE "low"
+  ELSE ""
+
+\\* QuoteJSONString, which escapes a code unit unless it's a surrogate that pairs with a neighbor.
+LOCAL QuoteJSON(text, escapes) ==
+  LET unit(position) == SubSeq(text, position, position)
+      kind(position) ==
+        IF position \\in 1..Len(text) THEN JSONSurrogate(escapes, unit(position)) ELSE ""
+      isPaired(position) ==
+        \\/ kind(position) = "high" /\\ kind(position + 1) = "low"
+        \\/ kind(position) = "low" /\\ kind(position - 1) = "high"
+  IN "\\"" \\o Join([position \\in 1..Len(text) |->
+                     IF unit(position) \\in DOMAIN escapes /\\ ~isPaired(position)
+                     THEN escapes[unit(position)]
+                     ELSE unit(position)], "") \\o "\\""
+
+\\* Which of Boolean, Number, and String an object wraps the primitive of, or "" where it wraps none.
+LOCAL JSONWrapperKind(heap, ref) ==
+  CASE ~IsHeap(ref) /\\ ref[Ref] \\in {"Boolean.prototype", "Number.prototype", "String.prototype"} ->
+         SubSeq(ref[Ref], 1, Len(ref[Ref]) - 10)
+    [] IsHeap(ref) /\\ "primitive" \\in DOMAIN Lookup(heap, ref) ->
+         CASE TypeOf(Lookup(heap, ref).primitive) = "boolean" -> "Boolean"
+           [] TypeOf(Lookup(heap, ref).primitive) = "number" -> "Number"
+           [] OTHER -> "String"
+    [] OTHER -> ""
+
+\\* The primitive that a wrapper object converts to, through the method that ToPrimitive calls first.
+LOCAL JSONPrimitive(heap, ref, kind, method) ==
+  CASE kind = "Boolean" -> IF IsHeap(ref) THEN Lookup(heap, ref).primitive ELSE FALSE
+    [] Get(heap, ref, WellKnownSymbol("toPrimitive")) # Undefined ->
+         Assert(FALSE, "tla-ts can't convert " \\o ToString(ref) \\o " to a primitive")
+    [] OTHER -> WrappedPrimitive(heap, ref, kind, method)
+
+\\* The gap that JSON.stringify indents by for its space argument.
+LOCAL JSONGap(heap, space) ==
+  LET kind == IF IsRef(space) THEN JSONWrapperKind(heap, space) ELSE ""
+      value == CASE kind = "Number" -> JSONPrimitive(heap, space, kind, "valueOf")
+                 [] kind = "String" -> JSONPrimitive(heap, space, kind, "toString")
+                 [] OTHER -> space
+      count == CASE value \\in {NaN, NegativeInfinity, NegativeZero} -> 0
+                 [] value = Infinity -> 10
+                 [] value > 10 -> 10
+                 [] OTHER -> value
+  IN CASE TypeOf(value) = "number" ->
+            IF count < 1 THEN "" ELSE Join([position \\in 1..count |-> " "], "")
+       [] TypeOf(value) = "string" -> IF Len(value) > 10 THEN SubSeq(value, 1, 10) ELSE value
+       [] OTHER -> ""
+
+\\* The keys that a replacer array lists, in order and without repeats.
+LOCAL JSONKeys(heap, replacer) ==
+  LET elements == IF IsRef(replacer)
+                  THEN [position \\in 1..ToLength(Get(heap, replacer, "length")) |->
+                          Get(heap, replacer, ToString(position - 1))]
+                  ELSE replacer
+      item(element) ==
+        LET kind == IF IsRef(element) THEN JSONWrapperKind(heap, element) ELSE ""
+        IN CASE TypeOf(element) = "string" -> element
+             [] TypeOf(element) = "number" -> StringOf(element)
+             [] kind \\in {"Number", "String"} ->
+                  StringOf(JSONPrimitive(heap, element, kind, "toString"))
+             [] OTHER -> Undefined
+      items == [position \\in DOMAIN elements |-> item(elements[position])]
+      kept == SelectSeq([position \\in DOMAIN items |-> position],
+                        LAMBDA position :
+                          /\\ items[position] # Undefined
+                          /\\ \\A earlier \\in 1..(position - 1) : items[earlier] # items[position])
+  IN [position \\in DOMAIN kept |-> items[kept[position]]]
+
+\\* SerializeJSONProperty, which gives Undefined where JSON.stringify leaves a value out. A value
+\\* that isn't on the heap and prints as a sequence is an array where state.isSequence holds, as
+\\* where the script makes no Map.
+RECURSIVE SerializeJSON(_, _, _, _, _)
+SerializeJSON(heap, value, state, stack, indent) ==
+  LET inner == indent \\o state.gap
+      wrap(open, close, parts) ==
+        CASE parts = <<>> -> open \\o close
+          [] state.gap = "" -> open \\o Join(parts, ",") \\o close
+          [] OTHER -> open \\o "\\n" \\o inner \\o Join(parts, ",\\n" \\o inner) \\o "\\n" \\o indent \\o close
+      array(elements, seen) ==
+        wrap("[", "]", [position \\in DOMAIN elements |->
+                          LET text == SerializeJSON(heap, elements[position], state, seen, inner)
+                          IN IF text = Undefined THEN "null" ELSE text])
+      object(keys) ==
+        LET texts == [position \\in DOMAIN keys |->
+                        SerializeJSON(heap, Get(heap, value, keys[position]), state,
+                                      stack \\cup {value}, inner)]
+            present == SelectSeq([position \\in DOMAIN keys |-> position],
+                                 LAMBDA position : texts[position] # Undefined)
+        IN wrap("{", "}", [position \\in DOMAIN present |->
+                             QuoteJSON(keys[present[position]], state.escapes) \\o ":"
+                               \\o (IF state.gap = "" THEN "" ELSE " ") \\o texts[present[position]]])
+      hasToJSON(ref) == TypeOfIn(heap, Get(heap, ref, "toJSON")) = "function"
+      kind == IF IsRef(value) THEN JSONWrapperKind(heap, value) ELSE ""
+  IN CASE value = Null -> "null"
+       [] value = Undefined -> Undefined
+       [] TypeOf(value) = "boolean" -> IF value THEN "true" ELSE "false"
+       [] TypeOf(value) = "string" -> QuoteJSON(value, state.escapes)
+       [] TypeOf(value) = "number" -> IF IsFinite(value) THEN StringOf(value) ELSE "null"
+       [] TypeOf(value) = "symbol" -> Undefined
+       [] IsRef(value) /\\ hasToJSON(value) -> Assert(FALSE, "tla-ts can't call toJSON")
+       [] kind = "Number" ->
+            SerializeJSON(heap, JSONPrimitive(heap, value, kind, "valueOf"), state, stack, indent)
+       [] kind # "" ->
+            SerializeJSON(heap, JSONPrimitive(heap, value, kind, "toString"), state, stack, indent)
+       [] IsRef(value) /\\ TypeOfIn(heap, value) = "function" -> Undefined
+       [] IsRef(value) /\\ value \\in stack ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of JSON.stringify of a cycle")
+       [] IsArray(heap, value) ->
+            array([position \\in 1..ToLength(Get(heap, value, "length")) |->
+                     Get(heap, value, ToString(position - 1))], stack \\cup {value})
+       [] IsRef(value) -> object(IF state.keys = Undefined THEN ObjectKeys(heap, value) ELSE state.keys)
+       [] TypeOf(value) = "function" /\\ hasToJSON(state.functionPrototype) ->
+            Assert(FALSE, "tla-ts can't call toJSON")
+       [] TypeOf(value) = "function" -> Undefined
+       [] state.isSequence /\\ SubSeq(ToString(value), 1, 2) = "<<" ->
+            IF hasToJSON(state.arrayPrototype)
+            THEN Assert(FALSE, "tla-ts can't call toJSON")
+            ELSE array(value, stack)
+       [] OTHER -> Assert(FALSE, "tla-ts can't tell what JSON.stringify writes for " \\o ToString(value))
+
+\\* JSON.stringify, which can't call a replacer function, where escapes maps each code unit that
+\\* QuoteJSONString escapes to its escape.
+JSONStringify(heap, value, replacer, space, escapes, arrayPrototype, functionPrototype, isSequence) ==
+  LET isList == IsArray(heap, replacer)
+                  \\/ (isSequence /\\ ~IsRef(replacer) /\\ SubSeq(ToString(replacer), 1, 2) = "<<")
+      keys == IF isList THEN JSONKeys(heap, replacer) ELSE Undefined
+      gap == JSONGap(heap, space)
+      state == [keys |-> keys, gap |-> gap, escapes |-> escapes, isSequence |-> isSequence,
+                arrayPrototype |-> arrayPrototype, functionPrototype |-> functionPrototype]
+  IN CASE TypeOfIn(heap, replacer) = "function" -> Assert(FALSE, "tla-ts can't call a replacer")
+       [] /\\ ~IsRef(replacer)
+          /\\ TypeOf(replacer) = "object"
+          /\\ replacer # Null
+          /\\ ~isList ->
+            Assert(FALSE, "tla-ts can't tell whether " \\o ToString(replacer) \\o " is an array")
+       [] keys = keys /\\ gap = gap -> SerializeJSON(heap, value, state, {}, "")
+
 ===============================================================================`;
 
 // The model values that stand for the numbers that TLA+ integers can't hold.
