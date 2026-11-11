@@ -38,20 +38,17 @@ const haveSameDirection = (car: Car) =>
   (carsRight.has(car) && getCarsInBridge().isSubsetOf(carsRight)) ||
   (carsLeft.has(car) && getCarsInBridge().isSubsetOf(carsLeft));
 
-/** @fair */
 export const moveOutsideBridge = (car: Car) => {
   if (bridge.has(nextLocation(car))) return;
   changeLocation(car);
 };
 
-/** @fair */
 export const moveInsideBridge = (car: Car) => {
   if (!getCarsInBridge().has(car) || !isFree(nextLocation(car))) return;
   changeLocation(car);
 };
 
 // Next tries EnterBridge once for each car, so it takes a car it doesn't use.
-/** @fair */
 export const enterBridge = (_car: Car) => {
   if (WaitingBeforeBridge.length === 0) return;
   const head = WaitingBeforeBridge[0];

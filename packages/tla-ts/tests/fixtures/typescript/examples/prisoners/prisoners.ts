@@ -20,7 +20,6 @@ const sumTimesSwitched = (subset: Set<OtherPrisoner>): number => {
     : timesSwitched[prisoner] + sumTimesSwitched(subset.difference(new Set([prisoner])));
 };
 
-/** @fair */
 export const counterStep = () => {
   if (switchAUp) {
     switchAUp = false;
@@ -30,7 +29,6 @@ export const counterStep = () => {
   }
 };
 
-/** @fair */
 export const nonCounterStep = (prisoner: OtherPrisoner) => {
   if (!switchAUp && timesSwitched[prisoner] < 2) {
     switchAUp = true;

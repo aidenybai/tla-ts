@@ -11,19 +11,16 @@ let waiting: [Access, Actor][] = [];
 const getWaiting = (access: Access) =>
   new Set(waiting.filter((request) => request[0] === access).map((request) => request[1]));
 
-/** @fair */
 export const tryRead = (actor: Actor) => {
   if (getWaiting("read").has(actor)) return;
   waiting.push(["read", actor]);
 };
 
-/** @fair */
 export const tryWrite = (actor: Actor) => {
   if (getWaiting("write").has(actor)) return;
   waiting.push(["write", actor]);
 };
 
-/** @fair */
 export const readOrWrite = () => {
   if (waiting.length === 0 || writers.size !== 0) return;
   const request = waiting[0];
@@ -33,7 +30,6 @@ export const readOrWrite = () => {
   else writers.add(request[1]);
 };
 
-/** @fair */
 export const stop = (actor: Actor) => {
   if (!readers.union(writers).has(actor)) return;
   if (readers.has(actor)) readers.delete(actor);

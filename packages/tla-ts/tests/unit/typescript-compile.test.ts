@@ -342,7 +342,36 @@ describe("tags", () => {
 
   it("checks eventually with weak fairness", async () => {
     expect((await checkModel(getTicker("/** @fair */"))).status).toBe("success");
-    expect((await checkModel(getTicker(""))).status).toBe("liveness-violation");
+  });
+
+  it("makes every action weakly fair when a spec checks liveness and tags no action fair", async () => {
+    const result = await checkModel(getTicker(""));
+    expect(result.status).toBe("success");
+    expect(compile(getTicker("")).source).toContain("WF_vars(tick)");
+  });
+
+  it("makes only the tagged actions fair, which other steps can starve the rest of", async () => {
+    const getSpec = (tag: { tick: string; toggle: string }) => `
+      /** @noDeadlock */
+      let count = 0;
+      let isOn = false;
+      ${tag.tick}
+      export const tick = () => {
+        if (count >= 3) return;
+        count++;
+      };
+      ${tag.toggle}
+      export const toggle = () => {
+        isOn = !isOn;
+      };
+      /** @eventually */
+      export const reachesThree = () => count === 3;
+    `;
+    const fair = "/** @fair */";
+    expect((await checkModel(getSpec({ tick: "", toggle: fair }))).status).toBe(
+      "liveness-violation",
+    );
+    expect((await checkModel(getSpec({ tick: fair, toggle: "" }))).status).toBe("success");
   });
 
   it("checks a step property against the state before the step", async () => {
