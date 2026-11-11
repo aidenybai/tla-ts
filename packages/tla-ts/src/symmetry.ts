@@ -22,6 +22,29 @@ import {
 
 type Images = Map<string, ModelValue>;
 
+// A member of the symmetry group. Every member shares the slot of each model value the group moves,
+// indexed by rank, -1 for the rest. A member's images hold the image of each moved value by slot.
+// The members also share positions, where permuting a function notes where each key sits.
+export interface Permutation {
+  slots: Int32Array;
+  images: ModelValue[];
+  positions: Int32Array;
+}
+
+const toPermutations = (group: Images[]): Permutation[] => {
+  const moved = [...new Set(group.flatMap((images) => [...images.values()]))];
+  const slots = new Int32Array(Math.max(...moved.map((value) => value.rank)) + 1).fill(-1);
+  moved.forEach((value, slot) => {
+    slots[value.rank] = slot;
+  });
+  const positions = new Int32Array(moved.length);
+  return group.map((images) => ({
+    slots,
+    images: moved.map((value) => images.get(value.name) ?? value),
+    positions,
+  }));
+};
+
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
     .map(([name, image]) => `${name}>${image.name}`)
@@ -102,7 +125,7 @@ export const getSymmetryGroup = (
   name: string,
   environment: Environment,
   substitutions: Substitution[],
-): Images[] | undefined => {
+): Permutation[] | undefined => {
   const definition = environment.definitions.get(name);
   if (definition === undefined && !environment.constants.has(name)) {
     throw new TlaConfigError(
@@ -186,18 +209,19 @@ export const getSymmetryGroup = (
     }),
   );
   if (group.size === 0) return undefined;
-  return [...group.values()];
+  return toPermutations([...group.values()]);
 };
 
-const permuteElements = (elements: Value[], images: Images) => {
+const permuteElements = (elements: Value[], permutation: Permutation) => {
   for (let index = 0; index < elements.length; index++) {
     const element = elements[index];
-    const permuted = permuteValue(element, images);
+    if (typeof element !== "object") continue;
+    const permuted = permuteValue(element, permutation);
     if (permuted === element) continue;
-    const result = elements.slice(0, index);
-    result.push(permuted);
+    const result = elements.slice();
+    result[index] = permuted;
     for (let rest = index + 1; rest < elements.length; rest++) {
-      result.push(permuteValue(elements[rest], images));
+      result[rest] = permuteValue(elements[rest], permutation);
     }
     return result;
   }
@@ -206,11 +230,11 @@ const permuteElements = (elements: Value[], images: Images) => {
 
 // A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
 // in order, so it sorts only the moved ones and merges them back.
-const permuteSortedElements = (elements: Value[], images: Images) => {
+const permuteSortedElements = (elements: Value[], permutation: Permutation) => {
   const kept: Value[] = [];
   const moved: Value[] = [];
   for (const element of elements) {
-    const permuted = permuteValue(element, images);
+    const permuted = permuteValue(element, permutation);
     if (permuted === element) kept.push(element);
     else moved.push(permuted);
   }
@@ -231,21 +255,57 @@ const permuteSortedElements = (elements: Value[], images: Images) => {
   return merged;
 };
 
+const getSlot = (value: ModelValue, permutation: Permutation) =>
+  value.rank < permutation.slots.length ? permutation.slots[value.rank] : -1;
+
+// The range of a function whose keys are all moved model values, under a permutation that maps the
+// keys onto themselves, as it does a function over a symmetric set. Each image takes the position of
+// the key it equals, so the range needs no sort.
+const permuteRangeInPlace = (
+  domain: Value[],
+  permutedDomain: Value[],
+  permutedRange: Value[],
+  permutation: Permutation,
+) => {
+  const positions = permutation.positions;
+  for (let index = 0; index < domain.length; index++) {
+    const key = domain[index];
+    if (typeof key !== "object" || key.kind !== "ModelValue") return undefined;
+    const slot = getSlot(key, permutation);
+    if (slot === -1) return undefined;
+    positions[slot] = index;
+  }
+  const range = permutedRange.slice();
+  for (let index = 0; index < domain.length; index++) {
+    const image = permutedDomain[index];
+    if (typeof image !== "object" || image.kind !== "ModelValue") return undefined;
+    const position = positions[getSlot(image, permutation)];
+    if (domain[position] !== image) return undefined;
+    range[position] = permutedRange[index];
+  }
+  return range;
+};
+
 // Value#permute: the value with each model value replaced by its image. A value the permutation
 // doesn't move is returned itself, so that comparing it with itself stops at identity.
-const permuteValue = (value: Value, images: Images): Value => {
+const permuteValue = (value: Value, permutation: Permutation): Value => {
   if (typeof value !== "object") return value;
   const kind = value.kind;
-  if (kind === "ModelValue") return images.get(value.name) ?? value;
+  if (kind === "ModelValue") {
+    const slot = getSlot(value, permutation);
+    return slot === -1 ? value : permutation.images[slot];
+  }
   if (kind === "Set") {
-    const elements = permuteSortedElements(value.elements, images);
+    const elements = permuteSortedElements(value.elements, permutation);
     return elements ? createSortedSet(elements) : value;
   }
   if (kind === "Function" || (kind === "LazyFunction" && isEnumerable(value.domain))) {
     const functionValue = toFiniteFunction(value);
-    const domain = permuteElements(functionValue.domain, images);
-    const range = permuteElements(functionValue.range, images) ?? functionValue.range;
+    const domain = permuteElements(functionValue.domain, permutation);
+    const range = permuteElements(functionValue.range, permutation) ?? functionValue.range;
     if (domain) {
+      const inPlace = permuteRangeInPlace(functionValue.domain, domain, range, permutation);
+      if (inPlace) return createSortedFunction(functionValue.domain, inPlace);
       const permuted = createFunction(
         domain.map((key, index): [Value, Value] => [key, range[index]]),
       );
@@ -262,7 +322,7 @@ const permuteValue = (value: Value, images: Images): Value => {
   }
   if (kind === "Interval" || !isSetValue(value) || !isEnumerable(value)) return value;
   const set = toFiniteSet(value);
-  const elements = permuteElements(set.elements, images);
+  const elements = permuteElements(set.elements, permutation);
   return elements ? createSet(elements) : set;
 };
 
@@ -270,15 +330,15 @@ const permuteValue = (value: Value, images: Images): Value => {
 // permutation as soon as a variable's image is larger than the smallest state's.
 export const getRepresentative = (
   state: Value[],
-  permutations: Images[],
+  permutations: Permutation[],
   order: number[],
 ): Value[] => {
   let smallest = state;
-  for (const images of permutations) {
+  for (const permutation of permutations) {
     const permuted = state.slice();
     let comparison = 0;
     for (const index of order) {
-      permuted[index] = permuteValue(state[index], images);
+      permuted[index] = permuteValue(state[index], permutation);
       if (comparison === 0) comparison = compareValues(permuted[index], smallest[index]);
       if (comparison > 0) break;
     }
