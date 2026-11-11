@@ -30,7 +30,7 @@ import {
   type Sequent,
 } from "./expression";
 import type { ModuleUnit, Mule } from "./module";
-import { findPragma, isSuppressedAt, readNewMethod, readOldMethod } from "./pragma";
+import { findPragma, findSuppressPragma, readNewMethod, readOldMethod } from "./pragma";
 import {
   expandChoose,
   expandFcn,
@@ -138,8 +138,10 @@ export const createSource = (
   const getMethod = (range: SourceRange | undefined) =>
     range && readOldMethod(lines, { line: range.end.line - 1, column: range.end.column });
 
-  const isSuppressed = (keyword: SourceRange) =>
-    isSuppressedAt(lines, { line: keyword.start.line - 1, column: keyword.start.column - 1 });
+  const getSuppressPragma = (keyword: SourceRange) =>
+    findSuppressPragma(lines, { line: keyword.start.line - 1, column: keyword.start.column - 1 });
+
+  const isSuppressed = (keyword: SourceRange) => getSuppressPragma(keyword) !== undefined;
 
   // A method pragma belongs to the node it follows, whose locus then takes it in.
   const withMethod = (range: SourceRange) => {
@@ -1068,13 +1070,19 @@ export const createSource = (
             location,
           };
         }
-        case "Use":
+        case "Use": {
+          // A module unit's locus takes in the suppress pragma that tlapm reads as its first tokens.
+          const pragma = getSuppressPragma(unit.use.keyword);
           return {
             kind: "Mutate",
             mode: unit.use.kind,
             usable: convertUsable(unit.use),
-            location: getUseLocus(unit.use),
+            location: mergeLoci(
+              pragma && getPointLocus({ line: pragma.line + 1, column: pragma.column + 1 }, 0),
+              getUseLocus(unit.use),
+            ),
           };
+        }
         case "Module":
           return { kind: "Submod", module: { ...convertModule(unit.module), isImportant: true } };
       }

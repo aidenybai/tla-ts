@@ -201,23 +201,23 @@ export const readNewMethod = (lines: string[], start: Position, file: string) =>
   return groups;
 };
 
-export const isSuppressedAt = (lines: string[], keyword: Position) => {
+export const findSuppressPragma = (lines: string[], keyword: Position) => {
   const close = { ...keyword };
   while (lines[close.line].slice(0, close.column).trimEnd() === "") {
-    if (close.line === 0) return false;
+    if (close.line === 0) return undefined;
     close.line--;
     close.column = lines[close.line].length;
   }
-  if (!lines[close.line].slice(0, close.column).trimEnd().endsWith("}*)")) return false;
+  if (!lines[close.line].slice(0, close.column).trimEnd().endsWith("}*)")) return undefined;
   for (let line = close.line; line >= 0; line--) {
     const open = lines[line].lastIndexOf("(*{", line === close.line ? close.column : undefined);
     if (open === -1) continue;
     const tokens = tokenizePragma(lines, { line, column: open });
-    return (
+    const isSuppress =
       tokens?.length === 1 &&
       tokens[0].kind === "Ident" &&
-      (tokens[0].text === "_" || tokens[0].text === "suppress")
-    );
+      (tokens[0].text === "_" || tokens[0].text === "suppress");
+    return isSuppress ? { line, column: open } : undefined;
   }
-  return false;
+  return undefined;
 };
