@@ -5,6 +5,7 @@ import {
   FAMILY_FPA,
   FAMILY_BASIC,
   FAMILY_USER,
+  KIND_QUANTIFIER,
   KIND_VAR,
   OP_DISTINCT,
   OP_EQ,
@@ -56,8 +57,11 @@ import {
   OP_FPA_TO_SBV_I,
   OP_FPA_TO_UBV,
   OP_FPA_TO_UBV_I,
+  OP_EXTRACT,
   OP_ITE,
+  getSymbolName,
 } from "./ast";
+import { mkBvApp } from "./bv-decl-plugin";
 import {
   BV_RM_TIES_TO_AWAY,
   BV_RM_TIES_TO_EVEN,
@@ -79,6 +83,8 @@ const RM_VALUES = new Map([
 ]);
 
 export class Fpa2BvRewriter extends RewriterTpl {
+  private numBindings = 0;
+
   constructor(
     manager: AstManager,
     readonly converter: Fpa2BvConverter,
@@ -88,6 +94,57 @@ export class Fpa2BvRewriter extends RewriterTpl {
 
   private isFloat(sort: number) {
     return this.manager.isFpSort(sort) || this.manager.isRmSort(sort);
+  }
+
+  preVisit(expr: number) {
+    if (this.manager.kinds[expr] === KIND_QUANTIFIER)
+      this.numBindings += this.manager.getQuantifier(expr).sorts.length;
+    return true;
+  }
+
+  reduceQuantifier(expr: number, body: number, patterns: number[]) {
+    const manager = this.manager;
+    const data = manager.getQuantifier(expr);
+    this.numBindings -= data.sorts.length;
+    const result = manager.mkQuantifier({
+      ...data,
+      sorts: data.sorts.map((sort) =>
+        manager.isFpSort(sort)
+          ? manager.mkBvSort(manager.getEbits(sort) + manager.getSbits(sort))
+          : manager.isRmSort(sort)
+            ? manager.mkBvSort(3)
+            : sort,
+      ),
+      names: data.names.map((name, index) =>
+        this.isFloat(data.sorts[index]) ? `${getSymbolName(name)}.bv` : name,
+      ),
+      body,
+      patterns,
+      noPatterns: [],
+    });
+    manager.incRef(result);
+    return result;
+  }
+
+  reduceVar(variable: number) {
+    const manager = this.manager;
+    const index = manager.values[variable];
+    const sort = manager.sorts[variable];
+    if (index >= this.numBindings || !this.isFloat(sort)) return -1;
+    return manager.withTemporaries(() => {
+      if (manager.isRmSort(sort))
+        return this.converter.mkBv2Rm(manager.mkVar(index, manager.mkBvSort(3)));
+      const ebits = manager.getEbits(sort);
+      const size = ebits + manager.getSbits(sort);
+      const bv = manager.mkVar(index, manager.mkBvSort(size));
+      const extract = (high: number, low: number) =>
+        mkBvApp(manager, OP_EXTRACT, [bv], [high, low]);
+      return this.converter.mkFp(
+        extract(size - 1, size - 1),
+        extract(ebits - 1, 0),
+        extract(size - 2, ebits),
+      );
+    });
   }
 
   reduceApp(decl: number, args: number[], sort: number) {

@@ -41,7 +41,6 @@
   "tlapm/backends/z3/z3test/regressions/smt2/3832.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3849.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3858.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/3919.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3934.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3953.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3968.smt2": "message-mismatch",
