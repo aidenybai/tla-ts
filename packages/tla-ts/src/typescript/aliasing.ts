@@ -182,6 +182,51 @@ const land = (target: ts.Symbol[] | Written | undefined, depths: Depths): Escape
 // returning function, no function inside it keeps the local, and no finally block runs after.
 const getOwner = (node: ts.Node) => ts.findAncestor(node.parent, ts.isFunctionLike);
 
+// Whether a function runs only during a call of the owner: it is the owner, or a function the owner
+// declares and only calls by name from functions that themselves run only then.
+const isRunByOwner = (
+  node: ts.Node | undefined,
+  owner: ts.Node,
+  context: Context,
+  visited: Set<ts.Node>,
+): boolean => {
+  if (node === owner || (node !== undefined && visited.has(node))) return true;
+  if (
+    node === undefined ||
+    !(ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node))
+  ) {
+    return false;
+  }
+  visited.add(node);
+  const declaration = ts.isFunctionDeclaration(node) ? node : node.parent;
+  const isConstant =
+    ts.isFunctionDeclaration(declaration) ||
+    (ts.isVariableDeclaration(declaration) &&
+      declaration.initializer === node &&
+      (declaration.parent.flags & ts.NodeFlags.Const) !== 0);
+  const isDeferred =
+    node.asteriskToken !== undefined ||
+    (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0;
+  const name =
+    ts.isFunctionDeclaration(declaration) || ts.isVariableDeclaration(declaration)
+      ? declaration.name
+      : undefined;
+  const symbol =
+    name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  return (
+    isConstant &&
+    !isDeferred &&
+    symbol !== undefined &&
+    isRunByOwner(getOwner(node), owner, context, visited) &&
+    getReferences(symbol, owner, context).every(
+      (reference) =>
+        ts.isCallExpression(reference.parent) &&
+        reference.parent.expression === reference &&
+        isRunByOwner(getOwner(reference), owner, context, visited),
+    )
+  );
+};
+
 const isOnlyName = (node: ts.Identifier, statement: ts.ReturnStatement, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const declaration = symbol?.valueDeclaration;
@@ -203,7 +248,9 @@ const isOnlyName = (node: ts.Identifier, statement: ts.ReturnStatement, context:
       isFinallyAfter(child.parent));
   return (
     !isFinallyAfter(statement) &&
-    getReferences(symbol, owner, context).every((reference) => getOwner(reference) === owner)
+    getReferences(symbol, owner, context).every((reference) =>
+      isRunByOwner(getOwner(reference), owner, context, new Set()),
+    )
   );
 };
 

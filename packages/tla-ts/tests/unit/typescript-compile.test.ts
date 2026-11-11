@@ -1297,6 +1297,45 @@ describe("errors", () => {
     expect(() => compile(source)).toThrow("items would share an object that changes in place");
   });
 
+  it("returns a local that closures the function only calls change", async () => {
+    const result = await checkModel(`
+      const build = (size: number) => {
+        const items: number[] = [];
+        const add = (value: number) => {
+          items.push(value);
+        };
+        const fill = () => {
+          for (let index = 0; index < size; index++) add(index * 2);
+        };
+        fill();
+        return items;
+      };
+
+      let count = 0;
+
+      export const tick = () => {
+        count = count === 1 ? 0 : 1;
+      };
+
+      export const isCorrect = () => build(3).length === 3 && build(3)[2] === 4;
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    [
+      "a local that a closure changes where the function passes the closure on",
+      "const make = () => {\n  const items: number[] = [];\n  const add = (value: number) => {\n    items.push(value);\n  };\n  [1].forEach(add);\n  return items;\n};\nlet size = make().length;",
+    ],
+    [
+      "a local that an async closure changes",
+      "const make = () => {\n  const items: number[] = [];\n  const add = async () => {\n    items.push(1);\n  };\n  add();\n  return items;\n};\nlet size = make().length;",
+    ],
+  ])("rejects %s, as the closure may run after the return", (_, source) => {
+    expect(() => compile(source)).toThrow("items would share an object that changes in place");
+  });
+
   it("returns a local that a function changes, as the caller holds its only name", async () => {
     const result = await checkModel(`
       const build = (size: number) => {
