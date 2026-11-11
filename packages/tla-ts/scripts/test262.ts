@@ -617,6 +617,7 @@ const annotate = (text: string) => {
 const UNTYPED_READ_ERRORS = new Set([2339, 2551, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
+const NOT_ITERABLE_ERROR = 2488;
 
 // Ignores those errors where the line they're on starts outside a string or template, so that
 // // @ts-ignore above it changes nothing that Node runs. A read of a value that isn't an object,
@@ -647,6 +648,20 @@ const ignoreSoundErrors = () => {
       ts.findAncestor(node, ts.isBindingElement) === undefined
     );
   };
+  // An object that the test declares and a pattern or a loop iterates, whose iterator tla-ts reads
+  // from its properties or refuses to follow.
+  const isPlainObject = (node: ts.Node) => {
+    const type = checker.getTypeAtLocation(node);
+    const declarations = type.getSymbol()?.declarations ?? [];
+    return (
+      !type.isUnion() &&
+      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      type.getCallSignatures().length === 0 &&
+      !checker.isArrayLikeType(type) &&
+      declarations.length > 0 &&
+      declarations.every((declaration) => !declaration.getSourceFile().isDeclarationFile)
+    );
+  };
   const lines = new Set(
     service
       .getSemanticDiagnostics(PROGRAM_PATH)
@@ -655,6 +670,7 @@ const ignoreSoundErrors = () => {
         return (
           diagnostic.code === UNUSED_OPERAND_ERROR ||
           (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
+          (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
           // Node may define a global that TypeScript doesn't know, such as print.
           (diagnostic.code === UNRESOLVED_NAME_ERROR &&
             ts.isIdentifier(node) &&
