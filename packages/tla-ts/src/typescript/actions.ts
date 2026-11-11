@@ -4383,10 +4383,13 @@ const isLibraryCall = (node: ts.CallExpression, context: Context) =>
     .isDeclarationFile ??
     false);
 
+// Whether evaluating a node calls a function, which a function's body doesn't, as it only runs
+// where something calls it.
 const hasCall = (node: ts.Node, context: Context): boolean =>
-  (ts.isCallExpression(node) && !isLibraryCall(node, context)) ||
-  ts.isNewExpression(node) ||
-  (ts.forEachChild(node, (child) => hasCall(child, context) || undefined) ?? false);
+  !ts.isFunctionLike(node) &&
+  ((ts.isCallExpression(node) && !isLibraryCall(node, context)) ||
+    ts.isNewExpression(node) ||
+    (ts.forEachChild(node, (child) => hasCall(child, context) || undefined) ?? false));
 
 const translateTry = (
   statement: ts.TryStatement,

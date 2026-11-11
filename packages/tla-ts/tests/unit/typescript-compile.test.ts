@@ -2206,6 +2206,30 @@ describe("errors", () => {
     expect((await checkModel(getSource(30))).failure?.message).toContain("pattern");
   });
 
+  it("returns an object whose functions call what they only call when they run", async () => {
+    const getSource = (caughtType: string) => `
+      const iterable: { [key: symbol]: unknown } = {};
+      iterable[Symbol.iterator] = function () {
+        return {
+          next: function () {
+            throw new RangeError("step");
+          },
+        };
+      };
+      // @ts-ignore
+      function take([value] = iterable) {}
+      let caught = false;
+      try {
+        take();
+      } catch (error) {
+        caught = error instanceof ${caughtType};
+      }
+      if (!caught) throw new Error("caught");
+    `;
+    expect((await checkModel(getSource("RangeError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("TypeError"))).failure?.message).toContain("caught");
+  });
+
   it("rejects an array pattern whose value's type doesn't tell an array from an object", () => {
     expect(() =>
       compile(`
