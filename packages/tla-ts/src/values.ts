@@ -1240,16 +1240,32 @@ const isAscendingIntegers = (elements: Value[]) => {
   return true;
 };
 
+const MAX_INSERTION_SORT_LENGTH = 16;
+
 export const createSet = (elements: Value[]): SetValue => {
   // TLC's sort compares each element after the first with those before it.
   for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
   if (elements.length < 2 || isStrictlySorted(elements)) return createSortedSet(elements);
-  const sorted = [...elements].sort(compareValues);
-  const unique = [sorted[0]];
-  for (let index = 1; index < sorted.length; index++) {
-    if (compareValues(unique[unique.length - 1], sorted[index]) !== 0) unique.push(sorted[index]);
+  const sorted = elements.slice();
+  // Array.prototype.sort costs more than insertion for the few elements a set usually has.
+  if (sorted.length > MAX_INSERTION_SORT_LENGTH) sorted.sort(compareValues);
+  else {
+    for (let index = 1; index < sorted.length; index++) {
+      const element = sorted[index];
+      let position = index;
+      for (; position > 0 && compareValues(sorted[position - 1], element) > 0; position--) {
+        sorted[position] = sorted[position - 1];
+      }
+      sorted[position] = element;
+    }
   }
-  return createSortedSet(unique);
+  let uniqueCount = 1;
+  for (let index = 1; index < sorted.length; index++) {
+    if (compareValues(sorted[uniqueCount - 1], sorted[index]) !== 0) {
+      sorted[uniqueCount++] = sorted[index];
+    }
+  }
+  return createSortedSet(uniqueCount === sorted.length ? sorted : sorted.slice(0, uniqueCount));
 };
 
 // TLC builds a set enumeration unsorted, so one whose elements it can't compare still evaluates.
