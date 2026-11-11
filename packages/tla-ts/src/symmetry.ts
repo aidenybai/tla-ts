@@ -26,9 +26,20 @@ type RankedImages = (ModelValue | undefined)[];
 
 interface SymmetryGroup {
   permutations: RankedImages[];
-  // Whether some permutation moves the model value of each rank.
-  isMovedRank: boolean[];
+  // The orbit of each model value some permutation moves, by rank. Each orbit is usually one of
+  // the sets the symmetry permutes.
+  orbitOfRank: (number | undefined)[];
+  orbitCount: number;
+  // Which of its orbit's distinct restrictions each permutation has, by orbit then permutation.
+  // Permutations with the same restrictions on the orbits a value holds give it the same image.
+  restrictions: Int32Array;
+  restrictionCounts: number[];
+  // Permuting a value once per restriction needs more candidates than this.
+  fewestRestrictions: number;
 }
+
+// Masks of orbits fit in a 32-bit integer.
+const MAX_ORBIT_COUNT = 30;
 
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
@@ -194,34 +205,78 @@ export const getSymmetryGroup = (
     }),
   );
   if (group.size === 0) return undefined;
-  const isMovedRank: boolean[] = [];
+  const parents = new Map<number, number>();
+  const findRoot = (rank: number): number => {
+    const parent = parents.get(rank) ?? rank;
+    return parent === rank ? rank : findRoot(parent);
+  };
   const permutations = [...group.values()].map((images) => {
     const ranked: (ModelValue | undefined)[] = [];
     images.forEach((image, name) => {
       const rank = createModelValue(name).rank;
       ranked[rank] = image;
-      isMovedRank[rank] = true;
+      parents.set(findRoot(rank), findRoot(image.rank));
     });
     return ranked;
   });
-  return { permutations, isMovedRank };
+  const roots = [...new Set([...parents.keys()].map(findRoot))];
+  const orbitCount = roots.length > MAX_ORBIT_COUNT ? 1 : roots.length;
+  const orbitRanks: number[][] = Array.from({ length: orbitCount }, () => []);
+  const orbitOfRank: (number | undefined)[] = [];
+  [...parents.keys()].forEach((rank) => {
+    const orbit = orbitCount === 1 ? 0 : roots.indexOf(findRoot(rank));
+    orbitOfRank[rank] = orbit;
+    orbitRanks[orbit].push(rank);
+  });
+  const restrictions = new Int32Array(orbitCount * permutations.length);
+  const restrictionCounts = orbitRanks.map((ranks, orbit) => {
+    const ids = new Map<string, number>();
+    permutations.forEach((images, permutation) => {
+      const key = ranks.map((rank) => images[rank]?.rank ?? rank).join(",");
+      const id = ids.get(key) ?? ids.size;
+      ids.set(key, id);
+      restrictions[orbit * permutations.length + permutation] = id;
+    });
+    return ids.size;
+  });
+  return {
+    permutations,
+    orbitOfRank,
+    orbitCount,
+    restrictions,
+    restrictionCounts,
+    fewestRestrictions: Math.min(...restrictionCounts),
+  };
 };
 
-// Whether a value may hold a model value that the group moves. A value that doesn't is its own
-// image under every permutation.
-const isMovable = (value: Value, isMovedRank: boolean[]): boolean => {
-  if (typeof value !== "object") return false;
-  if (value.kind === "ModelValue") return isMovedRank[value.rank] === true;
-  if (value.kind === "Set") return areMovable(value.elements, isMovedRank);
-  if (value.kind === "Function") {
-    return areMovable(value.domain, isMovedRank) || areMovable(value.range, isMovedRank);
+// The orbits of the model values a value may hold, as a mask, stopping once it holds every orbit.
+// A value that holds none is its own image under every permutation.
+const getOrbitMask = (value: Value, group: SymmetryGroup, allOrbits: number): number => {
+  if (typeof value !== "object") return 0;
+  if (value.kind === "ModelValue") {
+    const orbit = group.orbitOfRank[value.rank];
+    return orbit === undefined ? 0 : 1 << orbit;
   }
-  return value.kind !== "Interval";
+  if (value.kind === "Set") return getElementsOrbitMask(value.elements, group, allOrbits, 0);
+  if (value.kind === "Function") {
+    const mask = getElementsOrbitMask(value.domain, group, allOrbits, 0);
+    return mask === allOrbits ? mask : getElementsOrbitMask(value.range, group, allOrbits, mask);
+  }
+  return value.kind === "Interval" ? 0 : allOrbits;
 };
 
-const areMovable = (values: Value[], isMovedRank: boolean[]) => {
-  for (const value of values) if (isMovable(value, isMovedRank)) return true;
-  return false;
+const getElementsOrbitMask = (
+  values: Value[],
+  group: SymmetryGroup,
+  allOrbits: number,
+  initial: number,
+) => {
+  let mask = initial;
+  for (const value of values) {
+    mask |= getOrbitMask(value, group, allOrbits);
+    if (mask === allOrbits) return mask;
+  }
+  return mask;
 };
 
 const permuteElements = (elements: Value[], images: RankedImages) => {
@@ -330,20 +385,85 @@ export const getRepresentative = (
   // Narrows the permutations one variable at a time to those whose images tie for the smallest so
   // far, so each variable is permuted only by permutations that can still give the smallest state.
   // The state itself stays a candidate until a permutation makes a variable smaller.
-  const candidates = group.permutations.slice();
-  let candidateCount = candidates.length;
+  const permutations = group.permutations;
+  const permutationCount = permutations.length;
+  const candidates = new Int32Array(permutationCount);
+  for (let permutation = 0; permutation < permutationCount; permutation++) {
+    candidates[permutation] = permutation;
+  }
+  let candidateCount = permutationCount;
   let isStateSmallest = true;
   const smallest = state.slice();
+  const allOrbits = 2 ** group.orbitCount - 1;
   for (const index of order) {
     if (candidateCount === 0) break;
     const value = state[index];
+    const mask =
+      group.orbitCount > 1 && candidateCount > group.fewestRestrictions
+        ? getOrbitMask(value, group, allOrbits)
+        : allOrbits;
+    if (mask === 0) continue;
+    // A value that holds only some orbits has one image per distinct restriction to them, so each
+    // restriction is permuted once.
+    const strides: number[] = [];
+    let restrictionCount = 1;
+    if (mask !== allOrbits) {
+      for (let orbit = 0; orbit < group.orbitCount; orbit++) {
+        strides.push((mask >> orbit) & 1 ? restrictionCount : 0);
+        if ((mask >> orbit) & 1) restrictionCount *= group.restrictionCounts[orbit];
+      }
+    }
+    if (mask !== allOrbits && restrictionCount < candidateCount) {
+      const getKey = (permutation: number) => {
+        let key = 0;
+        for (let orbit = 0; orbit < strides.length; orbit++) {
+          key += group.restrictions[orbit * permutationCount + permutation] * strides[orbit];
+        }
+        return key;
+      };
+      const imageOfKey: (Value | undefined)[] = [];
+      let minimum = isStateSmallest ? value : undefined;
+      let isMinimumState = isStateSmallest;
+      for (let candidate = 0; candidate < candidateCount; candidate++) {
+        const permutation = candidates[candidate];
+        const key = getKey(permutation);
+        if (imageOfKey[key] !== undefined) continue;
+        const permuted = permuteValue(value, permutations[permutation]);
+        imageOfKey[key] = permuted;
+        if (minimum === undefined || compareValues(permuted, minimum) < 0) {
+          minimum = permuted;
+          isMinimumState = false;
+        }
+      }
+      const isTiedKey: (boolean | undefined)[] = [];
+      let kept = 0;
+      for (let candidate = 0; candidate < candidateCount; candidate++) {
+        const permutation = candidates[candidate];
+        const key = getKey(permutation);
+        let isTied = isTiedKey[key];
+        if (isTied === undefined) {
+          const image = imageOfKey[key];
+          isTied =
+            image === minimum ||
+            (image !== undefined && minimum !== undefined && compareValues(image, minimum) === 0);
+          isTiedKey[key] = isTied;
+        }
+        if (isTied) candidates[kept++] = permutation;
+      }
+      if (!isMinimumState && minimum !== undefined) {
+        smallest[index] = minimum;
+        isStateSmallest = false;
+      }
+      candidateCount = kept;
+      continue;
+    }
     let kept = 0;
     for (let candidate = 0; candidate < candidateCount; candidate++) {
-      const images = candidates[candidate];
-      const permuted = permuteValue(value, images);
+      const permutation = candidates[candidate];
+      const permuted = permuteValue(value, permutations[permutation]);
       // A value the first permutation fixes may hold no model value the group moves, and then every
       // permutation fixes it. A value the first permutation moves needs no such walk.
-      if (candidate === 0 && permuted === value && !isMovable(value, group.isMovedRank)) {
+      if (candidate === 0 && permuted === value && getOrbitMask(value, group, allOrbits) === 0) {
         kept = candidateCount;
         break;
       }
@@ -354,7 +474,7 @@ export const getRepresentative = (
         isStateSmallest = false;
         kept = 0;
       }
-      if (comparison <= 0) candidates[kept++] = images;
+      if (comparison <= 0) candidates[kept++] = permutation;
     }
     candidateCount = kept;
   }

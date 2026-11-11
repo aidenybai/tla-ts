@@ -956,6 +956,16 @@ ASSUME TLCFP(a) = -887695703
     expect(result.distinctStates).toBe(2);
   });
 
+  it("permutes each variable by the sets of model values it holds", async () => {
+    // x holds only S's model values and y only T's, while z holds both, verified with TLC.
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b, c, p, q\nVARIABLES x, y, z\nS == {a, b, c}\nT == {p, q}\nInit == x \\in [{0, 1} -> S] /\\ y \\in [{0, 1} -> T] /\\ z \\in [S -> T]\nNext == UNCHANGED <<x, y, z>>\nSym == Permutations(S) \\cup Permutations(T)\n====",
+      config: "CONSTANTS a = a b = b c = c p = p q = q\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+    });
+    expect(result.distinctStates).toBe(28);
+  });
+
   it("warns about a permuted set with fewer than two elements", async () => {
     const warnings: CheckProgress[] = [];
     const result = await check({
