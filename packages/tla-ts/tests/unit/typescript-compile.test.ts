@@ -1667,6 +1667,112 @@ describe("errors", () => {
     expect((await checkModel(getSource("!=="))).failure?.message).toContain("identity");
   });
 
+  it("destructures an object through the iterator that its Symbol.iterator method makes", async () => {
+    const getSource = (closedAfterLoop: number) => `
+      let closed = 0;
+      let steps = 0;
+      const read = (): number => closed * 10 + steps;
+      const iterable = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              steps += 1;
+              return { value: steps * 10, done: steps > 3 };
+            },
+            return: function () {
+              closed += 1;
+              return { value: 0, done: true };
+            },
+          };
+        },
+      };
+      const [first, , third] = iterable;
+      if (first !== 10 || third !== 30 || read() !== 13) throw new Error("close");
+      steps = 0;
+      const [head, ...rest] = iterable;
+      if (head !== 10 || rest.length !== 2 || rest[1] !== 30 || read() !== 14) throw new Error("rest");
+      for (let round = 0; round < 2; round += 1) {
+        steps = 0;
+        const [value] = iterable;
+      }
+      if (read() !== ${closedAfterLoop}) throw new Error("loop");
+      let taken = 0;
+      function take([value] = iterable) {
+        taken = value;
+      }
+      steps = 0;
+      take();
+      for (const [value] of [iterable]) {
+        taken += value;
+      }
+      if (taken !== 30 || read() !== 52) throw new Error("taken");
+    `;
+    expect((await checkModel(getSource(31))).failure).toBeUndefined();
+    expect((await checkModel(getSource(11))).failure?.message).toContain("loop");
+  });
+
+  it("throws the TypeErrors of an iterator that breaks the protocol", async () => {
+    const result = await checkModel(`
+      let log = "";
+      const unstepped: { [key: symbol]: unknown } = {};
+      unstepped[Symbol.iterator] = function () {
+        return {
+          next: function () {
+            return 5;
+          },
+        };
+      };
+      const unclosed: { [key: symbol]: unknown } = {};
+      unclosed[Symbol.iterator] = function () {
+        return {
+          next: function () {
+            return { value: 1, done: false };
+          },
+          return: function () {
+            return 3;
+          },
+        };
+      };
+      try {
+        // @ts-ignore
+        const [value] = unstepped;
+      } catch (error) {
+        log = log + (error instanceof TypeError ? "n" : "N");
+      }
+      try {
+        // @ts-ignore
+        const [value] = unclosed;
+      } catch (error) {
+        log = log + (error instanceof TypeError ? "c" : "C");
+      }
+      try {
+        // @ts-ignore
+        const [value] = {};
+      } catch (error) {
+        log = log + (error instanceof TypeError ? "i" : "I");
+      }
+      if (log !== "nci") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects a pattern with defaults that destructures an object through its iterator", () => {
+    expect(() =>
+      compile(`
+        const iterable = {
+          [Symbol.iterator]: function () {
+            return {
+              next: function () {
+                return { value: 1, done: false };
+              },
+            };
+          },
+        };
+        const [value = 2] = iterable;
+      `),
+    ).toThrow("tla-ts can't destructure this object through its iterator");
+  });
+
   it("resumes generators that an untyped variable holds", async () => {
     const result = await check(
       compile(

@@ -401,6 +401,14 @@ ArrowObject(functionPrototype, name, length) ==
 FunctionObject(functionPrototype, code) ==
   [code |-> code] @@ [ClassObject(functionPrototype) EXCEPT !.isOpaque = TRUE]
 
+\\* The code that a value runs where a script calls it.
+CodeOf(heap, value) ==
+  IF IsHeap(value) /\\ "code" \\in DOMAIN heap.objects[value[Ref]]
+  THEN heap.objects[value[Ref]].code
+  ELSE value
+
+IsObjectIn(heap, value) == value # Null /\\ TypeOfIn(heap, value) \\in {"object", "function"}
+
 \\* A function that bind makes, which has no prototype and constructs where its target does.
 BoundFunctionObject(functionPrototype, name, length, isConstructor) ==
   [ArrowObject(functionPrototype, "bound " \\o name, length) EXCEPT !.isConstructor = isConstructor]

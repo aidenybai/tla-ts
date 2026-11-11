@@ -892,7 +892,7 @@ const accessorFunctions = new WeakMap<ts.SourceFile, Map<string, HeapFunction[]>
 
 // The functions that a script writes as the get or the set of a property descriptor, which a read
 // or a write of a property that tla-ts can't resolve may run.
-const getAccessorFunctions = (node: ts.Node, field: "get" | "set", context: Context) => {
+export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", context: Context) => {
   const file = node.getSourceFile();
   const known = accessorFunctions.get(file);
   if (known !== undefined) return known.get(field) ?? [];

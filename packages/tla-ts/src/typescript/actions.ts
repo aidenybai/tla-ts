@@ -57,6 +57,7 @@ import {
   isNullBased,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getIteratorFunctions, isIteratedPattern, isTaken, takeFromIterator } from "./iterators";
 import {
   translateCondition,
   translateExpression,
@@ -541,6 +542,12 @@ const assignPattern = (
   context: Context,
 ): Path => {
   if (ts.isArrayLiteralExpression(target)) {
+    if (isIteratedPattern(target, context) && !isTaken(value)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't destructure this object through its iterator",
+        target,
+      );
+    }
     return target.elements.reduce((current, element, position) => {
       if (ts.isOmittedExpression(element)) return current;
       if (ts.isSpreadElement(element)) {
@@ -1115,7 +1122,7 @@ const getAsyncCallee = (node: ts.Expression, path: Path, context: Context) => {
 // whether or not the call passes the parameter, as making an object that nothing reads can't be
 // seen.
 export const bindCall = (
-  node: ts.Expression,
+  node: ts.Node,
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
   receiver: Receiver | undefined,
@@ -1170,6 +1177,44 @@ export const bindCall = (
         ),
     );
   if (taken !== undefined) return taken;
+  // A first parameter's array pattern that takes its default, an object, from the object's iterator,
+  // which it does before the body runs and after the arguments, which are all undefined.
+  const first = parameters.at(0);
+  const initializer = first?.initializer;
+  const iterated =
+    first !== undefined &&
+    initializer !== undefined &&
+    ts.isArrayBindingPattern(first.name) &&
+    isIteratedPattern(first.name, context) &&
+    !path.scope.results.has(initializer) &&
+    argumentNodes.every((argument) => isUndefinedLiteral(argument, context)) &&
+    isPlain(callee)
+      ? takeFromIterator(
+          first.name,
+          translateExpression(initializer, path.scope, context),
+          path,
+          context,
+          frame,
+          (after, values) =>
+            bindCall(
+              node,
+              callee,
+              argumentNodes,
+              receiver,
+              {
+                ...after,
+                scope: {
+                  ...after.scope,
+                  results: new Map([...after.scope.results, [initializer, values]]),
+                },
+              },
+              context,
+              frame,
+              continueWith,
+            ),
+        )
+      : undefined;
+  if (iterated !== undefined) return iterated;
   const defaulted = runCertainDefault(
     parameters.map((parameter) => parameter.name),
     parameters.flatMap((parameter, position) =>
@@ -1284,8 +1329,8 @@ export const getBody = (callee: FunctionNode) => {
 };
 
 // Runs a function's body as statements, for a call or a new that a statement makes.
-const inlineBody = (
-  node: ts.Expression,
+export const inlineBody = (
+  node: ts.Node,
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
   receiver: Receiver | undefined,
@@ -3345,7 +3390,7 @@ const throwError = (
     : frame.throwTo(path, { value: translateEngineError(name, node, context), uncaught });
 };
 
-const throwTypeError = (path: Path, node: ts.Node, context: Context, frame: Frame) =>
+export const throwTypeError = (path: Path, node: ts.Node, context: Context, frame: Frame) =>
   throwError("TypeError", path, node, context, frame);
 
 // Names the heap after a statement changes it, so that later statements share it.
@@ -3534,6 +3579,12 @@ const bindDeclaration = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const declaration = declarations[0];
+  const taken =
+    ts.isArrayBindingPattern(declaration.name) &&
+    takeFromIterator(declaration.name, value, path, context, frame, (after, values) =>
+      bindDeclaration(declarations, values, after, context, frame, continueWith),
+    );
+  if (taken) return taken;
   // A reference to an object that the statement made binds without a definition, so that code
   // that follows the object by its reference, such as a promise's, finds it.
   const isReference =
@@ -3607,6 +3658,15 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
     if (context.heap !== undefined && isHeapChanged) changed.add(context.heap);
+    // A pattern that destructures an object runs the functions of the object's iterator.
+    if (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) {
+      if (context.heap !== undefined) changed.add(context.heap);
+      getIteratorFunctions(node, context).forEach((called) => {
+        if (visited.has(called)) return;
+        visited.add(called);
+        visit(called);
+      });
+    }
     if (ts.isCallExpression(node)) {
       [
         ...[node.expression, ...node.arguments].flatMap((callee) => getFunctionNode(callee) ?? []),
@@ -3640,7 +3700,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
 // what follows once, as an operator of what the statement changes and the value it gives, instead
 // of once for each path. A path that changes what the operator can't take, such as a var it
 // declares, falls back to translating what follows on each path.
-const translateJoined = (
+export const translateJoined = (
   node: ts.Node,
   path: Path,
   context: Context,
@@ -3751,6 +3811,12 @@ const bindIteration = (
       (after) => bindIteration(declared, element, source, after, context, frame, continueWith),
     );
   if (defaulted !== undefined) return defaulted;
+  const taken =
+    ts.isArrayBindingPattern(name) &&
+    takeFromIterator(name, element, path, context, frame, (after, values) =>
+      bindIteration(declared, values, source, after, context, frame, continueWith),
+    );
+  if (taken) return taken;
   // Each iteration makes the objects that the pattern's defaults make.
   return allocateAll(getAllocated(name, context), path, context, (allocated) => {
     const bound = bindPattern(name, element, allocated.scope, context);

@@ -9,6 +9,7 @@ import {
   share,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { isIteratedPattern, isTaken } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
 import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
@@ -179,6 +180,12 @@ export const bindPatternInline = (
   if (ts.isIdentifier(pattern)) {
     return bindNames(scope, [{ name: value, symbol: getSymbol(pattern, context.checker) }]);
   }
+  if (ts.isArrayBindingPattern(pattern) && isIteratedPattern(pattern, context) && !isTaken(value)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't destructure this object through its iterator",
+      pattern,
+    );
+  }
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
   const heapSymbol = context.heap;
   const bound = pattern.elements.reduce((current, element, position) => {
@@ -319,6 +326,9 @@ export const bindPattern = (
   scope: Scope,
   context: Context,
 ): Bound => {
+  if (isTaken(value)) {
+    return { definitions: [], scope: bindPatternInline(pattern, value, scope, context) };
+  }
   const name = context.names.getFresh(ts.isIdentifier(pattern) ? pattern.text : "value");
   return {
     definitions: [define(name, [], value)],
