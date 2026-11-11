@@ -518,17 +518,22 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
           ["complete", PARAM_BOOL, true, true],
-          ["elim_root_objects", PARAM_BOOL, true],
-          ["elim_inverses", PARAM_BOOL, true],
+          ["elim_root_objects", PARAM_BOOL, true, true],
+          ["elim_inverses", PARAM_BOOL, true, true],
         ]),
       ]),
       build: (environment, params) => {
         const manager = environment.manager;
         const snf = runNnf(manager, new Map());
+        const elimRemParams = new Map([...params, ["elim_rem", true]]);
         return (goal) => {
           snf(goal);
-          simplifyGoal(manager, goal, getRewriterOptions(manager, params));
-          purifyArith(manager, goal, getBool(params, "complete", true));
+          simplifyGoal(manager, goal, getRewriterOptions(manager, elimRemParams));
+          purifyArith(manager, goal, {
+            isComplete: getBool(params, "complete", true),
+            isElimRootObjects: getBool(params, "elim_root_objects", true),
+            isElimInverses: getBool(params, "elim_inverses", true),
+          });
           simplifyGoal(manager, goal, getRewriterOptions(manager, params));
           return [goal];
         };

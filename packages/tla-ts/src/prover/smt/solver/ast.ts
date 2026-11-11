@@ -83,6 +83,9 @@ export const OP_PI = 47;
 export const OP_E = 48;
 export const OP_ALGEBRAIC_NUM = 49;
 export const OP_REM = 50;
+export const OP_NEG_ROOT = 51;
+export const OP_U_ASIN = 52;
+export const OP_U_ACOS = 53;
 export const OP_UNINTERPRETED = 60;
 const OP_MODEL_VALUE = 61;
 
@@ -395,6 +398,9 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["euler", FAMILY_ARITH, OP_E, SORT_REAL],
   ["RootObject", FAMILY_ARITH, OP_ALGEBRAIC_NUM, SORT_REAL],
   ["rem", FAMILY_ARITH, OP_REM, SORT_INT],
+  ["neg-root", FAMILY_ARITH, OP_NEG_ROOT, SORT_REAL],
+  ["asin-u", FAMILY_ARITH, OP_U_ASIN, SORT_REAL],
+  ["acos-u", FAMILY_ARITH, OP_U_ACOS, SORT_REAL],
 ];
 
 // Z3's family ids and decl kinds, which its AST hashes include.
@@ -467,6 +473,9 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_LOG, ["log", 38, 1]],
   [OP_PI, ["pi", 43, 0]],
   [OP_E, ["euler", 44, 0]],
+  [OP_NEG_ROOT, ["neg-root", 45, 2]],
+  [OP_U_ASIN, ["asin-u", 46, 1]],
+  [OP_U_ACOS, ["acos-u", 47, 1]],
 ]);
 
 // The small ids of the Int declarations Z3 makes when it starts, from arith_decl_plugin::set_manager,
@@ -516,6 +525,9 @@ const Z3_SMALL_IDS = new Map([
   [OP_LOG, 66],
   [OP_PI, 67],
   [OP_E, 68],
+  [OP_NEG_ROOT, 69],
+  [OP_U_ASIN, 70],
+  [OP_U_ACOS, 71],
 ]);
 
 // The small id of the first sort or declaration a problem declares, after Z3's own.
