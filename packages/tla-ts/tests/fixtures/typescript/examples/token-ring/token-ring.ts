@@ -5,7 +5,6 @@ type Node = 0 | 1 | 2 | 3 | 4;
 const N = 5;
 const M = 5;
 
-/** @noDeadlock */
 let c!: [Value, Value, Value, Value, Value];
 
 export const createToken = () => {
