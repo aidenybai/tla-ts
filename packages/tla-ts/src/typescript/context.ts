@@ -13,6 +13,11 @@ export interface Definition {
   readsState: boolean;
 }
 
+export interface SelfCall {
+  name: string;
+  changed: ts.Symbol[];
+}
+
 export interface Context {
   checker: ts.TypeChecker;
   names: Names;
@@ -22,6 +27,9 @@ export interface Context {
   // Helpers being compiled or inlined, to detect recursion.
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
+  // The recursive operator of each function that changes state and calls itself, while its body
+  // compiles, with what it changes.
+  selfCalls: Map<ts.Node, SelfCall>;
   output: OperatorDefinition[];
   // The TypeScript that each emitted definition or expression compiles from.
   links: Link[];
@@ -84,6 +92,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   definitions: new Map(),
   inProgress: new Set(),
   recursive: new Set(),
+  selfCalls: new Map(),
   output: [],
   links: [],
   modelValues: new Map(),

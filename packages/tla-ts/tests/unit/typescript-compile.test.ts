@@ -2993,6 +2993,85 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a function that changes state and calls itself", async () => {
+    const parsed = await checkModel(`
+      const tokens = ["{", "1", ",", "{", "2", "}", ",", "3", "}"];
+      const cursor = { index: 0 };
+      const advance = () => tokens[cursor.index++];
+      interface Value { kind: string; elements: Value[]; text: string }
+      const parseValue = (token: string): Value => {
+        if (token !== "{") return { kind: "Number", elements: [], text: token };
+        const elements: Value[] = [];
+        while (true) {
+          elements.push(parseValue(advance()));
+          if (advance() !== ",") break;
+        }
+        return { kind: "Set", elements, text: "" };
+      };
+      const value = parseValue(advance());
+      if (value.elements.length !== 3 || value.elements[1].elements[0].text !== "2") {
+        throw new Error("parsed");
+      }
+      if (cursor.index !== 9) throw new Error("cursor");
+    `);
+    expect(parsed.failure).toBeUndefined();
+    const counted = await checkModel(`
+      let calls = 0;
+      const walk = (n: number): number => {
+        calls += 1;
+        let local = n;
+        if (n === 0) throw new Error("bottom");
+        try {
+          return walk(n - 1);
+        } catch (error) {
+          local += 1;
+          return -local;
+        }
+      };
+      let fibs = 0;
+      const fib = (n: number): number => {
+        fibs += 1;
+        if (n < 2) return n;
+        return fib(n - 1) + fib(n - 2);
+      };
+      let seen = "";
+      const isEven = (n: number): boolean => {
+        seen += "e";
+        if (n === 0) return true;
+        return isOdd(n - 1);
+      };
+      const isOdd = (n: number): boolean => {
+        seen += "o";
+        if (n === 0) return false;
+        return isEven(n - 1);
+      };
+      if (walk(3) !== -2 || calls !== 4) throw new Error("walk");
+      if (fib(5) !== 5 || fibs !== 15) throw new Error("fib");
+      if (!isEven(4) || seen !== "eoeoe") throw new Error("mutual");
+    `);
+    expect(counted.failure).toBeUndefined();
+    const uncaught = await checkModel(`
+      let calls = 0;
+      const fail = (n: number): number => {
+        calls += 1;
+        if (n === 0) throw new Error("bottom");
+        return fail(n - 1) + 1;
+      };
+      fail(2);
+    `);
+    expect(uncaught.failure?.message).toContain("bottom");
+    expect(() =>
+      checkModel(`
+        let calls = 0;
+        const count = (n: number, step = 1): number => {
+          calls += step;
+          return n === 0 ? 0 : count(n - 1);
+        };
+        count(2);
+      `),
+    ).toThrow("tla-ts can't run this call of a function from inside itself");
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {

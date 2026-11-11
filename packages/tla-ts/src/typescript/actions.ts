@@ -191,9 +191,11 @@ import {
   except,
   exceptAt,
   field,
+  getLocation,
   identifier,
   ifExpression,
   index,
+  locate,
   not,
   number,
   record,
@@ -1972,6 +1974,210 @@ export const getBody = (callee: FunctionNode) => {
 };
 
 // Runs a function's body as statements, for a call or a new that a statement makes.
+// A call to a function that changes state from inside itself, as a call of a recursive operator.
+// The operator takes the arguments and the values that the function changes outside itself, and,
+// as a loop's does, gives how the body ended, its value or what it threw, the message of a throw
+// that nothing catches, and the changed values. The first such call defines it, and the calls
+// inside its body call it.
+const translateSelfCall = (
+  node: ts.Node,
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  receiver: Receiver | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const parameters = getParameters(callee);
+  const body = callee.body;
+  if (
+    body === undefined ||
+    isAnyGenerator(callee) ||
+    isAsyncFunction(callee) ||
+    (receiver !== undefined && !ts.isArrowFunction(callee)) ||
+    argumentNodes.length > parameters.length ||
+    argumentNodes.some(ts.isSpreadElement) ||
+    findNodes(
+      callee,
+      (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
+    ).length > 0 ||
+    parameters.some(
+      (parameter) =>
+        !ts.isIdentifier(parameter.name) ||
+        parameter.initializer !== undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length > 0,
+    )
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't run this call of a function from inside itself",
+      node,
+    );
+  }
+  const isOuter = (symbol: ts.Symbol) =>
+    !(symbol.declarations ?? []).some(
+      (declaration) =>
+        ts.findAncestor(declaration, (ancestor) => ancestor === callee) !== undefined,
+    );
+  const defined = context.selfCalls.get(callee);
+  const selfCall = defined ?? {
+    name: context.names.getFresh("Call"),
+    changed: getChanged(callee, path, context).filter(isOuter),
+  };
+  const changed = selfCall.changed;
+  const getValues = (current: Path) =>
+    changed.map((symbol) => current.scope.bindings.get(symbol) ?? getUndefined(context));
+  const bindChanged = (current: Path, values: Expression[]): Path => ({
+    ...current,
+    scope: {
+      ...current.scope,
+      bindings: new Map([
+        ...current.scope.bindings,
+        ...changed.map((symbol, position): [ts.Symbol, Expression] => [symbol, values[position]]),
+      ]),
+    },
+  });
+  const values = shareArguments(
+    argumentNodes.map((argument) => translateExpression(argument, path.scope, context)),
+    context,
+  );
+  const result = context.names.getFresh("result");
+  const kind = index(identifier(result), [number(1)]);
+  const value = index(identifier(result), [number(2)]);
+  const after = {
+    ...bindChanged(
+      path,
+      changed.map((_, position) => index(identifier(result), [number(position + 4)])),
+    ),
+    isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+  };
+  const throwTo = frame.throwTo;
+  const ended = ifThenElse(
+    apply("=", [kind, string("throw")]),
+    throwTo === undefined
+      ? leaf(
+          locate(
+            apply("Assert", [boolean(false), index(identifier(result), [number(3)])]),
+            getLocation(node),
+          ),
+        )
+      : throwTo(after, {
+          value,
+          uncaught: apply("Assert", [boolean(false), index(identifier(result), [number(3)])]),
+        }),
+    continueWith(
+      after,
+      ifExpression(apply("=", [kind, string("returnValue")]), value, getUndefined(context)),
+    ),
+  );
+  const called = values.evaluate(
+    bindOnce(
+      path,
+      result,
+      call(selfCall.name, [
+        ...parameters.map((_, position) => values.shared.at(position) ?? getUndefined(context)),
+        ...getValues(path),
+      ]),
+      ended,
+    ),
+    leaf(boolean(false)),
+  );
+  if (defined !== undefined) return called;
+  const parameterNames = parameters.map((parameter) =>
+    context.names.getFresh(parameter.name.getText()),
+  );
+  const changedNames = changed.map((symbol) => {
+    const binding = path.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const isInside = (node: ts.Node) =>
+    ts.findAncestor(node, (ancestor) => ancestor === callee) !== undefined;
+  const outer = bindChanged(
+    path,
+    changedNames.map((name) => identifier(name)),
+  );
+  const bound = bindValues(
+    parameters,
+    parameterNames.map((name) => identifier(name)),
+    {
+      ...outer.scope,
+      // What the call's own statements evaluated belongs to that call, not this one.
+      results: new Map([...outer.scope.results].filter((entry) => !isInside(entry[0]))),
+      allocated: new Map([...outer.scope.allocated].filter((entry) => !isInside(entry[0]))),
+      receiver,
+    },
+    context,
+  );
+  const inner: Path = {
+    ...outer,
+    scope: bound.scope,
+    mutable: new Set([
+      ...path.mutable,
+      ...parameters.flatMap((parameter) => getSymbol(parameter.name, context.checker) ?? []),
+    ]),
+    isLooping: true,
+    isLast: false,
+    generators: new Map(),
+    tasks: undefined,
+  };
+  const end = (current: Path, ending: string, ended: Expression, message: Expression) =>
+    leaf(tuple([string(ending), ended, message, ...getValues(current)]));
+  const carried = tuple([
+    ...parameterNames.map((name) => identifier(name)),
+    ...changedNames.map((name) => identifier(name)),
+  ]);
+  context.selfCalls.set(callee, selfCall);
+  const translated = translateStatements(getBody(callee), inner, context, {
+    next: (current) => end(current, "return", getUndefined(context), string("")),
+    exit: (current, returned) =>
+      returned === undefined
+        ? end(current, "return", getUndefined(context), string(""))
+        : end(current, "returnValue", returned, string("")),
+    breakTo: undefined,
+    continueTo: undefined,
+    // Where nothing can catch what the body throws, it stops there, as a loop's body does.
+    throwTo:
+      frame.throwTo === undefined && ts.forEachChild(body, hasTry) !== true
+        ? undefined
+        : (current, thrown) =>
+            end(
+              current,
+              "throw",
+              thrown.value,
+              thrown.uncaught.kind === "Apply" && thrown.uncaught.operator === "Assert"
+                ? (thrown.uncaught.args[1] ?? string(""))
+                : string(node.getText()),
+            ),
+    yieldTo: undefined,
+    awaitTo: undefined,
+    inlining: new Set([...frame.inlining, callee]),
+  });
+  context.selfCalls.delete(callee);
+  const operator: OperatorDefinition = {
+    ...define(
+      selfCall.name,
+      [...parameterNames, ...changedNames].map((name) => ({ name, arity: 0 })),
+      // Each call evaluates what it's given, as a loop's iteration does.
+      render(
+        ifThenElse(
+          apply("=", [carried, carried]),
+          letIn(bound.definitions, translated),
+          leaf(boolean(false)),
+        ),
+      ),
+    ),
+    isRecursive: true,
+  };
+  return letIn([operator], called);
+};
+
+// An exported function is a model's action, which no action calls.
+const isAction = (callee: FunctionNode) =>
+  (ts.getCombinedModifierFlags(ts.isVariableDeclaration(callee.parent) ? callee.parent : callee) &
+    ts.ModifierFlags.Export) !==
+  0;
+
 export const inlineBody = (
   node: ts.Node,
   callee: FunctionNode,
@@ -1988,31 +2194,33 @@ export const inlineBody = (
   argumentNodes === node.arguments &&
   isLiftable(callee, context)
     ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
-    : bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) =>
-        translateJoined(node, inner, context, continueWith, (next) => {
-          const afterCall = (after: Path, value?: Expression) =>
-            next({ ...after, scope: { ...after.scope, previous: inner.scope.previous } }, value);
-          return letIn(
-            bound.definitions,
-            forceHeap(
-              inner.scope,
-              bound.scope,
-              translateStatements(getBody(callee), { ...inner, scope: bound.scope }, context, {
-                next: afterCall,
-                exit: afterCall,
-                breakTo: undefined,
-                continueTo: undefined,
-                throwTo: frame.throwTo,
-                yieldTo: undefined,
-                awaitTo: undefined,
-                inlining: new Set([...frame.inlining, callee]),
-              }),
-              leaf(boolean(false)),
-              context,
-            ),
-          );
-        }),
-      );
+    : frame.inlining.has(callee) && !isAction(callee)
+      ? translateSelfCall(node, callee, argumentNodes, receiver, path, context, frame, continueWith)
+      : bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) =>
+          translateJoined(node, inner, context, continueWith, (next) => {
+            const afterCall = (after: Path, value?: Expression) =>
+              next({ ...after, scope: { ...after.scope, previous: inner.scope.previous } }, value);
+            return letIn(
+              bound.definitions,
+              forceHeap(
+                inner.scope,
+                bound.scope,
+                translateStatements(getBody(callee), { ...inner, scope: bound.scope }, context, {
+                  next: afterCall,
+                  exit: afterCall,
+                  breakTo: undefined,
+                  continueTo: undefined,
+                  throwTo: frame.throwTo,
+                  yieldTo: undefined,
+                  awaitTo: undefined,
+                  inlining: new Set([...frame.inlining, callee]),
+                }),
+                leaf(boolean(false)),
+                context,
+              ),
+            );
+          }),
+        );
 
 // The path of the code that resumed a function's body, with what the body changed outside itself.
 export const leaveBody = (
