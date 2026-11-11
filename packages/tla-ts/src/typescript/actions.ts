@@ -148,12 +148,12 @@ import {
   isDescriptorRead,
   isDescriptorsRead,
   isGetterRead,
-  isProxyRead,
+  isProxyOperation,
   readDescriptor,
   readDescriptors,
   readWith,
   runGetterRead,
-  runProxyRead,
+  runProxyOperation,
 } from "./protocols";
 import {
   bindPattern,
@@ -4320,6 +4320,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       ts.isDeleteExpression(node) ||
       isObjectChange(node, context) ||
       isRevoke(node, context) ||
+      isProxyOperation(node, context) ||
       getDateCall(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
@@ -5402,9 +5403,9 @@ interface LeadingCall {
   // The operation that converts an object to a primitive first, which runs code, so nothing after
   // it can run before it.
   conversion?: ts.Expression;
-  // The read that a getter which changes something may answer first, or that a proxy's trap may,
-  // which runs as a statement.
-  read?: ts.PropertyAccessExpression | ts.ElementAccessExpression | ts.BinaryExpression;
+  // The read that a getter which changes something may answer first, or an operation on a proxy,
+  // whose trap may change something, which runs as a statement.
+  read?: ts.Expression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -5452,7 +5453,7 @@ const findLeadingCall = (
       ? findLeadingCall(node.expression, before, path, context)
       : inOrder([node.expression, node.argumentExpression]);
     if (found.call !== undefined || found.isBlocked) return found;
-    return isGetterRead(node, context) || isProxyRead(node, context)
+    return isGetterRead(node, context) || isProxyOperation(node, context)
       ? { call: undefined, isBlocked: true, read: node }
       : evaluate(node);
   }
@@ -5461,6 +5462,17 @@ const findLeadingCall = (
       node.operator === ts.SyntaxKind.MinusMinusToken
       ? blocked
       : thenConverted(findLeadingCall(node.operand, before, path, context));
+  }
+  if (
+    isProxyOperation(node, context) &&
+    (ts.isDeleteExpression(node) || ts.isCallExpression(node))
+  ) {
+    const found = ts.isCallExpression(node)
+      ? inOrder(node.arguments)
+      : findLeadingCall(getCast(node.expression), before, path, context);
+    return found.call !== undefined || found.isBlocked
+      ? found
+      : { call: undefined, isBlocked: true, read: node };
   }
   if (ts.isArrayLiteralExpression(node)) return inOrder(node.elements);
   if (ts.isObjectLiteralExpression(node)) {
@@ -5503,6 +5515,17 @@ const findLeadingCall = (
     if (kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
       return findLeadingCall(node.right, before, path, context);
     }
+    // An assignment to a proxy's key evaluates the proxy and the value before its trap runs.
+    if (
+      kind === ts.SyntaxKind.EqualsToken &&
+      isProxyOperation(node, context) &&
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
+    ) {
+      const found = inOrder([node.left.expression, node.right]);
+      return found.call !== undefined || found.isBlocked
+        ? found
+        : { call: undefined, isBlocked: true, read: node };
+    }
     const isAssignment =
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
     // A compound assignment reads its variable before it evaluates its right operand, so it
@@ -5516,7 +5539,7 @@ const findLeadingCall = (
         : blocked;
     }
     const found = thenConverted(inOrder([node.left, node.right]));
-    return found.call === undefined && !found.isBlocked && isProxyRead(node, context)
+    return found.call === undefined && !found.isBlocked && isProxyOperation(node, context)
       ? { call: undefined, isBlocked: true, read: node }
       : found;
   }
@@ -5710,7 +5733,7 @@ export const translateStatements = (
     (ts.isAwaitExpression(skipCasts(statement.expression)) ||
       getConversion(skipCasts(statement.expression), context) !== undefined ||
       isGetterRead(skipCasts(statement.expression), context) ||
-      isProxyRead(skipCasts(statement.expression), context)) &&
+      isProxyOperation(skipCasts(statement.expression), context)) &&
     path.scope.results.has(skipCasts(statement.expression))
   ) {
     return continueWith(path);
@@ -5785,9 +5808,9 @@ export const translateStatements = (
         context,
         frame,
       );
-    return isProxyRead(hoistedRead, context)
-      ? runProxyRead(hoistedRead, path, context, frame, withRead)
-      : runGetterRead(hoistedRead, path, context, frame, withRead);
+    return isGetterRead(hoistedRead, context) && !isProxyOperation(hoistedRead, context)
+      ? runGetterRead(hoistedRead, path, context, frame, withRead)
+      : runProxyOperation(hoistedRead, path, context, frame, withRead);
   }
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {

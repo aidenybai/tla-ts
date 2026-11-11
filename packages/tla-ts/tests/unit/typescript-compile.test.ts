@@ -5406,6 +5406,53 @@ describe("proxies", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a proxy's set and deleteProperty traps, and Reflect's", async () => {
+    const result = await checkModel(`
+      const target: { attr?: number; fixed?: number } = {};
+      let seen: unknown[] = [];
+      const handler = {
+        set: function (inner: object, key: string | symbol, value: unknown, receiver: unknown) {
+          seen = [inner, key, value, receiver];
+          return true;
+        },
+      };
+      const proxy = new Proxy<typeof target>(target, handler);
+      proxy.attr = 3;
+      if (seen[0] !== target || seen[1] !== "attr" || seen[2] !== 3 || seen[3] !== proxy) {
+        throw new Error("arguments");
+      }
+      if ("attr" in target) throw new Error("set");
+      const refusing = new Proxy(target, { set: () => false, deleteProperty: () => false });
+      if (Reflect.set(refusing, "attr", 1) !== false) throw new Error("Reflect.set");
+      if (Reflect.deleteProperty(refusing, "attr") !== false) throw new Error("Reflect.deleteProperty");
+      let count = 0;
+      try { refusing.attr = 1; } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { delete refusing.attr; } catch (error) { if (error instanceof TypeError) count += 1; }
+      if (count !== 2) throw new Error("strict");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("sets and deletes the target's key where the handler has no trap", async () => {
+    const result = await checkModel(`
+      const target: { attr?: number; fixed?: number } = {};
+      Object.defineProperty(target, "fixed", { value: 1 });
+      const proxy = new Proxy(target, {});
+      proxy.attr = 5;
+      if (target.attr !== 5) throw new Error("set");
+      delete proxy.attr;
+      if ("attr" in target) throw new Error("delete");
+      let count = 0;
+      try { proxy.fixed = 2; } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { delete proxy.fixed; } catch (error) { if (error instanceof TypeError) count += 1; }
+      const lying = new Proxy(target, { set: () => true, deleteProperty: () => true });
+      try { lying.fixed = 2; } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { delete lying.fixed; } catch (error) { if (error instanceof TypeError) count += 1; }
+      if (count !== 4) throw new Error("fixed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: 1 }, {});
