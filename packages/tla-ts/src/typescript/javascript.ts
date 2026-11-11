@@ -2886,6 +2886,28 @@ Resize(heap, ref, request, isShared) ==
                         IF length <= Len(@) THEN SubSeq(@, 1, length)
                         ELSE @ \\o [position \\in 1..(length - Len(@)) |-> 0]], Undefined)
 
+\\* ArrayBuffer's and SharedArrayBuffer's slice, which copies bytes into a new buffer that the
+\\* receiver's constructor makes, where tla-ts follows only the built-in one.
+BufferSlice(heap, ref, start, end, isShared, constructor) ==
+  LET object == heap.objects[ref[Ref]]
+      length == Len(object.bytes)
+      clamped(index) == IF index < 0 THEN 0 ELSE IF index > length THEN length ELSE index
+      first == clamped(RelativeIndex(ToIntegerOrInfinity(ToNumber(start)), length))
+      final ==
+        IF end = Undefined
+        THEN length
+        ELSE clamped(RelativeIndex(ToIntegerOrInfinity(ToNumber(end)), length))
+      species == Get(heap, ref, "constructor")
+  IN CASE ~IsBuffer(heap, ref) \\/ object.isShared # isShared -> Thrown(heap, "TypeError")
+       [] object.isDetached -> Thrown(heap, "TypeError")
+       [] species \\notin {Undefined, constructor} ->
+            Assert(FALSE, "tla-ts can't make a buffer through a constructor that a script gives")
+       [] OTHER ->
+            LET made == Allocate(heap, BufferObject(Get(heap, constructor, "prototype"),
+                                                    SubSeq(object.bytes, first + 1, final),
+                                                    Undefined, isShared))
+            IN Returned(made, Allocated(made))
+
 SetProperty(heap, ref, key, value) ==
   LET accessor == AccessorOf(heap, ref, key)
       object == PropertiesOf(heap, ref, key)

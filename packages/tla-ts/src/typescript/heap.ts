@@ -1470,8 +1470,8 @@ const isBufferName = (
 
 const VIEW_ACCESSOR = /^[gs]et(?:Int8|Uint8|Int16|Uint16|Int32|Uint32|Float16|Float32|Float64)$/;
 
-// A DataView's get or set method, ArrayBuffer's resize, or SharedArrayBuffer's grow, which a
-// statement runs, as each may throw.
+// A DataView's get or set method, or a buffer's resize, grow, or slice, which a statement runs, as
+// each may throw.
 export const getViewCall = (node: ts.Node, context: Context) => {
   if (context.heap === undefined || !isMethodCall(node)) return undefined;
   const receiver = node.expression.expression;
@@ -1480,7 +1480,8 @@ export const getViewCall = (node: ts.Node, context: Context) => {
   const isKnown =
     (owner === "DataView" && VIEW_ACCESSOR.test(method)) ||
     (owner === "ArrayBuffer" && method === "resize") ||
-    (owner === "SharedArrayBuffer" && method === "grow");
+    (owner === "SharedArrayBuffer" && method === "grow") ||
+    ((owner === "ArrayBuffer" || owner === "SharedArrayBuffer") && method === "slice");
   return isKnown && !node.arguments.some(ts.isSpreadElement)
     ? { owner, method, receiver, values: node.arguments }
     : undefined;

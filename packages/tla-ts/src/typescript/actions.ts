@@ -1204,16 +1204,30 @@ export const translateCallStatement = (
     });
     const method = viewCall.method;
     const type = string(method.slice(3));
+    const isShared = boolean(viewCall.owner === "SharedArrayBuffer");
     const operation =
-      viewCall.owner !== "DataView"
-        ? useJavaScript(
-            "Resize",
-            [heap, ref, values[0], boolean(viewCall.owner === "SharedArrayBuffer")],
-            context,
-          )
-        : method.startsWith("get")
+      viewCall.owner === "DataView"
+        ? method.startsWith("get")
           ? useJavaScript("DataViewGet", [heap, ref, type, values[0], values[1]], context)
-          : useJavaScript("DataViewSet", [heap, ref, type, ...values], context);
+          : useJavaScript("DataViewSet", [heap, ref, type, ...values], context)
+        : method === "slice"
+          ? useJavaScript(
+              "BufferSlice",
+              [
+                heap,
+                ref,
+                values[0],
+                values[1],
+                isShared,
+                translateBuiltInValue(
+                  viewCall.owner === "SharedArrayBuffer" ? "SharedArrayBuffer" : "ArrayBuffer",
+                  expression,
+                  context,
+                ),
+              ],
+              context,
+            )
+          : useJavaScript("Resize", [heap, ref, values[0], isShared], context);
     const run = bindOnce(
       path,
       changeName,

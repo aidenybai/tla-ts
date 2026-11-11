@@ -5710,6 +5710,26 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("slices a buffer's bytes into a new buffer", async () => {
+    const result = await checkModel(`
+      const buffer = new ArrayBuffer(6);
+      const bytes = new Uint8Array(buffer);
+      bytes[1] = 1;
+      bytes[2] = 2;
+      bytes[4] = 4;
+      const copy = buffer.slice(1, -1);
+      if (copy.byteLength !== 4) throw new Error("length");
+      const copied = new Uint8Array(copy);
+      if (copied[0] !== 1 || copied[1] !== 2 || copied[3] !== 4) throw new Error("bytes");
+      copied[0] = 9;
+      if (bytes[1] !== 1) throw new Error("shared");
+      if (buffer.slice(4, 2).byteLength !== 0) throw new Error("empty");
+      if (buffer.slice(-2).byteLength !== 2) throw new Error("negative");
+      if (Object.getPrototypeOf(copy) !== ArrayBuffer.prototype) throw new Error("prototype");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);
