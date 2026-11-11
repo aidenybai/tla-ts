@@ -22,6 +22,7 @@ export interface RunResult {
 }
 
 interface RunRow {
+  id: number;
   title: string;
   detail: string;
   isFailed: boolean;
@@ -84,6 +85,7 @@ const getProveResult = async (source: string): Promise<RunResult> => {
     trace: [],
     loopStart: undefined,
     rows: result.obligations.map((obligation) => ({
+      id: obligation.id,
       title: `Line ${obligation.location.split(":")[0]}, ${
         obligation.status === "proved"
           ? `proved by ${obligation.prover}`

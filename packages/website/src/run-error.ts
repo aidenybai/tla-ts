@@ -7,5 +7,5 @@ export const getErrorResult = (title: string, message: string, summary = ""): Ru
   summary,
   trace: [],
   loopStart: undefined,
-  rows: [{ title: message, detail: "", isFailed: true }],
+  rows: [{ id: 0, title: message, detail: "", isFailed: true }],
 });
