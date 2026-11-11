@@ -138,12 +138,14 @@ import {
 } from "./functions";
 import {
   getDescriptorGetters,
+  getElementGetters,
   getReadFunctions,
   isDescriptorRead,
   isDescriptorsRead,
   isGetterRead,
   readDescriptor,
   readDescriptors,
+  readWith,
   runGetterRead,
 } from "./protocols";
 import {
@@ -2393,7 +2395,8 @@ interface LoopCall {
   isArrayLike: boolean;
 }
 
-const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCall | undefined => {
+// An array method that calls back for each element, on an array or an array-like object.
+const getLoopTarget = (node: ts.Node, context: Context) => {
   if (!isMethodCall(node)) return undefined;
   const target = node.expression.expression;
   const isCall =
@@ -2406,19 +2409,41 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
   const method =
     isCall && ts.isPropertyAccessExpression(target) ? target.name.text : node.expression.name.text;
   const receiver = isCall ? node.arguments[0] : target;
-  const callbackArguments = isCall ? node.arguments.slice(1) : node.arguments;
-  if (!LOOP_METHODS.has(method) || (!isArrayLike && getKind(receiver, context) !== "sequence")) {
-    return undefined;
-  }
-  const argument = callbackArguments.at(0);
+  return LOOP_METHODS.has(method) && (isArrayLike || getKind(receiver, context) === "sequence")
+    ? {
+        method,
+        receiver,
+        callbackArguments: isCall ? node.arguments.slice(1) : node.arguments,
+        isArrayLike,
+      }
+    : undefined;
+};
+
+// The getters that an array-like object's method may run as it reads each element.
+const getLoopGetters = (node: ts.Node, context: Context) => {
+  const target = getLoopTarget(node, context);
+  return target?.isArrayLike === true ? (getElementGetters(target.receiver, context) ?? []) : [];
+};
+
+const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCall | undefined => {
+  const target = getLoopTarget(node, context);
+  if (target === undefined) return undefined;
+  const argument = target.callbackArguments.at(0);
   const callback = argument && getCallback(argument, path, context);
   return argument !== undefined &&
     callback?.body !== undefined &&
     (ts.isArrowFunction(callback) ||
       ts.isFunctionExpression(callback) ||
       ts.isFunctionDeclaration(callback)) &&
-    getChanged(callback, path, context).length > 0
-    ? { method, receiver, callback, argument, initial: callbackArguments.at(1), isArrayLike }
+    (getChanged(callback, path, context).length > 0 || getLoopGetters(node, context).length > 0)
+    ? {
+        method: target.method,
+        receiver: target.receiver,
+        callback,
+        argument,
+        initial: target.callbackArguments.at(1),
+        isArrayLike: target.isArrayLike,
+      }
     : undefined;
 };
 
@@ -2435,10 +2460,20 @@ const translateLoopCall = (
   const receiver = loop.receiver;
   const method = loop.method;
   const callback = loop.callback;
-  const changed = getChanged(callback, path, context);
-  // An array-like object's method reads its elements as it visits them, which a callback that
-  // changes objects could change.
-  if (loop.isArrayLike && changed.some((symbol) => symbol === context.heap)) {
+  // Where a getter may answer an array-like object's element, the method reads each element as it
+  // visits it, as JavaScript does, so that the getters and the callback may change objects.
+  const getters = loop.isArrayLike ? getElementGetters(receiver, context) : undefined;
+  const changed =
+    getters === undefined
+      ? getChanged(callback, path, context)
+      : getChanged(expression, path, context);
+  // Otherwise an array-like object's method reads its elements before it visits them, which a
+  // callback that changes objects could change.
+  if (
+    getters === undefined &&
+    loop.isArrayLike &&
+    changed.some((symbol) => symbol === context.heap)
+  ) {
     throw new TlaTypeScriptError("Don't change objects in this callback", callback);
   }
   const isReceiverChanged = (node: ts.Node): boolean =>
@@ -2453,6 +2488,12 @@ const translateLoopCall = (
   }
   const isReversed = method === "reduceRight" || method.startsWith("findLast");
   const isReduce = method.startsWith("reduce");
+  if (getters !== undefined && isReduce && loop.initial === undefined) {
+    throw new TlaTypeScriptError(
+      "Give reduce an initial value where a getter may answer an element",
+      expression,
+    );
+  }
   // The array parameter holds a sequence, which only a parameter typed as an array can read.
   const callbackParameters = getParameters(callback);
   const arrayName = callbackParameters.at(isReduce ? 3 : 2)?.name;
@@ -2472,7 +2513,9 @@ const translateLoopCall = (
   const sequenceName = context.names.getFresh("sequence");
   const sequence = identifier(sequenceName);
   const presentName = context.names.getFresh("present");
-  const isSkippingHoles = loop.isArrayLike && HOLE_SKIPPING_METHODS.has(method);
+  const lengthName = context.names.getFresh("length");
+  const isSkippingHoles =
+    getters === undefined && loop.isArrayLike && HOLE_SKIPPING_METHODS.has(method);
   const position = context.names.getFresh("position");
   const accumulator = context.names.getFresh("accumulator");
   const parameters = changed.map((symbol) => {
@@ -2495,9 +2538,8 @@ const translateLoopCall = (
   const repeat = (current: Path, next: Expression) =>
     leaf(call(name, [step, next, ...getValues(current)]));
   const done = (current: Path, result: Expression) => leaf(tuple([result, ...getValues(current)]));
-  const element = index(sequence, [identifier(position)]);
   const kept = identifier(accumulator);
-  const afterCallback = (current: Path, value?: Expression) => {
+  const getAfterCallback = (element: Expression) => (current: Path, value?: Expression) => {
     const result = value ?? getUndefined(context);
     const isTruthy = useJavaScript("ToBoolean", [result], context);
     if (method === "forEach") return repeat(current, kept);
@@ -2542,28 +2584,6 @@ const translateLoopCall = (
     generators: new Map(),
     tasks: undefined,
   };
-  const getChecked = (value: Expression, at: number) =>
-    loop.isArrayLike
-      ? checkElement(
-          value,
-          callbackParameters[at],
-          getHeap(inner.scope, receiver, context),
-          context,
-        )
-      : value;
-  const bound = bindValues(
-    callbackParameters,
-    [
-      ...(isReduce ? [getChecked(kept, 0)] : []),
-      getChecked(element, isReduce ? 1 : 0),
-      isSkippingHoles
-        ? index(field(identifier(presentName), "indices"), [identifier(position)])
-        : apply("-", [identifier(position), number(1)]),
-      loop.isArrayLike ? owner : sequence,
-    ],
-    inner.scope,
-    context,
-  );
   const body = callback.body;
   if (body === undefined) throw new TlaTypeScriptError("Give this a body", callback);
   const statements = ts.isBlock(body)
@@ -2573,26 +2593,95 @@ const translateLoopCall = (
           ? ts.factory.createReturnStatement(body)
           : ts.factory.createExpressionStatement(body),
       ];
-  const callbackFrame: Frame = {
-    next: afterCallback,
-    exit: afterCallback,
-    breakTo: undefined,
-    continueTo: undefined,
-    throwTo:
-      frame.throwTo &&
-      (() => {
-        throw new TlaTypeScriptError(
-          "Catch inside the callback, or throw after the call",
-          callback,
-        );
-      }),
-    yieldTo: undefined,
-    awaitTo: undefined,
-    inlining: new Set([...frame.inlining, callback]),
+  const throwTo =
+    frame.throwTo &&
+    (() => {
+      throw new TlaTypeScriptError("Catch inside the callback, or throw after the call", callback);
+    });
+  // Runs the callback on an element, from a path that may have run a getter to read it.
+  const runCallback = (current: Path, element: Expression) => {
+    const getChecked = (value: Expression, at: number) =>
+      loop.isArrayLike
+        ? checkElement(
+            value,
+            callbackParameters[at],
+            getHeap(current.scope, receiver, context),
+            context,
+          )
+        : value;
+    const bound = bindValues(
+      callbackParameters,
+      [
+        ...(isReduce ? [getChecked(kept, 0)] : []),
+        getChecked(element, isReduce ? 1 : 0),
+        isSkippingHoles
+          ? index(field(identifier(presentName), "indices"), [identifier(position)])
+          : apply("-", [identifier(position), number(1)]),
+        loop.isArrayLike ? owner : sequence,
+      ],
+      current.scope,
+      context,
+    );
+    const afterCallback = getAfterCallback(element);
+    return letIn(
+      bound.definitions,
+      translateStatements(
+        statements,
+        {
+          ...current,
+          scope: {
+            ...bound.scope,
+            receiver: getCallbackReceiver(loop.argument, callback, current.scope, context),
+          },
+        },
+        context,
+        {
+          next: afterCallback,
+          exit: afterCallback,
+          breakTo: undefined,
+          continueTo: undefined,
+          throwTo,
+          yieldTo: undefined,
+          awaitTo: undefined,
+          inlining: new Set([...frame.inlining, callback]),
+        },
+      ),
+    );
   };
+  // Reads the element at a position, running a getter that answers it, where the object or a
+  // prototype has the index. The find methods read each index, and map keeps a hole, which the
+  // array it makes can't hold.
+  const visitLazily = (elementGetters: readonly FunctionNode[]) => {
+    const key = useJavaScript("ToString", [apply("-", [identifier(position), number(1)])], context);
+    const read = readWith(
+      expression,
+      owner,
+      key,
+      elementGetters,
+      inner,
+      context,
+      { ...frame, breakTo: undefined, continueTo: undefined, throwTo },
+      runCallback,
+    );
+    return EVERY_INDEX_METHODS.has(method)
+      ? read
+      : ifThenElse(
+          useJavaScript("Has", [getHeap(inner.scope, receiver, context), owner, key], context),
+          read,
+          method === "map"
+            ? leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string("tla-ts can't keep a hole in the array that map makes"),
+                ]),
+              )
+            : repeat(inner, kept),
+        );
+  };
+  const length = getters === undefined ? apply("Len", [sequence]) : identifier(lengthName);
   const isInRange = isReversed
     ? apply(">=", [identifier(position), number(1)])
-    : apply("<=", [identifier(position), apply("Len", [sequence])]);
+    : apply("<=", [identifier(position), length]);
   const operator: OperatorDefinition = {
     ...define(
       name,
@@ -2600,28 +2689,15 @@ const translateLoopCall = (
       render(
         ifThenElse(
           isInRange,
-          letIn(
-            bound.definitions,
-            translateStatements(
-              statements,
-              {
-                ...inner,
-                scope: {
-                  ...bound.scope,
-                  receiver: getCallbackReceiver(loop.argument, callback, inner.scope, context),
-                },
-              },
-              context,
-              callbackFrame,
-            ),
-          ),
+          getters === undefined
+            ? runCallback(inner, index(sequence, [identifier(position)]))
+            : visitLazily(getters),
           done(inner, finished),
         ),
       ),
     ),
     isRecursive: true,
   };
-  const length = apply("Len", [sequence]);
   const start = isReversed ? length : number(1);
   const result = context.names.getFresh("loop");
   const runLoop = (from: Expression, seed: Expression) =>
@@ -2657,6 +2733,40 @@ const translateLoopCall = (
             index(sequence, [start]),
           ),
         );
+  if (getters !== undefined) {
+    // The length, which the method reads once, after which map and filter check the array's
+    // constructor, as ArraySpeciesCreate reads it.
+    const heap = getHeap(path.scope, receiver, context);
+    const readLength = useJavaScript(
+      "ToLength",
+      [useJavaScript("Get", [heap, owner, string("length")], context)],
+      context,
+    );
+    return letIn(
+      [
+        define(ownerName, [], translateExpression(receiver, path.scope, context)),
+        define(
+          lengthName,
+          [],
+          ["filter", "map"].includes(method)
+            ? ifExpression(
+                apply("=", [
+                  useJavaScript(
+                    "SpeciesElements",
+                    [heap, owner, translateBuiltInValue("Array", receiver, context), tuple([])],
+                    context,
+                  ),
+                  tuple([]),
+                ]),
+                readLength,
+                number(0),
+              )
+            : readLength,
+        ),
+      ],
+      seeded,
+    );
+  }
   return letIn(
     [
       define(ownerName, [], translateExpression(receiver, path.scope, context)),
@@ -3894,7 +4004,11 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       });
     }
     // A definition that reads its descriptor's fields, or a read of a key with getters, runs them.
-    const getters = [...getDescriptorGetters(node, context), ...getReadFunctions(node, context)];
+    const getters = [
+      ...getDescriptorGetters(node, context),
+      ...getReadFunctions(node, context),
+      ...getLoopGetters(node, context),
+    ];
     if (context.heap !== undefined && getters.length > 0) changed.add(context.heap);
     getters.forEach((called) => {
       if (visited.has(called)) return;

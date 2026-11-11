@@ -1510,6 +1510,46 @@ describe("errors", () => {
     ).toThrow("Type a callback's array parameter as an array");
   });
 
+  it("reads each element of an array-like object as its method visits it, running getters", async () => {
+    const result = await checkModel(`
+      let isFirstRead = false;
+      const object = { length: 2 };
+      let second: unknown;
+      Object.defineProperty(object, "0", {
+        get: function () {
+          isFirstRead = true;
+          return 11;
+        },
+        configurable: true,
+      });
+      Object.defineProperty(object, "1", {
+        get: function () {
+          return isFirstRead ? 9 : 13;
+        },
+        configurable: true,
+      });
+      Array.prototype.forEach.call(object, (value: unknown, position: number) => {
+        if (position === 1) second = value;
+      });
+      if (second !== 9) throw new Error("lazy");
+      const holey = [0, , 2];
+      Object.defineProperty(holey, "0", {
+        get: function () {
+          delete Array.prototype[1];
+          return 0;
+        },
+        configurable: true,
+      });
+      Array.prototype[1] = 1;
+      let visited = 0;
+      holey.forEach(() => {
+        visited += 1;
+      });
+      if (visited !== 2) throw new Error("deleted");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("describes Array.prototype as the built-in object it is", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };

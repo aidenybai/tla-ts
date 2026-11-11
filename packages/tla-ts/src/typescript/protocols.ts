@@ -200,7 +200,7 @@ export const callMethod = (
   );
 
 // Reads a property, running the getter it holds where that's one of the candidates.
-const readWith = (
+export const readWith = (
   site: ts.Node,
   object: Expression,
   property: Expression,
@@ -330,6 +330,17 @@ const isRunnableGetter = (getter: FunctionNode, context: Context) =>
       !ts.isFunctionExpression(statement.expression) ||
       isNestedFunction(statement.expression, context),
   );
+
+// The getters that reading an array-like object's elements may run, where the script defines one
+// under an index and tla-ts can run each of them, or undefined.
+export const getElementGetters = (node: ts.Node, context: Context) => {
+  const getters = getAccessorFunctions(node, "get", context);
+  return [...getGetterKeys(node)].some((key) => /^(0|[1-9][0-9]*)$/.test(key)) &&
+    getters.length > 0 &&
+    getters.every((getter) => isRunnableGetter(getter, context))
+    ? getters
+    : undefined;
+};
 
 export const getDescriptorGetters = (node: ts.Node, context: Context) =>
   isDescriptorRead(node, context)
