@@ -15,7 +15,7 @@ import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateSetKey } from "./expressions";
 import { translateBody } from "./functions";
-import { getHeap } from "./heap";
+import { getHeap, isDateType } from "./heap";
 import { isBuiltInObject, translateBuiltInValue, translateSymbolProperty } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
@@ -1027,6 +1027,25 @@ export const translateMethod = (
   ) {
     return translateSymbolProperty(receiver, symbolMethod, node, scope, context);
   }
+  if (context.heap !== undefined && kind === "object" && isDateType(receiver, context)) {
+    const method = node.expression.name.text;
+    const field = DATE_FIELDS.get(method);
+    if ((field === undefined && !TIME_METHODS.has(method)) || node.arguments.length > 0) {
+      return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
+    }
+    const time = useJavaScript(
+      "DateTime",
+      [
+        getHeap(scope, node, context),
+        translateExpression(receiver, scope, context),
+        string(method),
+      ],
+      context,
+    );
+    return field === undefined
+      ? useJavaScript("TimeNumber", [time], context)
+      : useJavaScript("DateField", [time, string(field)], context);
+  }
   // valueOf on a value whose type doesn't tell what it is, such as this in a callback, which may
   // be a primitive or a wrapper object.
   if (
@@ -1143,6 +1162,19 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
     }
   );
 };
+
+// The fields that a Date's getters give, in local time and in UTC, which tla-ts takes to be the
+// same.
+const DATE_FIELDS = new Map<string, string>([
+  ...["FullYear", "Month", "Date", "Day", "Hours", "Minutes", "Seconds", "Milliseconds"].flatMap(
+    (field) => [[`get${field}`, field] as const, [`getUTC${field}`, field] as const],
+  ),
+  ["getYear", "Year"],
+  ["getTimezoneOffset", "TimezoneOffset"],
+]);
+
+// The methods that give a Date's time value.
+const TIME_METHODS = new Set(["getTime", "valueOf"]);
 
 // The types of the objects that wrap a primitive.
 const WRAPPERS = new Set(["Boolean", "Number", "String"]);

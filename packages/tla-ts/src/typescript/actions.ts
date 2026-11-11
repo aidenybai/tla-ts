@@ -90,6 +90,7 @@ import {
   getHeap,
   isAllocation,
   isObjectChange,
+  getDateSetter,
   translateAllocated,
   translateAllocatedValue,
   translateHasPrivate,
@@ -101,7 +102,7 @@ import {
   translatePropertyKey,
 } from "./heap";
 import { type Collection, getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
-import { useJavaScript } from "./javascript";
+import { translateToNumber, useJavaScript } from "./javascript";
 import {
   forceHeap,
   getReceiver,
@@ -868,16 +869,50 @@ export const translateCallStatement = (
   const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
     argumentNodes.map((argument) => translateExpression(argument, path.scope, context));
   const heapSymbol = context.heap;
+  const withHeap = (heap: Expression) =>
+    heapSymbol === undefined
+      ? path
+      : {
+          ...path,
+          scope: {
+            ...path.scope,
+            bindings: new Map([...path.scope.bindings, [heapSymbol, heap]]),
+          },
+        };
+  const dateSetter = getDateSetter(expression, context);
+  if (dateSetter !== undefined && ts.isPropertyAccessExpression(expression.expression)) {
+    const name = context.names.getFresh("change");
+    return bindOnce(
+      path,
+      name,
+      useJavaScript(
+        "DateChange",
+        [
+          getHeap(path.scope, expression, context),
+          translateExpression(expression.expression.expression, path.scope, context),
+          string(expression.expression.name.text),
+          number(dateSetter.position),
+          tuple(
+            expression.arguments.map((argument) =>
+              translateToNumber(argument, expression, path.scope, context),
+            ),
+          ),
+        ],
+        context,
+      ),
+      // A time value too far from 1970 for TLC's integers is only a number where something reads
+      // it.
+      continueWith(
+        withHeap(field(identifier(name), "heap")),
+        ts.isExpressionStatement(expression.parent)
+          ? undefined
+          : useJavaScript("TimeNumber", [field(identifier(name), "time")], context),
+      ),
+    );
+  }
   if (isObjectChange(expression) && heapSymbol !== undefined) {
     const translated = translateObjectChange(expression, path.scope, context);
     const name = context.names.getFresh(translated.isFallible ? "change" : "heap");
-    const withHeap = (heap: Expression) => ({
-      ...path,
-      scope: {
-        ...path.scope,
-        bindings: new Map([...path.scope.bindings, [heapSymbol, heap]]),
-      },
-    });
     // Each change but Reflect.construct gives the object it changes.
     const target = expression.arguments.at(0);
     const value =
@@ -3290,6 +3325,7 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getBound(node.expression, context) !== undefined ||
+  getDateSetter(node, context) !== undefined ||
   (isObjectChange(node) &&
     node.expression.name.text !== "construct" &&
     isHeapType(context.checker.getTypeAtLocation(node), node, context)) ||
@@ -3655,6 +3691,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||
       isObjectChange(node) ||
+      getDateSetter(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));

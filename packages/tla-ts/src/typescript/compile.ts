@@ -104,7 +104,7 @@ export const compile = (
         node.name.text === "hasOwnProperty")) ||
     (ts.isNewExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      ["Boolean", "Number", "String"].includes(node.expression.text)) ||
+      ["Boolean", "Number", "String", "Date"].includes(node.expression.text)) ||
     (ts.isIdentifier(node) &&
       ["arguments", "Symbol", "Promise", "setTimeout", "JSON"].includes(node.text)) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||

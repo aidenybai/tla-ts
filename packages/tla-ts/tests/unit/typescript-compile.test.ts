@@ -1211,6 +1211,74 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads a Date's fields from its time value", async () => {
+    const result = await checkModel(`
+      const same = (actual: unknown, expected: unknown) => {
+        if (!Object.is(actual, expected)) throw new Error("same");
+      };
+      const date = new Date(2016, 6, 5, 13, 4, 5, 6);
+      same(date.getFullYear(), 2016);
+      same(date.getMonth(), 6);
+      same(date.getDate(), 5);
+      same(date.getDay(), 2);
+      same(date.getUTCHours(), 13);
+      same(date.getMinutes(), 4);
+      same(date.getSeconds(), 5);
+      same(date.getMilliseconds(), 6);
+      same(new Date(1900, 1, 29).getMonth(), 2);
+      same(new Date(99, 0).getFullYear(), 1999);
+      same(new Date(-1).getUTCFullYear(), 1969);
+      same(new Date(NaN).getDate(), NaN);
+      same(new Date(275760, 8, 13, 0, 0, 0, 1).getTime(), NaN);
+      same(new Date(new Date(7)).getTime(), 7);
+      same(Object.prototype.toString.call(new Date(0)), "[object Date]");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("sets a Date's fields and gives its new time value", async () => {
+    const result = await checkModel(`
+      const same = (actual: unknown, expected: unknown) => {
+        if (!Object.is(actual, expected)) throw new Error("same");
+      };
+      const date = new Date(1970, 0, 5);
+      const hours = date.setHours(-1);
+      same(hours, 3 * 86400000 + 23 * 3600000);
+      same(date.getDate(), 4);
+      date.setMinutes(61, 2, 3);
+      same(date.getTime(), 4 * 86400000 + 62003);
+      date.setMonth(0, 20);
+      same(date.getDate(), 20);
+      const invalid = new Date(NaN);
+      const nothing = invalid.setHours(1);
+      same(nothing, NaN);
+      invalid.setFullYear(1970);
+      same(invalid.getTime(), 0);
+      invalid.setTime(12);
+      same(invalid.getUTCMilliseconds(), 12);
+      const far = new Date(0);
+      far.setFullYear(2016, 6, 5);
+      same(far.getDay(), 2);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("gives Date.UTC's time value where it fits TLC's integers", async () => {
+    const result = await checkModel(`
+      const same = (actual: unknown, expected: unknown) => {
+        if (!Object.is(actual, expected)) throw new Error("same");
+      };
+      same(Date.UTC(1970, 0, 25, 20, 31, 23, 647), 2147483647);
+      same(Date.UTC(70, 12, -364), 0);
+      same(Date.UTC(1970, Infinity), NaN);
+      const late = Date.UTC(2016, 6);
+      same(late > 0, true);
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't hold a time value this far from 1970 in a number",
+    );
+  });
+
   it("tells whether a value inherits from a built-in constructor's prototype", async () => {
     const result = await checkModel(`
       const holder = { count: 0 };

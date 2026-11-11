@@ -906,6 +906,38 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (isNewObject(node, context)) {
     return useJavaScript("Allocate", [heap, identifier("EmptyObject")], context);
   }
+  if (isNewDate(node, context)) {
+    const values = node.arguments ?? [];
+    const time =
+      values.length > 1
+        ? translateDateFields(node, values, scope, context)
+        : isDateType(values[0], context)
+          ? useJavaScript(
+              "TimeOfDate",
+              [heap, translateExpression(values[0], scope, context)],
+              context,
+            )
+          : (getLiteralTime(values[0]) ??
+            useJavaScript(
+              "TimeFromNumber",
+              [translateToNumber(values[0], node, scope, context)],
+              context,
+            ));
+    // The constructor, which the prototype's constructor property holds.
+    context.builtIns.add("Date");
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "DateObject",
+          [translateBuiltInValue("Date.prototype", node, context), time],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   const wrapper = getNewWrapper(node, context);
   if (wrapper !== undefined && ts.isNewExpression(node)) {
     // The wrapper's constructor, which its prototype's constructor property holds.
@@ -1076,6 +1108,7 @@ export const isAllocation = (node: ts.Node, context: Context) =>
       isFromEntries(node, context) ||
       isSymbolCall(node, context))) ||
   isNewObject(node, context) ||
+  isNewDate(node, context) ||
   getNewWrapper(node, context) !== undefined;
 
 // The primitive that new Boolean, new Number, or new String wraps in an object.
@@ -1108,6 +1141,110 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
     ? name
     : undefined;
 };
+
+// Whether a value has the type of a Date.
+export const isDateType = (node: ts.Expression, context: Context) =>
+  context.checker.getTypeAtLocation(node).getSymbol()?.name === "Date";
+
+// new Date of a time value, of another Date, or of a year and a month and the rest, whose
+// arguments convert to numbers without running code. tla-ts doesn't read the clock or parse
+// dates.
+export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpression => {
+  if (
+    context.heap === undefined ||
+    !ts.isNewExpression(node) ||
+    getBuiltIn(node.expression, context) !== "Date"
+  ) {
+    return false;
+  }
+  const values = node.arguments ?? [];
+  return values.length === 1
+    ? isNumeric(values[0], context) || isDateType(values[0], context)
+    : values.length >= 2 && areDateFields(values, context);
+};
+
+// The time value that new Date takes from a number that a literal writes, which may be past what
+// TLC's integers hold, as a time value's day and milliseconds, or NaN past what TimeClip allows.
+const getLiteralTime = (node: ts.Expression) => {
+  const literal =
+    ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken
+      ? node.operand
+      : node;
+  if (!ts.isNumericLiteral(literal)) return undefined;
+  const value = Math.trunc(Number(literal.text)) * (literal === node ? 1 : -1);
+  if (Math.abs(value) > 8.64e15) return identifier("NaN");
+  const day = Math.floor(value / 86400000);
+  return record("Record", [
+    { name: "day", value: number(day + 0) },
+    { name: "ms", value: number(value - day * 86400000 + 0) },
+  ]);
+};
+
+// The Date setters, by the position of the first field each sets, the year at 1 and the
+// milliseconds at 7, or 0 for setTime and setYear, and how many numbers each takes.
+const DATE_SETTERS = new Map<string, { position: number; arity: number }>([
+  ...(
+    [
+      ["FullYear", 1, 3],
+      ["Month", 2, 2],
+      ["Date", 3, 1],
+      ["Hours", 4, 4],
+      ["Minutes", 5, 3],
+      ["Seconds", 6, 2],
+      ["Milliseconds", 7, 1],
+    ] as const
+  ).flatMap(([field, position, arity]) => [
+    [`set${field}`, { position, arity }] as const,
+    [`setUTC${field}`, { position, arity }] as const,
+  ]),
+  ["setTime", { position: 0, arity: 1 }],
+  ["setYear", { position: 0, arity: 1 }],
+]);
+
+// The setter that a call of a Date's method runs, where its arguments convert to numbers without
+// running code.
+export const getDateSetter = (node: ts.Node, context: Context) => {
+  const setter = isMethodCall(node) ? DATE_SETTERS.get(node.expression.name.text) : undefined;
+  return context.heap !== undefined &&
+    setter !== undefined &&
+    isMethodCall(node) &&
+    isDateType(node.expression.expression, context) &&
+    node.arguments.length >= 1 &&
+    node.arguments.length <= setter.arity &&
+    node.arguments.every((argument) => isNumeric(argument, context))
+    ? setter
+    : undefined;
+};
+
+// Whether ToNumber of a value runs no code and reads no string as a date.
+const isNumeric = (argument: ts.Expression, context: Context) => {
+  const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
+  return names?.length === 1 && ["number", "boolean", "null"].includes(names[0]);
+};
+
+// Whether the arguments of Date.UTC, or of new Date with a year and a month, convert to numbers
+// without running code.
+export const areDateFields = (values: readonly ts.Expression[], context: Context) =>
+  values.length <= 7 &&
+  values.every((argument) => isNumeric(argument, context) || ts.isStringLiteral(argument));
+
+// The time value of the year, month, and the rest that Date.UTC or new Date reads, which are NaN,
+// 0, 1, and then 0 where a call omits them.
+export const translateDateFields = (
+  node: ts.Expression,
+  values: readonly ts.Expression[],
+  scope: Scope,
+  context: Context,
+) =>
+  useJavaScript(
+    "TimeFromFields",
+    [0, 1, 2, 3, 4, 5, 6].map((position) => {
+      const argument = values.at(position);
+      if (argument !== undefined) return translateToNumber(argument, node, scope, context);
+      return position === 0 ? identifier("NaN") : number(position === 2 ? 1 : 0);
+    }),
+    context,
+  );
 
 // new Object() with no value, which makes an empty object as {} does.
 export const isNewObject = (node: ts.Node, context: Context) => {
@@ -1181,6 +1318,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
     (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
     isNewObject(node, context) ||
+    isNewDate(node, context) ||
     getNewWrapper(node, context) !== undefined ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes &&

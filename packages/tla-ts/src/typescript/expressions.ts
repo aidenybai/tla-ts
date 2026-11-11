@@ -66,6 +66,9 @@ import {
   isSymbolCall,
   isNewObject,
   getNewWrapper,
+  isNewDate,
+  areDateFields,
+  translateDateFields,
   getMethodValue,
   translateHasPrivate,
   translateHoldsMethod,
@@ -538,6 +541,17 @@ const translateCall = (
     if (method !== "isNaN") return useJavaScript("IsFinite", [value], context);
     context.prelude.add("JavaScript");
     return apply("=", [value, identifier("NaN")]);
+  }
+  if (
+    getBuiltIn(receiver, context) === "Date" &&
+    method === "UTC" &&
+    areDateFields(node.arguments, context)
+  ) {
+    return useJavaScript(
+      "TimeNumber",
+      [translateDateFields(node, node.arguments, scope, context)],
+      context,
+    );
   }
   if (global === "Array" && method === "isArray" && node.arguments.length === 1) {
     const argument = node.arguments[0];
@@ -1608,6 +1622,7 @@ const translateNode = (
     isNestedFunction(node, context) ||
     getNewClass(node, context) !== undefined ||
     isNewObject(node, context) ||
+    isNewDate(node, context) ||
     getNewWrapper(node, context) !== undefined;
   if (isHeapObject) {
     const allocated = scope.allocated.get(node);

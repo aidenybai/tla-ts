@@ -1165,6 +1165,7 @@ LOCAL ClassOf(heap, ref) ==
          CASE TypeOf(Lookup(heap, ref).primitive) = "boolean" -> "Boolean"
            [] TypeOf(Lookup(heap, ref).primitive) = "string" -> "String"
            [] OTHER -> "Number"
+    [] IsHeap(ref) /\\ "time" \\in DOMAIN Lookup(heap, ref) -> "Date"
     [] IsHeap(ref) -> IF Lookup(heap, ref).isCallable THEN "Function" ELSE "Object"
     [] BuiltInKey(ref) = "Array.prototype" -> "Array"
     [] Lookup(heap, ref).isCallable -> "Function"
@@ -1310,6 +1311,164 @@ WrapperObject(prototype, primitive) ==
       attributes |-> [key \\in keys |-> IF key = "length" THEN fixed ELSE [fixed EXCEPT !.enumerable = TRUE]],
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, primitive |-> primitive]
+
+\\* A Date's time value is NaN, or the day since 1970 and the milliseconds within it, so that every
+\\* time value that TimeClip allows, up to 8.64e15 milliseconds, fits TLC's integers. tla-ts takes
+\\* local time to be UTC.
+LOCAL MsPerDay == 86400000
+
+LOCAL TimeValue(day, ms) == [day |-> day + ms \\div MsPerDay, ms |-> ms % MsPerDay]
+
+LOCAL TimeClip(time) ==
+  IF /\\ time # NaN
+     /\\ time.day >= -100000000
+     /\\ (time.day < 100000000 \\/ (time.day = 100000000 /\\ time.ms = 0))
+  THEN time
+  ELSE NaN
+
+LOCAL ToIntegerOrInfinity(value) == IF value \\in {NaN, NegativeZero} THEN 0 ELSE value
+
+LOCAL AreFinite(values) == \\A position \\in DOMAIN values : IsFinite(values[position])
+
+\\* The time value that new Date or setTime makes from a number.
+TimeFromNumber(value) ==
+  IF IsFinite(value) THEN TimeClip(TimeValue(0, ToIntegerOrInfinity(value))) ELSE NaN
+
+\\* The number that a time value is, where it fits TLC's integers.
+TimeNumber(time) ==
+  CASE time = NaN -> NaN
+    [] time.day \\in -24..23 -> time.day * MsPerDay + time.ms
+    [] time.day = 24 /\\ time.ms <= 73883647 -> 23 * MsPerDay + (time.ms + MsPerDay)
+    [] time.day = -25 /\\ time.ms >= 12516352 -> -24 * MsPerDay + (time.ms - MsPerDay)
+    [] OTHER -> Assert(FALSE, "tla-ts can't hold a time value this far from 1970 in a number")
+
+LOCAL DayFromYear(year) ==
+  365 * (year - 1970) + (year - 1969) \\div 4 - (year - 1901) \\div 100 + (year - 1601) \\div 400
+
+LOCAL IsLeapYear(year) == year % 4 = 0 /\\ (year % 100 # 0 \\/ year % 400 = 0)
+
+RECURSIVE YearAt(_, _)
+YearAt(day, year) ==
+  CASE DayFromYear(year) > day -> YearAt(day, year - 1)
+    [] DayFromYear(year + 1) <= day -> YearAt(day, year + 1)
+    [] OTHER -> year
+
+\\* YearFromTime, from an estimate of 400 years per 146097 days that is off by a year at most.
+LOCAL YearOf(time) ==
+  YearAt(time.day, 1970 + (time.day \\div 146097) * 400 + ((time.day % 146097) * 400) \\div 146097)
+
+LOCAL MonthStart(month, isLeap) ==
+  <<0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365>>[month + 1]
+    + (IF isLeap /\\ month >= 2 THEN 1 ELSE 0)
+
+LOCAL MonthOf(time) ==
+  LET within == time.day - DayFromYear(YearOf(time))
+      isLeap == IsLeapYear(YearOf(time))
+  IN CHOOSE month \\in 0..11 :
+       MonthStart(month, isLeap) <= within /\\ within < MonthStart(month + 1, isLeap)
+
+LOCAL DateOf(time) ==
+  time.day - DayFromYear(YearOf(time)) - MonthStart(MonthOf(time), IsLeapYear(YearOf(time))) + 1
+
+\\* What a Date getter gives for a time value, such as "FullYear" for getFullYear and getUTCFullYear.
+DateField(time, field) ==
+  IF time = NaN
+  THEN NaN
+  ELSE CASE field = "FullYear" -> YearOf(time)
+         [] field = "Year" -> YearOf(time) - 1900
+         [] field = "Month" -> MonthOf(time)
+         [] field = "Date" -> DateOf(time)
+         [] field = "Day" -> (time.day + 4) % 7
+         [] field = "Hours" -> time.ms \\div 3600000
+         [] field = "Minutes" -> (time.ms \\div 60000) % 60
+         [] field = "Seconds" -> (time.ms \\div 1000) % 60
+         [] field = "Milliseconds" -> time.ms % 1000
+         [] field = "TimezoneOffset" -> 0
+
+\\* MakeTime, as a time value whose day may be past what TimeClip allows.
+LOCAL MakeTime(hour, minute, second, ms) ==
+  LET h == ToIntegerOrInfinity(hour)
+      m == ToIntegerOrInfinity(minute)
+      s == ToIntegerOrInfinity(second)
+      milli == ToIntegerOrInfinity(ms)
+  IN IF AreFinite(<<hour, minute, second, ms>>)
+     THEN TimeValue(h \\div 24 + m \\div 1440 + s \\div 86400 + milli \\div MsPerDay,
+                    (h % 24) * 3600000 + (m % 1440) * 60000 + (s % 86400) * 1000
+                      + (milli % MsPerDay))
+     ELSE NaN
+
+\\* MakeDay, where the year, month, and date stay within bounds that keep the day within TLC's
+\\* integers.
+LOCAL MakeDay(year, month, date) ==
+  LET y == ToIntegerOrInfinity(year)
+      m == ToIntegerOrInfinity(month)
+      dt == ToIntegerOrInfinity(date)
+      ym == y + m \\div 12
+  IN CASE ~AreFinite(<<year, month, date>>) -> NaN
+       [] \\/ y < -1000000 \\/ y > 1000000
+          \\/ m < -10000000 \\/ m > 10000000
+          \\/ dt < -1000000000 \\/ dt > 1000000000 ->
+            Assert(FALSE, "tla-ts can't make a date this far from 1970")
+       [] OTHER -> DayFromYear(ym) + MonthStart(m % 12, IsLeapYear(ym)) + dt - 1
+
+LOCAL MakeDate(day, time) == IF day = NaN \\/ time = NaN THEN NaN ELSE TimeValue(day + time.day, time.ms)
+
+\\* The time value of new Date or Date.UTC with a year and a month, where a year from 0 to 99 is one
+\\* in the 1900s.
+TimeFromFields(year, month, date, hours, minutes, seconds, ms) ==
+  LET yr == IF IsFinite(year) /\\ ToIntegerOrInfinity(year) \\in 0..99
+            THEN 1900 + ToIntegerOrInfinity(year)
+            ELSE year
+  IN TimeClip(MakeDate(MakeDay(yr, month, date), MakeTime(hours, minutes, seconds, ms)))
+
+\\* The time value that a Date setter gives, which sets the fields from the given position on, the
+\\* year at 1 and the milliseconds at 7, to the numbers it takes and keeps the rest. Only
+\\* setFullYear sets an invalid date, as of 1970.
+LOCAL DateSet(time, position, values) ==
+  LET base == IF time = NaN /\\ position = 1 THEN TimeValue(0, 0) ELSE time
+      fields == <<YearOf(base), MonthOf(base), DateOf(base), base.ms \\div 3600000,
+                  (base.ms \\div 60000) % 60, (base.ms \\div 1000) % 60, base.ms % 1000>>
+      field(index) ==
+        IF index >= position /\\ index < position + Len(values)
+        THEN values[index - position + 1]
+        ELSE fields[index]
+  IN IF base = NaN
+     THEN NaN
+     ELSE TimeClip(MakeDate(MakeDay(field(1), field(2), field(3)),
+                            MakeTime(field(4), field(5), field(6), field(7))))
+
+\\* The object that new Date makes, which holds its time value.
+DateObject(prototype, time) == [EmptyObject EXCEPT !.prototype = prototype] @@ [time |-> time]
+
+\\* The time value that new Date takes from another Date.
+TimeOfDate(heap, value) ==
+  IF IsHeap(value) /\\ "time" \\in DOMAIN Lookup(heap, value)
+  THEN Lookup(heap, value).time
+  ELSE Assert(FALSE, "tla-ts can't convert " \\o ToString(value) \\o " to a time value")
+
+\\* The time value of a Date that reads the built-in method from its prototype.
+DateTime(heap, ref, method) ==
+  IF /\\ IsHeap(ref)
+     /\\ "time" \\in DOMAIN Lookup(heap, ref)
+     /\\ IsRef(Get(heap, ref, method))
+     /\\ ~IsHeap(Get(heap, ref, method))
+     /\\ Get(heap, ref, method)[Ref] = "Date.prototype." \\o method
+  THEN Lookup(heap, ref).time
+  ELSE Assert(FALSE, "tla-ts can't call this method on " \\o ToString(ref))
+
+\\* The heap after a Date setter, which takes the method's name and where it starts setting fields,
+\\* or 0 for setTime and setYear, and the time value it sets.
+DateChange(heap, ref, method, position, values) ==
+  LET time == DateTime(heap, ref, method)
+      year == values[1]
+      next == CASE method = "setTime" -> TimeFromNumber(values[1])
+                [] method = "setYear" /\\ year = NaN -> NaN
+                [] method = "setYear" ->
+                     DateSet(time, 1, <<IF IsFinite(year) /\\ ToIntegerOrInfinity(year) \\in 0..99
+                                        THEN 1900 + ToIntegerOrInfinity(year)
+                                        ELSE year>>)
+                [] OTHER -> DateSet(time, position, values)
+  IN [heap |-> Update(heap, ref, [Lookup(heap, ref) EXCEPT !.time = next]), time |-> next]
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==

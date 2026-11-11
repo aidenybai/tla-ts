@@ -84,6 +84,7 @@ const LIBRARY_OBJECTS = new Set([
   "IteratorYieldResult",
   "IteratorReturnResult",
   "IArguments",
+  "Date",
   "Boolean",
   "Number",
   "String",
