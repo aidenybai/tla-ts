@@ -5998,6 +5998,19 @@ describe("regular expressions", () => {
     expect(result.failure?.message).toContain("tla-ts can't call a regexp's method");
   });
 
+  it("read a call's result through an optional chain where a script has objects", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      const rest = "abc";
+      const number = /^\\d+/.exec(rest)?.[0];
+      if (number !== undefined) throw new Error("number");
+      const word = /^[a-z]+/.exec(rest)?.[0];
+      if (word !== "abc") throw new Error("word");
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
   it("stop where a script changed what a regexp's method reads", async () => {
     const result = await checkModel(`
       const pattern = /a/;

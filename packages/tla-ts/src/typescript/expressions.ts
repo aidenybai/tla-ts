@@ -1446,7 +1446,7 @@ const translatePropertyAccess = (
 ) => {
   const regExpRead = translateRegExpRead(node, () => string(node.name.text), scope, context);
   if (regExpRead !== undefined) return regExpRead;
-  if (node.questionDotToken !== undefined && !scope.results.has(node.expression)) {
+  if (node.questionDotToken !== undefined && scope.checked?.has(node) !== true) {
     throw new TlaTypeScriptError("Optional chaining isn't supported", node);
   }
   if (ts.isPrivateIdentifier(node.name)) return translatePrivateRead(node, scope, context);
@@ -1832,7 +1832,7 @@ const translateOptionalChain = (node: ts.Expression, scope: Scope, context: Cont
           ts.isElementAccessExpression(link) ||
           ts.isCallExpression(link)) &&
         link.questionDotToken !== undefined &&
-        !scope.results.has(link.expression),
+        scope.checked?.has(link) !== true,
     )
     .at(-1);
   if (optional === undefined || !ts.isOptionalChain(optional)) return undefined;
@@ -1848,7 +1848,11 @@ const translateOptionalChain = (node: ts.Expression, scope: Scope, context: Cont
       identifier("Undefined"),
       translateExpression(
         node,
-        { ...scope, results: new Map([...scope.results, [base, shared]]) },
+        {
+          ...scope,
+          results: new Map([...scope.results, [base, shared]]),
+          checked: new Set([...(scope.checked ?? []), optional]),
+        },
         context,
       ),
     ),
