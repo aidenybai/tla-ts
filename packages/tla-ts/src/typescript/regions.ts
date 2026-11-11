@@ -10,6 +10,7 @@ import {
 } from "../ast";
 import { parseModule } from "../parser";
 import { printModule } from "../printer";
+import { getWritten, getWrittenRoots } from "./actions";
 import { type Context, getSymbol } from "./context";
 import type { CompiledSpec } from "./emit";
 import type { Model } from "./model";
@@ -21,7 +22,8 @@ export interface Span {
 
 export type RegionKind =
   | "variable"
-  | "reference"
+  | "read"
+  | "write"
   | "init"
   | "action"
   | "next"
@@ -76,6 +78,15 @@ const getSpan = (node: ts.Node): Span => {
   return { start: statement.getStart(), end: statement.end };
 };
 
+const isWritten = (node: ts.Node, ancestor: ts.Node | undefined): boolean => {
+  if (ancestor === undefined) return false;
+  const written = getWritten(ancestor);
+  return (
+    (written !== undefined && getWrittenRoots(written).some((root) => root === node)) ||
+    isWritten(node, ancestor.parent)
+  );
+};
+
 // Each use of a state variable in the TypeScript, linked to where the module declares it.
 const getReferences = (
   node: ts.Node,
@@ -96,7 +107,7 @@ const getReferences = (
   }
   return [
     {
-      kind: "reference",
+      kind: isWritten(node, node.parent) ? "write" : "read",
       name: name.name,
       source: { start: node.getStart(), end: node.end },
       output,
