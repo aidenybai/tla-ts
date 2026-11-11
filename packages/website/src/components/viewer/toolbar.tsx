@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Check, ChevronDown, Play, Spline, Square } from "lucide-react";
+import { Check, ChevronDown, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import {
@@ -13,7 +13,6 @@ import { Link } from "@/lib/navigation";
 import { getRouteHref } from "@/lib/route";
 import { getFileTitle } from "@/lib/source";
 import { cn } from "@/lib/utils";
-import { useViewerStore } from "@/store/viewer";
 import { useViewer } from "./context";
 
 // Model checks the module with its config. A check runs until it finishes or you stop it.
@@ -40,25 +39,6 @@ const Run = () => {
       <Play />
       Run
     </Button>
-  );
-};
-
-const Arrows = () => {
-  const isShowingAllArcs = useViewerStore((state) => state.isShowingAllArcs);
-  const setShowingAllArcs = useViewerStore((state) => state.setShowingAllArcs);
-  return (
-    <button
-      type="button"
-      aria-pressed={isShowingAllArcs}
-      onClick={() => setShowingAllArcs(!isShowingAllArcs)}
-      className={cn(
-        buttonVariants({ variant: "ghost" }),
-        "text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground",
-      )}
-    >
-      <Spline />
-      All arrows
-    </button>
   );
 };
 
@@ -113,4 +93,4 @@ const Brand = () => (
   </div>
 );
 
-export const Toolbar = Object.assign(Root, { Brand, FileMenu, Run, Arrows });
+export const Toolbar = Object.assign(Root, { Brand, FileMenu, Run });

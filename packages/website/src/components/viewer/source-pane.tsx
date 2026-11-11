@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type MouseEvent,
-  type RefObject,
-} from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent, type RefObject } from "react";
 import { File } from "@pierre/diffs/react";
 import { ClientSuspense } from "@/components/ui/client-suspense";
 import { useFileOptions } from "@/hooks/use-file-options";
@@ -18,7 +10,6 @@ import type { GraphNode, Pane } from "@/model";
 import { getCausalNodeIds } from "@/lib/graph";
 import { useViewerStore } from "@/store/viewer";
 import { useViewer } from "./context";
-import { useSourceMap } from "./source-map";
 import { TokenMark } from "./token-mark";
 
 const contains = (box: Box, x: number, y: number): boolean =>
@@ -153,12 +144,7 @@ const CodeView = ({ pane, fileName, source }: CodeViewProps) => {
   const leave = useViewerStore((state) => state.leave);
   const select = useViewerStore((state) => state.select);
   const selectedNodeId = useViewerStore((state) => state.selectedNodeId);
-  const setLayouts = useSourceMap().setLayouts;
   useRevealLinked(wrapperRef, pane);
-  useLayoutEffect(() => {
-    const wrapper = wrapperRef.current;
-    if (wrapper) setLayouts((layouts) => new Map(layouts).set(pane, { wrapper, tokens }));
-  }, [pane, tokens, setLayouts]);
   return (
     <div
       ref={wrapperRef}

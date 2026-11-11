@@ -26,7 +26,6 @@ export interface GraphNode {
 export interface GraphEdge {
   from: string;
   to: string;
-  kind: "compiles" | "reads" | "writes";
 }
 
 export interface ViewSource {

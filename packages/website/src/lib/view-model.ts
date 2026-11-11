@@ -141,11 +141,7 @@ export const buildViewFile = (file: string, source: string, spec: PrintedSpec): 
     );
     for (const target of targets) {
       if (!useLabels.has(target.span.start)) useLabels.set(target.span.start, label);
-      edges.push({
-        from: id,
-        to: `module:use:${target.span.start}`,
-        kind: isWrite ? "writes" : "reads",
-      });
+      edges.push({ from: id, to: `module:use:${target.span.start}` });
     }
   });
   for (const use of uses) {
@@ -207,7 +203,7 @@ export const buildViewFile = (file: string, source: string, spec: PrintedSpec): 
       getNameSpan(spec.source, region.output, region.name),
     );
     if (region.kind === "next") {
-      edges.push({ from: `code:action:${region.name}`, to: moduleId, kind: "compiles" });
+      edges.push({ from: `code:action:${region.name}`, to: moduleId });
       return;
     }
     addNode(
@@ -215,7 +211,7 @@ export const buildViewFile = (file: string, source: string, spec: PrintedSpec): 
       kind === "check" ? getTestSpan(source, region.source) : region.source,
       getNameSpan(source, region.source, region.name),
     );
-    edges.push({ from: id, to: moduleId, kind: "compiles" });
+    edges.push({ from: id, to: moduleId });
   });
 
   return {
