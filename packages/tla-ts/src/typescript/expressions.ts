@@ -142,7 +142,6 @@ interface Field {
 const BINARY_OPERATORS = new Map([
   [ts.SyntaxKind.MinusToken, "-"],
   [ts.SyntaxKind.AsteriskToken, "*"],
-  [ts.SyntaxKind.AsteriskAsteriskToken, "^"],
   [ts.SyntaxKind.EqualsEqualsEqualsToken, "="],
   [ts.SyntaxKind.ExclamationEqualsEqualsToken, "#"],
   [ts.SyntaxKind.EqualsEqualsToken, "="],
@@ -408,7 +407,8 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     );
   }
   if (method === "pow" && node.arguments.length === 2) {
-    return useJavaScript("Power", node.arguments.map(translate), context);
+    const power = useJavaScript("Power", node.arguments.map(translate), context);
+    return isSpecial ? power : useJavaScript("PlainNumber", [power], context);
   }
   if ((method === "floor" || method === "trunc") && node.arguments.length === 1) {
     const division = ts.isParenthesizedExpression(argument) ? argument.expression : argument;
@@ -1064,6 +1064,14 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   }
   if (kind === ts.SyntaxKind.SlashToken) {
     throw new TlaTypeScriptError("Write division as Math.floor(a / b) or Math.trunc(a / b)", node);
+  }
+  // TLA+'s ^ takes no negative exponent, where ** gives a fraction or Infinity, which stop here.
+  if (kind === ts.SyntaxKind.AsteriskAsteriskToken) {
+    return useJavaScript(
+      "PlainNumber",
+      [useJavaScript("Power", [translate(node.left), translate(node.right)], context)],
+      context,
+    );
   }
   const operator = BINARY_OPERATORS.get(kind);
   if (operator === undefined) {

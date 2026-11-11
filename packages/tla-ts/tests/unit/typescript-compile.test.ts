@@ -699,6 +699,26 @@ describe("values", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("raises to a negative power, and stops where a script of integers can't hold the power", async () => {
+    const result = await checkModel(`
+      const exponent = -5;
+      if ((-1) ** 3 !== -1 || 1 ** exponent !== 1 || (-1) ** exponent !== -1) {
+        throw new Error("power");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(
+        "const exponent = -1;\nconst value = 2 ** exponent;\nif (value > 5) throw new Error();",
+      ),
+    ).rejects.toThrow("tla-ts can't represent this value");
+    await expect(
+      checkModel(
+        "const exponent = -1;\nconst value = Math.pow(0, exponent);\nif (value > 5) throw new Error();",
+      ),
+    ).rejects.toThrow("tla-ts can't represent Infinity in this script");
+  });
+
   it("multiplies with Math.imul and reads a literal past 32 bits as ToInt32 does", async () => {
     const result = await checkModel(`
       const hash = (seed: number, value: number) => Math.imul(seed ^ value, 0x01000193);
