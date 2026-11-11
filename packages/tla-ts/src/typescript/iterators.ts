@@ -1,27 +1,12 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import {
-  bindOnce,
-  type Frame,
-  inlineBody,
-  type Path,
-  throwTypeError,
-  translateJoined,
-} from "./actions";
-import {
-  type Context,
-  findNodes,
-  type FunctionNode,
-  getAccessorFunctions,
-  getCallee,
-  getSymbol,
-  getUndefined,
-  skipCasts,
-} from "./context";
+import { type Frame, type Path, throwTypeError, translateJoined } from "./actions";
+import { type Context, findNodes, getAccessorFunctions, getSymbol, getUndefined } from "./context";
 import { type Formula, ifThenElse, leaf } from "./formula";
-import { getCandidateValue, getHeap } from "./heap";
+import { getHeap } from "./heap";
 import { useJavaScript } from "./javascript";
-import { apply, boolean, identifier, string, tuple } from "./tla";
+import { bind, callMethod, getWrittenFunctions, isNullish, read } from "./protocols";
+import { apply, boolean, string, tuple } from "./tla";
 
 // The values that patterns took from iterators, which they bind as they would an array's.
 const taken = new WeakSet<Expression>();
@@ -31,73 +16,10 @@ export const isTaken = (value: Expression) => taken.has(value);
 // The values a rest element takes from an iterator before tla-ts stops following it.
 const REST_LIMIT = 3;
 
-// The key of the method that makes an object's iterator, Symbol.iterator.
+// The key of the method that makes an object's iterator, Symbol.iterator, as protocols name it.
 const ITERATOR_KEY = "@@iterator";
 
 const ITERATOR_KEYS = [ITERATOR_KEY, "next", "return", "value", "done"];
-
-const getKey = (name: ts.Node): string | undefined =>
-  ts.isComputedPropertyName(name) || ts.isElementAccessExpression(name)
-    ? getKey(ts.isComputedPropertyName(name) ? name.expression : name.argumentExpression)
-    : ts.isPropertyAccessExpression(name)
-      ? name.getText() === "Symbol.iterator"
-        ? ITERATOR_KEY
-        : name.name.text
-      : ts.isIdentifier(name) || ts.isStringLiteral(name)
-        ? name.text
-        : undefined;
-
-const isRunnable = (node: ts.Node): node is FunctionNode =>
-  (ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node)) &&
-  node.body !== undefined &&
-  (ts.isArrowFunction(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    node.asteriskToken === undefined) &&
-  (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0;
-
-const written = new WeakMap<ts.SourceFile, Map<string, FunctionNode[]>>();
-
-// The functions that a script writes under a key that the iterator protocol reads, as methods and
-// as getters, by key. A call of what the protocol reads branches on which of them it is.
-const getWrittenFunctions = (node: ts.Node, key: string, context: Context) => {
-  const file = node.getSourceFile();
-  const known = written.get(file);
-  if (known !== undefined) return known.get(key) ?? [];
-  const found = new Map<string, FunctionNode[]>();
-  const add = (name: ts.Node, value: ts.Node) => {
-    const role = getKey(name);
-    const candidate = ts.isExpression(value)
-      ? (getCallee(skipCasts(value), context) ?? skipCasts(value))
-      : value;
-    if (role === undefined || !ITERATOR_KEYS.includes(role) || !isRunnable(candidate)) return;
-    const known = found.get(role) ?? [];
-    if (!known.includes(candidate)) found.set(role, [...known, candidate]);
-  };
-  findNodes(file, (inner): inner is ts.Node => {
-    if (ts.isPropertyAssignment(inner)) add(inner.name, inner.initializer);
-    if (ts.isMethodDeclaration(inner) || ts.isGetAccessorDeclaration(inner)) add(inner.name, inner);
-    if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      add(skipCasts(inner.left), inner.right);
-    }
-    return false;
-  });
-  written.set(file, found);
-  return found.get(key) ?? [];
-};
-
-const getMethods = (node: ts.Node, key: string, context: Context) =>
-  getWrittenFunctions(node, key, context).filter(
-    (candidate) => !ts.isGetAccessorDeclaration(candidate),
-  );
-
-const getGetters = (node: ts.Node, key: string, context: Context) => [
-  ...getWrittenFunctions(node, key, context).filter(ts.isGetAccessorDeclaration),
-  ...getAccessorFunctions(node, "get", context),
-];
 
 // An array pattern that destructures an object that a script declares, which isn't an array or a
 // generator, through the iterator that the object's Symbol.iterator method makes.
@@ -151,137 +73,6 @@ const isPlainPattern = (pattern: ts.ArrayBindingPattern, context: Context) => {
         ts.findAncestor(name, ts.isFunctionLike) === owner
       );
     })
-  );
-};
-
-const isNullish = (value: Expression, context: Context) =>
-  apply("\\/", [
-    apply("=", [value, getUndefined(context)]),
-    apply("=", [value, identifier("Null")]),
-  ]);
-
-const bind = (
-  path: Path,
-  name: string,
-  value: Expression,
-  context: Context,
-  continueWith: (path: Path, value: Expression) => Formula,
-) => {
-  const fresh = context.names.getFresh(name);
-  return bindOnce(path, fresh, value, continueWith(path, identifier(fresh)));
-};
-
-// Calls a value with a receiver and no arguments, branching on which of the candidates it is, or
-// does what otherwise does with the call's continuation where it's none of them.
-const callValue = (
-  site: ts.Node,
-  candidates: readonly FunctionNode[],
-  value: Expression,
-  receiver: Expression,
-  path: Path,
-  context: Context,
-  frame: Frame,
-  otherwise: (next: (inner: Path, value?: Expression) => Formula) => Formula,
-  continueWith: (path: Path, result: Expression) => Formula,
-): Formula =>
-  translateJoined(
-    site,
-    path,
-    context,
-    (after, result) => continueWith(after, result ?? getUndefined(context)),
-    (next) =>
-      candidates.reduceRight((rest, candidate) => {
-        const candidateValue = getCandidateValue(candidate, context);
-        if (candidateValue === undefined || frame.inlining.has(candidate)) return rest;
-        return ifThenElse(
-          apply("=", [
-            useJavaScript("CodeOf", [getHeap(path.scope, site, context), value], context),
-            candidateValue,
-          ]),
-          inlineBody(
-            site,
-            candidate,
-            [],
-            ts.isArrowFunction(candidate) ? undefined : { value: receiver, method: candidate },
-            path,
-            context,
-            frame,
-            next,
-          ),
-          rest,
-        );
-      }, otherwise(next)),
-  );
-
-// Calls a method that the iterator protocol read, which throws a TypeError where it isn't callable.
-const callMethod = (
-  site: ts.Node,
-  key: string,
-  value: Expression,
-  receiver: Expression,
-  path: Path,
-  context: Context,
-  frame: Frame,
-  throwWith: (path: Path) => Formula,
-  continueWith: (path: Path, result: Expression) => Formula,
-) =>
-  callValue(
-    site,
-    getMethods(site, key, context),
-    value,
-    receiver,
-    path,
-    context,
-    frame,
-    () =>
-      ifThenElse(
-        apply("=", [
-          useJavaScript("TypeOfIn", [getHeap(path.scope, site, context), value], context),
-          string("function"),
-        ]),
-        leaf(
-          apply("Assert", [boolean(false), string("tla-ts can't tell which function this calls")]),
-        ),
-        throwWith(path),
-      ),
-    continueWith,
-  );
-
-// Reads a property, running its getter where it's one that the script writes.
-const read = (
-  site: ts.Node,
-  object: Expression,
-  key: string,
-  path: Path,
-  context: Context,
-  frame: Frame,
-  continueWith: (path: Path, value: Expression) => Formula,
-): Formula => {
-  const heap = getHeap(path.scope, site, context);
-  const property =
-    key === ITERATOR_KEY
-      ? useJavaScript("WellKnownSymbol", [string("iterator")], context)
-      : string(key);
-  const got = useJavaScript("Get", [heap, object, property], context);
-  const getters = getGetters(site, key, context);
-  if (getters.length === 0) return bind(path, "property", got, context, continueWith);
-  return bind(
-    path,
-    "getter",
-    useJavaScript("GetterOf", [heap, object, property], context),
-    context,
-    (bound, getter) =>
-      callValue(
-        site,
-        getters,
-        getter,
-        object,
-        bound,
-        context,
-        frame,
-        (next) => next(bound, got),
-        (after, value) => bind(after, "property", value, context, continueWith),
-      ),
   );
 };
 
