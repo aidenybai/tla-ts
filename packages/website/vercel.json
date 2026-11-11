@@ -14,7 +14,7 @@
       "destination": "/index.md"
     },
     {
-      "source": "/editor",
+      "source": "/editor/:path*",
       "destination": "/index.html"
     }
   ],

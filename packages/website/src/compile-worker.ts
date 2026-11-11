@@ -19,11 +19,10 @@ export interface PrintedSpec {
 }
 
 export type CompileResponse =
-  | { kind: "compiled"; spec: PrintedSpec; elapsed: number }
+  | { kind: "compiled"; spec: PrintedSpec }
   | { kind: "failed"; message: string };
 
 self.onmessage = (event: MessageEvent<CompileRequest>) => {
-  const startedAt = performance.now();
   try {
     const compiled = compile(event.data.source, event.data.fileName, libraries);
     const printed = printRegions(compiled);
@@ -36,7 +35,6 @@ self.onmessage = (event: MessageEvent<CompileRequest>) => {
         regions: printed.regions,
         variables: compiled.variables,
       },
-      elapsed: performance.now() - startedAt,
     } satisfies CompileResponse);
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;

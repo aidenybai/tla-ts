@@ -2,30 +2,36 @@ import { Tabs as TabsPrimitive } from "@base-ui/react/tabs";
 import { cn } from "@/lib/utils";
 
 export const Tabs = ({ className, ...props }: TabsPrimitive.Root.Props) => (
-  <TabsPrimitive.Root data-slot="tabs" className={cn("flex", className)} {...props} />
+  <TabsPrimitive.Root
+    data-slot="tabs"
+    className={cn("flex flex-col gap-2", className)}
+    {...props}
+  />
 );
 
-export const TabsList = ({ className, ...props }: TabsPrimitive.List.Props) => (
+export const TabsList = ({ className, children, ...props }: TabsPrimitive.List.Props) => (
   <TabsPrimitive.List
     data-slot="tabs-list"
-    className={cn("inline-flex h-7 items-center gap-0.5 rounded-md bg-well p-0.5", className)}
+    className={cn(
+      "relative inline-flex h-[32px] w-fit items-center justify-center rounded-[10px] bg-muted p-[3px] text-muted-foreground",
+      className,
+    )}
     {...props}
-  />
-);
-
-export const TabsContent = ({ className, ...props }: TabsPrimitive.Panel.Props) => (
-  <TabsPrimitive.Panel
-    data-slot="tabs-content"
-    className={cn("min-h-0 outline-none", className)}
-    {...props}
-  />
+  >
+    <TabsPrimitive.Indicator
+      data-slot="tabs-indicator"
+      renderBeforeHydration
+      className="absolute top-[calc(var(--active-tab-top)-1px)] left-[calc(var(--active-tab-left)-1px)] h-[calc(var(--active-tab-height)+2px)] w-[calc(var(--active-tab-width)+2px)] rounded-[8px] bg-background shadow-sm transition-[left,width] duration-300 ease-out-soft dark:border dark:border-input dark:bg-input/30"
+    />
+    {children}
+  </TabsPrimitive.List>
 );
 
 export const TabsTrigger = ({ className, ...props }: TabsPrimitive.Tab.Props) => (
   <TabsPrimitive.Tab
     data-slot="tabs-trigger"
     className={cn(
-      "inline-flex h-6 items-center rounded-[5px] px-2 text-muted transition-colors duration-150 outline-none enabled:active:scale-100 hover:text-ink focus-visible:shadow-focus data-active:bg-ground data-active:text-ink data-active:shadow-card",
+      "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-[6px] rounded-[8px] border border-transparent px-[6px] py-[2px] text-[14px]/[20px] font-medium whitespace-nowrap text-foreground/60 transition-colors hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:text-foreground dark:text-muted-foreground dark:hover:text-foreground dark:data-active:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[16px]",
       className,
     )}
     {...props}

@@ -1,12 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./app";
-import "./index.css";
+import { ROUTE_BASE } from "./lib/route";
+
+// Each page imports its own stylesheet, since the editor has its own theme.
+const isEditor = new RegExp(`^${ROUTE_BASE}(/|$)`).test(location.pathname);
+const Page = isEditor ? (await import("./editor")).Editor : (await import("./app")).App;
 
 await document.fonts.load('400 16px "Geist Mono Variable"');
-
-const Page =
-  location.pathname.replace(/\/$/, "") === "/editor" ? (await import("./editor")).Editor : App;
 
 const root = document.getElementById("root");
 if (root) {
