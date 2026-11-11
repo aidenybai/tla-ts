@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getErrorResult } from "./run-error";
 import type { RunRequest, RunResult } from "./run-worker";
 
 // Runs tla-ts in a worker, so a long check or proof never blocks the page. Stopping or unmounting
@@ -29,17 +30,7 @@ export const useRun = () => {
       workerRef.current = null;
     };
     worker.onmessage = (event: MessageEvent<RunResult>) => finish(event.data);
-    worker.onerror = (event) =>
-      finish({
-        isPassed: false,
-        title: "Error",
-        stats: undefined,
-        name: undefined,
-        summary: "",
-        trace: [],
-        loopStart: undefined,
-        rows: [{ title: event.message, detail: "", isFailed: true }],
-      });
+    worker.onerror = (event) => finish(getErrorResult("Error", event.message));
     setIsRunning(true);
     worker.postMessage(request);
   };

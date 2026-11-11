@@ -1,4 +1,5 @@
 import { check, formatValue, prove, TlaError, type CheckStatus } from "tla-ts";
+import { getErrorResult } from "./run-error";
 
 export type RunRequest =
   | { kind: "check"; source: string; config: string }
@@ -33,7 +34,7 @@ export interface RunResult {
   rows: RunRow[];
 }
 
-export interface RunRow {
+interface RunRow {
   title: string;
   // Shown while the row is the active step, such as the goal an obligation proves.
   detail: string;
@@ -59,17 +60,9 @@ const getCheckResult = async (source: string, config: string): Promise<RunResult
   const startedAt = performance.now();
   const result = await check({ source, config });
   const elapsedMs = performance.now() - startedAt;
-  if (result.failure)
-    return {
-      isPassed: false,
-      title: "Error",
-      stats: undefined,
-      name: undefined,
-      summary: formatElapsed(elapsedMs),
-      trace: [],
-      loopStart: undefined,
-      rows: [{ title: result.failure.message, detail: "", isFailed: true }],
-    };
+  if (result.failure) {
+    return getErrorResult("Error", result.failure.message, formatElapsed(elapsedMs));
+  }
   return {
     isPassed: result.status === "success",
     title: STATUS_TITLES[result.status],
@@ -137,15 +130,6 @@ self.onmessage = async (event: MessageEvent<RunRequest>) => {
     );
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    self.postMessage({
-      isPassed: false,
-      title: error.name,
-      stats: undefined,
-      name: undefined,
-      summary: "",
-      trace: [],
-      loopStart: undefined,
-      rows: [{ title: error.message, detail: "", isFailed: true }],
-    } satisfies RunResult);
+    self.postMessage(getErrorResult(error.name, error.message));
   }
 };
