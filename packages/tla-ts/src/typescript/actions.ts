@@ -194,6 +194,7 @@ import {
   isHeapType,
   isNumberLike,
   isGeneratorType,
+  isSequenceType,
   rejectGeneratorUse,
 } from "./types";
 
@@ -4404,20 +4405,49 @@ const bindIteration = (
       bindIteration(declared, values, source, after, context, frame, continueWith),
     );
   if (taken) return taken;
-  // A default that calls a function runs only where its element is undefined, before the pattern
-  // binds.
+  // A default that calls a function runs only where its element or property is undefined, before
+  // the pattern binds. A call that changes the heap would change the properties that the pattern
+  // read before it.
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(name));
+  const isHeapObject = ts.isObjectBindingPattern(name) && isHeapType(type, name, context);
+  const getPart = (inner: ts.BindingElement, position: number) => {
+    if (ts.isArrayBindingPattern(name)) {
+      return getElement(element, number(position + 1), context);
+    }
+    const key = inner.propertyName ?? inner.name;
+    if (!(ts.isIdentifier(key) || ts.isStringLiteral(key))) return undefined;
+    return isHeapObject
+      ? useJavaScript(
+          "Get",
+          [getHeap(path.scope, inner, context), element, string(key.text)],
+          context,
+        )
+      : isSequenceType(type, context.checker)
+        ? undefined
+        : getOptionalField(element, key.text, context);
+  };
   const pending =
-    ts.isArrayBindingPattern(name) &&
-    name.elements.every((inner) => !ts.isBindingElement(inner) || ts.isIdentifier(inner.name))
-      ? name.elements.flatMap((inner, position) => {
+    ts.isVariableDeclarationList(declared) && !ts.isIdentifier(name)
+      ? name.elements.flatMap((inner: ts.ArrayBindingElement, position) => {
           const initializer = ts.isBindingElement(inner) ? inner.initializer : undefined;
           const call = initializer && getCast(initializer);
+          const part =
+            ts.isBindingElement(inner) &&
+            ts.isIdentifier(inner.name) &&
+            inner.dotDotDotToken === undefined
+              ? getPart(inner, position)
+              : undefined;
           return call !== undefined &&
+            part !== undefined &&
             ts.isCallExpression(call) &&
             !path.scope.results.has(call) &&
             (isStatementCall(call, path, context) ||
-              (path.scope.isCatching && mayThrow(call, context)))
-            ? [{ call, position }]
+              (path.scope.isCatching && mayThrow(call, context))) &&
+            !(
+              ts.isObjectBindingPattern(name) &&
+              getChanged(call, path, context).some((symbol) => symbol === context.heap)
+            )
+            ? [{ call, part }]
             : [];
         })
       : [];
@@ -4457,10 +4487,7 @@ const bindIteration = (
         ),
       (next) =>
         ifThenElse(
-          apply("=", [
-            getElement(element, number(first.position + 1), context),
-            getUndefined(context),
-          ]),
+          apply("=", [first.part, getUndefined(context)]),
           translateCallStatement(first.call, path, context, frame, next),
           next(path, getUndefined(context)),
         ),
