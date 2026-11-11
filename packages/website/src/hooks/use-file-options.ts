@@ -1,5 +1,5 @@
 import type { FileOptions } from "@pierre/diffs/react";
-import { getCodeTheme } from "./use-highlighter";
+import { getCodeTheme, HIGHLIGHTER } from "./use-highlighter";
 import { useResolvedTheme } from "./use-resolved-theme";
 
 export type CodeFileOptions = FileOptions<undefined, undefined>;
@@ -10,7 +10,7 @@ const FILE_OPTIONS: Omit<CodeFileOptions, "theme"> = {
     ":host { background-color: transparent; --diffs-bg: transparent; --diffs-font-family: var(--font-mono); } [data-gutter], [data-column-number] { background: transparent; }",
   disableFileHeader: true,
   disableErrorHandling: true,
-  preferredHighlighter: "highlights",
+  preferredHighlighter: HIGHLIGHTER,
 };
 
 export const useFileOptions = (onPostRender?: () => void): CodeFileOptions => {
