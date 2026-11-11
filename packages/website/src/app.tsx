@@ -22,13 +22,13 @@ export const App = () => (
           <Link href="https://lamport.azurewebsites.net/tla/tla.html">TLA+</Link>.
         </p>
         <div className="flex gap-2">
-          <a href="/playground" className={buttonVariants({ variant: "primary" })}>
+          <a href="/playground" className={cn(buttonVariants(), "text-foreground")}>
             <Play weight="fill" className="size-3" />
             Playground
           </a>
           <a
             href="https://github.com/aidenybai/tla-ts"
-            className={cn(buttonVariants(), "text-foreground")}
+            className={buttonVariants({ variant: "primary" })}
           >
             <GitHubIcon />
             GitHub
