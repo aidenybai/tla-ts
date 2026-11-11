@@ -42,6 +42,10 @@ export class SmtKernel {
     this.asserted.push();
   }
 
+  getAssertions() {
+    return this.asserted.getFormulas();
+  }
+
   pop(numScopes: number) {
     this.context.pop(numScopes);
     for (let index = 0; index < numScopes; index++) this.asserted.pop();

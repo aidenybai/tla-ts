@@ -1,5 +1,5 @@
 // Ported from Z3 (src/opt/opt_nlsat.cpp), MIT license, see z3-license.txt.
-import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../errors";
+import { SmtCanceledError, SmtTacticError } from "../../../errors";
 import {
   type AstManager,
   FAMILY_ARITH,
@@ -12,6 +12,7 @@ import {
   OP_GE,
   OP_LE,
   OP_MUL,
+  OP_TO_INT,
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
@@ -167,10 +168,12 @@ export class NlsatOpt {
     private environment: TacticEnvironment,
   ) {}
 
+  // hard, T = objective, lower <= T <= upper, normalized for goal2nlsat. T only occurs in these
+  // assertions, so preprocessing can only lose it by eliminating the objective.
   private preprocess(
     hard: readonly number[],
     objective: number,
-    lower: Rational | null,
+    lower: Rational,
     upper: Rational | null,
   ): Preprocessed {
     const manager = this.manager;
@@ -183,8 +186,7 @@ export class NlsatOpt {
     const goal = new Goal(manager);
     for (const form of hard) goal.assert(form);
     goal.assert(pin(manager.mkApp(OP_EQ, [target, objective], SORT_BOOL)));
-    if (lower !== null)
-      goal.assert(pin(manager.mkApp(OP_GE, [target, manager.mkRealNumeral(lower)], SORT_BOOL)));
+    goal.assert(pin(manager.mkApp(OP_GE, [target, manager.mkRealNumeral(lower)], SORT_BOOL)));
     if (upper !== null)
       goal.assert(pin(manager.mkApp(OP_LE, [target, manager.mkRealNumeral(upper)], SORT_BOOL)));
     const goals = (() => {
@@ -203,6 +205,7 @@ export class NlsatOpt {
     return { status: isKept ? L_TRUE : L_UNDEF, goal: isKept ? result : null, objective: target };
   }
 
+  // The objective is nlsat's first variable and its maximization target.
   private load(goal: Goal, objective: number): Loaded | null {
     const solver = new NlsatSolver(this.manager.limit);
     const variable = solver.mkVar(false);
@@ -225,9 +228,10 @@ export class NlsatOpt {
       if (term === objective || !manager.isUninterpretedConst(term)) continue;
       const value = loaded.solver.getValue(variable);
       const isInt = manager.sorts[term] === SORT_INT;
-      if (isInt && !loaded.solver.am.isInt(value))
-        throw new SmtUnsupportedError("an integer variable that nlsat assigns a fraction");
-      const numeral = manager.mkAlgebraicNumeral(value, isInt ? SORT_INT : SORT_REAL);
+      const numeral =
+        isInt && !loaded.solver.am.isInt(value)
+          ? manager.mkApp(OP_TO_INT, [manager.mkAlgebraicNumeral(value)], SORT_INT)
+          : manager.mkAlgebraicNumeral(value, isInt ? SORT_INT : SORT_REAL);
       model.registerConst(manager.decls[term], numeral);
     }
     for (const [atom, boolVar] of loaded.a2b) {
@@ -258,14 +262,37 @@ export class NlsatOpt {
 
   private checkLimit(goal: Goal, objective: number, bound: Anum | null) {
     const loaded = this.load(goal, objective);
-    if (loaded === null) return { status: L_UNDEF, coverSup: null };
+    if (loaded === null) return L_UNDEF;
     return loaded.solver.checkLimit(loaded.variable, bound);
+  }
+
+  // Whether the objective is unbounded above over the assertions with objective >= lower.
+  proveUnbounded(hard: readonly number[], objective: number, lower: Rational) {
+    if (!isInNraFragment(this.manager, [...hard, objective])) return L_UNDEF;
+    const preprocessed = this.preprocess(hard, objective, lower, null);
+    if (preprocessed.status === L_FALSE) return L_FALSE;
+    if (preprocessed.goal === null) return L_UNDEF;
+    return this.checkLimit(preprocessed.goal, preprocessed.objective, null);
+  }
+
+  // Refuting T >= sup, at a model below an open candidate supremum, proves a strict upper bound,
+  // but not that feasible values approach it.
+  private proveStrictUpperBound(loaded: Loaded, sup: Anum, best: Anum, result: NlsatOptResult) {
+    const solver = loaded.solver;
+    if (solver.am.compare(sup, best) <= 0) return;
+    const literal = mkLowerBound(solver, loaded.variable, sup, false);
+    if (literal === null) return;
+    solver.mkExternalClause([literal], null);
+    if (solver.check() !== L_FALSE) return;
+    result.sup = solver.am.copy(sup);
+    [result.supLower, result.supUpper] = getBracket(solver, result.sup);
+    result.hasSup = true;
   }
 
   maximize(
     hard: readonly number[],
     objective: number,
-    lower: Rational | null,
+    lower: Rational,
     upper: Rational | null,
     maxRounds: number,
     supremumRlimit: number,
@@ -295,6 +322,8 @@ export class NlsatOpt {
     let best: Anum | null = null;
     let sup: Anum | null = null;
     let unboundedRounds = 0;
+    // A round without a candidate supremum is inconclusive, since bounds through later variables
+    // reach the objective only through conflicts, so five in a row probe for a feasible ray.
     for (let round = 0; round < maxRounds && this.manager.limit.inc(); round++) {
       status = solver.check();
       if (status !== L_TRUE) break;
@@ -306,15 +335,8 @@ export class NlsatOpt {
       result.model.incRef();
       if (sup === null) {
         if (++unboundedRounds > 4) {
-          const limit = upper === null ? this.checkLimit(goal, preprocessed.objective, null) : null;
-          if (limit?.status === L_TRUE) result.isUnbounded = true;
-          // Without the arithmetic climb, the cover's supremum stands in for its upper bound.
-          const coverSup = limit?.status === L_FALSE ? limit.coverSup : null;
-          if (coverSup !== null) {
-            result.model?.decRef();
-            const bracket = getBracket(solver, coverSup);
-            return this.maximize(hard, objective, lower, bracket[1], maxRounds, supremumRlimit);
-          }
+          if (upper === null && this.checkLimit(goal, preprocessed.objective, null) === L_TRUE)
+            result.isUnbounded = true;
           break;
         }
       } else unboundedRounds = 0;
@@ -329,23 +351,12 @@ export class NlsatOpt {
     result.value = best;
     [result.lower, result.upper] = getBracket(solver, best);
     result.isAttained = status === L_FALSE;
-    if (status === L_TRUE && sup !== null && am.compare(sup, best) > 0) {
-      const literal = mkLowerBound(solver, loaded.variable, sup, false);
-      if (literal !== null) {
-        solver.mkExternalClause([literal], null);
-        if (solver.check() === L_FALSE) {
-          result.sup = am.copy(sup);
-          [result.supLower, result.supUpper] = getBracket(solver, result.sup);
-          result.hasSup = true;
-        }
-      }
-    }
+    if (status === L_TRUE && sup !== null) this.proveStrictUpperBound(loaded, sup, best, result);
     const certifiedSup = result.sup;
     if (certifiedSup !== null)
       result.isOpen =
-        this.getBoundedLimit(
-          supremumRlimit,
-          () => this.checkLimit(goal, preprocessed.objective, certifiedSup).status,
+        this.getBoundedLimit(supremumRlimit, () =>
+          this.checkLimit(goal, preprocessed.objective, certifiedSup),
         ) === L_TRUE;
     return {
       status: result.isAttained || result.isUnbounded || result.isOpen ? L_TRUE : L_UNDEF,

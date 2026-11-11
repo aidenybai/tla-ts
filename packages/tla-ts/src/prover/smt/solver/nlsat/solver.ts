@@ -645,12 +645,11 @@ export class NlsatSolver {
   checkLimit(variable: number, bound: Anum | null) {
     if (variable !== 0 || this.invPerm[0] !== 0)
       throw new SmtInvariantError("nlsat checks the limit of the first variable");
-    if (this.isInt.some(Boolean)) return { status: L_UNDEF, coverSup: null };
+    if (this.isInt.some(Boolean)) return L_UNDEF;
     const limit = bound === null ? null : this.am.copy(bound);
     const savedMaxVar = this.maxVar;
     this.maxVar = variable;
     const tag = --this.nextTag;
-    let coverSup: Anum | null = null;
     try {
       if (limit !== null) {
         const isRational = this.am.isRational(limit);
@@ -663,7 +662,7 @@ export class NlsatSolver {
       while (true) {
         this.checkpoint();
         const status = this.check();
-        if (status !== L_TRUE) return { status, coverSup };
+        if (status !== L_TRUE) return status;
         const cube = this.projectModel();
         const sup = this.getCubeSup(cube);
         if (
@@ -671,9 +670,7 @@ export class NlsatSolver {
             ? sup === null
             : sup !== null && !sup.isAttained && this.am.compare(sup.sup, limit) === 0
         )
-          return { status: L_TRUE, coverSup: null };
-        if (sup !== null && (coverSup === null || this.am.compare(sup.sup, coverSup) > 0))
-          coverSup = sup.sup;
+          return L_TRUE;
         this.mkExternalClause(
           cube.literals.map((literal) => literal ^ 1),
           tag,

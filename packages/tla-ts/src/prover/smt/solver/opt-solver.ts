@@ -221,6 +221,10 @@ export class OptSolver {
     return result;
   }
 
+  getAssertions() {
+    return this.kernel.getAssertions();
+  }
+
   private checkBound(index: number, value: InfEps, result: MaximizeResult) {
     if (this.manager.limit.isExhausted()) return false;
     const bounded = this.boundValue(index, value);
