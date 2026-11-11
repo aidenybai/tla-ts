@@ -1,7 +1,3 @@
-// Encodes a prepared proof obligation in SMT-LIB as tlapm's SMT backend does (encode/ and
-// backend/smtlib.ml): TLA+ values share one sort Idv, set membership is the predicate TLA__Mem,
-// and each symbol the obligation uses brings the symbols and axioms encode/n_data.ml lists for it.
-
 import {
   applyBuiltin,
   at,
@@ -25,7 +21,6 @@ const isSameFieldSet = (left: RecordExpr, right: RecordExpr) =>
   left.fields.every((field) => right.fields.some((other) => other.name === field.name)) &&
   right.fields.every((field) => left.fields.some((other) => other.name === field.name));
 
-// mk_conj: e1 /\ (e2 /\ ...).
 const conjoinRight = (items: Expr[]): Expr =>
   items.length === 1
     ? items[0]
@@ -45,8 +40,6 @@ const decompose = (left: Expr, right: Expr, from: Expr): Expr => {
   );
 };
 
-// N_rewrite.simpl_receq, before Type.Synthesize: an equality of two record constructors with the same fields is the conjunction of
-// the equalities of their fields, paired by name.
 const simplifyRecordEqualities = (expression: Expr): Expr => {
   const inner = mapChildren(expression, simplifyRecordEqualities);
   if (
@@ -61,8 +54,7 @@ const simplifyRecordEqualities = (expression: Expr): Expr => {
   return at(decompose(inner.args[0], inner.args[1], inner), inner);
 };
 
-// N_rewrite.sort_recfields: a record's or a record set's fields in order. Like tlapm, it doesn't visit the
-// field values, so a record inside a record keeps the order it's written in.
+// tlapm doesn't visit the field values, so a record inside a record keeps its written order.
 const sortRecordFields = (expression: Expr): Expr =>
   expression.kind === "Record" || expression.kind === "Rect"
     ? {
@@ -71,8 +63,6 @@ const sortRecordFields = (expression: Expr): Expr =>
       }
     : mapChildren(expression, sortRecordFields);
 
-// N_axiomatize.collect: each symbol the obligation uses, in the order tlapm visits them, brings
-// the symbols and axioms it depends on, smallest name first.
 const collectSymbols = (entries: Entry[], encoder: Encoder) => {
   const state: CollectState = {
     recordFields: encoder.recordFields,
@@ -98,8 +88,6 @@ const collectSymbols = (entries: Entry[], encoder: Encoder) => {
       spec.axioms.forEach((entry) => axioms.set(getAxiomKey(entry), entry));
     }
   };
-  // A flattened symbol stands for a builtin applied to its first-order arguments and then its
-  // higher-order ones, so its higher-order text is visited after its arguments.
   const visit = (text: string) => {
     const tokens = text.match(/[()]|[^\s()]+/g) ?? [];
     const pending: { depth: number; text: string }[] = [];
@@ -132,12 +120,10 @@ type Encoder = ReturnType<typeof createEncoder>;
 
 const HYPOTHESIS: Mode = { isOmitted: false, polarity: "Negative", at: undefined, depth: 0 };
 
-// Prep.expand_defs substitutes visible definitions and pragmas, so they declare nothing.
 const isExpanded = (hyp: Extract<Hyp, { kind: "Defn" }>) =>
   hyp.definition.kind === "Bpragma" ||
   (hyp.definition.kind === "Operator" && hyp.visibility === "Visible");
 
-// Smtlib.is_sndord_fact: an ASSUME that declares an operator, which tlapm leaves out.
 const isSecondOrder = (expression: Expr) =>
   expression.kind === "Sequent" &&
   expression.sequent.context.some((hyp) => hyp.kind === "Fresh" && hyp.shape > 0);
@@ -147,11 +133,10 @@ interface EncodedContext {
   entries: Entry[];
 }
 
-// Declares each hypothesis's names and asserts its facts, in order, as Smtlib.pp_print_obligation.
 const encodeContext = (context: Hyp[], encoder: Encoder) =>
   context.reduce<EncodedContext>(
     (state, hyp) => {
-      const next = (binding: Binding, entries: Entry[] = []) => ({
+      const extend = (binding: Binding, entries: Entry[] = []) => ({
         env: encoder.push(state.env, binding),
         entries: [...state.entries, ...entries],
       });
@@ -163,16 +148,15 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
               ? { kind: "constant", symbol }
               : { kind: "operator", symbol, arity: hyp.shape };
           const declaration = declare(symbol, hyp.shape);
-          if (!hyp.domain || hyp.domainVisibility === "Hidden") return next(binding, [declaration]);
-          // Rewrite.elim_bounds: NEW x \in S is NEW x and the fact x \in S.
+          if (!hyp.domain || hyp.domainVisibility === "Hidden")
+            return extend(binding, [declaration]);
           const fact = `(assert (${MEM} ${symbol} ${encoder.encodeIdv(hyp.domain, state.env, HYPOTHESIS)}))`;
-          return next(binding, [declaration, ...encoder.getEntries(fact)]);
+          return extend(binding, [declaration, ...encoder.getEntries(fact)]);
         }
-        // Rewrite.elim_flex: a variable is two constants, the second for its primed value.
         case "Flex": {
           const symbol = encoder.getUniqueName(hyp.name);
           const primed = encoder.getUniqueName(`${hyp.name}_prime`);
-          return next({ kind: "variable", name: hyp.name, symbol, primed }, [
+          return extend({ kind: "variable", name: hyp.name, symbol, primed }, [
             declare(symbol, 0),
             declare(primed, 0),
           ]);
@@ -180,38 +164,38 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
         case "Defn": {
           const definition = hyp.definition;
           if (isExpanded(hyp))
-            return next({ kind: "unsupported", reason: "an expanded definition" });
+            return extend({ kind: "unsupported", reason: "an expanded definition" });
           if (definition.kind === "Instance")
-            return next({ kind: "unsupported", reason: "an instance" });
+            return extend({ kind: "unsupported", reason: "an instance" });
           if (definition.kind === "Recursive") {
             const symbol = encoder.getUniqueName(`CONSTANT_${definition.name}_`);
-            return next({ kind: "operator", symbol, arity: definition.shape }, [
+            return extend({ kind: "operator", symbol, arity: definition.shape }, [
               declare(symbol, definition.shape),
             ]);
           }
           if (definition.kind !== "Operator")
-            return next({ kind: "unsupported", reason: "a definition" });
+            return extend({ kind: "unsupported", reason: "a definition" });
           const body = definition.body;
           const params = body.kind === "Lambda" ? body.params : [];
           if (params.some((param) => param.shape > 0))
-            return next({
+            return extend({
               kind: "secondOrder",
               name: definition.name,
               shapes: params.map((param) => param.shape),
             });
           const symbol = encoder.getUniqueName(definition.name);
-          return next({ kind: "operator", symbol, arity: params.length }, [
+          return extend({ kind: "operator", symbol, arity: params.length }, [
             declare(symbol, params.length),
           ]);
         }
         case "Fact": {
           const binding: Binding = { kind: "unsupported", reason: "a reference to a fact" };
-          if (hyp.visibility === "Hidden") return next(binding);
+          if (hyp.visibility === "Hidden") return extend(binding);
           const isOmitted = isSecondOrder(hyp.expression);
           const entries = encoder.getEntries(
             `(assert ${encoder.encodeBool(hyp.expression, state.env, { ...HYPOTHESIS, isOmitted })})`,
           );
-          return next(
+          return extend(
             binding,
             isOmitted
               ? entries.map((entry) => (typeof entry === "string" ? { omitted: entry } : entry))
@@ -223,9 +207,6 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
     { env: undefined, entries: [] },
   );
 
-// Smtlib.pp_print_obligation: the logic, the sort, the builtin symbols by name, their axioms,
-// then the hypotheses in order, the goal last. It throws a TlaUnsupportedError for what the
-// encoding can't express, where tlapm's encoder fails.
 export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
   const simplified = sortRecordFields(
     simplifyRecordEqualities({ kind: "Sequent", sequent: prepared }),
@@ -258,8 +239,6 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
       return "omitted" in entry ? [] : entry.getLines(keys);
     }),
   ];
-  // Smtlib.collect_sorts declares Idv only when a symbol or a bound variable has that sort.
-  // Type.Synthesize gives that sort to each definition left in the context, though none is printed.
   const isIdvUsed =
     lines.some((line) => /\bIdv\b/.test(line)) ||
     sequent.context.some(

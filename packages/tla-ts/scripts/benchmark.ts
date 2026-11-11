@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getToolPath } from "./corpora";
 
 interface Measurement {
   milliseconds: number;
@@ -13,11 +14,7 @@ const BENCHMARKS_DIRECTORY = join(import.meta.dirname, "../benchmarks");
 const CLI_PATH = join(import.meta.dirname, "../dist/cli.js");
 const RUNS = Number(process.env.BENCHMARK_RUNS ?? 3);
 
-const jarPath = process.env.TLA2TOOLS_JAR;
-if (!jarPath || !existsSync(jarPath)) {
-  console.error("Set TLA2TOOLS_JAR to the path of tla2tools.jar");
-  process.exit(1);
-}
+const jarPath = getToolPath("TLA2TOOLS_JAR", "tla2tools.jar");
 if (!existsSync(CLI_PATH)) {
   console.error("Build the package first with pnpm build");
   process.exit(1);

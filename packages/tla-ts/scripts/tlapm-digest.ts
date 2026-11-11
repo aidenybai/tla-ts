@@ -14,7 +14,6 @@ export interface TlapmResult {
   obligations?: TlapmObligation[];
 }
 
-// text digests the obligation with its whitespace collapsed, and layout digests it as printed.
 export interface TlapmDigest {
   id: string;
   status: "ok" | "error";
@@ -24,7 +23,6 @@ export interface TlapmDigest {
 
 export const TLAPM_PATH = join(CONFORMANCE_DIRECTORY, "tlapm.json");
 
-// The obligations themselves take tens of megabytes, so only their digests are committed.
 export const TLAPM_TEXT_PATH = join(CONFORMANCE_DIRECTORY, ".tlapm.json");
 
 export const getDigest = (text: string) =>

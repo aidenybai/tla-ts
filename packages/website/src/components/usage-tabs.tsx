@@ -12,14 +12,14 @@ interface UsageTabsProps {
   api: string;
 }
 
-export const UsageTabs = ({ cli, api }: UsageTabsProps) => (
+export const UsageTabs = (props: UsageTabsProps) => (
   <Tabs.Root defaultValue="cli" className="flex flex-col gap-2">
     <TabList tabs={USAGE_TABS} />
     <Tabs.Panel value="cli" className="outline-none">
-      <CodeBlock language="shell" code={cli} />
+      <CodeBlock language="shell" code={props.cli} />
     </Tabs.Panel>
     <Tabs.Panel value="api" className="outline-none">
-      <CodeBlock language="typescript" code={api} />
+      <CodeBlock language="typescript" code={props.api} />
     </Tabs.Panel>
   </Tabs.Root>
 );

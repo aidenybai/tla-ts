@@ -1,6 +1,4 @@
-// Ported from Z3 (src/math/dd/pdd_interval.h), MIT license, see z3-license.txt. The interval of a
-// pdd under the intervals of its variables, as x*hi + lo by interval arithmetic. The distributed
-// variant, which nla does not call, is not ported.
+// Ported from Z3 (src/math/dd/pdd_interval.h), MIT license, see z3-license.txt.
 import {
   add,
   type DepInterval,

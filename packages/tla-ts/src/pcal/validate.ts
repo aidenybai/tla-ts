@@ -11,7 +11,6 @@ import { createPcalCharReader } from "./tokenize";
 import { translatePcalAlgorithm } from "./translate";
 import type { TlcVersion } from "../tlc/version";
 
-// Validator.ValidationResult.
 type PcalValidationResult =
   | "NO_PLUSCAL_EXISTS"
   | "NO_TRANSLATION_EXISTS"
@@ -29,15 +28,14 @@ const CHECKSUM_PATTERN = new RegExp(
   `\\\\\\* BEGIN TRANSLATION${SPACE}+\\(${SPACE}*([cC][hH]([eE][cC])?[kK][sS][uU][mM]\\([pP]([lL][uU][sS])?[cC][aA][lL]\\))${SPACE}*(=${SPACE}*"(?<pcal>[0-9A-Fa-f]*)"|\\\\in${SPACE}*STRING)${SPACE}*\\/\\\\${SPACE}*([cC][hH]([eE][cC])?[kK][sS][uU][mM]\\([tT][lL][aA]\\+?\\))${SPACE}*(=${SPACE}*"(?<tla>[0-9A-Fa-f]*)"|\\\\in${SPACE}*STRING)${SPACE}*\\)`,
 );
 
-// Validator.checksum: CRC32 of the string's bytes, in Long.toHexString's unpadded lowercase hex.
-// Only a spec with PlusCal needs node:zlib, so it loads then rather than at startup.
+// CRC32 in Long.toHexString's unpadded lowercase hex. Only a spec with PlusCal needs node:zlib,
+// so it loads then rather than at startup.
 const getChecksum = (text: string) =>
   process.getBuiltinModule("node:zlib").crc32(Buffer.from(text, "utf8")).toString(16);
 
 const reportUnrecoverableError = (session: PcalSession, message: string) =>
   session.log(`\nUnrecoverable error:\n -- ${message}.\n`);
 
-// PcalDebug.reportError: an UnrecoverablePositionedException names its statement's position.
 const reportPcalError = (session: PcalSession, error: PcalError) =>
   reportUnrecoverableError(
     session,
@@ -57,7 +55,6 @@ const removeTabs = (lines: string[]) =>
       )} `,
   );
 
-// trans.findTokenPair: the first line from start with first followed by second after spaces.
 const findTokenPair = (lines: string[], start: number, first: string, second: string) => {
   for (let index = Math.max(start, 0); index < lines.length; index++) {
     const line = lines[index];
@@ -75,8 +72,6 @@ interface PcalSearchLocation {
   column: number;
 }
 
-// ParseAlgorithm.GotoNextNonSpace: moves the location to the next character that isn't a space,
-// returning its line, or "" past the last line.
 const gotoNextNonSpace = (lines: string[], location: PcalSearchLocation) => {
   while (location.line < lines.length) {
     const line = lines[location.line];
@@ -88,8 +83,6 @@ const gotoNextNonSpace = (lines: string[], location: PcalSearchLocation) => {
   return "";
 };
 
-// ParseAlgorithm.NextSpaceCol and NextDelimiterCol: the first delimiter from column on, or the
-// end of the line.
 const getNextDelimiter = (line: string, column: number, delimiters: string) => {
   const index = Array.from(line.slice(column)).findIndex((char) => delimiters.includes(char));
   return index === -1 ? line.length : column + line.slice(column, column + index).length;
@@ -97,8 +90,6 @@ const getNextDelimiter = (line: string, column: number, delimiters: string) => {
 
 const isIdChar = (char: string) => /^[\p{L}\p{Nd}_]$/u.test(char);
 
-// ParseAlgorithm.FindToken: moves the location past the next occurrence of token that starts a
-// word and isn't followed by a letter or "_".
 const findToken = (lines: string[], location: PcalSearchLocation, token: string) => {
   while (location.line < lines.length) {
     const line = gotoNextNonSpace(lines, location);
@@ -114,12 +105,10 @@ const findToken = (lines: string[], location: PcalSearchLocation, token: string)
   return false;
 };
 
-// trans.CommandLineError.
 const reportCommandLineError = (session: PcalSession, message: string) =>
   reportUnrecoverableError(session, `Command-line error: ${message}`);
 
-// trans.parseAndProcessArguments for the options of a "PlusCal options" statement, which set the
-// translator's options for the rest of SANY's run.
+// These options set the translator's options for the rest of SANY's run.
 const processOptionArguments = (session: PcalSession, args: string[]) => {
   const params = session.params;
   const fairness = { isFirst: true, isExplicitNof: false };
@@ -208,7 +197,6 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
           reportCommandLineError(session, "Version number must follow `-version' option");
           return;
         }
-        // PcalParams.ProcessVersion.
         const version = getPcalVersionNumber(argument);
         if (version < 0 || version > PCAL_VERSION_WEIGHT) {
           reportUnrecoverableError(
@@ -248,7 +236,6 @@ const processOptionArguments = (session: PcalSession, args: string[]) => {
   }
 };
 
-// ParseAlgorithm.ProcessOptions: the location is just past "PlusCal".
 const processOptions = (session: PcalSession, lines: string[], location: PcalSearchLocation) => {
   gotoNextNonSpace(lines, location);
   location.column += "options".length;
@@ -277,9 +264,6 @@ const processOptions = (session: PcalSession, lines: string[], location: PcalSea
   processOptionArguments(session, args);
 };
 
-// ParseAlgorithm.uncomment: blanks out the comment delimiters and nested comments from the
-// algorithm's start to the "*)" that ends the comment it is in, dropping the rest of that line,
-// and returns the error it throws for a line that ends in a string.
 const uncomment = (lines: string[], startLine: number, startColumn: number) => {
   const scan = { depth: 0, isDone: false, isInString: false };
   for (let index = startLine; !scan.isDone && index < lines.length; index++) {
@@ -338,8 +322,6 @@ const throwIndexOutOfBounds = (index: number, size: number): never => {
   );
 };
 
-// Validator.validate: checks the PlusCal algorithm of the module whose lines are given, from its
-// first to its last, against the checksums its translation records.
 export const validatePcalModule = (
   session: PcalSession,
   specificationText: string[],

@@ -1,0 +1,35 @@
+(*---
+description: 'With a depth of one, the trace is one state where WF rules out stuttering, so nothing is rejected.'
+ref: tlc2/tool/liveness/LiveCheck1.java#checkTrace
+features: [liveness]
+outcome: success
+config: |
+  SPECIFICATION Spec
+  PROPERTY Prop
+  CHECK_DEADLOCK FALSE
+args:
+  - -simulate
+  - num=2
+  - -depth
+  - 1
+---*)
+---- MODULE simulate_depth_one ----
+EXTENDS Naturals
+VARIABLE x
+Next == x < 2 /\ x' = x + 1
+Spec == x = 0 /\ [][Next]_x /\ WF_x(Next)
+Prop == <>(x = 2)
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    2212:0 Implied-temporal checking--satisfiability problem has 1 branches.
+    2269:0 Computed 1 initial states...
+    2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+    2209:0 Progress(2) at <date>: 3 states generated, -1 distinct states found, -1 states left on queue.
+    2209:0 Progress(2) at <date>: 3 states generated, -1 distinct states found, -1 states left on queue.
+    2210:0 The number of states generated: 3
+    Simulation using seed 4 and aril 0
+---*)

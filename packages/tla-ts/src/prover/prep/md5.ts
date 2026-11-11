@@ -1,5 +1,3 @@
-// MD5 (RFC 1321), as OCaml's Digest computes it. tlapm names the operators it coalesces by
-// the digest of their printed form, so matching its SMT-LIB output needs the same digest.
 const SHIFTS = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
 
 const CONSTANTS = Array.from({ length: 64 }, (_value, index) =>

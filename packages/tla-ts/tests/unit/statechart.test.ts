@@ -23,21 +23,19 @@ const runCli = (args: string[], cwd: string) =>
     );
   });
 
-// The corpus of pstack's statechart skill (https://github.com/michael-denyer/pstack-claude, under the
-// MIT license in tests/fixtures/statechart/LICENSE),
-// with each call the skill makes to TLC and SANY and what Java's TLC nightly prints for it.
+// Corpus from pstack's statechart skill (https://github.com/michael-denyer/pstack-claude), MIT license, see tests/fixtures/statechart/LICENSE.
 describe("the CLI answers pstack's statechart skill like TLC", () => {
   describe.each(getStatechartSpecs())("for %s", (spec) => {
-    const { root, work, getArgs, normalize } = prepareStatechart(spec, "/lib/tla2tools.jar");
-    afterAll(() => rmSync(root, { recursive: true, force: true }));
+    const statechart = prepareStatechart(spec, "/lib/tla2tools.jar");
+    afterAll(() => rmSync(statechart.root, { recursive: true, force: true }));
     it.each([...readStatechartCalls(spec).entries()])("call %i", async (index, call) => {
-      const args = getArgs(call);
-      const result = await runCli(args, work);
-      expect(normalize(result.output)).toBe(readExpected(spec, call, index, "out"));
+      const args = statechart.getArgs(call);
+      const result = await runCli(args, statechart.work);
+      expect(statechart.normalize(result.output)).toBe(readExpected(spec, call, index, "out"));
       expect(result.status).toBe(call.status);
       const dump = readExpected(spec, call, index, "dot");
       if (dump !== undefined) {
-        expect(normalize(readFileSync(getDumpPath(args) ?? "", "utf8"))).toBe(dump);
+        expect(statechart.normalize(readFileSync(getDumpPath(args) ?? "", "utf8"))).toBe(dump);
       }
     });
   });

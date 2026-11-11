@@ -1,7 +1,4 @@
 // Ported from Zenon's mltoll.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-//
-// Translates the proof that the search finds into a low-level proof: the derived rules expand into
-// core rules, and each proof that the search reused becomes a lemma.
 
 import { TlaZenonError } from "../../errors";
 import type { Direction, Origin, Relations } from "./eqrel";
@@ -18,8 +15,7 @@ import type { Definition, Phrase } from "./parse";
 import type { Rule } from "./proof";
 import { getTlaLlProof } from "./tla/llproof";
 
-// The search's proofs, and the rule that only the translation builds.
-export type MlRule = Rule | { name: "notall" | "notallex"; args: [Expr] };
+type MlRule = Rule | { name: "notall" | "notallex"; args: [Expr] };
 
 export interface MlProof {
   conclusions: Expr[];
@@ -27,22 +23,17 @@ export interface MlProof {
   subproofs: MlProof[];
 }
 
-// A translated proof, with the hypotheses it uses that aren't conclusions of the node.
 export type Translated = [LlProof, Expr[]];
 
 interface TranslateContext {
   exprs: Expressions;
-  // Zenon's Index.get_number, which also names the formulas in the Isar output.
   getNumber: (expression: Expr) => number;
-  // The proofs that the search reused, which Zenon counts in mlrefc.
   sharedProofs: ReadonlySet<MlProof>;
   relations: Relations;
 }
 
 type RelationProperty = "reflexive" | "symmetric" | "transitive";
 
-// Zenon's Eqrel.hyp_kind: how to prove a hypothesis about a relation. A relation is also
-// symmetric or transitive when it's reflexive and transitive in the symmetric sense.
 type HypothesisKind =
   | { kind: "reflexive"; origin: Origin }
   | { kind: "symmetric"; origin: Origin }
@@ -61,7 +52,6 @@ export const isMetaName = (name: string) => name.startsWith(META_PREFIX);
 
 const isAlphanumeric = (char: string) => /^[A-Za-z0-9]$/.test(char);
 
-// Zenon's type_to_ident.
 const toIdentifier = (type: string) =>
   [...type]
     .map((char) =>
@@ -79,7 +69,6 @@ const getSingle = (proof: MlProof) => {
   return proof.subproofs[0];
 };
 
-// Zenon's Mlproof.make_node: the node's conclusions and those its subproofs leave open.
 const makeNode = (
   conclusions: Expr[],
   rule: MlRule,
@@ -119,7 +108,6 @@ const isDerived = (rule: MlRule) => {
   }
 };
 
-// The rules that tr_rule translates directly: the core rules and the extension rules named "".
 const CORE_RULES = new Set<string>([
   "close",
   "false",
@@ -150,7 +138,6 @@ const CORE_RULES = new Set<string>([
   "stringdiffrr",
 ]);
 
-// Zenon's Mltoll.translate: the lemmas in the order they were made, then the theorem.
 export const translateProof = (
   context: TranslateContext,
   phrases: Phrase[],
@@ -165,7 +152,6 @@ export const translateProof = (
 
   const equal = (left: Expr, right: Expr) => exprs.eapp("=", [left, right]);
 
-  // Zenon's tr_expr: metavariables become variables named after their quantifier.
   const translateExpr = (expression: Expr): Expr => {
     if (expression.metas.length === 0) return expression;
     const cached = translatedExprs.get(expression);
@@ -219,31 +205,30 @@ export const translateProof = (
           : exprs.elam(variable, type, body);
 
   const translateRule = (rule: MlRule): LlRule => {
-    const tr = translateExpr;
     switch (rule.name) {
       case "close":
-        return { kind: "axiom", formula: tr(rule.args[0]) };
+        return { kind: "axiom", formula: translateExpr(rule.args[0]) };
       case "close_refl":
-        return { kind: "noteq", term: tr(rule.args[0]) };
+        return { kind: "noteq", term: translateExpr(rule.args[0]) };
       case "close_sym": {
-        const right = tr(rule.args[1]);
-        return { kind: "eqsym", left: tr(rule.args[0]), right };
+        const right = translateExpr(rule.args[1]);
+        return { kind: "eqsym", left: translateExpr(rule.args[0]), right };
       }
       case "false":
         return { kind: "false" };
       case "not_true":
         return { kind: "nottrue" };
       case "not_not":
-        return { kind: "notnot", formula: tr(rule.args[0]) };
+        return { kind: "notnot", formula: translateExpr(rule.args[0]) };
       case "and":
       case "or":
       case "impl":
       case "equiv": {
-        const right = tr(rule.args[1]);
+        const right = translateExpr(rule.args[1]);
         return {
           kind: "connect",
           connective: RULE_CONNECTIVES[rule.name],
-          left: tr(rule.args[0]),
+          left: translateExpr(rule.args[0]),
           right,
         };
       }
@@ -251,57 +236,59 @@ export const translateProof = (
       case "not_impl":
       case "not_and":
       case "not_equiv": {
-        const right = tr(rule.args[1]);
+        const right = translateExpr(rule.args[1]);
         return {
           kind: "notconnect",
           connective: RULE_CONNECTIVES[rule.name],
-          left: tr(rule.args[0]),
+          left: translateExpr(rule.args[0]),
           right,
         };
       }
       case "ex": {
         const quantified = getBinder(rule.args[0], "ex");
-        const term = tr(exprs.etau(quantified.args[0], quantified.symbol, quantified.args[1]));
-        return { kind: "ex", quantified: tr(quantified), term };
+        const term = translateExpr(
+          exprs.etau(quantified.args[0], quantified.symbol, quantified.args[1]),
+        );
+        return { kind: "ex", quantified: translateExpr(quantified), term };
       }
       case "all": {
-        const term = tr(rule.args[1]);
-        return { kind: "all", quantified: tr(rule.args[0]), term };
+        const term = translateExpr(rule.args[1]);
+        return { kind: "all", quantified: translateExpr(rule.args[0]), term };
       }
       case "not_ex": {
         const negation = rule.args[0];
         if (negation.kind !== "not") throw new TlaZenonError("Zenon: not_ex without a negation");
-        const term = tr(rule.args[1]);
-        return { kind: "notex", quantified: tr(negation.args[0]), term };
+        const term = translateExpr(rule.args[1]);
+        return { kind: "notex", quantified: translateExpr(negation.args[0]), term };
       }
       case "p_not_p": {
-        const negative = tr(rule.args[1]);
-        return { kind: "pnotp", positive: tr(rule.args[0]), negative };
+        const negative = translateExpr(rule.args[1]);
+        return { kind: "pnotp", positive: translateExpr(rule.args[0]), negative };
       }
       case "not_equal": {
-        const right = tr(rule.args[1]);
-        return { kind: "notequal", left: tr(rule.args[0]), right };
+        const right = translateExpr(rule.args[1]);
+        return { kind: "notequal", left: translateExpr(rule.args[0]), right };
       }
       case "definition": {
         if (rule.definition.kind !== "real")
           throw new TlaZenonError("Zenon: a pseudo-definition in tr_rule");
-        const unfolded = tr(rule.args[1]);
+        const unfolded = translateExpr(rule.args[1]);
         return {
           kind: "definition",
           name: rule.definition.name,
-          folded: tr(rule.args[0]),
+          folded: translateExpr(rule.args[0]),
           unfolded,
         };
       }
       case "cut":
-        return { kind: "cut", formula: tr(rule.args[0]) };
+        return { kind: "cut", formula: translateExpr(rule.args[0]) };
       case "congruence_lr":
       case "congruence_rl": {
-        const right = tr(rule.args[2]);
-        const left = tr(rule.args[1]);
+        const right = translateExpr(rule.args[2]);
+        const left = translateExpr(rule.args[1]);
         return {
           kind: rule.name === "congruence_lr" ? "congruencelr" : "congruencerl",
-          context: tr(rule.args[0]),
+          context: translateExpr(rule.args[0]),
           left,
           right,
         };
@@ -309,10 +296,10 @@ export const translateProof = (
       case "notall": {
         const negation = rule.args[0];
         const quantified = getBinder(negation.kind === "not" ? negation.args[0] : negation, "all");
-        const term = tr(
+        const term = translateExpr(
           exprs.etau(quantified.args[0], quantified.symbol, exprs.enot(quantified.args[1])),
         );
-        return { kind: "notall", quantified: tr(quantified), term };
+        return { kind: "notall", quantified: translateExpr(quantified), term };
       }
       case "notallex": {
         const lambda = getBinder(rule.args[0], "lam");
@@ -344,7 +331,10 @@ export const translateProof = (
       case "stringdifflr":
       case "stringdiffrl":
       case "stringdiffrr": {
-        const [first, firstValue, second, secondValue] = rule.args;
+        const first = rule.args[0];
+        const firstValue = rule.args[1];
+        const second = rule.args[2];
+        const secondValue = rule.args[3];
         const isFirstLeft = rule.name === "stringdiffll" || rule.name === "stringdifflr";
         const isSecondLeft = rule.name === "stringdiffll" || rule.name === "stringdiffrl";
         const firstConclusion = isFirstLeft ? equal(first, firstValue) : equal(firstValue, first);
@@ -366,7 +356,6 @@ export const translateProof = (
     }
   };
 
-  // Zenon's get_params: the free taus of a lemma's conclusions, each with its type.
   const getParams = (accumulated: [string, Expr][], expression: Expr): [string, Expr][] => {
     const merge = (type: string, term: Expr): [string, Expr][] =>
       accumulated.some((param) => param[1] === term) ? accumulated : [[type, term], ...accumulated];
@@ -435,7 +424,6 @@ export const translateProof = (
   const isSharedProof = (proof: MlProof) =>
     context.sharedProofs.has(proof) && !lemmaNumbers.has(proof);
 
-  // Zenon's get_sub: the subproofs, and the union of their extras from the right.
   const translateAll = (proofs: MlProof[]): [LlProof[], Expr[]] => {
     const translated = proofs.map(translate);
     return [
@@ -444,7 +432,6 @@ export const translateProof = (
     ];
   };
 
-  // A node of recomp_conj, with the formulas it removes from its subproof's conclusions.
   const recompose = (
     conclusion: Expr,
     rule: LlRule,
@@ -518,12 +505,11 @@ export const translateProof = (
     }
   };
 
-  // Zenon's recomp_disj: consumes the translated subproofs, one for each disjunct.
   const recompDisj = (subs: Translated[], formula: Expr): [LlProof, Expr[], Translated[]] => {
     const node = (
       conclusion: Expr,
       connectiveName: Connective,
-      negated: boolean,
+      isNegated: boolean,
       left: Expr,
       right: Expr,
       first: [LlProof, Expr[], Translated[]],
@@ -540,7 +526,12 @@ export const translateProof = (
             difference(second[0].conclusions, [secondRemoved]),
           ),
         ),
-        rule: { kind: negated ? "notconnect" : "connect", connective: connectiveName, left, right },
+        rule: {
+          kind: isNegated ? "notconnect" : "connect",
+          connective: connectiveName,
+          left,
+          right,
+        },
         subproofs: [first[0], second[0]],
       },
       difference(union(first[1], second[1]), [extra]),
@@ -643,7 +634,6 @@ export const translateProof = (
     return [subs[0][0], subs[0][1], subs.slice(1)];
   };
 
-  // The constructors of Zenon's Mlproof, for the proofs that the translation builds.
   const makeClose = (formula: Expr) =>
     makeNode([formula, exprs.enot(formula)], { name: "close", args: [formula] }, [], []);
   const makeCloseRefl = (relation: string, term: Expr) =>
@@ -704,7 +694,6 @@ export const translateProof = (
     const instance = exprs.substitute([[binder.args[0], terms[0]]], binder.args[1]);
     return makeAll(quantified, terms[0], makeAlls(instance, terms.slice(1), subproof));
   };
-  // Zenon's make_impls: the implications from `hypotheses` to `conclusion`, and their proof.
   const makeImplies = (
     hypotheses: Expr[],
     conclusion: Expr,
@@ -737,8 +726,6 @@ export const translateProof = (
       [first, second],
     );
 
-  // Zenon's Eqrel.get_refl_hyp, get_sym_hyp and get_trans_hyp: the hypothesis that states a
-  // property of a relation, which the translation proves from the hypotheses that implied it.
   const relationHypotheses = new Map<string, Expr>();
   const hypothesisKinds = new Map<Expr, HypothesisKind>();
   const getRelationHypothesis = (property: RelationProperty, relation: string) => {
@@ -795,7 +782,6 @@ export const translateProof = (
     return hypothesis;
   };
 
-  // Zenon's inst_nall: the instance of a negated universal at its counterexample.
   const instantiateNegation = (negation: Expr): [Expr, Expr] => {
     if (negation.kind !== "not") throw new TlaZenonError("Zenon: inst_nall without a negation");
     const binder = getBinder(negation.args[0], "all");
@@ -804,7 +790,6 @@ export const translateProof = (
     return [exprs.substitute([[binder.args[0], witness]], body), witness];
   };
 
-  // Zenon's decompose_disj: closes each literal of a disjunction with one of `forms`.
   const decomposeDisjunction = (formula: Expr, forms: Expr[]): MlProof => {
     const visit = (disjunct: Expr) => decomposeDisjunction(disjunct, forms);
     const getForm = (form: Expr) => {
@@ -867,8 +852,6 @@ export const translateProof = (
     }
   };
 
-  // Zenon's decompose_conj: follows `directions` to the conjunct that states a property, and
-  // instantiates the quantifiers at `variables` with `witnesses`, the others with metavariables.
   const decomposeConjunction = (
     position: number,
     formula: Expr,
@@ -986,8 +969,6 @@ export const translateProof = (
     return decomposeDisjunction(formula, forms);
   };
 
-  // Zenon's Eqrel.get_proof: proves a relation hypothesis from the hypotheses that implied it,
-  // and returns the proof with those hypotheses.
   const getRelationProof = (hypothesis: Expr): [MlProof, Expr[]] => {
     const kind = hypothesisKinds.get(hypothesis);
     if (kind === undefined)
@@ -1124,7 +1105,6 @@ export const translateProof = (
 
   const relate = (relation: string, left: Expr, right: Expr) => exprs.eapp(relation, [left, right]);
 
-  // Zenon's make_direct_trans: r(a, b), r(b, c) / r(a, c) / (proof).
   const makeDirectTrans = (relation: string, a: Expr, b: Expr, c: Expr, proof: MlProof) => {
     const hypothesis = getRelationHypothesis("transitive", relation);
     const ab = relate(relation, a, b);
@@ -1137,21 +1117,18 @@ export const translateProof = (
     );
     return makeAlls(hypothesis, [a, b, c], implied[1]);
   };
-  // Zenon's make_direct_nsym: -r(a, b) / -r(b, a) / (proof).
   const makeDirectNotSym = (relation: string, a: Expr, b: Expr, proof: MlProof) => {
     const hypothesis = getRelationHypothesis("symmetric", relation);
     const ab = relate(relation, a, b);
     const ba = relate(relation, b, a);
     return makeAlls(hypothesis, [b, a], makeImply(ba, ab, proof, makeClose(ab)));
   };
-  // Zenon's make_direct_sym_neq: a != b / b != a / (proof).
   const makeSymmetricDisequality = (a: Expr, b: Expr, proof: MlProof) => {
     const reflexive = equal(b, b);
     const refuted = makeCloseRefl("=", b);
     const swapped = makePNotP(reflexive, exprs.enot(equal(a, b)), [proof, refuted]);
     return makeCut(reflexive, swapped, refuted);
   };
-  // Zenon's make_direct_sym_eq: a = b / b = a / (proof).
   const makeSymmetricEquality = (a: Expr, b: Expr, proof: MlProof) => {
     const ab = equal(a, b);
     return makeCut(equal(b, a), proof, makeSymmetricDisequality(b, a, makeClose(ab)));
@@ -1265,7 +1242,6 @@ export const translateProof = (
     return [proof.subproofs[0], proof.subproofs[1], proof.subproofs[2]];
   };
 
-  // A derived rule's expansion, with the hypotheses it relies on that no phrase may state.
   const translateWith = (expanded: MlProof, hypotheses: Expr[]): Translated => {
     const translated = translate(expanded);
     return [translated[0], union(hypotheses, translated[1])];
@@ -1295,7 +1271,8 @@ export const translateProof = (
       }
       case "close_sym": {
         const hypothesis = getRelationHypothesis("symmetric", rule.relation);
-        const [a, b] = rule.args;
+        const a = rule.args[0];
+        const b = rule.args[1];
         const ab = relate(rule.relation, a, b);
         const ba = relate(rule.relation, b, a);
         const implied = makeImply(ab, ba, makeClose(ab), makeClose(ba));
@@ -1310,7 +1287,8 @@ export const translateProof = (
       }
       case "refl": {
         const hypothesis = getRelationHypothesis("reflexive", rule.relation);
-        const [a, b] = rule.args;
+        const a = rule.args[0];
+        const b = rule.args[1];
         const reflexive = relate(rule.relation, a, a);
         const negated = exprs.enot(relate(rule.relation, a, b));
         const closed = makePNotP(reflexive, negated, [makeCloseRefl("=", a), getSingle(proof)]);
@@ -1325,7 +1303,8 @@ export const translateProof = (
           return translate(makeSymmetricDisequality(negative.args[0], negative.args[1], node));
         }
         const hypothesis = getRelationHypothesis("symmetric", rule.relation);
-        const [a, b] = positive.args;
+        const a = positive.args[0];
+        const b = positive.args[1];
         const ba = relate(rule.relation, b, a);
         const node = makePNotP(ba, rule.args[1], [proof.subproofs[0], proof.subproofs[1]]);
         const implied = makeImply(rule.args[0], ba, makeClose(rule.args[0]), node);
@@ -1335,8 +1314,11 @@ export const translateProof = (
       case "trans_sym": {
         const positive = getRelation(rule.args[0]);
         const relation = positive.symbol;
-        const [a, b] = positive.args;
-        const [c, d] = getRelation(rule.args[1]).args;
+        const a = positive.args[0];
+        const b = positive.args[1];
+        const negative = getRelation(rule.args[1]);
+        const c = negative.args[0];
+        const d = negative.args[1];
         const first = proof.subproofs[0];
         const second = proof.subproofs[1];
         if (relation === "=")
@@ -1365,7 +1347,8 @@ export const translateProof = (
       case "trans_eq_sym": {
         const negative = getRelation(rule.args[2]);
         const relation = negative.symbol;
-        const [c, d] = negative.args;
+        const c = negative.args[0];
+        const d = negative.args[1];
         const a = rule.args[0];
         const b = rule.args[1];
         const proofs = getThree(proof);
@@ -1402,7 +1385,6 @@ export const translateProof = (
     }
   };
 
-  // Zenon's make_ex.
   const makeExistential = (existential: Expr, subproof: MlProof) => {
     const binder = getBinder(existential, "ex");
     const witness = exprs.etau(binder.args[0], binder.symbol, binder.args[1]);
@@ -1410,7 +1392,6 @@ export const translateProof = (
     return makeNode([existential], { name: "ex", args: [existential] }, [[instance]], [subproof]);
   };
 
-  // Zenon's find_diff: the context in which two formulas differ, and the two subterms.
   const findDiff = (variable: VarExpr, left: Expr, right: Expr): [Expr, Expr, Expr] => {
     if (left === right) throw new TlaZenonError("Zenon: find_diff on equal formulas");
     if (left.kind === "app" && right.kind === "app" && left.symbol === right.symbol) {
@@ -1452,7 +1433,6 @@ export const translateProof = (
     return [variable, left, right];
   };
 
-  // Zenon's translate_pseudo_def: instantiates the defining hypothesis, then rewrites with it.
   const translatePseudoDefinition = (
     proof: MlProof,
     definition: Extract<Definition, { kind: "pseudo" }>,
@@ -1535,8 +1515,6 @@ export const translateProof = (
   const translated = translate(proof);
   const isCharged = (formula: Expr) =>
     !phrases.some((phrase) => phrase.kind === "hyp" && phrase.formula === formula);
-  // Zenon's discharge_extra: cuts each hypothesis about a relation that the phrases don't state,
-  // and proves it from the hypotheses that do.
   const discharged = translated[1].filter(isCharged).reduce((current: LlProof, extra): LlProof => {
     const relationProof = getRelationProof(extra);
     const proved = translate(relationProof[0]);

@@ -3,8 +3,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { decideIsabelle } from "../../src/prover/isabelle/decide";
 
-// Theories tlapm wrote for Isabelle, named after their module and obligation, with Isabelle's verdict
-// on each from the conformance recording.
 const DIRECTORY = join(import.meta.dirname, "../fixtures/isabelle");
 
 const readTheory = (name: string) => readFileSync(join(DIRECTORY, `${name}.thy`), "utf8");
@@ -33,14 +31,11 @@ describe("decideIsabelle gives Isabelle's verdict on tlapm's theories", () => {
     expect(decide(readTheory("Level_test-1"))).toBe("unknown");
   });
 
-  // tla-ts's encoder wrote this one, since tlapm proved the obligation with SMT. The simplifier
-  // keeps growing the goal, and Isabelle breaks down after two minutes.
   it("answers unknown when the simplifier runs out of stack", () => {
     expect(decide(readTheory("Paxos-109"))).toBe("unknown");
   }, 30_000);
 });
 
-// Isabelle fails on each of these too.
 describe("decideIsabelle doesn't prove what doesn't follow", () => {
   it.each([
     "AllocatorImplementation_proof-33",

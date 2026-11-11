@@ -1,7 +1,3 @@
-// The checks of the TLA+ extension's rules that rewrite a subterm in place: evaluating a function
-// application, DOMAIN, IF, CASE, Len, or a formula used as a term. Each rule names the context of
-// the subterm as a lambda, (\x. context).
-
 import type { PlainRuleName } from "../proof";
 import { getFields } from "./records";
 import {
@@ -28,7 +24,6 @@ import {
   type Term,
 } from "./terms";
 
-// The term that fills the hole of a context to give a formula.
 const getFilled = (lambda: Term, formula: Term) => {
   ensure(lambda.kind === "lam");
   const hole = lambda.args[0].symbol;
@@ -68,7 +63,6 @@ const getCaseBranches = (lambda: Term, args: Term[], condition: Term): Term[][] 
   ];
 };
 
-// A formula used as a term splits into the cases where it equals TRUE and FALSE.
 const getBoolCaseSpec = (
   checker: Checker,
   args: Term[],

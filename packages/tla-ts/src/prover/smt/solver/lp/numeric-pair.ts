@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/numeric_pair.h), MIT license, see z3-license.txt. The value x + δy
-// of a column, where δ is a positive infinitesimal that encodes strict bounds.
+// Ported from Z3 (src/math/lp/numeric_pair.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 
 export class Impq {
@@ -30,7 +29,6 @@ export class Impq {
     return new Impq(this.x.neg(), this.y.neg());
   }
 
-  // Lexicographic, as δ is smaller than any positive rational.
   compare(other: Impq) {
     const byX = this.x.compare(other.x);
     return byX !== 0 ? byX : this.y.compare(other.y);
@@ -48,7 +46,6 @@ export class Impq {
     return this.y.isZero() && this.x.isInt();
   }
 
-  // floor and ceil of numeric_pair: x + δy rounded, for a positive δ smaller than any gap.
   floor() {
     if (!this.x.isInt()) return this.x.floor();
     return this.y.isNegative() ? this.x.sub(Rational.one) : this.x;

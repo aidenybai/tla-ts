@@ -44,16 +44,14 @@ import {
   type PcalTokenizerState,
 } from "./tokenize";
 
-// The translator's state that its Java code keeps in static fields, which SANY never resets
-// between the modules it validates: the options, the tokenizer's state, ParseAlgorithm's
-// lookahead buffer and last token, and whether a macro's parsing was cut short by an error.
+// The Java keeps this state in static fields, which SANY never resets between the modules it
+// validates.
 export interface PcalSession {
   params: PcalParams;
   tokenizer: PcalTokenizerState;
   lookahead: { tokens: string[]; columns: number[]; lines: number[] };
   lastToken: { column: number; line: number; text: string };
   isInMacro: boolean;
-  // ToolIO.out.println, which PcalDebug's reports go to.
   log: (line: string) => void;
 }
 
@@ -73,7 +71,6 @@ export const createPcalSession = (
   log,
 });
 
-// ParseAlgorithm's static fields that Init resets for each algorithm.
 interface PcalParserState {
   lookaheadSize: number;
   addedLabels: string[];
@@ -99,27 +96,22 @@ interface PcalParseResult {
   hasDefaultInitialization: boolean;
 }
 
-// PcalParams.DefaultVarInit: the value of a variable declared without one.
 const createDefaultVarInit = () =>
   createNormalizedPcalExpr([[createPcalToken("defaultInitValue", 0, 0)]]);
 
-// ParseAlgorithm.Union.
 const getUnion = (first: string[], second: string[]) => [
   ...first,
   ...second.filter((name, index) => !first.includes(name) && second.indexOf(name) === index),
 ];
 
-// ParseAlgorithm.HasEmptyIntersection.
 const isDisjoint = (first: string[], second: string[]) =>
   !second.some((name) => first.includes(name));
 
-// ParseAlgorithm.Copy: replaces the contents of target, which callers share.
+// Replaces the contents of target in place, since callers share it.
 const copyInto = (source: string[], target: string[]) => {
   target.splice(0, target.length, ...source);
 };
 
-// ParseAlgorithm.getAlgorithm: parses the algorithm the reader is at, just after "--algorithm" or
-// "--fair", adds the labels it needs, and expands its macros.
 export const parsePcalAlgorithm = (
   session: PcalSession,
   reader: PcalCharReader,
@@ -128,7 +120,6 @@ export const parsePcalAlgorithm = (
   const params = session.params;
   const lookahead = session.lookahead;
   const lastToken = session.lastToken;
-  // ParseAlgorithm.Init.
   const state: PcalParserState = {
     lookaheadSize: 0,
     addedLabels: [],
@@ -148,7 +139,6 @@ export const parsePcalAlgorithm = (
     omitPC: params.inputVersionNumber >= 1500,
   };
 
-  // ParseAlgorithm.ParsingError.
   const throwParsingError = (message: string): never => {
     throw new PcalError(`${message}\n    line ${lastToken.line}, column ${lastToken.column}`);
   };
@@ -190,7 +180,6 @@ export const parsePcalAlgorithm = (
     return lookahead.tokens[tokenNumber - 1];
   };
 
-  // ParseAlgorithm.PeekPastAlgToken: the rest of the line after the next tokenNumber tokens.
   const peekPastAlgToken = (tokenNumber: number) => {
     if (tokenNumber < state.lookaheadSize) {
       throw new PcalBugError(
@@ -204,7 +193,7 @@ export const parsePcalAlgorithm = (
     return peekPcalReader(reader);
   };
 
-  // ParseAlgorithm.getExprInternal: an expression's delimiter becomes the next token.
+  // An expression's delimiter becomes the next token.
   const getExpr = (isDefineBlock = false) => {
     if (state.lookaheadSize !== 0) {
       throw new PcalBugError("ParseAlgorithm: GetExpr called after lookahead");
@@ -217,7 +206,7 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  // ParseAlgorithm.GobbleThis: a missing ";" is fine before a token that can't start a statement.
+  // A missing ";" is fine before a token that can't start a statement.
   const gobbleThis = (expected: string, alternate?: string) => {
     if (expected === ";") {
       const next = peekAtAlgToken(1);
@@ -328,7 +317,6 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  // ParseAlgorithm.IsLabelNext: an identifier followed by ":" but not ":=".
   const isLabelNext = () => {
     const keywords =
       "while if assert print else elsif either or end with when await skip call return goto";
@@ -546,7 +534,6 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  // ParseAlgorithm.InnerGetWith: "with x = e, y \in f" nests a with for each variable.
   const getWith = (depth: number): PcalWith => {
     if (depth === 0) {
       gobbleThis("with");
@@ -620,7 +607,6 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  // The arguments of a call or macro call, through its ")" and ";".
   const getCallArgs = () => {
     const args: PcalExpr[] = [];
     if (peekPastAlgToken(0)[0] !== ")") {
@@ -801,7 +787,6 @@ export const parsePcalAlgorithm = (
     };
   };
 
-  // ParseAlgorithm.NeedsLabel: the label root and the next number no label of the algorithm has.
   const getUnusedLabel = (): string => {
     const label = `${params.labelRoot}${state.nextLabelNum}`;
     state.nextLabelNum += 1;
@@ -815,9 +800,7 @@ export const parsePcalAlgorithm = (
     state.addedLabelsLocs.push(getPcalLocation(stmt));
   };
 
-  // ParseAlgorithm.InnerAddLabels: labels the statements that must start a step, tracking the
-  // variables assigned since the last label in outAssigned. True when the statement after the
-  // sequence needs a label.
+  // True when the statement after the sequence needs a label.
   const addLabels = (
     stmts: PcalStmt[],
     isFirstLabeled: boolean,
@@ -936,8 +919,6 @@ export const parsePcalAlgorithm = (
     return progress.hasLabel || progress.isNextLabeled;
   };
 
-  // ParseAlgorithm.FixStmtSeq: splits each compound statement's sequences into the statements
-  // before their first label and the labeled statements from it on.
   const fixStmtSeq = (stmts: PcalStmt[]) => {
     const split = (sequence: PcalStmt[]) => {
       const index = sequence.findIndex((stmt) => stmt.lbl !== "");
@@ -972,7 +953,6 @@ export const parsePcalAlgorithm = (
     });
   };
 
-  // ParseAlgorithm.InnerMakeLabeledStmtSeq: groups the statements into labeled statements.
   const makeLabeledStmts = (stmts: PcalStmt[]) => {
     const result: PcalLabeledStmt[] = [];
     stmts.forEach((stmt) => {
@@ -998,9 +978,8 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  // ParseAlgorithm.ClassifyStmtSeq for one statement: 0 for one that may have a statement after
-  // it in the step, 1 for a call, return or goto, which ends a step, and 2 for one with a labeled
-  // statement inside. An if or either without labels inside becomes an If or Either.
+  // 0 for a statement that may have another after it in the step, 1 for a call, return or goto,
+  // which ends a step, and 2 for one with a labeled statement inside.
   const classifyStmt = (stmts: PcalStmt[], index: number): number => {
     const node = stmts[index];
     switch (node.kind) {
@@ -1077,7 +1056,6 @@ export const parsePcalAlgorithm = (
     }
   };
 
-  // ParseAlgorithm.ClassifyStmtSeq: a statement that ends a step can only end its sequence.
   const classifyStmtSeq = (stmts: PcalStmt[]): number => {
     for (let index = 0; index < stmts.length; index++) {
       const stmtClass = classifyStmt(stmts, index);
@@ -1090,7 +1068,6 @@ export const parsePcalAlgorithm = (
     return 0;
   };
 
-  // ParseAlgorithm.AddLabelsToStmtSeq followed by MakeLabeledStmtSeq.
   const makeLabeledStmtSeq = (stmts: PcalStmt[]) => {
     addLabels(stmts, true, false, [], []);
     const result = makeLabeledStmts(stmts);
@@ -1098,8 +1075,6 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  // ParseAlgorithm.SubstituteInStmt: a copy of a macro's statement with the macro's arguments
-  // for its parameters, which records the position of the macro call.
   const substituteInStmt = (
     stmt: PcalStmt,
     args: PcalExpr[],
@@ -1228,8 +1203,8 @@ export const parsePcalAlgorithm = (
     }
   };
 
-  // ParseAlgorithm.SubstituteInSingleAssign: a parameter assigned to becomes the variable its
-  // argument starts with, and the rest of the argument goes before the subscript.
+  // A parameter assigned to becomes the variable its argument starts with, and the rest of the
+  // argument goes before the subscript.
   const substituteInSingleAssign = (
     assign: PcalSingleAssign,
     args: PcalExpr[],
@@ -1276,7 +1251,6 @@ export const parsePcalAlgorithm = (
     return result;
   };
 
-  // ParseAlgorithm.ExpandMacrosInStmtSeq: replaces each macro call with the macro's body.
   const expandMacrosInStmtSeq = (stmts: PcalStmt[], macros: PcalMacro[]) => {
     const expanded = stmts.flatMap((node) => {
       switch (node.kind) {
@@ -1328,8 +1302,7 @@ export const parsePcalAlgorithm = (
     });
   };
 
-  // ParseAlgorithm.checkBody: a body that is a single labeled "while TRUE" without labels inside
-  // lets the translation omit pc.
+  // A body that is a single labeled "while TRUE" without labels inside lets the translation omit pc.
   const checkBody = (body: PcalStmt[]) => {
     if (body.length === 0) return;
     const keepPC = () => {
@@ -1350,7 +1323,6 @@ export const parsePcalAlgorithm = (
     if (hasLabeled) state.omitPC = false;
   };
 
-  // ParseAlgorithm.AddedMessagesError.
   const throwAddedLabels = (): never => {
     const header =
       state.addedLabels.length > 1

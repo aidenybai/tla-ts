@@ -1,7 +1,4 @@
 // Ported from Zenon's phrase.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-//
-// Splits the input into definitions and hypotheses. A hypothesis that defines a symbol, such as
-// x = e or \A a, b : f(a, b) <=> e, becomes a definition that the prover unfolds.
 
 import type { Expr } from "./expr";
 import type { Definition, Phrase } from "./parse";
@@ -13,7 +10,6 @@ export interface Hypothesis {
 
 const hasName = (env: Expr[], name: string) => env.some((variable) => variable.symbol === name);
 
-// Zenon's check_args: the arguments are variables, and exactly the quantified ones.
 const isParameterList = (env: Expr[], args: Expr[]) => {
   if (!args.every((arg) => arg.kind === "var")) return false;
   const envNames = env.map((variable) => variable.symbol).sort();
@@ -50,8 +46,6 @@ interface Shape {
   body: Expr;
 }
 
-// The ways a formula can define a symbol, in the order Zenon tries them: a definiendum that is an
-// application with its parameters, or a constant.
 const getShapes = (expression: Expr): Shape[] => {
   const sides =
     expression.kind === "equiv" || (expression.kind === "app" && expression.symbol === "=")
@@ -79,8 +73,7 @@ const stripForall = (expression: Expr, env: Expr[]): { env: Expr[]; body: Expr }
     ? stripForall(expression.args[1], [expression.args[0], ...env])
     : { env, body: expression };
 
-// Zenon's is_def, then make_def. The two try the shapes with different conditions, so the shape
-// that defines the symbol can differ from the one that qualifies the formula.
+// Zenon's is_def and make_def try the shapes with different conditions, so the defining shape can differ from the qualifying one.
 const getDefinition = (
   predefined: string[],
   hypothesis: Hypothesis,
@@ -145,8 +138,6 @@ const isLooping = (symbol: string, symbols: string[], dependencies: Dependency[]
   (symbols.includes(symbol) ||
     isLooping(symbol, followDependencies(symbols, dependencies), dependencies));
 
-// Zenon's separate. Definitions come before hypotheses, each in input order, except where a
-// symbol is defined twice: then neither formula defines it.
 export const separate = (predefined: string[], phrases: Phrase[]) => {
   let dependencies: Dependency[] = [];
   const multiple: string[] = [];
@@ -165,7 +156,6 @@ export const separate = (predefined: string[], phrases: Phrase[]) => {
     }
     const symbol = definition.symbol;
     const dependency: Dependency = [symbol, getFreeSymbols(definition.params, [], definition.body)];
-    // The lists are reversed, as in Zenon, so a definition's index 0 is the latest.
     const previous = definitions.findIndex(
       (existing) => existing.kind === "pseudo" && existing.symbol === symbol,
     );

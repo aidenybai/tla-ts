@@ -1,7 +1,4 @@
-// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license,
-// see z3-license.txt. The eq_der of qe-lite: destructive equality resolution, which removes the
-// variables of a quantifier that its body defines by an equality, with the solve plugins for
-// Booleans and integer arithmetic.
+// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see z3-license.txt.
 import {
   KIND_VAR,
   OP_ADD,
@@ -24,7 +21,6 @@ import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { BetaReducer } from "./rewriter-tpl";
 import { assign, assignOwned, release } from "./expr-ref";
 
-// A summand of a linear equation and whether it is on the left-hand side.
 interface SignedExpr {
   isLeft: boolean;
   expr: number;
@@ -32,11 +28,9 @@ interface SignedExpr {
 
 interface SolvedVar {
   variable: number;
-  // Held by a reference that the receiver releases.
   term: number;
 }
 
-// eq_der: destructive equality resolution on a conjunction.
 export class EqDer {
   private subst: BetaReducer;
   private substMap: RefVector;
@@ -47,7 +41,6 @@ export class EqDer {
   private var2pos: number[] = [];
   private inx2var: number[] = [];
   private order: number[] = [];
-  // is_variable_test: the variables of the quantifier at hand are those below this index.
   numVars = 0;
 
   constructor(private manager: AstManager) {
@@ -62,13 +55,11 @@ export class EqDer {
     return manager.kinds[expr] === KIND_VAR && manager.values[expr] < this.numVars;
   }
 
-  // operator(): reduce_var_set until nothing changes.
   apply(conjs: RefVector) {
     while (this.reduceVarSet(conjs));
     this.newExprs.reset();
   }
 
-  // ~eq_der.
   release() {
     this.rewriter.release();
     this.newExprs.reset();
@@ -78,7 +69,6 @@ export class EqDer {
 
   private reduceVarSet(conjs: RefVector) {
     const manager = this.manager;
-    // flatten_definitions: a false conjunct is the whole conjunction.
     const falseConj = conjs.items.find((conj) => manager.isFalse(conj));
     if (falseConj !== undefined) {
       conjs.set(0, falseConj);
@@ -105,8 +95,6 @@ export class EqDer {
     return this.removeUnconstrained(conjs) || isReduced;
   }
 
-  // find_definitions: one definition per variable, preferring values, then ground terms, then
-  // constants.
   private findDefinitions(args: number[]) {
     const manager = this.manager;
     let numDefs = 0;
@@ -158,7 +146,6 @@ export class EqDer {
     return { numDefs, largestIndex };
   }
 
-  // is_var_eq: a variable and its definition from a literal, through the solve plugin of the sort.
   private getVarEq(expr: number, vars: number[], terms: RefVector) {
     const manager = this.manager;
     const isEq = manager.getOp(expr) === OP_EQ;
@@ -174,7 +161,6 @@ export class EqDer {
     }
     const sort = isEq ? manager.sorts[manager.getArg(expr, 0)] : manager.sorts[expr];
     if (sort !== SORT_BOOL && sort !== SORT_INT) return false;
-    // solve_plugin::operator(): the arithmetic plugin only sees positive equalities.
     const isNegated = manager.isNot(expr);
     const solved =
       sort === SORT_INT
@@ -192,7 +178,6 @@ export class EqDer {
     return isFound;
   }
 
-  // arith_solve_plugin::is_invertible_const: a numeral that a variable's coefficient may be.
   private getInvertibleConst(expr: number): bigint | undefined {
     const manager = this.manager;
     if (manager.getOp(expr) === OP_UMINUS) {
@@ -203,7 +188,6 @@ export class EqDer {
     return value === 1n || value === -1n ? value : undefined;
   }
 
-  // arith_solve_plugin::is_invertible_mul: a variable times an invertible coefficient.
   private getInvertibleMul(expr: number) {
     const manager = this.manager;
     if (this.isVariable(expr)) return { variable: expr, coefficient: 1n };
@@ -219,7 +203,6 @@ export class EqDer {
     return undefined;
   }
 
-  // arith_solve_plugin::solve: lhs = rhs as variable = term.
   private solveLinear(lhs: number, rhs: number): SolvedVar | undefined {
     const manager = this.manager;
     if (manager.sorts[lhs] !== SORT_INT) return undefined;
@@ -246,8 +229,6 @@ export class EqDer {
           continue;
         }
         done.push(...todo);
-        // mk_term: the other summands times the inverse of the coefficient, negated on the
-        // variable's side.
         const coefficient = 1n / mul.coefficient;
         const isLeft = item.isLeft;
         const terms = new RefVector(manager);
@@ -273,7 +254,6 @@ export class EqDer {
     return undefined;
   }
 
-  // arith_solve_plugin::mk_eq_core.
   private mkArithEqCore(inputLeft: number, inputRight: number) {
     const manager = this.manager;
     const solved = this.solveLinear(inputLeft, inputRight);
@@ -306,8 +286,6 @@ export class EqDer {
     return result;
   }
 
-  // arith_solve_plugin::try_int_mul_solve: k*y = x becomes y = x div k and x mod k = 0, or x = 0
-  // when k is zero.
   private tryIntMulSolve(atom: number) {
     const manager = this.manager;
     if (manager.sorts[manager.getArg(atom, 0)] !== SORT_INT) return -1;
@@ -341,7 +319,6 @@ export class EqDer {
     return result;
   }
 
-  // arith_solve_plugin::solve on a positive equality.
   private solveArithEq(atom: number) {
     const manager = this.manager;
     const mulSolved = this.tryIntMulSolve(atom);
@@ -361,7 +338,6 @@ export class EqDer {
     return result;
   }
 
-  // basic_solve_plugin::solve.
   private solveBasic(atom: number, isPositive: boolean): number {
     const manager = this.manager;
     let result = assign(manager, -1, atom);
@@ -409,8 +385,6 @@ export class EqDer {
     return negated;
   }
 
-  // der_sort_vars: the definitions in an order where each only uses the ones before it, dropping
-  // the definitions on a cycle.
   private sortVars() {
     const manager = this.manager;
     const definitions = this.map;
@@ -489,7 +463,6 @@ export class EqDer {
     }
   }
 
-  // is_unconstrained: an integer variable that no other conjunct mentions.
   private isUnconstrained(variable: number, term: number, position: number, conjs: number[]) {
     const manager = this.manager;
     const index = manager.values[variable];
@@ -500,7 +473,6 @@ export class EqDer {
     );
   }
 
-  // remove_unconstrained: a disequality on an unconstrained integer variable holds.
   private removeUnconstrained(conjs: RefVector) {
     const manager = this.manager;
     let isReduced = false;

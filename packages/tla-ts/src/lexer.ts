@@ -234,7 +234,6 @@ const SYMBOL_OPERATORS = [
   "?",
 ];
 
-// The Unicode forms of the operators SANY's grammar, javacc/tla+.jj, reads, as their ASCII forms.
 const UNICODE_OPERATORS = new Map([
   ["∃", "\\E"],
   ["∀", "\\A"],
@@ -320,13 +319,13 @@ const NUMBER_BASES = new Map([
   ["h", 16],
 ]);
 
-// A numeral token keeps its text as typed, such as \hFF, so errors can quote it as TLC does.
+// A numeral token keeps its text, such as \hFF, so errors can quote it as TLC does.
 export const getNumeralValue = (text: string) =>
   text.startsWith("\\")
     ? parseInt(text.slice(2), NUMBER_BASES.get(text[1].toLowerCase()))
     : Number(text);
 
-const MODULE_HEADER = /-{4,}[ \t]*MODULE\b/;
+const MODULE_HEADER = /-{4,} *MODULE\b/;
 
 const CODE_TAB = 9;
 const CODE_NEWLINE = 10;
@@ -352,7 +351,6 @@ const IDENTIFIER = DIGIT | LETTER | UNDERSCORE;
 
 const LOWERCASE = "abcdefghijklmnopqrstuvwxyz";
 
-// The classes each ASCII character belongs to, as a bit each.
 const CHARACTER_CLASSES = new Uint8Array(128);
 new Map([
   ["0123456789", DIGIT | HEX_DIGIT],
@@ -382,8 +380,7 @@ interface OperatorMatch {
   length: number;
 }
 
-// The symbol operators that start with each character, in the order of SYMBOL_OPERATORS, which
-// lists a longer operator before the operators it starts with.
+// In the order of SYMBOL_OPERATORS, which lists a longer operator before its prefixes.
 const SYMBOL_OPERATORS_BY_START = new Map<number, string[]>();
 SYMBOL_OPERATORS.forEach((symbol) => {
   const start = symbol.charCodeAt(0);
@@ -430,8 +427,7 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
   return code === CODE_BACKSLASH ? { text: "\\", length: 1 } : undefined;
 };
 
-// TLC's configuration parser reads its tokens with SANY's lexer, so it reads a Unicode operator, or
-// ℕ, ℤ, or ℝ, as one token, which it compares as written with the words it expects.
+// TLC's config parser reads ℕ, ℤ, ℝ, or a Unicode operator as one token, compared as written.
 const UNICODE_NAMES = new Set(["ℕ", "ℤ", "ℝ"]);
 export const matchUnicodeToken = (source: string, index: number): OperatorMatch | undefined => {
   const token = [source.slice(index, index + 2), source[index]].find(
@@ -450,14 +446,15 @@ export const skipWhile = (
   return end.value;
 };
 
-// The length of a step number such as <1>a., <+>, or <2>*., which SANY reads as one token wherever
-// it appears.
-const matchStep = (source: string, index: number) => {
+// SANY reads a step number as one token anywhere, and tlapm reads no name after <*> or <+>.
+const matchStep = (source: string, index: number, isTlapm: boolean) => {
   const isImplicit = source[index + 1] === "+" || source[index + 1] === "*";
   const levelEnd = isImplicit ? index + 2 : skipClass(source, index + 1, DIGIT);
   if (levelEnd === index + 1 || source[levelEnd] !== ">") return 0;
-  const nameEnd = skipClass(source, levelEnd + 1, IDENTIFIER);
-  const isDash = nameEnd === levelEnd + 1 && (source[nameEnd] === "*" || source[nameEnd] === "-");
+  const isNamed = !isImplicit || !isTlapm;
+  const nameEnd = isNamed ? skipClass(source, levelEnd + 1, IDENTIFIER) : levelEnd + 1;
+  const isDash =
+    isNamed && nameEnd === levelEnd + 1 && (source[nameEnd] === "*" || source[nameEnd] === "-");
   return (
     skipWhile(source, isDash ? nameEnd + 1 : nameEnd, (character) => character === ".") - index
   );
@@ -480,8 +477,7 @@ const BASED_NUMBER_DIGITS = new Map([
   ["h", HEX_DIGIT],
 ]);
 
-// The length of a based numeral such as \b01 or \hFF at index, or 0.
-const matchBasedNumber = (source: string, index: number) => {
+export const matchBasedNumber = (source: string, index: number) => {
   if (source.charCodeAt(index) !== CODE_BACKSLASH) return 0;
   const digits = BASED_NUMBER_DIGITS.get(source.charAt(index + 1).toLowerCase());
   if (digits === undefined) return 0;
@@ -489,7 +485,7 @@ const matchBasedNumber = (source: string, index: number) => {
   return end === index + 2 ? 0 : end - index;
 };
 
-export const tokenize = (source: string): Token[] => {
+export const tokenize = (source: string, isTlapm = false): Token[] => {
   const headerMatch = MODULE_HEADER.exec(source);
   if (!headerMatch)
     throw new TlaSyntaxError("Expected a module header such as ---- MODULE Name ----");
@@ -553,8 +549,8 @@ export const tokenize = (source: string): Token[] => {
       continue;
     }
     if (code === CODE_BACKSLASH && source.charCodeAt(cursor.index + 1) === CODE_STAR) {
-      const lineEnd = source.indexOf("\n", cursor.index);
-      advanceOver((lineEnd === -1 ? source.length : lineEnd) - cursor.index);
+      const lineEnd = skipWhile(source, cursor.index, (next) => next !== "\n" && next !== "\r");
+      advanceOver(lineEnd - cursor.index);
       continue;
     }
     if (code === CODE_OPEN_PAREN && source.charCodeAt(cursor.index + 1) === CODE_STAR) {
@@ -575,13 +571,8 @@ export const tokenize = (source: string): Token[] => {
     }
     if (code === CODE_DASH && source.startsWith("----", cursor.index)) {
       const length = skipWhile(source, cursor.index, (next) => next === "-") - cursor.index;
-      if (
-        source
-          .slice(cursor.index + length)
-          .trimStart()
-          .startsWith("MODULE")
-      )
-        cursor.moduleDepth++;
+      const keyword = skipWhile(source, cursor.index + length, (next) => next === " ");
+      if (source.startsWith("MODULE", keyword)) cursor.moduleDepth++;
       pushToken("Separator", "----", length);
       continue;
     }
@@ -663,7 +654,7 @@ export const tokenize = (source: string): Token[] => {
       continue;
     }
     if (code === CODE_LESS_THAN) {
-      const stepLength = matchStep(source, cursor.index);
+      const stepLength = matchStep(source, cursor.index, isTlapm);
       if (stepLength > 0) {
         pushToken("Step", source.slice(cursor.index, cursor.index + stepLength), stepLength);
         continue;

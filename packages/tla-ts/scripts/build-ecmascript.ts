@@ -1,14 +1,3 @@
-// Builds ecmascript/ESCore.tla from the parts in ecmascript/parts, in file order. TLA+ defines an
-// operator before its use, so the module declares every operator that takes arguments RECURSIVE,
-// which lets the parts call each other in any order. It also builds ecmascript/ESNames.tla, which
-// maps each N("...") and SV("...") string the parts use to its UTF-16 code units.
-// A part adds a family of built-ins with three definitions, so it needn't edit another part:
-//   <Family>Builtin(s, f, m, this, args, nt)  runs the built-in with id <<"<Family>", m>>
-//   <Family>Intrinsics                        the intrinsic objects it allocates
-//   <Family>Properties                        the properties it gives the intrinsics
-// The build joins them into CallBuiltin, Intrinsics, and RealmProperties.
-// Usage: bun scripts/run.ts build-ecmascript
-
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig } from "../src/config";
@@ -22,7 +11,6 @@ const parts = readdirSync(PARTS_DIRECTORY)
   .toSorted()
   .map((name) => ({ name, text: readFileSync(join(PARTS_DIRECTORY, name), "utf8") }));
 
-// An operator definition starts a line with its name and parameters, as in `Get(o, key, s) ==`.
 const getOperators = (text: string) =>
   [...text.matchAll(/^([A-Z][A-Za-z0-9_]*)\((.*)\)\s*==/gm)].map((match) => ({
     name: match[1],
@@ -88,9 +76,6 @@ writeFileSync(
   ].join("\n"),
 );
 
-// A definition is a line that starts with a name, with the comment lines above it. TLA+ needs a
-// definition without parameters, or with an operator parameter, before its first use, so those
-// come first.
 const getDefinitions = (text: string) =>
   text
     .split(/\n(?=(?:\\\*.*\n)*[A-Z][A-Za-z0-9_]*(?:\(.*\))?\s*==)/)
@@ -108,8 +93,6 @@ const getName = (definition: string) =>
     definition.split("\n").find((line) => !line.startsWith("\\*")) ?? "",
   )?.[1];
 
-// A step `XThen(a, b, r) ==` takes the result r it waits on last. A suspended r passes on with a
-// frame [step |-> "XThen", args |-> <<a, b>>], from which ResumeFrame runs the step again.
 const STEP_PATTERN = /^([A-Z][A-Za-z0-9_]*Then)\(([^()]*)\)\s*==/;
 const getStep = (definition: string) => {
   const match = STEP_PATTERN.exec(
@@ -145,7 +128,6 @@ operators.push({ name: "ResumeFrame", parameters: ["frame", "r"] });
 
 const definitions = [...partDefinitions.map(addSuspension), ...joinedDefinitions, resumeFrame];
 
-// Orders the eager definitions so each follows the eager definitions it names.
 const eagerDefinitions = definitions.filter(isEager);
 const eagerNames = new Set(eagerDefinitions.map(getName));
 const orderedEagerDefinitions: string[] = [];
@@ -173,7 +155,6 @@ writeFileSync(
     "\\* with any value.",
     "CONSTANTS None, Empty, Absent",
     "",
-    // An operator that takes an operator argument is defined before its use instead.
     ...operators
       .filter((operator) => operator.parameters.every((parameter) => !parameter.includes("(")))
       .map(
@@ -189,7 +170,6 @@ writeFileSync(
   ].join("\n"),
 );
 
-// Loads the module as the test262 runner does, so a name no part defines fails the build.
 createEnvironment(parseConfig("CONSTANTS None = None Empty = Empty Absent = Absent"), {
   source: "---- MODULE Check ----\nEXTENDS ESCore\n====",
   loadModule: (name) => {

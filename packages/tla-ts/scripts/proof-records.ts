@@ -6,21 +6,17 @@ import { collapseWhitespace, getDigest } from "./tlapm-digest";
 
 export type BackendVerdict = "unsat" | "sat" | "unknown";
 
-// One backend run: a digest of the input tlapm sent and what the backend answered. tlapm frames an
-// obligation as unsat when the backend proves it. Zenon and Isabelle only ever find a proof or give up.
 interface BackendRecord<Verdict extends BackendVerdict = BackendVerdict> {
   input: string;
   verdict: Verdict;
 }
 
-// tlapm proves a trivial obligation itself, without a backend.
 interface TrivialObligationRecord {
   id: number;
   loc: string;
   status: "trivial";
 }
 
-// tlapm's default SMT method writes .smt inputs, and its Z3 method writes .smt2 inputs.
 interface DecidedObligationRecord {
   id: number;
   loc: string;
@@ -36,13 +32,11 @@ interface ProvedObligationRecord extends DecidedObligationRecord {
   status: "proved";
 }
 
-// tlapm's reason is "false" when a backend refuted the obligation, "timeout", or its own message.
 interface FailedObligationRecord extends DecidedObligationRecord {
   status: "failed";
   reason?: string;
 }
 
-// tlapm stopped before a backend answered.
 interface UnfinishedObligationRecord {
   id: number;
   loc: string;
@@ -57,7 +51,6 @@ export type ObligationRecord =
 
 export type ObligationStatus = ObligationRecord["status"];
 
-// LS4 inputs don't name their obligation, so they're kept per module, in the order of their digests.
 export interface ModuleProofRecord {
   id: string;
   error?: string;
@@ -67,30 +60,23 @@ export interface ModuleProofRecord {
 
 export const PROOFS_PATH = join(CONFORMANCE_DIRECTORY, "proofs.json");
 
-// The backend inputs themselves take hundreds of megabytes, so only their digests are committed.
 export const PROOF_INPUTS_DIRECTORY = join(CONFORMANCE_DIRECTORY, ".proofs");
 
-// Comments carry tlapm's version and the module's path, which differ between machines.
 const removeComments = (text: string) =>
   text
     .split("\n")
     .filter((line) => !line.startsWith(";"))
     .join("\n");
 
-// Digests an SMT-LIB or Zenon input.
 export const getInputDigest = (text: string) => getDigest(collapseWhitespace(removeComments(text)));
 
-// An Isabelle theory with its comments removed and its theory name, which tlapm takes from a
-// temporary file, made the same.
 export const normalizeTheory = (text: string) =>
   collapseWhitespace(
     text.replace(/\(\*[\s\S]*?\*\)/g, "").replace(/\btlapm_[0-9a-f]+\b/g, "tlapm"),
   );
 
-// Isabelle theories carry the module's path in comments and a hashed theory name.
 export const getIsabelleDigest = (text: string) => getDigest(normalizeTheory(text));
 
-// tlapm names each atom of a PTL formula with a hash, so atoms are renumbered by first appearance.
 export const getLs4Digest = (text: string) => {
   const atoms = new Map<string, string>();
   return getDigest(
@@ -119,8 +105,6 @@ export const getLs4Verdict = (output: string): BackendVerdict => {
   return answer === undefined ? "unknown" : answer.startsWith("UNSAT") ? "unsat" : "sat";
 };
 
-// The records of the modules whose ids contain the --filter argument, or of every module, less
-// those whose ids contain the --skip argument.
 export const readProofRecords = (): ModuleProofRecord[] => {
   if (!existsSync(PROOFS_PATH)) {
     console.error("Run conformance:record-proofs first");
@@ -138,8 +122,6 @@ export const readProofRecords = (): ModuleProofRecord[] => {
 
 const libraryModules = getLibraryModules();
 
-// Reads a module the corpus module at path uses, where tlapm finds it: in the module's directory,
-// then the -I library, then tlapm's own standard library.
 const readModule = (path: string, name: string) => {
   const file = [
     join(dirname(path), `${name}.tla`),
@@ -151,15 +133,30 @@ const readModule = (path: string, name: string) => {
 
 export const getModuleLoader = (path: string) => (name: string) => readModule(path, name)?.source;
 
-// The obligations of a corpus module. A submodule reports its own obligations, before the module
-// that contains it.
 export const getModuleObligations = (path: string) =>
   getObligations([{ file: path, source: readFileSync(path, "utf8") }], (name) =>
     readModule(path, name),
   ).flatMap((result) => result.obligations);
 
-// Prints how many results have each verdict, then the ones worth a look, all of them with
-// --verbose and otherwise the first 20.
+export const getObligationsById = (path: string) =>
+  new Map(getModuleObligations(path).map((obligation) => [obligation.id, obligation]));
+
+export interface EncodeResult<Verdict extends string> {
+  module: string;
+  id: number;
+  verdict: Verdict;
+  reason?: string;
+  expected?: string;
+  actual?: string;
+}
+
+export const describeEncodeResult = (result: EncodeResult<string>) =>
+  [
+    `${result.verdict} ${result.module} #${result.id}${result.reason ? `: ${result.reason}` : ""}`,
+    ...(result.expected === undefined ? [] : [`  tlapm:  ${result.expected.slice(0, 300)}`]),
+    ...(result.actual === undefined ? [] : [`  tla-ts: ${result.actual.slice(0, 300)}`]),
+  ].join("\n");
+
 export const printResults = <Result extends { verdict: string }>(
   results: Result[],
   verdicts: readonly Result["verdict"][],

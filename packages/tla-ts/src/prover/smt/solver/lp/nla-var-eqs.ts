@@ -1,9 +1,7 @@
 // Ported from Z3 (src/math/lp/var_eqs.h, src/math/lp/nla_defs.h), MIT license, see z3-license.txt.
-// Equivalences between signed lp variables, x = y or x = -y, with the bounds that justify them. A
-// signed variable is the index 2 * var + sign.
-import { Dependency } from "./dependency";
+import type { Dependency } from "./dependency";
 import type { Explanation } from "./explanation";
-import { TrailStack, UnionFind, UnionFindHandler } from "./union-find";
+import { TrailStack, UnionFind, type UnionFindHandler } from "./union-find";
 import { shrink } from "../array";
 
 export const mkSignedVar = (lpVar: number, isNegated: boolean) => lpVar * 2 + (isNegated ? 1 : 0);
@@ -11,7 +9,6 @@ export const getSignedVarVar = (signedVar: number) => signedVar >> 1;
 export const isSignedVarNegated = (signedVar: number) => (signedVar & 1) === 1;
 export const negateSignedVar = (signedVar: number) => signedVar ^ 1;
 
-// An eq_justification: its dependencies up to the first null.
 type EqJustification = Dependency[];
 
 interface EqEdge {
@@ -25,7 +22,7 @@ interface VarFrame {
 }
 
 export class VarEqs {
-  readonly trail = new TrailStack();
+  private readonly trail = new TrailStack();
   private eqTrail: [number, number][] = [];
   private eqTrailScopes: number[] = [];
   private eqs: EqEdge[][] = [];
@@ -56,7 +53,7 @@ export class VarEqs {
     this.trail.popScope(count);
   }
 
-  merge(v1: number, v2: number, justification: EqJustification) {
+  private merge(v1: number, v2: number, justification: EqJustification) {
     if (v1 === v2 || getSignedVarVar(this.find(v1)) === getSignedVarVar(this.find(v2))) return;
     const maxIndex = Math.max(v1, v2) + 2;
     while (this.eqs.length < maxIndex) this.eqs.push([]);
@@ -86,11 +83,6 @@ export class VarEqs {
     return this.find(mkSignedVar(lpVar, false));
   }
 
-  isRoot(lpVar: number) {
-    return getSignedVarVar(this.findVar(lpVar)) === lpVar;
-  }
-
-  // explain_bfs: the justifications along a shortest path from v1 to v2.
   explain(v1: number, v2: number, explanation: Explanation) {
     if (v1 === v2) return;
     const todo: VarFrame[] = [{ signedVar: v1, index: 0 }];
@@ -124,18 +116,5 @@ export class VarEqs {
   explainVar(lpVar: number, explanation: Explanation) {
     const signedVar = mkSignedVar(lpVar, false);
     this.explain(this.find(signedVar), signedVar, explanation);
-  }
-
-  // The members of the class of a signed variable, from the variable around the union-find cycle.
-  *getClass(signedVar: number) {
-    if (signedVar >= this.unionFind.numVars) {
-      yield signedVar;
-      return;
-    }
-    let current = signedVar;
-    do {
-      yield current;
-      current = this.unionFind.next(current);
-    } while (current !== signedVar);
   }
 }

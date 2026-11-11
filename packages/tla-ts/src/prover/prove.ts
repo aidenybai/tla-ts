@@ -1,5 +1,3 @@
-// Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
-
 import { TlaProverError, TlaUnsupportedError } from "../errors";
 import { getChildren, mapHyp, type Expr, type Hyp, type Sequent } from "../obligations/expression";
 import { getObligations, type PrintedObligation } from "../obligations";
@@ -65,7 +63,6 @@ export interface ProveOptions {
   workers?: number;
 }
 
-// What one method concluded about an obligation, as tlapm's toolbox messages report it.
 export interface ProofAttempt {
   method: Method;
   isProved: boolean;
@@ -80,21 +77,16 @@ interface ProofReport {
   attempts: ProofAttempt[];
 }
 
-// Why a method left an obligation unproved: a prover decided so, or tla-ts couldn't try it.
 interface MethodFailure {
   reason: string;
   isDecided: boolean;
 }
 
-// The SMT encoder numbers the CASE errors it standardizes across the run, so an obligation it
-// encodes one in waits for every earlier obligation and starts from the count they leave.
 interface ObligationTask {
   done: Promise<void>;
   session: { initial: number; current: EncodingSession } | undefined;
 }
 
-// What tlapm keeps across one run's obligations. An obligation waits for the last earlier one with
-// its fingerprint, so obligations prove concurrently as they would in turn.
 interface ProveRun {
   tasks: ObligationTask[];
   results: Map<string, Map<string, ProofAttempt>>;
@@ -104,15 +96,10 @@ interface ProveRun {
   decide: DecidePool["decide"];
 }
 
-// The text Prep.ship sends a backend after Prep.normalize_expand. It throws a TlaUnsupportedError
-// for what tla-ts can't encode.
 type Encoder = (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
 
-// Action.process_obligation, the frontend for every backend but LS4, Isabelle included, then
-// Prep.flatten.
 const shipFirstOrder = (sequent: Sequent) => flatten(processObligation(sequent));
 
-// Prep.gen_smt_solve writes the resource budget before the encoding.
 const encodeSmtProblem: Encoder = (_id, sequent, method, session) =>
   (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
   encodeSmt(shipFirstOrder(sequent), session);
@@ -121,15 +108,11 @@ const ENCODERS: Record<string, Encoder> = {
   smt: encodeSmtProblem,
   z3: encodeSmtProblem,
   zenon: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
-  // tlapm names the theory after its temporary file, and tla-ts after the obligation.
   isabelle: (id, sequent, method) =>
     encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
-  // Pltl.process_obligation is LS4's frontend.
   ls4: (_id, sequent) => encodePtl(sequent),
 };
 
-// The frontends and Prep.flatten add no CASE without OTHER, so the SMT encoder standardizes one
-// only in an obligation that has one after Prep.normalize_expand.
 const hasIncompleteCase = (expression: Expr): boolean =>
   (expression.kind === "Case" && expression.other === undefined) ||
   getChildren(expression).some(hasIncompleteCase);
@@ -168,8 +151,6 @@ const getUnprovedReport = (
   attempts: ProofAttempt[] = [],
 ): ProofReport => ({ obligation: { ...getObligationBase(obligation), status, reason }, attempts });
 
-// A failed obligation as tlapm prints it: Prep.normalize_expand for a new failure, and
-// Toolbox.normalize, which keeps pragmas, for a reused one.
 export const formatNormalized = (obligation: PrintedObligation, isReused: boolean) =>
   `${formatObligation(
     isReused
@@ -177,7 +158,6 @@ export const formatNormalized = (obligation: PrintedObligation, isReused: boolea
       : normalizeExpand(obligation),
   )}\n`;
 
-// The theory of the proofs Isabelle found. tlapm also writes Zenon's proofs there.
 export const encodeProofTheory = (
   name: string,
   reports: ProofReport[],
@@ -199,7 +179,6 @@ export const encodeProofTheory = (
     ),
   );
 
-// The text one backend receives for an obligation, for comparing with tlapm's.
 export const encodeForBackend = (
   obligation: PrintedObligation,
   prover: string,
@@ -215,8 +194,6 @@ export const encodeForBackend = (
   return encode(obligation.id, normalizeExpand(obligation, methods), method, session);
 };
 
-// The SMT encoder's session for an obligation, from the count of CASE errors every earlier
-// obligation leaves.
 const getSession = async (run: ProveRun, index: number) => {
   const task = run.tasks[index];
   if (task.session) return task.session.current;
@@ -232,10 +209,6 @@ const getSession = async (run: ProveRun, index: number) => {
   return task.session.current;
 };
 
-// Prep.ship: the provers the step cites, or tlapm's default ones when it cites none, each tried in
-// turn until one proves the obligation. Prep.already_processed reuses what a prover concluded for
-// an earlier obligation with the same fingerprint: a proof, or a failure within at least as much
-// time. Unless the first prover's proof is reused, a trivial obligation needs no prover.
 const proveWithBackends = async (
   obligation: PrintedObligation,
   index: number,
@@ -255,13 +228,11 @@ const proveWithBackends = async (
     obligation: { ...getObligationBase(obligation), status: "proved", prover },
     attempts,
   });
-  // Prep.already_processed, which forgets the fingerprint's results on each call under --nofp.
   const getPrior = (method: Method) => {
     if (!run.isFingerprinted(obligation)) run.results.delete(fingerprint);
     const prior = run.results.get(fingerprint)?.get(method.prover);
     return prior?.method.tactic === method.tactic ? prior : undefined;
   };
-  // Fpfile.get_timeout.
   const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
   const reuse = (prior: ProofAttempt) =>
     attempts.push({ ...prior, isReused: true, timeUsedMs: undefined });
@@ -282,7 +253,6 @@ const proveWithBackends = async (
     return getProvedReport(firstPrior.method.prover);
   }
   const sequent = normalizeExpand(obligation, methods);
-  // Fpfile.fp_writes keeps no trivial result, but adds the fingerprint.
   if (obligation.kind.kind === "Support" && isTrivial(sequent)) {
     run.results.set(fingerprint, run.results.get(fingerprint) ?? new Map());
     return { obligation: { ...getObligationBase(obligation), status: "trivial" }, attempts };
@@ -302,7 +272,6 @@ const proveWithBackends = async (
       continue;
     }
     if (!run.isProving) continue;
-    // Prep.prove_with: the Trivial method proves anything.
     if (method.prover === "trivial") return getProvedReport(method.prover);
     const encode = ENCODERS[method.prover];
     if (!encode) {
@@ -352,8 +321,6 @@ const proveWithBackends = async (
   );
 };
 
-// An error that escapes proveWithBackends: what tla-ts can't handle is unsupported, and what tlapm
-// refuses, as a frontend's soundness check, fails.
 const getErrorReport = (obligation: PrintedObligation, error: unknown) => {
   if (error instanceof TlaUnsupportedError)
     return getUnprovedReport(obligation, "unsupported", error.message);
@@ -367,9 +334,7 @@ interface ObligationsOptions {
   signal?: AbortSignal;
   onReport?: (report: ProofReport, obligation: PrintedObligation) => void;
   results?: Map<string, Map<string, ProofAttempt>>;
-  // --nofp and --nofpl.
   isFingerprinted?: (obligation: PrintedObligation) => boolean;
-  // --noproving.
   isProving?: boolean;
 }
 
@@ -391,7 +356,6 @@ export const proveObligations = async (
     decide:
       pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),
   };
-  // A few obligations per worker prove at once, and each reports once every earlier one has.
   const limit = pool ? workerCount * 4 : 1;
   const pending: Promise<ProofReport>[] = [];
   const isSettled: boolean[] = [];

@@ -1,15 +1,8 @@
-// Runs test262 on the ECMAScript semantics in ecmascript/, which port engine262 to TLA+. engine262
-// parses each test, the runner converts the parse tree to a TLA+ value, and tla-ts evaluates
-// RunFrom of ESCore on it. A test passes as test262's INTERPRETING.md says: a positive test runs
-// without throwing, a negative test fails in the phase and with the error it names, and an async
-// test prints Test262:AsyncTestComplete.
-// Usage: bun scripts/run.ts test262 [--record] [--verbose] [test path prefixes]
-// --record writes the passing tests to tests/conformance/test262.json.
-
 import { fork } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
+import { scheduler } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isMainThread, parentPort, Worker } from "node:worker_threads";
 import {
@@ -28,7 +21,6 @@ import type { ErrorObject, ParseNodesByType, ScopeInfo } from "@engine262/engine
 import { parseConfig } from "../src/config";
 import { createEnvironment } from "../src/environment";
 import { evaluate, bindValue, evaluateStartupDefinitions, getDefinition } from "../src/evaluate";
-import type { Environment } from "../src/evaluate";
 import { createTlcOrder } from "../src/tlc/order";
 import {
   ANY_SET,
@@ -69,8 +61,6 @@ interface TestRun {
   reason: string;
 }
 
-// The fields of each parse node type, from engine262's declarations, with whether each is a
-// boolean. A node lacks a field the parser left out, so the converter adds it as None or FALSE.
 const getNodeFields = () => {
   const text = readFileSync(PARSE_NODE_PATH, "utf8");
   const nodeFields = new Map<string, Map<string, boolean>>();
@@ -86,7 +76,6 @@ const getNodeFields = () => {
     }
     nodeFields.set(types[0], fields);
   }
-  // A refined AssignmentProperty has either a name and an initializer or a key and an element.
   nodeFields.set(
     "AssignmentProperty",
     new Map(
@@ -99,8 +88,6 @@ const getNodeFields = () => {
   return nodeFields;
 };
 
-// Fields whose strings name a production or an operator, which ESCore compares as TLA+ strings.
-// Any other string is JS text, a sequence of UTF-16 code units.
 const ENUM_FIELDS = new Set([
   "type",
   "operator",
@@ -120,7 +107,6 @@ const DROPPED_FIELDS = new Set([
   "hasTrailingComma",
   "sourceText",
 ]);
-// The nodes whose source text Function.prototype.toString returns.
 const SOURCE_TEXT_TYPES = new Set([
   "FunctionDeclaration",
   "FunctionExpression",
@@ -140,7 +126,6 @@ const SOURCE_TEXT_TYPES = new Set([
   "ClassExpression",
 ]);
 const DESTRUCTURING_TYPES = new Set(["ObjectLiteral", "ArrayLiteral"]);
-// The fields that hold the parameters and body of a function that binds its own arguments.
 const PARAMETER_FIELDS = new Set([
   "FormalParameters",
   "UniqueFormalParameters",
@@ -160,7 +145,6 @@ const isParseNode = (value: unknown): value is ParseNode =>
 
 const USING_TYPES = new Set(["UsingDeclaration", "AwaitUsingDeclaration"]);
 
-// The fields of each node whose tail positions are its own (§15.10.2).
 const TAIL_FIELDS = new Map([
   ["FunctionBody", ["FunctionStatementList"]],
   ["ConciseBody", ["ExpressionBody"]],
@@ -185,8 +169,6 @@ const TAIL_FIELDS = new Map([
   ["ParenthesizedExpression", ["Expression"]],
 ]);
 
-// Adds the calls in tail position (§15.10.2) of a strict function body to tailCalls. A call after a
-// using declaration in its list or for head is not one, since the disposal runs after it.
 const addTailCalls = (value: unknown, tailCalls: WeakSet<object>): void => {
   if (Array.isArray(value)) {
     const usingIndex = value.findIndex((item) => isParseNode(item) && USING_TYPES.has(item.type));
@@ -214,8 +196,6 @@ const addTailCalls = (value: unknown, tailCalls: WeakSet<object>): void => {
   }
 };
 
-// Whether code may read the arguments object of the function around it, by name or through a call
-// to eval, which may be direct. Functions inside it other than arrows bind their own.
 const getIsEvalCallee = (value: unknown): boolean =>
   isParseNode(value) &&
   (value.type === "ParenthesizedExpression"
@@ -260,7 +240,6 @@ const createNumberRecord = (
     ["e", exponent],
   ]);
 
-// ESNumber's canonical record of a Number, read from its IEEE 754 bits.
 const getNumberRecord = (value: number) => {
   const view = new DataView(new ArrayBuffer(8));
   view.setFloat64(0, value);
@@ -289,12 +268,16 @@ const getNumberRecord = (value: number) => {
   );
 };
 
-// Refines an object or array literal that is an assignment target to an assignment pattern, as
-// engine262 does when it evaluates the assignment, along with the targets nested in it.
-const refineTarget = (node: unknown): unknown =>
-  isParseNode(node) && DESTRUCTURING_TYPES.has(node.type)
-    ? refinePattern(refineLeftHandSideExpression(node))
-    : node;
+const isDestructuringLiteral = (
+  value: unknown,
+): value is ParseNodesByType["ObjectLiteral"] | ParseNodesByType["ArrayLiteral"] =>
+  isParseNode(value) && DESTRUCTURING_TYPES.has(value.type);
+
+const refineTarget = (node: unknown): unknown => {
+  if (!isDestructuringLiteral(node)) return node;
+  const refined: unknown = refineLeftHandSideExpression(node);
+  return isParseNode(refined) ? refinePattern(refined) : refined;
+};
 
 const refinePattern = (pattern: ParseNode): ParseNode => {
   const getList = (field: string) => {
@@ -338,7 +321,6 @@ const refinePattern = (pattern: ParseNode): ParseNode => {
 const createConverter = (none: Value) => {
   const nodeFields = getNodeFields();
   let siteCount = 0;
-  // Whether each function body, or its parameters, may use the arguments object.
   const argumentUses = new WeakMap<object, boolean>();
   const tailCalls = new WeakSet<object>();
   const convert = (value: unknown, field?: string): Value => {
@@ -447,24 +429,12 @@ const getMetadata = (source: string): Metadata => {
   };
 };
 
-// Reads a field of a record that RunFrom returns.
 const getField = (record: Value, name: string) => applyFunction(record, name);
 
 const decodeUnits = (value: Value) =>
   String.fromCharCode(...(getSequenceElements(value) ?? []).map(Number));
 
-// HACK: engine262's parser leaves out these extensions to scripts. From Annex B: HTML-like
-// comments, "<!--" anywhere and "-->" first on a line (B.1.1), the grammar of patterns without the
-// u or v flag (B.1.2), which a regular expression literal is checked against with ESCore's parser
-// instead, a var statement in a catch block naming its one-name parameter (B.3.4), and in sloppy
-// code a FunctionDeclaration as an if clause, parsed as a block holding it (B.3.3), a name declared
-// by more than one FunctionDeclaration in a block or case block (B.3.2.4, B.3.2.5), a
-// FunctionDeclaration as a label's item (B.3.1), which IsLabelledFunction allows only in a statement
-// list, through any labels, and an initializer for a for-in var binding (B.3.5). And in sloppy code a
-// call as the target of an assignment that isn't logical, an update, or a for-in or for-of left side
-// (web-compat in AssignmentTargetType, §13.15.1), which throws a ReferenceError once it is called,
-// and arguments as a label in a class static block, where ContainsArguments sees only references.
-// The parser's own methods are replaced on this parser only.
+// HACK: engine262's parser leaves out Annex B and the web-compat script extensions, so its methods are replaced on this parser only.
 const allowAnnexB = (parser: Parser, isPatternValid: (pattern: string) => boolean) => {
   const parseRegularExpressionLiteral = parser.parseRegularExpressionLiteral.bind(parser);
   parser.parseRegularExpressionLiteral = () => {
@@ -516,7 +486,7 @@ const allowAnnexB = (parser: Parser, isPatternValid: (pattern: string) => boolea
     isListItem = false;
     return item;
   };
-  parser.parseStatement = () => {
+  Reflect.set(parser, "parseStatement", () => {
     const isLabelledFunctionAllowed = isListItem && !parser.isStrictMode();
     isListItem = false;
     if (isLabelledFunctionAllowed && parser.test(Token.FUNCTION) && !parser.testAhead(Token.MUL))
@@ -527,7 +497,7 @@ const allowAnnexB = (parser: Parser, isPatternValid: (pattern: string) => boolea
       parser.peek().type <= Token.YIELD &&
       parser.testAhead(Token.COLON);
     return parseStatement();
-  };
+  });
   const parseClause = () => {
     if (parser.isStrictMode() || !parser.test(Token.FUNCTION) || parser.testAhead(Token.MUL))
       return parseStatement();
@@ -548,7 +518,6 @@ const allowAnnexB = (parser: Parser, isPatternValid: (pattern: string) => boolea
     return parser.finishNode(node, "IfStatement");
   };
   const parseFunction = parser.parseFunction.bind(parser);
-  // The names each block's FunctionDeclarations declare, which a later one may declare again.
   const functionNames = new WeakMap<object, Set<string>>();
   parser.parseFunction = (isExpression, kind) => {
     if (
@@ -584,13 +553,11 @@ const allowAnnexB = (parser: Parser, isPatternValid: (pattern: string) => boolea
     isValidatingTarget = false;
   };
   const parseVariableDeclarationList = parser.parseVariableDeclarationList.bind(parser);
-  // Only a for head's list may leave out its first initializer, and its initializers are [~In].
   parser.parseVariableDeclarationList = (firstDeclarationRequiresInit) =>
     firstDeclarationRequiresInit === false
       ? parser.scope.with({ in: false }, () => parseVariableDeclarationList(false))
       : parseVariableDeclarationList(firstDeclarationRequiresInit);
   const validateIdentifierReference = parser.validateIdentifierReference.bind(parser);
-  // The early errors the last arguments was given as an IdentifierReference, which a label isn't.
   let argumentsErrors = new Set<ErrorObject>();
   parser.validateIdentifierReference = (name, token) => {
     const errors = new Set(parser.earlyErrors);
@@ -611,7 +578,6 @@ const allowAnnexB = (parser: Parser, isPatternValid: (pattern: string) => boolea
       : repurpose(node, type, update);
   });
   const declare = parser.scope.declare;
-  // The scope of each catch clause whose parameter is one name, with that name.
   const catchParameters = new Map<ScopeInfo, string>();
   Reflect.set(parser.scope, "declare", (...args: unknown[]) => {
     const node = args[0];
@@ -635,7 +601,6 @@ const createRunner = () => {
   };
   const config = parseConfig("CONSTANTS None = None Empty = Empty Absent = Absent");
   const source = "---- MODULE Test262 ----\nEXTENDS ESCore\n====";
-  // TLC orders strings by when it interns them, so the spec's strings rank first, as in a check.
   const order = createTlcOrder(source, loadModule);
   setStringOrder(order.getStringOrder(config));
   const specification = createEnvironment(config, {
@@ -645,7 +610,7 @@ const createRunner = () => {
     print: () => {},
     files: { readFile: undefined, writeFile: undefined },
   });
-  const environment: Environment = specification.environment;
+  const environment = specification.environment;
   evaluateStartupDefinitions(specification.startupDefinitions, environment);
   const none = environment.constants.get("None");
   if (none === undefined) throw new Error("ESCore declares no constant None");
@@ -663,31 +628,25 @@ const createRunner = () => {
   const isPatternValid = (pattern: string) =>
     getField(callDefinition("ParsePattern", [getCodeUnits(pattern), false, false]), "ok") === true;
 
-  // engine262 parses decorators, which ESCore evaluates, only with their feature on.
   setSurroundingAgent(new Agent({ features: ["decorators"] }));
   const realm = new ManagedRealm();
   const parse = (source: string, isModule: boolean) => {
     const pop = realm.pushTopContext();
-    const result = wrappedParse(
-      { source },
-      (parser: { parseScript: () => unknown; parseModule: () => unknown }) =>
-        isModule ? parser.parseModule() : allowAnnexB(parser, isPatternValid).parseScript(),
+    const result = wrappedParse({ source }, (parser: Parser): unknown =>
+      isModule ? parser.parseModule() : allowAnnexB(parser, isPatternValid).parseScript(),
     );
     pop?.();
     return result;
   };
 
-  // The parses the spec asked for, as ESCore's parse table describes them, by the request's text.
   const parses = new Map<string, Value>();
   const getParse = (request: Value): Value => {
     const goal = getField(request, "goal");
     if (goal === "module") {
-      // The host loads the files beside the test, by their path, JSON, text and bytes modules by
-      // type, and test262's '<module source>' as a module that has a source.
       const specifier = decodeUnits(getField(request, "specifier"));
       const type = decodeUnits(getField(request, "type"));
       const path = join(decodeUnits(getField(request, "directory")), specifier);
-      const fail = (error: string) =>
+      const createFailure = (error: string) =>
         createRecord([
           ["ok", false],
           ["error", rankString(error)],
@@ -703,7 +662,7 @@ const createRunner = () => {
         !existsSync(path) ||
         !["", "json", "text", "bytes"].includes(type)
       )
-        return fail("TypeError");
+        return createFailure("TypeError");
       const id = getCodeUnits(`${path}#${type}`);
       if (type === "bytes")
         return createRecord([
@@ -722,7 +681,7 @@ const createRunner = () => {
         ]);
       const tree = parse(source, true);
       return Array.isArray(tree)
-        ? fail("SyntaxError")
+        ? createFailure("SyntaxError")
         : createRecord([
             ["ok", true],
             ["id", id],
@@ -773,7 +732,6 @@ const createRunner = () => {
             ],
           ]);
     }
-    // CreateDynamicFunction parses the parameters and the body alone, then the whole function.
     const isAsync = goal === "async" || goal === "asyncGenerator";
     const isGenerator = goal === "generator" || goal === "asyncGenerator";
     const prefix = `${isAsync ? "async " : ""}function${isGenerator ? "*" : ""}`;
@@ -833,8 +791,6 @@ const createRunner = () => {
           ["node", convert(expression)],
         ]);
   };
-  // The host's parse of every request, which parses one the first time the spec applies it, so a
-  // run never stops for a parse.
   const parseTable: LazyFunctionValue = {
     kind: "LazyFunction",
     domain: ANY_SET,
@@ -863,11 +819,9 @@ const createRunner = () => {
     return result;
   };
 
-  // Runs RunFrom or RunModuleFrom after the harness.
   const runTest = (includes: string[], name: string, args: Value[]): Value =>
     callDefinition(name, [getHarnessResult(includes), ...args, parseTable]);
 
-  // Runs a test in one mode, returning why it failed or undefined when it passed.
   const runMode = (path: string, source: string, metadata: Metadata, isStrict: boolean) => {
     const isAsync = metadata.flags.includes("async");
     const isModule = metadata.flags.includes("module");
@@ -937,11 +891,10 @@ const createRunner = () => {
   };
 };
 
-// Each worker runs this many tests, then exits and is replaced, so its memory stays bounded.
 const TESTS_PER_WORKER = 100;
 const WORKER_COUNT = Math.min(4, availableParallelism());
 const WORKER_HEAP_MB = 2048;
-// One run at a time on the machine, across every worktree, since each run takes several GB.
+const WORKER_STACK_MB = 256;
 const LOCK_DIRECTORY = join(tmpdir(), "tla-ts-test262.lock");
 
 const isAlive = (pid: number) => {
@@ -966,22 +919,18 @@ const acquireLock = async () => {
       if (holder && !isAlive(holder)) rmSync(LOCK_DIRECTORY, { recursive: true, force: true });
       else {
         console.error(`Waiting for test262 run ${holder || "(starting)"} to finish`);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await scheduler.wait(5000);
       }
     }
   }
 };
 
-// Three roles: the main process hands out tests, each child process hosts one worker thread, and
-// the worker runs the tests. A worker that runs out of memory can take down its process, so the
-// process is the unit the main process replaces.
 if (!isMainThread) {
   const run = createRunner();
   parentPort?.on("message", (path: string) => parentPort?.postMessage(run(path)));
 } else if (process.send) {
   const worker = new Worker(new URL(import.meta.url), {
-    // The evaluator recurses once per step of a script, so a long loop needs a deep stack.
-    resourceLimits: { stackSizeMb: 256, maxOldGenerationSizeMb: WORKER_HEAP_MB },
+    resourceLimits: { stackSizeMb: WORKER_STACK_MB, maxOldGenerationSizeMb: WORKER_HEAP_MB },
   });
   worker.on("message", (run: TestRun) => process.send?.(run));
   process.on("message", (path: string) => worker.postMessage(path));
@@ -1017,40 +966,40 @@ if (!isMainThread) {
         `${run.isPassed ? "PASS" : "FAIL"} ${run.id}${run.reason ? ` ${run.reason}` : ""}`,
       );
   };
-  const queue = { next: 0 };
-  // Runs the queue's tests one at a time on a worker, and on a new one each time a worker exits.
+  let nextIndex = 0;
   const drain = async (): Promise<void> => {
-    while (queue.next < paths.length) {
+    while (nextIndex < paths.length) {
       const host = fork(fileURLToPath(import.meta.url), {
         stdio: ["ignore", "inherit", "pipe", "ipc"],
       });
-      const current = { path: "", reason: "worker exited", sent: 0 };
+      let currentPath = "";
+      let exitReason = "worker exited";
+      let sentCount = 0;
       const send = () => {
-        if (queue.next >= paths.length || current.sent === TESTS_PER_WORKER) return host.kill();
-        current.sent++;
-        current.path = paths[queue.next++];
-        host.send(current.path);
+        if (nextIndex >= paths.length || sentCount === TESTS_PER_WORKER) return host.kill();
+        sentCount++;
+        currentPath = paths[nextIndex++];
+        host.send(currentPath);
       };
       host.on("message", (run: TestRun) => {
-        current.path = "";
+        currentPath = "";
         report(run);
         send();
       });
-      // A worker out of memory prints V8's report, of which the first line says why.
       host.stderr?.on("data", (data: Buffer) => {
         const line = data
           .toString()
           .split("\n")
           .find((text) => /crashed|FATAL ERROR/.test(text));
-        if (line) current.reason = line.trim();
+        if (line) exitReason = line.trim();
       });
       send();
       await new Promise((resolve) => host.on("exit", resolve));
-      if (current.path !== "") {
+      if (currentPath !== "") {
         report({
-          id: relative(join(TEST262_DIRECTORY, "test"), current.path),
+          id: relative(join(TEST262_DIRECTORY, "test"), currentPath),
           isPassed: false,
-          reason: current.reason,
+          reason: exitReason,
         });
       }
     }

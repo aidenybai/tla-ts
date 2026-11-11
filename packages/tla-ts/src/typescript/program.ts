@@ -18,11 +18,8 @@ const COMPILER_OPTIONS: ts.CompilerOptions = {
 
 const LIBRARY_DIRECTORY = dirname(ts.getDefaultLibFilePath(COMPILER_OPTIONS));
 
-// TypeScript's own declaration files, parsed once and shared by every program, since parsing them
-// takes most of a compile.
 const libraryFiles = new Map<string, ts.SourceFile>();
 
-// Type checks a model, with the files it imports, and throws its type errors.
 export const createProgram = (source: string, path: string) => {
   const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true);
   const host = ts.createCompilerHost(COMPILER_OPTIONS);

@@ -1,7 +1,6 @@
 import { TlaError } from "../errors";
 
-// An emulation of the token manager that JavaCC generates for SANY's grammar, javacc/tla+.jj: the
-// tokens it produces, their kinds in TLAplusParserConstants order, and their positions.
+// An emulation of the token manager that JavaCC generates for SANY's grammar, javacc/tla+.jj.
 
 export interface SanyToken {
   kind: number;
@@ -11,8 +10,7 @@ export interface SanyToken {
   next: SanyToken | undefined;
 }
 
-// The token kinds, in the order of TLAplusParserConstants, each with the literal images that
-// produce it. JavaCC breaks a tie between matches of the same length by this order.
+// In TLAplusParserConstants order, by which JavaCC breaks a tie between matches of one length.
 const KINDS: [string, ...string[]][] = [
   ["EOF"],
   ["BEGIN_PRAGMA", "--->"],
@@ -261,7 +259,6 @@ const BAND_PATTERNS = getJunctionPatterns(String.raw`\.\/\\`);
 const BOR_PATTERNS = getJunctionPatterns(String.raw`\.\\\/`);
 const STEP = String.raw`<(?:[0-9]+|\+|\*)>`;
 
-// The tokens of the SPEC lexical state that are not literals, with their kinds.
 const SPEC_PATTERNS: [string, RegExp[]][] = [
   ["_BM0", [BEGIN_MODULE]],
   ["SEPARATOR", [/----+/y]],
@@ -278,7 +275,6 @@ const SPEC_PATTERNS: [string, RegExp[]][] = [
   ["UnnumberedStepLexeme", [new RegExp(String.raw`${STEP}(?:\*\.*|-\.*|\.+)`, "y")]],
 ];
 
-// The tokens of the DEFAULT and PRAGMA lexical states, which skip every other character.
 const DEFAULT_PATTERNS: [string, RegExp[]][] = [
   ["BEGIN_PRAGMA", [/--->/y]],
   ["_BM1", [BEGIN_MODULE]],
@@ -296,7 +292,6 @@ const getMatchLength = (pattern: RegExp, source: string, offset: number) => {
   return pattern.exec(source)?.[0].length ?? 0;
 };
 
-// The longest match at offset, the earliest kind among matches of that length.
 const matchPatterns = (patterns: [string, RegExp[]][], source: string, offset: number) =>
   patterns
     .map(([name, regexes]) => ({
@@ -329,8 +324,6 @@ const matchSpecToken = (source: string, offset: number) => {
 
 export const getTabStop = (column: number) => column + 8 - (column % 8);
 
-// SimpleCharStream.UpdateLineColumn: the line and column of each character, with tabs stopping
-// at multiples of 8.
 const getPositions = (source: string) => {
   const lines: number[] = [];
   const columns: number[] = [];
@@ -360,7 +353,6 @@ const getPositions = (source: string) => {
   return { lines, columns };
 };
 
-// The characters of a string literal that a string literal could still continue.
 const STRING_PREFIX = /"(?:[^"\n\r\\]|\\[ntrf\\"])*\\?/y;
 const LITERAL_PREFIXES = new Set(
   [...LITERALS.keys()].flatMap((image) =>
@@ -368,7 +360,6 @@ const LITERAL_PREFIXES = new Set(
   ),
 );
 
-// The characters JavaCC's token manager reads at offset while some token could still continue.
 const getTokenPrefix = (source: string, offset: number) => {
   let length = 0;
   while (LITERAL_PREFIXES.has(source.slice(offset, offset + length + 1))) length++;
@@ -378,9 +369,6 @@ const getTokenPrefix = (source: string, offset: number) => {
   );
 };
 
-// A lazy token stream over source, which returns SANY's message for the TokenMgrError JavaCC's
-// token manager throws at a character no token continues with, or at the end of the file in a
-// comment.
 export const createSanyLexer = (source: string) => {
   const positions = getPositions(source);
   const state = { offset: 0, mode: "DEFAULT" };
@@ -393,8 +381,8 @@ export const createSanyLexer = (source: string) => {
   });
   // JavaCC places the end of the file at the file's last character.
   const getEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
-  // The lexer read the characters from start to end, and TLAplusParser.parse reports the end of
-  // the file in a token that starts on an earlier line as an open comment.
+  // TLAplusParser.parse reports the end of the file in a token that starts on an earlier line as an
+  // open comment.
   const getLexicalError = (start: number, end: number, after: string) => {
     const index = end - 1;
     const line = positions.lines[index];
@@ -407,8 +395,7 @@ export const createSanyLexer = (source: string) => {
       ? formatLexicalError(line + 1, 0, undefined, after)
       : formatLexicalError(line, column + 1, undefined, after);
   };
-  // A comment is a chain of MORE matches, which restarts after each nested comment bracket, and the
-  // end of the file right after a bracket ends the token stream.
+  // The end of the file right after a nested comment bracket ends the token stream.
   const skipComment = () => {
     const start = state.offset;
     if (source.startsWith("\\*", start)) {
@@ -481,7 +468,6 @@ export const createSanyLexer = (source: string) => {
   return getNextToken;
 };
 
-// JavaCC's TokenMgrError.addEscapes, which escapes the characters of a lexical error's message.
 const LEXEME_ESCAPES = new Map([
   ["\b", "\\b"],
   ["\t", "\\t"],
@@ -502,8 +488,6 @@ export const escapeLexeme = (text: string) =>
       (character === "\0" ? "" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`),
   );
 
-// TokenMgrError.LexicalError: the character the lexer stopped at, or the end of the file, and the
-// characters of the token it had read.
 export const formatLexicalError = (
   line: number,
   column: number,
@@ -512,8 +496,8 @@ export const formatLexicalError = (
 ) =>
   `Lexical error at line ${line}, column ${column}.  Encountered: ${character === undefined ? "<EOF> " : `"${escapeLexeme(character)}" (${character.charCodeAt(0)}), `}after : "${escapeLexeme(after)}"`;
 
-// TLC 1.7.4's lexer, which JavaCC generated without UNICODE_INPUT, reads a character past U+00FF
-// outside a comment by its low byte, and stops at one whose low byte is below 0x80.
+// TLC 1.7.4's lexer, generated without UNICODE_INPUT, reads a character past U+00FF outside a
+// comment by its low byte, and stops at one whose low byte is below 0x80.
 export const getSany174LexicalError = (source: string) => {
   const readToken = createSanyLexer(source);
   for (

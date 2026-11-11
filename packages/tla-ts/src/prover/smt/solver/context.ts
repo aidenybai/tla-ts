@@ -1,7 +1,4 @@
-// Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt. The SMT kernel's
-// search: a CDCL loop over Boolean variables combined with an E-graph for congruence closure,
-// relevancy propagation, the arithmetic theory and quantifier instantiation, with Z3's default
-// parameters for UFNIA.
+// Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt.
 import type { AssertedFormulas } from "./asserted-formulas";
 import { AstManager, FAMILY_ARITH, KIND_APP, KIND_QUANTIFIER, KIND_VAR } from "./ast";
 import { getCongruenceJustification, isCongruent } from "./cg-table";
@@ -46,14 +43,10 @@ const INV_ACTIVITY_LIMIT = 1e-100;
 const INV_DECAY = 1.052;
 const RESTART_INITIAL = 100;
 const RESTART_FACTOR = 1.1;
-// phase_caching_on and phase_caching_off: the numbers of conflicts while phase caching is on and off.
 const PHASE_CACHING_ON = 400;
 const PHASE_CACHING_OFF = 100;
 const AGILITY_FACTOR = 0.9999;
-// The LGC_FIXED lemma garbage collection: lemma_gc_initial conflicts between collections, and the
-// activity and unassigned literal thresholds of del_inactive_lemmas2.
 const LEMMA_GC_INITIAL = 5000;
-// theory_lra::num_final_check_levels: level 2 also runs nlsat's full check.
 const NUM_ARITH_FINAL_CHECK_LEVELS = 2;
 const NEW_OLD_RATIO = 16;
 const OLD_CLAUSE_ACTIVITY = 500;
@@ -65,7 +58,6 @@ export const CHECK_MODEL_SAT = 0;
 export const CHECK_MODEL_UNKNOWN = 1;
 export const CHECK_MODEL_RESTART = 2;
 
-// The reasons a search may stop without an answer that MBQI cares about.
 const FAILURE_OK = 0;
 const FAILURE_THEORY = 1;
 const FAILURE_QUANTIFIERS = 2;
@@ -77,12 +69,6 @@ type SearchFailure =
   | typeof FAILURE_QUANTIFIERS
   | typeof FAILURE_CANCELED;
 
-// smt_params: the kernel runs model-based quantifier instantiation with relevancy level 2 and the
-// CS_ACTIVITY_DELAY_NEW case split queue. The model checker's auxiliary context runs neither, as Z3
-// sets its relevancy level to 0 and its case split strategy to CS_ACTIVITY.
-// m_model_generator's model, m_proto_model and m_model. The model generator holds the last model it
-// made. From mk_proto_model to reset_model the context holds that model too as its proto model, and
-// get_model adds the model the proto model makes.
 type ModelState =
   | { kind: "none" }
   | { kind: "generated"; generated: GeneratedModel }
@@ -95,8 +81,6 @@ interface SmtParams {
 }
 
 export class Context extends Internalizer {
-  // setup_context makes the theories after the first formulas are asserted, so the field starts
-  // unassigned.
   theory!: TheoryLra;
   readonly qmanager: DefaultQuantifierManager;
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
@@ -105,7 +89,6 @@ export class Context extends Internalizer {
   private scopeAssignedLimits: number[] = [];
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
-  // The number of lemmas when each user scope began.
   private baseScopeLemmaLimits: number[] = [];
   private atomPropagationQueue: Literal[] = [];
   private thEqQueue: number[] = [];
@@ -130,18 +113,14 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
-  // register_plugin initializes each theory it registers.
   setupContext() {
     this.theory = new TheoryLra(this);
     this.theory.init();
   }
 
-  // The search stops with unknown when the manager's resource limit cancels it.
   checkCanceled() {
     return !this.manager.limit.inc();
   }
-
-  // Assignment and propagation.
 
   assign(literal: Literal, justification: BJustification, isDecision = false) {
     const value = this.assignment[literal];
@@ -189,7 +168,6 @@ export class Context extends Internalizer {
       }
       const list = this.watches[literal];
       if (list === undefined) continue;
-      // Nothing below makes a clause, so the clause data stays in place.
       const data = this.clauses.data;
       let kept = 0;
       let index = 0;
@@ -260,7 +238,7 @@ export class Context extends Internalizer {
           const lhs = this.exprToEnode[this.manager.getArg(eq, 0)];
           const rhs = this.exprToEnode[this.manager.getArg(eq, 1)];
           if (lhs !== undefined && rhs !== undefined) {
-            if (value === L_TRUE) this.addEq(lhs, rhs, { kind: "equation", literal: literal });
+            if (value === L_TRUE) this.addEq(lhs, rhs, { kind: "equation", literal });
             else if (!this.addDiseq(lhs, rhs) && !this.isInconsistent())
               this.setConflict(new EqPropagationJustification(lhs, rhs), mkLiteral(boolVar, true));
           }
@@ -379,8 +357,6 @@ export class Context extends Internalizer {
     }
   }
 
-  // Equalities.
-
   private getClosestVar(start: Enode) {
     for (let node: Enode | null = start; node !== null; node = node.transTarget)
       if (node.thVar >= 0) return node.thVar;
@@ -449,7 +425,6 @@ export class Context extends Internalizer {
 
   attachThVar(node: Enode, thVar: number) {
     const oldVar = node.thVar;
-    // A variable that an equality moved to the node's list, which the node's own replaces.
     if (oldVar >= 0) {
       node.thVar = thVar;
       this.pushTrail(() => {
@@ -524,8 +499,6 @@ export class Context extends Internalizer {
     }
   }
 
-  // n1 = n2, justified by the justification, implied r1 = r2. A congruence that makes a false
-  // equality true is the root of a conflict, which dynamic Ackermannization counts.
   private reinsertParentsIntoCgTable(
     r1: Enode,
     r2: Enode,
@@ -677,7 +650,6 @@ export class Context extends Internalizer {
     return true;
   }
 
-  // Theory combination: assume that two shared terms are equal.
   assumeEq(lhs: Enode, rhs: Enode) {
     if (lhs.root === rhs.root) return false;
     const eq = this.mkEqAtom(lhs.owner, rhs.owner);
@@ -702,8 +674,6 @@ export class Context extends Internalizer {
     }
     return isNew;
   }
-
-  // Search.
 
   incBvarActivity(boolVar: BoolVar) {
     this.activity[boolVar] += this.bvarInc;
@@ -888,7 +858,6 @@ export class Context extends Internalizer {
     return true;
   }
 
-  // is_unit_clause: exactly one literal is unassigned and the rest are false.
   private isUnitClause(clause: Clause) {
     const store = this.clauses;
     let isFound = false;
@@ -903,7 +872,6 @@ export class Context extends Internalizer {
     return isFound;
   }
 
-  // guess with PS_CACHING_CONSERVATIVE: the cached phase while phase caching is on, else false.
   private guess(boolVar: BoolVar) {
     if (this.manager.kinds[this.boolVar2Expr[boolVar]] === KIND_QUANTIFIER) return false;
     if (this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST)) return true;
@@ -966,7 +934,6 @@ export class Context extends Internalizer {
           ? negate(this.getLiteral(atoms[index]))
           : this.getLiteral(atoms[index]);
       }
-    // restore_relevancy: marking propagates, so it only marks the literals that lost relevancy.
     for (let index = 0; index < literals.length; index++)
       if (wasRelevant[index] && !this.isRelevant(this.boolVar2Expr[getVar(literals[index])]))
         this.markLiteralAsRelevant(literals[index]);
@@ -989,16 +956,13 @@ export class Context extends Internalizer {
     let maxLevel = 1;
     for (;;) {
       const isTheory = this.finalCheckIndex === 0;
-      // Z3 registers every theory for UFNIA, and only arithmetic acts on tlapm's obligations. Of
-      // the theories between arithmetic and the quantifiers, theory_finite_set makes a set.range
-      // declaration, and its assume_eqs draws a random value.
+      // Z3's theory_finite_set makes a set.range declaration here, and its assume_eqs draws a random value.
       if (!isTheory) {
         this.manager.initFiniteSetPlugin();
         this.getRandomValue();
       }
       const check = isTheory ? this.theory.finalCheckEh(level) : qmanager.finalCheckEh(true);
       if (isTheory) maxLevel = Math.max(maxLevel, NUM_ARITH_FINAL_CHECK_LEVELS);
-      // Z3 reads the cancel flag after each theory's final check, and a canceled check gives up.
       const isCanceled = isTheory && this.checkCanceled();
       if (isCanceled) failure = FAILURE_CANCELED;
       else if (isTheory && check === FC_GIVEUP) failure = FAILURE_THEORY;
@@ -1007,7 +971,6 @@ export class Context extends Internalizer {
       if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
       if (this.finalCheckIndex !== oldIndex) continue;
       if (level >= maxLevel || result === FC_DONE || this.canPropagate()) break;
-      // A higher level reruns every check with the give-up state of the lower one cleared.
       level++;
       result = FC_DONE;
       failure = FAILURE_OK;
@@ -1044,15 +1007,13 @@ export class Context extends Internalizer {
     }
   }
 
-  // resource_limits_exceeded: while searching, a failure stops the search, and the cancel flag is
-  // read twice.
+  // Z3's resource_limits_exceeded reads the cancel flag twice while searching.
   private isResourceLimitExceeded() {
     if (this.isSearching && (this.lastSearchFailure !== FAILURE_OK || this.checkCanceled()))
       return true;
     return this.checkCanceled();
   }
 
-  // reset_model: the model generator still holds the proto model.
   private resetModel() {
     const state = this.modelState;
     if (state.kind === "none" || state.kind === "generated") return;
@@ -1061,8 +1022,6 @@ export class Context extends Internalizer {
     this.modelState = { kind: "generated", generated: state.generated };
   }
 
-  // mk_proto_model: the model of the current assignment, which the quantifier manager adjusts. The
-  // model generator releases the last model first.
   private mkProtoModel() {
     if (this.modelState.kind !== "none") this.modelState.generated.model.decRef();
     const generated = mkModel(this);
@@ -1076,8 +1035,6 @@ export class Context extends Internalizer {
     return generated;
   }
 
-  // get_model: the model that the proto model makes, which the caller holds too. add_rec_funs gives
-  // each named expression without an interpretation its expression.
   getModel() {
     if (this.modelState.kind === "final") return this.modelState.model;
     const generated =
@@ -1090,13 +1047,11 @@ export class Context extends Internalizer {
     return model;
   }
 
-  // validate_model: every relevant ground literal of the assignment holds in the model.
   validateModel(model: ProtoModel) {
     const manager = this.manager;
     for (const literal of this.assignedLiterals) {
       const atom = this.boolVar2Expr[getVar(literal)];
       if (!this.isRelevant(atom)) continue;
-      // n and res of Z3's loop hold the literal and its value.
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
       const value = manager.isGround(expr) ? model.eval(expr, false) : -1;
@@ -1107,9 +1062,6 @@ export class Context extends Internalizer {
     return true;
   }
 
-  // restart: decides whether the search goes on after a bounded search. A candidate model of a
-  // problem with quantifiers goes to model-based quantifier instantiation, which may add instances
-  // and force a restart.
   private restart(status: number, currentLevel: number): number | undefined {
     const qmanager = this.qmanager;
     this.resetModel();
@@ -1143,7 +1095,6 @@ export class Context extends Internalizer {
         return L_UNDEF;
       }
     }
-    // inc_limits with RS_IN_OUT_GEOMETRIC.
     if (this.numConflictsSinceRestart >= this.restartThreshold) {
       this.restartThreshold = Math.trunc(this.restartThreshold * RESTART_FACTOR);
       if (this.restartThreshold > this.restartOuterThreshold) {
@@ -1164,7 +1115,6 @@ export class Context extends Internalizer {
     return undefined;
   }
 
-  // can_delete: a lemma that justifies neither of its watched literals.
   private isDeletable(clause: Clause) {
     const store = this.clauses;
     if (store.isReinit(clause)) return false;
@@ -1183,8 +1133,6 @@ export class Context extends Internalizer {
     return false;
   }
 
-  // del_inactive_lemmas2: deletes the lemmas of the current user scope with low activity and many
-  // unassigned literals. The newest sixteenth of them tolerates more unassigned literals.
   private delInactiveLemmas() {
     const lemmas = this.lemmas;
     const startAt = this.baseLevel === 0 ? 0 : this.baseScopeLemmaLimits[this.baseLevel - 1];
@@ -1212,7 +1160,6 @@ export class Context extends Internalizer {
     this.numConflictsSinceLemmaGc = 0;
   }
 
-  // push: a user scope, which pop removes with everything asserted in it.
   push() {
     this.popToBaseLevel();
     this.pushScope();
@@ -1226,13 +1173,10 @@ export class Context extends Internalizer {
     this.popScope(numScopes);
   }
 
-  // pop_to_base_lvl: undoes the decisions of the last search, before new assertions.
   popToBaseLevel() {
     if (this.scopeLevel > this.baseLevel) this.popScope(this.scopeLevel - this.baseLevel);
   }
 
-  // internalize_assertions: the formulas of the asserted formulas, after preprocessing. When they
-  // are inconsistent, none is internalized and the context has an axiom conflict.
   internalizeAssertions(asserted: AssertedFormulas) {
     const formulas = asserted.reduce();
     if (asserted.isInconsistent) {
@@ -1245,7 +1189,6 @@ export class Context extends Internalizer {
     }
   }
 
-  // init_assumptions: the search runs above a scope where the assumptions hold.
   initAssumptions(assumptions: number[]) {
     if (assumptions.length > 0) {
       this.propagate();

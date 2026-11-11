@@ -1,0 +1,3 @@
+---- MODULE FixVariable ----
+VARIABLE Shared
+====
