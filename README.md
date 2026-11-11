@@ -10,6 +10,8 @@
 
 tla-ts formally verifies your TypeScript code with [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
 
+Under the hood, tla-ts is a transpiler that turns TypeScript/JavaScript into TLA+. It uses a 1:1 reimplementation of [TLC](https://github.com/tlaplus/tlaplus)/[TLAPM](https://proofs.tlapl.us) in TypeScript that runs 2× faster.
+
 [View playground](https://tla-ts.aidenybai.com)
 
 ## How it works
@@ -58,8 +60,6 @@ You can also skip the install and run `npx tla-ts [file].ts`.
 ## About
 
 tla-ts is a research project by [Aiden Bai](https://aidenybai.com).
-
-Under the hood, tla-ts is a transpiler that turns TypeScript/JavaScript into TLA+. It uses a 1:1 reimplementation of [TLC](https://github.com/tlaplus/tlaplus)/[TLAPM](https://proofs.tlapl.us) in TypeScript that runs 2× faster.
 
 Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
 
