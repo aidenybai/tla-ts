@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { ArcKey } from "./arc-key";
 import { Chip } from "./chip";
-import { useFocusedNode } from "@/store/viewer";
+import { LinkKey } from "./link-key";
+import { getLinks } from "@/lib/graph";
+import { useFocusedNode, useViewerStore } from "@/store/viewer";
 import { ThemeToggle } from "./theme-toggle";
 
 const Root = ({ children }: { children: ReactNode }) => (
@@ -12,6 +13,8 @@ const Root = ({ children }: { children: ReactNode }) => (
 
 const Hover = () => {
   const hoveredNode = useFocusedNode();
+  const index = useViewerStore((state) => state.index);
+  const links = hoveredNode && getLinks(index, hoveredNode.id);
   return (
     <div className="flex min-w-0 flex-1 items-center gap-4 overflow-hidden">
       {hoveredNode && (
@@ -23,6 +26,11 @@ const Hover = () => {
             {hoveredNode.name}
           </Chip>
           <span className="truncate">{hoveredNode.label}</span>
+          {links && links.lineCount > links.links.length && (
+            <span className="shrink-0">
+              {links.lineCount} linked lines, showing their definition
+            </span>
+          )}
         </>
       )}
     </div>
@@ -35,4 +43,4 @@ const Controls = () => (
   </div>
 );
 
-export const Status = Object.assign(Root, { Hover, Key: ArcKey, Controls });
+export const Status = Object.assign(Root, { Hover, Key: LinkKey, Controls });

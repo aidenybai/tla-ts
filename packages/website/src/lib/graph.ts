@@ -60,3 +60,61 @@ export const getCausalNodeIds = (index: GraphIndex, nodeId: string): Set<string>
   }
   return seen;
 };
+
+const MAX_LINKS = 5;
+
+const getLength = (node: GraphNode) => node.loc.end.index - node.loc.start.index;
+
+// The smallest declaration in a node's pane that holds it.
+const getHolder = (index: GraphIndex, node: GraphNode): GraphNode | undefined =>
+  [...index.nodes.values()]
+    .filter((region) => !isUse(region) && region.id !== node.id && isInside(region, node))
+    .toSorted((left, right) => getLength(left) - getLength(right))[0];
+
+// Groups nodes whose lines touch or overlap, in line order.
+const getLineRuns = (nodes: GraphNode[]): GraphNode[][] => {
+  const runs: GraphNode[][] = [];
+  for (const node of nodes.toSorted((left, right) => left.loc.start.line - right.loc.start.line)) {
+    const last = runs.at(-1);
+    if (last && node.loc.start.line <= Math.max(...last.map((inner) => inner.loc.end.line)) + 1) {
+      last.push(node);
+      continue;
+    }
+    runs.push([node]);
+  }
+  return runs;
+};
+
+// A link joins the lines of TypeScript nodes to the lines of the TLA+ nodes they become.
+export interface Link {
+  from: string[];
+  to: string[];
+}
+
+export interface Links {
+  links: Link[];
+  // How many runs of lines the node links to, which is more than `links` when they were collapsed.
+  lineCount: number;
+}
+
+// The links of a focused node: one to each run of lines it links to directly. A declaration gets
+// no links for the uses inside it, which its highlight already shows. When a node links to more
+// runs than fit, one link goes to the declaration that holds the first of them.
+export const getLinks = (index: GraphIndex, nodeId: string): Links => {
+  const node = index.nodes.get(nodeId);
+  if (!node) return { links: [], lineCount: 0 };
+  const isSource = node.pane === "code";
+  const runs = getLineRuns(
+    ((isSource ? index.forward : index.backward).get(nodeId) ?? []).flatMap(
+      (otherId) => index.nodes.get(otherId) ?? [],
+    ),
+  );
+  const toLink = (others: GraphNode[]): Link => {
+    const ids = others.map((other) => other.id);
+    return isSource ? { from: [nodeId], to: ids } : { from: ids, to: [nodeId] };
+  };
+  const first = runs[0]?.[0];
+  if (runs.length <= MAX_LINKS || first === undefined)
+    return { links: runs.map(toLink), lineCount: runs.length };
+  return { links: [toLink([getHolder(index, first) ?? first])], lineCount: runs.length };
+};
