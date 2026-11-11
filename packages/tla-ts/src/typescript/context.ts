@@ -43,7 +43,9 @@ export interface Context {
   // The model values that stand for the well-known symbols and for the symbols a script makes.
   symbols: string[];
   // The array literals and the rest elements that a script uses as objects, which its heap holds.
-  heapArrays: Set<ts.ArrayLiteralExpression | ts.BindingElement>;
+  // The array literals, and the rest elements, parameters, and fields that hold arrays, which the
+  // heap holds.
+  heapArrays: Set<ts.Node>;
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;

@@ -13,7 +13,13 @@ import {
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
-import { findHeapArrays, isHoleyArray, TYPED_ARRAYS, translateConstantFunctions } from "./heap";
+import {
+  findChangedArrays,
+  findHeapArrays,
+  isHoleyArray,
+  TYPED_ARRAYS,
+  translateConstantFunctions,
+} from "./heap";
 import { translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
@@ -227,7 +233,14 @@ export const compile = (
         .flatMap((type) => (type.isIntersection() ? type.types : [type]))
         .some((type) => context.checker.isArrayType(type) || context.checker.isTupleType(type))) ||
     (ts.forEachChild(node, usesObjects) ?? false);
-  if (heap !== undefined && isScript(sourceFile) && roots.some(usesObjects)) {
+  const changedArrays = isScript(sourceFile)
+    ? findChangedArrays(getReached(roots, context), context)
+    : [];
+  if (
+    heap !== undefined &&
+    isScript(sourceFile) &&
+    (changedArrays.length > 0 || roots.some(usesObjects))
+  ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     const usesSpecialNumbers = (node: ts.Node): boolean =>
@@ -251,7 +264,7 @@ export const compile = (
       (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
-    context.heapArrays = findHeapArrays(roots, context);
+    context.heapArrays = findHeapArrays(roots, changedArrays, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>
       (ts.isCallExpression(node) &&

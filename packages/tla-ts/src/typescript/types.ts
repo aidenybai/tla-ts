@@ -191,17 +191,48 @@ export const getArrayLiteral = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// The fields that a property access or an element access reads, where its key names them: a
+// literal, or a union of literals. It's undefined where tla-ts can't tell.
+export const getAccessedFields = (node: ts.Node, checker: ts.TypeChecker) => {
+  if (ts.isPropertyAccessExpression(node) && !ts.isPrivateIdentifier(node.name)) {
+    const symbol = checker.getSymbolAtLocation(node.name);
+    return symbol === undefined || (symbol.flags & ts.SymbolFlags.Transient) !== 0
+      ? undefined
+      : [symbol];
+  }
+  if (!ts.isElementAccessExpression(node)) return undefined;
+  const keyType = checker.getTypeAtLocation(node.argumentExpression);
+  const keys = keyType.isUnion() ? keyType.types : [keyType];
+  const objectType = checker.getNonNullableType(checker.getTypeAtLocation(node.expression));
+  const fields = keys.map((key) =>
+    key.isStringLiteral() ? checker.getPropertyOfType(objectType, key.value) : undefined,
+  );
+  return fields.every(
+    (field) => field !== undefined && (field.flags & ts.SymbolFlags.Transient) === 0,
+  )
+    ? fields.filter((field) => field !== undefined)
+    : undefined;
+};
+
 export const isHeapArray = (node: ts.Expression, context: Context) => {
   if (context.heapArrays.size === 0) return false;
   const literal = getArrayLiteral(node, context);
   const declaration = ts.isIdentifier(node)
     ? getSymbol(node, context.checker)?.valueDeclaration
     : undefined;
+  const fields = getAccessedFields(node, context.checker);
   return (
     (literal !== undefined && context.heapArrays.has(literal)) ||
     (declaration !== undefined &&
-      ts.isBindingElement(declaration) &&
-      context.heapArrays.has(declaration))
+      (ts.isBindingElement(declaration) || ts.isParameter(declaration)) &&
+      context.heapArrays.has(declaration)) ||
+    (fields !== undefined &&
+      fields.length > 0 &&
+      fields.every((field) =>
+        (field.declarations ?? []).some((fieldDeclaration) =>
+          context.heapArrays.has(fieldDeclaration),
+        ),
+      ))
   );
 };
 

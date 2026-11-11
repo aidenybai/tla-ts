@@ -37,7 +37,7 @@ import {
   skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { getRegExpCall } from "./collections";
+import { ARRAY_LIKE_METHODS, getRegExpCall, IN_PLACE_METHODS } from "./collections";
 import { getJsonText, parseJson } from "./json";
 import { getConstructor } from "./exceptions";
 import { translateExpression, translateToString } from "./expressions";
@@ -72,6 +72,7 @@ import {
   tuple,
 } from "./tla";
 import {
+  getAccessedFields,
   getArrayLiteral,
   getKind,
   isEvery,
@@ -1693,8 +1694,287 @@ export const isHoleyArray = (node: ts.Node): node is ts.ArrayLiteralExpression =
     ts.isIdentifier(node.parent.name)) ||
     (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node));
 
-export const findHeapArrays = (roots: readonly ts.Node[], context: Context) => {
-  const arrays = new Set<ts.ArrayLiteralExpression | ts.BindingElement>();
+const isAssigned = (node: ts.Node) =>
+  ts.isBinaryExpression(node.parent) &&
+  node.parent.left === node &&
+  node.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+  node.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+
+// The name that a script calls a function by, where it declares it or binds it to a constant.
+const getCalledName = (owner: ts.SignatureDeclaration) => {
+  if (ts.isFunctionDeclaration(owner)) return owner.name;
+  const holder = owner.parent;
+  return (ts.isArrowFunction(owner) || ts.isFunctionExpression(owner)) &&
+    ts.isVariableDeclaration(holder) &&
+    holder.initializer === owner &&
+    (holder.parent.flags & ts.NodeFlags.Const) !== 0 &&
+    ts.isIdentifier(holder.name)
+    ? holder.name
+    : undefined;
+};
+
+const isPlainLiteral = (node: ts.Node | undefined): node is ts.ArrayLiteralExpression =>
+  node !== undefined &&
+  ts.isArrayLiteralExpression(node) &&
+  !node.elements.some(ts.isSpreadElement);
+
+// The arrays that a function the script reaches changes in place through a parameter, which
+// JavaScript shares with its caller, live in the heap, with every variable, parameter, and field
+// that may hold one, across the files that the script reaches. Each must start as an array
+// literal, each use must read the heap, and each object with such a field must go only where the
+// field keeps its name. Where any doesn't, the arrays stay values.
+export const findChangedArrays = (reached: readonly ts.Node[], context: Context) => {
+  const checker = context.checker;
+  const isReached = new Set(reached);
+  const references = new Map<ts.Symbol, ts.Identifier[]>();
+  const accesses: (ts.PropertyAccessExpression | ts.ElementAccessExpression)[] = [];
+  const objects: ts.ObjectLiteralExpression[] = [];
+  const expressions: ts.Expression[] = [];
+  const visit = (node: ts.Node) => {
+    const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+    if (ts.isIdentifier(node) && symbol !== undefined) {
+      references.set(symbol, [...(references.get(symbol) ?? []), node]);
+    }
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      accesses.push(node);
+    }
+    if (ts.isObjectLiteralExpression(node)) objects.push(node);
+    if (
+      ts.isExpression(node) &&
+      !(
+        ts.isIdentifier(node) &&
+        getSymbol(node, checker)?.declarations?.some(
+          (declaration) => ts.getNameOfDeclaration(declaration) === node,
+        )
+      )
+    ) {
+      expressions.push(node);
+    }
+    if (!ts.isTypeNode(node)) ts.forEachChild(node, visit);
+  };
+  new Set(reached.map((node) => node.getSourceFile())).forEach(visit);
+  const getFields = (type: ts.Type, name: string) =>
+    (type.isUnion() || type.isIntersection() ? type.types : [type]).flatMap(
+      (member) => checker.getPropertyOfType(member, name) ?? [],
+    );
+  const isInPlace = (use: ts.Identifier) => {
+    const parent = use.parent;
+    return (
+      (ts.isPropertyAccessExpression(parent) &&
+        IN_PLACE_METHODS.has(parent.name.text) &&
+        ts.isCallExpression(parent.parent) &&
+        parent.parent.expression === parent) ||
+      (ts.isElementAccessExpression(parent) && parent.expression === use && isAssigned(parent))
+    );
+  };
+  const grow = (start: ts.Symbol) => {
+    const group = new Set<ts.Node>();
+    const names = new Set<string>();
+    const nodes: ts.Node[] = [];
+    const pending = [start];
+    const isInGroup = (symbol: ts.Symbol) =>
+      (symbol.declarations ?? []).some((declaration) => group.has(declaration));
+    const isSame = (symbol: ts.Symbol, other: ts.Symbol) =>
+      (symbol.declarations ?? []).some((declaration) => other.declarations?.includes(declaration));
+    // Adds what an expression that holds one of the group's arrays names, where it names any.
+    const addHolder = (node: ts.Expression) => {
+      const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+      const found = getAccessedFields(node, checker) ?? (symbol === undefined ? [] : [symbol]);
+      pending.push(...found);
+      return found.length > 0;
+    };
+    const isUse = (use: ts.Expression): boolean => {
+      const parent = use.parent;
+      if (ts.isPropertyAccessExpression(parent)) {
+        const call = parent.parent;
+        return (
+          parent.name.text === "length" ||
+          ((IN_PLACE_METHODS.has(parent.name.text) || ARRAY_LIKE_METHODS.has(parent.name.text)) &&
+            ts.isCallExpression(call) &&
+            call.expression === parent &&
+            !call.arguments.some(ts.isSpreadElement))
+        );
+      }
+      if (ts.isElementAccessExpression(parent) && parent.expression === use) {
+        return isNumberLike(parent.argumentExpression, context);
+      }
+      if (ts.isForOfStatement(parent)) return parent.expression === use;
+      if (ts.isSpreadElement(parent)) return ts.isArrayLiteralExpression(parent.parent);
+      if (ts.isBinaryExpression(parent)) {
+        const kind = parent.operatorToken.kind;
+        return (
+          kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+          kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+        );
+      }
+      if (!ts.isCallExpression(parent) || parent.arguments.some(ts.isSpreadElement)) return false;
+      const callee = ts.isIdentifier(parent.expression)
+        ? getSymbol(parent.expression, checker)?.valueDeclaration
+        : undefined;
+      const owner =
+        callee !== undefined && ts.isVariableDeclaration(callee) ? callee.initializer : callee;
+      const parameter =
+        owner !== undefined && ts.isFunctionLike(owner)
+          ? owner.parameters.at(parent.arguments.indexOf(use))
+          : undefined;
+      return (
+        parameter !== undefined && ts.isIdentifier(parameter.name) && addHolder(parameter.name)
+      );
+    };
+    const isHolder = (symbol: ts.Symbol): boolean => {
+      const declaration = symbol.valueDeclaration;
+      if (declaration !== undefined && ts.isParameter(declaration)) {
+        nodes.push(declaration);
+        const owner = declaration.parent;
+        const position = owner.parameters.indexOf(declaration);
+        const name = getCalledName(owner);
+        const called = name === undefined ? undefined : getSymbol(name, checker);
+        return (
+          called !== undefined &&
+          declaration.initializer === undefined &&
+          declaration.dotDotDotToken === undefined &&
+          (references.get(called) ?? [])
+            .filter((reference) => reference !== name)
+            .every((reference) => {
+              const call = reference.parent;
+              const argument = ts.isCallExpression(call) ? call.arguments.at(position) : undefined;
+              if (isPlainLiteral(argument)) nodes.push(argument);
+              return (
+                ts.isCallExpression(call) &&
+                call.expression === reference &&
+                argument !== undefined &&
+                (isPlainLiteral(argument) || addHolder(argument))
+              );
+            })
+        );
+      }
+      if (declaration !== undefined && ts.isVariableDeclaration(declaration)) {
+        if (declaration.initializer !== undefined) nodes.push(declaration.initializer);
+        return (
+          (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+          ts.isIdentifier(declaration.name) &&
+          isPlainLiteral(declaration.initializer)
+        );
+      }
+      // A field, which only object literals give its arrays.
+      const fieldDeclarations = symbol.declarations ?? [];
+      nodes.push(...fieldDeclarations);
+      names.add(symbol.name);
+      return (
+        fieldDeclarations.length > 0 &&
+        fieldDeclarations.every(
+          (fieldDeclaration) =>
+            (ts.isPropertySignature(fieldDeclaration) &&
+              fieldDeclaration.questionToken === undefined) ||
+            ts.isPropertyAssignment(fieldDeclaration),
+        ) &&
+        objects.every((object) => {
+          const contextual = checker.getContextualType(object);
+          return object.properties.every((property) => {
+            const own =
+              property.name === undefined ? undefined : checker.getSymbolAtLocation(property.name);
+            const key = own?.name;
+            const isField =
+              own !== undefined &&
+              key !== undefined &&
+              [own, ...(contextual === undefined ? [] : getFields(contextual, key))].some((field) =>
+                isSame(field, symbol),
+              );
+            if (!isField) return true;
+            pending.push(own);
+            const value = ts.isPropertyAssignment(property) ? property.initializer : undefined;
+            if (value !== undefined) nodes.push(value);
+            return isPlainLiteral(value);
+          });
+        })
+      );
+    };
+    const getUses = (symbol: ts.Symbol): ts.Expression[] => {
+      const declaration = symbol.valueDeclaration;
+      return declaration !== undefined &&
+        (ts.isParameter(declaration) || ts.isVariableDeclaration(declaration))
+        ? (references.get(symbol) ?? []).filter((reference) => reference !== declaration.name)
+        : accesses.filter((access) =>
+            getAccessedFields(access, checker)?.some((field) => isSame(field, symbol)),
+          );
+    };
+    while (pending.length > 0) {
+      const symbol = pending.pop();
+      if (symbol === undefined || (symbol.declarations ?? []).every((node) => group.has(node))) {
+        continue;
+      }
+      (symbol.declarations ?? []).forEach((node) => group.add(node));
+      if (!isHolder(symbol) || !getUses(symbol).every((use) => addHolder(use) && isUse(use))) {
+        return [];
+      }
+    }
+    const holdsField = (type: ts.Type) =>
+      [...names].some((name) => getFields(type, name).some(isInGroup));
+    // Whether an object of one type keeps the group's fields where it goes as another type.
+    const keepsFields = (from: ts.Type, to: ts.Type) =>
+      [...names].every((name) => {
+        const fields = getFields(to, name);
+        return (
+          !getFields(from, name).some(isInGroup) || (fields.length > 0 && fields.every(isInGroup))
+        );
+      });
+    // An object that holds one of the group's fields goes only where its fields keep their names,
+    // as an operation that reads every field, such as a spread, would read an array as a value.
+    const isKept = (node: ts.Expression): boolean => {
+      const parent = node.parent;
+      const type = checker.getTypeAtLocation(node);
+      if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
+        return parent.expression !== node || getAccessedFields(parent, checker) !== undefined;
+      }
+      if (ts.isVariableDeclaration(parent)) {
+        return (
+          ts.isIdentifier(parent.name) && keepsFields(type, checker.getTypeAtLocation(parent.name))
+        );
+      }
+      if (
+        ts.isParenthesizedExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isSatisfiesExpression(parent) ||
+        ts.isNonNullExpression(parent)
+      ) {
+        return keepsFields(type, checker.getTypeAtLocation(parent));
+      }
+      if (ts.isReturnStatement(parent) || (ts.isArrowFunction(parent) && parent.body === node)) {
+        const owner = ts.findAncestor(parent, ts.isFunctionLike);
+        const signature =
+          owner === undefined ? undefined : checker.getSignatureFromDeclaration(owner);
+        return signature !== undefined && keepsFields(type, signature.getReturnType());
+      }
+      if (ts.isCallExpression(parent) && parent.arguments.includes(node)) {
+        const contextual = checker.getContextualType(node);
+        return contextual !== undefined && keepsFields(type, contextual);
+      }
+      if (ts.isBinaryExpression(parent) && parent.right === node && isAssigned(parent.left)) {
+        return keepsFields(type, checker.getTypeAtLocation(parent.left));
+      }
+      return ts.isExpressionStatement(parent);
+    };
+    return expressions.every((node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node))
+      ? nodes
+      : [];
+  };
+  return [...references.entries()]
+    .filter(
+      (entry) =>
+        entry[0].valueDeclaration !== undefined &&
+        ts.isParameter(entry[0].valueDeclaration) &&
+        ts.findAncestor(entry[0].valueDeclaration, (node) => isReached.has(node)) !== undefined &&
+        entry[1].some(isInPlace),
+    )
+    .flatMap((entry) => grow(entry[0]));
+};
+
+export const findHeapArrays = (
+  roots: readonly ts.Node[],
+  changed: readonly ts.Node[],
+  context: Context,
+) => {
+  const arrays = new Set<ts.Node>();
   const find = (node: ts.Node) => {
     const argument = ts.isCallExpression(node) ? node.arguments.at(0) : undefined;
     const callee = ts.isCallExpression(node) ? node.expression : undefined;
@@ -1779,6 +2059,7 @@ export const findHeapArrays = (roots: readonly ts.Node[], context: Context) => {
       arrays.add(literal);
     }
   });
+  changed.forEach((node) => arrays.add(node));
   const check = (node: ts.Node) => {
     if (
       ts.isIdentifier(node) &&
@@ -1786,7 +2067,7 @@ export const findHeapArrays = (roots: readonly ts.Node[], context: Context) => {
       !isArrayObjectUse(node, context)
     ) {
       const literal = getArrayLiteral(node, context);
-      if (literal !== undefined && arrays.has(literal)) {
+      if (literal !== undefined && arrays.has(literal) && !changed.includes(literal)) {
         throw new TlaTypeScriptError(
           "Use an array that tla-ts holds as an object only through its properties",
           node,

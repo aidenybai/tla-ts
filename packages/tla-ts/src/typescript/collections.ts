@@ -1480,7 +1480,7 @@ const PRIMITIVE_PROTOTYPES = new Map([
   ["Boolean.prototype", { methods: BOOLEAN_METHODS, converter: "ThisBoolean" }],
 ]);
 
-const ARRAY_LIKE_METHODS = new Set([
+export const ARRAY_LIKE_METHODS = new Set([
   "at",
   "join",
   "slice",
@@ -1601,7 +1601,7 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
-const IN_PLACE_METHODS = new Set(["push", "pop", "shift", "unshift"]);
+export const IN_PLACE_METHODS = new Set(["push", "pop", "shift", "unshift"]);
 
 // A call of push, pop, shift, or unshift on an array that the heap holds, which changes the array
 // in place.

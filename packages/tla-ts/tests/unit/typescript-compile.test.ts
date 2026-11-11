@@ -2696,7 +2696,7 @@ describe("errors", () => {
         const fill = (names: string[]) => {
           names.push("a");
         };
-        const names: string[] = [];
+        const names = "b,c".split(",");
         fill(names);
       `),
     ).toThrow("Only state variables and local lets can change: names");
@@ -2789,6 +2789,80 @@ describe("errors", () => {
         for (const item of items) if (item === 1) items.push(3);
       `),
     ).toThrow("tla-ts can't iterate an array that the heap holds while the loop changes objects");
+  });
+
+  it("changes a caller's array through a parameter", async () => {
+    const result = await checkModel(`
+      const add = (names: string[], name: string) => {
+        names.push(name);
+        return names.length;
+      };
+      const kept: string[] = ["a"];
+      const size = add(kept, "b");
+      const other = add(["x", "y"], "z");
+      add(kept, "c");
+      if (size !== 2 || other !== 3 || kept.join("") !== "abc") throw new Error("parameter");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const add = (items: number[]) => {
+          items.push(1);
+        };
+        const list: number[] = [];
+        add(list.slice());
+      `),
+    ).toThrow("Only state variables and local lets can change: items");
+  });
+
+  it("changes an array that a field holds through a parameter", async () => {
+    const result = await checkModel(`
+      interface Config {
+        init: string | undefined;
+        invariants: string[];
+        properties: string[];
+      }
+      const KEYS = new Map<string, "invariants" | "properties">([
+        ["INVARIANT", "invariants"],
+        ["PROPERTY", "properties"],
+      ]);
+      const parse = (words: string[]): Config => {
+        const config: Config = { init: undefined, invariants: [], properties: [] };
+        const parseNames = (names: string[], start: number) => {
+          let position = start;
+          while (position < words.length && !KEYS.has(words[position])) {
+            names.push(words[position]);
+            position++;
+          }
+          return position;
+        };
+        let position = 0;
+        while (position < words.length) {
+          const listKey = KEYS.get(words[position]);
+          if (listKey === undefined) throw new Error("keyword");
+          position = parseNames(config[listKey], position + 1);
+        }
+        return config;
+      };
+      const config = parse(["INVARIANT", "A", "B", "PROPERTY", "C", "INVARIANT", "D"]);
+      if (config.invariants.join() !== "A,B,D" || config.properties.length !== 1) {
+        throw new Error("fields");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        interface Box {
+          items: number[];
+        }
+        const add = (items: number[]) => {
+          items.push(1);
+        };
+        const box: Box = { items: [] };
+        add(box.items);
+        const copy = { ...box };
+      `),
+    ).toThrow("Only state variables and local lets can change: items");
   });
 
   it("names a function's model value so that TLC doesn't type it", async () => {
