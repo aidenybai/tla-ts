@@ -26,7 +26,19 @@ import { type Formula, ifThenElse, leaf } from "./formula";
 import { getCandidateValue, getHeap, translateObjectValue } from "./heap";
 import { useJavaScript } from "./javascript";
 import { getKind } from "./types";
-import { apply, boolean, field, identifier, junction, not, record, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  field,
+  identifier,
+  index,
+  junction,
+  not,
+  number,
+  record,
+  string,
+  tuple,
+} from "./tla";
 
 // The key that a name writes, as @@name for Symbol.name.
 const getKey = (name: ts.Node): string | undefined =>
@@ -301,10 +313,17 @@ export const isDescriptorRead = (node: ts.Node, context: Context): node is ts.Ca
   node.arguments.length >= 3 &&
   DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key));
 
+// The getters that reading a descriptor's fields may run.
+const getFieldGetters = (node: ts.Node, context: Context) => [
+  ...new Set(DESCRIPTOR_FIELDS.flatMap((key) => getKeyGetters(node, key, context))),
+];
+
 export const getDescriptorGetters = (node: ts.Node, context: Context) =>
   isDescriptorRead(node, context)
-    ? [...new Set(DESCRIPTOR_FIELDS.flatMap((key) => getKeyGetters(node, key, context)))]
-    : [];
+    ? getFieldGetters(node, context)
+    : isDescriptorsRead(node, context)
+      ? [...new Set([...getFieldGetters(node, context), ...getReadGetters(node, context)])]
+      : [];
 
 // Names the heap that a change gives, for what follows it.
 const withHeap = (path: Path, heap: Expression, context: Context): Path => {
@@ -473,6 +492,210 @@ export const readDescriptor = (
     ),
     throwTypeError(path, site, context, frame),
   );
+
+// The keys of an object literal that a definition takes, in the order that JavaScript lists them,
+// where each is a name that isn't an index.
+const getLiteralKeys = (node: ts.Expression | undefined) => {
+  if (node === undefined || !ts.isObjectLiteralExpression(node)) return undefined;
+  const keys = node.properties.map((property) =>
+    ts.isPropertyAssignment(property) &&
+    (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+    !/^(0|[1-9][0-9]*)$/.test(property.name.text)
+      ? property.name.text
+      : undefined,
+  );
+  return keys.every((key) => key !== undefined) && new Set(keys).size === keys.length
+    ? keys.filter((key) => key !== undefined)
+    : undefined;
+};
+
+// The most keys that tla-ts reads descriptors of where it lists an object's keys as it runs.
+const KEYS_LIMIT = 4;
+
+// Object.defineProperties or Object.create, which reads the descriptor under each enumerable own
+// key in turn, running its getter, reads each descriptor's fields, and then defines them all.
+// Object.create makes its object first, and gives it. An object literal gives its keys as it's
+// written, and otherwise the statement lists them as it runs and reads at most a few.
+export const readDescriptors = (
+  site: ts.CallExpression,
+  values: readonly Expression[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+): Formula => {
+  const literalKeys = getLiteralKeys(site.arguments[1]);
+  const properties = values[1];
+  const readLiteral = (
+    current: Path,
+    target: Expression,
+    index: number,
+    descriptors: readonly Expression[],
+  ): Formula => {
+    const key = literalKeys?.[index];
+    if (key === undefined) {
+      return define(
+        site,
+        target,
+        tuple((literalKeys ?? []).map(string)),
+        tuple([...descriptors]),
+        current,
+        context,
+        frame,
+        (after) => continueWith(after, target),
+      );
+    }
+    return bind(
+      current,
+      "attributes",
+      useJavaScript(
+        "Get",
+        [getHeap(current.scope, site, context), properties, string(key)],
+        context,
+      ),
+      context,
+      (bound, attributes) =>
+        readFields(site, attributes, bound, context, frame, (after, descriptor) =>
+          readLiteral(after, target, index + 1, [...descriptors, descriptor]),
+        ),
+    );
+  };
+  // The keys and descriptors that the statement read so far, as a pair that each join passes on.
+  const readListed = (
+    current: Path,
+    target: Expression,
+    keys: Expression,
+    position: number,
+    read: Expression,
+  ): Formula => {
+    if (position > KEYS_LIMIT) {
+      return ifThenElse(
+        apply("<=", [apply("Len", [keys]), number(KEYS_LIMIT)]),
+        define(
+          site,
+          target,
+          index(read, [number(1)]),
+          index(read, [number(2)]),
+          current,
+          context,
+          frame,
+          (after) => continueWith(after, target),
+        ),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't read the descriptors of more than ${KEYS_LIMIT} keys`),
+          ]),
+        ),
+      );
+    }
+    const heap = getHeap(current.scope, site, context);
+    const key = index(keys, [number(position)]);
+    return translateJoined(
+      site,
+      current,
+      context,
+      (after, value) => readListed(after, target, keys, position + 1, value ?? read),
+      (next) =>
+        ifThenElse(
+          junction("And", [
+            apply("<=", [number(position), apply("Len", [keys])]),
+            useJavaScript("IsEnumerableOwn", [heap, properties, key], context),
+          ]),
+          readWith(
+            site,
+            properties,
+            key,
+            getReadGetters(site, context),
+            current,
+            context,
+            frame,
+            (got, attributes) =>
+              readFields(site, attributes, got, context, frame, (after, descriptor) =>
+                next(
+                  after,
+                  tuple([
+                    apply("Append", [index(read, [number(1)]), key]),
+                    apply("Append", [index(read, [number(2)]), descriptor]),
+                  ]),
+                ),
+              ),
+          ),
+          next(current, read),
+        ),
+    );
+  };
+  const readAll = (current: Path, target: Expression): Formula =>
+    literalKeys !== undefined
+      ? readLiteral(current, target, 0, [])
+      : ifThenElse(
+          isObjectArgument(properties, context),
+          bind(
+            current,
+            "keys",
+            useJavaScript(
+              "PropertyKeysOf",
+              [getHeap(current.scope, site, context), properties],
+              context,
+            ),
+            context,
+            (bound, keys) => readListed(bound, target, keys, 1, tuple([tuple([]), tuple([])])),
+          ),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't read descriptors of this value"),
+            ]),
+          ),
+        );
+  if (getCallName(site) === "defineProperties") {
+    return ifThenElse(
+      isObjectArgument(values[0], context),
+      readAll(path, values[0]),
+      throwTypeError(path, site, context, frame),
+    );
+  }
+  const prototype = values[0];
+  return ifThenElse(
+    junction("Or", [
+      apply("=", [prototype, identifier("Null")]),
+      isObjectArgument(prototype, context),
+    ]),
+    bind(
+      path,
+      "heap",
+      useJavaScript(
+        "Allocate",
+        [
+          getHeap(path.scope, site, context),
+          useJavaScript("WithPrototype", [identifier("EmptyObject"), prototype], context),
+        ],
+        context,
+      ),
+      context,
+      (bound, heap) =>
+        readAll(withHeap(bound, heap, context), useJavaScript("Allocated", [heap], context)),
+    ),
+    throwTypeError(path, site, context, frame),
+  );
+};
+
+const getCallName = (node: ts.CallExpression) =>
+  ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
+
+// Object.defineProperties or Object.create of an object literal of descriptors whose fields may
+// hold a getter that the script defines.
+export const isDescriptorsRead = (node: ts.Node, context: Context) =>
+  context.heap !== undefined &&
+  ts.isCallExpression(node) &&
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.expression.getText() === "Object" &&
+  (getCallName(node) === "defineProperties" || getCallName(node) === "create") &&
+  node.arguments.length >= 2 &&
+  !node.arguments.some(ts.isSpreadElement) &&
+  (getLiteralKeys(node.arguments[1]) !== undefined
+    ? DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key))
+    : getReadGetters(node, context).some((getter) => !getGetters(node, context).includes(getter)));
 
 // The getters that a read may run where the script defines a getter under its key: the functions
 // that descriptors give as getters, and the function objects that functions return.

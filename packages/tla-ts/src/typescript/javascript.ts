@@ -1751,6 +1751,11 @@ DefineProperties(heap, ref, properties) ==
      ELSE DefineConvertedAll(heap, ref, keys,
                              [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])])
 
+\\* The own keys of an object, with its symbols last, that Object.defineProperties visits.
+PropertyKeysOf(heap, ref) ==
+  LET object == Lookup(heap, ref) IN OwnKeys(object) \\o SelectSeq(object.keys, IsSymbol)
+
+
 LOCAL EntryPart(heap, entry, position) ==
   CASE IsRef(entry) -> Get(heap, entry, ToString(position - 1))
     [] TypeOf(entry) = "object" /\\ entry # Null /\\ SubSeq(ToString(entry), 1, 2) = "<<" ->

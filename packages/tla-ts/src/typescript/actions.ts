@@ -138,8 +138,10 @@ import {
   getDescriptorGetters,
   getReadFunctions,
   isDescriptorRead,
+  isDescriptorsRead,
   isGetterRead,
   readDescriptor,
+  readDescriptors,
   runGetterRead,
 } from "./protocols";
 import {
@@ -1036,7 +1038,7 @@ export const translateCallStatement = (
           ),
     );
   }
-  if (isObjectChange(expression) && heapSymbol !== undefined) {
+  if (isObjectChange(expression, context) && heapSymbol !== undefined) {
     const translated = translateObjectChange(expression, path.scope, context);
     const name = context.names.getFresh(translated.isFallible ? "change" : "heap");
     // Each change but Reflect.construct gives the object it changes.
@@ -1047,6 +1049,9 @@ export const translateCallStatement = (
         : translateObjectValue(target, path.scope, context);
     if (isDescriptorRead(expression, context) && "values" in translated) {
       return readDescriptor(expression, translated.values, path, context, frame, continueWith);
+    }
+    if (isDescriptorsRead(expression, context) && "values" in translated) {
+      return readDescriptors(expression, translated.values, path, context, frame, continueWith);
     }
     if (!translated.isFallible) {
       return bindOnce(
@@ -3481,7 +3486,8 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getBound(node.expression, context) !== undefined ||
   getDateCall(node, context) !== undefined ||
-  (isObjectChange(node) &&
+  isDescriptorsRead(node, context) ||
+  (isObjectChange(node, context) &&
     node.expression.name.text !== "construct" &&
     isHeapType(context.checker.getTypeAtLocation(node), node, context)) ||
   isGeneratorStep(node, context) ||
@@ -3865,7 +3871,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
           (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||
-      isObjectChange(node) ||
+      isObjectChange(node, context) ||
       getDateCall(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&

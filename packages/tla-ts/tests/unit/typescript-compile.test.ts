@@ -1577,6 +1577,41 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the descriptors that defineProperties and create take through their getters", async () => {
+    const result = await checkModel(`
+      const log = { text: "" };
+      const props: { [key: string]: PropertyDescriptor } = {};
+      Object.defineProperty(props, "a", {
+        get: function () {
+          log.text += "a";
+          return { value: 1 };
+        },
+        enumerable: true,
+      });
+      Object.defineProperty(props, "hidden", {
+        get: function () {
+          log.text += "h";
+          return { value: 2 };
+        },
+      });
+      const target: { [key: string]: unknown } = {};
+      Object.defineProperties(target, props);
+      if (log.text !== "a" || target.a !== 1 || "hidden" in target) throw new Error(log.text);
+      const described: { [key: string]: unknown } = {};
+      Object.defineProperty(described, "get", {
+        get: function () {
+          return function () {
+            return "got";
+          };
+        },
+      });
+      const made: { [key: string | symbol]: unknown } = Object.create({}, { prop: described });
+      const value = made.prop;
+      if (value !== "got") throw new Error("create");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("sets an object's prototype, and throws a TypeError where the chain would loop", async () => {
     const result = await checkModel(`
       const parent: { [key: string]: unknown } = { inherited: 1 };

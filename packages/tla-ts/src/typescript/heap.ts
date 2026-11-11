@@ -45,6 +45,7 @@ import {
   translateBuiltInValue,
 } from "./intrinsics";
 import { getTypeNames, translateToNumber, useJavaScript } from "./javascript";
+import { isDescriptorsRead } from "./protocols";
 import { createStateScope, type Scope } from "./scope";
 import {
   apply,
@@ -1052,7 +1053,8 @@ export const isCreation = (node: ts.Node, context: Context) => {
     node.expression.expression.getText() !== "Object" ||
     node.expression.name.text !== "create" ||
     node.arguments.length === 0 ||
-    ts.isExpressionStatement(node.parent)
+    ts.isExpressionStatement(node.parent) ||
+    isDescriptorsRead(node, context)
   ) {
     return false;
   }
@@ -1565,11 +1567,13 @@ const isConstruct = (node: MethodCall) =>
 
 // Object.create runs as a change only where nothing reads the object it makes, so that it can
 // throw.
-export const isObjectChange = (node: ts.Node): node is MethodCall =>
+export const isObjectChange = (node: ts.Node, context: Context): node is MethodCall =>
   isMethodCall(node) &&
   ((node.expression.expression.getText() === "Object" &&
     OBJECT_CHANGES.has(node.expression.name.text) &&
-    (node.expression.name.text !== "create" || ts.isExpressionStatement(node.parent))) ||
+    (node.expression.name.text !== "create" ||
+      ts.isExpressionStatement(node.parent) ||
+      isDescriptorsRead(node, context))) ||
     isConstruct(node));
 
 // The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
@@ -1577,8 +1581,10 @@ export const isObjectChange = (node: ts.Node): node is MethodCall =>
 // of an empty array, the RangeError of an array's invalid length, and a Date method's TypeError
 // on another receiver and toISOString's RangeError of an invalid date.
 export const getEngineErrors = (node: ts.Node, context: Context) => {
-  const isDefinition = isObjectChange(node) && node.expression.name.text.startsWith("define");
-  const isFallible = isObjectChange(node) && FALLIBLE_CHANGES.has(node.expression.name.text);
+  const isDefinition =
+    isObjectChange(node, context) && node.expression.name.text.startsWith("define");
+  const isFallible =
+    isObjectChange(node, context) && FALLIBLE_CHANGES.has(node.expression.name.text);
   if (
     isDefinition &&
     context.heapArrays.size > 0 &&
@@ -1601,7 +1607,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["ReferenceError"];
   }
   return isFallible ||
-    (isObjectChange(node) && isConstruct(node)) ||
+    (isObjectChange(node, context) && isConstruct(node)) ||
     ts.isNewExpression(node) ||
     (isMethodCall(node) && node.expression.name.text.startsWith("reduce"))
     ? ["TypeError"]
