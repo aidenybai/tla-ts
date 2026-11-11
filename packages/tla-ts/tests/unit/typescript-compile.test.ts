@@ -1551,6 +1551,32 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a setter that a definition's value or a getter gives", async () => {
+    const result = await checkModel(`
+      const target: { [key: string]: unknown } = {};
+      let inherited = "data";
+      let own = "data";
+      const proto: { [key: string]: unknown } = {};
+      Object.defineProperty(proto, "set", {
+        get: function () {
+          return function (value: string) {
+            inherited = value;
+          };
+        },
+      });
+      const child: { [key: string]: unknown } = Object.create(proto);
+      Object.defineProperty(child, "set", {
+        value: function (value: string) {
+          own = value;
+        },
+      });
+      Object.defineProperty(target, "property", child);
+      target.property = "written";
+      if (inherited !== "data" || own !== "written") throw new Error(inherited + own);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("sets an object's prototype, and throws a TypeError where the chain would loop", async () => {
     const result = await checkModel(`
       const parent: { [key: string]: unknown } = { inherited: 1 };

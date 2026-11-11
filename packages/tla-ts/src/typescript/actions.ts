@@ -3363,7 +3363,11 @@ const translateExpressionStatement = (
       (rest, setter) =>
         ifThenElse(
           apply("=", [
-            useJavaScript("SetterOf", [write.heap, write.ref, write.key], context),
+            useJavaScript(
+              "CodeOf",
+              [write.heap, useJavaScript("SetterOf", [write.heap, write.ref, write.key], context)],
+              context,
+            ),
             translateFunctionValue(setter, context),
           ]),
           inlineBody(

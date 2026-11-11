@@ -965,16 +965,47 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
     ["get", []],
     ["set", []],
   ]);
+  // A descriptor's get or set, which an object literal, an assignment, or a definition's value
+  // gives it.
   const visit = (child: ts.Node) => {
-    const list =
-      ts.isPropertyAssignment(child) &&
-      (ts.isIdentifier(child.name) || ts.isStringLiteral(child.name))
-        ? found.get(child.name.text)
+    const isAssigned =
+      ts.isBinaryExpression(child) &&
+      child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(child.left);
+    const definition =
+      ts.isCallExpression(child) &&
+      ts.isPropertyAccessExpression(child.expression) &&
+      child.expression.name.text === "defineProperty"
+        ? child.arguments
         : undefined;
+    const attributes = definition?.at(2);
+    const defined =
+      attributes !== undefined && ts.isObjectLiteralExpression(attributes)
+        ? attributes.properties.find(
+            (property): property is ts.PropertyAssignment =>
+              ts.isPropertyAssignment(property) &&
+              ts.isIdentifier(property.name) &&
+              property.name.text === "value",
+          )
+        : undefined;
+    const name = ts.isPropertyAssignment(child)
+      ? child.name
+      : isAssigned && ts.isPropertyAccessExpression(child.left)
+        ? child.left.name
+        : defined === undefined
+          ? undefined
+          : definition?.at(1);
+    const list =
+      name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name))
+        ? found.get(name.text)
+        : undefined;
+    const value = ts.isPropertyAssignment(child)
+      ? child.initializer
+      : ts.isBinaryExpression(child)
+        ? child.right
+        : defined?.initializer;
     const accessor =
-      list === undefined || !ts.isPropertyAssignment(child)
-        ? undefined
-        : getCallee(child.initializer, context);
+      list === undefined || value === undefined ? undefined : getCallee(value, context);
     if (
       list !== undefined &&
       accessor !== undefined &&
@@ -994,7 +1025,9 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
 // A setter takes one argument, so a function that declares more parameters would hold undefined
 // in ones its types say it can't.
 export const getSetters = (node: ts.Node, context: Context) =>
-  getAccessorFunctions(node, "set", context).filter((setter) => getParameters(setter).length <= 1);
+  [...getAccessorFunctions(node, "set", context), ...getReturnedFunctions(node, context)].filter(
+    (setter) => getParameters(setter).length <= 1,
+  );
 
 // Whether a node makes a function or an object, which only a statement can.
 const isMaking = (node: ts.Node): boolean =>
