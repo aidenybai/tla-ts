@@ -191,3 +191,37 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["qffplra", QFFP],
   ["default", DEFAULT],
 ]);
+
+const LOGIC_STRATEGIES = new Map([
+  ["QF_UF", "qfuf"],
+  ["QF_BV", "qfbv"],
+  ["QF_IDL", "qfidl"],
+  ["QF_LIA", "qflia"],
+  ["QF_LRA", "qflra"],
+  ["QF_NIA", "qfnia"],
+  ["QF_NRA", "qfnra"],
+  ["QF_NTA", "qfnra"],
+  ["QF_AUFLIA", "qfauflia"],
+  ["QF_AUFBV", "qfaufbv"],
+  ["QF_ABV", "qfaufbv"],
+  ["QF_UFBV", "qfufbv"],
+  ["AUFLIA", "auflia"],
+  ["AUFLIRA", "auflira"],
+  ["AUFNIRA", "aufnira"],
+  ["UFNIA", "ufnia"],
+  ["UFLRA", "uflra"],
+  ["LRA", "lra"],
+  ["NRA", "nra"],
+  ["LIA", "lia"],
+  ["UFBV", "ufbv"],
+  ["BV", "bv"],
+  ["QF_FP", "qffp"],
+  ["QF_FPBV", "qffpbv"],
+  ["QF_BVFP", "qffpbv"],
+  ["HORN", "horn"],
+]);
+
+export const getLogicStrategy = (logic: string | undefined, isProofsEnabled: boolean) =>
+  (logic === "QF_FD" || logic === "SAT") && !isProofsEnabled
+    ? "qffd"
+    : (LOGIC_STRATEGIES.get(logic ?? "") ?? "default");

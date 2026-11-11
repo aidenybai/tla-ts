@@ -1388,8 +1388,8 @@ export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr, end:
   compile(environment, sexpr, end, false);
 
 export const compileInternalTactic = (environment: TacticEnvironment, text: string) => {
-  const list = createCommandReader(text).read() as SmtList;
-  return compile(environment, list, list.end, true).build(new Map());
+  const list = createCommandReader(`(${text})`).read() as SmtList;
+  return compile(environment, list.items[0], list.end, true).build(new Map());
 };
 
 interface TacticCheck {

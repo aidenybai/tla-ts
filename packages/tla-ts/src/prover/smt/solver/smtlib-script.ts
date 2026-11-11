@@ -52,6 +52,7 @@ import {
 } from "./smtlib-parser";
 import { OptContext } from "./opt-context";
 import { isInNraFragment } from "./opt-nlsat";
+import { getLogicStrategy } from "./logic-tactics";
 import { isSupportedLogic } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { isAstLess } from "./ast-lt";
@@ -64,6 +65,7 @@ import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
   checkSatUsing,
+  compileInternalTactic,
   compileTactic,
   getRewriterOptions,
   type TacticParam,
@@ -479,6 +481,27 @@ export const runSmtlibScript = (
     script.state.optimizer?.release();
     script.state.optimizer = undefined;
   };
+  // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
+  const solveWithStrategy = () => {
+    const state = script.state;
+    const goal = getGoal();
+    const strategy =
+      settings.parameters.get("tactic.default_tactic") ??
+      getLogicStrategy(state.logic, goal.isProofsEnabled);
+    try {
+      const checked = checkSatUsing(
+        compileInternalTactic(getTacticEnvironment(), strategy),
+        goal,
+      );
+      return { result: checked.status, context: undefined, model: checked.model };
+    } catch (error) {
+      if (!(error instanceof SmtUnsupportedError)) throw error;
+      return {
+        ...solveAssertions(state.manager, state.assertions, settings),
+        model: undefined,
+      };
+    }
+  };
   const checkSat = (extra: number[]) => {
     const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
@@ -525,13 +548,14 @@ export const runSmtlibScript = (
           kernel.result === L_UNDEF &&
           !state.assertions.some((assertion) => manager.hasQuantifierFlags[assertion]) &&
           manager.limit.inc())
-          ? solveAssertions(manager, state.assertions, settings)
-          : kernel;
+          ? solveWithStrategy()
+          : { ...kernel, model: undefined };
+      solved.model?.incRef();
       state.check = {
         status: solved.result,
         context: solved.context,
         isOptimizing,
-        model: undefined,
+        model: solved.model,
         core: solved.context?.unsatCore ?? [],
       };
       print(getVerdict(solved.result));
@@ -573,17 +597,14 @@ export const runSmtlibScript = (
     pendingText = lines.pop() ?? "";
     for (const line of lines) (isDiagnostic ? printDiagnostic : print)(line);
   };
+  const getTacticEnvironment = () => ({
+    manager: script.state.manager,
+    isMbqi: settings.isMbqi,
+    isFindingMacros: settings.isFindingMacros,
+    write,
+  });
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
-    compileTactic(
-      {
-        manager: script.state.manager,
-        isMbqi: settings.isMbqi,
-        isFindingMacros: settings.isFindingMacros,
-        write,
-      },
-      sexpr,
-      end,
-    );
+    compileTactic(getTacticEnvironment(), sexpr, end);
   const getGoal = () => {
     const goal = new Goal(script.state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || script.state.isProofsEnabled === true;
