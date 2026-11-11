@@ -15,6 +15,7 @@ import {
   isInlined,
   share,
 } from "./context";
+import { translateLocalStatements } from "./actions";
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
@@ -407,9 +408,41 @@ interface DeclaredValues extends Bound {
   values: Expression[];
 }
 
+// Whether a statement only binds constants, branches, returns, or throws, which an operator
+// writes as it is.
+const isPureStatement = (statement: ts.Statement): boolean => {
+  if (ts.isBlock(statement)) return statement.statements.every(isPureStatement);
+  if (ts.isIfStatement(statement)) {
+    return (
+      isPureStatement(statement.thenStatement) &&
+      (statement.elseStatement === undefined || isPureStatement(statement.elseStatement))
+    );
+  }
+  if (ts.isSwitchStatement(statement)) {
+    return statement.caseBlock.clauses.every((clause) =>
+      clause.statements.every(
+        (inner, index) =>
+          isPureStatement(inner) ||
+          (ts.isBreakStatement(inner) && index === clause.statements.length - 1),
+      ),
+    );
+  }
+  return (
+    (ts.isVariableStatement(statement) &&
+      (statement.declarationList.flags & ts.NodeFlags.Const) !== 0) ||
+    ts.isReturnStatement(statement) ||
+    ts.isThrowStatement(statement)
+  );
+};
+
+// A body of loops and assignments runs as statements that change only its locals.
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
-  return render(translatePure(body.statements, scope, context, () => leaf(getUndefined(context))));
+  return render(
+    body.statements.every(isPureStatement)
+      ? translatePure(body.statements, scope, context, () => leaf(getUndefined(context)))
+      : translateLocalStatements(body, scope, context),
+  );
 };
 
 const translatePure = (

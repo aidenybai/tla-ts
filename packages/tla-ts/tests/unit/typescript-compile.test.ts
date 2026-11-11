@@ -1866,6 +1866,75 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs the loops and local changes of a function that an expression calls", async () => {
+    const result = await checkModel(`
+      const findPair = (values: number[], target: number) => {
+        const found = { first: -1, second: -1 };
+        for (let outer = 0; outer < values.length; outer++) {
+          for (let inner = outer + 1; inner < values.length; inner++) {
+            if (values[outer] + values[inner] === target) {
+              found.first = outer;
+              found.second = inner;
+              break;
+            }
+          }
+          if (found.first !== -1) break;
+        }
+        return found.first * 10 + found.second;
+      };
+
+      const countUntil = (text: string, stop: string) => {
+        const state = { index: 0, seen: 0 };
+        while (state.index < text.length && text[state.index] !== stop) {
+          state.index++;
+          state.seen += 2;
+        }
+        return state.seen;
+      };
+
+      const sumTo = (limit: number) => {
+        let total = 0;
+        for (let index = 1; index <= limit; index++) {
+          if (index === 3) continue;
+          total += index;
+        }
+        return total;
+      };
+
+      const firstEven = (values: number[]) => {
+        for (const value of values) {
+          if (value % 2 === 0) return value;
+        }
+        return -1;
+      };
+
+      let count = 0;
+
+      export const tick = () => {
+        count = count === 1 ? 0 : 1;
+      };
+
+      export const isCorrect = () =>
+        findPair([1, 4, 2, 5], 7) === 23 &&
+        findPair([1, 2], 9) === -11 &&
+        countUntil("abc.d", ".") === 6 &&
+        countUntil("abc", ".") === 6 &&
+        sumTo(5) === 12 &&
+        firstEven([1, 3, 4, 6]) === 4 &&
+        firstEven([1, 3]) === -1;
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(result.status).toBe("success");
+  });
+
+  it("rejects a function that an expression calls where it shares an object it changes", () => {
+    expect(() =>
+      compile(
+        "const getShared = () => {\n  const first = { value: 1 };\n  const second = first;\n  second.value = 2;\n  return first.value;\n};\nlet count = 0;\nexport const tick = () => {\n  count = 1 - count;\n};\nexport const isCorrect = () => getShared() === 2;",
+      ),
+    ).toThrow("spec.ts:3:18 first would share an object that changes in place, so copy it");
+  });
+
   it("rejects arguments that a new would drop where no constructor runs", async () => {
     expect(() =>
       compile(

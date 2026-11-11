@@ -5300,6 +5300,52 @@ export const translateAction = (
   );
 };
 
+// A function's body that an expression calls, where its statements change only its own locals,
+// as the value it returns.
+export const translateLocalStatements = (
+  body: ts.Block,
+  scope: Scope,
+  context: Context,
+): Formula => {
+  const state = [
+    ...context.variables.keys(),
+    ...(context.heap === undefined ? [] : [context.heap]),
+  ];
+  const leave = (path: Path, value: Expression) => {
+    if (state.some((symbol) => path.scope.bindings.get(symbol) !== scope.bindings.get(symbol))) {
+      throw new TlaTypeScriptError(
+        "A function that an expression calls can change only its locals",
+        body,
+      );
+    }
+    return leaf(value);
+  };
+  return translateStatements(
+    body.statements,
+    {
+      scope,
+      mutable: new Set(),
+      isAssigned: false,
+      isLast: false,
+      // Its leaves are values, as a loop body's are.
+      isLooping: true,
+      generators: new Map(),
+      tasks: undefined,
+    },
+    context,
+    {
+      next: (path) => leave(path, getUndefined(context)),
+      exit: (path, value) => leave(path, value ?? getUndefined(context)),
+      breakTo: undefined,
+      continueTo: undefined,
+      throwTo: undefined,
+      yieldTo: undefined,
+      awaitTo: undefined,
+      inlining: new Set([body.parent]),
+    },
+  );
+};
+
 export const translateScript = (
   statements: readonly ts.Statement[],
   isLast: boolean,
