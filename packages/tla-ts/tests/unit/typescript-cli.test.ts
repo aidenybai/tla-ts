@@ -57,6 +57,20 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("4 distinct states found");
   });
 
+  it("stops where a model reads a name that only a declaration file gives", () => {
+    const directory = copyFixtures("project");
+    writeFileSync(join(directory, "host.d.ts"), "declare const hostLimit: number;\n");
+    writeFileSync(
+      join(directory, "host.ts"),
+      '/// <reference path="./host.d.ts" />\nlet count = 0;\n\nexport const tick = () => {\n  count = hostLimit;\n};\n',
+    );
+    const result = runCli(directory, ["host.ts"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "host.ts:5:11 tla-ts can't run hostLimit, which only a declaration gives",
+    );
+  });
+
   it("prints a counterexample as TLC does and exits with TLC's code", () => {
     const result = runCli(copyFixtures("failing"), ["overdraft.ts"]);
     expect(result.status).toBe(12);
