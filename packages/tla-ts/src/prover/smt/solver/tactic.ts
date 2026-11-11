@@ -41,6 +41,7 @@ import { reduceArgs } from "./reduce-args";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
 import { runNlsat } from "./nlsat-tactic";
+import { runNlqsat } from "./nlqsat";
 import { occf } from "./occf";
 import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
@@ -899,6 +900,18 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "nlqsat",
+    {
+      descrs: new Map(),
+      build: (environment, params) =>
+        runNlqsat(
+          environment.manager,
+          getUint(params, "seed", 0),
+          compileInternalTactic(environment, "tseitin-cnf"),
+        ),
+    },
+  ],
+  [
     "qe",
     {
       descrs: new Map(),
@@ -995,7 +1008,7 @@ const UNPORTED_TACTICS = new Set(
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
-    "nla2bv nlqsat nra pb-preprocess pb2bv pqffd " +
+    "nla2bv nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
     "qfbv-sls qffd qfnra " +
     "qfufbv recover-01 reduce-args2 " +
