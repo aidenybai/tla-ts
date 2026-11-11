@@ -1,4 +1,3 @@
-import { Check, X } from "@phosphor-icons/react";
 import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
@@ -8,6 +7,7 @@ import { useRun } from "../use-run";
 import { CodeActions, CodeContent, CodeCopy, CodeFooter, CodeRoot, CodeRun } from "./code";
 import { Button } from "./ui/button";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+import { Verdict } from "./verdict";
 
 interface ExampleState {
   example: (typeof EXAMPLES)[number];
@@ -129,28 +129,6 @@ export const ExampleHint = () => {
 
 const VIEW_ITEM_CLASS_NAME =
   "h-7 rounded-md px-2 text-xs aria-pressed:bg-raised aria-pressed:shadow-raised";
-
-interface VerdictProps {
-  result: RunResult;
-}
-
-const Verdict = (props: VerdictProps) => (
-  <span className="flex min-w-0 items-center gap-1.5 transition-opacity duration-200 ease-out starting:opacity-0">
-    {props.result.isPassed ? (
-      <Check weight="bold" className="shrink-0 text-success" />
-    ) : (
-      <X weight="bold" className="shrink-0 text-destructive" />
-    )}
-    <span
-      className={cn(
-        "min-w-0 truncate",
-        props.result.isPassed ? "text-success" : "text-destructive",
-      )}
-    >
-      {props.result.title}
-    </span>
-  </span>
-);
 
 export const ExampleSource = () => {
   const state = exampleContext.useParts();

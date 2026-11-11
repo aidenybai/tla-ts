@@ -23,3 +23,9 @@ export interface Benchmark {
   tlaTsSeconds: number;
   speedup: string;
 }
+
+export interface Mark {
+  start: number;
+  end: number;
+  name: string;
+}

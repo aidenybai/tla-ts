@@ -11,7 +11,15 @@
           "value": ".*text/markdown.*"
         }
       ],
-      "destination": "/index.md"
+      "destination": "https://raw.githubusercontent.com/aidenybai/tla-ts/main/README.md"
+    },
+    {
+      "source": "/(index.md|llms.txt)",
+      "destination": "https://raw.githubusercontent.com/aidenybai/tla-ts/main/README.md"
+    },
+    {
+      "source": "/playground",
+      "destination": "/index.html"
     }
   ],
   "headers": [
@@ -21,6 +29,22 @@
         {
           "key": "Vary",
           "value": "Accept"
+        }
+      ]
+    },
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "header",
+          "key": "accept",
+          "value": ".*text/markdown.*"
+        }
+      ],
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/markdown; charset=utf-8"
         }
       ]
     },

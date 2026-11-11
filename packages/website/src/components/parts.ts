@@ -2,7 +2,6 @@ import { CodeActions, CodeContent, CodeCopy, CodeFooter, CodeRoot, CodeRun } fro
 import { ExampleDescription, ExampleHint, ExampleRoot, ExampleSource } from "./example";
 import { HeroBody, HeroRoot, HeroTitle } from "./hero";
 import { SectionRoot, SectionTitle } from "./section";
-import { ThemeSwitcherOption, ThemeSwitcherRoot } from "./theme-switcher";
 
 export const Code = {
   Root: CodeRoot,
@@ -29,9 +28,4 @@ export const Hero = {
 export const Section = {
   Root: SectionRoot,
   Title: SectionTitle,
-};
-
-export const ThemeSwitcher = {
-  Root: ThemeSwitcherRoot,
-  Option: ThemeSwitcherOption,
 };

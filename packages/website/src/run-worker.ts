@@ -4,6 +4,7 @@ import { getErrorResult } from "./run-error";
 export interface RunRequest {
   source: string;
   config: string;
+  modules?: Record<string, string>;
 }
 
 export interface LineNote {
@@ -44,8 +45,14 @@ const getStateText = (state: Record<string, Value>) =>
     .map(([name, value]) => `${name} = ${formatValue(value)}`)
     .join(", ");
 
-const getCheckResult = async (source: string, config: string): Promise<RunResult> => {
-  const result = await check({ source, config });
+const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
+  const source = request.source;
+  const config = request.config;
+  const result = await check({
+    source,
+    config,
+    loadModule: (name) => request.modules?.[name],
+  });
   const lastStep = result.violation?.trace.at(-1);
   const module = parseModule(source);
   const getDefinitionLine = (name: string | undefined) =>
@@ -81,7 +88,7 @@ const getCheckResult = async (source: string, config: string): Promise<RunResult
 
 self.onmessage = async (event: MessageEvent<RunRequest>) => {
   try {
-    self.postMessage(await getCheckResult(event.data.source, event.data.config));
+    self.postMessage(await getCheckResult(event.data));
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     self.postMessage(getErrorResult(error.message));

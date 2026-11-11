@@ -1,8 +1,12 @@
 import { domMax, LazyMotion, MotionConfig } from "motion/react";
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app";
 import "./index.css";
+
+const PlaygroundPage = lazy(async () => ({
+  default: (await import("./playground-page")).PlaygroundPage,
+}));
 
 await document.fonts.load('400 16px "Geist Mono Variable"');
 
@@ -12,7 +16,9 @@ if (root) {
     <StrictMode>
       <LazyMotion features={domMax} strict>
         <MotionConfig reducedMotion="user">
-          <App />
+          <Suspense>
+            {location.pathname.replace(/\/$/, "") === "/playground" ? <PlaygroundPage /> : <App />}
+          </Suspense>
         </MotionConfig>
       </LazyMotion>
     </StrictMode>,

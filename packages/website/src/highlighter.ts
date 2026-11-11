@@ -87,6 +87,11 @@ const getToken = (content: string, style: Record<string, string>, prefix: string
   },
 });
 
+export const getHighlightedLines = (code: string, language: "shellscript" | "typescript") =>
+  codeToTokens(code, { lang: language, themes: HIGHLIGHTS_THEMES, defaultColor: false }).tokens.map(
+    (line) => line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--hls-")),
+  );
+
 export const createHighlighter = async () => {
   if (!RegisteredCustomLanguages.has(TLA_GRAMMAR.name)) {
     registerCustomLanguage(TLA_GRAMMAR.name, async () => ({ default: [TLA_GRAMMAR] }), ["tla"]);
@@ -111,12 +116,6 @@ export const createHighlighter = async () => {
             .tokens.map((line) =>
               line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--shiki-")),
             )
-        : codeToTokens(code, {
-            lang: language,
-            themes: HIGHLIGHTS_THEMES,
-            defaultColor: false,
-          }).tokens.map((line) =>
-            line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--hls-")),
-          ),
+        : getHighlightedLines(code, language),
   });
 };

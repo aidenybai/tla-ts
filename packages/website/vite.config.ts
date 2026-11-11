@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
+import typescript from "@typescript/typescript6";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite-plus";
 import { printModule } from "../tla-ts/src/printer";
@@ -73,6 +75,33 @@ const siteData = (): Plugin => ({
   },
 });
 
+const TYPESCRIPT_LIBRARIES = "virtual:typescript-libraries";
+
+const getLibraries = (directory: string, fileName: string, libraries: Map<string, string>) => {
+  if (libraries.has(fileName)) return libraries;
+  const text = readFileSync(join(directory, fileName), "utf8");
+  libraries.set(fileName, text);
+  for (const match of text.matchAll(/<reference lib="([^"]+)"/g)) {
+    getLibraries(directory, `lib.${match[1]}.d.ts`, libraries);
+  }
+  return libraries;
+};
+
+const typescriptLibraries = (): Plugin => ({
+  name: "typescript-libraries",
+  resolveId: (id) => (id === TYPESCRIPT_LIBRARIES ? `\0${TYPESCRIPT_LIBRARIES}` : undefined),
+  load: (id) =>
+    id === `\0${TYPESCRIPT_LIBRARIES}`
+      ? `export default new Map(${JSON.stringify([
+          ...getLibraries(
+            dirname(typescript.getDefaultLibFilePath({})),
+            "lib.esnext.d.ts",
+            new Map(),
+          ),
+        ])});`
+      : undefined,
+});
+
 const LOGO_FILES = {
   "favicon.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 11 11" shape-rendering="crispEdges"><style>path{fill:#21201c}@media(prefers-color-scheme:dark){path{fill:#eeeeec}}</style><path d="${LOGO_PATH}"/></svg>\n`,
   "logo-light.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 11" shape-rendering="crispEdges"><path fill="#21201c" d="${LOGO_PATH}"/></svg>\n`,
@@ -89,25 +118,12 @@ const logoFiles = (): Plugin => ({
 });
 
 export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    siteData(),
-    logoFiles(),
-    {
-      name: "readme-markdown",
-      generateBundle() {
-        const source = readFileSync(README_URL, "utf8");
-        this.emitFile({ type: "asset", fileName: "index.md", source });
-        this.emitFile({ type: "asset", fileName: "llms.txt", source });
-      },
-    },
-  ],
+  plugins: [react(), tailwindcss(), siteData(), typescriptLibraries(), logoFiles()],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
       "tla-ts": fileURLToPath(new URL("../tla-ts/src/index.ts", import.meta.url)),
     },
   },
-  worker: { format: "es" },
+  worker: { format: "es", plugins: () => [typescriptLibraries()] },
 });
