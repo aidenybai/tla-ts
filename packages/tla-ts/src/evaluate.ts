@@ -133,11 +133,16 @@ export interface Thunk {
   isReleased?: boolean;
 }
 
-type Binding =
+export type Binding =
   // A literal argument keeps its expression, which TLC binds lazily like any other.
   | { kind: "Value"; value: Value; argument?: Expression }
   | Thunk
   | { kind: "Operator"; operator: Operator };
+
+export interface GeneratedBody {
+  evaluate: ((...args: never[]) => Value) | undefined;
+  compile: () => (...args: never[]) => Value;
+}
 
 export interface Scope {
   name: string;
@@ -163,6 +168,8 @@ export interface Environment {
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
+  // The generated code of each operator body, for the kinds of arguments it takes.
+  generatedBodies: WeakMap<Expression, Map<string, GeneratedBody>>;
   callStack?: CallStack;
   coverage?: Coverage;
 }
@@ -884,7 +891,7 @@ const isStateWithin = (state: State | undefined, cached: State | undefined) => {
   }
 };
 
-const forceThunk = (thunk: Thunk, context: Context) => {
+export const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
   const isCached =
     cache !== undefined &&
@@ -1009,7 +1016,7 @@ const isOperatorArgument = (expression: Expression, context: Context) => {
   return operator !== undefined && getArity(operator) > 0;
 };
 
-const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
+export const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
   args.map((arg) =>
     isOperatorArgument(arg, context)
       ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
@@ -1047,7 +1054,10 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   return undefined;
 };
 
-const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
+export const compileArgumentBinder = (
+  argument: Expression,
+  environment: Environment,
+): ArgumentBinder => {
   const isLiteral =
     argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
   if (isLiteral) {
@@ -1199,7 +1209,11 @@ export const bindDefinitions = (
   return scope;
 };
 
-const evaluateLocalIdentifier = (name: string, expression: Expression, context: Context): Value => {
+export const evaluateLocalIdentifier = (
+  name: string,
+  expression: Expression,
+  context: Context,
+): Value => {
   const binding = lookupScope(context.scope, name);
   if (binding?.kind === "Value") return binding.value;
   if (binding?.kind === "Thunk") return forceThunk(binding, context);
@@ -1651,7 +1665,7 @@ const compileQuantifier = (
   environment: Environment,
 ): Evaluator => {
   const isForall = expression.kind === "Forall";
-  const body = getEvaluator(expression.body, environment);
+  const body = getEntryEvaluator(expression.body, environment);
   const bound = expression.bounds[0];
   if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
     const name = bound.pattern.name;
@@ -1763,7 +1777,7 @@ export const getFunctionBuilder = (
   environment: Environment,
 ) => {
   const isKeptLazyExpression = isKeptLazy(expression);
-  const body = getEvaluator(expression.body, environment);
+  const body = getEntryEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
   const isSingleName = bounds.length === 1 && bound.pattern.kind === "Name";
@@ -2030,7 +2044,7 @@ const compileSetComprehension = (
   environment: Environment,
 ): Evaluator => {
   if (expression.kind === "SetFilter") {
-    const predicate = getEvaluator(expression.predicate, environment);
+    const predicate = getEntryEvaluator(expression.predicate, environment);
     const set = getEvaluator(expression.bound.set, environment);
     const filterLazily = getLazyFilter(expression, environment);
     const pattern = expression.bound.pattern;
@@ -2054,7 +2068,7 @@ const compileSetComprehension = (
     };
   }
   if (expression.kind === "SetMap") {
-    const mapped = getEvaluator(expression.expression, environment);
+    const mapped = getEntryEvaluator(expression.expression, environment);
     return (context) => {
       const elements: Value[] = [];
       forEachBinding(expression.bounds, context, (scope) => {
@@ -2072,7 +2086,7 @@ const compileSetComprehension = (
       );
     };
   }
-  const body = getEvaluator(expression.body, environment);
+  const body = getEntryEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
   return (context) => {
     const elements = getChoiceElements(
@@ -2233,7 +2247,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       };
     }
     case "Let": {
-      const body = getChildEvaluator(expression.body);
+      const body = getEntryEvaluator(expression.body, environment);
       return (context) =>
         body(withScope(context, bindDefinitions(expression.definitions, context)));
     }

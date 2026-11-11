@@ -1396,6 +1396,7 @@ export const createEnvironment = (
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),
     definitionEvaluators: new WeakMap(),
+    generatedBodies: new WeakMap(),
   };
   const analyzer = createLevelAnalyzer({
     constants: new Set(constants.keys()),
