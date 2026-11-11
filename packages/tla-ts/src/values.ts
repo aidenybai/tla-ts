@@ -1221,7 +1221,13 @@ export const createSet = (elements: Value[]): SetValue => {
       if (comparison < 0) high = middle;
       else low = middle + 1;
     }
-    if (comparison !== 0) sorted.splice(comparison < 0 ? middle : middle + 1, 0, element);
+    if (comparison === 0) continue;
+    const insertion = comparison < 0 ? middle : middle + 1;
+    sorted.push(element);
+    for (let position = sorted.length - 1; position > insertion; position--) {
+      sorted[position] = sorted[position - 1];
+    }
+    sorted[insertion] = element;
   }
   return createSortedSet(sorted);
 };
