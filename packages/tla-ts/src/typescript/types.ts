@@ -11,6 +11,7 @@ import {
   translateString,
   type Unknown,
   getBound,
+  isNestedFunction,
 } from "./context";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
@@ -101,7 +102,8 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
     declaration !== undefined &&
     ((ts.isClassLike(declaration) && isHeapClass(declaration, context)) ||
       isHeapFunction(declaration, context) ||
-      isFunctionObject(declaration, context))
+      isFunctionObject(declaration, context) ||
+      isNestedFunction(declaration, context))
   ) {
     return true;
   }

@@ -1649,6 +1649,24 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes a new function object each time a function makes one as a property's value", async () => {
+    const getSource = (comparison: string) => `
+      const make = function () {
+        return {
+          next: function () {
+            return 1;
+          },
+        };
+      };
+      const first = make();
+      const second = make();
+      if (first.next ${comparison} second.next) throw new Error("identity");
+      if (typeof first.next !== "function") throw new Error("typeof");
+    `;
+    expect((await checkModel(getSource("==="))).failure).toBeUndefined();
+    expect((await checkModel(getSource("!=="))).failure?.message).toContain("identity");
+  });
+
   it("resumes generators that an untyped variable holds", async () => {
     const result = await check(
       compile(

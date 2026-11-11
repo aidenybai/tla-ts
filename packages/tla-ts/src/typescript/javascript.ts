@@ -396,6 +396,11 @@ ArrowObject(functionPrototype, name, length) ==
                 "length", length, FALSE, FALSE, TRUE),
          "name", name, FALSE, FALSE, TRUE)
 
+\\* A function that a function makes each time it runs, which holds the model value of its code, so
+\\* that a call can tell which function it runs. tla-ts can't read its properties.
+FunctionObject(functionPrototype, code) ==
+  [code |-> code] @@ [ClassObject(functionPrototype) EXCEPT !.isOpaque = TRUE]
+
 \\* A function that bind makes, which has no prototype and constructs where its target does.
 BoundFunctionObject(functionPrototype, name, length, isConstructor) ==
   [ArrowObject(functionPrototype, "bound " \\o name, length) EXCEPT !.isConstructor = isConstructor]

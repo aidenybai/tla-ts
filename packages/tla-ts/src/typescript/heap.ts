@@ -28,6 +28,7 @@ import {
   isAmbient,
   isNullBased,
   getHeapClass,
+  isNestedFunction,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor } from "./exceptions";
@@ -667,6 +668,23 @@ export const translateHasPrivate = (
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
+  if (isNestedFunction(node, context)) {
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "FunctionObject",
+          [
+            translateBuiltInValue("Function.prototype", node, context),
+            translateFunctionValue(node, context),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   const binding = getBinding(node, context);
   if (binding !== undefined) {
     const length = getFunctionLength(getParameters(binding.target)) - binding.arguments.length;
@@ -1016,7 +1034,11 @@ export const isNewObject = (node: ts.Node, context: Context) => {
 // which may stop the run.
 export const getAllocated = (node: ts.Node, context: Context, isSometimes = false): ts.Node[] => {
   if (context.heap === undefined) return [];
-  if (isHeapFunction(node, context) || isFunctionObject(node, context)) {
+  if (
+    isHeapFunction(node, context) ||
+    isFunctionObject(node, context) ||
+    isNestedFunction(node, context)
+  ) {
     return isSometimes ? [] : [node];
   }
   if (ts.isFunctionLike(node)) return [];

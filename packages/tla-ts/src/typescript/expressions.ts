@@ -37,6 +37,7 @@ import {
   isMethodCall,
   share,
   translateString,
+  isNestedFunction,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -1566,6 +1567,7 @@ const translateNode = (
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     isHeapFunction(node, context) ||
     isFunctionObject(node, context) ||
+    isNestedFunction(node, context) ||
     getNewClass(node, context) !== undefined ||
     isNewObject(node, context) ||
     getNewWrapper(node, context) !== undefined;
