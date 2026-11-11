@@ -76,6 +76,7 @@ export interface OptOptions {
   paretoMaxLemmas: number;
   hasAssumptions: boolean;
   isLinear: boolean;
+  isSatEnabled: boolean;
   isEliminatingZeroOne: boolean;
   maxsat: MaxsatParams;
 }
@@ -562,6 +563,7 @@ export class OptContext {
 
   // update_solver: Z3 moves a MaxSAT query over finite domains to the SAT core.
   private updateSolver(hard: readonly number[], options: OptOptions) {
+    if (!options.isSatEnabled) return;
     if (this.internal.some((objective) => objective.type !== O_MAXSMT)) return;
     const soft = this.internal.flatMap((objective) => objective.terms);
     if (!isFiniteDomain(this.manager, [...soft, ...hard])) return;

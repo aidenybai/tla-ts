@@ -419,6 +419,7 @@ export const runSmtlibScript = (
         ...getOptOptions(),
         hasAssumptions,
         isLinear,
+        isSatEnabled: settings.parameters.get("opt.enable_sat") !== "false",
         maxsat: {
           maxsatEngine: settings.parameters.get("opt.maxsat_engine") ?? "maxres",
           isMaxlexEnabled: settings.parameters.get("opt.maxlex.enable") !== "false",
