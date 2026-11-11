@@ -2631,8 +2631,7 @@ const takeFromGenerator = (
 
 // Rejects running nodes before expressions that JavaScript evaluates first, where those expressions
 // read what the nodes change.
-const rejectEarlyRun = (
-  node: ts.Node,
+const getEarlyReads = (
   run: readonly ts.Node[],
   evaluated: readonly ts.Node[],
   path: Path,
@@ -2648,13 +2647,21 @@ const rejectEarlyRun = (
         ts.isElementAccessExpression(found) ||
         found.kind === ts.SyntaxKind.ThisKeyword,
     ).length > 0;
-  if (
-    evaluated.some(
-      (inner) =>
-        getSymbols(inner, context).some((symbol) => changed.has(symbol)) ||
-        (isHeapChanged && readsHeap(inner)),
-    )
-  ) {
+  return evaluated.filter(
+    (inner) =>
+      getSymbols(inner, context).some((symbol) => changed.has(symbol)) ||
+      (isHeapChanged && readsHeap(inner)),
+  );
+};
+
+const rejectEarlyRun = (
+  node: ts.Node,
+  run: readonly ts.Node[],
+  evaluated: readonly ts.Node[],
+  path: Path,
+  context: Context,
+) => {
+  if (getEarlyReads(run, evaluated, path, context).length > 0) {
     throw new TlaTypeScriptError("tla-ts can't run this before what reads what it changes", node);
   }
 };
@@ -5943,6 +5950,18 @@ const findLeadingCall = (
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
     // A compound assignment reads its variable before it evaluates its right operand, so it
     // converts first only where that operand runs nothing.
+    // An assignment to a property evaluates the object and the key, and then the value.
+    if (
+      kind === ts.SyntaxKind.EqualsToken &&
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
+    ) {
+      const found = inOrder(
+        ts.isPropertyAccessExpression(node.left)
+          ? [node.left.expression, node.right]
+          : [node.left.expression, node.left.argumentExpression, node.right],
+      );
+      return found.call !== undefined || found.isBlocked ? found : blocked;
+    }
     if (isAssignment) {
       const right = isCompoundAssignment(node)
         ? findLeadingCall(node.right, [], path, context)
@@ -6059,15 +6078,47 @@ const getLeadingCall = (
   ) {
     return undefined;
   }
-  rejectEarlyRun(
-    call,
+  // A name or a property that the statement reads before the call keeps the value that it had then.
+  const reads = getEarlyReads(
     [call],
     before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === call) === undefined),
     path,
     context,
   );
-  return call;
+  const properties = reads.filter(
+    (inner): inner is ts.Identifier | ts.PropertyAccessExpression | ts.ElementAccessExpression =>
+      ts.isIdentifier(inner) ||
+      ts.isPropertyAccessExpression(inner) ||
+      ts.isElementAccessExpression(inner),
+  );
+  if (properties.length < reads.length) {
+    throw new TlaTypeScriptError("tla-ts can't run this before what reads what it changes", call);
+  }
+  return { call, reads: properties };
 };
+
+// The path after a call that runs first, whose results hold the call's value and what the statement
+// read before it.
+const withLeadingResults = (
+  leading: { call: ts.CallExpression; reads: readonly ts.Expression[] },
+  path: Path,
+  after: Path,
+  value: Expression | undefined,
+  context: Context,
+): Path => ({
+  ...after,
+  scope: {
+    ...after.scope,
+    results: new Map([
+      ...after.scope.results,
+      ...leading.reads.map((read): [ts.Expression, Expression] => [
+        read,
+        translateExpression(read, path.scope, context),
+      ]),
+      [leading.call, value ?? getUndefined(context)],
+    ]),
+  },
+});
 
 // The short-circuit or the conditional that a statement's expression evaluates first whose operand
 // that runs only sometimes is a call that only statements can run. Nothing that the statement
@@ -6146,17 +6197,11 @@ export const runLeadingCall = (
   frame: Frame,
   rest: (path: Path) => Formula,
 ) => {
-  const call = getLeadingCall(node, () => true, path, context);
+  const leading = getLeadingCall(node, () => true, path, context);
   return (
-    call &&
-    translateCallStatement(call, path, context, frame, (after, value) =>
-      rest({
-        ...after,
-        scope: {
-          ...after.scope,
-          results: new Map([...after.scope.results, [call, value ?? getUndefined(context)]]),
-        },
-      }),
+    leading &&
+    translateCallStatement(leading.call, path, context, frame, (after, value) =>
+      rest(withLeadingResults(leading, path, after, value, context)),
     )
   );
 };
@@ -6226,20 +6271,11 @@ export const translateStatements = (
   }
   const hoistedCall = getHoistedCall(statement, path, context);
   if (hoistedCall !== undefined) {
-    return allocate(hoistedCall, path, context, (allocated) =>
-      translateCallStatement(hoistedCall, allocated, context, frame, (after, value) =>
+    return allocate(hoistedCall.call, path, context, (allocated) =>
+      translateCallStatement(hoistedCall.call, allocated, context, frame, (after, value) =>
         translateStatements(
           statements,
-          {
-            ...after,
-            scope: {
-              ...after.scope,
-              results: new Map([
-                ...after.scope.results,
-                [hoistedCall, value ?? getUndefined(context)],
-              ]),
-            },
-          },
+          withLeadingResults(hoistedCall, allocated, after, value, context),
           context,
           frame,
         ),

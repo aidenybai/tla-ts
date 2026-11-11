@@ -998,6 +998,36 @@ describe("calls", () => {
     `);
     expect(result.failure).toBeUndefined();
   });
+  it("run a call in a property's value after the reads that evaluate before it", async () => {
+    const result = await checkModel(`
+      const state = { count: 1, label: "" };
+      const bump = () => {
+        state.count++;
+        return { text: String(state.count) };
+      };
+      state.label = \`\${state.count}:\${bump().text}:\${state.count}\`;
+      if (state.label !== "1:2:2") throw new Error("label");
+      let target = { v: "a" };
+      const first = target;
+      const other = { v: "z" };
+      const swap = () => {
+        target = other;
+        return { text: "s" };
+      };
+      target.v = \`\${swap().text}\`;
+      if (first.v !== "s" || other.v !== "z") throw new Error("swap");
+      const table: Record<string, string> = { a: "", b: "" };
+      let key = "a";
+      const turn = () => {
+        key = "b";
+        return { text: "t" };
+      };
+      table[key] = \`\${turn().text}\${key}\`;
+      if (table.a !== "tb" || table.b !== "") throw new Error("table");
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
   it("branch on a short-circuit whose right operand calls a function that makes objects", async () => {
     const result = await checkModel(`
       const cursor = { index: 1 };
@@ -4865,18 +4895,17 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("rejects running a call before an operand that reads what it changes", () => {
-    expect(() =>
-      compile(`
-        let count = 0;
-        function counter() {
-          count += 1;
-          return count;
-        }
-        const total = count + counter();
-        if (total !== 1) throw new Error("total");
-      `),
-    ).toThrow("tla-ts can't run this before what reads what it changes");
+  it("runs a call after an operand that reads what it changes, with the value read before", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      function counter() {
+        count += 1;
+        return count;
+      }
+      const total = count + counter();
+      if (total !== 1) throw new Error("total");
+    `);
+    expect(result.status).toBe("deadlock");
   });
 
   it("describes a property with Reflect.getOwnPropertyDescriptor", async () => {
