@@ -60,7 +60,13 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { getConversion, getConversionFunctions, runConversion } from "./conversions";
 import { getJsonText, parseJson, translateHoldsJson } from "./json";
-import { getIteratorFunctions, isIteratedPattern, isTaken, takeFromIterator } from "./iterators";
+import {
+  getIteratorFunctions,
+  isIteratedPattern,
+  isTaken,
+  isUntypedPattern,
+  takeFromIterator,
+} from "./iterators";
 import {
   translateCondition,
   translateExpression,
@@ -553,6 +559,9 @@ const assignPattern = (
         "tla-ts can't destructure this object through its iterator",
         target,
       );
+    }
+    if (isUntypedPattern(target, context) && !isTaken(value)) {
+      throw new TlaTypeScriptError("Give this pattern's value an array type", target);
     }
     return target.elements.reduce((current, element, position) => {
       if (ts.isOmittedExpression(element)) return current;

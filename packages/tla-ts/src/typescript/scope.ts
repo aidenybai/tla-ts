@@ -9,7 +9,7 @@ import {
   share,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { isIteratedPattern, isTaken } from "./iterators";
+import { isIteratedPattern, isTaken, isUntypedPattern } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateExpression } from "./expressions";
 import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
@@ -185,6 +185,9 @@ export const bindPatternInline = (
       "tla-ts can't destructure this object through its iterator",
       pattern,
     );
+  }
+  if (ts.isArrayBindingPattern(pattern) && isUntypedPattern(pattern, context) && !isTaken(value)) {
+    throw new TlaTypeScriptError("Give this pattern's value an array type", pattern);
   }
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
   const heapSymbol = context.heap;

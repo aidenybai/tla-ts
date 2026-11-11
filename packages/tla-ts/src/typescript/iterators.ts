@@ -41,6 +41,20 @@ export const isIteratedPattern = (
   );
 };
 
+// An array pattern whose type doesn't tell whether it destructures an array or an object that
+// iterates, which an object's iterator could give different values than its indices.
+export const isUntypedPattern = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
+  context: Context,
+) => {
+  const type = ts.isArrayBindingPattern(pattern)
+    ? context.checker.getTypeAtLocation(pattern)
+    : context.checker.getTypeOfAssignmentPattern(pattern);
+  return (
+    context.heap !== undefined && (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+  );
+};
+
 // The functions that destructuring a pattern through an iterator may run.
 export const getIteratorFunctions = (pattern: ts.Node, context: Context) => [
   ...ITERATOR_KEYS.flatMap((key) => getWrittenFunctions(pattern, key, context)),

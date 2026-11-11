@@ -2165,6 +2165,16 @@ describe("errors", () => {
     expect((await checkModel(getSource(0))).failure?.message).toContain("call");
   });
 
+  it("rejects an array pattern whose value's type doesn't tell an array from an object", () => {
+    expect(() =>
+      compile(`
+        const box = { size: 1 };
+        const held: any = box;
+        const [value] = held;
+      `),
+    ).toThrow("spec.ts:4:15 Give this pattern's value an array type");
+  });
+
   it("resumes generators that an untyped variable holds", async () => {
     const result = await check(
       compile(
