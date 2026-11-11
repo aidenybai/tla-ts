@@ -22,8 +22,19 @@ const getWords = (tokens: Token[]) =>
       return words;
     }, []);
 
+interface LineNumberProps {
+  number: number;
+}
+
+export const LineNumber = (props: LineNumberProps) => (
+  <span aria-hidden className="block w-[3ch] shrink-0 text-right text-faint select-none">
+    {props.number}
+  </span>
+);
+
 interface CodeLineProps {
   tokens: Token[];
+  number?: number;
   note?: LineNote;
   isActive?: boolean;
   isWrapped?: boolean;
@@ -44,6 +55,7 @@ export const CodeLine = (props: CodeLineProps) => (
       props.className,
     )}
   >
+    {props.number !== undefined && <LineNumber number={props.number} />}
     <span
       className={cn(
         "min-w-0 flex-1",

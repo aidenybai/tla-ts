@@ -1,5 +1,5 @@
 import { CaretDown } from "@phosphor-icons/react";
-import { use, useMemo, useState, type ReactNode } from "react";
+import { use, useEffect, useMemo, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { Compilation } from "../compile-worker";
@@ -48,11 +48,13 @@ interface PlaygroundState {
   isCompiling: boolean;
   isRunning: boolean;
   result: RunResult | undefined;
+  canRun: boolean;
   run: () => void;
 }
 
 const highlighting = createHighlighter();
 const NO_MARKS: Mark[] = [];
+const RUN_SHORTCUT = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↵" : "Ctrl ↵";
 
 const playgroundContext = createPartsContext<PlaygroundState>("Playground.Root");
 
@@ -84,6 +86,26 @@ export const PlaygroundRoot = (props: PartProps) => {
     runner.reset();
     setFile(nextFile);
   };
+  const compilation = compiler.compilation;
+  const canRun =
+    !runner.isRunning && compilation !== undefined && !compiler.isCompiling && !compiler.error;
+  const run = () => {
+    if (!canRun) return;
+    runner.run({
+      source: compilation.tla,
+      config: compilation.config,
+      modules: compilation.modules,
+    });
+  };
+  useEffect(() => {
+    const runOnShortcut = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+      event.preventDefault();
+      run();
+    };
+    addEventListener("keydown", runOnShortcut);
+    return () => removeEventListener("keydown", runOnShortcut);
+  });
   return (
     <playgroundContext.PartsContext
       value={{
@@ -104,14 +126,8 @@ export const PlaygroundRoot = (props: PartProps) => {
         isCompiling: compiler.isCompiling,
         isRunning: runner.isRunning,
         result: compiler.isCompiling || compiler.error ? undefined : runner.result,
-        run: () => {
-          if (compiler.compilation === undefined) return;
-          runner.run({
-            source: compiler.compilation.tla,
-            config: compiler.compilation.config,
-            modules: compiler.compilation.modules,
-          });
-        },
+        canRun,
+        run,
       }}
     >
       <div className="flex h-dvh flex-col text-prose">{props.children}</div>
@@ -147,15 +163,12 @@ export const PlaygroundHeader = () => {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          disabled={
-            state.isRunning || state.compilation === undefined || state.isCompiling || !!state.error
-          }
-          variant="success"
-          onClick={state.run}
-        >
+        <Button disabled={!state.canRun} variant="success" onClick={state.run}>
           <RunIcon isRunning={state.isRunning} isDone={false} />
           {state.isRunning ? "Processing" : "Run"}
+          {!state.isRunning && (
+            <kbd className="font-sans text-white/65 max-sm:hidden">{RUN_SHORTCUT}</kbd>
+          )}
         </Button>
       </div>
     </header>
@@ -216,6 +229,7 @@ export const PlaygroundPanes = () => {
                 .map((line) => (
                   <CodeLine
                     key={line.number}
+                    number={line.number}
                     tokens={line.tokens}
                     offset={state.outputOffsets[line.number - 1]}
                     marks={state.outputMarks}
