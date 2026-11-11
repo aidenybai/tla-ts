@@ -53,6 +53,7 @@ import {
 import { OptContext } from "./opt-context";
 import { isInNraFragment } from "./opt-nlsat";
 import { getLogicStrategy } from "./logic-tactics";
+import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { isAstLess } from "./ast-lt";
@@ -426,6 +427,7 @@ export const runSmtlibScript = (
         manager,
         isMbqi: settings.isMbqi,
         isFindingMacros: settings.isFindingMacros,
+        setup: getSetup(),
         write: () => {},
       },
       objectives,
@@ -489,15 +491,18 @@ export const runSmtlibScript = (
       settings.parameters.get("tactic.default_tactic") ??
       getLogicStrategy(state.logic, goal.isProofsEnabled);
     try {
-      const checked = checkSatUsing(
-        compileInternalTactic(getTacticEnvironment(), strategy),
-        goal,
-      );
+      const checked = checkSatUsing(compileInternalTactic(getTacticEnvironment(), strategy), goal);
       return { result: checked.status, context: undefined, model: checked.model };
     } catch (error) {
       if (!(error instanceof SmtUnsupportedError)) throw error;
+      const hasQuantifiers = state.assertions.some(
+        (assertion) => state.manager.hasQuantifierFlags[assertion],
+      );
       return {
-        ...solveAssertions(state.manager, state.assertions, settings),
+        ...solveAssertions(state.manager, state.assertions, {
+          isMbqi: settings.isMbqi || isMbqiByFeatures(getSetup(), hasQuantifiers),
+          isFindingMacros: settings.isFindingMacros,
+        }),
         model: undefined,
       };
     }
@@ -534,12 +539,10 @@ export const runSmtlibScript = (
       if (!isOptimizing) state.hasChecked = true;
       const kernel =
         isAssuming || (state.isIncremental && !isOptimizing)
-          ? solveAssuming(
-              manager,
-              getNamedAssertions(),
-              isNamed ? [...names, ...extra] : extra,
-              settings,
-            )
+          ? solveAssuming(manager, getNamedAssertions(), isNamed ? [...names, ...extra] : extra, {
+              isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
+              isFindingMacros: settings.isFindingMacros,
+            })
           : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
       const solved =
@@ -597,10 +600,17 @@ export const runSmtlibScript = (
     pendingText = lines.pop() ?? "";
     for (const line of lines) (isDiagnostic ? printDiagnostic : print)(line);
   };
+  const getSetup = () => ({
+    logic: script.state.logic,
+    isAutoConfig:
+      settings.parameters.get("auto_config") !== "false" &&
+      settings.parameters.get("smt.auto_config") !== "false",
+  });
   const getTacticEnvironment = () => ({
     manager: script.state.manager,
     isMbqi: settings.isMbqi,
     isFindingMacros: settings.isFindingMacros,
+    setup: getSetup(),
     write,
   });
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>

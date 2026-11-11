@@ -46,6 +46,7 @@ import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
+import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
 import { applyQeLite } from "./qe-lite";
 import { simplifyGoal } from "./quant-tactics";
@@ -89,6 +90,7 @@ export interface TacticEnvironment {
   manager: AstManager;
   isMbqi: boolean;
   isFindingMacros: boolean;
+  setup: SmtSetup;
   write: (text: string, isDiagnostic: boolean) => void;
 }
 
@@ -225,8 +227,12 @@ const SMT_DESCRS = getDescrs("smt", [
 ]);
 
 const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
-  const solved = solveGoal(environment.manager, goal.forms.items, {
-    isMbqi: getBool(params, "mbqi", environment.isMbqi),
+  const manager = environment.manager;
+  const hasQuantifiers = goal.forms.items.some((form) => manager.hasQuantifierFlags[form]);
+  const solved = solveGoal(manager, goal.forms.items, {
+    isMbqi:
+      getBool(params, "mbqi", environment.isMbqi) ||
+      isMbqiByFeatures(environment.setup, hasQuantifiers),
     isFindingMacros: environment.isFindingMacros,
   });
   if (solved.result === L_UNDEF) throw new SmtTacticError(solved.context.getLastFailureMessage());
