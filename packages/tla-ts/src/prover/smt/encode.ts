@@ -15,7 +15,8 @@ import { simplifySets } from "./simplify";
 import { layOutCommand } from "./layout";
 import { getSymbolSpec, type CollectState, type SymbolSpec } from "./data";
 import type { Entry } from "./flatten";
-import { declare, getTlaName, MEM } from "./format";
+import { declare, getTlaName, NATIVE_OPERATORS, replaceTokens } from "./format";
+import { getSort } from "./types";
 import {
   createEncoder,
   type Binding,
@@ -83,6 +84,7 @@ const collectSymbols = (entries: Entry[], encoder: Encoder, encoding: SmtEncodin
     isArithmetic: encoding.isArithmetic,
     isSetExtensional: encoding.isSetExtensional,
     recordFields: encoder.recordFields,
+    setTypes: encoder.setTypes,
     strings: [],
     integers: [],
     isFunConstr: false,
@@ -155,31 +157,54 @@ interface EncodedContext {
   entries: Entry[];
 }
 
-const encodeContext = (context: Hyp[], encoder: Encoder) =>
-  context.reduce<EncodedContext>(
-    (state, hyp) => {
+const encodeContext = (sequent: Sequent, encoder: Encoder) =>
+  sequent.context.reduce<EncodedContext>(
+    (state, hyp, index) => {
       const next = (binding: Binding, entries: Entry[] = []) => ({
         env: encoder.push(state.env, binding),
         entries: [...state.entries, ...entries],
       });
+      const rest: Expr = {
+        kind: "Sequent",
+        sequent: { context: sequent.context.slice(index + 1), active: sequent.active },
+      };
       switch (hyp.kind) {
         case "Fresh": {
           const symbol = encoder.getUniqueName(hyp.name);
-          const binding: Binding =
-            hyp.shape === 0
-              ? { kind: "constant", symbol }
-              : { kind: "operator", symbol, arity: hyp.shape };
-          const declaration = declare(symbol, hyp.shape);
-          if (!hyp.domain || hyp.domainVisibility === "Hidden") return next(binding, [declaration]);
-          const fact = `(assert (${MEM} ${symbol} ${encoder.encodeIdv(hyp.domain, state.env, HYPOTHESIS)}))`;
-          return next(binding, [declaration, ...encoder.getEntries(fact)]);
+          if (hyp.shape > 0)
+            return next({ kind: "operator", symbol, arity: hyp.shape }, [
+              declare(symbol, hyp.shape),
+            ]);
+          const declared = encoder.declareConstant(
+            hyp,
+            hyp.domainVisibility === "Visible" ? hyp.domain : undefined,
+            rest.sequent,
+            state.env,
+            HYPOTHESIS,
+          );
+          const binding: Binding = { kind: "constant", symbol, type: declared.type };
+          const declaration = declare(symbol, 0, getSort(declared.type));
+          const guard = declared.getGuard(symbol);
+          if (guard === undefined) return next(binding, [declaration]);
+          return next(binding, [declaration, ...encoder.getEntries(`(assert ${guard})`)]);
         }
+        // Rewrite.elim_flex declares a variable and then its primed copy, so the hypotheses after
+        // it type both.
         case "Flex": {
           const symbol = encoder.getUniqueName(hyp.name);
           const primed = encoder.getUniqueName(`${hyp.name}_prime`);
-          return next({ kind: "variable", name: hyp.name, symbol, primed }, [
-            declare(symbol, 0),
-            declare(primed, 0),
+          const type = encoder.searchDeclarationType(rest, true, state.env, HYPOTHESIS);
+          const variable: Binding = { kind: "variable", name: hyp.name, symbol, primed, type };
+          const primedType = encoder.searchDeclarationType(
+            rest,
+            true,
+            encoder.push(state.env, variable),
+            HYPOTHESIS,
+            `${hyp.name}#prime`,
+          );
+          return next({ ...variable, primedType }, [
+            declare(symbol, 0, getSort(type)),
+            declare(primed, 0, getSort(primedType)),
           ]);
         }
         case "Defn": {
@@ -210,6 +235,13 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
               [`; omitted declaration of '${definition.name}' (second-order)`],
             );
           const symbol = encoder.getUniqueName(definition.name);
+          // Type.Synthesize types a hidden constant definition as it types a NEW constant.
+          const type =
+            hyp.visibility === "Hidden" && body.kind !== "Lambda"
+              ? encoder.searchDeclarationType(rest, true, state.env, HYPOTHESIS)
+              : undefined;
+          if (type !== undefined)
+            return next({ kind: "constant", symbol, type }, [declare(symbol, 0, getSort(type))]);
           return next({ kind: "operator", symbol, arity: params.length }, [
             declare(symbol, params.length),
           ]);
@@ -259,7 +291,7 @@ export const encodeSmt = (
     encoding.rewriteLevel,
   );
   const encoder = createEncoder(session, encoding);
-  const context = encodeContext(sequent.context, encoder);
+  const context = encodeContext(sequent, encoder);
   const goal = isSecondOrder(sequent.active)
     ? []
     : encoder.getEntries(
@@ -297,7 +329,7 @@ export const encodeSmt = (
     );
   const printCommand = (line: string) => {
     if (line.startsWith(";")) return line;
-    const command = layOutCommand(printer.resolve(line));
+    const command = layOutCommand(replaceTokens(printer.resolve(line), NATIVE_OPERATORS));
     const name = /:named \|([^|]*)\|\)\)$/.exec(line)?.[1];
     if (name === undefined) return command;
     return `;; ${name === "Goal" ? name : `Axiom: ${name}`}\n${command}`;

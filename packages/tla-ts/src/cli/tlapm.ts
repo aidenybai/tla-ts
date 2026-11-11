@@ -309,6 +309,7 @@ const DEBUG_FLAGS = new Set([
   "rwsetext",
   "disable_arithmetic",
   "no_smt_set_extensionality",
+  "smarter_types",
 ]);
 
 export const runTlapm = async (args: string[]) => {
@@ -327,7 +328,13 @@ export const runTlapm = async (args: string[]) => {
     isShowingHidden: debugFlags.has("hidden"),
     isShowingAllDefinitions: debugFlags.has("alldefs"),
   };
-  const unsupportedFlag = [...debugFlags].find((flag) => !DEBUG_FLAGS.has(flag));
+  const rewriteFlags = ["rwsetext", "rw", "rw+"].filter((flag) => debugFlags.has(flag));
+  const isTyped = debugFlags.has("smarter_types") && !debugFlags.has("disable_arithmetic");
+  // tla-ts rewrites sets before it types expressions, though tlapm types them first.
+  const unsupportedFlag =
+    isTyped && rewriteFlags.length > 0
+      ? `smarter_types with --debug ${rewriteFlags.at(-1)}`
+      : [...debugFlags].find((flag) => !DEBUG_FLAGS.has(flag));
   const unsupported =
     parsed.unknown[0] ??
     (isProcessing && parsed.has("--printallobs") ? "--printallobs" : undefined) ??
@@ -443,6 +450,7 @@ export const runTlapm = async (args: string[]) => {
         isArithmetic: !debugFlags.has("disable_arithmetic"),
         rewriteLevel: ["rwsetext", "rw", "rw+"].findLastIndex((flag) => debugFlags.has(flag)) + 1,
         isSetExtensional: !debugFlags.has("no_smt_set_extensionality"),
+        isTyped,
       },
     },
     printing,

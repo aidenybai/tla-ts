@@ -93,7 +93,7 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
         state.index += 3;
         while (tokens[state.index]?.[0] === "(") {
           const raw = tokens[state.index + 1][0];
-          const identifier = context.adjoin(raw.replace(/#\d+$/, ""));
+          const identifier = context.adjoin(raw.replace(/(:\w+)?#\d+$/, ""));
           const stack = renames.get(raw) ?? [];
           renames.set(raw, [...stack, identifier.name]);
           scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
@@ -121,7 +121,7 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
         const scope: QuantifierScope = { depth: letScope.depth, exits: [] };
         letScope.names.toReversed().forEach((index) => {
           const raw = tokens[index][0];
-          const identifier = context.adjoin(raw.replace(/#\d+$/, ""));
+          const identifier = context.adjoin(raw.replace(/(:\w+)?#\d+$/, ""));
           const stack = renames.get(raw) ?? [];
           renames.set(raw, [...stack, identifier.name]);
           scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));

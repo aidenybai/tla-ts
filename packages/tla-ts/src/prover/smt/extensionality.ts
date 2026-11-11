@@ -47,16 +47,18 @@ export const resolveTriggers = (text: string, isTriggered: boolean): string => {
 };
 
 // Without set extensionality, Standardize leaves out set_extensionality_visitor, so no polarity
-// triggers anything.
+// triggers anything. An equality of two sets of one type has that type's trigger.
 export const getEquality = (
   left: string,
   right: string,
   polarity: Polarity | undefined,
   isNegated: boolean,
+  setTrigger?: string,
 ) => {
-  const triggered = `(${TRIG_EQ} ${left} ${right})`;
+  const triggered = `(${setTrigger ?? TRIG_EQ} ${left} ${right})`;
   const kept = isNegated ? `(distinct ${left} ${right})` : `(= ${left} ${right})`;
-  if (polarity === undefined || (!isSetTerm(left) && !isSetTerm(right))) return kept;
+  if (polarity === undefined || (setTrigger === undefined && !isSetTerm(left) && !isSetTerm(right)))
+    return kept;
   const text = isNegated ? `(not ${triggered})` : triggered;
   // A cast around the equality may still trigger it, so both forms wait for resolveTriggers.
   return polarity === (isNegated ? "Positive" : "Negative")

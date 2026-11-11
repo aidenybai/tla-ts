@@ -45,12 +45,14 @@ import {
   SUBSET_EQ,
   TAIL,
   tla,
-  TRIG_EQ,
   TT_IDV,
   UNION,
 } from "./format";
 import { getUntypedSpec } from "./arithmetic";
 import { axiom, type Axiom } from "./table";
+import { getTypeKey, getTypeName, IDV, type Type } from "./types";
+
+const SET_OF_IDV: Type = { kind: "Set", element: IDV };
 
 export interface SymbolSpec {
   declaration: string | undefined;
@@ -62,6 +64,7 @@ export interface CollectState {
   isArithmetic: boolean;
   isSetExtensional: boolean;
   recordFields: Map<string, string[]>;
+  setTypes: Map<string, Type>;
   strings: string[];
   integers: number[];
   isFunConstr: boolean;
@@ -195,6 +198,29 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         getIntegers(count, state.isArithmetic),
         "t",
       ),
+    );
+  }
+  if (name.startsWith("TrigEq_")) {
+    const type = state.setTypes.get(name) ?? SET_OF_IDV;
+    const element = type.kind === "Set" ? type.element : IDV;
+    return fixed(
+      2,
+      ["SetExtTrigger"],
+      [
+        axiom(
+          "ExtTrigEqDef",
+          [getTypeKey(type)],
+          `(forall ((x Idv) (y Idv)) (! (= (${symbol} x y) (= x y)) :pattern ((${symbol} x y))))`,
+          `ExtTrigEqDef ${getTypeName(type)}`,
+        ),
+        axiom(
+          "ExtTrigEqTrigger",
+          [getTypeKey(element)],
+          `(forall ((x Idv) (y Idv)) (! (${SET_EXT_TRIGGER} x y) :pattern ((${symbol} x y))))`,
+          `ExtTrigEqTrigger ${getTypeName(element)}`,
+        ),
+      ],
+      "Bool",
     );
   }
   const fields = state.recordFields.get(name);
@@ -666,24 +692,6 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     case "Proj_Int":
       return spec(declare(symbol, 1, "Int"), [], []);
-    case "TrigEq_Set$Idv$":
-      return fixed(
-        2,
-        ["SetExtTrigger"],
-        [
-          axiom(
-            "ExtTrigEqDef",
-            ["Set$Idv$"],
-            `(forall ((x Idv) (y Idv)) (! (= (${TRIG_EQ} x y) (= x y)) :pattern ((${TRIG_EQ} x y))))`,
-          ),
-          axiom(
-            "ExtTrigEqTrigger",
-            ["Idv"],
-            `(forall ((x Idv) (y Idv)) (! (${SET_EXT_TRIGGER} x y) :pattern ((${TRIG_EQ} x y))))`,
-          ),
-        ],
-        "Bool",
-      );
     case "SetExtTrigger":
     case "IsSetOf":
       return fixed(name === "IsSetOf" ? 1 : 2, [], [], "Bool");
@@ -692,8 +700,17 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     case "IntSet":
     case "Tt_Idv":
       return fixed(0, [], []);
+    // N_data.typed_deps: every comparison of two integers has the typing of IntLteq.
     case "TIntLteq":
+    case "TIntLt":
+    case "TIntGteq":
+    case "TIntGt":
       return spec(undefined, ["IntLteq"], [getTyping("IntLteq")]);
+    case "TIntPlus":
+    case "TIntMinus":
+    case "TIntTimes":
+    case "TIntUminus":
+      return spec(undefined, [name.slice(1)], []);
     default:
       if (name.startsWith("TIntLit_")) return spec(undefined, [], []);
       throw new TlaUnsupportedError(`the symbol ${name}`);

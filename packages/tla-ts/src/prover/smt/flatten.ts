@@ -1,7 +1,7 @@
 // encode/n_flatten.ml: each application of a second-order construct becomes a fresh first-order
 // symbol, declared with its axioms before the fact that uses it.
 
-import { declare, formatName, getClosing } from "./format";
+import { formatName, getClosing } from "./format";
 import type { Axiom } from "./table";
 
 export interface Flattened {
@@ -17,8 +17,6 @@ interface OmittedFact {
 }
 
 export type Entry = string | Flattened | OmittedFact;
-
-export const getVariable = (name: string, depth: number) => `${name}#${depth}`;
 
 export const getDepth = (variable: string) => Number(variable.slice(variable.lastIndexOf("#") + 1));
 
@@ -62,7 +60,7 @@ export const createFlattener = () => {
     visit: string,
     site: Site,
     getAxioms: (symbol: string, axioms: Set<string>) => Axiom[],
-    arity: number,
+    sorts: string[],
     name = `TLA__${kind}`,
   ) => {
     // Flatten.find_hoapp skips a second-order ASSUME, so the application stays and only
@@ -84,7 +82,7 @@ export const createFlattener = () => {
       kind,
       visit: removeUnprimable(visit),
       getLines: (axioms) => [
-        declare(symbol, arity),
+        `(declare-fun ${symbol} (${sorts.join(" ")}) Idv)`,
         ...getAxioms(symbol, axioms).map(
           (entry) =>
             `(assert (! ${removeUnprimable(entry.formula ?? "")} :named |${entry.label} ${raw}|))`,

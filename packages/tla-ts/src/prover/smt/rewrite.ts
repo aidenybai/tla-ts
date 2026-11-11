@@ -1,19 +1,18 @@
 // encode/n_rewrite.ml, type/t_synth.ml and encode/n_standardize.ml: a TLA+ expression as an SMT-LIB
 // term over Idv.
 
-import { TlaProverError, TlaUnsupportedError } from "../../errors";
+import { TlaError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { normalizeApply, shiftExpr } from "../../obligations/substitution";
-import { type Bound, type Builtin, type Expr, type Sequent } from "../../obligations/expression";
+import {
+  type Bound,
+  type Builtin,
+  type Expr,
+  type Hyp,
+  type Sequent,
+} from "../../obligations/expression";
 import { getNumeral } from "./axioms";
 import { createContext, type Identifier } from "./context";
-import {
-  createFlattener,
-  getDepth,
-  getVariable,
-  removeUnprimable,
-  UNPRIMABLE,
-  type Entry,
-} from "./flatten";
+import { createFlattener, getDepth, removeUnprimable, UNPRIMABLE, type Entry } from "./flatten";
 import {
   BOOL_SET,
   BUILTIN_SYMBOLS,
@@ -27,10 +26,13 @@ import {
   FUN_ISAFCN,
   FUN_SET,
   getBinders,
+  getVariable,
+  getVariableSort,
   INT_LTEQ,
   INT_SET,
   MEM,
   NAT_SET,
+  PROJ_INT,
   STR_SET,
   SUBSET_EQ,
   tla,
@@ -44,12 +46,24 @@ import {
   getSetOfAxioms,
   getSetStAxioms,
 } from "./instances";
+import {
+  BOOL,
+  getSort,
+  getTypeName,
+  IDV,
+  INT,
+  isSameType,
+  searchType,
+  STRING,
+  type Type,
+} from "./types";
 
 interface Term {
   isBool: boolean;
   text: string;
   // Type.Synthesize: the Int-sorted form of a term that is an integer before it's cast to Idv.
   integer?: string;
+  type?: Type;
 }
 
 export interface EncodingSession {
@@ -61,6 +75,8 @@ export interface SmtEncoding {
   isArithmetic: boolean;
   rewriteLevel: number;
   isSetExtensional: boolean;
+  // Type level 2, which --debug smarter_types turns on.
+  isTyped: boolean;
 }
 
 export interface Mode {
@@ -71,8 +87,15 @@ export interface Mode {
 }
 
 export type Binding =
-  | { kind: "constant"; symbol: string }
-  | { kind: "variable"; name: string; symbol: string; primed: string }
+  | { kind: "constant"; symbol: string; type?: Type }
+  | {
+      kind: "variable";
+      name: string;
+      symbol: string;
+      primed: string;
+      type?: Type;
+      primedType?: Type;
+    }
   | { kind: "operator"; symbol: string; arity: number }
   | { kind: "secondOrder"; name: string; shapes: number[] }
   | { kind: "unsupported"; reason: string };
@@ -103,11 +126,55 @@ const UNSUPPORTED_OPERANDS = new Set<Builtin>([
   "Irregular",
 ]);
 
+const ARITHMETIC = new Set<Builtin>(["Plus", "Minus", "Times", "Uminus"]);
+
+const getSetType = (element: Type): Type => ({ kind: "Set", element });
+
+const getRecordFieldType = (type: Type, field: string) =>
+  type.kind === "Record" ? type.fields.find((entry) => entry.name === field)?.type : undefined;
+
+const getFieldType = (type: Type, field: string) =>
+  type.kind === "Fun" && type.domain.kind === "String"
+    ? type.range
+    : getRecordFieldType(type, field);
+
+const getComponentType = (type: Type, args: Expr[]) => {
+  if (args.length !== 1) return undefined;
+  const arg = args[0];
+  if (arg.kind === "String") return getRecordFieldType(type, arg.value);
+  return arg.kind === "Num" && arg.fraction === "" && type.kind === "Product"
+    ? type.items[Number(arg.integer) - 1]
+    : undefined;
+};
+
+const getBuiltinType = (builtin: Builtin, types: Type[]): Type | undefined => {
+  const first = types[0];
+  switch (builtin) {
+    case "Range":
+      return getSetType(INT);
+    case "Cup":
+    case "Cap":
+    case "Setminus":
+      return first.kind === "Set" && isSameType(first, types[1]) ? first : undefined;
+    case "UNION":
+      return first.kind === "Set" && first.element.kind === "Set" ? first.element : undefined;
+    case "SUBSET":
+      return first.kind === "Set" ? getSetType(first) : undefined;
+    case "DOMAIN":
+      if (first.kind === "Fun") return getSetType(first.domain);
+      if (first.kind === "Product") return getSetType(INT);
+      return first.kind === "Record" ? getSetType(STRING) : undefined;
+    default:
+      return undefined;
+  }
+};
+
 export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) => {
   const flattener = createFlattener();
   const flatten = flattener.flatten;
   const anonymous = new Map<string, number>();
   const recordFields = new Map<string, string[]>();
+  const setTypes = new Map<string, Type>();
   const context = createContext();
   const declared = new Map<string, Identifier>();
 
@@ -121,7 +188,75 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
 
   const bool = (text: string): Term => ({ isBool: true, text });
 
-  const idv = (text: string): Term => ({ isBool: false, text });
+  const idv = (text: string, type?: Type): Term => ({ isBool: false, text, type });
+
+  const typed = (type: Type | undefined) => (encoding.isTyped ? type : undefined);
+
+  const integer = (text: string): Term => ({
+    isBool: false,
+    text: `(${CAST_INT} ${text})`,
+    integer: text,
+  });
+
+  const getType = (term: Term) =>
+    term.isBool ? BOOL : term.integer === undefined ? (term.type ?? IDV) : INT;
+
+  const getTyped = (symbol: string, type: Type | undefined) => {
+    if (type?.kind === "Int") return integer(symbol);
+    return type?.kind === "Bool" ? bool(symbol) : idv(symbol, type);
+  };
+
+  // Type.Synthesize marks a component of a tuple or record as projected into its type, and only
+  // Int has a projection at type level 2. tlapm leaves a Bool component an Idv it then uses as a
+  // Bool, so it stays an individual here.
+  const project = (text: string, type: Type) => {
+    if (type.kind === "Int") return { isBool: false, text, integer: `(${PROJ_INT} ${text})` };
+    return idv(text, type.kind === "Bool" ? undefined : type);
+  };
+
+  const getElementType = (term: Term) => {
+    const type = getType(term);
+    return type.kind === "Set" ? type.element : undefined;
+  };
+
+  const inferType = (expression: Expr, env: Env | undefined, mode: Mode, depth: number) => {
+    const inner = Array.from({ length: depth }).reduce<Env | undefined>(
+      (current) => push(current, { kind: "unsupported", reason: "a declaration without a type" }),
+      env,
+    );
+    try {
+      return getType(
+        createEncoder({ caseErrors: session.caseErrors }, encoding).encode(expression, inner, mode),
+      );
+    } catch (error) {
+      if (error instanceof TlaError) return undefined;
+      throw error;
+    }
+  };
+
+  // The type a later hypothesis gives a declaration with no domain, which the env doesn't bind yet.
+  // A primed variable has no index of its own, so the hypotheses name it.
+  const searchDeclarationType = (
+    expression: Expr,
+    isPositive: boolean,
+    env: Env | undefined,
+    mode: Mode,
+    primed?: string,
+  ) =>
+    encoding.isTyped
+      ? searchType(
+          {
+            infer: (inner, depth) =>
+              inferType(inner, env, mode, primed === undefined ? depth + 1 : depth),
+            isTarget: (inner, depth) =>
+              primed === undefined
+                ? inner.kind === "Ix" && inner.index === depth + 1
+                : inner.kind === "Opaque" && inner.name === primed,
+          },
+          isPositive,
+          expression,
+        )
+      : undefined;
 
   const getBinding = (env: Env | undefined, index: number): Binding => {
     const found = Array.from({ length: index - 1 }).reduce<Env | undefined>(
@@ -173,7 +308,7 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
         if (bound.domain.kind === "NoDomain") return [...domains, undefined];
         return [...domains, bound.domain.expression];
       }, [])
-      .map((domain) => (domain === undefined ? undefined : encodeIdv(domain, env, mode)));
+      .map((domain) => (domain === undefined ? undefined : encode(domain, env, neither(mode))));
 
   const getDomains = (bounds: Bound[], env: Env | undefined, mode: Mode, construct: string) =>
     encodeDomains(bounds, env, mode).map((domain) => {
@@ -181,14 +316,56 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       return domain;
     });
 
-  const bindVariables = (names: string[], env: Env | undefined, mode: Mode) => {
-    const variables = names.map((name, index) => getVariable(name, mode.depth + index));
+  const getSetResult = (domains: Term[], getResult: (elements: Type[]) => Type) => {
+    const elements = domains.map(getElementType);
+    return encoding.isTyped && elements.every((element) => element !== undefined)
+      ? getResult(elements.filter((element) => element !== undefined))
+      : undefined;
+  };
+
+  const bindVariables = (
+    names: string[],
+    env: Env | undefined,
+    mode: Mode,
+    types: (Type | undefined)[] = [],
+  ) => {
+    const variables = names.map((name, index) =>
+      getVariable(name, mode.depth + index, getSort(types[index])),
+    );
     const inner = variables.reduce<Env | undefined>(
-      (current, symbol) => push(current, { kind: "constant", symbol }),
+      (current, symbol, index) => push(current, { kind: "constant", symbol, type: types[index] }),
       env,
     );
     return { variables, env: inner, mode: { ...mode, depth: mode.depth + names.length } };
   };
+
+  // Type.Synthesize types a variable bounded by a set of type Set(t) as a t. A Ditto has the
+  // previous domain, though tlapm types it without a cast in its membership, or as Set(t) itself
+  // when t isn't atomic, so Z3 rejects either. A variable with no domain gets the type a hypothesis
+  // in the rest of the quantifier gives it.
+  const getBoundTypes = (
+    expression: Extract<Expr, { kind: "Quant" }>,
+    domains: (Term | undefined)[],
+    env: Env | undefined,
+    mode: Mode,
+  ) =>
+    expression.bounds.reduce<{ types: (Type | undefined)[]; last: Type | undefined }>(
+      (state, bound, index) => {
+        const domain = domains[index];
+        const next = (type: Type | undefined) => ({ types: [...state.types, type], last: type });
+        if (bound.domain.kind === "Domain" && domain !== undefined)
+          return next(getElementType(domain));
+        if (bound.domain.kind === "Ditto" && state.last !== undefined) return next(state.last);
+        const rest = expression.bounds.slice(index + 1);
+        const scope = rest.length === 0 ? expression.body : { ...expression, bounds: rest };
+        const names = expression.bounds.slice(0, index).map((innerBound) => innerBound.name);
+        const outer = bindVariables(names, env, mode, state.types);
+        return next(
+          searchDeclarationType(scope, expression.quantifier === "Forall", outer.env, outer.mode),
+        );
+      },
+      { types: [], last: undefined },
+    ).types;
 
   const encodeQuantifier = (
     expression: Extract<Expr, { kind: "Quant" }>,
@@ -196,26 +373,35 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
     mode: Mode,
   ) => {
     const domains = encodeDomains(expression.bounds, env, mode);
+    const types = encoding.isTyped ? getBoundTypes(expression, domains, env, mode) : [];
     const bound = bindVariables(
       expression.bounds.map((innerBound) => innerBound.name),
       env,
       mode,
+      types,
     );
     const body = encodeBool(expression.body, bound.env, bound.mode);
-    const guards = bound.variables.flatMap((variable, index) =>
-      domains[index] === undefined ? [] : [`(${MEM} ${variable} ${domains[index]})`],
-    );
+    const guards = bound.variables.flatMap((variable, index) => {
+      const domain = domains[index];
+      if (domain === undefined) return [];
+      return [`(${MEM} ${toIdv(getTyped(variable, types[index]))} ${toIdv(domain)})`];
+    });
     return expression.quantifier === "Forall"
       ? `(forall (${getBinders(bound.variables)}) ${guards.length === 0 ? body : `(=> ${conjoin(guards)} ${body})`})`
       : `(exists (${getBinders(bound.variables)}) ${conjoin([...guards, body])})`;
   };
+
+  const getSorts = (count: number, free: string[]) => [
+    ...Array.from({ length: count }, () => "Idv"),
+    ...free.map((variable) => getVariableSort(variable) ?? "Idv"),
+  ];
 
   const encodeSetSt = (
     expression: Extract<Expr, { kind: "SetSt" }>,
     env: Env | undefined,
     mode: Mode,
   ) => {
-    const domain = encodeIdv(expression.domain, env, mode);
+    const domain = encode(expression.domain, env, neither(mode));
     const bound = bindVariables([expression.name], env, neither(mode));
     const body = encodeBool(expression.body, bound.env, bound.mode);
     const free = getFree(body, mode.depth);
@@ -224,11 +410,16 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       body,
       mode,
       (name) => getSetStAxioms(name, free, body, bound.variables[0]),
-      free.length + 1,
+      getSorts(1, free),
     );
-    return idv(call(symbol, [domain, ...free]));
+    return idv(
+      call(symbol, [toIdv(domain), ...free]),
+      getSetResult([domain], (elements) => getSetType(elements[0])),
+    );
   };
 
+  // At type level 2 tlapm also gives a set of values the types Standardize rejects, so it encodes
+  // none.
   const encodeSetOf = (
     expression: Extract<Expr, { kind: "SetOf" }>,
     env: Env | undefined,
@@ -240,17 +431,21 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       env,
       neither(mode),
     );
-    const element = encodeIdv(expression.element, bound.env, bound.mode);
-    const free = getFree(element, mode.depth);
+    const element = encode(expression.element, bound.env, neither(bound.mode));
+    const text = toIdv(element);
+    const free = getFree(text, mode.depth);
     const count = domains.length;
     const symbol = flatten(
       `SetOf_${count}`,
-      element,
+      text,
       mode,
-      (name) => getSetOfAxioms(name, free, element, bound.variables),
-      count + free.length,
+      (name) => getSetOfAxioms(name, free, text, bound.variables),
+      getSorts(count, free),
     );
-    return idv(call(symbol, [...domains, ...free]));
+    return idv(
+      call(symbol, [...domains.map(toIdv), ...free]),
+      getSetResult(domains, () => getSetType(getType(element))),
+    );
   };
 
   // Rewrite.elim_multiarg: a function of several arguments is a function of a tuple, whose
@@ -263,7 +458,8 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
     env: Env | undefined,
     mode: Mode,
   ) => {
-    const domains = getDomains(expression.bounds, env, mode, "a function");
+    const terms = getDomains(expression.bounds, env, mode, "a function");
+    const domains = terms.map(toIdv);
     const domain =
       domains.length === 1 ? domains[0] : call(tla(`Product_${domains.length}`), domains);
     const variable = getVariable(
@@ -276,11 +472,12 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       env,
       inner,
     );
-    const body = encodeIdv(
+    const term = encode(
       expression.body,
       domains.length === 1 ? push(env, { kind: "constant", symbol: variable }) : components.env,
-      components.mode,
+      neither(components.mode),
     );
+    const body = toIdv(term);
     const definitions = components.variables.map(
       (component, index) =>
         `(${component} (${FUN_APP} ${variable} ${getNumeral(index + 1, encoding.isArithmetic)}))`,
@@ -294,11 +491,20 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       domains.length === 1 ? body : `(let (${definitions.join(" ")}) ${body})`,
       mode,
       (name, axioms) => getFunctionAxioms(name, free, value, variable, axioms),
-      free.length + 1,
+      getSorts(1, free),
     );
-    return idv(call(symbol, [domain, ...free]));
+    return idv(
+      call(symbol, [domain, ...free]),
+      getSetResult(terms, (elements) => ({
+        kind: "Fun",
+        domain: elements.length === 1 ? elements[0] : { kind: "Product", items: elements },
+        range: getType(term),
+      })),
+    );
   };
 
+  // At type level 2 tlapm sorts the variable of a CHOOSE over a set of type Set(Int) as an Int in
+  // its body but an Idv in ChooseDef, which Z3 rejects, so it stays an Idv.
   const encodeChoose = (
     expression: Extract<Expr, { kind: "Choose" }>,
     env: Env | undefined,
@@ -316,20 +522,29 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       body,
       mode,
       (name) => getChooseAxioms(name, free, body, variable),
-      free.length,
+      getSorts(0, free),
     );
     return idv(call(symbol, free));
   };
 
-  // Type.Synthesize compares values of the same sort only above type level 1, so two formulas are
-  // compared as values.
-  const encodeEquality = (args: Expr[], env: Env | undefined, mode: Mode, isNegated: boolean) =>
-    getEquality(
-      encodeIdv(args[0], env, mode),
-      encodeIdv(args[1], env, mode),
-      encoding.isSetExtensional ? mode.polarity : undefined,
-      isNegated,
-    );
+  // Type.Synthesize compares values of the same type in their own sort only above type level 1,
+  // and Standardize triggers set extensionality on any equality of two sets of one type.
+  const encodeEquality = (args: Expr[], env: Env | undefined, mode: Mode, isNegated: boolean) => {
+    const left = encode(args[0], env, neither(mode));
+    const right = encode(args[1], env, neither(mode));
+    const type = getType(left);
+    const polarity = encoding.isSetExtensional ? mode.polarity : undefined;
+    if (!encoding.isTyped || !isSameType(type, getType(right)))
+      return getEquality(toIdv(left), toIdv(right), polarity, isNegated);
+    if (type.kind === "Int" || type.kind === "Bool") {
+      const operands = [left, right].map((term) => term.integer ?? term.text).join(" ");
+      return isNegated ? `(distinct ${operands})` : `(= ${operands})`;
+    }
+    if (type.kind !== "Set") return getEquality(left.text, right.text, polarity, isNegated);
+    const name = `TrigEq_${getTypeName(type)}`;
+    setTypes.set(name, type);
+    return getEquality(left.text, right.text, polarity, isNegated, tla(name));
+  };
 
   // Type.Synthesize: SelectSeq's test becomes the predicate LAMBDA x1 : Test(x1), its body the
   // text Flatten compares.
@@ -354,7 +569,8 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
     env: Env | undefined,
     mode: Mode,
   ): Term => {
-    const idvs = () => args.map((arg) => encodeIdv(arg, env, mode));
+    const getTerms = () => args.map((arg) => encode(arg, env, neither(mode)));
+    const idvs = () => getTerms().map(toIdv);
     switch (builtin) {
       case "Conj":
         return bool(conjoin(args.map((arg) => encodeBool(arg, env, mode))));
@@ -378,16 +594,24 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
         return bool(`(not ${call(MEM, idvs())})`);
       case "Subseteq":
         return bool(call(SUBSET_EQ, idvs()));
-      // Rewrite.elim_compare: a < b is a <= b /\ a # b, and a > b is b < a.
+      // Rewrite.elim_compare, which leaves the comparisons of two integers at type level 2: a < b
+      // is a <= b /\ a # b, and a > b is b < a.
       case "Lteq":
-        return bool(call(INT_LTEQ, idvs()));
       case "Gteq":
-        return bool(call(INT_LTEQ, idvs().toReversed()));
       case "Lt":
       case "Gt": {
+        const terms = getTerms();
+        const integers = terms.flatMap((term) =>
+          term.integer === undefined ? [] : [term.integer],
+        );
+        if (encoding.isTyped && integers.length === 2)
+          return bool(call(tla(`TInt${builtin}`), integers));
+        const order = (operands: string[]) =>
+          builtin === "Lteq" || builtin === "Lt" ? operands : operands.toReversed();
+        const operands = order(terms.map(toIdv));
+        if (builtin === "Lteq" || builtin === "Gteq") return bool(call(INT_LTEQ, operands));
         // Rewrite copies the operands before Flatten, which flattens each copy again.
-        const getOperands = () => (builtin === "Lt" ? idvs() : idvs().toReversed());
-        return bool(`(and ${call(INT_LTEQ, getOperands())} (distinct ${getOperands().join(" ")}))`);
+        return bool(`(and ${call(INT_LTEQ, operands)} (distinct ${order(idvs()).join(" ")}))`);
       }
       case "SelectSeq": {
         const test = getSelectionTest(args[1], env, mode);
@@ -397,7 +621,7 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
           test.body,
           mode,
           (name) => getSelectSeqAxioms(name, free, test.body, test.variable, encoding.isArithmetic),
-          free.length + 1,
+          getSorts(1, free),
         );
         return idv(call(symbol, [encodeIdv(args[0], env, mode), ...free]));
       }
@@ -413,7 +637,14 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
               ? `Type.Synthesize: Unsupported builtin ${builtin.startsWith("Box") ? "Box" : builtin}`
               : "Type.Synthesize: Unexpected left operand",
           );
-        return idv(call(symbol, idvs()));
+        const terms = getTerms();
+        if (!encoding.isTyped) return idv(call(symbol, terms.map(toIdv)));
+        const integers = terms.flatMap((term) =>
+          term.integer === undefined ? [] : [term.integer],
+        );
+        if (ARITHMETIC.has(builtin) && integers.length === terms.length)
+          return integer(call(tla(`TInt${builtin}`), integers));
+        return idv(call(symbol, terms.map(toIdv)), getBuiltinType(builtin, terms.map(getType)));
       }
     }
   };
@@ -428,7 +659,7 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       case "constant":
       case "variable":
         if (args.length > 0) throw new TlaUnsupportedError(`an applied ${binding.kind}`);
-        return idv(binding.symbol);
+        return getTyped(binding.symbol, binding.type);
       case "operator":
         if (args.length === 0 && binding.arity > 0)
           throw new TlaProverError("Type.Synthesize: Impossible operator conversion");
@@ -475,7 +706,7 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
           higherOrder.join(" "),
           mode,
           () => [],
-          firstOrder.length + free.length,
+          getSorts(firstOrder.length, free),
           binding.name,
         );
         return idv(call(symbol, [...firstOrder, ...free]));
@@ -485,11 +716,11 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
     }
   };
 
-  const getPrimed = (env: Env | undefined, name: string): string => {
+  const getPrimed = (env: Env | undefined, name: string): Term => {
     if (!env) throw new TlaUnsupportedError(`a primed declaration that isn't a variable`);
     const binding = env.binding;
     return binding.kind === "variable" && binding.name === name
-      ? binding.primed
+      ? getTyped(binding.primed, binding.primedType)
       : getPrimed(env.rest, name);
   };
 
@@ -500,7 +731,7 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
     if (name === "IsAFcn" && args.length === 1)
       return bool(`(${FUN_ISAFCN} ${encodeIdv(args[0], env, mode)})`);
     if (args.length === 0 && name.endsWith("#prime"))
-      return idv(getPrimed(env, name.slice(0, -"#prime".length)));
+      return getPrimed(env, name.slice(0, -"#prime".length));
     const anonymousName = args.length === 0 ? `Anon_OPAQUE_${name}` : `Anon_${name}`;
     anonymous.set(anonymousName, args.length);
     return idv(
@@ -557,10 +788,10 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
     const other: Term = expression.other
       ? encode(expression.other, env, mode)
       : idv(getCaseError());
-    const isBool = other.isBool && bodies.every((body) => body.isBool);
-    const isInteger =
-      other.integer !== undefined && bodies.every((body) => body.integer !== undefined);
-    if (isInteger) {
+    const type = getType(other);
+    const isUniform = bodies.every((body) => isSameType(getType(body), type));
+    const isBool = isUniform && type.kind === "Bool";
+    if (isUniform && type.kind === "Int") {
       const integer = expression.arms.reduceRight(
         (rest, arm, index) =>
           `(ite ${encodeBool(arm.condition, env, neither(mode))} ${bodies[index].integer} ${rest})`,
@@ -574,12 +805,33 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
         `(ite ${encodeBool(arm.condition, env, mode)} ${convert(bodies[index])} ${rest})`,
       convert(other),
     );
-    return { isBool, text };
+    return { isBool, text, type: isUniform ? other.type : undefined };
+  };
+
+  // Type.Synthesize types a NEW constant by its visible domain, or else by a hypothesis in the rest
+  // of the sequent. The guard is its membership in the domain the encoding asserts.
+  const declareConstant = (
+    hyp: Extract<Hyp, { kind: "Fresh" }>,
+    guarded: Expr | undefined,
+    rest: Sequent,
+    env: Env | undefined,
+    mode: Mode,
+  ) => {
+    const domain = guarded && encode(guarded, env, neither(mode));
+    const type =
+      domain !== undefined && hyp.domainVisibility === "Visible"
+        ? getElementType(domain)
+        : searchDeclarationType({ kind: "Sequent", sequent: rest }, true, env, mode);
+    return {
+      type,
+      getGuard: (symbol: string) =>
+        domain && `(${MEM} ${toIdv(getTyped(symbol, type))} ${toIdv(domain)})`,
+    };
   };
 
   const encodeSequent = (sequent: Sequent, env: Env | undefined, mode: Mode): string => {
     const steps = sequent.context.reduce<NestedContext>(
-      (state, hyp) => {
+      (state, hyp, index) => {
         switch (hyp.kind) {
           case "Fresh": {
             if (hyp.shape > 0) {
@@ -593,16 +845,18 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
             }
             if (hyp.level !== "Constant")
               throw new TlaUnsupportedError("a NEW declaration that isn't constant");
-            const domain = hyp.domain && encodeIdv(hyp.domain, state.env, state.mode);
-            const bound = bindVariables([hyp.name], state.env, state.mode);
+            const rest = { context: sequent.context.slice(index + 1), active: sequent.active };
+            const declared = declareConstant(hyp, hyp.domain, rest, state.env, state.mode);
+            const bound = bindVariables([hyp.name], state.env, state.mode, [declared.type]);
             const variable = bound.variables[0];
-            const guard = domain && `(${MEM} ${variable} ${domain})`;
+            const guard = declared.getGuard(variable);
             return {
               env: bound.env,
               mode: bound.mode,
               wrappers: [
                 ...state.wrappers,
-                (body) => `(forall ((${variable} Idv)) ${guard ? `(=> ${guard} ${body})` : body})`,
+                (body) =>
+                  `(forall (${getBinders([variable])}) ${guard ? `(=> ${guard} ${body})` : body})`,
               ],
             };
           }
@@ -642,13 +896,13 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
           case "FALSE":
             return bool("false");
           case "BOOLEAN":
-            return idv(BOOL_SET);
+            return idv(BOOL_SET, typed(getSetType(BOOL)));
           case "STRING":
-            return idv(STR_SET);
+            return idv(STR_SET, typed(getSetType(STRING)));
           case "Nat":
-            return idv(NAT_SET);
+            return idv(NAT_SET, typed(getSetType(INT)));
           case "Int":
-            return idv(INT_SET);
+            return idv(INT_SET, typed(getSetType(INT)));
           case "Real":
           case "Infinity":
             throw new TlaProverError(
@@ -682,9 +936,12 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
           const integer = `(ite ${resolveTriggers(condition, true)} ${consequent.integer} ${alternative.integer})`;
           return { isBool: false, text: `(${CAST_INT} ${integer})`, integer };
         }
-        return consequent.isBool && alternative.isBool
-          ? bool(`(ite ${condition} ${consequent.text} ${alternative.text})`)
-          : idv(`(ite ${condition} ${toIdv(consequent)} ${toIdv(alternative)})`);
+        if (consequent.isBool && alternative.isBool)
+          return bool(`(ite ${condition} ${consequent.text} ${alternative.text})`);
+        return idv(
+          `(ite ${condition} ${toIdv(consequent)} ${toIdv(alternative)})`,
+          isSameType(getType(consequent), getType(alternative)) ? consequent.type : undefined,
+        );
       }
       case "List": {
         const items = expression.items.map((item) => encodeBool(item, env, mode));
@@ -700,66 +957,86 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
         return encodeSetSt(expression, env, mode);
       case "SetOf":
         return encodeSetOf(expression, env, mode);
-      case "SetEnum":
+      case "SetEnum": {
+        const elements = expression.elements.map((element) => encode(element, env, neither(mode)));
+        const types = elements.map(getType);
         return idv(
-          call(
-            tla(`SetEnum_${expression.elements.length}`),
-            expression.elements.map((element) => encodeIdv(element, env, mode)),
+          call(tla(`SetEnum_${elements.length}`), elements.map(toIdv)),
+          typed(
+            types.every((type) => isSameType(type, types[0] ?? IDV))
+              ? getSetType(types[0] ?? IDV)
+              : undefined,
           ),
         );
-      case "Product":
+      }
+      case "Product": {
+        const factors = expression.factors.map((factor) => encode(factor, env, neither(mode)));
         return idv(
-          call(
-            tla(`Product_${expression.factors.length}`),
-            expression.factors.map((factor) => encodeIdv(factor, env, mode)),
-          ),
+          call(tla(`Product_${factors.length}`), factors.map(toIdv)),
+          getSetResult(factors, (items) => getSetType({ kind: "Product", items })),
         );
-      case "Tuple":
+      }
+      case "Tuple": {
+        const elements = expression.elements.map((element) => encode(element, env, neither(mode)));
         return idv(
-          call(
-            tla(`Tuple_${expression.elements.length}`),
-            expression.elements.map((element) => encodeIdv(element, env, mode)),
-          ),
+          call(tla(`Tuple_${elements.length}`), elements.map(toIdv)),
+          typed({ kind: "Product", items: elements.map(getType) }),
         );
+      }
       case "Fcn":
         return encodeFunction(expression, env, mode);
       // Rewrite.elim_multiarg: f[a, b] applies f to the tuple <<a, b>>.
       case "FcnApp": {
-        const encodedFunction = encodeIdv(expression.function, env, mode);
+        const encodedFunction = encode(expression.function, env, neither(mode));
         const args = expression.args.map((arg) => encodeIdv(arg, env, mode));
         const argument = args.length === 1 ? args[0] : call(tla(`Tuple_${args.length}`), args);
-        return idv(`(${FUN_APP} ${encodedFunction} ${argument})`);
+        const text = `(${FUN_APP} ${toIdv(encodedFunction)} ${argument})`;
+        const component = typed(getComponentType(getType(encodedFunction), expression.args));
+        return component === undefined ? idv(text) : project(text, component);
       }
-      case "Arrow":
-        return idv(
-          call(FUN_SET, [
-            encodeIdv(expression.domain, env, mode),
-            encodeIdv(expression.range, env, mode),
-          ]),
+      case "Arrow": {
+        const sets = [expression.domain, expression.range].map((set) =>
+          encode(set, env, neither(mode)),
         );
+        return idv(
+          call(FUN_SET, sets.map(toIdv)),
+          getSetResult(sets, (elements) =>
+            getSetType({ kind: "Fun", domain: elements[0], range: elements[1] }),
+          ),
+        );
+      }
       case "Record":
       case "Rect": {
         const names = expression.fields.map((field) => field.name);
         const suffix = names.join("_");
         recordFields.set(`Record_${suffix}`, names);
         recordFields.set(`RecordSet_${suffix}`, names);
+        const values = expression.fields.map((field) => encode(field.value, env, neither(mode)));
+        // Type.Synthesize types a set of records only at type level 3.
+        const type: Type = {
+          kind: "Record",
+          fields: names.map((name, index) => ({ name, type: getType(values[index]) })),
+        };
         return idv(
           call(
             tla(`${expression.kind === "Record" ? "Record" : "RecordSet"}_${suffix}`),
-            expression.fields.map((field) => encodeIdv(field.value, env, mode)),
+            values.map(toIdv),
           ),
+          expression.kind === "Record" ? typed(type) : undefined,
         );
       }
       case "Except":
         return idv(encodeExcept(expression, env, mode));
-      case "Dot":
-        return idv(
-          `(${FUN_APP} ${encodeIdv(expression.expression, env, mode)} ${tla(`StrLit_${expression.field}`)})`,
-        );
+      case "Dot": {
+        const record = encode(expression.expression, env, neither(mode));
+        const text = `(${FUN_APP} ${toIdv(record)} ${tla(`StrLit_${expression.field}`)})`;
+        const component = typed(getFieldType(getType(record), expression.field));
+        return component === undefined ? idv(text) : project(text, component);
+      }
       case "Case":
         return encodeCase(expression, env, mode);
       case "String":
-        return idv(tla(`StrLit_${expression.value}`));
+        return idv(tla(`StrLit_${expression.value}`), typed(STRING));
       case "Num":
         if (expression.fraction !== "") throw new TlaUnsupportedError("a real number");
         // Type.Synthesize gives a number no type when arithmetic is off.
@@ -790,14 +1067,18 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
   ];
 
   return {
+    encode,
     encodeIdv,
     encodeBool,
+    declareConstant,
+    searchDeclarationType,
     push,
     getEntries,
     getUniqueName,
     flattened: flattener.flattened,
     anonymous,
     recordFields,
+    setTypes,
     declared,
   };
 };

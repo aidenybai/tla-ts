@@ -135,7 +135,7 @@ export const TYPED_SYMBOLS = [
   "TIntLteq",
 ];
 
-export type AxiomArgument = number | string | string[];
+export type AxiomArgument = number | string | AxiomArgument[];
 
 // An axiom without a formula belongs to a second-order symbol. Flattening instantiates it for
 // each use of the symbol, and otherwise it isn't printed.

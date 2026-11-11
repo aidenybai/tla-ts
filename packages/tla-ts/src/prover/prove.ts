@@ -560,7 +560,7 @@ const DEFAULT_SETTINGS: ProverSettings = {
   stretch: 1,
   isFlattened: true,
   smtLogic: "UFNIA",
-  smtEncoding: { isArithmetic: true, rewriteLevel: 0, isSetExtensional: true },
+  smtEncoding: { isArithmetic: true, rewriteLevel: 0, isSetExtensional: true, isTyped: false },
 };
 
 interface ObligationsOptions extends Partial<ProverSettings> {
