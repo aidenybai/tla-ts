@@ -1257,6 +1257,36 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("assigns the enumerable own properties of each source in turn", async () => {
+    const result = await checkModel(`
+      const target: { [key: string]: unknown } = { a: 1 };
+      const source: { [key: string]: unknown } = { b: 3 };
+      Object.defineProperty(source, "hidden", { value: 4, enumerable: false });
+      Object.assign(target, null, undefined, "xy", 5);
+      const assigned = Object.assign(target, { a: 2 }, source);
+      if (assigned !== target || target.a !== 2 || target.b !== 3 || "hidden" in target) {
+        throw new Error("assign");
+      }
+      if (target["0"] !== "x" || target["1"] !== "y") throw new Error("string");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("throws a TypeError where Object.assign can't write a property", async () => {
+    const result = await checkModel(`
+      const target: { [key: string]: unknown } = { a: 1 };
+      Object.defineProperty(target, "a", { writable: false });
+      let caught = false;
+      try {
+        Object.assign(target, { a: 2 });
+      } catch (error) {
+        caught = error instanceof TypeError;
+      }
+      if (!caught || target.a !== 1) throw new Error("write");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("describes the properties of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };

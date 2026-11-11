@@ -1179,10 +1179,16 @@ const OBJECT_CHANGES = new Map([
   ["seal", { operator: "Seal", arity: 1, objects: [0] }],
   ["preventExtensions", { operator: "PreventExtensions", arity: 1, objects: [0] }],
   ["setPrototypeOf", { operator: "SetPrototypeOf", arity: 2, objects: [0] }],
+  ["assign", { operator: "Assign", arity: 1, objects: [0] }],
 ]);
 
 // The changes that throw a TypeError where they fail.
-const FALLIBLE_CHANGES = new Set(["defineProperty", "defineProperties", "setPrototypeOf"]);
+const FALLIBLE_CHANGES = new Set([
+  "defineProperty",
+  "defineProperties",
+  "setPrototypeOf",
+  "assign",
+]);
 
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
@@ -1280,23 +1286,27 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
   const isOutside = (argument: ts.Expression) =>
     !isBuiltInObject(argument, context) &&
     ["sequence", "set", "map"].includes(getKind(argument, context));
+  const isAssign = method === "assign";
+  const used = isAssign ? node.arguments : node.arguments.slice(0, change?.arity);
   if (
     change === undefined ||
     node.arguments.length < change.arity ||
     !change.objects.every(isObject) ||
-    node.arguments.slice(0, change.arity).some(isOutside)
+    used.some((argument) => ts.isSpreadElement(argument) || isOutside(argument))
   ) {
     throw new TlaTypeScriptError(`Unsupported statement: ${node.getText()}`, node);
   }
-  const values = node.arguments
-    .slice(0, change.arity)
-    .map((argument, position) =>
-      method === "defineProperty" && position === 1
-        ? translatePropertyKey(argument, scope, context)
-        : translateObjectValue(argument, scope, context),
-    );
+  const values = used.map((argument, position) =>
+    method === "defineProperty" && position === 1
+      ? translatePropertyKey(argument, scope, context)
+      : translateObjectValue(argument, scope, context),
+  );
   return {
-    change: useJavaScript(change.operator, [getHeap(scope, node, context), ...values], context),
+    change: useJavaScript(
+      change.operator,
+      [getHeap(scope, node, context), ...(isAssign ? [values[0], tuple(values.slice(1))] : values)],
+      context,
+    ),
     isFallible: FALLIBLE_CHANGES.has(method),
   };
 };

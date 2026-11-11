@@ -94,6 +94,7 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
   const symbol = type.getSymbol();
   const readonly = type.aliasSymbol?.name === "Readonly" ? type.aliasTypeArguments?.[0] : undefined;
   if (readonly !== undefined) return isPlainObject(readonly, context);
+  if (type.isIntersection()) return type.types.every((member) => isPlainObject(member, context));
   if ((type.flags & ts.TypeFlags.NonPrimitive) !== 0) return true;
   const declaration = symbol?.valueDeclaration;
   if (

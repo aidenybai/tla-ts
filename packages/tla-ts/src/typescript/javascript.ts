@@ -1376,6 +1376,35 @@ Create(heap, prototype, properties) ==
        [] change.isDone -> change.heap
        [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
 
+\\* The writes of Object.assign from one source, which reads each key's value before it writes it.
+RECURSIVE AssignKeys(_, _, _, _)
+AssignKeys(heap, ref, source, keys) ==
+  IF keys = <<>>
+  THEN [heap |-> heap, isDone |-> TRUE, isRangeError |-> FALSE]
+  ELSE LET key == Head(keys)
+           value == Value(IF IsObject(source) THEN Lookup(heap, source) ELSE source, key)
+       IN IF value = value /\\ ~CanPut(heap, ref, key)
+          THEN [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
+          ELSE AssignKeys(SetProperty(heap, ref, key, value), ref, source, Tail(keys))
+
+\\* Object.assign, which writes the enumerable own properties of each source in turn, and skips
+\\* null, undefined, and the primitives that have none. A string copies its characters.
+RECURSIVE Assign(_, _, _)
+Assign(heap, ref, sources) ==
+  IF sources = <<>>
+  THEN [heap |-> heap, isDone |-> TRUE, isRangeError |-> FALSE]
+  ELSE LET value == Head(sources)
+           source ==
+             CASE IsObject(value) -> value
+               [] TypeOf(value) = "string" -> WrapperObject(Null, value)
+               [] value \\in {Undefined, Null} \\/ TypeOf(value) \\in {"number", "boolean", "symbol"} ->
+                    EmptyObject
+               [] OTHER -> Assert(FALSE, "tla-ts can't copy the properties of " \\o ToString(value))
+           written ==
+             AssignKeys(heap, ref, source,
+                        EnumerableOwnKeys(IF IsObject(source) THEN Lookup(heap, source) ELSE source))
+       IN IF written.isDone THEN Assign(written.heap, ref, Tail(sources)) ELSE written
+
 \\* Whether a prototype chain reaches an object.
 RECURSIVE ChainHas(_, _, _)
 ChainHas(heap, prototype, ref) ==
