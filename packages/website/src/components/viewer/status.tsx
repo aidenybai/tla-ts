@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { ArcKey } from "./arc-key";
 import { Chip } from "./chip";
 import { useFocusedNode } from "@/store/viewer";
 import { ThemeToggle } from "./theme-toggle";
@@ -35,4 +34,4 @@ const Controls = () => (
   </div>
 );
 
-export const Status = Object.assign(Root, { Hover, Key: ArcKey, Controls });
+export const Status = Object.assign(Root, { Hover, Controls });

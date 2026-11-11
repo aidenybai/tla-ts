@@ -8,11 +8,9 @@ interface ViewerStoreState {
   hoveredNodeId: string | null;
   selectedNodeId: string | null;
   causalNodeIds: Set<string> | null;
-  isShowingAllArcs: boolean;
   hover: (nodeId: string) => void;
   leave: () => void;
   select: (nodeId: string | null) => void;
-  setShowingAllArcs: (isShowingAllArcs: boolean) => void;
 }
 
 export type ViewerStore = StoreApi<ViewerStoreState>;
@@ -28,7 +26,6 @@ export const createViewerStore = (view: ViewFile): ViewerStore => {
     hoveredNodeId: null,
     selectedNodeId: null,
     causalNodeIds: null,
-    isShowingAllArcs: false,
     hover: (nodeId) => {
       if (get().hoveredNodeId !== nodeId)
         set({ hoveredNodeId: nodeId, causalNodeIds: getFocus(nodeId) });
@@ -39,7 +36,6 @@ export const createViewerStore = (view: ViewFile): ViewerStore => {
     },
     select: (selectedNodeId) =>
       set({ selectedNodeId, causalNodeIds: getFocus(get().hoveredNodeId ?? selectedNodeId) }),
-    setShowingAllArcs: (isShowingAllArcs) => set({ isShowingAllArcs }),
   }));
 };
 
@@ -71,11 +67,3 @@ export const useIsDimmed = (nodeIds: string[]): boolean =>
       nodeIds.length > 0 &&
       !nodeIds.some((nodeId) => state.causalNodeIds?.has(nodeId)),
   );
-
-export const useIsCausalEdge = (from: string, to: string): boolean =>
-  useViewerStore(
-    (state) =>
-      state.causalNodeIds !== null && state.causalNodeIds.has(from) && state.causalNodeIds.has(to),
-  );
-
-export const useHasHover = (): boolean => useViewerStore((state) => state.causalNodeIds !== null);
