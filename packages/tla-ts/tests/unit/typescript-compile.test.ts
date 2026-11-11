@@ -1298,6 +1298,16 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives back a primitive that freeze, seal, or preventExtensions takes", async () => {
+    const result = await checkModel(`
+      const holder = { seen: 0 };
+      if (Object.seal(true) !== true || Object.freeze("a") !== "a") throw new Error("primitive");
+      if (Object.preventExtensions(3) !== 3) throw new Error("number");
+      holder.seen = 1;
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("describes the properties of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };

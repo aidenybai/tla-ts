@@ -598,6 +598,27 @@ const translateCall = (
       );
     }
   }
+  // freeze, seal, and preventExtensions give a primitive back as it is.
+  const primitive = global === "Object" ? node.arguments.at(0) : undefined;
+  const primitiveNames =
+    primitive === undefined
+      ? undefined
+      : getTypeNames(context.checker.getTypeAtLocation(primitive), context.checker);
+  if (
+    primitive !== undefined &&
+    ["freeze", "seal", "preventExtensions"].includes(method) &&
+    primitiveNames?.every((name) => name !== "object" && name !== "function")
+  ) {
+    return share(translateExpression(primitive, scope, context), "value", context, (value) =>
+      context.heap === undefined
+        ? value
+        : ifExpression(
+            useJavaScript("IsRef", [value], context),
+            apply("Assert", [boolean(false), string(`tla-ts can't tell what ${method} changes`)]),
+            value,
+          ),
+    );
+  }
   const test = OBJECT_TESTS.get(method);
   // Only freeze, seal, and preventExtensions on a script's objects, or on the built-in objects a
   // script's heap holds, make an object inextensible.
