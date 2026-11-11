@@ -129,7 +129,7 @@ import {
   translatePropertyKey,
 } from "./heap";
 import { type Collection, getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
-import { translateToNumber, useJavaScript } from "./javascript";
+import { getTypeNames, translateToNumber, useJavaScript } from "./javascript";
 import {
   forceHeap,
   getReceiver,
@@ -148,6 +148,7 @@ import {
   isDescriptorRead,
   isDescriptorsRead,
   isGetterRead,
+  getGetterKeys,
   isProxyOperation,
   readDescriptor,
   readDescriptors,
@@ -5291,14 +5292,69 @@ const isPlainCallee = (node: ts.Expression, context: Context): boolean =>
     ) &&
     isPlainCallee(node.expression, context));
 
+type Increment = ts.PrefixUnaryExpression | ts.PostfixUnaryExpression;
+
+const isIncrement = (node: ts.Node): node is Increment =>
+  (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+  INCREMENT_OPERATORS.has(node.operator);
+
+// A variable, or a property of an object that a name holds, whose key no getter has, which reads
+// and writes a number without running code.
+const isPlainIncrement = (node: Increment, context: Context) => {
+  const operand = node.operand;
+  const names = getTypeNames(context.checker.getTypeAtLocation(operand), context.checker);
+  const isNumeric =
+    names !== undefined && names.every((name) => name === "number" || name === "bigint");
+  const isPlainObject = (object: ts.Expression): boolean =>
+    ts.isIdentifier(object) ||
+    object.kind === ts.SyntaxKind.ThisKeyword ||
+    (ts.isPropertyAccessExpression(object) &&
+      !getGetterKeys(object).has(object.name.text) &&
+      isPlainObject(object.expression));
+  return (
+    isNumeric &&
+    !isProxyOperation(node, context) &&
+    (ts.isIdentifier(operand) ||
+      (ts.isPropertyAccessExpression(operand) &&
+        operand.questionDotToken === undefined &&
+        !getGetterKeys(operand).has(operand.name.text) &&
+        isPlainObject(operand.expression)))
+  );
+};
+
+// Whether a target's evaluation reads only names and keys that an increment doesn't write, so
+// that the increment can run before it.
+const isUnwritten = (target: ts.Expression, increment: Increment, context: Context): boolean => {
+  const operand = increment.operand;
+  const isRead = (node: ts.Expression): boolean =>
+    ts.isParenthesizedExpression(node)
+      ? isRead(node.expression)
+      : ts.isIdentifier(node)
+        ? !ts.isIdentifier(operand) ||
+          getSymbol(node, context.checker) !== getSymbol(operand, context.checker)
+        : ts.isPropertyAccessExpression(node)
+          ? (!ts.isPropertyAccessExpression(operand) || node.name.text !== operand.name.text) &&
+            isRead(node.expression)
+          : ts.isStringLiteral(node) ||
+            ts.isNumericLiteral(node) ||
+            node.kind === ts.SyntaxKind.ThisKeyword;
+  return ts.isPropertyAccessExpression(target)
+    ? target.questionDotToken === undefined && isRead(target.expression)
+    : ts.isElementAccessExpression(target) &&
+        target.questionDotToken === undefined &&
+        isRead(target.expression) &&
+        isRead(target.argumentExpression);
+};
+
 // The assignment that a statement evaluates first, inside an expression, which can run as a
 // statement before it, since nothing the statement evaluates before it sees the change.
 const getLeadingAssignment = (
   node: ts.Expression,
   results: ReadonlyMap<ts.Expression, Expression>,
   context: Context,
-): ts.BinaryExpression | undefined => {
+): ts.BinaryExpression | Increment | undefined => {
   if (results.has(node)) return undefined;
+  if (isIncrement(node)) return isPlainIncrement(node, context) ? node : undefined;
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
@@ -5328,8 +5384,13 @@ const getLeadingAssignment = (
   }
   const isPattern =
     ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
-  return ts.isIdentifier(node.left) || isPattern
-    ? (getLeadingAssignment(node.right, results, context) ?? node)
+  if (ts.isIdentifier(node.left) || isPattern) {
+    return getLeadingAssignment(node.right, results, context) ?? node;
+  }
+  // A property's assignment evaluates its object and key, then its value.
+  const inner = getLeadingAssignment(node.right, results, context);
+  return inner !== undefined && isIncrement(inner) && isUnwritten(node.left, inner, context)
+    ? inner
     : undefined;
 };
 
@@ -5791,6 +5852,32 @@ export const translateStatements = (
     );
   }
   const hoisted = getHoistedAssignment(statement, path, context);
+  // An increment gives its operand's number from before, or after, as its prefix form does.
+  if (hoisted !== undefined && isIncrement(hoisted)) {
+    const before = translateExpression(hoisted.operand, path.scope, context);
+    return translateExpressionStatement(hoisted, path, context, frame, (after) =>
+      translateStatements(
+        statements,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              [
+                hoisted,
+                ts.isPostfixUnaryExpression(hoisted)
+                  ? before
+                  : translateExpression(hoisted.operand, after.scope, context),
+              ],
+            ]),
+          },
+        },
+        context,
+        frame,
+      ),
+    );
+  }
   if (hoisted !== undefined) {
     const target = ts.isIdentifier(hoisted.left)
       ? getSymbol(hoisted.left, context.checker)

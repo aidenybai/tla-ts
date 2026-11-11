@@ -2639,6 +2639,25 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives the number an increment reads or writes", async () => {
+    const result = await checkModel(`
+      let x = 5;
+      x = x++;
+      const z = --x + 10;
+      const order = { size: 0, ranks: {} as Record<string, number> };
+      order.ranks.a = order.size++;
+      const pre = ++order.size;
+      if (x !== 4 || z !== 14 || order.ranks.a !== 0 || pre !== 2) throw new Error("counts");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const box = { i: 0, slots: {} as Record<number, number> };
+        box.slots[box.i] = box.i++;
+      `),
+    ).toThrow("Unsupported expression: box.i++");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

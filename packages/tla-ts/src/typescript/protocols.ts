@@ -267,7 +267,7 @@ const getterKeys = new WeakMap<ts.SourceFile, Set<string>>();
 
 // The keys that a script defines getters under, in object literals and classes or with
 // Object.defineProperty.
-const getGetterKeys = (node: ts.Node) => {
+export const getGetterKeys = (node: ts.Node) => {
   const file = node.getSourceFile();
   const known = getterKeys.get(file);
   if (known !== undefined) return known;

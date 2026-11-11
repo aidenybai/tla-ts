@@ -65,7 +65,7 @@ const CASES: [string, string][] = [
     "const value: unknown = count; if (value instanceof Error) count = 1;",
   ],
   ["labels", "outer: { count++; }"],
-  ["comma expressions", "count = (count++, count);"],
+  ["an increment after a comma", "count = (label, count++);"],
   ["sort", "values.sort();"],
   ["reverse", "values.reverse();"],
   ["splice", "values.splice(0, 1);"],
