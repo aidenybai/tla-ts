@@ -5,25 +5,41 @@
 //   lemma NAME: fixes ... assumes NAME: "prop" ... shows "prop" (is "PROP ?NAME")
 //   proof - show "PROP ?NAME" [using assms] by METHOD [METHOD] qed
 //   end
+//
+// and theories of lemmas proved by a method, such as tlapm's isabelle/tests/Tests.thy, with text
+// between them:
+//
+//   lemma [NAME:] fixes x y :: "type" and z assumes [NAME:] "prop" and "prop" shows "prop"
+//   [using assms] by METHOD [METHOD]
 
 import { TlaIsabelleError } from "../../../errors";
 
 export type OuterToken =
   | { readonly kind: "word"; readonly text: string }
   | { readonly kind: "string"; readonly text: string }
+  | { readonly kind: "cartouche"; readonly text: string }
   | { readonly kind: "symbol"; readonly text: string };
 
-export type StatementElement =
-  | { readonly kind: "fixes"; readonly names: readonly string[] }
-  | { readonly kind: "assumes"; readonly name: string; readonly prop: string };
-
-export interface TheoryText {
+export interface FixedVariable {
   readonly name: string;
-  readonly consts: readonly { readonly name: string; readonly type: string }[];
+  readonly type: string | undefined;
+}
+
+export type StatementElement =
+  | { readonly kind: "fixes"; readonly variables: readonly FixedVariable[] }
+  | { readonly kind: "assumes"; readonly props: readonly string[] };
+
+export interface LemmaText {
   readonly elements: readonly StatementElement[];
   readonly shows: string;
   readonly isUsingAssms: boolean;
   readonly method: readonly OuterToken[];
+}
+
+export interface TheoryText {
+  readonly name: string;
+  readonly consts: readonly { readonly name: string; readonly type: string }[];
+  readonly lemmas: readonly LemmaText[];
 }
 
 const isWordChar = (char: string) => /[A-Za-z0-9_'.]/.test(char);
@@ -63,6 +79,24 @@ const skipComment = (text: string, start: number) => {
   return position;
 };
 
+// A cartouche nests \<open> and \<close>.
+const skipCartouche = (text: string, start: number) => {
+  let depth = 0;
+  let position = start;
+  do {
+    if (text.startsWith("\\<open>", position)) {
+      depth += 1;
+      position += "\\<open>".length;
+    } else if (text.startsWith("\\<close>", position)) {
+      depth -= 1;
+      position += "\\<close>".length;
+    } else if (position >= text.length)
+      throw new TlaIsabelleError("ERROR", "Outer lexical error: unclosed text cartouche");
+    else position += 1;
+  } while (depth > 0);
+  return position;
+};
+
 const tokenize = (text: string): OuterToken[] => {
   const tokens: OuterToken[] = [];
   let position = 0;
@@ -72,6 +106,17 @@ const tokenize = (text: string): OuterToken[] => {
     else if (text[position] === '"') {
       const [string, end] = readString(text, position);
       tokens.push({ kind: "string", text: string });
+      position = end;
+    } else if (text.startsWith("\\<comment>", position)) {
+      // A formal comment is a cartouche after \<comment>, which the outer syntax ignores.
+      const start = position + "\\<comment>".length;
+      const cartouche = start + (/^\s*/.exec(text.slice(start))?.[0].length ?? 0);
+      if (!text.startsWith("\\<open>", cartouche))
+        throw new TlaIsabelleError("ERROR", "Outer lexical error: comment without a cartouche");
+      position = skipCartouche(text, cartouche);
+    } else if (text.startsWith("\\<open>", position)) {
+      const end = skipCartouche(text, position);
+      tokens.push({ kind: "cartouche", text: text.slice(position, end) });
       position = end;
     } else if (isWordChar(text[position])) {
       let end = position;
@@ -86,10 +131,23 @@ const tokenize = (text: string): OuterToken[] => {
   return tokens;
 };
 
+const DOCUMENT_COMMANDS = new Set([
+  "chapter",
+  "section",
+  "subsection",
+  "subsubsection",
+  "paragraph",
+  "subparagraph",
+  "text",
+  "text_raw",
+]);
+
 const KEYWORDS = new Set([
   "fixes",
   "assumes",
   "shows",
+  "and",
+  "is",
   "lemma",
   "proof",
   "show",
@@ -98,6 +156,7 @@ const KEYWORDS = new Set([
   "qed",
   "end",
   "consts",
+  ...DOCUMENT_COMMANDS,
 ]);
 
 export const parseTheory = (text: string): TheoryText => {
@@ -147,44 +206,97 @@ export const parseTheory = (text: string): TheoryText => {
       consts.push({ name: constName, type: nameOrString() });
     }
   }
-  expectWord("lemma");
-  name();
-  expectSymbol(":");
-  const elements: StatementElement[] = [];
-  while (isWord("fixes") || isWord("assumes")) {
-    if (isWord("fixes")) {
+  const isSymbol = (symbol: string) => peek()?.kind === "symbol" && peek().text === symbol;
+  const isName = () => peek()?.kind === "word" && !KEYWORDS.has(peek().text);
+  const andList = <T>(read: () => T) => {
+    const items = [read()];
+    while (isWord("and")) {
       position += 1;
-      const names = [name()];
-      while (peek()?.kind === "word" && !KEYWORDS.has(peek().text)) names.push(name());
-      elements.push({ kind: "fixes", names });
-    } else {
-      position += 1;
-      const assumption = name();
-      expectSymbol(":");
-      elements.push({ kind: "assumes", name: assumption, prop: string() });
+      items.push(read());
     }
+    return items;
+  };
+  const variables = () => {
+    const names = [name()];
+    while (isName()) names.push(name());
+    if (!isSymbol(":")) return names.map((variable) => ({ name: variable, type: undefined }));
+    expectSymbol(":");
+    expectSymbol(":");
+    const type = nameOrString();
+    return names.map((variable) => ({ name: variable, type }));
+  };
+  // Parse_Spec.opt_thm_name ":" followed by the propositions it names.
+  const props = () => {
+    if (isName() && tokens[position + 1]?.kind === "symbol" && tokens[position + 1].text === ":")
+      position += 2;
+    const found = [string()];
+    while (peek()?.kind === "string") found.push(string());
+    return found;
+  };
+  const isDocument = () => peek()?.kind === "word" && DOCUMENT_COMMANDS.has(peek().text);
+  // A method runs to the next command.
+  const method = () => {
+    const methodStart = position;
+    let depth = 0;
+    while (
+      position < tokens.length &&
+      !(depth === 0 && (isWord("qed") || isWord("lemma") || isWord("end") || isDocument()))
+    ) {
+      if (isSymbol("(")) depth += 1;
+      if (isSymbol(")")) depth -= 1;
+      position += 1;
+    }
+    return tokens.slice(methodStart, position);
+  };
+  const proof = () => {
+    const isUsingAssms = isWord("using");
+    if (isUsingAssms) {
+      position += 1;
+      expectWord("assms");
+    }
+    expectWord("by");
+    return { isUsingAssms, method: method() };
+  };
+  const lemma = (): LemmaText => {
+    expectWord("lemma");
+    if (isName()) {
+      name();
+      expectSymbol(":");
+    }
+    const elements: StatementElement[] = [];
+    while (isWord("fixes") || isWord("assumes")) {
+      const isFixes = isWord("fixes");
+      position += 1;
+      elements.push(
+        isFixes
+          ? { kind: "fixes", variables: andList(variables).flat() }
+          : { kind: "assumes", props: andList(props).flat() },
+      );
+    }
+    expectWord("shows");
+    const shows = string();
+    if (!isSymbol("(")) return { elements, shows, ...proof() };
+    expectSymbol("(");
+    expectWord("is");
+    string();
+    expectSymbol(")");
+    expectWord("proof");
+    expectSymbol("-");
+    expectWord("show");
+    string();
+    const found = proof();
+    expectWord("qed");
+    return { elements, shows, ...found };
+  };
+  const lemmas: LemmaText[] = [];
+  while (!isWord("end")) {
+    if (isDocument()) {
+      position += 1;
+      if (peek()?.kind !== "cartouche" && peek()?.kind !== "string") throw syntaxError();
+      position += 1;
+    } else lemmas.push(lemma());
   }
-  expectWord("shows");
-  const shows = string();
-  expectSymbol("(");
-  expectWord("is");
-  string();
-  expectSymbol(")");
-  expectWord("proof");
-  expectSymbol("-");
-  expectWord("show");
-  string();
-  const isUsingAssms = isWord("using");
-  if (isUsingAssms) {
-    position += 1;
-    expectWord("assms");
-  }
-  expectWord("by");
-  const methodStart = position;
-  while (position < tokens.length && !isWord("qed")) position += 1;
-  const method = tokens.slice(methodStart, position);
-  expectWord("qed");
   expectWord("end");
   if (position !== tokens.length) throw syntaxError();
-  return { name: theoryName, consts, elements, shows, isUsingAssms, method };
+  return { name: theoryName, consts, lemmas };
 };

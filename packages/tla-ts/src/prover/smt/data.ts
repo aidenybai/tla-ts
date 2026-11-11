@@ -49,6 +49,7 @@ import {
   TT_IDV,
   UNION,
 } from "./format";
+import { getUntypedSpec } from "./arithmetic";
 import { axiom, type Axiom } from "./table";
 
 export interface SymbolSpec {
@@ -58,8 +59,11 @@ export interface SymbolSpec {
 }
 
 export interface CollectState {
+  isArithmetic: boolean;
+  isSetExtensional: boolean;
   recordFields: Map<string, string[]>;
   strings: string[];
+  integers: number[];
   isFunConstr: boolean;
   isFunSet: boolean;
   isExcept: boolean;
@@ -71,9 +75,12 @@ export interface CollectState {
 const getOmittedDeclaration = (name: string) =>
   `; omitted declaration of 'TLA__${name}' (second-order)`;
 
+const getLiteralNames = (count: number) =>
+  Array.from({ length: count }, (_value, index) => `IntLit_${index + 1}`);
+
 const SEQUENCE_DEPS = ["Mem", "Seq", "Len", "FunApp", "NatSet", "Cast_Int", "Proj_Int"];
 
-// N_data.get_deps, with arithmetic and set extensionality as tlapm's SMT backend sets them.
+// N_data.get_deps, with arithmetic as tlapm's SMT backend sets it.
 export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => {
   const spec = (declaration: string | undefined, deps: string[], axioms: Axiom[]) => ({
     declaration,
@@ -89,12 +96,16 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   const setOf = /^SetOf_(\d+)$/.exec(name);
   if (setOf) {
     const count = Number(setOf[1]);
+    const axioms = [
+      axiom("SetOfIntro", [count], undefined),
+      axiom("SetOfElim", [count], undefined),
+    ];
+    if (!state.isSetExtensional) return spec(getOmittedDeclaration(name), ["Mem"], axioms);
     return spec(
       getOmittedDeclaration(name),
       ["Mem", "IsSetOf"],
       [
-        axiom("SetOfIntro", [count], undefined),
-        axiom("SetOfElim", [count], undefined),
+        ...axioms,
         axiom("AssertIsSetOf", [count], undefined),
         axiom(
           "CompareSetOfTrigger",
@@ -118,23 +129,72 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       [axiom("StrLitIsstr", [value], `(${MEM} ${symbol} ${STR_SET})`), ...distinct],
     );
   }
+  const integer = /^IntLit_(\d+)$/.exec(name);
+  if (integer) {
+    const value = Number(integer[1]);
+    const distinct = state.integers.map((other) =>
+      axiom("IntLitDistinct", [other, value], `(distinct ${tla(`IntLit_${other}`)} ${symbol})`),
+    );
+    state.integers.push(value);
+    const zero = tla("IntLit_0");
+    const isPositivityNeeded = value === 0 && !state.isArithmetic;
+    return fixed(
+      0,
+      ["Mem", "IntSet", "IntLit_0", "IntLteq", ...(isPositivityNeeded ? ["IntLit_1"] : [])],
+      [
+        axiom("IntLitIsint", [value], `(${MEM} ${symbol} ${INT_SET})`),
+        axiom(
+          "IntLitZeroCmp",
+          [value],
+          value === 0 ? `(${INT_LTEQ} ${symbol} ${zero})` : `(${INT_LTEQ} ${zero} ${symbol})`,
+        ),
+        ...distinct,
+        ...(isPositivityNeeded
+          ? [
+              axiom(
+                "NonNegIsPos",
+                [],
+                `(forall ((x Idv)) (! (=> (and (${INT_LTEQ} ${zero} x) (distinct ${zero} x)) (${INT_LTEQ} ${tla("IntLit_1")} x)) :pattern ((${INT_LTEQ} ${zero} x))))`,
+              ),
+            ]
+          : []),
+      ],
+    );
+  }
   const tuple = /^Tuple_(\d+)$/.exec(name);
   if (tuple) {
     const count = Number(tuple[1]);
     state.tuples.push(count);
+    const indexes = state.isArithmetic
+      ? ["Cast_Int"]
+      : count === 0
+        ? ["IntLit_0"]
+        : getLiteralNames(count);
     const deps =
       count === 0
-        ? ["FunIsafcn", "Cast_Int", "Seq", "Len"]
-        : ["FunIsafcn", "FunDom", "FunApp", `SetEnum_${count}`, "Cast_Int", "Mem", "Seq", "Len"];
-    return fixed(count, deps, getTupleAxioms(count, state.isExcept));
+        ? ["FunIsafcn", ...indexes, "Seq", "Len"]
+        : ["FunIsafcn", "FunDom", "FunApp", `SetEnum_${count}`, ...indexes, "Mem", "Seq", "Len"];
+    return fixed(count, deps, getTupleAxioms(count, state.isExcept, state.isArithmetic));
   }
   const product = /^Product_(\d+)$/.exec(name);
   if (product) {
     const count = Number(product[1]);
     return fixed(
       count,
-      ["Mem", `Tuple_${count}`, "FunApp", "Cast_Int", "Proj_Int"],
-      getComponentSet("Product", [count], symbol, tla(`Tuple_${count}`), getIntegers(count), "t"),
+      [
+        "Mem",
+        `Tuple_${count}`,
+        "FunApp",
+        ...(state.isArithmetic ? ["Cast_Int", "Proj_Int"] : getLiteralNames(count)),
+      ],
+      getComponentSet(
+        "Product",
+        [count],
+        symbol,
+        tla(`Tuple_${count}`),
+        getIntegers(count, state.isArithmetic),
+        "t",
+      ),
     );
   }
   const fields = state.recordFields.get(name);
@@ -162,6 +222,8 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   }
   const anonymous = state.anonymous.get(name);
   if (anonymous !== undefined) return fixed(anonymous, [], []);
+  const untyped = state.isArithmetic ? undefined : getUntypedSpec(name);
+  if (untyped) return untyped;
   const typed = TYPED_OPERATORS[name];
   if (typed)
     return fixed(typed[1], ["Cast_Int"], [getTyping(name)], name === "IntLteq" ? "Bool" : "Idv");
@@ -192,7 +254,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
           "IntSet",
           "NatSet",
           "Tuple_0",
-          "Proj_Int",
+          state.isArithmetic ? "Proj_Int" : "IntLteq",
         ],
         [
           axiom("SeqSelectseqTyping", [], undefined),
@@ -205,6 +267,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     case "Choose":
       return spec(getOmittedDeclaration(name), [], [axiom("ChooseDef", [], undefined)]);
     case "Mem":
+      if (!state.isSetExtensional) return fixed(2, [], [], "Bool");
       return fixed(
         2,
         ["SetExtTrigger"],
@@ -278,7 +341,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         [],
         `(forall ((a Idv) (b Idv) (x Idv)) (! (= (${MEM} x (${symbol} a b)) ${condition.replaceAll("MEM", MEM)}) :pattern ((${MEM} x (${symbol} a b))) :pattern ((${MEM} x a) (${symbol} a b)) :pattern ((${MEM} x b) (${symbol} a b))))`,
       );
-      if (name !== "Cap") return fixed(2, ["Mem"], [definition]);
+      if (name !== "Cap" || !state.isSetExtensional) return fixed(2, ["Mem"], [definition]);
       return fixed(
         2,
         ["Mem", "SetEnum_0", "SetExtTrigger"],
@@ -293,6 +356,8 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     }
     case "SetSt":
+      if (!state.isSetExtensional)
+        return spec(getOmittedDeclaration(name), ["Mem"], [axiom("SetStDef", [], undefined)]);
       return spec(
         getOmittedDeclaration(name),
         ["Mem", "SetEnum_0", "SetExtTrigger"],
@@ -400,7 +465,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
             [],
             `(forall ((f Idv) (x Idv) (y Idv) (z Idv)) (! (=> (${MEM} z (${FUN_DOM} f)) (and (=> (= z x) (= (${FUN_APP} ${updated} z) y)) (=> (distinct z x) (= (${FUN_APP} ${updated} z) (${FUN_APP} f z))))) :pattern ((${FUN_APP} ${updated} z)) :pattern (${updated} (${FUN_APP} f z))))`,
           ),
-          ...state.tuples.flatMap(getTupleExcepts),
+          ...state.tuples.flatMap((count) => getTupleExcepts(count, state.isArithmetic)),
           ...state.records.flatMap(getRecordExcepts),
         ],
       );

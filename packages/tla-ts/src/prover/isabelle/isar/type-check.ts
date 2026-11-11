@@ -221,8 +221,16 @@ const expandAbbreviations = (scope: NameScope, term: Term): Term => {
   );
 };
 
-export const checkProps = (scope: NameScope, props: readonly PropToCheck[]): Term[] => {
-  const inference: Inference = { substitution: new Map(), freeTypes: new Map(), nextParam: 0 };
+export const checkProps = (
+  scope: NameScope,
+  props: readonly PropToCheck[],
+  fixedTypes: ReadonlyMap<string, Typ>,
+): Term[] => {
+  const inference: Inference = {
+    substitution: new Map(),
+    freeTypes: new Map(fixedTypes),
+    nextParam: 0,
+  };
   const elaborated = props.map((prop) => {
     const [term, type] = elaborate(scope, inference, prop.fixed, [], prop.ast);
     unify(inference, type, mkType("prop"));

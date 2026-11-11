@@ -4,6 +4,7 @@
 import { TlaProverError, TlaUnsupportedError } from "../../errors";
 import { normalizeApply, shiftExpr } from "../../obligations/substitution";
 import { type Bound, type Builtin, type Expr, type Sequent } from "../../obligations/expression";
+import { getNumeral } from "./axioms";
 import { createContext, type Identifier } from "./context";
 import {
   createFlattener,
@@ -23,6 +24,7 @@ import {
   disjoin,
   FUN_APP,
   FUN_EXCEPT,
+  FUN_ISAFCN,
   FUN_SET,
   getBinders,
   INT_LTEQ,
@@ -34,7 +36,6 @@ import {
   tla,
   TT_IDV,
 } from "./format";
-import { getIntegers } from "./axioms";
 import { getEquality, resolveTriggers, type Polarity } from "./extensionality";
 import {
   getChooseAxioms,
@@ -53,6 +54,13 @@ interface Term {
 
 export interface EncodingSession {
   caseErrors: number;
+}
+
+// The options of Smtlib.preprocess that tlapm's --debug flags set.
+export interface SmtEncoding {
+  isArithmetic: boolean;
+  rewriteLevel: number;
+  isSetExtensional: boolean;
 }
 
 export interface Mode {
@@ -95,7 +103,7 @@ const UNSUPPORTED_OPERANDS = new Set<Builtin>([
   "Irregular",
 ]);
 
-export const createEncoder = (session: EncodingSession) => {
+export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) => {
   const flattener = createFlattener();
   const flatten = flattener.flatten;
   const anonymous = new Map<string, number>();
@@ -245,7 +253,11 @@ export const createEncoder = (session: EncodingSession) => {
     return idv(call(symbol, [...domains, ...free]));
   };
 
-  // Rewrite.elim_multiarg: a function of several arguments is a function of a tuple.
+  // Rewrite.elim_multiarg: a function of several arguments is a function of a tuple, whose
+  // components a LET binds. tlapm builds every component from Ix 1, which inside the LET is the
+  // previous component, doesn't shift the body past the tuple, and indexes the tuple with
+  // untyped numbers that no axiom relates to the tuple's, so this binds each component to its
+  // typed index.
   const encodeFunction = (
     expression: Extract<Expr, { kind: "Fcn" }>,
     env: Env | undefined,
@@ -259,21 +271,29 @@ export const createEncoder = (session: EncodingSession) => {
       mode.depth,
     );
     const inner = { ...neither(mode), depth: mode.depth + 1 };
-    const bodyEnv =
-      domains.length === 1
-        ? push(env, { kind: "constant", symbol: variable })
-        : getIntegers(domains.length).reduce<Env | undefined>(
-            (current, key) =>
-              push(current, { kind: "constant", symbol: `(${FUN_APP} ${variable} ${key})` }),
-            env,
-          );
-    const body = encodeIdv(expression.body, bodyEnv, inner);
-    const free = getFree(body, mode.depth);
+    const components = bindVariables(
+      domains.length === 1 ? [] : expression.bounds.map((bound) => bound.name),
+      env,
+      inner,
+    );
+    const body = encodeIdv(
+      expression.body,
+      domains.length === 1 ? push(env, { kind: "constant", symbol: variable }) : components.env,
+      components.mode,
+    );
+    const definitions = components.variables.map(
+      (component, index) =>
+        `(${component} (${FUN_APP} ${variable} ${getNumeral(index + 1, encoding.isArithmetic)}))`,
+    );
+    // Smtlib prints the definitions of a LET last first, and N_axiomatize visits them in order.
+    const value =
+      domains.length === 1 ? body : `(let (${definitions.toReversed().join(" ")}) ${body})`;
+    const free = getFree(value, mode.depth);
     const symbol = flatten(
       "FunFcn",
-      body,
+      domains.length === 1 ? body : `(let (${definitions.join(" ")}) ${body})`,
       mode,
-      (name, axioms) => getFunctionAxioms(name, free, body, variable, axioms),
+      (name, axioms) => getFunctionAxioms(name, free, value, variable, axioms),
       free.length + 1,
     );
     return idv(call(symbol, [domain, ...free]));
@@ -307,7 +327,7 @@ export const createEncoder = (session: EncodingSession) => {
     getEquality(
       encodeIdv(args[0], env, mode),
       encodeIdv(args[1], env, mode),
-      mode.polarity,
+      encoding.isSetExtensional ? mode.polarity : undefined,
       isNegated,
     );
 
@@ -376,7 +396,7 @@ export const createEncoder = (session: EncodingSession) => {
           "SelectSeq",
           test.body,
           mode,
-          (name) => getSelectSeqAxioms(name, free, test.body, test.variable),
+          (name) => getSelectSeqAxioms(name, free, test.body, test.variable, encoding.isArithmetic),
           free.length + 1,
         );
         return idv(call(symbol, [encodeIdv(args[0], env, mode), ...free]));
@@ -475,7 +495,10 @@ export const createEncoder = (session: EncodingSession) => {
 
   // Standardize: an opaque name the Action frontend introduces is an anonymous operator, named
   // OPAQUE_ when it has no arguments.
-  const encodeOpaque = (name: string, args: Expr[], env: Env | undefined, mode: Mode) => {
+  const encodeOpaque = (name: string, args: Expr[], env: Env | undefined, mode: Mode): Term => {
+    // Rewrite.simplify_sets writes IsAFcn for the functions in a set of functions.
+    if (name === "IsAFcn" && args.length === 1)
+      return bool(`(${FUN_ISAFCN} ${encodeIdv(args[0], env, mode)})`);
     if (args.length === 0 && name.endsWith("#prime"))
       return idv(getPrimed(env, name.slice(0, -"#prime".length)));
     const anonymousName = args.length === 0 ? `Anon_OPAQUE_${name}` : `Anon_${name}`;
@@ -739,6 +762,8 @@ export const createEncoder = (session: EncodingSession) => {
         return idv(tla(`StrLit_${expression.value}`));
       case "Num":
         if (expression.fraction !== "") throw new TlaUnsupportedError("a real number");
+        // Type.Synthesize gives a number no type when arithmetic is off.
+        if (!encoding.isArithmetic) return idv(tla(`IntLit_${BigInt(expression.integer)}`));
         return {
           isBool: false,
           text: `(${CAST_INT} ${BigInt(expression.integer)})`,

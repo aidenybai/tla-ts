@@ -8,6 +8,10 @@ ref: translate/fofunctions.ml#string_of_formula
 outcome: sat
 features:
   - tlapm-bug
+correct:
+  all:
+    exit: 0
+    transcript: unsat
 ---*)
 sometime False
 

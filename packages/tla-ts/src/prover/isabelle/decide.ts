@@ -15,21 +15,28 @@ export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Ve
   try {
     const theory = parseTheory(text);
     const logic = loadLogic();
-    const statement = readStatement(logic, theory);
-    const facts = theory.isUsingAssms ? getFacts(limits, statement) : [];
-    const result = seqHead(
-      terminalProof(
-        getProofContext(logic, limits),
-        parseProofText(theory.method),
-        facts,
-        initGoal(statement),
-      ),
-    );
-    // Proof.conclude_goal: the theorem must be the statement, from its assumptions only.
-    return result !== undefined &&
-      result.tpairs.length === 0 &&
-      aconv(result.prop, protect(statement.conclusion)) &&
-      result.hyps.every((hyp) => statement.assumptions.some((assumption) => aconv(hyp, assumption)))
+    // use_thy fails at the first lemma whose proof fails.
+    return theory.lemmas.every((lemma) => {
+      const statement = readStatement(logic, theory, lemma);
+      const facts = lemma.isUsingAssms ? getFacts(limits, statement) : [];
+      const result = seqHead(
+        terminalProof(
+          getProofContext(logic, limits),
+          parseProofText(lemma.method),
+          facts,
+          initGoal(statement),
+        ),
+      );
+      // Proof.conclude_goal: the theorem must be the statement, from its assumptions only.
+      return (
+        result !== undefined &&
+        result.tpairs.length === 0 &&
+        aconv(result.prop, protect(statement.conclusion)) &&
+        result.hyps.every((hyp) =>
+          statement.assumptions.some((assumption) => aconv(hyp, assumption)),
+        )
+      );
+    })
       ? "unsat"
       : "unknown";
   } catch (error) {

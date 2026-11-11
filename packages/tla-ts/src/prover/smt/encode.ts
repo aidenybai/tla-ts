@@ -11,11 +11,19 @@ import {
 } from "../../obligations/expression";
 import { compareStrings } from "../ocaml";
 import { createPrinter } from "./context";
+import { simplifySets } from "./simplify";
 import { layOutCommand } from "./layout";
 import { getSymbolSpec, type CollectState, type SymbolSpec } from "./data";
 import type { Entry } from "./flatten";
 import { declare, getTlaName, MEM } from "./format";
-import { createEncoder, type Binding, type EncodingSession, type Env, type Mode } from "./rewrite";
+import {
+  createEncoder,
+  type Binding,
+  type EncodingSession,
+  type Env,
+  type Mode,
+  type SmtEncoding,
+} from "./rewrite";
 import { compareAxioms, getAxiomKey, type Axiom } from "./table";
 
 type RecordExpr = Extract<Expr, { kind: "Record" }>;
@@ -70,10 +78,13 @@ const sortRecordFields = (expression: Expr): Expr =>
 
 // Each symbol brings its dependencies in the order tlapm's N_axiomatize.collect visits them,
 // smallest name first.
-const collectSymbols = (entries: Entry[], encoder: Encoder) => {
+const collectSymbols = (entries: Entry[], encoder: Encoder, encoding: SmtEncoding) => {
   const state: CollectState = {
+    isArithmetic: encoding.isArithmetic,
+    isSetExtensional: encoding.isSetExtensional,
     recordFields: encoder.recordFields,
     strings: [],
+    integers: [],
     isFunConstr: false,
     isFunSet: false,
     isExcept: false,
@@ -234,12 +245,20 @@ interface SmtHeader {
   logic: string;
 }
 
-export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: SmtHeader) => {
+export const encodeSmt = (
+  prepared: Sequent,
+  session: EncodingSession,
+  header: SmtHeader,
+  encoding: SmtEncoding,
+) => {
   const simplified = sortRecordFields(
     simplifyRecordEqualities({ kind: "Sequent", sequent: prepared }),
   );
-  const sequent = simplified.kind === "Sequent" ? simplified.sequent : prepared;
-  const encoder = createEncoder(session);
+  const sequent = simplifySets(
+    simplified.kind === "Sequent" ? simplified.sequent : prepared,
+    encoding.rewriteLevel,
+  );
+  const encoder = createEncoder(session, encoding);
   const context = encodeContext(sequent.context, encoder);
   const goal = isSecondOrder(sequent.active)
     ? []
@@ -247,7 +266,7 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession, header: S
         `(assert (! (not ${encoder.encodeBool(sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
       );
   const printer = createPrinter(encoder.declared);
-  const collected = collectSymbols([...context.entries, ...goal], encoder);
+  const collected = collectSymbols([...context.entries, ...goal], encoder, encoding);
   const declarations = [...collected.symbols]
     .toSorted((left, right) => compareStrings(left[0], right[0]))
     .flatMap((symbol) => (symbol[1].declaration === undefined ? [] : [symbol[1].declaration]));

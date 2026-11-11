@@ -5,7 +5,7 @@ import { typargsOf } from "../pure/consts";
 import type { Term } from "../pure/term";
 import type { TlaLogic } from "../tla/logic";
 import { parseProp, parseType } from "./inner-syntax";
-import type { TheoryText } from "./theory";
+import type { LemmaText, TheoryText } from "./theory";
 import { checkProps, type PropToCheck } from "./type-check";
 
 export interface Statement {
@@ -13,7 +13,7 @@ export interface Statement {
   readonly conclusion: Term;
 }
 
-export const readStatement = (logic: TlaLogic, theory: TheoryText): Statement => {
+export const readStatement = (logic: TlaLogic, theory: TheoryText, lemma: LemmaText): Statement => {
   const theoryConsts = theory.consts.map((constant) => ({
     base: constant.name,
     name: `${theory.name}.${constant.name}`,
@@ -35,19 +35,35 @@ export const readStatement = (logic: TlaLogic, theory: TheoryText): Statement =>
       ...theoryConsts.map((constant) => [constant.base, constant.name] as const),
     ]),
   };
-  const props = theory.elements.reduce<{ fixed: ReadonlySet<string>; props: PropToCheck[] }>(
+  const props = lemma.elements.reduce<{ fixed: ReadonlySet<string>; props: PropToCheck[] }>(
     (state, element) =>
       element.kind === "fixes"
-        ? { fixed: new Set([...state.fixed, ...element.names]), props: state.props }
+        ? {
+            fixed: new Set([...state.fixed, ...element.variables.map((variable) => variable.name)]),
+            props: state.props,
+          }
         : {
             fixed: state.fixed,
-            props: [...state.props, { ast: parseProp(element.prop), fixed: state.fixed }],
+            props: [
+              ...state.props,
+              ...element.props.map((prop) => ({ ast: parseProp(prop), fixed: state.fixed })),
+            ],
           },
     { fixed: new Set(), props: [] },
   );
-  const checked = checkProps(scope, [
-    ...props.props,
-    { ast: parseProp(theory.shows), fixed: props.fixed },
-  ]);
+  const fixedTypes = new Map(
+    lemma.elements.flatMap((element) =>
+      element.kind === "fixes"
+        ? element.variables.flatMap((variable) =>
+            variable.type === undefined ? [] : [[variable.name, parseType(variable.type)] as const],
+          )
+        : [],
+    ),
+  );
+  const checked = checkProps(
+    scope,
+    [...props.props, { ast: parseProp(lemma.shows), fixed: props.fixed }],
+    fixedTypes,
+  );
   return { assumptions: checked.slice(0, -1), conclusion: checked[checked.length - 1] };
 };
