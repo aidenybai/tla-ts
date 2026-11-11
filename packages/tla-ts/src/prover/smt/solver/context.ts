@@ -139,6 +139,7 @@ export class Context extends Internalizer {
   private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
   macros: MacroManager | undefined;
+  hasQuantifiers = false;
 
   constructor(manager: AstManager, params: SmtParams) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
@@ -1361,6 +1362,7 @@ export class Context extends Internalizer {
 
   internalizeAssertions(asserted: AssertedFormulas) {
     this.macros = asserted.macros;
+    this.hasQuantifiers = asserted.hasQuantifiers;
     const formulas = asserted.reduce();
     if (asserted.isInconsistent) {
       this.setConflict("axiom", null);

@@ -161,7 +161,7 @@ export class AssertedFormulas {
   private names: DefinedNames;
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
-  private hasQuantifiers = false;
+  hasQuantifiers = false;
   readonly macros: MacroManager;
   isInconsistent = false;
   private numLazyScopes = 0;

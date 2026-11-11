@@ -254,7 +254,7 @@ export class TheoryDatatype extends Theory {
     const manager = this.manager;
     if (
       !this.isAttachedToVar(node) &&
-      (this.context.qmanager.hasQuantifiers() ||
+      (this.context.hasQuantifiers ||
         (this.isDatatype(sort) && manager.hasNestedRecDatatype) ||
         (this.isDatatype(sort) && manager.getSortSize(sort) !== SORT_SIZE_INFINITE))
     )
