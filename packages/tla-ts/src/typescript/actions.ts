@@ -4415,14 +4415,32 @@ export const translateJoined = (
     return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
   });
   const result = context.names.getFresh("result");
+  // A var that the statement declares outlives it, as does any binding it declares that a function
+  // in it captures, such as a catch's error.
   const isVarInside = (symbol: ts.Symbol) => {
     const declaration = symbol.valueDeclaration;
+    if (
+      declaration === undefined ||
+      !ts.isVariableDeclaration(declaration) ||
+      ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined
+    ) {
+      return false;
+    }
+    const parent = declaration.parent;
     return (
-      declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      ts.isVariableDeclarationList(declaration.parent) &&
-      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
-      ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined
+      (ts.isVariableDeclarationList(parent) && (parent.flags & ts.NodeFlags.BlockScoped) === 0) ||
+      findNodes(
+        node,
+        (inner): inner is ts.Identifier =>
+          ts.isIdentifier(inner) &&
+          getSymbol(inner, context.checker) === symbol &&
+          ts.findAncestor(inner, (ancestor) =>
+            ancestor === node
+              ? "quit"
+              : ts.isFunctionLike(ancestor) &&
+                ts.findAncestor(declaration, (outer) => outer === ancestor) === undefined,
+          ) !== undefined,
+      ).length > 0
     );
   };
   const isKept = <T>(entries: Map<ts.Symbol, T>, before: Map<ts.Symbol, T>) =>

@@ -1268,6 +1268,26 @@ describe("tags", () => {
 });
 
 describe("errors", () => {
+  it("keeps a binding in a catch that a function in the catch captures", async () => {
+    const result = await checkModel(`
+      var probe: () => unknown, other: () => unknown, x: unknown;
+      try {
+        throw "inside";
+      } catch (x) {
+        probe = function () { return x; };
+      }
+      try {
+        throw null;
+      } catch (_) {
+        let x = "block";
+        other = function () { return x; };
+      }
+      x = "outside";
+      if (x !== "outside" || probe() !== "inside" || other() !== "block") throw new Error("missed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("reports type errors", () => {
     expect(() => compile(`let count = 0;\nexport const step = () => { count = "one"; };`)).toThrow(
       /Type 'string' is not assignable to type 'number'/,
