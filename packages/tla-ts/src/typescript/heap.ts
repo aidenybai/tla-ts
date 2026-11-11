@@ -908,8 +908,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   }
   if (isNewDate(node, context)) {
     const values = node.arguments ?? [];
-    const time =
-      values.length > 1
+    const time = isClockDate(node, context)
+      ? identifier("Clock")
+      : values.length > 1
         ? translateDateFields(node, values, scope, context)
         : isDateType(values[0], context)
           ? useJavaScript(
@@ -1160,7 +1161,23 @@ export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpres
   const values = node.arguments ?? [];
   return values.length === 1
     ? isNumeric(values[0], context) || isDateType(values[0], context)
-    : values.length >= 2 && areDateFields(values, context);
+    : values.length !== 1 && areDateFields(values, context);
+};
+
+// Whether new Date reads the clock, as new Date() and new Date(Date.now()) do.
+const isClockDate = (node: ts.NewExpression, context: Context) => {
+  const values = node.arguments ?? [];
+  const value = values.at(0);
+  return (
+    values.length === 0 ||
+    (values.length === 1 &&
+      value !== undefined &&
+      ts.isCallExpression(value) &&
+      value.arguments.length === 0 &&
+      ts.isPropertyAccessExpression(value.expression) &&
+      value.expression.name.text === "now" &&
+      getBuiltIn(value.expression.expression, context) === "Date")
+  );
 };
 
 // The time value that new Date takes from a number that a literal writes, which may be past what

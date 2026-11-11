@@ -1456,19 +1456,24 @@ ISOString(time) ==
        \\o "T" \\o pad(time.ms \\div 3600000, 2) \\o ":" \\o pad((time.ms \\div 60000) % 60, 2)
        \\o ":" \\o pad((time.ms \\div 1000) % 60, 2) \\o "." \\o pad(time.ms % 1000, 3) \\o "Z"
 
+\\* The time value of a Date that reads the clock, which tla-ts doesn't read.
+Clock == [clock |-> TRUE]
+
+LOCAL Known(time) == IF time = Clock THEN Assert(FALSE, "tla-ts can't read the clock") ELSE time
+
 \\* The object that new Date makes, which holds its time value.
 DateObject(prototype, time) == [EmptyObject EXCEPT !.prototype = prototype] @@ [time |-> time]
 
 \\* The time value that new Date takes from another Date.
 TimeOfDate(heap, value) ==
   IF IsDate(heap, value)
-  THEN Lookup(heap, value).time
+  THEN Known(Lookup(heap, value).time)
   ELSE Assert(FALSE, "tla-ts can't convert " \\o ToString(value) \\o " to a time value")
 
 \\* The time value of a Date that reads the built-in method from its prototype.
 DateTime(heap, ref, method) ==
   IF IsDate(heap, ref) /\\ IsDateMethod(Get(heap, ref, method), method)
-  THEN Lookup(heap, ref).time
+  THEN Known(Lookup(heap, ref).time)
   ELSE Assert(FALSE, "tla-ts can't call this method on " \\o ToString(ref))
 
 \\* The heap after a Date setter, which takes the Date's time value, the method's name, and where it

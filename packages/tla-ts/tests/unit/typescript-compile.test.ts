@@ -1291,6 +1291,17 @@ describe("errors", () => {
     expect((await checkModel(getSource("valid"))).failure?.message).toContain("throws");
   });
 
+  it("makes a Date that reads the clock but stops where something reads its time", async () => {
+    const result = await checkModel(`
+      const now = new Date(Date.now());
+      if (typeof now !== "object" || !(now instanceof Date)) throw new Error("date");
+      const later = new Date();
+      const year = later.getFullYear();
+      if (year < 0) throw new Error("year");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't read the clock");
+  });
+
   it("gives Date.UTC's time value where it fits TLC's integers", async () => {
     const result = await checkModel(`
       const same = (actual: unknown, expected: unknown) => {
