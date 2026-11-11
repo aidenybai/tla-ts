@@ -2585,6 +2585,29 @@ describe("errors", () => {
     ).toThrow("spec.ts:3:18 first would share an object that changes in place, so copy it");
   });
 
+  it("evaluates a declaration that nothing reads where it runs", async () => {
+    await expect(
+      checkModel(`
+        const fail = (): number => {
+          throw new Error("boom");
+        };
+        const unused = fail();
+      `),
+    ).rejects.toThrow("boom");
+    const inner = await checkModel(`
+      const box = { size: 0 };
+      const fail = (): number => {
+        throw new Error("boom");
+      };
+      const run = () => {
+        const unused = fail();
+        box.size = 1;
+      };
+      run();
+    `);
+    expect(inner.failure?.message).toContain("boom");
+  });
+
   it("rejects arguments that a new would drop where no constructor runs", async () => {
     expect(() =>
       compile(

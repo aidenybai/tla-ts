@@ -1,7 +1,14 @@
 import ts from "@typescript/typescript6";
 import { getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
 import { getReached, rejectSharing } from "./aliasing";
-import { type Context, createContext, findNodes, getCallee, getSymbol } from "./context";
+import {
+  type Context,
+  createContext,
+  findNodes,
+  getCallee,
+  getSymbol,
+  isInertValue,
+} from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
@@ -284,8 +291,13 @@ export const compile = (
     model.script.every(
       (statement) =>
         ts.isVariableStatement(statement) &&
-        statement.declarationList.declarations.every((declaration) =>
-          ts.isIdentifier(declaration.name),
+        statement.declarationList.declarations.every(
+          (declaration) =>
+            ts.isIdentifier(declaration.name) &&
+            // Only a script runs a declaration that nothing reads, which may throw.
+            (declaration.initializer === undefined ||
+              (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
+              isInertValue(declaration.initializer)),
         ),
     )
       ? model.variables.map((variable) =>

@@ -2,7 +2,6 @@ import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
   checkElement,
-  getArrayLikeCall,
   getCallbackReceiver,
   getStringCall,
   getUpdatedValue,
@@ -3961,23 +3960,16 @@ const translateDeclarations = (
       (initializer === undefined
         ? getUndefined(context)
         : translateExpression(initializer, allocated.scope, context));
-    // An array-like call reads the object's elements, which may run a getter that tla-ts can't
-    // call, and new Array(length) may make holes that a sequence can't hold, so the declaration
-    // evaluates them where it runs.
-    const mayStop = (node: ts.Node): boolean =>
-      !ts.isFunctionLike(node) &&
-      ((ts.isCallExpression(node) && getArrayLikeCall(node, context) !== undefined) ||
-        (ts.isNewExpression(node) &&
-          node.expression.getText() === "Array" &&
-          node.arguments?.length === 1) ||
-        (ts.forEachChild(node, mayStop) ?? false));
-    if (initializer !== undefined && mayStop(initializer)) {
+    // JavaScript evaluates a declaration where it runs, and TLA+ a LET definition only where it's
+    // read, so a declaration whose value may throw or stop evaluates it here.
+    if (initializer !== undefined && !isInertValue(initializer)) {
       const name = context.names.getFresh("value");
+      const after = removed?.path ?? allocated;
       return bindOnce(
-        allocated,
+        after,
         name,
         value,
-        bindDeclaration(declarations, identifier(name), allocated, context, frame, continueWith),
+        bindDeclaration(declarations, identifier(name), after, context, frame, continueWith),
       );
     }
     return bindDeclaration(
