@@ -654,6 +654,26 @@ export const reset = () => {
   });
 });
 
+describe("state variables", () => {
+  it("gives each variable's TypeScript type, split into union members, and its initializer", () => {
+    const compiled = compile(`type Data = "d1" | "d2";
+let val: Data;
+let rdy!: 0 | 1;
+let count = 0;
+let done = false;
+export const step = () => {
+  count = count + 1;
+};
+`);
+    expect(compiled.variables).toEqual([
+      { name: "val", types: ['"d1"', '"d2"'], initial: undefined },
+      { name: "rdy", types: ["0", "1"], initial: undefined },
+      { name: "count", types: ["number"], initial: "0" },
+      { name: "done", types: ["false", "true"], initial: "false" },
+    ]);
+  });
+});
+
 describe("without a file system", () => {
   const directory = dirname(ts.getDefaultLibFilePath({}));
   const libraries = new Map(

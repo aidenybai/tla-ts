@@ -52,11 +52,19 @@ export interface Region {
   output: Span;
 }
 
+// A state variable's TypeScript type, split into the members of a union, and its initializer.
+export interface StateVariable {
+  name: string;
+  types: string[];
+  initial: string | undefined;
+}
+
 export interface CompiledSpec {
   name: string;
   source: string;
   config: string;
   regions: Region[];
+  variables: StateVariable[];
 }
 
 interface Linked extends Emitted {
@@ -247,5 +255,15 @@ export const emit = (
     source: parts.map(getText).join(""),
     config,
     regions: [...regions, ...getReferences(sourceFile, declared, context)],
+    variables: model.variables.map((variable) => {
+      const type = context.checker.getTypeAtLocation(variable.declaration.name);
+      return {
+        name: variable.name,
+        types: (type.isUnion() ? type.types : [type]).map((member) =>
+          context.checker.typeToString(member),
+        ),
+        initial: variable.declaration.initializer?.getText(),
+      };
+    }),
   };
 };
