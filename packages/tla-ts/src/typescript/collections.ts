@@ -118,8 +118,16 @@ export const getCallbackReceiver = (
   };
 };
 
-const getCallback = (callback: ts.Expression, context: Context) => {
-  const callee = getCallee(callback, context);
+// The function that a callback names, or that a local function's parameter holds.
+const getCallbackFunction = (callback: ts.Expression, scope: Scope, context: Context) => {
+  const symbol = getSymbol(callback, context.checker);
+  return (
+    (symbol === undefined ? undefined : scope.functions.get(symbol)) ?? getCallee(callback, context)
+  );
+};
+
+const getCallback = (callback: ts.Expression, outer: Scope, context: Context) => {
+  const callee = getCallbackFunction(callback, outer, context);
   if (callee?.body === undefined) throw new TlaTypeScriptError("Pass a function here", callback);
   const parameters = getParameters(callee);
   const unbound = parameters.find(
@@ -139,10 +147,10 @@ const getCallback = (callback: ts.Expression, context: Context) => {
 };
 
 const translateCallback = (callback: ts.Expression, scope: Scope, context: Context) =>
-  translateBody(getCallback(callback, context).body, scope, context);
+  translateBody(getCallback(callback, scope, context).body, scope, context);
 
 const translateTest = (callback: ts.Expression, scope: Scope, context: Context) => {
-  const callee = getCallee(callback, context);
+  const callee = getCallbackFunction(callback, scope, context);
   const signature = callee && context.checker.getSignatureFromDeclaration(callee);
   if (signature === undefined) {
     throw new TlaTypeScriptError("Return a boolean from this test", callback);
@@ -153,15 +161,15 @@ const translateTest = (callback: ts.Expression, scope: Scope, context: Context) 
     : useJavaScript("ToBoolean", [result], context);
 };
 
-const rejectIndex = (callback: ts.Expression, message: string, context: Context) => {
-  if (getCallback(callback, context).parameters[1] !== undefined) {
+const rejectIndex = (callback: ts.Expression, message: string, scope: Scope, context: Context) => {
+  if (getCallback(callback, scope, context).parameters[1] !== undefined) {
     throw new TlaTypeScriptError(message, callback);
   }
 };
 
 // Binds a callback's element parameter to a fresh variable, which a quantifier then binds.
 const bindElement = (callback: ts.Expression, outer: Scope, context: Context): Element => {
-  const found = getCallback(callback, context);
+  const found = getCallback(callback, outer, context);
   const scope = found.scope(outer);
   const parameter = found.parameters[0];
   if (parameter === undefined) return { variable: context.names.getFresh("element"), scope };
@@ -217,7 +225,7 @@ const bindIndexed = (
   context: Context,
   extra: { accumulator?: Expression; owner?: Expression; indices?: Expression } = {},
 ) => {
-  const found = getCallback(callback, context);
+  const found = getCallback(callback, scope, context);
   const parameters = found.parameters;
   const offset = extra.accumulator === undefined ? 0 : 1;
   const getChecked = (value: Expression, at: number) =>
@@ -350,7 +358,7 @@ const translateUnordered = (
   const source = translateUnordered(receiver, scope, context);
   if (source === undefined) return undefined;
   const callback = node.arguments[0];
-  rejectIndex(callback, "Elements of a set have no index", context);
+  rejectIndex(callback, "Elements of a set have no index", scope, context);
   const element = bindElement(callback, scope, context);
   return method === "filter"
     ? {
@@ -411,7 +419,7 @@ export const translateFunctionConstructor = (
       ? getElements(translateExpression(receiver, scope, context), context)
       : undefined);
   const callback = node.arguments[0];
-  const parameter = getCallback(callback, context).parameters[0];
+  const parameter = getCallback(callback, scope, context).parameters[0];
   const body =
     (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
     !ts.isBlock(callback.body)
@@ -769,7 +777,7 @@ const translateSequenceOperation = (
     [
       "filter",
       () => {
-        if (getCallback(argument, context).parameters.length < 2) {
+        if (getCallback(argument, scope, context).parameters.length < 2) {
           const element = bindElement(argument, scope, context);
           return apply("SelectSeq", [
             sequence,
@@ -856,7 +864,7 @@ const translateUnorderedMethod = (
   if (method !== "every" && method !== "some" && method !== "find") {
     throw new TlaTypeScriptError(`Unsupported method on a set's elements: ${method}`, node);
   }
-  rejectIndex(argument, "Elements of a set have no index", context);
+  rejectIndex(argument, "Elements of a set have no index", scope, context);
   const element = bindElement(argument, scope, context);
   const body = translateTest(argument, element.scope, context);
   const bounds = [bound(element.variable, source.set)];

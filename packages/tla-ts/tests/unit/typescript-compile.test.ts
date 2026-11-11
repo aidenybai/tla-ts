@@ -875,6 +875,33 @@ describe("calls", () => {
     expect(result.status).toBe("error");
     expect(result.failure?.message).toContain("out of bounds");
   });
+
+  it("passes a local function to a local function that calls it", async () => {
+    const getSource = (expected: number) => `
+      const twice = (items: number[], offset: number): number[] => {
+        const shift = (value: number) => value + offset;
+        const run = (each: (value: number) => number, value: number) => each(each(value));
+        return items.map((item) => run(shift, item));
+      };
+      const result = twice([1, 2], 10);
+      if (result[0] !== ${expected} || result[1] !== 22) throw new Error("twice");
+    `;
+    expect((await checkModel(getSource(21))).failure).toBeUndefined();
+    await expect(checkModel(getSource(20))).rejects.toThrow("twice");
+  });
+
+  it("maps with a local function that a name holds", async () => {
+    const result = await checkModel(`
+      const scale = (items: number[]): number[] => {
+        const factor = 3;
+        const times = (value: number) => value * factor;
+        return items.map(times);
+      };
+      const result = scale([1, 2]);
+      if (result[0] !== 3 || result[1] !== 6) throw new Error("scale");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
 });
 
 describe("calls tla-ts can't compile", () => {

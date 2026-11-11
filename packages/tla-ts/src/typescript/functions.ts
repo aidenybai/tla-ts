@@ -183,6 +183,18 @@ export const shareArguments = (values: Expression[], context: Context) => {
   };
 };
 
+// The function that an argument names, which a parameter that the callee calls takes as it is
+// rather than as a value.
+const getCallback = (argument: ts.Expression, scope: Scope, context: Context) => {
+  const symbol = getSymbol(argument, context.checker);
+  const held = symbol === undefined ? undefined : scope.functions.get(symbol);
+  const callback = held ?? getCallee(argument, context);
+  return callback?.body !== undefined &&
+    context.checker.getTypeAtLocation(argument).getCallSignatures().length > 0
+    ? callback
+    : undefined;
+};
+
 const inlineCall = (
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
@@ -191,16 +203,45 @@ const inlineCall = (
   called?: CalledMethod,
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
+  const callbacks = callee.parameters.flatMap(
+    (parameter, position): [ts.Symbol, FunctionNode][] => {
+      const argument = argumentNodes.at(position);
+      const symbol = getSymbol(parameter.name, context.checker);
+      const callback = argument === undefined ? undefined : getCallback(argument, scope, context);
+      return callback === undefined ||
+        symbol === undefined ||
+        parameter.dotDotDotToken !== undefined
+        ? []
+        : [[symbol, callback]];
+    },
+  );
+  const isValue = (position: number) =>
+    !callbacks.some(
+      (entry) => entry[0] === getSymbol(callee.parameters[position].name, context.checker),
+    );
   const values = shareArguments(
-    argumentNodes.map((argument) => translateExpression(argument, scope, context)),
+    argumentNodes
+      .filter((_, position) => position >= callee.parameters.length || isValue(position))
+      .map((argument) => translateExpression(argument, scope, context)),
     context,
   );
-  const bound = bindValues(callee.parameters, values.shared, scope, context);
+  const bound = bindValues(
+    callee.parameters.filter((_, position) => isValue(position)),
+    values.shared,
+    scope,
+    context,
+  );
+  context.inProgress.add(callee);
   const value = translateBody(
     callee.body,
-    { ...bound.scope, receiver: getReceiver(scope, context, called) },
+    {
+      ...bound.scope,
+      functions: new Map([...bound.scope.functions, ...callbacks]),
+      receiver: getReceiver(scope, context, called),
+    },
     context,
   );
+  context.inProgress.delete(callee);
   return render(
     values.evaluate(
       letIn(
@@ -230,21 +271,34 @@ export const forceHeap = (
 };
 
 // A function argument to an operator parameter, as a LAMBDA or an operator's name.
-const translateOperatorArgument = (node: ts.Expression, scope: Scope, context: Context) => {
-  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
-    const parameters = declareParameters(node.parameters, context);
-    const body = translateBody(node.body, bindNames(scope, parameters), context);
-    return lambda(
-      parameters.map((parameter) => parameter.name),
-      body,
-    );
-  }
+// A local function that a name holds reads the names around it where the LAMBDA stands.
+const translateOperatorArgument = (
+  node: ts.Expression,
+  scope: Scope,
+  context: Context,
+): Expression => {
   const symbol = getSymbol(node, context.checker);
   const declaration = getTopLevelDeclaration(symbol);
   if (declaration !== undefined) return identifier(getDefinition(declaration, context).name);
   const binding = symbol === undefined ? undefined : scope.bindings.get(symbol);
-  if (binding === undefined) throw new TlaTypeScriptError("Pass a function here", node);
-  return binding;
+  if (binding !== undefined) return binding;
+  const held = ts.isIdentifier(node) ? getCallback(node, scope, context) : undefined;
+  const callee = ts.isArrowFunction(node) || ts.isFunctionExpression(node) ? node : held;
+  if (callee?.body === undefined) throw new TlaTypeScriptError("Pass a function here", node);
+  if (context.inProgress.has(callee)) {
+    throw new TlaTypeScriptError(
+      "A local function can't call itself, so declare it at the top level",
+      node,
+    );
+  }
+  const parameters = declareParameters(callee.parameters, context);
+  context.inProgress.add(callee);
+  const body = translateBody(callee.body, bindNames(scope, parameters), context);
+  context.inProgress.delete(callee);
+  return lambda(
+    parameters.map((parameter) => parameter.name),
+    body,
+  );
 };
 
 // A call to a top-level helper, or a reference to a top-level constant when node is undefined.
@@ -274,10 +328,7 @@ export const translateHelperCall = (
         node,
       );
     }
-    context.inProgress.add(helper);
-    const value = inlineCall(helper, node.arguments, scope, context);
-    context.inProgress.delete(helper);
-    return value;
+    return inlineCall(helper, node.arguments, scope, context);
   }
   const definition = getDefinition(declaration, context);
   const argumentNodes = node?.arguments ?? [];
@@ -332,10 +383,7 @@ export const translateLocalCall = (
     );
   }
   rejectCaught(node, callee, scope, context);
-  context.inProgress.add(callee);
-  const value = inlineCall(callee, node.arguments, scope, context, called);
-  context.inProgress.delete(callee);
-  return value;
+  return inlineCall(callee, node.arguments, scope, context, called);
 };
 
 // A read of a property that a heap class's getter computes.
