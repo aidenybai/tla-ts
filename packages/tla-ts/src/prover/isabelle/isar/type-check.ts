@@ -17,6 +17,8 @@ import {
   mkTFree,
   mkTVar,
   mkType,
+  mkVar,
+  existsSubterm,
   mapTypes,
   stripComb,
   type Term,
@@ -35,12 +37,25 @@ interface NameScope {
 export interface PropToCheck {
   readonly ast: Ast;
   readonly fixed: ReadonlySet<string>;
+  // The type the term must have, a proposition unless given.
+  readonly type?: Typ;
+}
+
+export interface CheckOptions {
+  readonly fixedTypes: ReadonlyMap<string, Typ>;
+  // The types of the schematic variables a term binding gives, Variable.def_type.
+  readonly varTypes?: (name: string, index: number) => Typ | undefined;
+  // Proof_Context.mode_pattern: dummies and open type parameters become schematic.
+  readonly isPattern?: boolean;
 }
 
 interface Inference {
   readonly substitution: Map<number, Typ>;
   readonly freeTypes: Map<string, Typ>;
+  readonly varTypes: Map<string, Typ>;
+  readonly getVarType: (name: string, index: number) => Typ | undefined;
   nextParam: number;
+  nextDummy: number;
 }
 
 const freshParam = (inference: Inference) => {
@@ -125,6 +140,19 @@ const instantiateScheme = (inference: Inference, type: Typ) => {
   return instantiate(type);
 };
 
+// Type.mark_polymorphic: each use of a term binding instantiates its type variables afresh.
+const instantiateTVars = (inference: Inference, type: Typ, params = new Map<string, Typ>()) => {
+  const instantiate = (current: Typ): Typ => {
+    if (current.kind === "Type") return mkType(current.name, current.args.map(instantiate));
+    if (current.kind === "TFree") return current;
+    const key = `${current.name}.${current.index}`;
+    const param = params.get(key) ?? freshParam(inference);
+    params.set(key, param);
+    return param;
+  };
+  return instantiate(type);
+};
+
 const constType = (scope: NameScope, name: string) => {
   const info = scope.consts.get(name);
   if (info === undefined) throw new TlaIsabelleError("ERROR", `Undeclared constant: ${name}`);
@@ -155,6 +183,20 @@ const elaborate = (
     case "const": {
       const type = instantiateScheme(inference, constType(scope, ast.name));
       return [mkConst(ast.name, type), type];
+    }
+    case "var": {
+      const key = `${ast.name}.${ast.index}`;
+      const known = inference.varTypes.get(key);
+      const bound = known === undefined ? inference.getVarType(ast.name, ast.index) : undefined;
+      const type =
+        known ?? (bound === undefined ? freshParam(inference) : instantiateTVars(inference, bound));
+      inference.varTypes.set(key, type);
+      return [mkVar(ast.name, ast.index, type), type];
+    }
+    case "dummy": {
+      const type = freshParam(inference);
+      inference.nextDummy += 1;
+      return [mkVar("_dummy_", inference.nextDummy, type), type];
     }
     case "app": {
       const [fun, funType] = elaborate(scope, inference, fixed, bound, ast.fun);
@@ -224,18 +266,34 @@ const expandAbbreviations = (scope: NameScope, term: Term): Term => {
 export const checkProps = (
   scope: NameScope,
   props: readonly PropToCheck[],
-  fixedTypes: ReadonlyMap<string, Typ>,
+  options: CheckOptions,
 ): Term[] => {
   const inference: Inference = {
     substitution: new Map(),
-    freeTypes: new Map(fixedTypes),
+    freeTypes: new Map(options.fixedTypes),
+    varTypes: new Map(),
+    getVarType: options.varTypes ?? (() => undefined),
     nextParam: 0,
+    nextDummy: 0,
   };
+  // Type_Infer.paramify_vars: the expected types' variables are open, the same in each.
+  const expected = new Map<string, Typ>();
   const elaborated = props.map((prop) => {
     const [term, type] = elaborate(scope, inference, prop.fixed, [], prop.ast);
-    unify(inference, type, mkType("prop"));
+    unify(
+      inference,
+      type,
+      prop.type === undefined ? mkType("prop") : instantiateTVars(inference, prop.type, expected),
+    );
     return term;
   });
+  if (
+    !options.isPattern &&
+    elaborated.some((term) =>
+      existsSubterm((sub) => sub.kind === "Var" && sub.name === "_dummy_", term),
+    )
+  )
+    throw new TlaIsabelleError("ERROR", "Illegal dummy pattern(s) in term");
   const expanded = elaborated.map((term) =>
     expandAbbreviations(
       scope,
@@ -260,16 +318,26 @@ export const checkProps = (
       ),
     [] as number[],
   );
+  const used = new Set<string>();
+  for (const type of options.fixedTypes.values())
+    foldAtyps(
+      (atom, current: Set<string>) => (atom.kind === "TFree" ? current.add(atom.name) : current),
+      type,
+      used,
+    );
+  const fresh = (name: string): string => (used.has(name) ? fresh(bumpString(name)) : name);
   const names = new Map<number, string>();
   params.reduce((name, param) => {
-    names.set(param, name);
-    return bumpString(name);
+    names.set(param, fresh(name));
+    return bumpString(fresh(name));
   }, "'a");
   const fixType = (type: Typ): Typ =>
     type.kind === "Type"
       ? mkType(type.name, type.args.map(fixType))
       : type.kind === "TVar" && isParam(type)
-        ? mkTFree(names.get(type.index) ?? "'a")
+        ? options.isPattern
+          ? mkTVar(names.get(type.index) ?? "'a", 0)
+          : mkTFree(names.get(type.index) ?? "'a")
         : type;
   return expanded.map((term) => mapTypes(fixType, term));
 };

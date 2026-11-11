@@ -1,12 +1,4 @@
 {
-  "tlapm/backends/isabelle/zenon/bounded_forall.thy": "message-mismatch",
-  "tlapm/backends/isabelle/zenon/choose_same.thy": "message-mismatch",
-  "tlapm/backends/isabelle/zenon/funcset.thy": "message-mismatch",
-  "tlapm/backends/isabelle/zenon/if_branches.thy": "message-mismatch",
-  "tlapm/backends/isabelle/zenon/in_cup.thy": "message-mismatch",
-  "tlapm/backends/isabelle/zenon/record_access.thy": "message-mismatch",
-  "tlapm/backends/isabelle/zenon/setequal.thy": "message-mismatch",
-  "tlapm/backends/isabelle/zenon/tuple_eq.thy": "message-mismatch",
   "tlapm/backends/z3/z3test/old-regressions/smt2/t220.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/old-regressions/smt2/t241.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/old-regressions/smt2/t258.smt2": "message-mismatch",

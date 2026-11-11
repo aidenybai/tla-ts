@@ -67,6 +67,7 @@ export const remdupsRl = axiomThm(
 );
 export const protectI = axiomThm(mkImplies(propVar("A"), protect(propVar("A"))));
 export const protectD = axiomThm(mkImplies(protect(propVar("A")), propVar("A")));
+export const protectCong = axiomThm(mkEquals(protect(propVar("A")), protect(propVar("A"))));
 export const reflexiveThm = axiomThm(
   mkEquals(mkVar("x", 0, mkTVar("'a", 0)), mkVar("x", 0, mkTVar("'a", 0))),
 );

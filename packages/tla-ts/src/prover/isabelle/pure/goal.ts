@@ -11,7 +11,7 @@ import { nprems, permutePrems, type Thm } from "./thm";
 const protect = (count: number, thm: Thm) => compNoFlatten(thm, count, 1, protectI);
 
 // A ==> ... ==> #C becomes A ==> ... ==> C.
-const conclude = (thm: Thm) => compNoFlatten(thm, nprems(thm), 1, protectD);
+export const conclude = (thm: Thm) => compNoFlatten(thm, nprems(thm), 1, protectD);
 
 const restrict = (index: number, count: number, state: Thm) => {
   if (index < 1 || count < 1 || index + count - 1 > nprems(state))
