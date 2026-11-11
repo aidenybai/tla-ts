@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getHeapClass, getSymbol, getUndefined, share } from "./context";
+import { type Context, getHeapClass, getSymbol, getUndefined, isOnce, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
@@ -28,13 +28,21 @@ const isNative = (symbol: ts.Symbol) =>
 const getBase = (symbol: ts.Symbol, checker: ts.TypeChecker) => {
   const expression = (symbol.declarations ?? [])
     .flatMap((declaration) =>
-      ts.isClassDeclaration(declaration) || ts.isInterfaceDeclaration(declaration)
+      ts.isClassLike(declaration) || ts.isInterfaceDeclaration(declaration)
         ? (declaration.heritageClauses ?? [])
         : [],
     )
     .find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]?.expression;
   return expression === undefined ? undefined : getSymbol(expression, checker);
 };
+
+// A class expression that a const holds, which the script evaluates once, so the const names it.
+const isConstClass = (node: ts.Node): node is ts.ClassExpression =>
+  ts.isClassExpression(node) &&
+  ts.isVariableDeclaration(node.parent) &&
+  node.parent.initializer === node &&
+  (ts.getCombinedNodeFlags(node.parent) & ts.NodeFlags.Const) !== 0 &&
+  isOnce(node.parent);
 
 export const getErrorClass = (
   symbol: ts.Symbol | undefined,
@@ -44,9 +52,16 @@ export const getErrorClass = (
   const base = getBase(symbol, checker);
   if (isNative(symbol)) return [symbol, ...(base === undefined ? [] : [base])];
   const declaration = symbol.valueDeclaration;
+  const held =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  if (held !== undefined && ts.isClassExpression(held)) {
+    return getErrorClass(checker.getTypeAtLocation(held).getSymbol(), checker);
+  }
   if (
     declaration === undefined ||
-    !ts.isClassDeclaration(declaration) ||
+    !(ts.isClassDeclaration(declaration) || isConstClass(declaration)) ||
     declaration.members.length > 0
   ) {
     return undefined;
@@ -175,7 +190,7 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
     throw new TlaTypeScriptError(`Unsupported instanceof: ${node.right.getText()}`, node);
   }
   const value = translateExpression(node.left, scope, context);
-  const subclasses = set(getSubclasses(node, symbol, context));
+  const subclasses = set(getSubclasses(node, classes[0], context));
   if (getErrorClass(context.checker.getTypeAtLocation(node.left).getSymbol(), context.checker)) {
     return apply("\\in", [field(value, "constructor"), subclasses]);
   }

@@ -1925,6 +1925,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes errors of a class expression that a const holds", async () => {
+    const result = await check(
+      compile(
+        `const Subclass = class extends TypeError {};\nconst Other = class extends TypeError {};\nconst sub = new Subclass("x");\nif (!(sub instanceof Subclass) || !(sub instanceof Error) || sub instanceof Other || sub instanceof RangeError) throw new Error("missed");\nif (sub.message !== "x" || sub.name !== "TypeError") throw new Error("missed");\ntry {\n  throw new Other("y");\n} catch (caught) {\n  if (!(caught instanceof Other) || caught instanceof Subclass) throw new Error("missed");\n}`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    await expect(
+      check(
+        compile(
+          `const Subclass = class extends TypeError {};\nif (!(new Subclass() instanceof RangeError)) throw new Error("not a RangeError");`,
+        ),
+      ),
+    ).rejects.toThrow("not a RangeError");
+  });
+
   it("runs the defaults that a call or a declaration certainly evaluates", async () => {
     const result = await check(
       compile(
