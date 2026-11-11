@@ -2767,6 +2767,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("spreads a condition's object literal only where the condition holds", async () => {
+    const result = await checkModel(`
+      const make = (name: string, args: string[], module: string | undefined) => {
+        const hasArgs = args.length > 0;
+        return { name, ...(hasArgs && { args }), ...(module !== undefined && { module }) };
+      };
+      const plain = make("a", [], undefined);
+      if (Object.keys(plain).join() !== "name" || "args" in plain) throw new Error("plain");
+      const full = make("b", ["x"], "M");
+      if (Object.keys(full).join() !== "name,args,module" || full.module !== "M") {
+        throw new Error("full");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("changes a constant's set or map in place in a script with objects", async () => {
     const result = await checkModel(`
       const box = { n: 0 };

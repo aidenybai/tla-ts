@@ -40,7 +40,7 @@ import { TlaTypeScriptError } from "../errors";
 import { ARRAY_LIKE_METHODS, getHeapRegExpCall, IN_PLACE_METHODS } from "./collections";
 import { getJsonText, parseJson } from "./json";
 import { getConstructor } from "./exceptions";
-import { translateExpression, translateToString } from "./expressions";
+import { translateCondition, translateExpression, translateToString } from "./expressions";
 import {
   getBuiltIn,
   isBuiltInObject,
@@ -344,6 +344,39 @@ export const translateObject = (
         "Put",
         [object, translateMemberKey(method.name, scope, context), getMethodValue(method, context)],
         context,
+      );
+    }
+    // A spread of a condition and an object literal of names and literals spreads the object only
+    // where the condition holds, as spreading false or another primitive adds nothing.
+    const spread = ts.isSpreadAssignment(property) ? skipCasts(property.expression) : undefined;
+    const literal =
+      spread !== undefined &&
+      ts.isBinaryExpression(spread) &&
+      spread.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+        ? skipCasts(spread.right)
+        : undefined;
+    if (
+      spread !== undefined &&
+      ts.isBinaryExpression(spread) &&
+      literal !== undefined &&
+      ts.isObjectLiteralExpression(literal) &&
+      literal.properties.every(
+        (member) =>
+          ts.isShorthandPropertyAssignment(member) ||
+          (ts.isPropertyAssignment(member) &&
+            !ts.isComputedPropertyName(member.name) &&
+            (ts.isIdentifier(member.initializer) || ts.isLiteralExpression(member.initializer))),
+      ) &&
+      getKind(spread.left, context) !== "object"
+    ) {
+      return ifExpression(
+        translateCondition(spread.left, scope, context),
+        useJavaScript(
+          "Spread",
+          [object, getHeap(scope, property, context), translateExpression(literal, scope, context)],
+          context,
+        ),
+        object,
       );
     }
     if (ts.isSpreadAssignment(property) && getKind(property.expression, context) === "object") {
