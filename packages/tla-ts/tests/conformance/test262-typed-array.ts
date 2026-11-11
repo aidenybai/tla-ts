@@ -101,16 +101,39 @@ function makeArrayLike(TA: AnyTypedArrayConstructor, primitiveOrIterable: unknow
   return obj;
 }
 
+// makeIterable's object gives the array's own iterator from a closure over the array. tla-ts holds
+// no closure as a value, so the object holds the array, and its iterator reads the array's
+// elements as an array's iterator does.
+interface ArrayValues {
+  src: unknown[];
+  index: number;
+  next: (this: ArrayValues) => IteratorResult<unknown>;
+}
+
+interface ArrayIterable {
+  src: unknown[];
+  [Symbol.iterator]: (this: ArrayIterable) => ArrayValues;
+}
+
+function stepArrayValues(this: ArrayValues): IteratorResult<unknown> {
+  if (this.index < this.src.length) {
+    const value = this.src[this.index];
+    this.index += 1;
+    return { value, done: false };
+  }
+  return { value: undefined, done: true };
+}
+
+function openArrayValues(this: ArrayIterable): ArrayValues {
+  return { src: this.src, index: 0, next: stepArrayValues };
+}
+
 let makeIterable: ArgFactory | undefined;
 if (typeof Symbol !== "undefined" && Symbol.iterator) {
   makeIterable = function makeIterable(TA: AnyTypedArrayConstructor, primitiveOrIterable: unknown) {
     const src = makeArray(TA, primitiveOrIterable);
     if (isPrimitive(src)) return src;
-    const elements = src as unknown[];
-    const obj: { [Symbol.iterator]?: () => Iterator<unknown> } = {};
-    obj[Symbol.iterator] = function () {
-      return elements[Symbol.iterator]();
-    };
+    const obj: ArrayIterable = { src: src as unknown[], [Symbol.iterator]: openArrayValues };
     return obj;
   };
 }
