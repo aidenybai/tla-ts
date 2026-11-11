@@ -1235,16 +1235,21 @@ export const createSmtlibReader = (
   const parseLet = (list: SmtList) => {
     const message = "invalid let declaration, symbol expected";
     const scope = new Map<string, Binding>();
+    const exprs: number[] = [];
     for (const binding of expectList(list.items[1], message, list).items) {
       const pair = expectList(binding, message, binding);
       const name = expectSymbol(pair.items[0], message, pair);
       const expr = parseTerm(pair.items[1] ?? pair.end);
+      exprs.push(expr);
       scope.set(name.text, { kind: "let", depth: binders.depth, expr });
     }
     scopes.push(scope);
-    const body = parseTerm(list.items[2] ?? list.end);
+    // Z3 takes the last expression on its stack, so a let without a body is its last binding.
+    for (const body of list.items.slice(2)) exprs.push(parseTerm(body));
     scopes.pop();
-    return body;
+    const result = exprs.at(-1);
+    if (result === undefined) throw new SmtParseError("invalid let expression", list.end);
+    return result;
   };
 
   const expandMacro = (macro: Macro, args: number[]) =>
