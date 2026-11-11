@@ -202,10 +202,10 @@ const permuteElements = (elements: Value[], images: RankedImages) => {
     const element = elements[index];
     const permuted = permuteValue(element, images);
     if (permuted === element) continue;
-    const result = elements.slice(0, index);
-    result.push(permuted);
+    const result = elements.slice();
+    result[index] = permuted;
     for (let rest = index + 1; rest < elements.length; rest++) {
-      result.push(permuteValue(elements[rest], images));
+      result[rest] = permuteValue(elements[rest], images);
     }
     return result;
   }
