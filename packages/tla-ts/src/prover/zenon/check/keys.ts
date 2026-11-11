@@ -1,6 +1,3 @@
-// Comparing formulas by their own alpha-equivalence: each formula prints to a key in which a bound
-// variable is the number of binders between it and its own.
-
 import { term, UncheckedError, variable, type Env, type Operators, type Term } from "./terms";
 
 export const createKeys = () => {
@@ -8,8 +5,6 @@ export const createKeys = () => {
   const topKeys = new WeakMap<Term, string>();
   let freshCount = 0;
 
-  // The variables and applied symbols that a formula doesn't bind, which are the names an
-  // environment can change.
   const getFreeNames = (formula: Term): Set<string> => {
     const cached = freeNames.get(formula);
     if (cached !== undefined) return cached;
@@ -33,7 +28,6 @@ export const createKeys = () => {
     return names;
   };
 
-  // `operators` replaces applied symbols, for definitions whose parameters are operators.
   const getKey = (formula: Term, env: Env, depth: number, operators?: Operators): string => {
     for (const name of getFreeNames(formula))
       if (env.has(name) || operators?.has(name) === true)
@@ -107,7 +101,6 @@ export const createKeys = () => {
   const getTopKey = (formula: Term) => {
     const cached = topKeys.get(formula);
     if (cached !== undefined) return cached;
-    // Keys count binders from the variable, so a formula's key doesn't depend on where it sits.
     const key = getEnvKey(formula, new Map(), 0);
     topKeys.set(formula, key);
     return key;

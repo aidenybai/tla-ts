@@ -1,11 +1,8 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// The rules for tuples and records.
 
 import { compareExprs, isApp, type Expr } from "../expr";
 import { stableSort } from "../ocaml";
-import type { Priority } from "../node";
-import { makeRule, type Rule } from "../proof";
+import { makeRule } from "../proof";
 import {
   domain,
   equal,
@@ -25,7 +22,6 @@ const getStringName = (expression: Expr) =>
     ? expression.args[0].symbol
     : undefined;
 
-// Zenon's check_record_labels on sorted fields: false for Invalid_record, a repeated label.
 const hasDistinctLabels = (pairs: [Expr, Expr][]) => {
   for (let index = 0; index + 1 < pairs.length; index++) {
     const left = pairs[index][0];
@@ -56,10 +52,8 @@ export const getTupleNodes = (literal: Literal): Item[] | undefined => {
   const isNegated = literal.isNegated;
   const atom = literal.atom;
   const relation = literal.relation;
-  const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
-    makeExtensionNode(literal, priority, rule, branches);
   if (isNegated && isApp(atom, "TLA.isASeq", 1) && isApp(atom.args[0], "TLA.tuple"))
-    return node("prop", makeRule("tuple_notisaseq", [formula]), []);
+    return makeExtensionNode(literal, "prop", makeRule("tuple_notisaseq", [formula]), []);
   if (relation === undefined) return undefined;
   const left = relation.args[0];
   const right = relation.args[1];
@@ -67,11 +61,21 @@ export const getTupleNodes = (literal: Literal): Item[] | undefined => {
   const isMembership = relation.symbol === "TLA.in";
   if (!isNegated && isEquality && isApp(left, "TLA.tuple") && isApp(right, "TLA.tuple")) {
     if (left.args.length !== right.args.length)
-      return node("prop", makeRule("tuple_eq_mismatch", [formula, formula]), []);
+      return makeExtensionNode(
+        literal,
+        "prop",
+        makeRule("tuple_eq_mismatch", [formula, formula]),
+        [],
+      );
     const equalities = left.args.map((inner, position) =>
       equal(exprs, inner, right.args[position]),
     );
-    return node("prop", makeRule("tuple_eq_match", [formula, ...equalities]), [equalities]);
+    return makeExtensionNode(
+      literal,
+      "prop",
+      makeRule("tuple_eq_match", [formula, ...equalities]),
+      [equalities],
+    );
   }
   if (isMembership && isApp(right, "TLA.Product", 1) && isApp(right.args[0], "TLA.tuple")) {
     const element = left;
@@ -80,16 +84,24 @@ export const getTupleNodes = (literal: Literal): Item[] | undefined => {
       const components = tuple.args.map((inner, position) =>
         member(exprs, fapply(exprs, element, makeNatural(exprs, position + 1)), inner),
       );
-      const isSequence = exprs.eapp("TLA.isASeq", [element]);
-      const hasLength = equal(
+      const sequenceFormula = exprs.eapp("TLA.isASeq", [element]);
+      const lengthFormula = equal(
         exprs,
         exprs.eapp("TLA.Len", [element]),
         makeNatural(exprs, tuple.args.length),
       );
-      return node(
+      return makeExtensionNode(
+        literal,
         "prop",
-        makeRule("in_product", [formula, element, tuple, isSequence, hasLength, ...components]),
-        [[isSequence, hasLength, ...components]],
+        makeRule("in_product", [
+          formula,
+          element,
+          tuple,
+          sequenceFormula,
+          lengthFormula,
+          ...components,
+        ]),
+        [[sequenceFormula, lengthFormula, ...components]],
       );
     }
     if (
@@ -108,7 +120,8 @@ export const getTupleNodes = (literal: Literal): Item[] | undefined => {
       ),
       ...components,
     ];
-    return node(
+    return makeExtensionNode(
+      literal,
       "prop",
       makeRule("notin_product", [formula, element, tuple, ...formulas]),
       getBranches(formulas),
@@ -123,10 +136,8 @@ export const getRecordNodes = (literal: Literal): Item[] | undefined => {
   const isNegated = literal.isNegated;
   const atom = literal.atom;
   const relation = literal.relation;
-  const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
-    makeExtensionNode(literal, priority, rule, branches);
   if (isNegated && isApp(atom, "TLA.isAFcn", 1) && isApp(atom.args[0], "TLA.record"))
-    return node("prop", makeRule("record_notisafcn", [formula]), []);
+    return makeExtensionNode(literal, "prop", makeRule("record_notisafcn", [formula]), []);
   if (relation === undefined) return undefined;
   const left = relation.args[0];
   const right = relation.args[1];
@@ -140,14 +151,27 @@ export const getRecordNodes = (literal: Literal): Item[] | undefined => {
       leftFields.length === rightFields.length &&
       leftFields.every((field, position) => field[0] === rightFields[position][0]);
     if (!isMatch)
-      return isNegated ? [] : node("prop", makeRule("record_eq_mismatch", [formula, formula]), []);
+      return isNegated
+        ? []
+        : makeExtensionNode(
+            literal,
+            "prop",
+            makeRule("record_eq_mismatch", [formula, formula]),
+            [],
+          );
     const equalities = leftFields.map((field, position) =>
       equal(exprs, field[1], rightFields[position][1]),
     );
     if (!isNegated)
-      return node("prop", makeRule("record_eq_match", [formula, ...equalities]), [equalities]);
+      return makeExtensionNode(
+        literal,
+        "prop",
+        makeRule("record_eq_match", [formula, ...equalities]),
+        [equalities],
+      );
     const inequalities = equalities.map((inner) => exprs.enot(inner));
-    return node(
+    return makeExtensionNode(
+      literal,
       "prop",
       makeRule("record_neq_match", [formula, ...inequalities]),
       getBranches(inequalities),
@@ -171,7 +195,8 @@ export const getRecordNodes = (literal: Literal): Item[] | undefined => {
       ),
       ...pairs.map((pair) => exprs.enot(equal(exprs, fapply(exprs, other, pair[0]), pair[1]))),
     ];
-    return node(
+    return makeExtensionNode(
+      literal,
       "prop",
       makeRule(record === right ? "neq_record" : "record_neq", [
         formula,
@@ -194,9 +219,12 @@ export const getRecordNodes = (literal: Literal): Item[] | undefined => {
         equal(exprs, domain(exprs, left), labels),
         ...pairs.map((pair) => member(exprs, fapply(exprs, left, pair[0]), pair[1])),
       ];
-      return node("prop", makeRule("in_recordset", [formula, left, right, ...formulas]), [
-        formulas,
-      ]);
+      return makeExtensionNode(
+        literal,
+        "prop",
+        makeRule("in_recordset", [formula, left, right, ...formulas]),
+        [formulas],
+      );
     }
     if (isApp(left, "TLA.record")) {
       const leftLabels = getSortedLabels(left.args);
@@ -215,7 +243,8 @@ export const getRecordNodes = (literal: Literal): Item[] | undefined => {
       exprs.enot(equal(exprs, domain(exprs, left), labels)),
       ...pairs.map((pair) => exprs.enot(member(exprs, fapply(exprs, left, pair[0]), pair[1]))),
     ];
-    return node(
+    return makeExtensionNode(
+      literal,
       "prop",
       makeRule("notin_recordset", [formula, left, right, ...formulas]),
       getBranches(formulas),

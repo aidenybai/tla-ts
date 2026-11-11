@@ -1,14 +1,7 @@
-// Prep.find_meth and Prep.compute_meth: the methods the pragmas an obligation cites select, each a
-// prover with its time limit, or a frontend that rewrites the obligation first. A malformed method
-// throws a TlaProverError, since Prep.ship catches compute_meth's failure and fails only that
-// obligation.
-
 import { TlapmBugError, TlaProverError } from "../../errors";
 import type { Expr, Locus, Sequent } from "../../obligations/expression";
 import type { OldMethod, PragmaSetting } from "../../obligations/pragma";
 
-// A method, named after the Method.t constructor tlapm reports it by. A Z3 resource budget turns
-// the time limit off.
 export interface Method {
   prover: string;
   timeLimitMs: number;
@@ -16,7 +9,6 @@ export interface Method {
   tactic?: string;
 }
 
-// The methods that rewrite an obligation in Prep.expand_enabled_cdot instead of proving it.
 const FRONTENDS = new Set([
   "expandenabled",
   "expandcdot",
@@ -26,25 +18,20 @@ const FRONTENDS = new Set([
   "levelcomparison",
 ]);
 
-// Method.default_*_timeout, in seconds.
 const SMT_SECONDS = 5;
 const ZENON_SECONDS = 10;
 const ISABELLE_SECONDS = 30;
 const LS4_SECONDS = 10;
 
-// Method.rlimit_base and Method.max_rlimit.
 const RLIMIT_BASE = 3_000_000;
 const MAX_RLIMIT = 0xffff_ffff;
 
-// Params.default_method: what tlapm tries when a step cites no prover.
 const DEFAULT_METHODS: Method[] = [
   { prover: "smt", timeLimitMs: SMT_SECONDS * 1000 },
   { prover: "zenon", timeLimitMs: ZENON_SECONDS * 1000 },
   { prover: "isabelle", timeLimitMs: ISABELLE_SECONDS * 1000, tactic: "auto" },
 ];
 
-// compute_meth's names for each prover, and the Method.t constructor and default time each
-// selects. The SMT solvers take a resource budget.
 const PROVERS: Record<string, { prover: string; seconds: number; isBudgeted?: boolean }> = {
   zenon: { prover: "zenon", seconds: ZENON_SECONDS },
   isabelle: { prover: "isabelle", seconds: ISABELLE_SECONDS },
@@ -89,7 +76,6 @@ const getProverMethod = (
   };
 };
 
-// parse_rlimit: "rN" is N times the base resource count, at least 1.
 const getRlimit = (budget: string) => {
   const count = Number.parseFloat(budget.slice(1));
   if (!/^[rR]./.test(budget) || !Number.isFinite(count) || count <= 0)
@@ -97,8 +83,6 @@ const getRlimit = (budget: string) => {
   return Math.max(1, Math.trunc(Math.min(count * RLIMIT_BASE, MAX_RLIMIT)));
 };
 
-// compute_meth: a group of a pragma's settings, where each @ takes the next argument the pragma is
-// applied to.
 const computeMethod = (settings: PragmaSetting[], args: Expr[]): Method => {
   const values = settings.reduce<{
     args: Expr[];
@@ -146,7 +130,6 @@ const computeMethod = (settings: PragmaSetting[], args: Expr[]): Method => {
   return getProverMethod(values.prover, values.timeout, values.rlimit, values.tactic);
 };
 
-// An old-style method, as Method_prs reads it, with its default time unless it names one.
 const getOldMethod = (method: OldMethod) =>
   getProverMethod(method.name, method.timeout, undefined, method.tactic);
 
@@ -155,21 +138,14 @@ type Cited =
   | { kind: "Meth"; method: OldMethod }
   | undefined;
 
-// find_meth: an obligation whose proof names a method keeps it. Otherwise each visible fact that
-// cites a pragma, alone or applied to arguments, adds the methods its groups compute, and each that
-// cites a theorem or carries an old-style method adds that method. A pragma that a fact from
-// another BY or USE cites drops the methods found so far: tlapm compares the USE locations
-// physically, as tla-ts compares the objects.
 const getCitedMethods = (sequent: Sequent) => {
   const cited: Cited[] = [];
-  const state: { methods: Method[]; useLocation: Locus | undefined | null } = {
-    methods: [],
-    useLocation: null,
-  };
+  let methods: Method[] = [];
+  let useLocation: Locus | undefined | null = null;
   sequent.context.forEach((hyp, index) => {
     const expression = hyp.kind === "Fact" && hyp.visibility === "Visible" && hyp.expression;
     if (expression && expression.kind === "With") {
-      state.methods.push(getOldMethod(expression.method));
+      methods.push(getOldMethod(expression.method));
       cited.push(undefined);
       return;
     }
@@ -188,24 +164,21 @@ const getCitedMethods = (sequent: Sequent) => {
     if (operator.kind !== "Ix") return;
     const entry = cited[index - operator.index];
     if (entry?.kind === "Premeth") {
-      if (hyp.useLocation !== state.useLocation) {
-        state.methods = [];
-        state.useLocation = hyp.useLocation;
+      if (hyp.useLocation !== useLocation) {
+        methods = [];
+        useLocation = hyp.useLocation;
       }
       const args = expression.kind === "Apply" ? expression.args : [];
-      state.methods.push(...entry.groups.map((group) => computeMethod(group, args)));
+      methods.push(...entry.groups.map((group) => computeMethod(group, args)));
       return;
     }
     if (entry?.kind !== "Meth") return;
-    // find_meth asserts that a theorem with a method is not applied to arguments.
     if (expression.kind === "Apply") throw new TlapmBugError();
-    state.methods.push(getOldMethod(entry.method));
+    methods.push(getOldMethod(entry.method));
   });
-  return state.methods;
+  return methods;
 };
 
-// The methods find_meth selects: the frontends to apply, and the provers to try in order, which
-// are tlapm's default ones when the obligation cites only frontends or nothing.
 export const findMethods = (obligation: { sequent: Sequent; method?: OldMethod }) => {
   const methods =
     obligation.method === undefined

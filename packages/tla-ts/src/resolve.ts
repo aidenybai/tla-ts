@@ -22,8 +22,6 @@ import {
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 
-// The kinds of symbol SANY tells apart when it binds a name twice. A parameter is also a bound name,
-// and a NEW symbol has a kind for each level.
 export type SymbolKind =
   | "Builtin"
   | "Constant"
@@ -34,8 +32,6 @@ export type SymbolKind =
   | "Parameter"
   | `New${NewSymbol["level"]}`;
 
-// range is where SANY reports the symbol, and two symbols at one range are one node to SANY. params
-// holds the arity of each parameter of a defined operator.
 interface Binding {
   kind: SymbolKind;
   arity: number;
@@ -49,17 +45,12 @@ export interface ModuleSymbol extends Binding {
 
 export type Symbols = Map<string, ModuleSymbol>;
 
-// A named theorem or proof step whose parts a name such as foo!lab or <1>2!1 selects. isInProof
-// holds while SANY analyzes the proof of the theorem or step.
 interface Goal {
   statement: Expression | AssumeProve;
   isSuffices: boolean;
   isInProof: boolean;
 }
 
-// isPending holds for an operator a RECURSIVE declaration names until its definition.
-// isNonFact holds for the name of a USE, HIDE, DEFINE or INSTANCE step, which SANY takes neither as
-// a fact nor as an expression.
 interface LocalName extends Binding {
   name: string;
   parent: LocalName | undefined;
@@ -68,13 +59,11 @@ interface LocalName extends Binding {
   isNonFact?: boolean;
 }
 
-// A name the module binds, from position on.
 interface ModuleBinding extends Binding {
   position: SourceLocation;
   isPending?: boolean;
 }
 
-// What SANY reports while it goes on analyzing a unit of a module, and the scope it analyzes it in.
 interface Unit {
   imported: Symbols;
   getInstance: (instance: Instance) => InstancedModule;
@@ -87,15 +76,11 @@ interface Unit {
   bindings: Map<string, ModuleBinding>;
   errors: SanyError[];
   warnings: SanyError[];
-  // In a definition, a named theorem, or a numbered step.
   hasLabelScope: boolean;
-  // In the scope of a NEW in a nested ASSUME.
   isLabelForbidden: boolean;
   isInExcept: boolean;
-  // The names bound since the innermost definition, label, or step, which a label must take.
   labelParams: string[];
   labels: Set<string>;
-  // In a definition generated for a LET INSTANCE, or a subexpression analyzed where it is defined.
   isGenerated: boolean;
 }
 
@@ -114,8 +99,6 @@ type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" }
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
-// The subexpressions that names select, and for a name that selects none, the error SANY reports and
-// the arguments it analyzes before it.
 export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
 
@@ -123,7 +106,6 @@ const renamedArities = new WeakMap<Expression, number>();
 
 export const KEY_SEPARATOR = "@";
 
-// A key is a name, the separator, and an id, so the operator @@ is not one.
 const isKey = (name: string) => {
   const index = name.lastIndexOf(KEY_SEPARATOR);
   return index > 0 && index < name.length - 1;
@@ -151,8 +133,6 @@ const lookupLocal = (scope: LocalName | undefined, name: string) => {
   return undefined;
 };
 
-// A name the module binds before the unit and before the range, which a copy of a subexpression
-// that a reference selects keeps from its definition.
 const getModuleBinding = (name: string, unit: Unit, range: SourceRange | undefined) => {
   const binding = unit.bindings.get(name);
   return binding &&
@@ -165,8 +145,6 @@ const getModuleBinding = (name: string, unit: Unit, range: SourceRange | undefin
 const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefined) =>
   left !== undefined && right !== undefined && formatRange(left) === formatRange(right);
 
-// SymbolTable.addSymbol: rejects redefining a built-in, a bound name, or a symbol of another kind
-// or arity, and warns of any other duplicate. A symbol SANY never sees, such as a generated one, binds.
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
   if (isSameRange(current.range, added.range)) return false;
@@ -214,7 +192,6 @@ const bindName = (
     ? { ...added, name, parent: scope }
     : scope;
 
-// Binds the names of a module from the unit on.
 const bindModuleName = (name: string, added: Binding, unit: Unit) => {
   if (isBindable(name, unit.bindings.get(name), added, unit)) {
     unit.bindings.set(name, { ...added, position: unit.location });
@@ -276,14 +253,12 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
   lookupLocal(scope, name) ?? findSymbol(name, unit);
 
-// SANY reports a name at the range of its text.
 const getNameRange = (location: SourceLocation, name: string): SourceRange => ({
   module: location.range?.module ?? "",
   start: location,
   end: { line: location.line, column: location.column + name.length - 1 },
 });
 
-// SANY reports a name at its tokens, such as M ! ⊕ for M!\oplus.
 const getSpelledNameRange = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
@@ -295,7 +270,6 @@ const getSpelledNameRange = (
     : getNameRange(expression.location, expression.spelling ?? name);
 };
 
-// SANY reports an operator symbol applied to operands as one it cannot resolve.
 const getFixity = (expression: Expression) => {
   if (expression.kind !== "Apply") return undefined;
   if (expression.args.length === 2) return "infix";
@@ -303,7 +277,6 @@ const getFixity = (expression: Expression) => {
   return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
 };
 
-// SANY names an undefined operator symbol such as + differently from an undefined identifier.
 const isOperatorSymbol = (name: string) => !/^[\p{L}\d_]/u.test(name);
 
 const isStepName = (name: string) =>
@@ -315,8 +288,6 @@ export const getOperandIndex = (operand: number | "<<" | ">>", count: number) =>
   return count === 2 ? 1 : -1;
 };
 
-// The parts of a name such as F(x)!l(y), each with its own arguments. counts holds the number each
-// part takes, when a part before the last takes some.
 export const getNameSelectors = (
   name: string,
   args: Expression[],
@@ -324,7 +295,7 @@ export const getNameSelectors = (
 ): Selector[] => {
   const parts = name.split("!");
   const partCounts =
-    counts ?? parts.map((_, index) => (index === parts.length - 1 ? args.length : 0));
+    counts ?? parts.map((_part, index) => (index === parts.length - 1 ? args.length : 0));
   return parts.map((part, index) => {
     const start = partCounts.slice(0, index).reduce((sum, count) => sum + count, 0);
     return { kind: "Name", name: part, args: args.slice(start, start + partCounts[index]) };
@@ -343,8 +314,6 @@ const getBoundSets = (bounds: Bound[]) =>
     .filter((bound, index) => index === 0 || bounds[index - 1].set !== bound.set)
     .map((bound) => bound.set);
 
-// The names a binder binds, its body, and the sets it binds them to, which a selector such as !1
-// chooses from.
 export const getBinder = (
   expression: Expression,
 ): { names: string[]; body: Expression; sets: Expression[] } | undefined => {
@@ -387,7 +356,6 @@ export const getBinder = (
   }
 };
 
-// The operands that a selector such as !1 chooses from, where they do not depend on bound names.
 export const getOperands = (expression: Expression): Expression[] | undefined => {
   switch (expression.kind) {
     case "Apply":
@@ -456,7 +424,6 @@ const findLabel = (expression: Expression, name: string): LabelExpression | unde
   );
 };
 
-// SANY drops a label in the scope of a NEW in a nested ASSUME, after it reports the label.
 const findClauseLabel = (
   clause: Expression | NewSymbol | AssumeProve,
   name: string,
@@ -482,10 +449,6 @@ const getOperandName = (operand: number | "<<" | ">>") =>
 
 const SCOPE_MESSAGE = "within the scope of a declaration\n from outside that declaration's scope.";
 
-// Generator.selectorToNode for a name that selects part of a theorem or step. A part in the scope of
-// a NEW in its ASSUME may be selected only within the proof of the theorem, or only after the proof
-// of a SUFFICES step. A label takes its own arguments, and an operand must exist, unless the part
-// selected depends on bound names. A fact may select an ASSUME/PROVE or a NEW clause.
 const checkSelection = (
   reference: Reference,
   selectors: Selector[],
@@ -623,7 +586,6 @@ const checkSelection = (
   }
 };
 
-// Generator.generateLabel reports a label where it may not appear, and skips the label's body.
 const isLabelReported = (label: LabelExpression, unit: Unit) => {
   const message = unit.isGenerated
     ? undefined
@@ -639,9 +601,6 @@ const isLabelReported = (label: LabelExpression, unit: Unit) => {
   return true;
 };
 
-// Generator.generateLabel reports, after the label's body, each parameter that names no bound name,
-// then formalParamsEqual each parameter given twice, each name bound since the label scope began
-// that the label leaves out, and the parameters it adds, and then a label of a name already used.
 const checkLabel = (label: LabelExpression, scope: LocalName | undefined, unit: Unit) => {
   const range = label.location.range;
   if (!range || unit.isGenerated) return;
@@ -689,7 +648,6 @@ const checkLabel = (label: LabelExpression, scope: LocalName | undefined, unit: 
   unit.labels.add(label.name);
 };
 
-// Checks a name that selects part of a theorem or step, and tells whether it is one.
 const checkReference = (
   expression: Expression,
   scope: LocalName | undefined,
@@ -707,9 +665,6 @@ const checkReference = (
   return goal !== undefined;
 };
 
-// Generator.selectorToNode reports an unknown operator and goes on without analyzing its arguments,
-// so its arity is undefined. It does the same for an operator given the wrong number of arguments,
-// and for a name that selects nothing, after the arguments of the parts before.
 const getSymbolArity = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
   name: string,
@@ -741,8 +696,6 @@ const getSymbolArity = (
     renamedArities.set(expression, symbol.arity);
     return symbol.arity;
   }
-  // A name such as Inv!P1 selects the label P1 of a definition or theorem, which takes its own
-  // arguments.
   const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
   const isSelected =
     prefix !== "" &&
@@ -796,10 +749,6 @@ const markRecursiveConstructions = (expression: Expression, name: string): void 
   getChildren(expression).forEach((child) => markRecursiveConstructions(child, name));
 };
 
-// Generator.processOperator binds the parameters, reports a name already bound unless a RECURSIVE
-// declaration of this level awaits the definition, analyzes the body, and then binds the name.
-// processFunction binds the bound names before it looks up the name, and binds the name only where
-// nothing else does. recursive holds the declarations of this level. Tells whether to bind the name.
 const resolveDefinition = (
   definition: Definition,
   scope: LocalName | undefined,
@@ -858,8 +807,6 @@ const resolveDefinition = (
       );
 };
 
-// SANY analyzes an INSTANCE in a LET where it appears, before the definitions that follow it, which
-// tla-ts generates at its location and analyzes without reporting.
 const resolveDefinitions = (
   definitions: Definition[],
   scope: LocalName | undefined,
@@ -918,7 +865,6 @@ const resolveDefinitions = (
   return resolveInstances(resolved, () => true);
 };
 
-// The INSTANCE that a name such as K!C starts with, whose arguments SANY requires at its name.
 const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
   const prefix = name.split("!")[0];
   const binding =
@@ -928,8 +874,6 @@ const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
   return binding?.kind === "Instance" ? { name: prefix, arity: binding.arity } : undefined;
 };
 
-// Generator.selectorToNode reports an INSTANCE given the wrong number of arguments at its name,
-// as in K!C or K(1, 2)!C, and goes on without analyzing them. Tells whether it reports one.
 const isInstanceArityReported = (
   expression: Expression,
   scope: LocalName | undefined,
@@ -955,11 +899,7 @@ const isInstanceArityReported = (
   return true;
 };
 
-// Generator.generateExprOrOpArg analyzes an argument as an expression, unless a defined operator
-// takes an operator in its place, which a name, a built-in operator, or a LAMBDA of the parameter's
-// arity must give. OpDefNode#match then reports each argument that gives no such operator, or one
-// whose own parameters take operators. tla-ts lets an operator whose parameters it does not know
-// take any argument.
+// Deviation from SANY: an operator whose parameters tla-ts does not know takes any argument.
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,
@@ -990,8 +930,7 @@ const resolveApply = (
       const expected = params[index] ?? 0;
       const range = arg.location.range;
       if (expected === 0) {
-        // SANY fails on an operator here with an internal error, so tla-ts words it as it does for
-        // a name.
+        // Deviation from SANY: SANY fails here with an internal error; tla-ts words it as for a name.
         if (arg.kind === "Lambda" && arg.operator !== undefined) {
           report(range, `The operator ${arg.operator} requires 1 arguments.`);
         } else if (arg.kind === "Lambda" && range) {
@@ -1004,7 +943,6 @@ const resolveApply = (
         } else resolveExpression(arg, scope, unit);
         return true;
       }
-      // A name that selects a subexpression gives an operator of the names it leaves unbound.
       if (arg.kind === "Lambda") {
         resolveExpression(arg, scope, unit);
         const isMatched = arg.params.length === expected;
@@ -1025,13 +963,11 @@ const resolveApply = (
         resolveExpression(arg, scope, unit);
         return true;
       }
-      // Generator.selectorToNode: a name such as K(1)!C names an operator, but none of its parts
-      // may take arguments.
       if (arg.kind === "Apply" && arg.argumentCounts?.at(-1) === 0) {
-        const index = arg.argumentCounts.findIndex((count) => count > 0);
+        const selectorIndex = arg.argumentCounts.findIndex((count) => count > 0);
         report(
-          arg.selectorRanges?.[index],
-          `Selector \`${arg.operator.split("!")[index]}' should not have argument(s).`,
+          arg.selectorRanges?.[selectorIndex],
+          `Selector \`${arg.operator.split("!")[selectorIndex]}' should not have argument(s).`,
         );
         return false;
       }
@@ -1063,13 +999,11 @@ const resolveApply = (
     });
 };
 
-// An argument may name an operator that takes arguments of its own.
 const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) => {
   if (arg.kind === "Identifier") getSymbolArity(arg, arg.name, scope, unit);
   else resolveExpression(arg, scope, unit);
 };
 
-// Reports the error of a name that selects nothing, after the arguments SANY analyzes before it.
 const isSelectionReported = (expression: Expression, scope: LocalName | undefined, unit: Unit) => {
   const failed = selectionErrors.get(expression);
   if (!failed) return false;
@@ -1245,9 +1179,6 @@ const resolveExpression = (
   }
 };
 
-// Generator.generateUseOrHide looks up a fact that is a name as it looks up a name in an expression,
-// except that the name may select an ASSUME/PROVE or a NEW clause or name a theorem or assumption,
-// and analyzes any other fact as an expression.
 const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
   facts.forEach((fact) => {
     if (
@@ -1277,8 +1208,6 @@ const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit:
   );
 };
 
-// The NEW symbols of an ASSUME stay in scope for its conclusion and the proof that follows. SANY
-// forbids a label in the scope of a NEW in a nested ASSUME.
 const resolveAssumeProve = (
   assumeProve: AssumeProve,
   scope: LocalName | undefined,
@@ -1314,8 +1243,6 @@ const resolveStatement = (
   return scope;
 };
 
-// SANY resolves the expressions of a proof, while its facts and DEF clauses may also name
-// theorems, assumptions, and modules.
 const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, outer: Unit) => {
   const unit = outer.hasLabelScope ? { ...outer, hasLabelScope: false } : outer;
   if (proof?.kind === "By") checkFacts(proof.facts, scope, unit);
@@ -1323,7 +1250,6 @@ const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, ou
   proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
 };
 
-// A LET or a step binds the name of the INSTANCE after the names it adds.
 const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = resolveInstance(instance, scope, unit);
   return instance.name === undefined
@@ -1336,8 +1262,6 @@ const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, 
       );
 };
 
-// Generator.generateProof binds the name of a step after its statement and before its proof, or
-// after the step where it takes no proof.
 const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
@@ -1355,8 +1279,6 @@ const resolveStep = (
       ? parent
       : { name: step.name, arity: 0, kind: "Theorem", parent, isNonFact: true };
   switch (body.kind) {
-    // The NEW symbols of a SUFFICES ASSUME are in scope after its proof, and those of any other
-    // ASSUME in its proof.
     case "Assert": {
       const assumed = resolveStatement(body.statement, scope, stepUnit);
       const proofScope = body.isSuffices ? scope : assumed;
@@ -1423,7 +1345,6 @@ const resolveStep = (
   }
 };
 
-// SANY binds the name of a theorem after its statement and before its proof.
 const resolveTheorem = (theorem: Theorem, unit: Unit) => {
   const isDefinition = theorem.name !== undefined && theorem.statement.kind !== "AssumeProve";
   const scope = isDefinition ? undefined : resolveStatement(theorem.statement, undefined, unit);
@@ -1440,16 +1361,12 @@ const resolveTheorem = (theorem: Theorem, unit: Unit) => {
   if (goal) goal.isInProof = false;
 };
 
-// The declarations of the module an INSTANCE instantiates, the names the INSTANCE adds, and the
-// module that instantiates it.
 interface InstancedModule {
   declarations: Declaration[];
   symbols: Symbols;
   instancer: string;
 }
 
-// What SANY reports at a location as it links a module, such as a conflict between the modules it
-// extends.
 export interface ModuleReport {
   location: SourceLocation;
   errors: SanyError[];
@@ -1459,13 +1376,10 @@ export interface ModuleReport {
 export interface ModuleUnit {
   imported: Symbols;
   getInstance: (instance: Instance) => InstancedModule;
-  // The built-in operators and the names of the enclosing and extended modules.
   bound: Symbols;
   definitions: Map<string, Definition>;
   getKey: (definition: Definition) => string;
-  // The names each INSTANCE adds.
   instanced: Map<Instance, Symbols>;
-  // The theorems and assumptions the extended and instantiated modules export.
   facts: Set<string>;
   reports: ModuleReport[];
   warnings: SanyError[];
@@ -1473,7 +1387,6 @@ export interface ModuleUnit {
 
 export const MODULE_START: SourceLocation = { line: 0, column: 0 };
 
-// A named theorem or assumption is linked as a definition too.
 export const isTheoremDefinition = (module: Module, definition: Definition) =>
   [...module.theorems, ...module.assumptions].some(
     (item) =>
@@ -1493,9 +1406,6 @@ const createSymbols = (module: Module, imported: Symbols) => {
   return symbols;
 };
 
-// Generator.processSubst analyzes the explicit substitutions in the order they appear, then the
-// implicit ones, and then reports each declaration left without one. The parameters of the INSTANCE
-// are in scope.
 const checkSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
@@ -1568,8 +1478,6 @@ const checkSubstitutions = (
   return substitutions;
 };
 
-// Generator.processSubst analyzes an INSTANCE in a LET or a proof, which then binds the names the
-// INSTANCE adds.
 const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = unit.getInstance(instance);
   checkSubstitutions(instance, instanced.declarations, instanced.instancer, scope, unit);
@@ -1579,7 +1487,6 @@ const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit:
   );
 };
 
-// tla-ts reports what SANY goes on after with an INSTANCE of the module.
 export const resolveSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
@@ -1612,17 +1519,12 @@ export const resolveSubstitutions = (
   });
 };
 
-// SANY reports the errors of every unit it checks, in the order of the units in the module, after
-// the warnings it reports for the spec. A unit reports to its lists what SANY goes on after, and
-// throws the error that stops it. An error tla-ts cannot word as SANY does yields to the errors the
-// unit reported before it. Returns the errors.
-export const collectSemanticErrors = (
-  units: {
-    location: SourceLocation;
-    check: (reported: SanyError[], warned: SanyError[]) => void;
-  }[],
-  warnings: SanyError[],
-) => {
+interface SemanticUnit {
+  location: SourceLocation;
+  check: (reported: SanyError[], warned: SanyError[]) => void;
+}
+
+export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError[]) => {
   const errors: SanyError[] = [];
   const addUnique = (list: SanyError[], item: SanyError) => {
     if (
@@ -1658,8 +1560,6 @@ export const collectSemanticErrors = (
   return errors;
 };
 
-// SANY binds the names of a module in the order of its units, and reports a RECURSIVE declaration
-// that no definition follows at the end. Returns the errors.
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit.imported);
   const facts = new Set([

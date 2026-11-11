@@ -1,8 +1,5 @@
 // Ported from Z3 (src/math/polynomial/algebraic_numbers.cpp, src/util/basic_interval.h,
-// src/util/mpbq.cpp), MIT license, see z3-license.txt. Real algebraic numbers: a rational, or the
-// root of a square-free integer polynomial in an open isolating interval of binary rationals whose
-// ends the polynomial has opposite signs at. Comparing and evaluating refine these intervals in
-// place, and may find a number rational, as Z3 does, so later operations see Z3's intervals.
+// src/util/mpbq.cpp, src/util/index_sort_with_mutations.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { getLog2, Mpbq } from "./mpbq";
@@ -10,13 +7,9 @@ import { PolynomialManager, type Polynomial, type ValueOps } from "./polynomial"
 import { UpolynomialManager, type Upolynomial } from "./upolynomial";
 import { factorUpolynomial, type FactorParams } from "./upolynomial-factorization";
 
-// algebraic.factor_max_prime, factor_num_primes and factor_search_size.
 const FACTOR_PARAMS: FactorParams = { maxPrime: 31, primeTrials: 1, maxSearchSize: 5000 };
-// -algebraic.min_mag: a refined interval narrower than about 1/2^16 is not kept.
 const MIN_MAGNITUDE = -16;
-// DEFAULT_PRECISION: how far isolate_roots with signs refines each root first.
 const SIGN_PRECISION = 2;
-// The variables of the polynomials the binary operations build, m_x and m_y.
 const X = 0;
 const Y = 1;
 
@@ -28,7 +21,6 @@ class AlgebraicCell {
     public isMinimal: boolean,
     public isSignLowerNeg: boolean,
     public isNotRational: boolean,
-    // m_i: which root of p the number is, from 1, or 0 when not yet computed.
     public rootIndex: number,
   ) {}
 
@@ -49,7 +41,6 @@ class AlgebraicCell {
   }
 }
 
-// anum: a mutable handle, since refining an algebraic number may turn it into a rational.
 export class Anum {
   constructor(public value: Rational | AlgebraicCell) {}
 }
@@ -59,14 +50,11 @@ interface BqInterval {
   upper: Mpbq;
 }
 
-// One end of the interval select_small picks from: a binary rational end is closed, a rational one
-// open.
 interface SelectEnd {
   value: Rational;
   isOpen: boolean;
 }
 
-// save_intervals: an interval to restore when refining it made it too narrow to keep.
 interface SavedInterval {
   anum: Anum;
   lower: Mpbq;
@@ -74,7 +62,6 @@ interface SavedInterval {
   isRestored: boolean;
 }
 
-// The factor whose Sturm sequence counts the one root in an interval.
 interface IsolatingFactor {
   factor: Upolynomial;
   sequence: Upolynomial[];
@@ -91,10 +78,9 @@ interface SignedRoots {
   signs: number[];
 }
 
-const minBq = (first: Mpbq, second: Mpbq) => (second.compare(first) < 0 ? second : first);
-const maxBq = (first: Mpbq, second: Mpbq) => (second.compare(first) > 0 ? second : first);
+const getMinBq = (first: Mpbq, second: Mpbq) => (second.compare(first) < 0 ? second : first);
+const getMaxBq = (first: Mpbq, second: Mpbq) => (second.compare(first) > 0 ? second : first);
 
-// mpbqi_manager over open intervals, as t_eval uses it.
 const INTERVAL_OPS: ValueOps<BqInterval> = {
   fromInteger: (value) => ({ lower: Mpbq.of(value), upper: Mpbq.of(value) }),
   add: (first, second) => ({
@@ -108,7 +94,7 @@ const INTERVAL_OPS: ValueOps<BqInterval> = {
       first.upper.mul(second.lower),
       first.upper.mul(second.upper),
     ];
-    return { lower: products.reduce(minBq), upper: products.reduce(maxBq) };
+    return { lower: products.reduce(getMinBq), upper: products.reduce(getMaxBq) };
   },
   power: (base, exponent) => getIntervalPower(base, exponent),
 };
@@ -118,16 +104,14 @@ const getIntervalPower = (base: BqInterval, exponent: number): BqInterval => {
   const upper = base.upper.power(exponent);
   if (exponent % 2 === 1 || !base.lower.isNeg) return { lower, upper };
   if (base.upper.isNeg) return { lower: upper, upper: lower };
-  return { lower: Mpbq.zero, upper: maxBq(lower, upper) };
+  return { lower: Mpbq.zero, upper: getMaxBq(lower, upper) };
 };
 
 const containsZero = (interval: BqInterval) => interval.lower.isNeg && interval.upper.isPos;
 
-// mpz log2 and mlog2: 0 outside the sign they expect.
 const getPositiveLog2 = (value: bigint) => (value <= 0n ? 0 : getLog2(value));
 const getNegativeLog2 = (value: bigint) => (value >= 0n ? 0 : getLog2(value));
 
-// magnitude_ub
 const getMagnitudeUpperBound = (value: Mpbq) =>
   value.isZero
     ? 0
@@ -135,14 +119,12 @@ const getMagnitudeUpperBound = (value: Mpbq) =>
       ? getLog2(value.num) - value.k + 1
       : getNegativeLog2(value.num) - value.k;
 
-// magnitude: about log2 of the width of (l, u).
 const getMagnitude = (lower: Mpbq, upper: Mpbq) => {
   if (lower.k === upper.k) return getMagnitudeUpperBound(lower);
   const log2 = lower.isNeg ? getNegativeLog2 : getPositiveLog2;
   return log2(upper.num) - log2(lower.num) - upper.k + lower.k - upper.k;
 };
 
-// select_integer: the integer select_small takes from scaled ends, preferring a closed end.
 const selectInteger = (
   lower: SelectEnd,
   upper: SelectEnd,
@@ -158,8 +140,6 @@ const selectInteger = (
   return ceilLower <= floorUpper ? ceilLower : null;
 };
 
-// select_small_core: the binary rational between two ends with the smallest power of two as its
-// denominator.
 const selectSmall = (lower: SelectEnd, upper: SelectEnd) => {
   for (let k = 0; ; k++) {
     const scale = Rational.of(1n << BigInt(k));
@@ -189,8 +169,30 @@ const getExtended = (values: readonly (Anum | undefined)[], variable: number, an
   return extended;
 };
 
-const sameCoeffs = (first: Upolynomial, second: Upolynomial) =>
+const hasSameCoeffs = (first: Upolynomial, second: Upolynomial) =>
   first.length === second.length && first.every((coeff, index) => coeff === second[index]);
+
+export const mergeSortIndices = (
+  count: number,
+  isLess: (first: number, second: number) => boolean,
+) => {
+  let source = Array.from({ length: count }, (_unused, index) => index);
+  for (let width = 1; width < count; width *= 2) {
+    const target: number[] = [];
+    for (let low = 0; low < count; low += 2 * width) {
+      const middle = Math.min(low + width, count);
+      const high = Math.min(low + 2 * width, count);
+      let left = low;
+      let right = middle;
+      while (left < middle && right < high)
+        target.push(isLess(source[right], source[left]) ? source[right++] : source[left++]);
+      while (left < middle) target.push(source[left++]);
+      while (right < high) target.push(source[right++]);
+    }
+    source = target;
+  }
+  return source;
+};
 
 export class AlgebraicManager {
   private um = new UpolynomialManager();
@@ -201,8 +203,6 @@ export class AlgebraicManager {
     mul: (first, second) => this.mul(first, second),
     power: (base, exponent) => this.power(base, exponent),
   };
-
-  // Queries.
 
   isZero(anum: Anum) {
     return anum.value instanceof Rational && anum.value.isZero();
@@ -217,7 +217,6 @@ export class AlgebraicManager {
     return new Anum(anum.value instanceof Rational ? anum.value : anum.value.clone());
   }
 
-  // is_int: refines the interval until it holds at most one integer, then tests it.
   isInt(anum: Anum): boolean {
     if (anum.value instanceof Rational) return anum.value.isInt();
     const cell = anum.value;
@@ -231,8 +230,6 @@ export class AlgebraicManager {
     return false;
   }
 
-  // is_rational: by the rational root theorem, the only candidate in an interval narrower than
-  // 1/|a_n| is floor(u*|a_n|)/|a_n|.
   isRational(anum: Anum) {
     if (anum.value instanceof Rational) return true;
     const cell = anum.value;
@@ -250,7 +247,6 @@ export class AlgebraicManager {
     return isRoot;
   }
 
-  // get_i: which root of its polynomial the number is.
   getRootIndex(anum: Anum) {
     if (anum.value instanceof Rational) return this.isZero(anum) ? 0 : 1;
     const cell = anum.value;
@@ -258,9 +254,6 @@ export class AlgebraicManager {
     return cell.rootIndex;
   }
 
-  // Cells.
-
-  // mk_algebraic_cell: the coefficients made primitive with a positive leading coefficient.
   private mkCell(p: Upolynomial, lower: Mpbq, upper: Mpbq, isMinimal: boolean) {
     const cell = new AlgebraicCell(p, lower, upper, isMinimal, false, isMinimal, 0);
     this.updateSignLower(cell);
@@ -276,13 +269,11 @@ export class AlgebraicManager {
     cell.isSignLowerNeg = this.um.evalSignAtBq(cell.p, cell.lower) < 0;
   }
 
-  // set(a, p, l, u, minimal): the root of p in (l, u), a rational when p is linear.
   private mkAnum(p: Upolynomial, lower: Mpbq, upper: Mpbq, isMinimal: boolean) {
     if (p.length === 2) return new Anum(Rational.of(p[0]).div(Rational.of(p[1])).neg());
     return new Anum(this.mkCell(p, lower, upper, isMinimal));
   }
 
-  // normalize: an interval around zero shrunk to the side of zero holding the root.
   private normalize(anum: Anum) {
     if (anum.value instanceof Rational) return;
     const cell = anum.value;
@@ -295,9 +286,6 @@ export class AlgebraicManager {
     cell.upper = interval.upper;
   }
 
-  // Refinement.
-
-  // refine: halves the interval, or finds the number rational and returns false.
   private refine(anum: Anum) {
     if (anum.value instanceof Rational) return false;
     const cell = anum.value;
@@ -316,7 +304,6 @@ export class AlgebraicManager {
     return true;
   }
 
-  // refine_until_prec: refines until the interval is narrower than 1/2^precision.
   private refineUntilPrecision(anum: Anum, precision: number) {
     if (anum.value instanceof Rational) return true;
     const cell = anum.value;
@@ -339,7 +326,6 @@ export class AlgebraicManager {
     return { anum, lower: cell.lower, upper: cell.upper, isRestored: false };
   }
 
-  // restore_if_too_small: swaps the saved interval back in when the current one is too narrow.
   private restoreIfTooSmall(saved: SavedInterval) {
     saved.isRestored = true;
     if (saved.anum.value instanceof Rational) return;
@@ -353,24 +339,20 @@ export class AlgebraicManager {
     ];
   }
 
-  // ~save_intervals
   private releaseInterval(saved: SavedInterval) {
     if (!saved.isRestored) this.restoreIfTooSmall(saved);
   }
-
-  // Root isolation.
 
   private factor(p: Upolynomial) {
     return factorUpolynomial(this.um, p, FACTOR_PARAMS);
   }
 
-  // isolate_roots(up): the real roots of a univariate polynomial, factor by factor, sorted.
-  private isolateUnivariateRoots(up: Upolynomial) {
+  private isolateUnivariateRoots(coeffs: Upolynomial) {
     const roots: Anum[] = [];
-    if (up.length === 0) return roots;
-    const hasZeroRoot = this.um.hasZeroRoots(up);
+    if (coeffs.length === 0) return roots;
+    const hasZeroRoot = this.um.hasZeroRoots(coeffs);
     if (hasZeroRoot) roots.push(new Anum(Rational.zero));
-    const factored = this.factor(hasZeroRoot ? this.um.removeZeroRoots(up) : up);
+    const factored = this.factor(hasZeroRoot ? this.um.removeZeroRoots(coeffs) : coeffs);
     for (const factor of factored.factors.factors) {
       const degree = factor.length - 1;
       if (degree <= 0) continue;
@@ -399,32 +381,13 @@ export class AlgebraicManager {
     return roots;
   }
 
-  // sort_roots: Z3's stable bottom-up merge sort, since each comparison may refine the roots.
   private sortRoots(roots: Anum[]) {
-    const size = roots.length;
-    if (size < 2) return;
-    const isLess = (first: number, second: number) => {
-      const sign = this.compare(roots[first], roots[second]);
-      return sign !== 0 ? sign < 0 : first < second;
-    };
-    let source = roots.map((_root, index) => index);
-    let target = [...source];
-    for (let width = 1; width < size; width *= 2) {
-      for (let low = 0; low < size; low += 2 * width) {
-        const middle = Math.min(low + width, size);
-        const high = Math.min(low + 2 * width, size);
-        let left = low;
-        let right = middle;
-        let next = low;
-        while (left < middle && right < high)
-          target[next++] = isLess(source[right], source[left]) ? source[right++] : source[left++];
-        while (left < middle) target[next++] = source[left++];
-        while (right < high) target[next++] = source[right++];
-      }
-      [source, target] = [target, source];
-    }
-    const sorted = source.map((index) => roots[index]);
-    for (let index = 0; index < size; index++) roots[index] = sorted[index];
+    if (roots.length < 2) return;
+    const sorted = mergeSortIndices(
+      roots.length,
+      (first, second) => this.compare(roots[first], roots[second]) < 0,
+    ).map((index) => roots[index]);
+    for (let index = 0; index < sorted.length; index++) roots[index] = sorted[index];
   }
 
   private getSignVariationsAtQ(sequence: Upolynomial[], value: Rational) {
@@ -440,7 +403,6 @@ export class AlgebraicManager {
     return count;
   }
 
-  // isolate_kth_root: the i-th real root of a square-free p, by bisecting with its Sturm sequence.
   private isolateKthRoot(p: Upolynomial, sequence: Upolynomial[], rootIndex: number) {
     if (p.length === 2) return new Anum(Rational.of(p[0]).div(Rational.of(p[1])).neg());
     const minusInf = this.um.signVariationsAtMinusInf(sequence);
@@ -478,8 +440,6 @@ export class AlgebraicManager {
     );
   }
 
-  // rational_root_in_interval: the root of p in (l, u) when it is rational, else the interval
-  // refined below 1/|a_n|.
   private getRationalRootIn(p: Upolynomial, lower: Mpbq, upper: Mpbq): Rational | BqInterval {
     const leading = p[p.length - 1];
     const absLeading = leading < 0n ? -leading : leading;
@@ -491,17 +451,16 @@ export class AlgebraicManager {
     return { lower: refined.lower, upper: refined.upper };
   }
 
-  // isolate_roots_closest_univariate: the roots next to s, s itself when it is a root.
-  private isolateUnivariateClosest(
+  private isolateRootsClosestUnivariate(
     pm: PolynomialManager,
     polynomial: Polynomial,
     sample: Rational,
   ): ClosestAnums {
     const result: ClosestAnums = { roots: [], indices: [] };
     if (pm.isConst(polynomial)) return result;
-    const up = pm.toCoeffs(polynomial);
-    if (up.length === 0) return result;
-    const p = this.um.squareFree(up);
+    const coeffs = pm.toCoeffs(polynomial);
+    if (coeffs.length === 0) return result;
+    const p = this.um.squareFree(coeffs);
     if (p.length <= 1) return result;
     const sequence = this.um.sturmSeq(p);
     const minusInf = this.um.signVariationsAtMinusInf(sequence);
@@ -522,9 +481,6 @@ export class AlgebraicManager {
     return result;
   }
 
-  // isolate_roots(p, x2v): the roots of p in its one unassigned variable at the values of the
-  // others. Resultants eliminate the irrational values, and the roots of the result that are not
-  // roots of p are filtered out.
   isolateRoots(
     pm: PolynomialManager,
     polynomial: Polynomial,
@@ -549,15 +505,15 @@ export class AlgebraicManager {
     }
     if (q.size > 0) {
       if (pm.isConst(q)) return [];
-      return this.filterRoots(pm, reduced, values, x, this.isolateUnivariateRoots(pm.toCoeffs(q)));
+      return this.isolateUnivariateRoots(pm.toCoeffs(q)).filter(
+        (root) => this.evalSignAt(pm, reduced, getExtended(values, x, root)) === 0,
+      );
     }
     if (isNested)
       throw new SmtInvariantError("resultant vanished during nested isolate_roots call");
     return this.isolateVanishedRoots(pm, reduced, values, xs, x);
   }
 
-  // The resultant vanished, perhaps at another root of a value's polynomial: p's leading
-  // coefficient at the values decides.
   private isolateVanishedRoots(
     pm: PolynomialManager,
     reduced: Polynomial,
@@ -583,7 +539,6 @@ export class AlgebraicManager {
       if (!this.isZero(leading)) break;
     }
     if (power === 0) return [];
-    // z*x^i + c_{i-1}*x^{i-1} + ... + c_0, with z the value of the leading coefficient.
     const z = Math.max(...xs) + 1;
     const q = this.pm.add(
       this.pm.mul(this.pm.mkVar(z), this.pm.mkVar(x, power)),
@@ -592,7 +547,6 @@ export class AlgebraicManager {
     return this.isolateRoots(this.pm, q, getExtended(values, z, leading), true);
   }
 
-  // convert: p in the local manager, without its monomials of degree above maxDegree in x.
   private convert(pm: PolynomialManager, polynomial: Polynomial, x = -1, maxDegree = Infinity) {
     if (pm === this.pm) return polynomial;
     const as: bigint[] = [];
@@ -606,7 +560,6 @@ export class AlgebraicManager {
     return this.pm.mkPolynomial(as, ms);
   }
 
-  // std::stable_sort with var_degree_lt: by the degree of each value, unassigned last.
   private sortByDegree(xs: number[], values: readonly (Anum | undefined)[]) {
     const getDegree = (variable: number) => {
       const value = values[variable];
@@ -615,20 +568,6 @@ export class AlgebraicManager {
     return [...xs].sort((first, second) => getDegree(first) - getDegree(second));
   }
 
-  // filter_roots: the roots at which p vanishes.
-  private filterRoots(
-    pm: PolynomialManager,
-    polynomial: Polynomial,
-    values: readonly (Anum | undefined)[],
-    x: number,
-    roots: Anum[],
-  ) {
-    return roots.filter(
-      (root) => this.evalSignAt(pm, polynomial, getExtended(values, x, root)) === 0,
-    );
-  }
-
-  // isolate_roots_closest: the roots of p next to the rational s, with their indices from 1.
   isolateRootsClosest(
     pm: PolynomialManager,
     polynomial: Polynomial,
@@ -637,12 +576,13 @@ export class AlgebraicManager {
   ): ClosestAnums {
     const result: ClosestAnums = { roots: [], indices: [] };
     if (pm.isConst(polynomial)) return result;
-    if (pm.isUnivariate(polynomial)) return this.isolateUnivariateClosest(pm, polynomial, sample);
+    if (pm.isUnivariate(polynomial))
+      return this.isolateRootsClosestUnivariate(pm, polynomial, sample);
     const reduced = pm.substituteRational(polynomial, getRationalValues(values));
     if (pm.isConst(reduced)) return result;
     if (pm.isUnivariate(reduced)) {
       if (values[pm.maxVar(reduced)] !== undefined) return result;
-      return this.isolateUnivariateClosest(pm, reduced, sample);
+      return this.isolateRootsClosestUnivariate(pm, reduced, sample);
     }
     const all = this.isolateRoots(pm, polynomial, values);
     const sampleAnum = new Anum(sample);
@@ -668,8 +608,6 @@ export class AlgebraicManager {
     return result;
   }
 
-  // isolate_roots(p, x2v, roots, signs): the roots, and the sign of p below, between and above
-  // them, at a sample the unassigned variables share.
   isolateRootsWithSigns(
     pm: PolynomialManager,
     polynomial: Polynomial,
@@ -691,11 +629,6 @@ export class AlgebraicManager {
     return { roots, signs };
   }
 
-  // Signs.
-
-  // eval_sign_at: the sign of p at the values. Rational values are substituted, interval
-  // arithmetic on the irrational ones decides most signs, and otherwise a lower bound on the
-  // nonzero roots of the resultant with their polynomials tells zero apart.
   evalSignAt(pm: PolynomialManager, polynomial: Polynomial, values: readonly (Anum | undefined)[]) {
     while (true) {
       const rationalValues = getRationalValues(values);
@@ -733,7 +666,6 @@ export class AlgebraicManager {
     }
   }
 
-  // The resultant step of eval_sign_at, or null when a value turned rational and it restarts.
   private evalSignByResultant(
     pm: PolynomialManager,
     reduced: Polynomial,
@@ -767,8 +699,6 @@ export class AlgebraicManager {
     return sign;
   }
 
-  // Arithmetic.
-
   add(first: Anum, second: Anum): Anum {
     if (this.isZero(first)) return this.copy(second);
     if (this.isZero(second)) return this.copy(first);
@@ -780,7 +710,6 @@ export class AlgebraicManager {
     return this.mkBinary(first, second, true);
   }
 
-  // add(cell, basic): p(x - b), with the interval shifted by b.
   private addRational(cell: AlgebraicCell, value: Rational) {
     const p = this.um.translateQ(cell.p, value.neg());
     const shift = Mpbq.fromRational(value);
@@ -806,7 +735,6 @@ export class AlgebraicManager {
     return this.mkBinary(first, second, false);
   }
 
-  // mul(cell, basic): b^n * p(x/b), with the interval scaled by b.
   private mulRational(cell: AlgebraicCell, value: Rational) {
     const p = this.um.composePQX(cell.p, Rational.one.div(value));
     const scale = Mpbq.fromRational(value);
@@ -830,7 +758,6 @@ export class AlgebraicManager {
     return result;
   }
 
-  // neg: p(-x) with the interval mirrored, in place.
   neg(anum: Anum) {
     if (anum.value instanceof Rational) {
       anum.value = anum.value.neg();
@@ -843,7 +770,6 @@ export class AlgebraicManager {
     this.updateSignLower(cell);
   }
 
-  // refine_nz_bound: moves an interval end off zero, halving it until its sign is right.
   private refineNonzeroBound(anum: Anum) {
     if (anum.value instanceof Rational) return;
     const cell = anum.value;
@@ -864,7 +790,6 @@ export class AlgebraicManager {
     }
   }
 
-  // inv: x^n * p(1/x), with the interval (1/u, 1/l), in place.
   inv(anum: Anum) {
     if (this.isZero(anum)) throw new SmtInvariantError("division by zero");
     this.refineNonzeroBound(anum);
@@ -902,20 +827,16 @@ export class AlgebraicManager {
     return this.mkPower(anum, exponent);
   }
 
-  // mk_add_polynomial: Res_y(pa(x - y), pb(y)), which has a + b as a root.
   private getSumPolynomial(first: AlgebraicCell, second: AlgebraicCell) {
-    const pa = this.pm.composeXMinusY(this.pm.fromCoeffs(first.p, X), Y);
-    return this.pm.toCoeffs(this.pm.resultant(pa, this.pm.fromCoeffs(second.p, Y), Y));
+    const composed = this.pm.composeXMinusY(this.pm.fromCoeffs(first.p, X), Y);
+    return this.pm.toCoeffs(this.pm.resultant(composed, this.pm.fromCoeffs(second.p, Y), Y));
   }
 
-  // mk_mul_polynomial: Res_y(y^n * pa(x/y), pb(y)), which has a*b as a root.
   private getProductPolynomial(first: AlgebraicCell, second: AlgebraicCell) {
-    const pa = this.pm.composeXDivY(this.pm.fromCoeffs(first.p, X), Y);
-    return this.pm.toCoeffs(this.pm.resultant(pa, this.pm.fromCoeffs(second.p, Y), Y));
+    const composed = this.pm.composeXDivY(this.pm.fromCoeffs(first.p, X), Y);
+    return this.pm.toCoeffs(this.pm.resultant(composed, this.pm.fromCoeffs(second.p, Y), Y));
   }
 
-  // The factors of p whose Sturm sequence counts exactly one root in an interval, until only one
-  // factor is left.
   private findIsolatingFactor(
     factors: bigint[][],
     sequences: (Upolynomial[] | null)[],
@@ -945,8 +866,6 @@ export class AlgebraicManager {
       : null;
   }
 
-  // mk_binary: a + b or a*b for irrational a and b, refining both until the interval of the result
-  // isolates a root of one factor of the resultant.
   private mkBinary(first: Anum, second: Anum, isAdd: boolean) {
     const cellA = getCell(first);
     const cellB = getCell(second);
@@ -976,13 +895,11 @@ export class AlgebraicManager {
     }
   }
 
-  // mk_power_polynomial: Res_y(x - y^k, pa(y)), which has a^k as a root.
   private getPowerPolynomial(cell: AlgebraicCell, exponent: number) {
     const x = this.pm.sub(this.pm.mkVar(X), this.pm.mkVar(Y, exponent));
     return this.pm.toCoeffs(this.pm.resultant(x, this.pm.fromCoeffs(cell.p, Y), Y));
   }
 
-  // mk_unary with mk_power_polynomial: a^k for an irrational a.
   private mkPower(anum: Anum, exponent: number): Anum {
     const cell = getCell(anum);
     const factored = this.factor(this.getPowerPolynomial(cell, exponent));
@@ -1003,7 +920,6 @@ export class AlgebraicManager {
     }
   }
 
-  // set_core: the root of p in an isolating interval that may contain zero.
   private setCore(found: IsolatingFactor, interval: BqInterval, isMinimal: boolean) {
     const p = found.factor;
     let lower = interval.lower;
@@ -1019,9 +935,6 @@ export class AlgebraicManager {
     return this.mkAnum(nonzero, refined.lower, refined.upper, isMinimal);
   }
 
-  // Comparison.
-
-  // compare(cell, b): by the interval, or by the sign of p at b.
   private compareRational(cell: AlgebraicCell, value: Rational) {
     if (cell.upper.compareRational(value) <= 0) return -1;
     if (cell.lower.compareRational(value) >= 0) return 1;
@@ -1039,8 +952,6 @@ export class AlgebraicManager {
     return this.compareCore(first, second);
   }
 
-  // compare_core: refines both intervals to a common magnitude, then tries a wider separation, and
-  // last the sign of pb at a by a Sturm-Tarski sequence.
   private compareCore(first: Anum, second: Anum): number {
     const cellA = getCell(first);
     const cellB = getCell(second);
@@ -1048,7 +959,7 @@ export class AlgebraicManager {
       cellA.upper.compare(cellB.lower) <= 0 ? -1 : cellA.lower.compare(cellB.upper) >= 0 ? 1 : 0;
     let sign = compareIntervals();
     if (sign !== 0) return sign;
-    if (sameCoeffs(cellA.p, cellB.p)) return 0;
+    if (hasSameCoeffs(cellA.p, cellB.p)) return 0;
     if (cellA.isMinimal && cellB.isMinimal)
       while (true) {
         this.refine(first);
@@ -1074,7 +985,6 @@ export class AlgebraicManager {
       sign = compareIntervals();
       if (sign !== 0) return sign;
     }
-    // get_interval at precision 10: copies of the intervals refined below 1/2^40.
     const intervalA = this.um.refineToPrecision(cellA.p, cellA.lower, cellA.upper, 40);
     const intervalB = this.um.refineToPrecision(cellB.p, cellB.lower, cellB.upper, 40);
     if (intervalA.isInterval && intervalB.isInterval) {
@@ -1093,9 +1003,6 @@ export class AlgebraicManager {
     return variations < 0 === cellB.signLower < 0 ? -1 : 1;
   }
 
-  // Sample points.
-
-  // int_lt: an integer below a.
   intLt(anum: Anum) {
     this.refineUntilPrecision(anum, 1);
     return new Anum(
@@ -1105,7 +1012,6 @@ export class AlgebraicManager {
     );
   }
 
-  // int_gt: an integer above a.
   intGt(anum: Anum) {
     this.refineUntilPrecision(anum, 1);
     return new Anum(
@@ -1115,7 +1021,6 @@ export class AlgebraicManager {
     );
   }
 
-  // separate: refines until the intervals of prev and curr do not touch.
   private separate(previous: Anum, current: Anum) {
     if (previous.value instanceof Rational) {
       const value = previous.value;
@@ -1145,14 +1050,13 @@ export class AlgebraicManager {
     }
   }
 
-  // select: a binary rational between prev < curr with the smallest denominator.
   select(previous: Anum, current: Anum) {
     this.separate(previous, current);
-    const lower: SelectEnd =
+    const lower =
       previous.value instanceof Rational
         ? { value: previous.value, isOpen: true }
         : { value: previous.value.upper.toRational(), isOpen: false };
-    const upper: SelectEnd =
+    const upper =
       current.value instanceof Rational
         ? { value: current.value, isOpen: true }
         : { value: current.value.lower.toRational(), isOpen: false };

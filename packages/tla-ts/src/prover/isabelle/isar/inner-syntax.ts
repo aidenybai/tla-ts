@@ -1,16 +1,8 @@
-// Parses Isabelle's inner syntax, the terms inside quotes, as far as tlapm's theory printer
-// (isabelle.ml) uses it. The notation and its priorities come from Isabelle2025's Pure and from
-// the Isabelle/TLA+ theories that declare it: PredicateLogic, SetTheory, Functions, Tuples,
-// Strings and CaseExpressions. The translations those theories declare apply while parsing, so a
-// term comes out as constants, names, applications and abstractions only.
-
 import { TlaIsabelleError } from "../../../errors";
 import { funT, mkType, propT, type Typ } from "../pure/term";
 
 const TLA_TYPE = mkType("PredicateLogic.c");
 
-// A parsed term before names resolve and types are inferred. A name is a bound or free variable
-// or a constant; a constant comes from notation.
 export type Ast =
   | { readonly kind: "name"; readonly name: string }
   | { readonly kind: "const"; readonly name: string }
@@ -109,31 +101,30 @@ const tokenize = (text: string): Token[] => {
   return tokens;
 };
 
-const constant = (name: string): Ast => ({ kind: "const", name });
+const toConstant = (name: string): Ast => ({ kind: "const", name });
 const apply = (fun: Ast, ...args: Ast[]) =>
   args.reduce<Ast>((result, arg) => ({ kind: "app", fun: result, arg }), fun);
 
-// Strings.thy: a string is the tuple of its characters, each a pair of nibbles.
-const nibble = (value: number): Ast =>
+const toNibble = (value: number): Ast =>
   value === 0
-    ? constant("Integers.zero")
-    : apply(constant("Functions.fapply"), constant("Integers.succ"), nibble(value - 1));
+    ? toConstant("Integers.zero")
+    : apply(toConstant("Functions.fapply"), toConstant("Integers.succ"), toNibble(value - 1));
 
-const stringTerm = (text: string) =>
+const toStringTerm = (text: string) =>
   [...text].reduce((tuple, char) => {
     const code = char.charCodeAt(0);
     if (code >= 128) throw new TlaIsabelleError("ERROR", `Non-ASCII symbol: ${char}`);
     return apply(
-      constant("Tuples.Append"),
+      toConstant("Tuples.Append"),
       tuple,
-      apply(constant("Strings.char"), nibble(code >> 4), nibble(code & 15)),
+      apply(toConstant("Strings.char"), toNibble(code >> 4), toNibble(code & 15)),
     );
-  }, constant("Tuples.emptySeq"));
+  }, toConstant("Tuples.emptySeq"));
 
-const tuple = (elements: readonly Ast[]) =>
+const toTuple = (elements: readonly Ast[]) =>
   elements.reduce(
-    (result, element) => apply(constant("Tuples.Append"), result, element),
-    constant("Tuples.emptySeq"),
+    (result, element) => apply(toConstant("Tuples.Append"), result, element),
+    toConstant("Tuples.emptySeq"),
   );
 
 interface Infix {
@@ -188,12 +179,15 @@ const PREFIXES = new Map<
   ["DOMAIN", { constant: "Functions.DOMAIN", argument: 100, priority: 90 }],
 ]);
 
-// A parse result: the term, its priority, and whether it is a proposition rather than an object
-// of the logic, which Isabelle tells apart by syntactic category.
 interface Parsed {
   readonly ast: Ast;
   readonly priority: number;
   readonly isProp: boolean;
+}
+
+interface TypedName {
+  readonly name: string;
+  readonly type: Typ | undefined;
 }
 
 const MAX_PRIORITY = 1000;
@@ -231,23 +225,22 @@ class Parser {
     );
   }
 
-  private identifier(): string {
+  private parseIdentifier(): string {
     const token = this.next();
     if (token.kind !== "id") throw this.syntaxError();
     return token.text;
   }
 
-  atEnd() {
+  isAtEnd() {
     return this.peek().kind === "end";
   }
 
-  // A type: c, prop, a function type, or [c, c] => c.
-  type(): Typ {
-    const domains = this.isDelimiter("[") ? this.typeList() : undefined;
-    const atom = domains === undefined ? this.typeAtom() : undefined;
+  parseType(): Typ {
+    const domains = this.isDelimiter("[") ? this.parseTypeList() : undefined;
+    const atom = domains === undefined ? this.parseTypeAtom() : undefined;
     if (this.isDelimiter("=>") || this.isDelimiter("\\<Rightarrow>")) {
       this.position += 1;
-      const range = this.type();
+      const range = this.parseType();
       return (domains ?? [atom ?? TLA_TYPE]).reduceRight(
         (result, domain) => funT(domain, result),
         range,
@@ -257,75 +250,71 @@ class Parser {
     return atom;
   }
 
-  private typeList(): Typ[] {
+  private parseTypeList(): Typ[] {
     this.expect("[");
-    const types = [this.type()];
+    const types = [this.parseType()];
     while (this.isDelimiter(",")) {
       this.position += 1;
-      types.push(this.type());
+      types.push(this.parseType());
     }
     this.expect("]");
     return types;
   }
 
-  private typeAtom(): Typ {
+  private parseTypeAtom(): Typ {
     if (this.isDelimiter("(")) {
       this.position += 1;
-      const type = this.type();
+      const type = this.parseType();
       this.expect(")");
       return type;
     }
-    const name = this.identifier();
+    const name = this.parseIdentifier();
     if (name === "c") return TLA_TYPE;
     if (name === "prop") return propT;
     throw new TlaIsabelleError("ERROR", `Undefined type name: ${name}`);
   }
 
-  // Binder variables, each optionally constrained: x, x :: c.
-  private binders(isConstrainable: boolean): { name: string; type: Typ | undefined }[] {
-    const binders: { name: string; type: Typ | undefined }[] = [];
+  private parseBinders(isConstrainable: boolean): TypedName[] {
+    const binders: TypedName[] = [];
     while (this.peek().kind === "id") {
-      const name = this.identifier();
+      const name = this.parseIdentifier();
       if (isConstrainable && this.isDelimiter("::")) {
         this.position += 1;
-        binders.push({ name, type: this.type() });
+        binders.push({ name, type: this.parseType() });
       } else binders.push({ name, type: undefined });
     }
     if (binders.length === 0) throw this.syntaxError();
     return binders;
   }
 
-  private commaList(close: string): Ast[] {
+  private parseCommaList(close: string): Ast[] {
     if (this.isDelimiter(close)) {
       this.position += 1;
       return [];
     }
-    const items = [this.logic(0)];
+    const items = [this.parseLogic(0)];
     while (this.isDelimiter(",")) {
       this.position += 1;
-      items.push(this.logic(0));
+      items.push(this.parseLogic(0));
     }
     this.expect(close);
     return items;
   }
 
-  // An object-logic term of at least the given priority.
-  logic(minimum: number): Ast {
-    const parsed = this.expression(minimum);
+  parseLogic(minimum: number): Ast {
+    const parsed = this.parseExpression(minimum);
     if (parsed.isProp)
       throw new TlaIsabelleError("ERROR", "Inner syntax error: proposition in term position");
     return parsed.ast;
   }
 
-  // A proposition: an object-logic term becomes one through Trueprop, as PredicateLogic's
-  // "(_)" 5 mixfix declares.
-  prop(minimum: number): Ast {
-    const parsed = this.expression(minimum);
-    return parsed.isProp ? parsed.ast : apply(constant("PredicateLogic.Trueprop"), parsed.ast);
+  parseProp(minimum: number): Ast {
+    const parsed = this.parseExpression(minimum);
+    return parsed.isProp ? parsed.ast : apply(toConstant("PredicateLogic.Trueprop"), parsed.ast);
   }
 
-  private expression(minimum: number): Parsed {
-    let left = this.prefix(minimum);
+  private parseExpression(minimum: number): Parsed {
+    let left = this.parsePrefix(minimum);
     for (;;) {
       const token = this.peek();
       if (token.kind !== "delimiter") return left;
@@ -334,9 +323,9 @@ class Parser {
         this.position += 1;
         const premise = left.isProp
           ? left.ast
-          : apply(constant("PredicateLogic.Trueprop"), left.ast);
+          : apply(toConstant("PredicateLogic.Trueprop"), left.ast);
         left = {
-          ast: apply(constant("Pure.imp"), premise, this.prop(1)),
+          ast: apply(toConstant("Pure.imp"), premise, this.parseProp(1)),
           priority: 1,
           isProp: true,
         };
@@ -347,7 +336,7 @@ class Parser {
         if (minimum > 3 || left.priority < 4) return left;
         this.position += 1;
         left = {
-          ast: { kind: "constrain", term: left.ast, type: this.type() },
+          ast: { kind: "constrain", term: left.ast, type: this.parseType() },
           priority: 3,
           isProp: false,
         };
@@ -356,7 +345,7 @@ class Parser {
       if (token.text === "(") {
         if (left.priority < MAX_PRIORITY) return left;
         this.position += 1;
-        const args = this.commaList(")");
+        const args = this.parseCommaList(")");
         if (args.length === 0) throw this.syntaxError();
         left = { ast: apply(left.ast, ...args), priority: MAX_PRIORITY, isProp: false };
         continue;
@@ -364,10 +353,10 @@ class Parser {
       if (token.text === "[") {
         if (minimum > 90 || left.priority < 89) return left;
         this.position += 1;
-        const index = this.logic(0);
+        const index = this.parseLogic(0);
         this.expect("]");
         left = {
-          ast: apply(constant("Functions.fapply"), left.ast, index),
+          ast: apply(toConstant("Functions.fapply"), left.ast, index),
           priority: 90,
           isProp: false,
         };
@@ -378,61 +367,61 @@ class Parser {
         return left;
       this.position += 1;
       left = {
-        ast: apply(constant(infix.constant), left.ast, this.logic(infix.right)),
+        ast: apply(toConstant(infix.constant), left.ast, this.parseLogic(infix.right)),
         priority: infix.priority,
         isProp: false,
       };
     }
   }
 
-  private prefix(minimum: number): Parsed {
+  private parsePrefix(minimum: number): Parsed {
     const token = this.next();
-    const term = (ast: Ast, priority = MAX_PRIORITY): Parsed => ({ ast, priority, isProp: false });
+    const toTerm = (ast: Ast, priority = MAX_PRIORITY): Parsed => ({
+      ast,
+      priority,
+      isProp: false,
+    });
     if (token.kind === "end") {
       this.position -= 1;
       throw this.syntaxError();
     }
-    if (token.kind === "id") return term({ kind: "name", name: token.text });
-    if (token.kind === "string") return term(stringTerm(token.text));
+    if (token.kind === "id") return toTerm({ kind: "name", name: token.text });
+    if (token.kind === "string") return toTerm(toStringTerm(token.text));
     switch (token.text) {
       case "(": {
-        const inner = this.expression(0);
+        const inner = this.parseExpression(0);
         this.expect(")");
         return { ...inner, priority: MAX_PRIORITY };
       }
       case "0":
-        return term(constant("Integers.zero"));
+        return toTerm(toConstant("Integers.zero"));
       case "{":
         if (this.isDelimiter("}")) {
           this.position += 1;
-          return term(constant("SetTheory.emptyset"), 100);
+          return toTerm(toConstant("SetTheory.emptyset"), 100);
         }
-        return term(
-          this.commaList("}").reduceRight(
-            (set, element) => apply(constant("SetTheory.addElt"), element, set),
-            constant("SetTheory.emptyset"),
+        return toTerm(
+          this.parseCommaList("}").reduceRight(
+            (set, element) => apply(toConstant("SetTheory.addElt"), element, set),
+            toConstant("SetTheory.emptyset"),
           ),
         );
       case "<<":
-        return term(
-          this.isDelimiter(">>")
-            ? (this.next(), constant("Tuples.emptySeq"))
-            : tuple(this.commaList(">>")),
-        );
+        return toTerm(toTuple(this.parseCommaList(">>")));
       case "\\<langle>":
-        return term(tuple(this.commaList("\\<rangle>")));
+        return toTerm(toTuple(this.parseCommaList("\\<rangle>")));
       case "[":
-        return this.bracket();
+        return this.parseBracket();
       case "\\<forall>":
       case "\\<exists>":
-        return term(this.quantifier(token.text === "\\<forall>"), 10);
+        return toTerm(this.parseQuantifier(token.text === "\\<forall>"), 10);
       case "%":
       case "\\<lambda>": {
         if (minimum > 3) throw this.syntaxError();
-        const binders = this.binders(true);
+        const binders = this.parseBinders(true);
         this.expect(".");
-        const body = this.logic(3);
-        return term(
+        const body = this.parseLogic(3);
+        return toTerm(
           binders.reduceRight<Ast>(
             (result, binder) => ({
               kind: "abs",
@@ -447,13 +436,13 @@ class Parser {
       }
       case "\\<And>": {
         if (minimum > 0) throw this.syntaxError();
-        const binders = this.binders(true);
+        const binders = this.parseBinders(true);
         this.expect(".");
-        const body = this.prop(0);
+        const body = this.parseProp(0);
         return {
           ast: binders.reduceRight<Ast>(
             (result, binder) =>
-              apply(constant("Pure.all"), {
+              apply(toConstant("Pure.all"), {
                 kind: "abs",
                 name: binder.name,
                 type: binder.type,
@@ -471,30 +460,32 @@ class Parser {
       this.position -= 1;
       throw this.syntaxError();
     }
-    return term(apply(constant(prefix.constant), this.logic(prefix.argument)), prefix.priority);
+    return toTerm(
+      apply(toConstant(prefix.constant), this.parseLogic(prefix.argument)),
+      prefix.priority,
+    );
   }
 
-  // \<forall>x, y : P and \<forall>x, y \<in> S : P, with \<exists> alike.
-  private quantifier(isForall: boolean): Ast {
-    const names = [this.identifier()];
+  private parseQuantifier(isForall: boolean): Ast {
+    const names = [this.parseIdentifier()];
     while (this.isDelimiter(",")) {
       this.position += 1;
-      names.push(this.identifier());
+      names.push(this.parseIdentifier());
     }
     if (this.isDelimiter(":")) {
       this.position += 1;
-      const body = this.logic(10);
-      const quantifier = constant(isForall ? "PredicateLogic.All" : "PredicateLogic.Ex");
+      const body = this.parseLogic(10);
+      const quantifier = toConstant(isForall ? "PredicateLogic.All" : "PredicateLogic.Ex");
       return names.reduceRight(
         (result, name) => apply(quantifier, { kind: "abs", name, type: undefined, body: result }),
         body,
       );
     }
     this.expect("\\<in>");
-    const domain = this.logic(0);
+    const domain = this.parseLogic(0);
     this.expect(":");
-    const body = this.logic(0);
-    const quantifier = constant(isForall ? "SetTheory.bAll" : "SetTheory.bEx");
+    const body = this.parseLogic(0);
+    const quantifier = toConstant(isForall ? "SetTheory.bAll" : "SetTheory.bEx");
     return names.reduceRight(
       (result, name) =>
         apply(quantifier, domain, { kind: "abs", name, type: undefined, body: result }),
@@ -502,29 +493,32 @@ class Parser {
     );
   }
 
-  // The bracketed forms: [x \<in> S \<mapsto> e], [S \<rightarrow> T], [f EXCEPT ![x] = e, ...]
-  // and [d : r, ...].
-  private bracket(): Parsed {
+  private parseBracket(): Parsed {
     if (this.peek().kind === "id" && this.isDelimiter("\\<in>", 1)) {
-      const name = this.identifier();
+      const name = this.parseIdentifier();
       this.position += 1;
-      const domain = this.logic(0);
+      const domain = this.parseLogic(0);
       this.expect("\\<mapsto>");
-      const body = this.logic(0);
+      const body = this.parseLogic(0);
       this.expect("]");
       return {
-        ast: apply(constant("Functions.Fcn"), domain, { kind: "abs", name, type: undefined, body }),
+        ast: apply(toConstant("Functions.Fcn"), domain, {
+          kind: "abs",
+          name,
+          type: undefined,
+          body,
+        }),
         priority: 900,
         isProp: false,
       };
     }
-    const first = this.logic(0);
+    const first = this.parseLogic(0);
     if (this.isDelimiter("\\<rightarrow>")) {
       this.position += 1;
-      const range = this.logic(0);
+      const range = this.parseLogic(0);
       this.expect("]");
       return {
-        ast: apply(constant("Functions.FuncSet"), first, range),
+        ast: apply(toConstant("Functions.FuncSet"), first, range),
         priority: 900,
         isProp: false,
       };
@@ -535,10 +529,10 @@ class Parser {
       for (;;) {
         this.expect("!");
         this.expect("[");
-        const index = this.logic(0);
+        const index = this.parseLogic(0);
         this.expect("]");
         this.expect("=");
-        result = apply(constant("Functions.except"), result, index, this.logic(0));
+        result = apply(toConstant("Functions.except"), result, index, this.parseLogic(0));
         if (!this.isDelimiter(",")) break;
         this.position += 1;
       }
@@ -547,16 +541,16 @@ class Parser {
     }
     this.expect(":");
     const domains = [first];
-    const ranges = [this.logic(0)];
+    const ranges = [this.parseLogic(0)];
     while (this.isDelimiter(",")) {
       this.position += 1;
-      domains.push(this.logic(0));
+      domains.push(this.parseLogic(0));
       this.expect(":");
-      ranges.push(this.logic(0));
+      ranges.push(this.parseLogic(0));
     }
     this.expect("]");
     return {
-      ast: apply(constant("Tuples.EnumFuncSet"), tuple(domains), tuple(ranges)),
+      ast: apply(toConstant("Tuples.EnumFuncSet"), toTuple(domains), toTuple(ranges)),
       priority: MAX_PRIORITY,
       isProp: false,
     };
@@ -566,7 +560,7 @@ class Parser {
 const parseWith = <Result>(text: string, parse: (parser: Parser) => Result): Result => {
   const parser = new Parser(tokenize(text));
   const result = parse(parser);
-  if (!parser.atEnd())
+  if (!parser.isAtEnd())
     throw new TlaIsabelleError(
       "ERROR",
       `Inner syntax error: trailing input in ${text.slice(0, 40)}`,
@@ -574,6 +568,6 @@ const parseWith = <Result>(text: string, parse: (parser: Parser) => Result): Res
   return result;
 };
 
-export const parseProp = (text: string) => parseWith(text, (parser) => parser.prop(0));
+export const parseProp = (text: string) => parseWith(text, (parser) => parser.parseProp(0));
 
-export const parseType = (text: string) => parseWith(text, (parser) => parser.type());
+export const parseType = (text: string) => parseWith(text, (parser) => parser.parseType());

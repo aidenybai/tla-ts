@@ -103,9 +103,9 @@ describe("ALIAS matches TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 1 }]);
   });
 
-  it("prints a deadlocked initial state without the alias", async () => {
+  it("prints a deadlocked initial state with the alias", async () => {
     const result = await checkModule("Next == x > 0 /\\ x' = x\nAlias == [y |-> x]", "ALIAS Alias");
-    expect([result.status, result.violation?.trace[0].state]).toEqual(["deadlock", { x: 0 }]);
+    expect([result.status, result.violation?.trace[0].state]).toEqual(["deadlock", { y: 0 }]);
   });
 
   it("rejects a second ALIAS", async () => {

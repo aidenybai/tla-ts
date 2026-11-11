@@ -1,7 +1,4 @@
 // Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-//
-// The rules for equality and other relations: instances that unify a metavariable, matching a
-// literal against its negation, congruence, reflexivity, symmetry and transitivity.
 
 import { TlaZenonError } from "../../errors";
 import {
@@ -50,7 +47,6 @@ const makeInstance = (
       ]),
     );
   }
-  // Zenon hands applications to the extension named by the symbol's prefix, and tla has none.
   if (quantified.kind === "app") return queue;
   throw new TlaZenonError("Zenon: make_inst on a formula that isn't quantified");
 };

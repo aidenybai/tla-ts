@@ -1,0 +1,21 @@
+(*---
+description: subseteq of boolean_set, a SetEnumValue, and set_empty, a SetEnumValue.
+ref: tlc2/tool/impl/Tool.java#OPCODE_subseteq
+features:
+  - value-matrix
+flags:
+  - expression
+contexts:
+  - assume
+outcome: any
+---*)
+---- MODULE subseteq_boolean_set__set_empty ----
+EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
+Test == PrintT((BOOLEAN) \subseteq ({}))
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: "| FALSE"
+---*)

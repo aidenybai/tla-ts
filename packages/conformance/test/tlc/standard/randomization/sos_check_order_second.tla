@@ -1,0 +1,74 @@
+(*---
+description: With the last two bad, the second argument is reported.
+ref: tlc2/module/Randomization.java#RandomSetOfSubsets
+features:
+  - Randomization
+flags:
+  - expression
+outcome: evaluation-failure
+---*)
+---- MODULE sos_check_order_second ----
+EXTENDS Randomization, FiniteSets, Naturals
+Test == RandomSetOfSubsets(1, "b", 3) = {}
+====
+
+(*--- recorded
+assume:
+  exit: 10
+  transcript: |-
+    2105:1 Evaluating assumption line 13, col 8 to line 13, col 11 of module sos_check_order_second failed.
+    2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
+    "b"
+init:
+  exit: 75
+  transcript: |-
+    1000:1 
+    2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
+    "b"
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 14, column 9 to line 14, column 32 in sos_check_order_second
+    1. Line 14, column 29 to line 14, column 32 in sos_check_order_second
+    2. Line 12, column 9 to line 12, column 42 in sos_check_order_second
+    3. Line 12, column 9 to line 12, column 37 in sos_check_order_second
+next:
+  exit: 255
+  transcript: |-
+    2169:1 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
+    "b"
+    2121:1 The behavior up to this point is:
+    2217:4 1: <Initial predicate>
+    conformance_state = TRUE
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 15, column 9 to line 15, column 33 in sos_check_order_second
+    1. Line 15, column 30 to line 15, column 33 in sos_check_order_second
+    2. Line 12, column 9 to line 12, column 42 in sos_check_order_second
+    3. Line 12, column 9 to line 12, column 37 in sos_check_order_second
+invariant:
+  exit: 75
+  transcript: |-
+    1000:1 
+    2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
+    "b"
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 14, column 9 to line 14, column 32 in sos_check_order_second
+    1. Line 16, column 8 to line 16, column 32 in sos_check_order_second
+    2. Line 16, column 29 to line 16, column 32 in sos_check_order_second
+    3. Line 12, column 9 to line 12, column 42 in sos_check_order_second
+    4. Line 12, column 9 to line 12, column 37 in sos_check_order_second
+property:
+  exit: 75
+  transcript: |-
+    1000:1 
+    2169:0 The second argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:
+    "b"
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 14, column 9 to line 14, column 32 in sos_check_order_second
+    1. Line 15, column 12 to line 15, column 36 in sos_check_order_second
+    2. Line 15, column 33 to line 15, column 36 in sos_check_order_second
+    3. Line 12, column 9 to line 12, column 42 in sos_check_order_second
+    4. Line 12, column 9 to line 12, column 37 in sos_check_order_second
+---*)

@@ -328,7 +328,7 @@ describe("definitions", () => {
 });
 
 describe("tags", () => {
-  const ticker = (tag: string) => `
+  const getTicker = (tag: string) => `
     /** @noDeadlock */
     let count = 0;
     ${tag}
@@ -341,8 +341,8 @@ describe("tags", () => {
   `;
 
   it("checks eventually with weak fairness", async () => {
-    expect((await checkModel(ticker("/** @fair */"))).status).toBe("success");
-    expect((await checkModel(ticker(""))).status).toBe("liveness-violation");
+    expect((await checkModel(getTicker("/** @fair */"))).status).toBe("success");
+    expect((await checkModel(getTicker(""))).status).toBe("liveness-violation");
   });
 
   it("checks a step property against the state before the step", async () => {
@@ -400,6 +400,45 @@ describe("tags", () => {
       export const isWaiting = (proc: Proc) => waiting.has(proc);
     `);
     expect(result.status).toBe("success");
+  });
+
+  it("reads the description after a @leadsTo target", async () => {
+    const result = await checkModel(`
+      /** @noDeadlock */
+      let count: 0 | 1 | 2 = 0;
+      /** @fair */
+      export const increment = () => {
+        if (count === 2) return;
+        count = count === 0 ? 1 : 2;
+      };
+      const isDone = () => count === 2;
+      /**
+       * @leadsTo isDone
+       * Counting always reaches two.
+       */
+      export const isCounting = () => count < 2;
+    `);
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    ['phase !== "paying"', "success"],
+    ['phase === "paid"', "deadlock"],
+  ])("reports a deadlock only outside the end states where %s", async (condition, status) => {
+    const result = await checkModel(`
+      let phase: "paying" | "paid" | "failed" = "paying";
+      export const pay = () => {
+        if (phase !== "paying") return;
+        phase = "paid";
+      };
+      export const decline = () => {
+        if (phase !== "paying") return;
+        phase = "failed";
+      };
+      /** @terminating */
+      export const isFinished = () => ${condition};
+    `);
+    expect([result.status, result.distinctStates]).toEqual([status, 3]);
   });
 
   it("reduces states with a symmetric type", async () => {

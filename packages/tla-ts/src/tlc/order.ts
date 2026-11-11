@@ -1,11 +1,10 @@
-// TLC orders strings and model values by when it first interned their text, and compares a
-// state's variables in the order of SANY's symbol table. This reproduces both orders.
 import type { Module, SourceLocation } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
 import { tokenize, type Token } from "../lexer";
 import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
+import { SANY_STANDARD_MODULES } from "../sany/modules";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
@@ -13,7 +12,6 @@ import {
   TLC_MODULE_SOURCES,
   TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
-  USER_STANDARD_MODULES,
 } from "./jar-data";
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
@@ -29,7 +27,6 @@ interface SymbolEntry {
 interface SymbolTable {
   put: (entry: SymbolEntry) => void;
   inserted: SymbolEntry[];
-  // Where the entries the module adds itself start, after those of the modules it extends.
   ownStart: number;
   enumerate: () => SymbolEntry[];
 }
@@ -66,9 +63,6 @@ const getJavaHash = (text: string) => {
   return hash;
 };
 
-// java.util.Hashtable as SANY's Context uses it: default capacity 11, load factor 0.75, new
-// entries at the head of their bucket, and enumeration from the last bucket to the first. Each
-// bucket lists its entries from tail to head, so a new entry goes at the end.
 const createSymbolTable = (): SymbolTable => {
   let buckets: SymbolEntry[][] = Array.from({ length: 11 }, () => []);
   let threshold = 8;
@@ -156,8 +150,6 @@ type ModuleSearch = (
   visited: Set<string>,
 ) => [ModuleReferences, string] | undefined;
 
-// The modules a module extends and instantiates, with its inner modules, as SANY's SpecObj
-// walks them to decide which module to parse next.
 const getModuleReferences = (
   tokens: Token[],
   unit: string | undefined,
@@ -182,10 +174,10 @@ const getModuleReferences = (
         innerModules.set(name, inner.references);
         references.inner.push(inner.references);
         index = inner.end;
-      } else if (tokens[index - 1]?.text === ".") {
-        // A record field named EXTENDS or INSTANCE, as in r.EXTENDS or [r EXCEPT !.INSTANCE = 0].
         continue;
-      } else if (token.text === "EXTENDS") {
+      }
+      if (tokens[index - 1]?.text === ".") continue;
+      if (token.text === "EXTENDS") {
         const names = getDeclarations(tokens, index + 1);
         references.extends.push(...names);
         names.forEach((name) => allExtends.add(name));
@@ -212,9 +204,6 @@ const STRING_ESCAPES: Record<string, string> = {
   "\f": "\\f",
 };
 
-// The texts SANY interns while parsing, in order. SANY reads a proof step label such as <1>2 and
-// a module header such as ---- MODULE as one token. It interns a string literal as written, quotes
-// included, and interns the literal's contents only during semantic analysis.
 const getParsedTexts = (tokens: Token[]) => {
   const texts: string[] = [];
   for (let index = 0; index < tokens.length; index++) {
@@ -240,7 +229,6 @@ const getParsedTexts = (tokens: Token[]) => {
   return texts;
 };
 
-// A module starts with ---- MODULE Name, so its third token is its name.
 const getModuleName = (tokens: Token[]) => tokens[2]?.text;
 
 const getRanges = (tokens: Token[]) => {
@@ -268,26 +256,20 @@ interface ModuleText {
   getModule: () => Module;
 }
 
-// A module's source is read into tokens once, and parsed from them once, for every order and for
-// the environment that evaluates it.
 const readModuleText = (text: string | undefined): ModuleText => {
   const tokens = text === undefined ? [] : tokenize(text);
-  const parsed = { module: undefined as Module | undefined };
+  let parsedModule: Module | undefined;
   return {
     tokens,
     ranges: getRanges(tokens),
     getModule: () =>
-      (parsed.module ??= text === undefined ? parseModule("") : parseModuleTokens(text, tokens)),
+      (parsedModule ??= text === undefined ? parseModule("") : parseModuleTokens(text, tokens)),
   };
 };
 
-// The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
-// returns, the modules that follow the root module, and the modules nested in any of these. A
-// module without a source has no tokens.
 const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   const files = new Map<string, ParsedModule>();
   const nestedModules = new Map<string, ParsedModule>();
-  // The read of each module text, so that the environment parses a text the order read only once.
   const texts = new Map<string, ModuleText>();
   const readText = (text: string | undefined) => {
     const known = text === undefined ? undefined : texts.get(text);
@@ -302,15 +284,16 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     const text =
       name === undefined
         ? source
-        : ((USER_STANDARD_MODULES.has(name) ? loadModule?.(name) : undefined) ??
+        : (loadModule?.(name) ??
           TLC_MODULE_SOURCES.get(name) ??
-          loadModule?.(name) ??
+          SANY_STANDARD_MODULES.get(name) ??
           extractModule(source, name));
-    const { tokens, ranges, getModule } = readText(text);
-    const range = ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const file = { tokens, ...range, getModule };
+    const moduleText = readText(text);
+    const tokens = moduleText.tokens;
+    const range = moduleText.ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
+    const file = { tokens, ...range, getModule: moduleText.getModule };
     files.set(name ?? "", file);
-    ranges.forEach((nestedRange, nestedName) => {
+    moduleText.ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
       nestedModules.set(nestedName, {
         tokens,
@@ -328,7 +311,6 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
   };
 };
 
-// SANY's Context of each module, which the root module has under undefined.
 type ModuleSet = ReturnType<typeof createModuleSet>["getParsed"];
 
 const createContexts = (getParsed: ModuleSet) => {
@@ -347,13 +329,19 @@ const createContexts = (getParsed: ModuleSet) => {
     const recursiveNames = new Set(
       module.definitions.filter((definition) => definition.isRecursive).map((item) => item.name),
     );
-    const depth = { value: 0 };
-    tokens.slice(unit.start, unit.end).forEach((_, offset) => {
+    const declarationKeywords = new Set(
+      module.units.flatMap((moduleUnit) =>
+        moduleUnit.kind === "Constants" || moduleUnit.kind === "Variables"
+          ? [`${moduleUnit.location.line}:${moduleUnit.location.column}`]
+          : [],
+      ),
+    );
+    let depth = 0;
+    tokens.slice(unit.start, unit.end).forEach((token, offset) => {
       const index = unit.start + offset;
-      const token = tokens[index];
       if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
-        depth.value++;
-        if (depth.value === 2) {
+        depth++;
+        if (depth === 2) {
           const name = tokens[index + 2].text;
           units.push({
             location: getLocation(token),
@@ -362,10 +350,15 @@ const createContexts = (getParsed: ModuleSet) => {
         }
         return;
       }
-      if (token.kind === "ModuleEnd") depth.value--;
-      if (depth.value !== 1 || token.kind !== "Keyword") return;
-      if (token.text === "CONSTANT" || token.text === "CONSTANTS") declare(index, "constant");
-      if (token.text === "VARIABLE" || token.text === "VARIABLES") declare(index, "variable");
+      if (token.kind === "ModuleEnd") depth--;
+      if (depth !== 1 || token.kind !== "Keyword") return;
+      const isDeclaration = declarationKeywords.has(`${token.line}:${token.column}`);
+      if (isDeclaration && (token.text === "CONSTANT" || token.text === "CONSTANTS")) {
+        declare(index, "constant");
+      }
+      if (isDeclaration && (token.text === "VARIABLE" || token.text === "VARIABLES")) {
+        declare(index, "variable");
+      }
       if (token.text === "RECURSIVE") {
         const names = getDeclarations(tokens, index + 1);
         if (names.every((name) => recursiveNames.has(name))) declare(index, "definition");
@@ -458,9 +451,6 @@ const createContexts = (getParsed: ModuleSet) => {
   };
 };
 
-// Every string TLC interns before model checking starts, in order: values in the config, TLC's
-// startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, string
-// literals in semantic analysis order, and the names TLC interns for TLCGet.
 const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => {
   const order = new Set<string>();
   const intern = (text: string) => {
@@ -536,7 +526,6 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
     dependencies.set(module.unit, [...(dependencies.get(module.unit) ?? []), name]);
     if (parsedUnits.has(name)) continue;
     parsedUnits.add(name);
-    // SANY stops at the first module it can't find, in the order it reads them.
     if (getParsed(name).tokens.length === 0) {
       const importer = module.unit ?? getModuleName(getParsed(undefined).tokens);
       throw createMissingModuleError(name, importer);
@@ -564,23 +553,12 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
 };
 
 export interface TlcOrder {
-  // Every string TLC interns before model checking starts.
   getStringOrder: (config: ModelConfig) => string[];
-  // The variables or constants of the root module in the reverse of its context enumeration, as
-  // ModuleNode.getVariableDecls and getConstantDecls return them. TLC compares variables in this
-  // order, and checks that the configuration assigns each constant in it.
   getDeclarationOrder: (kind: "variable" | "constant") => string[];
-  // The names of the definitions each module adds to its context, in the order of
-  // ModuleNode.getOpDefs, in which TLC computes the constant definitions as it starts. An INSTANCE
-  // adds the definitions of the module it instantiates in the order that module's Hashtable
-  // enumerates them.
   createDefinitionOrder: () => (name: string | undefined) => string[];
-  // Parses a module's source, once for the order and the environment.
   parseModule: (source: string) => Module;
 }
 
-// One check reads the spec's modules once, and every order shares their tokens, parses and
-// contexts.
 export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrder => {
   const modules = createModuleSet(source, loadModule);
   const getParsed = modules.getParsed;
@@ -597,12 +575,11 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
         .reverse(),
     parseModule: modules.parseText,
     createDefinitionOrder: () => {
-      const { getContext, getOwnEntries } = getContexts();
-      // The root module's context reads every file of the spec, and so finds the modules nested
-      // in the files it extends or instantiates.
-      getContext(undefined);
+      const moduleContexts = getContexts();
+      moduleContexts.getContext(undefined);
       return (name) =>
-        getOwnEntries(name)
+        moduleContexts
+          .getOwnEntries(name)
           .filter((entry) => entry.kind === "definition")
           .map((entry) => entry.name);
     },

@@ -1,13 +1,9 @@
-// Ported from Isabelle2025's Pure/Isar/method.ML (method syntax, combinators, SIMPLE_METHOD,
-// finish), the assume_rule_tac and norm_hhf_tac of Pure/goal.ML, and the methods the theories
-// tlapm writes use: auto, force and clarsimp (Provers/clasimp.ML), blast (Provers/blast.ML),
-// iprover (Tools/intuitionistic.ML) and intro. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/Isar/method.ML and Pure/goal.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { asmRl, isNormHhf, normHhfEq, reflexiveThm, termI } from "../pure/drule";
 import { isEquals, stripImpPrems, stripAssumsConcl } from "../pure/logic";
-import { addSimps, emptySimpset, type Simpset } from "../pure/raw-simplifier";
+import { makeSimpContext, type Simpset } from "../pure/raw-simplifier";
 import { genericRewriteGoalTac } from "../pure/rewriter";
 import { filterSeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
 import { atomizePremsTac } from "../pure/object-logic";
@@ -65,13 +61,11 @@ type MethodText =
   | { readonly kind: "then"; readonly methods: readonly MethodText[] }
   | { readonly kind: "try"; readonly method: MethodText };
 
-// The methods of by: the initial one, and the terminal one that qed runs.
 interface ProofText {
   readonly initial: MethodText;
   readonly terminal: MethodText | undefined;
 }
 
-// What a proof method reads from the Isabelle proof context.
 export interface ProofContext {
   readonly limits: Limits;
   readonly simpset: Simpset;
@@ -89,7 +83,6 @@ const syntaxError = (token: OuterToken | undefined) =>
     `Outer syntax error at: ${token === undefined ? "end of input" : token.text}`,
   );
 
-// Method.parse for the proof methods of by.
 export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
   let position = 0;
   const peek = () => tokens[position];
@@ -100,62 +93,67 @@ export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
     position += 1;
   };
   const isWord = () => peek()?.kind === "word";
-  const word = () => {
+  const readWord = () => {
     const token = peek();
     if (token?.kind !== "word") throw syntaxError(token);
     position += 1;
     return token.text;
   };
   const isSectionStart = () => isWord() && isSymbol(":", 1);
-  const facts = () => {
+  const readFacts = () => {
     const names: string[] = [];
-    while (isWord() && !isSectionStart()) names.push(word());
+    while (isWord() && !isSectionStart()) names.push(readWord());
     return names;
   };
-  const modifiers = (): Modifier[] => {
+  const readModifiers = (): Modifier[] => {
     const result: Modifier[] = [];
     while (isSectionStart()) {
-      const kind = word();
+      const kind = readWord();
       position += 1;
       if (kind !== "intro" && kind !== "dest")
         throw new TlaIsabelleError("ERROR", `Unsupported method modifier: ${kind}`);
-      result.push({ kind, facts: facts() });
+      result.push({ kind, facts: readFacts() });
     }
     return result;
   };
-  const method = (name: string, hasArgs: boolean): MethodText => {
+  const readMethod = (name: string, hasArgs: boolean): MethodText => {
     switch (name) {
       case "auto":
       case "blast":
       case "force":
       case "clarsimp":
-        return { kind: name, modifiers: hasArgs ? modifiers() : [] };
+        return { kind: name, modifiers: hasArgs ? readModifiers() : [] };
       case "iprover":
         return { kind: "iprover" };
       case "intro":
-        return { kind: "intro", facts: hasArgs ? facts() : [] };
+        return { kind: "intro", facts: hasArgs ? readFacts() : [] };
       default:
         throw new TlaIsabelleError("ERROR", `Undefined method: ${name}`);
     }
   };
-  const suffixed = (text: MethodText): MethodText => {
+  const readSuffixed = (text: MethodText): MethodText => {
     if (!isSymbol("?")) return text;
     position += 1;
-    return suffixed({ kind: "try", method: text });
+    return readSuffixed({ kind: "try", method: text });
   };
-  const parenthesized = (): MethodText => {
+  const readParenthesized = (): MethodText => {
     expectSymbol("(");
-    const elements = [suffixed(isSymbol("(") ? parenthesized() : method(word(), true))];
+    const elements = [
+      readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), true)),
+    ];
     while (isSymbol(",")) {
       position += 1;
-      elements.push(suffixed(isSymbol("(") ? parenthesized() : method(word(), true)));
+      elements.push(
+        readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), true)),
+      );
     }
     expectSymbol(")");
     return elements.length === 1 ? elements[0] : { kind: "then", methods: elements };
   };
-  const atom = () => suffixed(isSymbol("(") ? parenthesized() : method(word(), false));
-  const initial = atom();
-  const terminal = position < tokens.length ? atom() : undefined;
+  const readAtom = () =>
+    readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), false));
+  const initial = readAtom();
+  const terminal = position < tokens.length ? readAtom() : undefined;
   if (position !== tokens.length) throw syntaxError(peek());
   return { initial, terminal };
 };
@@ -163,7 +161,6 @@ export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
 const getFacts = (context: ProofContext, names: readonly string[]) =>
   names.flatMap((name) => context.getFact(name));
 
-// Method.sections: the claset the modifiers declare.
 const withModifiers = (context: ProofContext, modifiers: readonly Modifier[]): ClassicalContext =>
   modifiers.reduce(
     (classical, modifier) =>
@@ -189,7 +186,6 @@ const getClasimp = (context: ProofContext, classical: ClassicalContext): Clasimp
 const insertAllTac = (context: ProofContext, facts: readonly Thm[]) =>
   allGoals((index) => insertTac(context.limits, facts, index));
 
-// SIMPLE_METHOD'
 const simpleMethodHead = (context: ProofContext, facts: readonly Thm[], tactic: GoalTactic) =>
   thenGoal((index) => insertTac(context.limits, facts, index), tactic)(1);
 
@@ -255,10 +251,8 @@ const evaluate = (context: ProofContext, text: MethodText): Method => {
   }
 };
 
-// Goal.norm_hhf_tac
 const normHhfTac = (limits: Limits): GoalTactic => {
-  const empty = { limits, simpset: emptySimpset, bounds: 0 };
-  const context = { ...empty, simpset: addSimps(empty, [normHhfEq]) };
+  const context = makeSimpContext(limits, [normHhfEq]);
   return thenGoal(
     resolveTac(limits, [asmRl]),
     subgoal((goal, index) =>
@@ -274,12 +268,10 @@ const normHhfTac = (limits: Limits): GoalTactic => {
   );
 };
 
-// Goal.assume_rule_tac: solves a goal with one of its non-atomic premises.
 const assumeRuleTac = (limits: Limits): GoalTactic =>
   thenGoal(
     normHhfTac(limits),
     subgoal((goal, index) => {
-      // Variable.focus_cterm and Variable.export: the parameters become schematic variables.
       const params = stripAllVars(goal);
       const names = variantList(
         addFreeNames(goal, []),
@@ -309,7 +301,6 @@ const assumeRuleTac = (limits: Limits): GoalTactic =>
     }),
   );
 
-// Method.assm_tac
 const assmTac = (limits: Limits): GoalTactic => {
   const condRtac = (isRule: (concl: Term) => boolean, rule: Thm) =>
     subgoal((goal, index) =>
@@ -331,7 +322,6 @@ const assmTac = (limits: Limits): GoalTactic => {
   );
 };
 
-// Method.all_assm_tac
 const allAssmTac =
   (limits: Limits) =>
   (index: number): Tactic =>
@@ -343,9 +333,6 @@ const allAssmTac =
           allAssmTac(limits)(index + 1),
         )(state);
 
-// Proof.local_terminal_proof: by initial terminal runs the initial method with the facts, then
-// the terminal one without them and Method.finish, and succeeds on the first result that leaves
-// no goal.
 export const terminalProof = (
   context: ProofContext,
   text: ProofText,

@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/smt_clause.h, src/smt/smt_b_justification.h,
-// src/util/small_object_allocator.cpp), MIT license, see z3-license.txt. Disjunctions of literals,
-// and the reasons a literal is assigned.
+// Ported from Z3 (src/smt/smt_clause.h, src/smt/smt_b_justification.h, src/util/small_object_allocator.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import type { Justification } from "./enode";
 import type { Literal } from "./literal";
@@ -11,16 +9,12 @@ export const CLS_LEARNED = 1;
 export const CLS_TH_AXIOM = 2;
 export const CLS_TH_LEMMA = 3;
 
-// b_justification(l) of BIN_CLAUSE kind: a binary clause propagated because the literal l became true.
 export class BinJustification {
   constructor(readonly literal: Literal) {}
 }
 
-// b_justification: a clause, a binary clause, a theory justification, an axiom, or a decision (null).
 export type BJustification = number | BinJustification | Justification | "axiom" | null;
 
-// The second header word packs Z3's bit fields: m_capacity:24, m_kind:2, m_reinit,
-// m_reinternalize_atoms, m_has_atoms, m_has_del_eh, m_has_justification and m_deleted.
 const CAPACITY_MASK = 0xffffff;
 const KIND_SHIFT = 24;
 const IS_REINIT = 1 << 26;
@@ -29,30 +23,18 @@ const HAS_ATOMS = 1 << 28;
 const HAS_DEL_EH = 1 << 29;
 const HAS_JUSTIFICATION = 1 << 30;
 const IS_DELETED = 1 << 31;
-// The words before the literals: m_num_literals and the bit fields.
 export const HEADER_SIZE = 2;
-// An atom word of a clause whose atoms were released.
 const NO_ATOM = -1;
 
-// The clauses live in one Int32Array, and a clause is the offset of its block, as a clause is the
-// address of its memory in Z3. A block holds the header, the literals, then the activity of a lemma,
-// the slots of the deletion handler and the justification, and the atoms with their signs, each
-// present only when used. Like small_object_allocator, a freed block goes on the free list of its size
-// for the next clause of that size, and the array never shrinks. A freed block keeps the next free
-// block in its first word and 0 in its second, which no clause has.
 export class ClauseStore {
-  // Literal i of clause c is data[c + 2 + i]. Making a clause can replace the array, so a loop that
-  // makes clauses reads it again.
   data = new Int32Array(1 << 16);
   private top = 0;
   private freeLists: (number | undefined)[] = [];
-  // The deletion handlers and justifications, which a block refers to by slot.
   private delEhs: ((() => void) | null)[] = [];
   private freeDelEhSlots: number[] = [];
   private justifications: (Justification | null)[] = [];
   private freeJustificationSlots: number[] = [];
 
-  // get_obj_size, in words.
   private getSize(flags: number) {
     const capacity = flags & CAPACITY_MASK;
     return (
@@ -81,7 +63,6 @@ export class ClauseStore {
     return block;
   }
 
-  // clause::mk. The atoms are the atom of each literal, which the clause keeps with the literal's sign.
   mk(
     literals: Literal[],
     kind: number,
@@ -119,7 +100,6 @@ export class ClauseStore {
     return slot;
   }
 
-  // deallocate: the block goes on its free list. The atoms must be released first.
   free(clause: Clause) {
     const data = this.data;
     const flags = data[clause + 1];
@@ -140,12 +120,10 @@ export class ClauseStore {
     setAt(this.freeLists, size, clause);
   }
 
-  // The first word after the literals, where the activity of a lemma is.
   private getExtra(clause: Clause) {
     return clause + HEADER_SIZE + (this.data[clause + 1] & CAPACITY_MASK);
   }
 
-  // A clause that was freed is not one any more, which the slower paths check.
   checkLive(clause: Clause) {
     if ((this.data[clause + 1] & CAPACITY_MASK) === 0)
       throw new SmtInvariantError("the clause was freed");
@@ -246,7 +224,6 @@ export class ClauseStore {
     return this.getSlotAddress(clause, HAS_JUSTIFICATION) + (flags & HAS_JUSTIFICATION ? 1 : 0);
   }
 
-  // The atoms the clause still holds, or none once they are released.
   getAtoms(clause: Clause) {
     const address = this.getAtomsAddress(clause);
     if (address === -1 || this.data[address] === NO_ATOM) return [];
@@ -256,12 +233,10 @@ export class ClauseStore {
     return atoms;
   }
 
-  // The sign of the literal of atom i, as the clause was made.
   getAtomSign(clause: Clause, index: number) {
     return (this.data[this.getAtomsAddress(clause) + index] & 1) === 1;
   }
 
-  // Marks the atoms released, after their references are dropped.
   clearAtoms(clause: Clause) {
     const address = this.getAtomsAddress(clause);
     if (address === -1) return;
@@ -270,7 +245,6 @@ export class ClauseStore {
   }
 }
 
-// A clause is the offset of its block in the ClauseStore.
 export type Clause = number;
 
 const isLemmaKind = (kind: number) => kind === CLS_LEARNED || kind === CLS_TH_LEMMA;

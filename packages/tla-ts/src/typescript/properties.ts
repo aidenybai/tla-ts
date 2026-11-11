@@ -15,7 +15,6 @@ const TEMPORAL_OPERATORS = new Map([
   ["eventuallyAlways", "<>[]"],
 ]);
 
-// Tags whose functions become named predicates that the config lists in a section.
 const PREDICATE_TAGS = new Map<string, keyof Sections>([
   ["constraint", "constraints"],
   ["actionConstraint", "actionConstraints"],
@@ -24,17 +23,15 @@ const PREDICATE_TAGS = new Map<string, keyof Sections>([
   ["assume", "assumptions"],
 ]);
 
-// Tags that make an exported function a property of the spec rather than an action.
 export const VALUE_TAGS = new Set([
   ...TEMPORAL_OPERATORS.keys(),
   ...PREDICATE_TAGS.keys(),
   "initially",
   "always",
   "leadsTo",
+  "terminating",
 ]);
 
-// The scope of an action property, whose one parameter names the state before the step, and whose
-// variables are the state after it.
 const getPreviousScope = (definition: Exported, context: Context): Scope => {
   const parameters = definition.node.parameters;
   if (parameters.length === 0) return createStateScope(context);
@@ -47,14 +44,13 @@ const getPreviousScope = (definition: Exported, context: Context): Scope => {
   };
 };
 
-// The operator that a @leadsTo tag names, applied to the parameters that it shares.
 const getLeadsToTarget = (
   definition: Exported,
   parameters: string[],
   model: Model,
   context: Context,
 ) => {
-  const targetName = definition.tags.get("leadsTo") ?? "";
+  const targetName = (definition.tags.get("leadsTo") ?? "").split(/\s/)[0];
   const target = model.topLevel.get(targetName);
   if (target === undefined) {
     throw new TlaTypeScriptError(
@@ -81,7 +77,6 @@ export const translateProperty = (
   const name = definition.name;
   const node = definition.node;
   const hasPreviousState = tag === "always" || tag === "actionConstraint";
-  // A temporal property's parameters hold for every value, as in \A p \in P : []<>Eats(p).
   const isQuantified = TEMPORAL_OPERATORS.has(tag) || tag === "leadsTo";
   if (!hasPreviousState && !isQuantified && node.parameters.length > 0) {
     throw new TlaTypeScriptError(`@${tag} functions can't take parameters`, node.parameters[0]);
@@ -118,6 +113,10 @@ export const translateProperty = (
     );
     sections.properties.push(name);
   }
+  if (tag === "terminating") {
+    sections.actions.push(`${name} ==\n  ${value}`);
+    sections.next.push(`${name} /\\ UNCHANGED vars`);
+  }
   if (tag === "initially") sections.init.push(value);
   if (predicate !== undefined) {
     sections.predicates.push(`${name} ==\n  ${value}`);
@@ -125,7 +124,6 @@ export const translateProperty = (
   }
 };
 
-// An exported function that returns a boolean, which holds in every state.
 export const translateInvariant = (definition: Exported, sections: Sections, context: Context) => {
   const parameters = definition.node.parameters;
   if (parameters.length > 0) {

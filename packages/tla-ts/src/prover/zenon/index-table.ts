@@ -1,8 +1,4 @@
 // Ported from Zenon's index.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-//
-// The formulas on the current branch, indexed by head symbol, by the sides of equalities and
-// transitive relations, and the cache of proved lemmas. Formulas are added and removed in LIFO
-// order as the search descends and backtracks. Lists keep Zenon's order, latest first.
 
 import {
   isNegatedRelation,
@@ -27,7 +23,6 @@ interface Suspect {
   records: LemmaRecord[];
 }
 
-// A stack of values per key, as a Hashtbl with Hashtbl.add and Hashtbl.remove.
 const pushValue = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
   const values = table.get(key);
   if (values === undefined) table.set(key, [value]);
@@ -44,7 +39,6 @@ const popValue = <Key, Value>(table: Map<Key, Value[]>, key: Key) => {
 const getLatestFirst = <Key, Value>(table: Map<Key, Value[]>, key: Key) =>
   [...(table.get(key) ?? [])].reverse();
 
-// Zenon's head of a term, or undefined for No_head. Taus and metavariables are heads by identity.
 type Head = string | Expr;
 
 export const getHead = (expression: Expr): Head | undefined => {
@@ -68,19 +62,10 @@ export const getHead = (expression: Expr): Head | undefined => {
   }
 };
 
-// Zenon indexes formulas by head under a string; every tau shares "t." and every metavariable "".
 const getHeadKey = (head: Head) =>
   typeof head === "string" ? head : head.kind === "tau" ? "t." : "";
 
-// Zenon's add_element and remove_element on a table of lists. Removing from a one-element list
-// drops the key whatever the element, as Zenon does.
-const addElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
-  const values = table.get(key);
-  if (values === undefined) table.set(key, [value]);
-  else values.push(value);
-};
-
-// False stands for Zenon's Not_found.
+// Removing from a one-element list drops the key whatever the element, as Zenon does.
 const removeElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
   const values = table.get(key);
   if (values === undefined) return false;
@@ -89,9 +74,6 @@ const removeElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Va
   return true;
 };
 
-const getValues = <Key, Value>(table: Map<Key, Value[]>, key: Key) => getLatestFirst(table, key);
-
-// Keys pair a relation with a head. Heads that are expressions are told apart by identity.
 const getHeadId = (head: Head) => (typeof head === "string" ? `s${head}` : `e${head.id}`);
 
 const getRelationKey = (relation: string, head: Head) => `${relation}\u0000${getHeadId(head)}`;
@@ -129,7 +111,6 @@ export const createIndex = (exprs: Expressions) => {
   const withGoalness = <Formula extends Expr>(list: Formula[]): [Formula, number][] =>
     list.map((formula) => [formula, getGoalness(formula)]);
 
-  // Zenon's negpos: a negation under the head of its operand, anything else under its own head.
   const actOnHead = (
     formula: Expr,
     action: <Formula extends Expr>(
@@ -187,7 +168,7 @@ export const createIndex = (exprs: Expressions) => {
       ]);
     formulaCount++;
     topFormulaCount = Math.max(topFormulaCount, formulaCount);
-    actOnHead(formula, addElement);
+    actOnHead(formula, pushValue);
     const lemma = lemmas.get(formula);
     if (lemma !== undefined) lemma.isPresent = true;
     newFormulas.unshift(formula);
@@ -240,14 +221,13 @@ export const createIndex = (exprs: Expressions) => {
     if (lemma !== undefined) lemma.isPresent = false;
   };
 
-  // Zenon's add_trans, which stops at the first side without a head. False means No_head.
   const addTrans = (formula: RelationExpr) => {
     const leftHead = getHead(formula.args[0]);
     if (leftHead === undefined) return false;
-    addElement(transLeft, getRelationKey(formula.symbol, leftHead), formula);
+    pushValue(transLeft, getRelationKey(formula.symbol, leftHead), formula);
     const rightHead = getHead(formula.args[1]);
     if (rightHead === undefined) return false;
-    addElement(transRight, getRelationKey(formula.symbol, rightHead), formula);
+    pushValue(transRight, getRelationKey(formula.symbol, rightHead), formula);
     return true;
   };
 
@@ -255,13 +235,13 @@ export const createIndex = (exprs: Expressions) => {
     const relation = formula.args[0];
     const leftHead = getHead(relation.args[0]);
     if (leftHead !== undefined) {
-      addElement(negTransLeft, getRelationKey(relation.symbol, leftHead), formula);
-      addElement(allNegTransLeft, getHeadId(leftHead), formula);
+      pushValue(negTransLeft, getRelationKey(relation.symbol, leftHead), formula);
+      pushValue(allNegTransLeft, getHeadId(leftHead), formula);
     }
     const rightHead = getHead(relation.args[1]);
     if (rightHead !== undefined) {
-      addElement(negTransRight, getRelationKey(relation.symbol, rightHead), formula);
-      addElement(allNegTransRight, getHeadId(rightHead), formula);
+      pushValue(negTransRight, getRelationKey(relation.symbol, rightHead), formula);
+      pushValue(allNegTransRight, getHeadId(rightHead), formula);
     }
   };
 
@@ -276,8 +256,6 @@ export const createIndex = (exprs: Expressions) => {
     suspects.unshift([{ proof, cursor: 0, records }]);
   };
 
-  // A cached lemma whose conclusions are all on the branch. A lemma waits on the first conclusion
-  // that is missing, and is checked again when that formula comes back.
   const searchLemma = (): Proof | undefined => {
     for (const formula of newFormulas) {
       const record = lemmas.get(formula);
@@ -312,8 +290,8 @@ export const createIndex = (exprs: Expressions) => {
     remove,
     isMember,
     getGoalness,
-    findPositive: (symbol: string) => withGoalness(getValues(positive, symbol)),
-    findNegative: (symbol: string) => withGoalness(getValues(negative, symbol)),
+    findPositive: (symbol: string) => withGoalness(getLatestFirst(positive, symbol)),
+    findNegative: (symbol: string) => withGoalness(getLatestFirst(negative, symbol)),
     findEqualRight: (term: Expr) => getLatestFirst(equalLeftRight, term),
     findEqualLeft: (term: Expr) => getLatestFirst(equalRightLeft, term),
     findDisequalities: (term: Expr) => [
@@ -329,16 +307,17 @@ export const createIndex = (exprs: Expressions) => {
     addTrans,
     addNegTrans,
     findTransLeft: (relation: string, head: Head) =>
-      withGoalness(getValues(transLeft, getRelationKey(relation, head))),
+      withGoalness(getLatestFirst(transLeft, getRelationKey(relation, head))),
     findTransRight: (relation: string, head: Head) =>
-      withGoalness(getValues(transRight, getRelationKey(relation, head))),
+      withGoalness(getLatestFirst(transRight, getRelationKey(relation, head))),
     findNegTransLeft: (relation: string, head: Head) =>
-      withGoalness(getValues(negTransLeft, getRelationKey(relation, head))),
+      withGoalness(getLatestFirst(negTransLeft, getRelationKey(relation, head))),
     findNegTransRight: (relation: string, head: Head) =>
-      withGoalness(getValues(negTransRight, getRelationKey(relation, head))),
-    findAllNegTransLeft: (head: Head) => withGoalness(getValues(allNegTransLeft, getHeadId(head))),
+      withGoalness(getLatestFirst(negTransRight, getRelationKey(relation, head))),
+    findAllNegTransLeft: (head: Head) =>
+      withGoalness(getLatestFirst(allNegTransLeft, getHeadId(head))),
     findAllNegTransRight: (head: Head) =>
-      withGoalness(getValues(allNegTransRight, getHeadId(head))),
+      withGoalness(getLatestFirst(allNegTransRight, getHeadId(head))),
     addLemma,
     searchLemma,
     addDefinition: (definition: Definition) => definitions.set(definition.symbol, definition),

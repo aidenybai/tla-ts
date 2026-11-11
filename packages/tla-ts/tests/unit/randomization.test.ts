@@ -17,7 +17,6 @@ const getSummary = async (name: string, seed: bigint) => {
   return [result.status, result.generatedStates, result.distinctStates];
 };
 
-// TLC's tests run these specs with -fp 0 and -seed 1 unless they pass another seed.
 describe("random choices match TLC run with -fp 0 and the same -seed", () => {
   it("picks RandomElement in the next-state relation from the predecessor's fingerprint", async () => {
     const result = await checkWithSeed("RandomElementXandY", 8006642976694192746n);
@@ -63,7 +62,7 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     [918347981374n, 604, 100000000, [15, 152, 5], [86, 170, 1612]],
   ])(
     "draws the RandomSubsetATest and RandomSubsetBTest values for seed %s",
-    async (seed, x, y, p, q) => {
+    async (seed, expectedX, expectedY, expectedP, expectedQ) => {
       const result = await checkWithSeed("RandomSubset", seed);
       expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
         "invariant-violation",
@@ -71,12 +70,12 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
         8009,
       ]);
       const initial = result.violation?.trace[0].state;
-      expect([initial?.x, initial?.y]).toEqual([x, y]);
+      expect([initial?.x, initial?.y]).toEqual([expectedX, expectedY]);
       expect(
         [initial?.p, initial?.q].map((tuple) =>
           typeof tuple === "object" && tuple.kind === "Function" ? tuple.range : undefined,
         ),
-      ).toEqual([p, q]);
+      ).toEqual([expectedP, expectedQ]);
     },
   );
 
@@ -89,19 +88,16 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     expect(await getSummary("RandomSubsetSetOfFcns", 1n)).toEqual(["success", 2000, 1000]);
   });
 
-  it("evaluates a random constant definition once, as Github648 expects", async () => {
-    expect(
-      await Promise.all(
-        [1n, -2252017213236477395n, 8006642976694192746n].map((seed) =>
-          getSummary("Github648", seed),
-        ),
-      ),
-    ).toEqual([
-      ["success", 1332, 36],
-      ["success", 4160, 64],
-      ["success", 90, 9],
-    ]);
-  });
+  it.each([
+    [1n, ["success", 1332, 36]],
+    [-2252017213236477395n, ["success", 4160, 64]],
+    [8006642976694192746n, ["success", 90, 9]],
+  ])(
+    "evaluates a random constant definition once with seed %s, as Github648 expects",
+    async (seed, summary) => {
+      expect(await getSummary("Github648", seed)).toEqual(summary);
+    },
+  );
 
   it("reseeds from the tokens TLC interns model values with", async () => {
     const result = await checkWithSeed("RandomModelValue", 1n);
@@ -141,7 +137,6 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
   });
 });
 
-// The expected values are what TLC 1.7.4 prints with -fp 0 and -seed 4.
 describe("random choices match TLC 1.7.4", () => {
   it("draws RandomSubset as TLC 1.7.4 does, and refuses to enumerate a large set of tuples", async () => {
     const result = await check({

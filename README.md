@@ -161,6 +161,13 @@ pnpm --filter tla-ts conformance:fetch
 pnpm --filter tla-ts conformance
 ```
 
+Run the TLC conformance suite in `packages/conformance`:
+
+```shell
+pnpm --filter @tla-ts/conformance fetch-tlc
+pnpm --filter @tla-ts/conformance conformance
+```
+
 Rerun the benchmarks with `TLA2TOOLS_JAR` set to the path of `tla2tools.jar`:
 
 ```shell

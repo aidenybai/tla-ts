@@ -1,8 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { TlaUnsupportedError } from "../src/errors";
 import type { PrintedObligation } from "../src/obligations";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption, writeResults } from "./corpora";
+import {
+  CONFORMANCE_DIRECTORY,
+  CORPORA_DIRECTORY,
+  getOption,
+  reportModuleResults,
+} from "./corpora";
 import { getModuleObligations } from "./proof-records";
 import {
   collapseWhitespace,
@@ -38,15 +43,12 @@ const analyze = (path: string): Outcome => {
   }
 };
 
-// Whether tla-ts prints the recorded obligation at its location, up to whitespace.
 const isSameText = (expected: TlapmObligation | undefined, actual: PrintedObligation | undefined) =>
   expected !== undefined &&
   actual !== undefined &&
   expected.loc === actual.location &&
   expected.text === getDigest(collapseWhitespace(actual.text));
 
-// The first obligation whose location or text differs, with both texts when the full recording is
-// available.
 const findDifference = (expected: TlapmDigest, actual: Outcome, texts: TlapmResult | undefined) => {
   const expectedObligations = expected.obligations ?? [];
   const count = Math.max(expectedObligations.length, actual.obligations.length);
@@ -74,7 +76,6 @@ const getVerdict = (expected: TlapmDigest, actual: Outcome): Verdict => {
     )
   )
     return "mismatch";
-  // The recording trims the end of each obligation.
   const isLayoutSame = expectedObligations.every(
     (obligation, index) =>
       obligation.layout === getDigest(actual.obligations[index].text.trimEnd()),
@@ -116,9 +117,4 @@ const results = expected
     }
     return { id: result.id, verdict, error: actual.error, difference };
   });
-writeResults(RESULTS_PATH, results);
-console.log("");
-Map.groupBy(results, (result) => result.verdict).forEach((group, verdict) =>
-  console.log(`${verdict}: ${group.length}`),
-);
-console.log(`modules: ${results.length} (${basename(RESULTS_PATH)} has the details)`);
+reportModuleResults(RESULTS_PATH, results);

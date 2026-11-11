@@ -1,5 +1,4 @@
-// A port of TLC's tlc2.pprint package, which re-parses a printed value and breaks it across
-// lines of at most 80 columns. TLC prints the original text whenever the parse fails.
+// A port of TLC's tlc2.pprint package. TLC prints the original text whenever the parse fails.
 
 import { skipWhile } from "./lexer";
 
@@ -79,9 +78,9 @@ const parsePrinted = (text: string) => {
     separator: string,
   ) => {
     const node: PrintedNode = { kind, first, last: first, children: [] };
-    const position = { index: skipWhitespace(start) };
-    while (position.index !== undefined && text[position.index] !== close) {
-      const item = parseItem(position.index);
+    let position = skipWhitespace(start);
+    while (position !== undefined && text[position] !== close) {
+      const item = parseItem(position);
       if (!item) return undefined;
       node.children.push(item);
       const afterItem = skipWhitespace(item.last + 1);
@@ -89,10 +88,10 @@ const parsePrinted = (text: string) => {
       const afterSeparator = text.startsWith(separator, afterItem)
         ? afterItem + separator.length
         : afterItem;
-      position.index = skipWhitespace(afterSeparator);
+      position = skipWhitespace(afterSeparator);
     }
-    if (position.index === undefined) return undefined;
-    node.last = position.index;
+    if (position === undefined) return undefined;
+    node.last = position;
     return node;
   };
 

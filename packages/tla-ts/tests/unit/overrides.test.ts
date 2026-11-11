@@ -30,7 +30,6 @@ describe("Java module overrides match TLC", () => {
         if (progress.kind === "java-override") overrides.push(progress);
       },
     });
-    // TLC lists the methods in an order that depends on the JVM.
     expect(overrides.toSorted((left, right) => (left.operator < right.operator ? -1 : 1))).toEqual(
       [
         ["Computed", "()", false],

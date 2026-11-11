@@ -1,7 +1,4 @@
-// Ported from Z3 (src/model/model_macro_solver.cpp, src/ast/macros/macro_util.cpp,
-// src/ast/func_decl_dependencies.cpp), MIT license, see z3-license.txt. Collects the conditional
-// macros of a quantifier, f(x) = def when cond, and satisfies quantifiers by taking such a def as the
-// else case of the interpretation of f.
+// Ported from Z3 (src/model/model_macro_solver.cpp, src/ast/macros/macro_util.cpp, src/ast/func_decl_dependencies.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_BASIC,
   FAMILY_USER,
@@ -24,12 +21,10 @@ import { Rational } from "./rational";
 import type { Rewriter } from "./rewriter";
 import { replaceFreeVars } from "./var-subst";
 
-// cond_macro: f(x_0, ..., x_n) = def whenever cond holds. A hint has no condition.
 export interface CondMacro {
   decl: number;
   def: number;
   cond: number | null;
-  isIneq: boolean;
   isSatisfyAtom: boolean;
   isHint: boolean;
   weight: number;
@@ -136,18 +131,12 @@ const isPolyHint = (manager: AstManager, poly: number, head: number, exception: 
   );
 };
 
-// quantifier_macro_info::collect_macro_candidates, with an empty forbidden set. Each candidate holds
-// a reference to its definition and condition, which releaseCondMacros releases. Like macro_util,
-// the expressions of each step live until the step returns. The rewriter does macro_util's Boolean
-// and arithmetic rewriting, which keeps nothing between calls.
 export const collectMacroCandidates = (
   manager: AstManager,
   rewriter: Rewriter,
   quantifier: number,
 ) => {
   const data = manager.getQuantifier(quantifier);
-  // qa: an existential quantifier becomes a universal one of the negated body until the candidates
-  // are collected.
   const qa = data.isForall
     ? quantifier
     : manager.withTemporaries(() =>
@@ -160,7 +149,6 @@ export const collectMacroCandidates = (
   return candidates;
 };
 
-// ~cond_macro, for each candidate in order.
 export const releaseCondMacros = (manager: AstManager, candidates: CondMacro[]) => {
   for (const candidate of candidates) {
     if (candidate.cond !== null) manager.decRef(candidate.cond);
@@ -168,12 +156,10 @@ export const releaseCondMacros = (manager: AstManager, candidates: CondMacro[]) 
   }
 };
 
-// macro_util::collect_macro_candidates.
 const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: number) => {
   const data = manager.getQuantifier(quantifier);
   const body = data.body;
   const candidates: CondMacro[] = [];
-  // The expressions of a step without a reference live until the step returns.
   const scope = (step: () => void) => manager.withTemporaries(step, () => []);
   const mkNot = (expr: number) => rewriter.mkAppCore(OP_NOT, [expr], SORT_BOOL);
   const mkAnd = (args: number[]) =>
@@ -182,7 +168,6 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
       : args.length === 1
         ? args[0]
         : rewriter.mkAppCore(OP_AND, args, SORT_BOOL);
-  const mkSub = (first: number, second: number) => rewriter.mkSub(first, second);
   const mkAdd = (args: number[], sort: number) =>
     args.length === 0
       ? manager.mkNumeralOfSort(Rational.zero, sort)
@@ -198,7 +183,6 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
     clause !== null &&
     clause.some((literal) => literal !== exceptLiteral && manager.isOccurring(decl, literal));
 
-  // get_rest_clause_as_cond: the condition comes with a reference, which the caller releases.
   const getRestClauseAsCond = (exceptLiteral: number) =>
     clause === null
       ? null
@@ -212,14 +196,12 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
           (cond) => (cond === null ? [] : [cond]),
         );
 
-  // A step with the rest of the clause as its condition, which it holds until it returns.
   const withRestClauseAsCond = (exceptLiteral: number, step: (cond: number | null) => void) => {
     const cond = getRestClauseAsCond(exceptLiteral);
     step(cond);
     if (cond !== null) manager.decRef(cond);
   };
 
-  // normalize_expr: the variables of the head become (:var 0) ... (:var n-1) in order.
   const normalize = (head: number, expr: number) => {
     const mapping = new Map<number, number>();
     for (let index = 0; index < manager.getNumArgs(head); index++)
@@ -234,14 +216,7 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
         });
   };
 
-  // insert_macro: the candidate holds references to the normalized definition and condition.
-  const insertMacro = (
-    head: number,
-    def: number,
-    cond: number | null,
-    isIneq: boolean,
-    isHint: boolean,
-  ) =>
+  const insertMacro = (head: number, def: number, cond: number | null, isHint: boolean) =>
     scope(() => {
       const normDef = normalize(head, def);
       const normCond = cond !== null ? normalize(head, cond) : isHint ? null : manager.trueExpr;
@@ -251,30 +226,23 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
         decl: manager.decls[head],
         def: normDef,
         cond: normCond,
-        isIneq,
         isSatisfyAtom: true,
         isHint,
         weight: data.weight,
       });
     });
 
-  // insert_quasi_macro: a head whose arguments are not distinct variables gets fresh variables,
-  // and for a macro the equalities between them and the arguments join the condition. new_head,
-  // extra_cond and new_cond hold references until it returns, and are released in the reverse
-  // order of their declarations.
   const insertQuasiMacro = (
     head: number,
     numDecls: number,
     def: number,
     cond: number | null,
-    isIneq: boolean,
     isHint: boolean,
   ) => {
     if (isMacroHead(manager, head, manager.getNumArgs(head))) {
-      insertMacro(head, def, cond, isIneq, isHint);
+      insertMacro(head, def, cond, isHint);
       return;
     }
-    // quasi_macro_head_to_macro_head and hint_to_macro_head: the condition comes before the head.
     const converted = manager.withTemporaries(
       () => {
         const seen = new Set<number>();
@@ -310,19 +278,13 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
           ? extraCond
           : manager.withTemporaries(() => mkAnd([cond, extraCond]));
     if (newCond === extraCond && extraCond !== null) manager.incRef(extraCond);
-    insertMacro(converted.newHead, def, newCond, isIneq, isHint);
+    insertMacro(converted.newHead, def, newCond, isHint);
     if (newCond !== null) manager.decRef(newCond);
     if (extraCond !== null) manager.decRef(extraCond);
     manager.decRef(converted.newHead);
   };
 
-  const collectArith = (
-    lhs: number,
-    rhs: number,
-    atom: number,
-    numDecls: number,
-    isIneq: boolean,
-  ) => {
+  const collectArith = (lhs: number, rhs: number, atom: number, numDecls: number) => {
     if (manager.getOp(lhs) !== OP_ADD && manager.getOp(atom) === OP_EQ) return;
     const lhsArgs = getPolyArgs(manager, lhs);
     const tryHead = (head: number, monomial: number, isNegated: boolean) => {
@@ -339,15 +301,11 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
           lhsArgs.filter((arg) => arg !== monomial),
           manager.sorts[lhs],
         );
-        const def = isNegated ? mkSub(rest, rhs) : mkSub(rhs, rest);
-        // A hint's right-hand side may contain variables that are not arguments of the head.
+        const def = isNegated ? rewriter.mkSub(rest, rhs) : rewriter.mkSub(rhs, rest);
         if (isHint && !isPolyHint(manager, def, head, null)) return;
-        // add_arith_macro_candidate.
-        if (isHint) insertQuasiMacro(head, numDecls, def, null, isIneq, true);
+        if (isHint) insertQuasiMacro(head, numDecls, def, null, true);
         else
-          withRestClauseAsCond(atom, (cond) =>
-            insertQuasiMacro(head, numDecls, def, cond, isIneq, false),
-          );
+          withRestClauseAsCond(atom, (cond) => insertQuasiMacro(head, numDecls, def, cond, false));
       });
       return true;
     };
@@ -367,13 +325,11 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
         isRestContainingDecl(manager.decls[lhs], atom)
       )
         return false;
-      withRestClauseAsCond(atom, (cond) =>
-        insertQuasiMacro(lhs, numDecls, rhs, cond, false, false),
-      );
+      withRestClauseAsCond(atom, (cond) => insertQuasiMacro(lhs, numDecls, rhs, cond, false));
       return true;
     };
     const insertHint = (lhs: number, rhs: number) => {
-      if (isHintAtom(manager, lhs, rhs)) insertQuasiMacro(lhs, numDecls, rhs, null, false, true);
+      if (isHintAtom(manager, lhs, rhs)) insertQuasiMacro(lhs, numDecls, rhs, null, true);
     };
     const op = manager.getOp(atom);
     if (op === OP_EQ) {
@@ -397,8 +353,8 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
     if (op === OP_EQ || op === OP_LE || op === OP_GE) {
       const lhs = manager.getArg(atom, 0);
       const rhs = manager.getArg(atom, 1);
-      collectArith(lhs, rhs, atom, numDecls, op !== OP_EQ);
-      collectArith(rhs, lhs, atom, numDecls, op !== OP_EQ);
+      collectArith(lhs, rhs, atom, numDecls);
+      collectArith(rhs, lhs, atom, numDecls);
     }
   };
 
@@ -417,8 +373,6 @@ const setElseInterp = (manager: AstManager, model: ProtoModel, decl: number, els
 
 type Process = (qs: number[], newQs: number[], residue: number[]) => boolean;
 
-// base_macro_solver::operator(): runs the solver until it removes no more quantifiers, and leaves
-// in qs the quantifiers of its last round.
 const runMacroSolver = (qs: number[], residue: number[], process: Process) => {
   let current = qs;
   let next: number[] = [];
@@ -429,7 +383,6 @@ const runMacroSolver = (qs: number[], residue: number[], process: Process) => {
   return next;
 };
 
-// simple_macro_solver: a macro for f satisfies its quantifier when no other quantifier uses f.
 const simpleMacroSolver =
   (manager: AstManager, model: ProtoModel, getInfo: GetInfo): Process =>
   (qs, newQs) => {
@@ -445,8 +398,6 @@ const simpleMacroSolver =
         newQs.push(quantifier);
         continue;
       }
-      // The conditions of the macro can be ignored: the partial interpretation of f satisfies the
-      // ground part, and MBQI adds instances when it does not satisfy the quantifier.
       info.theOne = macro.decl;
       setElseInterp(manager, model, macro.decl, macro.def);
       isRemoved = true;
@@ -456,8 +407,6 @@ const simpleMacroSolver =
 
 const GREEDY_MAX_DEPTH = 10;
 
-// hint_macro_solver: searches greedily for a set of hints and macros, one per function symbol,
-// that satisfies a set of quantifiers without cyclic definitions.
 const hintMacroSolver =
   (manager: AstManager, model: ProtoModel, getInfo: GetInfo): Process =>
   (qs, newQs) => {
@@ -548,7 +497,6 @@ const hintMacroSolver =
         const savedSatisfied = [...satisfied];
         const savedResidue = [...residue];
         fs.set(decl, entry[0]);
-        // update_satisfied_residue.
         let isUseful = false;
         for (const quantifier of entry[1]) {
           if (satisfied.has(quantifier)) continue;
@@ -583,7 +531,6 @@ const hintMacroSolver =
     return false;
   };
 
-// collect_func_decls with ng_only: the uninterpreted functions applied in non-ground terms.
 const collectNgFuncDecls = (manager: AstManager, expr: number) => {
   const decls = new Set<number>();
   const visited = new Set<number>();
@@ -608,8 +555,6 @@ const collectNgFuncDecls = (manager: AstManager, expr: number) => {
   return decls;
 };
 
-// non_auf_macro_solver: satisfies quantifiers outside the AUF fragment with their macros, even when
-// other quantifiers use the defined symbol.
 const nonAufMacroSolver =
   (
     manager: AstManager,
@@ -619,7 +564,6 @@ const nonAufMacroSolver =
     forceTemplate: number,
   ): Process =>
   (qs, newQs, residue) => {
-    // func_decl_dependencies::insert: fails when f has a definition or the new one is cyclic.
     const addMacro = (decl: number, elseExpr: number) => {
       if (dependencies.has(decl)) return false;
       dependencies.set(decl, collectNgFuncDecls(manager, elseExpr));
@@ -707,7 +651,6 @@ const nonAufMacroSolver =
     return removed.size > 0;
   };
 
-// The macro part of model_finder::fix_model: returns the quantifiers left for the AUF solver.
 export const solveMacros = (
   manager: AstManager,
   model: ProtoModel,

@@ -3,7 +3,6 @@ import { createNames, type Names } from "./names";
 
 export interface Definition {
   name: string;
-  // The operator's parameters as TLA+ declares them, such as "x" or "F(_)".
   parameters: string[];
   readsState: boolean;
 }
@@ -12,16 +11,11 @@ export interface Context {
   checker: ts.TypeChecker;
   names: Names;
   variables: Map<ts.Symbol, string>;
-  // Helper functions and constants, compiled when first referenced.
   definitions: Map<ts.Declaration, Definition>;
-  // Helpers being compiled or inlined, to detect recursion.
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
-  // Rendered definitions, each after the definitions it uses.
   output: string[];
-  // String literals of @symmetric types, which become model values.
   modelValues: Map<string, string>;
-  // Model values and helper operators that the spec uses.
   prelude: Set<"Null" | "Undefined" | "Rem" | "Quot">;
 }
 
@@ -58,8 +52,6 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
 export const isMethodCall = (node: ts.Node): node is MethodCall =>
   ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression);
 
-// The declaration of a constant or function at the top level of a module, which becomes a TLA+
-// definition.
 export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
   const declaration = symbol?.valueDeclaration;
   if (declaration === undefined) return undefined;
@@ -74,7 +66,6 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
   return isTopLevelConst ? declaration : undefined;
 };
 
-// The function a node is, or that a variable declaration initializes.
 export const getFunction = (node: ts.Node | undefined): FunctionNode | undefined => {
   if (node === undefined) return undefined;
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
@@ -83,17 +74,14 @@ export const getFunction = (node: ts.Node | undefined): FunctionNode | undefined
   return ts.isVariableDeclaration(node) ? getFunction(node.initializer) : undefined;
 };
 
-// The function that a callee or callback names: one written in place, or one declared elsewhere.
 export const getCallee = (node: ts.Expression, context: Context) =>
   getFunction(node) ?? getFunction(getSymbol(node, context.checker)?.valueDeclaration);
 
 export const translateString = (value: string, context: Context) =>
   context.modelValues.get(value) ?? JSON.stringify(value);
 
-// A name, a number, a string, or the @ of an EXCEPT, which costs nothing to repeat.
 const isTrivial = (value: string) => /^(@|[A-Za-z_]\w*'?|-?\d+|"[^"\\]*")$/.test(value);
 
-// Binds a value that an expression repeats to a LET definition, so that TLC evaluates it once.
 export const share = (
   value: string,
   base: string,

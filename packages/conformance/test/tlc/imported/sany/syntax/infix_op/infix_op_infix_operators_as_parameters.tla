@@ -1,0 +1,121 @@
+(*---
+description: Infix Operators as Parameters. Ported from SANY's syntax corpus.
+source: tlatools/org.lamport.tlatools/test/tla2sany/corpus/infix_op.txt
+features:
+  - sany-syntax
+outcome: parse-error
+---*)
+---- MODULE infix_op_infix_operators_as_parameters ----
+op == f(
+  &,
+  &&,
+  \approx,
+  :=,
+  \asymp,
+  \bigcirc,
+  ::=,
+  \bullet,
+  \intersect,
+  \cap,
+  \cdot,
+  \o,
+  \circ,
+  @@,
+  \cong,
+  \union,
+  \cup,
+  \div,
+  $,
+  $$,
+  \doteq,
+  ..,
+  ...,
+  =,
+  \equiv,
+  !!,
+  >=,
+  \geq,
+  \gg,
+  >,
+  ##,
+  <=>,
+  =>,
+  \in,
+  /\,
+  \land,
+  =|,
+  ~>,
+  <=,
+  =<,
+  \leq,
+  \ll,
+  \/,
+  \lor,
+  -|,
+  <,
+  <:,
+  :>,
+  --,
+  %,
+  %%,
+  *,
+  **,
+  /=,
+  #,
+  \notin,
+  (.),
+  \odot,
+  (-),
+  \ominus,
+  (+),
+  \oplus,
+  (/),
+  \oslash,
+  (\X),
+  \otimes,
+  +,
+  -+->,
+  ++,
+  ^,
+  ^^,
+  \prec,
+  \preceq,
+  \propto,
+  ??,
+  |=,
+  |-,
+  \,
+  \sim,
+  \simeq,
+  /,
+  //,
+  \sqcap,
+  \sqcup,
+  \sqsubset,
+  \sqsubseteq,
+  \sqsupset,
+  \sqsupseteq,
+  \star,
+  \subset,
+  \subseteq,
+  \succ,
+  \succeq,
+  \supset,
+  \supseteq,
+  \uplus,
+  |,
+  ||,
+  \wr
+)
+====
+
+(*--- recorded
+all:
+  exit: 150
+  transcript: |-
+    | Semantic errors:
+    | *** Errors: 1
+    | line 9, col 7 to line 9, col 7 of module infix_op_infix_operators_as_parameters
+    | Unknown operator: `f'.
+    3002:1 Parsing or semantic analysis failed.
+---*)

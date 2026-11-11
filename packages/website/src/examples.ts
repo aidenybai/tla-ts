@@ -17,7 +17,6 @@ export interface Example {
   api: string;
 }
 
-// The status in each API example is what check returns for the spec, and matches TLC.
 const getSpecExample = (
   name: string,
   source: string,
@@ -39,7 +38,6 @@ const result = await check({
 result.status; // "${status}"`,
 });
 
-// The statuses in each API example are what prove returns for the module, and match tlapm.
 const getProofExample = (
   name: string,
   source: string,

@@ -1,5 +1,21 @@
 # tla-ts
 
+## 0.0.10
+
+### Patch Changes
+
+- Check TypeScript files. `tla-ts bank.ts` compiles `bank.ts` to `Bank.tla` and `Bank.cfg`, writes them beside it, and checks them like a TLA+ spec, with the same output and exit codes. `docs/typescript.md` describes what compiles and the JSDoc tags for properties, fairness and options (#330).
+- Mark the end states of a TypeScript model with `@terminating` on a boolean function. States where it holds take a step that changes nothing, like PlusCal's `Terminating`, so they aren't deadlocks, and deadlock checking stays on for the rest (#446, #465).
+- Read only the first word after `@leadsTo` as its target in a TypeScript model, so a description on the lines after the tag no longer fails the compile with "names an unknown function" (#447, #464).
+- Keep a check's workers when the search creates strings, and check the model again on one worker only when the search orders two of them (#436).
+- Use less memory on long evaluations. A lazy function keeps only the bindings its body reads, and a value that reads no variable drops the scope it was computed in (#359).
+- Report TLC's error when comparing stored values of different types, such as a record and a tuple. Their hashes used to decide the comparison first, so the check passed where TLC fails (#366).
+- The SMT solver stops watching the garbage collector however a check ends. A problem without `check-sat`, an unsupported input, or a stack overflow ended the check without releasing its resource limit, so a `GCProfiler` it had started near the heap limit kept running in the caller's process (#376).
+- When a temporal property fails to evaluate, the trace tla-ts prints for the failure now reads `TLCGet("level")` of the search, as TLC's does. The liveness checker left its source state set when an evaluation threw, so every step of the trace read the level of the state it last checked (#375).
+- With `-continue`, an `ALIAS` no longer changes what `TLCGet("level")` and `Trace` read in the rest of the search. Printing a trace with an alias left both pinned to the trace's last state, so a later invariant that read the level could fail where TLC's holds (#374).
+- Compile a function defined in a `LET`, such as `LET f[x \in S] == ...`, once instead of each time the `LET` is evaluated. The mongodb-txns `ClientCentricTests` falls from 47.4 G to 41.6 G instructions and from 372 MB to 113 MB, and `MCKVsnap` from 115.3 G to 105.3 G and from 488 MB to 294 MB (#373).
+- Evaluate an `INSTANCE` substitution once each time an instantiated operator is evaluated, as TLC does with a lazy value, instead of at each use. A substitution that prints now prints as often as in TLC. The summerset `MultiPaxos_MC`, which checks a refinement with `proposed <- proposedSet`, falls from 967 G to 756 G instructions (#372).
+
 ## 0.0.9
 
 ### Patch Changes
