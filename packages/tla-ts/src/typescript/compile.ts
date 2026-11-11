@@ -13,7 +13,7 @@ import {
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
-import { findHeapArrays, isHoleyArray, translateConstantFunctions } from "./heap";
+import { findHeapArrays, isHoleyArray, TYPED_ARRAYS, translateConstantFunctions } from "./heap";
 import { translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
@@ -204,7 +204,18 @@ export const compile = (
       ts.isIdentifier(node.expression) &&
       ["Boolean", "Number", "String", "Date"].includes(node.expression.text)) ||
     (ts.isIdentifier(node) &&
-      ["arguments", "Symbol", "Promise", "setTimeout", "JSON", "Proxy"].includes(node.text)) ||
+      [
+        "arguments",
+        "Symbol",
+        "Promise",
+        "setTimeout",
+        "JSON",
+        "Proxy",
+        "ArrayBuffer",
+        "SharedArrayBuffer",
+        "DataView",
+        ...TYPED_ARRAYS.keys(),
+      ].includes(node.text)) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
     (ts.forEachChild(node, usesObjects) ?? false);
@@ -213,7 +224,17 @@ export const compile = (
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     const usesSpecialNumbers = (node: ts.Node): boolean =>
       (ts.isIdentifier(node) &&
-        ["NaN", "Infinity", "POSITIVE_INFINITY", "NEGATIVE_INFINITY"].includes(node.text)) ||
+        [
+          "NaN",
+          "Infinity",
+          "POSITIVE_INFINITY",
+          "NEGATIVE_INFINITY",
+          // A float's bytes may hold any of them.
+          "DataView",
+          "Float16Array",
+          "Float32Array",
+          "Float64Array",
+        ].includes(node.text)) ||
       (ts.isPrefixUnaryExpression(node) &&
         node.operator === ts.SyntaxKind.MinusToken &&
         ts.isNumericLiteral(node.operand) &&

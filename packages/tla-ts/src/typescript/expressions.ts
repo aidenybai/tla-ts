@@ -67,6 +67,7 @@ import {
   isSymbolCall,
   isNewObject,
   isNewProxy,
+  getNewBuffer,
   isRevocable,
   getNewWrapper,
   isNewDate,
@@ -2018,6 +2019,7 @@ const translateNode = (
     isNewObject(node, context) ||
     isNewDate(node, context) ||
     isNewProxy(node, context) ||
+    getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined;
   if (isHeapObject) {
     const allocated = scope.allocated.get(node);

@@ -399,8 +399,21 @@ ProxyTarget(heap, ref) == heap.objects[ref[Ref]].target
 
 ProxyHandler(heap, ref) == heap.objects[ref[Ref]].handler
 
+\\* An ArrayBuffer holds bytes, and a DataView or a typed array views them from an offset, for a
+\\* length, or for a resizable buffer's length where that's -1. A typed array holds the type
+\\* of its elements.
+IsBuffer(heap, value) == IsHeap(value) /\\ "bytes" \\in DOMAIN heap.objects[value[Ref]]
+
+IsDataView(heap, value) ==
+  /\\ IsHeap(value)
+  /\\ "viewed" \\in DOMAIN heap.objects[value[Ref]]
+  /\\ "elementType" \\notin DOMAIN heap.objects[value[Ref]]
+
+IsTypedArray(heap, value) == IsHeap(value) /\\ "elementType" \\in DOMAIN heap.objects[value[Ref]]
+
 Lookup(heap, ref) ==
   CASE IsProxy(heap, ref) -> Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+    [] IsTypedArray(heap, ref) -> Assert(FALSE, "tla-ts can't run a typed array's internal method here")
     [] ref \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of " \\o ToString(ref))
     [] IsHeap(ref) /\\ heap.objects[ref[Ref]].isOpaque ->
@@ -649,12 +662,155 @@ IsEnumerableOwn(heap, ref, key) ==
   LET object == Lookup(heap, ref)
   IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
 
-Prototype(heap, ref) == Lookup(heap, ref).prototype
+ElementSize(type) ==
+  CASE type \\in {"Int8", "Uint8", "Uint8Clamped"} -> 1
+    [] type \\in {"Int16", "Uint16", "Float16"} -> 2
+    [] type \\in {"Int32", "Uint32", "Float32"} -> 4
+    [] OTHER -> 8
+
+LOCAL ViewedBytes(heap, view) == heap.objects[view.viewed[Ref]].bytes
+
+LOCAL ViewSize(view) == IF "elementType" \\in DOMAIN view THEN ElementSize(view.elementType) ELSE 1
+
+\\* Whether a view reaches past its buffer's end, as a detached buffer, or one that shrank, leaves it.
+IsOutOfBounds(heap, view) ==
+  LET buffer == heap.objects[view.viewed[Ref]]
+  IN \\/ buffer.isDetached
+     \\/ view.byteOffset > Len(buffer.bytes)
+     \\/ /\\ view.viewLength # -1
+        /\\ view.byteOffset + view.viewLength * ViewSize(view) > Len(buffer.bytes)
+
+\\* The number of a typed array's elements, or of a DataView's bytes, which is 0 out of bounds.
+ViewLength(heap, view) ==
+  CASE IsOutOfBounds(heap, view) -> 0
+    [] view.viewLength = -1 ->
+         (Len(ViewedBytes(heap, view)) - view.byteOffset) \\div ViewSize(view)
+    [] OTHER -> view.viewLength
+
+RECURSIVE BitsValue(_, _, _)
+BitsValue(bits, from, count) ==
+  IF count = 0 THEN 0 ELSE bits[from] + 2 * BitsValue(bits, from + 1, count - 1)
+
+LOCAL ByteBits(bytes) ==
+  [position \\in 0..(8 * Len(bytes) - 1) |-> (bytes[position \\div 8 + 1] \\div 2^(position % 8)) % 2]
+
+\\* A float's little-endian bytes as a number, which stops at a fraction, or at a number past TLC's
+\\* integers.
+LOCAL FloatOf(bytes, exponentBits, fractionBits) ==
+  LET bits == ByteBits(bytes)
+      isNegative == bits[8 * Len(bytes) - 1] = 1
+      exponent == BitsValue(bits, fractionBits, exponentBits)
+      power == exponent - (2^(exponentBits - 1) - 1)
+      shift == fractionBits - power
+      isFractionZero == \\A position \\in 0..(fractionBits - 1) : bits[position] = 0
+      magnitude ==
+        IF shift >= 0
+        THEN 2^power + BitsValue(bits, shift, fractionBits - shift)
+        ELSE 2^power + BitsValue(bits, 0, fractionBits) * 2^(-shift)
+  IN CASE exponent = 2^exponentBits - 1 /\\ isFractionZero ->
+            IF isNegative THEN NegativeInfinity ELSE Infinity
+       [] exponent = 2^exponentBits - 1 -> NaN
+       [] exponent = 0 /\\ isFractionZero -> IF isNegative THEN NegativeZero ELSE 0
+       [] power < 0 \\/ \\E position \\in 0..(shift - 1) : bits[position] = 1 ->
+            Assert(FALSE, "tla-ts can't represent a fraction")
+       [] power > 30 -> Assert(FALSE, "tla-ts can't represent a number this big")
+       [] isNegative -> -magnitude
+       [] OTHER -> magnitude
+
+\\* An element's little-endian bytes as the number they hold.
+NumberOfBytes(type, bytes) ==
+  LET unsigned == BitsValue(ByteBits(bytes), 0, 8 * Len(bytes) - 1)
+      isNegative == bytes[Len(bytes)] >= 128
+  IN CASE type = "Float16" -> FloatOf(bytes, 5, 10)
+       [] type = "Float32" -> FloatOf(bytes, 8, 23)
+       [] type = "Float64" -> FloatOf(bytes, 11, 52)
+       [] type \\in {"Uint8", "Uint8Clamped", "Uint16"} -> unsigned + (IF isNegative THEN 2^(8 * Len(bytes) - 1) ELSE 0)
+       [] type = "Uint32" /\\ isNegative -> Assert(FALSE, "tla-ts can't represent a number this big")
+       [] type = "Uint32" -> unsigned
+       [] isNegative -> (unsigned - 2^(8 * Len(bytes) - 2)) - 2^(8 * Len(bytes) - 2)
+       [] OTHER -> unsigned
+
+\\* How a typed array reads a key: as an index, as a number that is no index, or as a property.
+TypedKey(key) ==
+  CASE IsSymbol(key) -> "property"
+    [] IsIndex(key) -> "index"
+    [] key \\in {"-0", "Infinity", "-Infinity", "NaN"} -> "number"
+    [] Len(key) > 1 /\\ SubSeq(key, 1, 1) = "-" /\\ IsIndex(SubSeq(key, 2, Len(key))) -> "number"
+    [] /\\ Len(key) > 0
+       /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\cup {".", "e", "+"} ->
+         Assert(FALSE, "tla-ts can't tell whether this key is a number")
+    [] OTHER -> "property"
+
+\\* A typed array's element at an index, or undefined past its end.
+TypedElement(heap, ref, index) ==
+  LET view == heap.objects[ref[Ref]]
+      size == ElementSize(view.elementType)
+      start == view.byteOffset + index * size
+  IN IF index < ViewLength(heap, view)
+     THEN NumberOfBytes(view.elementType, SubSeq(ViewedBytes(heap, view), start + 1, start + size))
+     ELSE Undefined
+
+LOCAL TypedArrayGetter == "get %Int8Array.prototype.[[Prototype]]%."
+
+\\* The paths of the getters that read a buffer's or a view's internal slots.
+LOCAL ViewGetters ==
+  {"get ArrayBuffer.prototype." \\o name : name \\in {"byteLength", "maxByteLength", "resizable", "detached"}}
+    \\cup {"get SharedArrayBuffer.prototype." \\o name : name \\in {"byteLength", "maxByteLength", "growable"}}
+    \\cup {"get DataView.prototype." \\o name : name \\in {"buffer", "byteLength", "byteOffset"}}
+    \\cup {TypedArrayGetter \\o name : name \\in {"buffer", "byteLength", "byteOffset", "length", "@@toStringTag"}}
+
+LOCAL HasPrefix(text, prefix) == Len(text) >= Len(prefix) /\\ SubSeq(text, 1, Len(prefix)) = prefix
+
+LOCAL GetterPath(getter) == IF IsRef(getter) /\\ TypeOf(getter[Ref]) = "string" THEN getter[Ref] ELSE ""
+
+\\* What one of those getters gives for a receiver.
+LOCAL ViewGet(heap, path, receiver) ==
+  LET object == heap.objects[receiver[Ref]]
+      name(prefix) == SubSeq(path, Len(prefix) + 1, Len(path))
+      wrong == Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
+      isShared == HasPrefix(path, "get Shared")
+  IN CASE path = TypedArrayGetter \\o "@@toStringTag" ->
+            IF IsTypedArray(heap, receiver) THEN object.elementType \\o "Array" ELSE Undefined
+       [] HasPrefix(path, TypedArrayGetter) ->
+            CASE ~IsTypedArray(heap, receiver) -> wrong
+              [] name(TypedArrayGetter) = "buffer" -> object.viewed
+              [] IsOutOfBounds(heap, object) -> 0
+              [] name(TypedArrayGetter) = "length" -> ViewLength(heap, object)
+              [] name(TypedArrayGetter) = "byteLength" ->
+                   ViewLength(heap, object) * ElementSize(object.elementType)
+              [] OTHER -> object.byteOffset
+       [] HasPrefix(path, "get DataView.") ->
+            CASE ~IsDataView(heap, receiver) -> wrong
+              [] name("get DataView.prototype.") = "buffer" -> object.viewed
+              [] IsOutOfBounds(heap, object) ->
+                   Assert(FALSE, "tla-ts can't throw the TypeError of a DataView out of bounds")
+              [] name("get DataView.prototype.") = "byteLength" -> ViewLength(heap, object)
+              [] OTHER -> object.byteOffset
+       [] ~IsBuffer(heap, receiver) \\/ object.isShared # isShared -> wrong
+       [] OTHER ->
+            LET field == IF isShared THEN name("get SharedArrayBuffer.prototype.")
+                         ELSE name("get ArrayBuffer.prototype.")
+            IN CASE field = "byteLength" -> Len(object.bytes)
+                 [] field = "maxByteLength" ->
+                      IF object.maxLength = Undefined THEN Len(object.bytes) ELSE object.maxLength
+                 [] field \\in {"resizable", "growable"} -> object.maxLength # Undefined
+                 [] OTHER -> object.isDetached
+
+\\* An object's own properties that hold a key, where a typed array's elements aren't properties.
+LOCAL PropertiesOf(heap, ref, key) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) = "property"
+  THEN heap.objects[ref[Ref]]
+  ELSE Lookup(heap, ref)
+
+Prototype(heap, ref) ==
+  IF IsTypedArray(heap, ref) THEN heap.objects[ref[Ref]].prototype ELSE Lookup(heap, ref).prototype
 
 RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
-  \\/ key \\in DOMAIN Own(heap, ref)
-  \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
+  ELSE \\/ key \\in DOMAIN PropertiesOf(heap, ref, key).values
+       \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
 
 \\* A promise that tla-ts follows as it compiles, whose properties the heap doesn't hold.
 PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !.isOpaque = TRUE]
@@ -678,6 +834,20 @@ LOCAL IsError(value) ==
 \\* that JavaScript throws differs between engines, and tla-ts gives it none. A script can't read or
 \\* change the prototype of an error class that isn't an object tla-ts holds, so its constructor
 \\* property is still the class.
+\\* A read of a key from an object or its prototypes, where a getter that reads a buffer's or a view's
+\\* internal slots reads the receiver's.
+RECURSIVE GetFrom(_, _, _, _)
+GetFrom(heap, ref, key, receiver) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN IF TypedKey(key) = "index" THEN TypedElement(heap, ref, ToIndex(key)) ELSE Undefined
+  ELSE LET object == PropertiesOf(heap, ref, key)
+           path == GetterPath(object.values[key].get)
+       IN CASE key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                 /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
+            [] key \\in DOMAIN object.values -> Value(object, key)
+            [] object.prototype = Null -> Undefined
+            [] OTHER -> GetFrom(heap, object.prototype, key, receiver)
+
 RECURSIVE Get(_, _, _)
 Get(heap, ref, key) ==
   IF ~IsRef(ref) /\\ IsError(ref)
@@ -686,10 +856,7 @@ Get(heap, ref, key) ==
          [] key = "constructor" /\\ ~IsHeap(ref.constructor) /\\ ~IsBuiltIn(ref.constructor) ->
               ref.constructor
          [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
-  ELSE LET object == Lookup(heap, ref)
-       IN CASE key \\in DOMAIN object.values -> Value(object, key)
-            [] object.prototype = Null -> Undefined
-            [] OTHER -> Get(heap, object.prototype, key)
+  ELSE GetFrom(heap, ref, key, ref)
 
 \\* The heap after a pattern reads keys of an object, which TLC would read only where something
 \\* reads what the pattern binds, so that a getter that tla-ts can't call stops the check.
@@ -876,7 +1043,7 @@ PresentElements(heap, ref) ==
 \\* where the write makes or changes a data property.
 RECURSIVE AccessorOf(_, _, _)
 AccessorOf(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
+  LET object == PropertiesOf(heap, ref, key)
   IN CASE key \\in DOMAIN object.values ->
             IF object.attributes[key].kind = "accessor" THEN object.values[key] ELSE Undefined
        [] object.prototype = Null -> Undefined
@@ -884,7 +1051,7 @@ AccessorOf(heap, ref, key) ==
 
 RECURSIVE AccessorFieldOf(_, _, _, _)
 AccessorFieldOf(heap, ref, key, field) ==
-  LET object == Lookup(heap, ref)
+  LET object == PropertiesOf(heap, ref, key)
   IN CASE key \\in DOMAIN object.values ->
             IF object.attributes[key].kind = "accessor"
             THEN object.values[key][field]
@@ -898,17 +1065,19 @@ SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
 RECURSIVE IsWritable(_, _, _)
 IsWritable(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
+  LET object == PropertiesOf(heap, ref, key)
   IN IF key \\in DOMAIN object.values
      THEN object.attributes[key].writable
      ELSE object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
 
 CanPut(heap, ref, key) ==
   LET accessor == AccessorOf(heap, ref, key)
-  IN IF accessor = Undefined
-     THEN /\\ IsWritable(heap, ref, key)
-          /\\ key \\in DOMAIN Own(heap, ref) \\/ Lookup(heap, ref).extensible
-     ELSE accessor.set # Undefined
+      object == PropertiesOf(heap, ref, key)
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> TRUE
+       [] accessor = Undefined ->
+            /\\ IsWritable(heap, ref, key)
+            /\\ key \\in DOMAIN object.values \\/ object.extensible
+       [] OTHER -> accessor.set # Undefined
 
 RECURSIVE IsPrototypeOf(_, _, _)
 IsPrototypeOf(heap, owner, ref) ==
@@ -2501,12 +2670,229 @@ LOCAL WriteDescriptor(object, key, value) ==
    isAccessor |-> FALSE, isData |-> TRUE, isValid |-> TRUE, value |-> value, get |-> Undefined,
    set |-> Undefined, writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE]
 
+LOCAL Reversed(sequence) == [position \\in DOMAIN sequence |-> sequence[Len(sequence) - position + 1]]
+
+LOCAL ExponentBits(type) == CASE type = "Float16" -> 5 [] type = "Float32" -> 8 [] OTHER -> 11
+
+LOCAL FractionBits(type) == CASE type = "Float16" -> 10 [] type = "Float32" -> 23 [] OTHER -> 52
+
+LOCAL BitsBytes(bits, size) == [position \\in 1..size |-> BitsValue(bits, 8 * (position - 1), 8)]
+
+\\* The little-endian bytes of a float that holds a number exactly, which stops where it would round.
+LOCAL FloatBytes(value, type) ==
+  LET size == ElementSize(type)
+      exponentBits == ExponentBits(type)
+      fractionBits == FractionBits(type)
+      top == 8 * size - 1
+      ones == 2^exponentBits - 1
+      encode(isNegative, exponent, fraction) ==
+        BitsBytes([position \\in 0..top |->
+                     CASE position = top -> IF isNegative THEN 1 ELSE 0
+                       [] position >= fractionBits -> (exponent \\div 2^(position - fractionBits)) % 2
+                       [] OTHER -> fraction[position]], size)
+      none == [position \\in 0..(fractionBits - 1) |-> 0]
+      magnitude == IF value < 0 THEN -value ELSE value
+      power == CHOOSE candidate \\in 0..30 : magnitude \\div 2^candidate = 1
+      shift == fractionBits - power
+      rest == magnitude - 2^power
+  IN CASE value = NaN ->
+            encode(FALSE, ones, [position \\in 0..(fractionBits - 1) |->
+                                   IF position = fractionBits - 1 THEN 1 ELSE 0])
+       [] value = Infinity -> encode(FALSE, ones, none)
+       [] value = NegativeInfinity -> encode(TRUE, ones, none)
+       [] value = NegativeZero -> encode(TRUE, 0, none)
+       [] value = 0 -> encode(FALSE, 0, none)
+       [] value = -2147483647 - 1 -> Assert(FALSE, "tla-ts can't represent a number this big")
+       [] (shift < 0 /\\ magnitude % 2^(-shift) # 0) \\/ power + 2^(exponentBits - 1) - 1 >= ones ->
+            Assert(FALSE, "tla-ts can't round a number to a float")
+       [] OTHER ->
+            encode(value < 0, power + 2^(exponentBits - 1) - 1,
+                   [position \\in 0..(fractionBits - 1) |->
+                      IF position < shift THEN 0 ELSE (rest \\div 2^(position - shift)) % 2])
+
+\\* The little-endian bytes that an element of a type holds for a number.
+NumberBytes(type, value) ==
+  CASE type \\in {"Float16", "Float32", "Float64"} -> FloatBytes(value, type)
+    [] type = "Uint8Clamped" ->
+         <<CASE value \\in {NaN, NegativeZero, NegativeInfinity} -> 0
+             [] value = Infinity -> 255
+             [] value < 0 -> 0
+             [] value > 255 -> 255
+             [] OTHER -> value>>
+    [] value \\in SpecialNumbers -> [position \\in 1..ElementSize(type) |-> 0]
+    [] OTHER -> [position \\in 1..ElementSize(type) |-> (value \\div 2^(8 * (position - 1))) % 256]
+
+RECURSIVE NumbersBytes(_, _)
+NumbersBytes(type, numbers) ==
+  IF numbers = <<>> THEN <<>> ELSE NumberBytes(type, Head(numbers)) \\o NumbersBytes(type, Tail(numbers))
+
+LOCAL WithBytes(heap, view, start, written) ==
+  LET bytes == ViewedBytes(heap, view)
+  IN [heap EXCEPT !.objects[view.viewed[Ref]].bytes =
+        SubSeq(bytes, 1, start) \\o written \\o SubSeq(bytes, start + Len(written) + 1, Len(bytes))]
+
+\\* A write to a typed array's element, which converts the value first, and does nothing at an
+\\* index past the end.
+TypedSet(heap, ref, key, value) ==
+  LET number == ToNumber(value)
+      view == heap.objects[ref[Ref]]
+  IN IF number = number /\\ TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, view)
+     THEN WithBytes(heap, view, view.byteOffset + ToIndex(key) * ElementSize(view.elementType),
+                    NumberBytes(view.elementType, number))
+     ELSE heap
+
+\\* ToIndex of an argument, or -1 where it throws a RangeError.
+IndexOfArgument(value) ==
+  LET number == ToNumber(value)
+  IN CASE number \\in {NaN, NegativeZero} -> 0
+       [] number \\in {Infinity, NegativeInfinity} -> -1
+       [] number < 0 -> -1
+       [] OTHER -> number
+
+LOCAL MaxBytes == 65536
+
+LOCAL RangeError(what) == Assert(FALSE, "tla-ts can't throw the RangeError of " \\o what)
+
+LOCAL ViewObject(prototype, buffer, offset, length) ==
+  [viewed |-> buffer, byteOffset |-> offset, viewLength |-> length]
+    @@ [EmptyObject EXCEPT !.prototype = prototype]
+
+LOCAL BufferObject(prototype, bytes, maxLength, isShared) ==
+  [bytes |-> bytes, maxLength |-> maxLength, isShared |-> isShared, isDetached |-> FALSE]
+    @@ [EmptyObject EXCEPT !.prototype = prototype]
+
+\\* The heap with a new ArrayBuffer or SharedArrayBuffer of a length, which options may make
+\\* resizable.
+NewBuffer(heap, prototype, arguments, isShared) ==
+  LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
+      byteLength == IndexOfArgument(argument(1))
+      options == argument(2)
+      maximum == IF IsObjectIn(heap, options) THEN Get(heap, options, "maxByteLength") ELSE Undefined
+      maxLength == IF maximum = Undefined THEN Undefined ELSE IndexOfArgument(maximum)
+  IN CASE byteLength = -1 -> RangeError("an invalid length")
+       [] maxLength = -1 -> RangeError("an invalid length")
+       [] maxLength # Undefined /\\ byteLength > maxLength -> RangeError("a length past the maximum")
+       [] byteLength > MaxBytes \\/ (maxLength # Undefined /\\ maxLength > MaxBytes) ->
+            Assert(FALSE, "tla-ts can't make a buffer this big")
+       [] OTHER ->
+            Allocate(heap, BufferObject(prototype, [position \\in 1..byteLength |-> 0], maxLength,
+                                        isShared))
+
+\\* The heap with a new DataView of a buffer.
+NewDataView(heap, prototype, arguments) ==
+  LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
+      buffer == argument(1)
+      object == heap.objects[buffer[Ref]]
+      offset == IndexOfArgument(argument(2))
+      length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
+  IN CASE ~IsBuffer(heap, buffer) ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of a DataView of something other than a buffer")
+       [] offset = -1 -> RangeError("an invalid offset")
+       [] object.isDetached -> Assert(FALSE, "tla-ts can't throw the TypeError of a detached buffer")
+       [] offset > Len(object.bytes) -> RangeError("an offset past the end")
+       [] length = -1 -> RangeError("an invalid length")
+       [] length # Undefined /\\ offset + length > Len(object.bytes) -> RangeError("a length past the end")
+       [] OTHER ->
+            Allocate(heap, ViewObject(prototype, buffer, offset,
+                                      CASE length # Undefined -> length
+                                        [] object.maxLength # Undefined -> -1
+                                        [] OTHER -> Len(object.bytes) - offset))
+
+LOCAL IsSequenceValue(value) ==
+  ~IsRef(value) /\\ TypeOf(value) = "object" /\\ SubSeq(ToString(value), 1, 2) = "<<"
+
+\\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
+\\* viewing a buffer.
+NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
+  LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
+      size == ElementSize(type)
+      first == argument(1)
+      view(current, buffer, offset, length) ==
+        Allocate(current, [elementType |-> type] @@ ViewObject(prototype, buffer, offset, length))
+      withBytes(bytes) ==
+        LET allocated == Allocate(heap, BufferObject(bufferPrototype, bytes, Undefined, FALSE))
+        IN view(allocated, Allocated(allocated), 0, Len(bytes) \\div size)
+      object == heap.objects[first[Ref]]
+      offset == IndexOfArgument(argument(2))
+      length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
+      byteLength == Len(object.bytes)
+  IN CASE ~IsObjectIn(heap, first) ->
+            LET count == IndexOfArgument(first)
+            IN CASE count = -1 -> RangeError("an invalid length")
+                 [] count * size > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")
+                 [] OTHER -> withBytes([position \\in 1..(count * size) |-> 0])
+       [] IsTypedArray(heap, first) ->
+            IF IsOutOfBounds(heap, object)
+            THEN Assert(FALSE, "tla-ts can't throw the TypeError of a typed array out of bounds")
+            ELSE withBytes(NumbersBytes(type, [position \\in 1..ViewLength(heap, object) |->
+                                                 TypedElement(heap, first, position - 1)]))
+       [] IsSequenceValue(first) ->
+            withBytes(NumbersBytes(type, [position \\in DOMAIN first |-> ToNumber(first[position])]))
+       [] ~IsBuffer(heap, first) -> Assert(FALSE, "tla-ts can't make a typed array of this object")
+       [] offset = -1 \\/ offset % size # 0 -> RangeError("an invalid offset")
+       [] length = -1 -> RangeError("an invalid length")
+       [] object.isDetached -> Assert(FALSE, "tla-ts can't throw the TypeError of a detached buffer")
+       [] length = Undefined /\\ object.maxLength # Undefined ->
+            IF offset > byteLength THEN RangeError("an offset past the end") ELSE view(heap, first, offset, -1)
+       [] length = Undefined ->
+            IF byteLength % size # 0 \\/ offset > byteLength
+            THEN RangeError("an invalid offset")
+            ELSE view(heap, first, offset, (byteLength - offset) \\div size)
+       [] offset + length * size > byteLength -> RangeError("a length past the end")
+       [] OTHER -> view(heap, first, offset, length)
+
+LOCAL Returned(heap, value) == [heap |-> heap, value |-> value, error |-> ""]
+
+LOCAL Thrown(heap, error) == [heap |-> heap, value |-> Undefined, error |-> error]
+
+\\* DataView's get and set methods, which give the heap after them, their value, and the error they
+\\* throw, if any.
+DataViewGet(heap, ref, type, request, littleEndian) ==
+  LET view == heap.objects[ref[Ref]]
+      index == IndexOfArgument(request)
+      isLittle == ToBoolean(littleEndian)
+      size == ElementSize(type)
+      bytes == SubSeq(ViewedBytes(heap, view), view.byteOffset + index + 1, view.byteOffset + index + size)
+  IN CASE index = -1 -> Thrown(heap, "RangeError")
+       [] isLittle = isLittle /\\ IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
+       [] index + size > ViewLength(heap, view) -> Thrown(heap, "RangeError")
+       [] OTHER -> Returned(heap, NumberOfBytes(type, IF isLittle THEN bytes ELSE Reversed(bytes)))
+
+DataViewSet(heap, ref, type, request, value, littleEndian) ==
+  LET view == heap.objects[ref[Ref]]
+      index == IndexOfArgument(request)
+      number == ToNumber(value)
+      isLittle == ToBoolean(littleEndian)
+      bytes == NumberBytes(type, number)
+  IN CASE index = -1 -> Thrown(heap, "RangeError")
+       [] number = number /\\ isLittle = isLittle /\\ IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
+       [] index + ElementSize(type) > ViewLength(heap, view) -> Thrown(heap, "RangeError")
+       [] OTHER ->
+            Returned(WithBytes(heap, view, view.byteOffset + index,
+                               IF isLittle THEN bytes ELSE Reversed(bytes)), Undefined)
+
+\\* ArrayBuffer's resize and SharedArrayBuffer's grow.
+Resize(heap, ref, request, isShared) ==
+  LET object == heap.objects[ref[Ref]]
+      length == IndexOfArgument(request)
+  IN CASE ~IsBuffer(heap, ref) \\/ object.isShared # isShared \\/ object.maxLength = Undefined ->
+            Thrown(heap, "TypeError")
+       [] length = -1 -> Thrown(heap, "RangeError")
+       [] object.isDetached -> Thrown(heap, "TypeError")
+       [] length > object.maxLength -> Thrown(heap, "RangeError")
+       [] isShared /\\ length < Len(object.bytes) -> Thrown(heap, "RangeError")
+       [] OTHER ->
+            Returned([heap EXCEPT !.objects[ref[Ref]].bytes =
+                        IF length <= Len(@) THEN SubSeq(@, 1, length)
+                        ELSE @ \\o [position \\in 1..(length - Len(@)) |-> 0]], Undefined)
+
 SetProperty(heap, ref, key, value) ==
   LET accessor == AccessorOf(heap, ref, key)
-      object == Lookup(heap, ref)
+      object == PropertiesOf(heap, ref, key)
       written == DefineOwn(object, key, WriteDescriptor(object, key, value))
       failed == Assert(FALSE, "tla-ts can't throw the TypeError of a failed write")
-  IN CASE ~CanPut(heap, ref, key) -> failed
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> TypedSet(heap, ref, key, value)
+       [] ~CanPut(heap, ref, key) -> failed
        [] accessor = Undefined /\\ IsArrayObject(object) ->
             CASE written.isDone -> Update(heap, ref, written.object)
               [] written.isRangeError ->

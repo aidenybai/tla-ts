@@ -5652,3 +5652,78 @@ describe("regular expressions", () => {
     expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u flag");
   });
 });
+
+describe("buffers", () => {
+  it("reads and writes the elements of typed arrays that share a buffer", async () => {
+    const result = await checkModel(`
+      const buffer = new ArrayBuffer(8);
+      if (buffer.byteLength !== 8) throw new Error("byteLength");
+      const bytes = new Uint8Array(buffer);
+      if (bytes[2] !== 0 || bytes.length !== 8) throw new Error("bytes");
+      bytes[3] = 300;
+      if (bytes[3] !== 44) throw new Error("wrap");
+      if (bytes[9] !== undefined) throw new Error("oob");
+      const signed = new Int8Array(buffer, 3, 2);
+      if (signed[0] !== 44 || signed.length !== 2 || signed.byteOffset !== 3) throw new Error("signed");
+      bytes[4] = 255;
+      if (signed[1] !== -1) throw new Error("negative");
+      const floats = new Float64Array([1, -2, 1024]);
+      if (floats[0] !== 1 || floats[1] !== -2 || floats[2] !== 1024) throw new Error("floats");
+      const halves = new Uint16Array(new Uint8Array([1, 2, 3]));
+      if (halves[2] !== 3 || halves.byteLength !== 6) throw new Error("copy");
+      if (!(1 in halves) || 3 in halves) throw new Error("in");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("gets and sets a DataView's numbers, in either byte order", async () => {
+    const result = await checkModel(`
+      const buffer = new ArrayBuffer(12, { maxByteLength: 16 });
+      const view = new DataView(buffer, 2);
+      view.setUint8(0, 200);
+      if (view.getUint8(0) !== 200) throw new Error("get");
+      if (view.getInt8(0) !== -56) throw new Error("int8");
+      view.setInt16(1, -2);
+      if (view.getInt16(1) !== -2) throw new Error("int16");
+      if (view.getUint8(1) !== 255) throw new Error("int16 high");
+      if (view.getUint8(2) !== 254) throw new Error("int16 low");
+      if (view.getUint16(1, true) !== 65279) throw new Error("little");
+      view.setFloat64(0, -1024);
+      if (view.getFloat64(0) !== -1024) throw new Error("float");
+      view.setFloat32(4, NaN);
+      if (!Number.isNaN(view.getFloat32(4))) throw new Error("nan");
+      view.setFloat16(0, -0);
+      if (!Object.is(view.getFloat16(0), -0)) throw new Error("minus zero");
+      let caught = "";
+      try { view.getInt32(8); } catch (error) { caught = error instanceof RangeError ? "range" : "other"; }
+      if (caught !== "range") throw new Error("range");
+      const before: number = view.byteLength;
+      if (before !== 10) throw new Error("length");
+      buffer.resize(16);
+      if (view.byteLength !== 14) throw new Error("resize");
+      if (buffer.byteLength !== 16) throw new Error("buffer resize");
+      view.setInt32(10, 2147483647);
+      if (view.getInt32(10) !== 2147483647) throw new Error("max");
+      view.setInt32(10, -2147483647);
+      if (view.getInt32(10) !== -2147483647) throw new Error("min");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops at a number a typed array's float can't hold exactly", async () => {
+    const result = await checkModel(`
+      const floats = new Float32Array(1);
+      floats[0] = 16777217;
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't round a number to a float");
+  });
+
+  it("stops where something else reads a typed array's properties", async () => {
+    const result = await checkModel(`
+      const bytes = new Uint8Array(2);
+      const keys = Object.keys(bytes);
+      if (keys.length !== 2) throw new Error("keys");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't");
+  });
+});

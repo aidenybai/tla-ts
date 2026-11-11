@@ -116,6 +116,8 @@ import {
   getNewWrapper,
   isAllocation,
   isNewProxy,
+  getNewBuffer,
+  getViewCall,
   isRevoke,
   isObjectChange,
   getDateCall,
@@ -1185,6 +1187,73 @@ export const translateCallStatement = (
             throwTypeError(path, expression, context, frame),
           )
         : run,
+    );
+  }
+  const viewCall = getViewCall(expression, context);
+  if (viewCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const receiver = context.names.getFresh("view");
+    const ref = identifier(receiver);
+    const changeName = context.names.getFresh("change");
+    const change = identifier(changeName);
+    const values = [0, 1, 2].map((position) => {
+      const value = viewCall.values.at(position);
+      return value === undefined
+        ? getUndefined(context)
+        : translateExpression(value, path.scope, context);
+    });
+    const method = viewCall.method;
+    const type = string(method.slice(3));
+    const operation =
+      viewCall.owner !== "DataView"
+        ? useJavaScript(
+            "Resize",
+            [heap, ref, values[0], boolean(viewCall.owner === "SharedArrayBuffer")],
+            context,
+          )
+        : method.startsWith("get")
+          ? useJavaScript("DataViewGet", [heap, ref, type, values[0], values[1]], context)
+          : useJavaScript("DataViewSet", [heap, ref, type, ...values], context);
+    const run = bindOnce(
+      path,
+      changeName,
+      operation,
+      ifThenElse(
+        apply("=", [field(change, "error"), string("")]),
+        continueWith(withHeap(field(change, "heap")), field(change, "value")),
+        ifThenElse(
+          apply("=", [field(change, "error"), string("RangeError")]),
+          throwError("RangeError", path, expression, context, frame),
+          throwTypeError(path, expression, context, frame),
+        ),
+      ),
+    );
+    return bindOnce(
+      path,
+      receiver,
+      translateExpression(viewCall.receiver, path.scope, context),
+      ifThenElse(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [heap, ref, string(method), string(`${viewCall.owner}.prototype.${method}`)],
+          context,
+        ),
+        viewCall.owner === "DataView"
+          ? ifThenElse(
+              useJavaScript("IsDataView", [heap, ref], context),
+              run,
+              throwTypeError(path, expression, context, frame),
+            )
+          : run,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(
+              `tla-ts can't call ${viewCall.owner}.prototype.${method} where a script replaced it`,
+            ),
+          ]),
+        ),
+      ),
     );
   }
   const stringCall = getStringCall(expression, context);
@@ -3956,6 +4025,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   getBound(node.expression, context) !== undefined ||
   getDateCall(node, context) !== undefined ||
   (context.heap !== undefined && getRegExpCall(node, context) !== undefined) ||
+  getViewCall(node, context) !== undefined ||
   getStringCall(node, context) !== undefined ||
   isDescriptorsRead(node, context) ||
   isRevoke(node, context) ||
@@ -4383,6 +4453,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       isProxyOperation(node, context) ||
       getDateCall(node, context) !== undefined ||
       getRegExpCall(node, context) !== undefined ||
+      getViewCall(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
@@ -5700,7 +5771,9 @@ const findLeadingCall = (
   // other new runs a conversion among its arguments first, such as one in an error's message.
   if (
     ts.isNewExpression(node) &&
-    (getNewWrapper(node, context) !== undefined || isNewProxy(node, context))
+    (getNewWrapper(node, context) !== undefined ||
+      isNewProxy(node, context) ||
+      getNewBuffer(node, context) !== undefined)
   ) {
     const found = inOrder(node.arguments ?? []);
     return found.call !== undefined || found.isBlocked ? found : evaluate(node);

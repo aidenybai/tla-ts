@@ -300,6 +300,9 @@ export const translateBuiltInValue = (
     | `String.prototype.${string}`
     | "Date.prototype"
     | "RegExp.prototype"
+    | `${string}Buffer.prototype`
+    | `${string}Array.prototype`
+    | "DataView.prototype"
     | "Symbol.prototype"
     | "Promise"
     | "Promise.prototype"

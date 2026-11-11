@@ -985,6 +985,35 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           context,
         );
   }
+  const buffer = getNewBuffer(node, context);
+  if (buffer !== undefined && ts.isNewExpression(node)) {
+    // The constructor, which the prototype's constructor property holds.
+    context.builtIns.add(buffer);
+    const prototype = translateBuiltInValue(`${buffer}.prototype`, node, context);
+    const values = tuple(
+      (node.arguments ?? []).map((value) => translateExpression(value, scope, context)),
+    );
+    const type = TYPED_ARRAYS.get(buffer);
+    return type !== undefined
+      ? useJavaScript(
+          "NewTypedArray",
+          [
+            heap,
+            string(type),
+            prototype,
+            translateBuiltInValue("ArrayBuffer.prototype", node, context),
+            values,
+          ],
+          context,
+        )
+      : buffer === "DataView"
+        ? useJavaScript("NewDataView", [heap, prototype, values], context)
+        : useJavaScript(
+            "NewBuffer",
+            [heap, prototype, values, boolean(buffer === "SharedArrayBuffer")],
+            context,
+          );
+  }
   if (isNewDate(node, context)) {
     const values = node.arguments ?? [];
     const time = isClockDate(node, context)
@@ -1191,6 +1220,7 @@ export const isAllocation = (node: ts.Node, context: Context) =>
   isNewObject(node, context) ||
   isNewDate(node, context) ||
   isNewProxy(node, context) ||
+  getNewBuffer(node, context) !== undefined ||
   isRevocable(node, context) ||
   getNewWrapper(node, context) !== undefined;
 
@@ -1401,6 +1431,61 @@ export const translateDateFields = (
     context,
   );
 
+// The type of each typed array's elements. A BigInt array's elements are BigInts, which tla-ts
+// doesn't hold in one.
+export const TYPED_ARRAYS = new Map(
+  [
+    "Int8",
+    "Uint8",
+    "Uint8Clamped",
+    "Int16",
+    "Uint16",
+    "Int32",
+    "Uint32",
+    "Float16",
+    "Float32",
+    "Float64",
+  ].map((type) => [`${type}Array`, type]),
+);
+
+// new of an ArrayBuffer, a SharedArrayBuffer, a DataView, or a typed array, which a statement makes
+// on the heap.
+export const getNewBuffer = (node: ts.Node, context: Context) => {
+  const name =
+    context.heap !== undefined &&
+    ts.isNewExpression(node) &&
+    !(node.arguments ?? []).some(ts.isSpreadElement)
+      ? getBuiltIn(node.expression, context)
+      : undefined;
+  return name !== undefined && isBufferName(name) ? name : undefined;
+};
+
+const isBufferName = (
+  name: string,
+): name is "ArrayBuffer" | "SharedArrayBuffer" | "DataView" | `${string}Array` =>
+  name === "ArrayBuffer" ||
+  name === "SharedArrayBuffer" ||
+  name === "DataView" ||
+  TYPED_ARRAYS.has(name);
+
+const VIEW_ACCESSOR = /^[gs]et(?:Int8|Uint8|Int16|Uint16|Int32|Uint32|Float16|Float32|Float64)$/;
+
+// A DataView's get or set method, ArrayBuffer's resize, or SharedArrayBuffer's grow, which a
+// statement runs, as each may throw.
+export const getViewCall = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined || !isMethodCall(node)) return undefined;
+  const receiver = node.expression.expression;
+  const method = node.expression.name.text;
+  const owner = context.checker.getTypeAtLocation(receiver).getSymbol()?.name;
+  const isKnown =
+    (owner === "DataView" && VIEW_ACCESSOR.test(method)) ||
+    (owner === "ArrayBuffer" && method === "resize") ||
+    (owner === "SharedArrayBuffer" && method === "grow");
+  return isKnown && !node.arguments.some(ts.isSpreadElement)
+    ? { owner, method, receiver, values: node.arguments }
+    : undefined;
+};
+
 // new Proxy of a target and a handler.
 export const isNewProxy = (node: ts.Node, context: Context): node is ts.NewExpression =>
   context.heap !== undefined &&
@@ -1533,6 +1618,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     isNewObject(node, context) ||
     isNewDate(node, context) ||
     isNewProxy(node, context) ||
+    getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes &&
@@ -1777,6 +1863,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (context.heap !== undefined && getRegExpCall(node, context)?.method === "replaceAll") {
     return ["TypeError"];
   }
+  if (getViewCall(node, context) !== undefined) return ["TypeError", "RangeError"];
   if (isInvalidRegExp(node, context)) return ["SyntaxError"];
   const created = ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
