@@ -14,7 +14,7 @@ interface TokenMarkProps extends PlacedToken {
 
 // A token gets a background. A declaration gets a bar in the gutter, and an outline around its
 // text only while it's hovered or selected, so it never covers the tokens inside it.
-export const TokenMark = ({ mark, rows, box, color }: TokenMarkProps) => {
+export const TokenMark = ({ mark, rows, lines, color }: TokenMarkProps) => {
   const nodeIds = mark.nodes.map((node) => node.id);
   const isHovered = useIsHovered(nodeIds);
   const isDimmed = useIsDimmed(nodeIds);
@@ -25,10 +25,10 @@ export const TokenMark = ({ mark, rows, box, color }: TokenMarkProps) => {
       <>
         <rect
           data-node={nodeId}
-          x={box.x - BAR_OFFSET - mark.lane * BAR_GAP}
-          y={box.y + 1}
+          x={lines.x - BAR_OFFSET - mark.lane * BAR_GAP}
+          y={lines.y + 1}
           width={BAR_WIDTH}
-          height={box.height - 2}
+          height={lines.height - 2}
           rx={BAR_WIDTH / 2}
           fill={color}
           opacity={isDimmed ? 0.25 : isHovered ? 1 : 0.5}
