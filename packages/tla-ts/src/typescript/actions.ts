@@ -61,10 +61,15 @@ import { TlaTypeScriptError } from "../errors";
 import { getConversion, getConversionFunctions, runConversion } from "./conversions";
 import { getJsonText, parseJson, translateHoldsJson } from "./json";
 import {
+  closeIterator,
   getIteratorFunctions,
   isIteratedPattern,
+  isIteratedValue,
   isTaken,
   isUntypedPattern,
+  openIterator,
+  readValue,
+  stepIterator,
   takeFromIterator,
 } from "./iterators";
 import {
@@ -3793,8 +3798,14 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
         visit(called);
       });
     }
-    // A pattern that destructures an object runs the functions of the object's iterator.
-    if (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) {
+    // A pattern that destructures an object, or a for-of that iterates one, runs the functions of
+    // the object's iterator.
+    if (
+      (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) ||
+      (ts.isForOfStatement(node) &&
+        getKind(node.expression, context) !== "sequence" &&
+        isIteratedValue(node.expression, context))
+    ) {
       if (context.heap !== undefined) changed.add(context.heap);
       getIteratorFunctions(node, context).forEach((called) => {
         if (visited.has(called)) return;
@@ -4161,6 +4172,11 @@ const translateLoop = (
     : translateExpressionStatement(initializer, path, context, frame, runLoop);
 };
 
+interface OpenedIterator {
+  iterator: Expression;
+  next: Expression;
+}
+
 const translateIterations = (
   loop: ts.IterationStatement,
   path: Path,
@@ -4169,6 +4185,12 @@ const translateIterations = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const iterated = ts.isForOfStatement(loop) || ts.isForInStatement(loop) ? loop : undefined;
+  // A for-of over an object that a script declares iterates through the object's iterator.
+  const isIterator =
+    iterated !== undefined &&
+    ts.isForOfStatement(iterated) &&
+    getKind(iterated.expression, context) !== "sequence" &&
+    isIteratedValue(iterated.expression, context);
   const isForIn =
     iterated !== undefined &&
     ts.isForInStatement(iterated) &&
@@ -4177,7 +4199,12 @@ const translateIterations = (
   if (ts.isForInStatement(loop) && !isForIn) {
     throw new TlaTypeScriptError("for-in iterates only objects", loop.expression);
   }
-  if (iterated !== undefined && !isForIn && getKind(iterated.expression, context) !== "sequence") {
+  if (
+    iterated !== undefined &&
+    !isForIn &&
+    !isIterator &&
+    getKind(iterated.expression, context) !== "sequence"
+  ) {
     throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
   }
   const changed = getChanged(loop, path, context);
@@ -4192,187 +4219,268 @@ const translateIterations = (
     (ts.isIdentifier(node) &&
       changed.some((symbol) => symbol === getSymbol(node, context.checker))) ||
     (ts.forEachChild(node, (child) => isIteratedChanged(child) || undefined) ?? false);
-  if (iterated !== undefined && isIteratedChanged(iterated.expression)) {
+  if (iterated !== undefined && !isIterator && isIteratedChanged(iterated.expression)) {
     throw new TlaTypeScriptError(
       "Don't change an array while a for-of iterates it",
       iterated.expression,
     );
   }
-  const name = context.names.getFresh("Loop");
-  const parameters = changed.map((symbol) => {
-    const binding = path.scope.bindings.get(symbol);
-    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
-  });
-  const position = context.names.getFresh("position");
-  const sequence = context.names.getFresh("sequence");
-  const getValues = (current: Path) =>
-    changed.flatMap((symbol) => current.scope.bindings.get(symbol) ?? []);
-  const bindValues = (current: Path, values: Expression[]): Path => ({
-    ...current,
-    scope: {
-      ...current.scope,
-      bindings: new Map([
-        ...current.scope.bindings,
-        ...changed.map((symbol, index): [ts.Symbol, Expression] => [symbol, values[index]]),
-      ]),
-    },
-  });
-  // A loop that a catch or a function's return can leave gives how its body ended: "next", or
-  // "throw" or "return" with a value, which the code after it then throws or returns.
-  const hasReturn = (node: ts.Node): boolean =>
-    ts.isReturnStatement(node) ||
-    (!ts.isFunctionLike(node) &&
-      !ts.isClassLike(node) &&
-      (ts.forEachChild(node, (child) => hasReturn(child) || undefined) ?? false));
-  const isEnded = frame.throwTo !== undefined || hasReturn(loop.statement);
-  const end = (current: Path, kind: string, value: Expression = getUndefined(context)) =>
-    leaf(tuple([...(isEnded ? [string(kind), value] : []), ...getValues(current)]));
-  const done = (current: Path) => end(current, "next");
-  const repeat = (current: Path) =>
-    leaf(
-      call(name, [
-        ...(iterated === undefined ? [] : [apply("+", [identifier(position), number(1)])]),
-        ...getValues(current),
-      ]),
-    );
-  const test = (current: Path) => {
-    if (iterated !== undefined) {
-      return apply("<=", [identifier(position), apply("Len", [identifier(sequence)])]);
-    }
-    const condition =
-      ts.isWhileStatement(loop) || ts.isDoStatement(loop)
-        ? loop.expression
-        : ts.isForStatement(loop)
-          ? loop.condition
-          : undefined;
-    return condition === undefined
-      ? boolean(true)
-      : translateCondition(condition, current.scope, context);
-  };
-  const testAgain = (current: Path) => ifThenElse(test(current), repeat(current), done(current));
-  const advance = (current: Path) =>
-    ts.isForStatement(loop) && loop.incrementor !== undefined
-      ? translateExpressionStatement(loop.incrementor, current, context, frame, repeat)
-      : repeat(current);
-  const bodyFrame: Frame = {
-    ...frame,
-    next: ts.isDoStatement(loop) ? testAgain : advance,
-    exit: (current, value) =>
-      value === undefined ? end(current, "return") : end(current, "returnValue", value),
-    breakTo: done,
-    continueTo: ts.isDoStatement(loop) ? testAgain : advance,
-    throwTo: frame.throwTo && ((current, thrown) => end(current, "throw", thrown.value)),
-    yieldTo:
-      frame.yieldTo &&
-      (() => {
-        throw new TlaTypeScriptError("Yield outside loops", loop);
-      }),
-    awaitTo:
-      frame.awaitTo &&
-      (() => {
-        throw new TlaTypeScriptError("Await outside loops", loop);
-      }),
-  };
-  const translateBody = (current: Path) => {
-    if (iterated === undefined) {
-      return translateStatements([loop.statement], current, context, bodyFrame);
-    }
-    return bindIteration(
-      iterated.initializer,
-      index(identifier(sequence), [identifier(position)]),
-      undefined,
-      current,
+  // An iteration of a for-of over an iterator: it steps the iterator, and closes it where the body
+  // leaves the loop by a break, a return, or a throw, whose value the close can't change.
+  const translateStep = (
+    iterating: ts.ForOfStatement | ts.ForInStatement,
+    opened: OpenedIterator,
+    path: Path,
+    bodyFrame: Frame,
+    done: (path: Path) => Formula,
+  ) => {
+    const site = iterating.expression;
+    const close = (current: Path, closeFrame: Frame, closedWith: (path: Path) => Formula) =>
+      closeIterator(
+        site,
+        opened.iterator,
+        current,
+        context,
+        closeFrame,
+        (failed) => throwTypeError(failed, site, context, closeFrame),
+        closedWith,
+      );
+    const throwTo = bodyFrame.throwTo;
+    const iterationFrame: Frame = {
+      ...bodyFrame,
+      breakTo: (current) => close(current, bodyFrame, done),
+      exit: (current, value) =>
+        close(current, bodyFrame, (closed) => bodyFrame.exit(closed, value)),
+      throwTo:
+        throwTo &&
+        ((current, thrown) => {
+          const rethrow = (failed: Path) => throwTo(failed, thrown);
+          return close(current, { ...bodyFrame, throwTo: rethrow }, rethrow);
+        }),
+    };
+    return stepIterator(
+      site,
+      opened.iterator,
+      opened.next,
+      path,
       context,
       bodyFrame,
-      (bound) => translateStatements([loop.statement], bound, context, bodyFrame),
-    );
-  };
-  const inner = {
-    ...bindValues(
-      path,
-      parameters.map((parameter) => identifier(parameter)),
-    ),
-    isLooping: true,
-    // A generator from before the loop resumes only outside it, as each iteration's path ends.
-    generators: new Map(),
-    tasks: undefined,
-  };
-  const operator: OperatorDefinition = {
-    ...define(
-      name,
-      [...(iterated === undefined ? [] : [position]), ...parameters].map((parameter) => ({
-        name: parameter,
-        arity: 0,
-      })),
-      render(
-        ts.isDoStatement(loop)
-          ? translateBody(inner)
-          : ifThenElse(test(inner), translateBody(inner), done(inner)),
-      ),
-    ),
-    isRecursive: true,
-  };
-  const result = context.names.getFresh("loop");
-  const offset = isEnded ? 2 : 0;
-  const after = {
-    ...bindValues(
-      path,
-      changed.map((_, position) => index(identifier(result), [number(position + offset + 1)])),
-    ),
-    isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
-  };
-  const kind = index(identifier(result), [number(1)]);
-  const carried = index(identifier(result), [number(2)]);
-  const throwTo = frame.throwTo;
-  const ended = !isEnded
-    ? continueWith(after)
-    : ifThenElse(
-        apply("=", [kind, string("next")]),
-        continueWith(after),
-        ifThenElse(
-          apply("=", [kind, string("throw")]),
-          throwTo === undefined
-            ? leaf(boolean(false))
-            : throwTo(after, {
-                value: carried,
-                uncaught: apply("Assert", [boolean(false), string("A loop threw")]),
-              }),
-          ifThenElse(
-            apply("=", [kind, string("return")]),
-            frame.exit(after),
-            frame.exit(after, carried),
+      (failed) => throwTypeError(failed, site, context, bodyFrame),
+      done,
+      (stepped, result) =>
+        readValue(site, result, stepped, context, bodyFrame, (taken, value) =>
+          bindIteration(
+            iterating.initializer,
+            value,
+            undefined,
+            taken,
+            context,
+            iterationFrame,
+            (bound) => translateStatements([loop.statement], bound, context, iterationFrame),
           ),
         ),
+    );
+  };
+  const translateFrom = (path: Path, opened?: OpenedIterator): Formula => {
+    const name = context.names.getFresh("Loop");
+    // A loop over an array visits each of its positions, and one over an iterator steps it.
+    const isSequence = iterated !== undefined && opened === undefined;
+    const parameters = changed.map((symbol) => {
+      const binding = path.scope.bindings.get(symbol);
+      return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+    });
+    const position = context.names.getFresh("position");
+    const sequence = context.names.getFresh("sequence");
+    const getValues = (current: Path) =>
+      changed.flatMap((symbol) => current.scope.bindings.get(symbol) ?? []);
+    const bindValues = (current: Path, values: Expression[]): Path => ({
+      ...current,
+      scope: {
+        ...current.scope,
+        bindings: new Map([
+          ...current.scope.bindings,
+          ...changed.map((symbol, index): [ts.Symbol, Expression] => [symbol, values[index]]),
+        ]),
+      },
+    });
+    // A loop that a catch or a function's return can leave gives how its body ended: "next", or
+    // "throw" or "return" with a value, which the code after it then throws or returns.
+    const hasReturn = (node: ts.Node): boolean =>
+      ts.isReturnStatement(node) ||
+      (!ts.isFunctionLike(node) &&
+        !ts.isClassLike(node) &&
+        (ts.forEachChild(node, (child) => hasReturn(child) || undefined) ?? false));
+    const isEnded = frame.throwTo !== undefined || hasReturn(loop.statement);
+    const end = (current: Path, kind: string, value: Expression = getUndefined(context)) =>
+      leaf(tuple([...(isEnded ? [string(kind), value] : []), ...getValues(current)]));
+    const done = (current: Path) => end(current, "next");
+    const repeat = (current: Path) =>
+      leaf(
+        call(name, [
+          ...(isSequence ? [apply("+", [identifier(position), number(1)])] : []),
+          ...getValues(current),
+        ]),
       );
-  return letIn(
-    [
-      ...(iterated === undefined
-        ? []
-        : [
-            define(
-              sequence,
-              [],
-              isForIn
-                ? useJavaScript(
-                    "ForInKeys",
-                    [
-                      getHeap(path.scope, iterated.expression, context),
-                      translateObjectValue(iterated.expression, path.scope, context),
-                    ],
-                    context,
-                  )
-                : translateExpression(iterated.expression, path.scope, context),
+    const test = (current: Path) => {
+      if (iterated !== undefined) {
+        return apply("<=", [identifier(position), apply("Len", [identifier(sequence)])]);
+      }
+      const condition =
+        ts.isWhileStatement(loop) || ts.isDoStatement(loop)
+          ? loop.expression
+          : ts.isForStatement(loop)
+            ? loop.condition
+            : undefined;
+      return condition === undefined
+        ? boolean(true)
+        : translateCondition(condition, current.scope, context);
+    };
+    const testAgain = (current: Path) => ifThenElse(test(current), repeat(current), done(current));
+    const advance = (current: Path) =>
+      ts.isForStatement(loop) && loop.incrementor !== undefined
+        ? translateExpressionStatement(loop.incrementor, current, context, frame, repeat)
+        : repeat(current);
+    const bodyFrame: Frame = {
+      ...frame,
+      next: ts.isDoStatement(loop) ? testAgain : advance,
+      exit: (current, value) =>
+        value === undefined ? end(current, "return") : end(current, "returnValue", value),
+      breakTo: done,
+      continueTo: ts.isDoStatement(loop) ? testAgain : advance,
+      throwTo: frame.throwTo && ((current, thrown) => end(current, "throw", thrown.value)),
+      yieldTo:
+        frame.yieldTo &&
+        (() => {
+          throw new TlaTypeScriptError("Yield outside loops", loop);
+        }),
+      awaitTo:
+        frame.awaitTo &&
+        (() => {
+          throw new TlaTypeScriptError("Await outside loops", loop);
+        }),
+    };
+    const translateBody = (current: Path) => {
+      if (iterated === undefined) {
+        return translateStatements([loop.statement], current, context, bodyFrame);
+      }
+      if (opened !== undefined) {
+        return translateStep(iterated, opened, current, bodyFrame, done);
+      }
+      return bindIteration(
+        iterated.initializer,
+        index(identifier(sequence), [identifier(position)]),
+        undefined,
+        current,
+        context,
+        bodyFrame,
+        (bound) => translateStatements([loop.statement], bound, context, bodyFrame),
+      );
+    };
+    const inner = {
+      ...bindValues(
+        path,
+        parameters.map((parameter) => identifier(parameter)),
+      ),
+      isLooping: true,
+      // A generator from before the loop resumes only outside it, as each iteration's path ends.
+      generators: new Map(),
+      tasks: undefined,
+    };
+    const operator: OperatorDefinition = {
+      ...define(
+        name,
+        [...(isSequence ? [position] : []), ...parameters].map((parameter) => ({
+          name: parameter,
+          arity: 0,
+        })),
+        render(
+          ts.isDoStatement(loop) || opened !== undefined
+            ? translateBody(inner)
+            : ifThenElse(test(inner), translateBody(inner), done(inner)),
+        ),
+      ),
+      isRecursive: true,
+    };
+    const result = context.names.getFresh("loop");
+    const offset = isEnded ? 2 : 0;
+    const after = {
+      ...bindValues(
+        path,
+        changed.map((_, position) => index(identifier(result), [number(position + offset + 1)])),
+      ),
+      isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+    };
+    const kind = index(identifier(result), [number(1)]);
+    const carried = index(identifier(result), [number(2)]);
+    const throwTo = frame.throwTo;
+    const ended = !isEnded
+      ? continueWith(after)
+      : ifThenElse(
+          apply("=", [kind, string("next")]),
+          continueWith(after),
+          ifThenElse(
+            apply("=", [kind, string("throw")]),
+            throwTo === undefined
+              ? leaf(boolean(false))
+              : throwTo(after, {
+                  value: carried,
+                  uncaught: apply("Assert", [boolean(false), string("A loop threw")]),
+                }),
+            ifThenElse(
+              apply("=", [kind, string("return")]),
+              frame.exit(after),
+              frame.exit(after, carried),
             ),
-          ]),
-      operator,
-    ],
-    // The loop runs even when nothing reads what it changes, as it may throw.
-    bindOnce(
-      path,
-      result,
-      call(name, [...(iterated === undefined ? [] : [number(1)]), ...getValues(path)]),
-      ended,
-    ),
+          ),
+        );
+    return letIn(
+      [
+        ...(iterated === undefined || opened !== undefined
+          ? []
+          : [
+              define(
+                sequence,
+                [],
+                isForIn
+                  ? useJavaScript(
+                      "ForInKeys",
+                      [
+                        getHeap(path.scope, iterated.expression, context),
+                        translateObjectValue(iterated.expression, path.scope, context),
+                      ],
+                      context,
+                    )
+                  : translateExpression(iterated.expression, path.scope, context),
+              ),
+            ]),
+        operator,
+      ],
+      // The loop runs even when nothing reads what it changes, as it may throw.
+      bindOnce(
+        path,
+        result,
+        call(name, [...(isSequence ? [number(1)] : []), ...getValues(path)]),
+        ended,
+      ),
+    );
+  };
+  if (!isIterator || iterated === undefined) return translateFrom(path);
+  const iteratedExpression = iterated.expression;
+  return translateJoined(
+    loop,
+    path,
+    context,
+    (after) => throwTypeError(after, iteratedExpression, context, frame),
+    (throwWith) =>
+      openIterator(
+        iteratedExpression,
+        translateExpression(iteratedExpression, path.scope, context),
+        path,
+        context,
+        frame,
+        throwWith,
+        (opened, iterator, next) => translateFrom(opened, { iterator, next }),
+      ),
   );
 };
 

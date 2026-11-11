@@ -2230,6 +2230,49 @@ describe("errors", () => {
     expect((await checkModel(getSource("TypeError"))).failure?.message).toContain("caught");
   });
 
+  it("iterates an object through its iterator, and closes it where the loop leaves early", async () => {
+    const getSource = (closedAfterBreak: number) => `
+      let closed: number = 0;
+      let steps = 0;
+      const read = (): number => closed;
+      const iterable = {
+        [Symbol.iterator]: function () {
+          steps = 0;
+          return {
+            next: function () {
+              steps += 1;
+              return { value: steps * 2, done: steps > 3 };
+            },
+            return: function () {
+              closed += 1;
+              return { value: 0, done: true };
+            },
+          };
+        },
+      };
+      let sum = 0;
+      for (const value of iterable) {
+        sum += value;
+      }
+      if (sum !== 12 || read() !== 0) throw new Error("all");
+      for (const value of iterable) {
+        if (value === 4) break;
+      }
+      if (read() !== ${closedAfterBreak}) throw new Error("break");
+      let caught = false;
+      try {
+        for (const value of iterable) {
+          throw new RangeError("body");
+        }
+      } catch (error) {
+        caught = error instanceof RangeError;
+      }
+      if (!caught || read() !== 2) throw new Error("throw");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(0))).failure?.message).toContain("break");
+  });
+
   it("rejects an array pattern whose value's type doesn't tell an array from an object", () => {
     expect(() =>
       compile(`
