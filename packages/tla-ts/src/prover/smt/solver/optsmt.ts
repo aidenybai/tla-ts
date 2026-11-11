@@ -130,7 +130,6 @@ export class Optsmt {
     this.publishBestModel();
   }
 
-  // update_lower(idx, v): Z3 keeps the bound atom for the next maximize_objectives1.
   updateLowerBound(index: number, value: InfEps) {
     this.optSolver.mkGe(index, value);
     this.lower[index] = value;

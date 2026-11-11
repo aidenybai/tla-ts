@@ -191,7 +191,6 @@ class PbRewriter extends RewriterTpl {
   }
 }
 
-// get_pb_sum: whether a term is a weighted sum of 0-1 terms, as an objective MaxSMT takes.
 export const isPbSum = (manager: AstManager, term: number) => {
   const terms = new RefVector(manager);
   const isSum = new PbRewriter(manager, terms, 4, true).isPbSum(term);

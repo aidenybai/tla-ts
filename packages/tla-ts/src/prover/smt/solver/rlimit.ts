@@ -33,7 +33,6 @@ export class ResourceLimit {
     return this.isSuspended || (!this.isCanceled && this.count <= this.limit);
   }
 
-  // is_canceled: the state inc reports, without counting a step.
   isExhausted() {
     return !this.isSuspended && (this.isCanceled || this.count > this.limit);
   }

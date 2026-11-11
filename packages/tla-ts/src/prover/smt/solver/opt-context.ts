@@ -83,7 +83,6 @@ export class OptContext {
   private normalizedTerms: RefVector;
   private optSolver: OptSolver | null = null;
   private optsmt: Optsmt | null = null;
-  // m_model of Z3's context: the optimizer's model before the normalization's conversion.
   private rawModel: ProtoModel | null = null;
   private fixedModels = new Map<ProtoModel, ProtoModel>();
   model: ProtoModel | null = null;
@@ -97,7 +96,6 @@ export class OptContext {
     this.normalizedTerms = new RefVector(manager);
   }
 
-  // fix_model: each model is converted once.
   private fixModel(model: ProtoModel, goal: Goal) {
     const existing = this.fixedModels.get(model);
     if (existing !== undefined) return existing;
