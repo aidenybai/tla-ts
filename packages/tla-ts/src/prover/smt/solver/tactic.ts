@@ -957,7 +957,7 @@ const UNPORTED_TACTICS = new Set(
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
     "nla2bv nlqsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
-    "qe qe_rec qe2 qfbv-sls qffd qffp qffpbv qffplra qfnra " +
+    "qe qe_rec qe2 qfbv-sls qffd qfnra " +
     "qfufbv qsat recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
@@ -1325,7 +1325,7 @@ const compile = (
     case "cond": {
       if (sexpr.items.length !== 4)
         throw new SmtParseError("invalid if/conditional combinator, three arguments expected", end);
-      const probe = compileProbe(sexpr.items[1], end);
+      const probe = compileProbe(sexpr.items[1], end, isInternal);
       const children = sexpr.items
         .slice(2)
         .map((child) => compile(environment, child, end, isInternal));
@@ -1337,7 +1337,7 @@ const compile = (
     case "when": {
       if (sexpr.items.length !== 3)
         throw new SmtParseError("invalid when combinator, two arguments expected", end);
-      const probe = compileProbe(sexpr.items[1], end);
+      const probe = compileProbe(sexpr.items[1], end, isInternal);
       const child = compile(environment, sexpr.items[2], end, isInternal);
       return {
         ...mergeDescrs([child]),
@@ -1347,7 +1347,7 @@ const compile = (
     case "fail-if": {
       if (sexpr.items.length !== 2)
         throw new SmtParseError("invalid fail-if tactic, one argument expected", end);
-      const probe = compileProbe(sexpr.items[1], end);
+      const probe = compileProbe(sexpr.items[1], end, isInternal);
       return {
         descrs: new Map(),
         isRejectingUnknown: true,
@@ -1367,7 +1367,7 @@ const compile = (
             environment.write(piece.text + newline, false);
             return [goal];
           };
-        const probe = compileProbe(piece, end);
+        const probe = compileProbe(piece, end, isInternal);
         return (goal) => {
           environment.write(formatProbeValue(probe(goal)) + newline, true);
           return [goal];

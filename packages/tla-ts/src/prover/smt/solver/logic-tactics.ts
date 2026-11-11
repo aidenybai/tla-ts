@@ -155,6 +155,13 @@ const DEFAULT =
   "is-qfnra qfnra (if is-qfnia qfnia (if is-lira lira (if is-nra nra (if is-qffp qffp (if " +
   `is-qffplra qffplra (and-then ${QFLIA_PREAMBLE} smt))))))))))))))`;
 
+const QFFP_SIMPLIFY = "(using-params simplify :arith_lhs true :elim_and true)";
+
+const QFFP =
+  `(and-then (and-then ${QFFP_SIMPLIFY} propagate-values fpa2bv propagate-values ${QFFP_SIMPLIFY} ` +
+  "(if-no-proofs (if-no-unsat-cores ackermannize_bv))) bit-blast " +
+  `${QFFP_SIMPLIFY} (if is-propositional (if produce-proofs smt psat) (if is-fp-qfnra qfnra smt)))`;
+
 export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["qflia", QFLIA],
   ["qfidl", QFIDL],
@@ -179,5 +186,8 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["qfaufbv", QFAUFBV],
   ["qfauflia", QFAUFLIA],
   ["qfuf", QFUF],
+  ["qffp", QFFP],
+  ["qffpbv", QFFP],
+  ["qffplra", QFFP],
   ["default", DEFAULT],
 ]);

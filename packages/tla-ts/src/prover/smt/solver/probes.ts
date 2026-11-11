@@ -8,6 +8,7 @@ import {
   FAMILY_BASIC,
   FAMILY_BV,
   FAMILY_FPA,
+  FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -25,6 +26,7 @@ import {
   OP_DIV,
   OP_EQ,
   OP_EXTRACT,
+  OP_FPA_TO_REAL,
   OP_GE,
   OP_GT,
   OP_IDIV,
@@ -151,6 +153,25 @@ const mkNonQffp = (isLra: boolean) => (manager: AstManager, expr: number) => {
   if ((isLra && family === FAMILY_ARITH) || manager.isUninterpretedConst(expr)) return false;
   return isLra ? sort !== SORT_REAL : !(sort === SORT_REAL && manager.isNumeral(expr));
 };
+
+// Ported from Z3 (src/tactic/fpa/qffp_tactic.cpp). Z3 rejects every application of the basic family
+// before it would accept one, so the goal must not have a Boolean connective.
+const isNonFpQfnra = (manager: AstManager, expr: number) => {
+  if (!isApp(manager, expr)) return true;
+  const family = manager.getFamily(expr);
+  const sort = manager.sorts[expr];
+  if (family === FAMILY_FPA)
+    return (
+      !manager.isFpSort(sort) && !manager.isRmSort(sort) && manager.getOp(expr) !== OP_FPA_TO_REAL
+    );
+  return (
+    family !== FAMILY_USER ||
+    (!manager.isFpSort(sort) && !manager.isRmSort(sort) && sort !== SORT_BOOL)
+  );
+};
+
+// Z3 builds these probes into its tactics without registering them by name.
+const INTERNAL_PROBES = new Map<string, Probe>([["is-fp-qfnra", mkTest(isNonFpQfnra)]]);
 
 const LINEAR_OPS = [OP_LE, OP_GE, OP_LT, OP_GT, OP_ADD, OP_NUM];
 
@@ -455,7 +476,7 @@ const NARY_PROBES = new Map<string, (first: number, second: number) => number>([
   ["*", (first, second) => first * second],
 ]);
 
-export const compileProbe = (sexpr: SExpr, end: SmtToken): Probe => {
+export const compileProbe = (sexpr: SExpr, end: SmtToken, isInternal = false): Probe => {
   if (sexpr.kind === "numeral") {
     const value = Number(sexpr.text);
     if (value > 2 ** 31 - 1)
@@ -467,7 +488,8 @@ export const compileProbe = (sexpr: SExpr, end: SmtToken): Probe => {
   }
   if (sexpr.kind !== "list") {
     if (!isSymbol(sexpr)) throw new SmtParseError("invalid probe, unexpected input", end);
-    const named = NAMED_PROBES.get(sexpr.text);
+    const named =
+      NAMED_PROBES.get(sexpr.text) ?? (isInternal ? INTERNAL_PROBES.get(sexpr.text) : undefined);
     if (named !== undefined) return named;
     if (UNPORTED_PROBES.has(sexpr.text)) throw new SmtUnsupportedError(`the probe ${sexpr.text}`);
     throw new SmtParseError(`invalid probe, unknown builtin probe ${sexpr.text}`, end);
@@ -479,15 +501,15 @@ export const compileProbe = (sexpr: SExpr, end: SmtToken): Probe => {
   if (head.text === "not") {
     if (children.length !== 1)
       throw new SmtParseError("invalid probe expression, one argument expected", end);
-    const child = compileProbe(children[0], end);
+    const child = compileProbe(children[0], end, isInternal);
     return (goal) => Number(child(goal) === 0);
   }
   const binary = BINARY_PROBES.get(head.text);
   if (binary !== undefined) {
     if (children.length !== 2)
       throw new SmtParseError("invalid probe expression, two arguments expected", end);
-    const first = compileProbe(children[0], end);
-    const second = compileProbe(children[1], end);
+    const first = compileProbe(children[0], end, isInternal);
+    const second = compileProbe(children[1], end, isInternal);
     return (goal) => binary(first(goal), second(goal));
   }
   const nary = NARY_PROBES.get(head.text);
@@ -495,7 +517,7 @@ export const compileProbe = (sexpr: SExpr, end: SmtToken): Probe => {
     throw new SmtParseError(`invalid probe, unknown probe expression ${head.text}`, end);
   if (children.length === 0)
     throw new SmtParseError("invalid probe, at least one argument expected", end);
-  const probes = children.map((child) => compileProbe(child, end));
+  const probes = children.map((child) => compileProbe(child, end, isInternal));
   return (goal) => probes.map((probe) => probe(goal)).reduce(nary);
 };
 
