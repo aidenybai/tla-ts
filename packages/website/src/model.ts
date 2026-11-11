@@ -37,6 +37,8 @@ export interface ViewSource {
 // The TypeScript, the TLA+ it compiles to, and a source map from regions of one to the other.
 export interface ViewFile extends ViewSource {
   module: ViewSource;
+  // The TLC configuration that checks the module.
+  config: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
 }

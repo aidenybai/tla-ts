@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { Check, ChevronDown, Spline } from "lucide-react";
+import { Check, ChevronDown, Play, Spline, Square } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import {
   DropdownMenu,
@@ -7,6 +8,7 @@ import {
   DropdownMenuLinkItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "@/lib/navigation";
 import { getRouteHref } from "@/lib/route";
@@ -15,6 +17,33 @@ import { cn } from "@/lib/utils";
 import { isViewMode } from "@/lib/view-mode";
 import { useViewerStore } from "@/store/viewer";
 import { useViewer } from "./context";
+
+// Model checks the module with its config. A check runs until it finishes or you stop it.
+const Run = () => {
+  const { view, runner, setResultOpen } = useViewer();
+  if (runner.isRunning)
+    return (
+      <div className="flex shrink-0 items-center gap-1">
+        <Spinner label="Checking" className="size-7" />
+        <Button variant="ghost" onClick={runner.stop}>
+          <Square />
+          Stop
+        </Button>
+      </div>
+    );
+  return (
+    <Button
+      variant="ghost"
+      onClick={() => {
+        setResultOpen(true);
+        runner.run({ kind: "check", source: view.module.source, config: view.config });
+      }}
+    >
+      <Play />
+      Run
+    </Button>
+  );
+};
 
 const Arrows = () => {
   const { mode } = useViewer();
@@ -104,4 +133,4 @@ const Brand = () => (
   </div>
 );
 
-export const Toolbar = Object.assign(Root, { Brand, FileMenu, Arrows, Modes });
+export const Toolbar = Object.assign(Root, { Brand, FileMenu, Run, Arrows, Modes });

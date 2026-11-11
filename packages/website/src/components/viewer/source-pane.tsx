@@ -57,7 +57,7 @@ const useColoredNodes = (pane: Pane): GraphNode[] => {
   return view.nodes.filter((node) => node.pane === pane && colorByNodeId.has(node.id));
 };
 
-// Clicking a token in one pane brings the first token it links to in this pane into view.
+// Selecting a node brings its first linked line in this pane into view.
 const useRevealLinked = (wrapperRef: RefObject<HTMLDivElement | null>, pane: Pane): void => {
   const index = useViewerStore((state) => state.index);
   const selectedNodeId = useViewerStore((state) => state.selectedNodeId);
@@ -65,7 +65,7 @@ const useRevealLinked = (wrapperRef: RefObject<HTMLDivElement | null>, pane: Pan
     const wrapper = wrapperRef.current;
     const host = wrapper?.querySelector<HTMLElement>("diffs-container");
     const selected = selectedNodeId === null ? undefined : index.nodes.get(selectedNodeId);
-    if (!wrapper?.parentElement || !host || !selected || selected.pane === pane) return;
+    if (!wrapper?.parentElement || !host || !selected) return;
     const linked = [...getCausalNodeIds(index, selected.id)]
       .flatMap((nodeId) => index.nodes.get(nodeId) ?? [])
       .filter((node) => node.pane === pane)
@@ -152,6 +152,7 @@ const CodeView = ({ pane, fileName, source }: CodeViewProps) => {
   const trackPointer = usePointerTracking(wrapperRef, tokens);
   const leave = useViewerStore((state) => state.leave);
   const select = useViewerStore((state) => state.select);
+  const selectedNodeId = useViewerStore((state) => state.selectedNodeId);
   const setLayouts = useSourceMap().setLayouts;
   useRevealLinked(wrapperRef, pane);
   useLayoutEffect(() => {
@@ -166,7 +167,9 @@ const CodeView = ({ pane, fileName, source }: CodeViewProps) => {
       onMouseLeave={leave}
       onClick={(event) => {
         const wrapper = wrapperRef.current;
-        if (wrapper) select(getTokenAtEvent(wrapper, tokens, event)?.node.id ?? null);
+        const nodeId = wrapper ? getTokenAtEvent(wrapper, tokens, event)?.node.id : undefined;
+        // A second click on the selected token, or a click on empty space, clears the selection.
+        select(nodeId === undefined || nodeId === selectedNodeId ? null : nodeId);
       }}
     >
       <File file={file} options={options} disableWorkerPool />
