@@ -328,6 +328,14 @@ const CASES: Record<string, Case[]> = {
       statements: "const isSmall = (value: number) => value < 3; if (isSmall(count)) count = 10;",
     },
   ],
+  "missing keys": [
+    {
+      variables: "result: unknown = 0",
+      statements:
+        'result = [table["a"]["b"], table["z"] === undefined, table["a"]["c"] === undefined];',
+      setup: "const table: Record<string, Record<string, number>> = { a: { b: 1, zero: 0 } };",
+    },
+  ],
 };
 
 describe.each(Object.entries(CASES))("%s", (_, cases) => {

@@ -1408,6 +1408,30 @@ const translateElementAccess = (
         )
       : getElement(value, key, context);
   }
+  // An object read through its index signature, rather than a property its type declares, may
+  // lack the key, where JavaScript reads undefined.
+  const checker = context.checker;
+  const objectType = checker.getNonNullableType(checker.getTypeAtLocation(node.expression));
+  const argument = node.argumentExpression;
+  const isDeclared =
+    (ts.isStringLiteralLike(argument) || ts.isNumericLiteral(argument)) &&
+    objectType.getProperty(argument.text) !== undefined;
+  if (
+    kind === "other" &&
+    !isDefined &&
+    !isDeclared &&
+    checker.getIndexInfosOfType(objectType).length > 0
+  ) {
+    return share(value, "object", context, (object) =>
+      share(key, "key", context, (shared) =>
+        ifExpression(
+          apply("\\in", [shared, apply("DOMAIN", [object])]),
+          index(object, [shared]),
+          getUndefined(context),
+        ),
+      ),
+    );
+  }
   if (kind !== "string") return index(value, [key]);
   if (context.hasInheritedElements && !isDefined) {
     throw new TlaTypeScriptError(
