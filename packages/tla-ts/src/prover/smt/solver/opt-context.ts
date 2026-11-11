@@ -437,11 +437,8 @@ export class OptContext {
       manager: this.manager,
       params: options.maxsat,
       isSatEnabled: false,
-      numObjectives: this.internal.length,
       getSolver: () => ({
         assertExpr: (expr) => solver.assertExpr(expr),
-        push: () => solver.push(),
-        pop: (numScopes) => solver.pop(numScopes),
         checkSat: (assumptions) => solver.check(assumptions),
         getModel: () => solver.getModel(),
         getUnsatCore: () => solver.getUnsatCore(),

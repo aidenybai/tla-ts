@@ -8,8 +8,6 @@ import { RefVector } from "./ref-vector";
 
 export interface MaxsatSolver {
   assertExpr(expr: number): void;
-  push(): void;
-  pop(numScopes: number): void;
   checkSat(assumptions: readonly number[]): number;
   getModel(): ProtoModel | null;
   getUnsatCore(): readonly number[];
@@ -27,7 +25,6 @@ export interface MaxsatContext {
   readonly manager: AstManager;
   readonly params: MaxsatParams;
   readonly isSatEnabled: boolean;
-  readonly numObjectives: number;
   getSolver(): MaxsatSolver;
   getBaseModel(): ProtoModel | null;
   hide(decl: number): void;
