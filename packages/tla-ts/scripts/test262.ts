@@ -622,6 +622,10 @@ const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
 
+// An operator's operand of a type that the operator doesn't take, which tla-ts converts to a
+// primitive where it's an object that the test declares.
+const OPERAND_TYPE_ERRORS = new Set([2362, 2363, 2365]);
+
 // A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
 // by it.
 const UNINTENDED_COMPARISON_ERROR = 2367;
@@ -724,6 +728,34 @@ const ignoreSoundErrors = () => {
       declarations.every((declaration) => !declaration.getSourceFile().isDeclarationFile)
     );
   };
+  const isPrimitive = (node: ts.Node) =>
+    (checker.getTypeAtLocation(node).flags &
+      (ts.TypeFlags.NumberLike |
+        ts.TypeFlags.StringLike |
+        ts.TypeFlags.BooleanLike |
+        ts.TypeFlags.Undefined |
+        ts.TypeFlags.Null)) !==
+    0;
+  // An operation on objects that the test declares and primitives, which tla-ts converts.
+  const isConverted = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const start = diagnostic.start ?? 0;
+    const end = start + (diagnostic.length ?? 0);
+    const isSpan = (inner: ts.Node) => inner.getStart() === start && inner.getEnd() === end;
+    const operation = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.BinaryExpression =>
+        ts.isBinaryExpression(ancestor) &&
+        (isSpan(ancestor) || isSpan(ancestor.left) || isSpan(ancestor.right)),
+    );
+    if (operation === undefined) return false;
+    const kind = operation.operatorToken.kind;
+    const operands = [operation.left, operation.right];
+    return (
+      !(kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment) &&
+      operands.some(isPlainObject) &&
+      operands.every((operand) => isPlainObject(operand) || isPrimitive(operand))
+    );
+  };
   const isUnnarrowed = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const comparison = ts.findAncestor(
       node,
@@ -745,6 +777,7 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
+      (OPERAND_TYPE_ERRORS.has(diagnostic.code) && isConverted(node, diagnostic)) ||
       // Node may define a global that TypeScript doesn't know, such as print.
       (diagnostic.code === UNRESOLVED_NAME_ERROR &&
         ts.isIdentifier(node) &&
