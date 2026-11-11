@@ -23,11 +23,6 @@ const CASES: [string, string][] = [
   ["string methods as values", "count = label.includes.length;"],
   ["properties of functions", "count = step.length;"],
   ["converting an array to a string", "label = `${values}`;"],
-  ["bitwise and", "count = count & 1;"],
-  ["bitwise or", "count = count | 1;"],
-  ["bitwise xor", "count = count ^ 1;"],
-  ["shifts", "count = count << 1;"],
-  ["bitwise not", "count = ~count;"],
   ["delete", "delete record.a;"],
   ["optional chaining", "count = record?.a ?? 0;"],
   [

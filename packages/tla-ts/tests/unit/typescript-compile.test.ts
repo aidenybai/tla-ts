@@ -656,6 +656,43 @@ describe("values", () => {
     `);
     expect(result.status).toBe("success");
   });
+
+  it("computes the operators on the 32 bits of integers", async () => {
+    const result = await checkModel(`
+      export const isLikeJavaScript = () =>
+        (-1431655766 & 1431655765) === 0 &&
+        (-2147483647 | 1) === -2147483647 &&
+        (-2147483647 ^ 1) === -2147483647 - 1 &&
+        ~2147483647 === -2147483647 - 1 &&
+        (1073741824 << 1) === -2147483647 - 1 &&
+        (-5 << 33) === -10 &&
+        (-987654321 >> 31) === -1 &&
+        (-5 >>> 1) === 2147483645 &&
+        (-5 >>> 31) === 1 &&
+        (5 >>> 32) === 5;
+    `);
+    expect(result.status).toBe("success");
+  });
+
+  it("stops where >>> gives an integer that TLC can't hold", async () => {
+    const result = await checkModel(`
+      const box = { value: -1 };
+      box.value = box.value >>> 0;
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't hold -1 >>> 0 in an integer");
+  });
+
+  it("converts the objects that a bitwise operator takes in order", async () => {
+    const result = await checkModel(`
+      const log = { text: "" };
+      const left = { valueOf() { log.text += "L"; return 6; } };
+      const right = { valueOf() { log.text += "R"; return "3"; } };
+      // @ts-ignore
+      const result = left ^ right;
+      if (result !== 5 || log.text !== "LR") throw new Error("order");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
 });
 
 describe("bounds", () => {

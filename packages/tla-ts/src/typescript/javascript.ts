@@ -178,6 +178,72 @@ LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left
 \\* Math.abs.
 AbsoluteValue(value) == IF IsNegative(value) THEN Negate(value) ELSE value
 
+\\* ToInt32 of a number. TLC keeps integers in 32 bits, so it leaves an integer as it is.
+LOCAL Int32(value) == IF value \\in SpecialNumbers THEN 0 ELSE value
+
+\\* The count that a shift takes: ToUint32 of its right operand, modulo 32.
+LOCAL ShiftCount(value) == Int32(value) % 32
+
+LOCAL BitOf(operation, left, right) ==
+  CASE operation = "and" -> left * right
+    [] operation = "or" -> IF left + right > 0 THEN 1 ELSE 0
+    [] OTHER -> (left + right) % 2
+
+\\* An operation on the bits of two integers from 0.
+RECURSIVE Bits(_, _, _)
+Bits(operation, left, right) ==
+  IF left = 0 /\\ right = 0
+  THEN 0
+  ELSE 2 * Bits(operation, left \\div 2, right \\div 2) + BitOf(operation, left % 2, right % 2)
+
+\\* JavaScript's &, |, and ^. An integer of 32 bits is its low 30 bits plus High * 2^30, where High,
+\\* from -2 to 1, holds its top two bits in two's complement.
+LOCAL BitwiseOperation(operation, left, right) ==
+  LET a == Int32(left)
+      b == Int32(right)
+      high(value) == value \\div 1073741824
+      top(value) == IF high(value) < 0 THEN 1 ELSE 0
+      next(value) == high(value) % 2
+  IN Bits(operation, a % 1073741824, b % 1073741824)
+       + (BitOf(operation, next(a), next(b)) - 2 * BitOf(operation, top(a), top(b))) * 1073741824
+
+BitwiseAnd(left, right) == BitwiseOperation("and", left, right)
+
+BitwiseOr(left, right) == BitwiseOperation("or", left, right)
+
+BitwiseXor(left, right) == BitwiseOperation("xor", left, right)
+
+\\* JavaScript's ~.
+BitwiseNot(value) == -Int32(value) - 1
+
+\\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
+LeftShift(left, right) ==
+  LET a == Int32(left)
+      count == ShiftCount(right)
+  IN IF count = 0
+     THEN a
+     ELSE LET shifted == (a % 2 ^ (31 - count)) * 2 ^ (count - 1) * 2
+          IN IF (a \\div 2 ^ (31 - count)) % 2 = 1 THEN shifted + (-2147483647 - 1) ELSE shifted
+
+\\* JavaScript's >>, which keeps the sign.
+SignedRightShift(left, right) ==
+  LET a == Int32(left)
+      count == ShiftCount(right)
+  IN CASE count < 31 -> a \\div 2 ^ count
+       [] a < 0 -> -1
+       [] OTHER -> 0
+
+\\* JavaScript's >>>, which reads its left operand as unsigned. tla-ts can't hold an integer from
+\\* 2^31 that the shift doesn't make smaller.
+UnsignedRightShift(left, right) ==
+  LET a == Int32(left)
+      count == ShiftCount(right)
+  IN CASE a >= 0 /\\ count < 31 -> a \\div 2 ^ count
+       [] a >= 0 -> 0
+       [] count = 0 -> Assert(FALSE, "tla-ts can't hold " \\o ToString(a) \\o " >>> 0 in an integer")
+       [] count = 31 -> 1
+       [] OTHER -> a \\div 2 ^ count + 2 ^ (31 - count) + 2 ^ (31 - count)
+
 \\* Math.min and Math.max of two numbers, where NaN wins and -0 is less than 0.
 Minimum(left, right) ==
   CASE left = NaN \\/ right = NaN -> NaN

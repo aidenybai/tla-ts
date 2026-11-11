@@ -152,6 +152,17 @@ const BINARY_OPERATORS = new Map([
   [ts.SyntaxKind.GreaterThanEqualsToken, ">="],
 ]);
 
+// The JavaScript module's operators on the 32 bits of integers, which convert their operands with
+// ToInt32.
+export const BITWISE_OPERATORS = new Map([
+  [ts.SyntaxKind.AmpersandToken, "BitwiseAnd"],
+  [ts.SyntaxKind.BarToken, "BitwiseOr"],
+  [ts.SyntaxKind.CaretToken, "BitwiseXor"],
+  [ts.SyntaxKind.LessThanLessThanToken, "LeftShift"],
+  [ts.SyntaxKind.GreaterThanGreaterThanToken, "SignedRightShift"],
+  [ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken, "UnsignedRightShift"],
+]);
+
 const ORDERING_OPERATORS = new Set([
   ts.SyntaxKind.LessThanToken,
   ts.SyntaxKind.LessThanEqualsToken,
@@ -999,6 +1010,14 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     }
     return apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
   }
+  const bitwise = BITWISE_OPERATORS.get(kind);
+  if (bitwise !== undefined) {
+    return useJavaScript(
+      bitwise,
+      [node.left, node.right].map((operand) => translateToNumber(operand, node, scope, context)),
+      context,
+    );
+  }
   if (kind === ts.SyntaxKind.SlashToken) {
     throw new TlaTypeScriptError("Write division as Math.floor(a / b) or Math.trunc(a / b)", node);
   }
@@ -1560,6 +1579,13 @@ const translateNode = (
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.PlusToken) {
     return translateToNumber(node.operand, node, scope, context);
+  }
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.TildeToken) {
+    return useJavaScript(
+      "BitwiseNot",
+      [translateToNumber(node.operand, node, scope, context)],
+      context,
+    );
   }
   if (ts.isBinaryExpression(node)) return translateBinary(node, scope, context);
   if (ts.isConditionalExpression(node)) {

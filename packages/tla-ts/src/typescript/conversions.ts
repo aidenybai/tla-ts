@@ -9,7 +9,7 @@ import {
   getSymbol,
   skipCasts,
 } from "./context";
-import { concatenate, translateExpression } from "./expressions";
+import { BITWISE_OPERATORS, concatenate, translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { getBuiltIn } from "./intrinsics";
@@ -174,6 +174,11 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
         ),
       );
     }
+    if (node.operator === ts.SyntaxKind.TildeToken) {
+      return make([node.operand], "number", (primitives) =>
+        useJavaScript("BitwiseNot", [useJavaScript("ToNumber", [primitives[0]], context)], context),
+      );
+    }
     return undefined;
   }
   if (ts.isTemplateExpression(node)) {
@@ -202,7 +207,7 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       !operands.some((operand) => hasFlags(operand, ts.TypeFlags.StringLike, context)),
     );
   }
-  const operation = NUMBER_OPERATIONS.get(kind);
+  const operation = NUMBER_OPERATIONS.get(kind) ?? BITWISE_OPERATORS.get(kind);
   if (operation !== undefined) {
     return make(
       operands,
