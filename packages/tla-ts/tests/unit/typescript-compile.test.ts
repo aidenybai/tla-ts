@@ -1208,6 +1208,47 @@ describe("errors", () => {
 
   it.each([
     [
+      "a local that a function returns while a closure keeps it",
+      "let saved = () => 0;\nconst make = () => {\n  const items: number[] = [];\n  saved = () => items.push(1);\n  return items;\n};\nlet size = make().length;",
+    ],
+    [
+      "a local that a function returns and then changes in a finally block",
+      "const make = () => {\n  const items: number[] = [];\n  try {\n    return items;\n  } finally {\n    items.push(1);\n  }\n};\nlet size = make().length;",
+    ],
+    [
+      "a parameter that a function changes and returns",
+      "const fill = (items: number[]) => {\n  items.push(1);\n  return items;\n};\nconst list: number[] = [];\nlet size = fill(list).length + list.length;",
+    ],
+    [
+      "a local of an outer function that an inner function returns",
+      "const make = () => {\n  const items: number[] = [];\n  const get = () => {\n    return items;\n  };\n  const other = get();\n  items.push(1);\n  return other.length;\n};\nlet size = make();",
+    ],
+  ])("rejects %s, as the caller would share it", (_, source) => {
+    expect(() => compile(source)).toThrow("items would share an object that changes in place");
+  });
+
+  it("returns a local that a function changes, as the caller holds its only name", async () => {
+    const result = await checkModel(`
+      const build = (size: number) => {
+        const items: number[] = [];
+        for (let index = 0; index < size; index++) items.push(index * 2);
+        return items;
+      };
+
+      let count = 0;
+
+      export const tick = () => {
+        count = count === 1 ? 0 : 1;
+      };
+
+      export const isCorrect = () => build(3).length === 3 && build(3)[2] === 4;
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    [
       "an array that a heap object shares and that then changes",
       "const box = { list: [1] };\nlet list = box.list;\nlist.push(2);\nlet size = box.list.length;",
       "would share an object that changes in place",

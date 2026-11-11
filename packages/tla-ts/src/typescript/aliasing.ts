@@ -178,6 +178,35 @@ const land = (target: ts.Symbol[] | Written | undefined, depths: Depths): Escape
       : [{ target: target.symbol, source: depths.source, landing: depths.landing + target.depth }];
 
 // The places that may keep the object a node evaluates to.
+// Whether a return gives the caller the only name for a local's object: the local belongs to the
+// returning function, no function inside it keeps the local, and no finally block runs after.
+const getOwner = (node: ts.Node) => ts.findAncestor(node.parent, ts.isFunctionLike);
+
+const isOnlyName = (node: ts.Identifier, statement: ts.ReturnStatement, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const declaration = symbol?.valueDeclaration;
+  const owner = getOwner(statement);
+  if (
+    symbol === undefined ||
+    declaration === undefined ||
+    owner === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    getOwner(declaration) !== owner
+  ) {
+    return false;
+  }
+  const isFinallyAfter = (child: ts.Node): boolean =>
+    child.parent !== owner &&
+    ((ts.isTryStatement(child.parent) &&
+      child.parent.finallyBlock !== undefined &&
+      child.parent.finallyBlock !== child) ||
+      isFinallyAfter(child.parent));
+  return (
+    !isFinallyAfter(statement) &&
+    getReferences(symbol, owner, context).every((reference) => getOwner(reference) === owner)
+  );
+};
+
 const getEscapes = (
   node: ts.Expression,
   depths: Depths,
@@ -292,6 +321,9 @@ const getEscapes = (
     return ts.isIdentifier(parent.expression) && COPYING_CONSTRUCTORS.has(parent.expression.text)
       ? getFrom(parent, getCopy(depths))
       : land(undefined, depths);
+  }
+  if (ts.isReturnStatement(parent) && ts.isIdentifier(node) && isOnlyName(node, parent, context)) {
+    return [];
   }
   const isRead =
     ts.isExpressionStatement(parent) ||
