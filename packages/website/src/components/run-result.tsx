@@ -46,8 +46,8 @@ export const RunStatus = ({ result, onOpen }: RunStatusProps) => (
     className={cn(
       "mr-1 flex h-8 min-w-0 items-center gap-1.5 self-center rounded-full px-3 text-sm",
       result.isPassed
-        ? "bg-green-50 text-green-700 hover:bg-green-100"
-        : "bg-red-50 text-red-600 hover:bg-red-100",
+        ? "bg-success-soft text-success hover:bg-success-tint"
+        : "bg-danger-soft text-danger hover:bg-danger-tint",
     )}
   >
     <span aria-hidden>{result.isPassed ? "✓" : "✕"}</span>
@@ -76,7 +76,7 @@ export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
         aria-hidden
         onClick={onClose}
         className={cn(
-          "absolute inset-0 z-10 bg-gray-1200/5 transition-opacity starting:opacity-0",
+          "absolute inset-0 z-10 bg-overlay transition-opacity starting:opacity-0",
           DRAWER_EASING,
           !isOpen && "pointer-events-none opacity-0",
         )}
@@ -84,16 +84,16 @@ export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
       <section
         inert={!isOpen}
         className={cn(
-          "absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col rounded-t-xl bg-white shadow-[0_0_0_1px_#0000000f,0_-8px_24px_-12px_#00000029] transition-transform starting:translate-y-full",
+          "absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col rounded-t-xl bg-surface shadow-drawer transition-transform starting:translate-y-full",
           DRAWER_EASING,
           !isOpen && "translate-y-full",
         )}
       >
         <header className="flex items-start gap-3 py-2 pr-2 pl-4">
-          <h3 className={cn("mr-auto pt-1 text-sm", !result.isPassed && "text-red-600")}>
+          <h3 className={cn("mr-auto pt-1 text-sm", !result.isPassed && "text-danger")}>
             <span>{result.title}</span>
             {result.name && (
-              <code className="ml-2 rounded-md border bg-white px-1 py-0.5 text-sm text-gray-1200">
+              <code className="ml-2 rounded-md border bg-surface px-1 py-0.5 text-sm text-gray-1200">
                 {result.name}
               </code>
             )}
@@ -170,11 +170,14 @@ export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
                 className={cn(
                   "flex gap-4 border-b border-gray-300 px-4 py-1.5 transition-[opacity,background-color] duration-200",
                   index > playback.stepIndex && "opacity-30",
-                  index === playback.stepIndex && (row.isFailed ? "bg-red-50" : "bg-gray-200"),
+                  index === playback.stepIndex && (row.isFailed ? "bg-danger-soft" : "bg-gray-200"),
                 )}
               >
                 <span
-                  className={cn("tabular-nums", row.isFailed ? "text-red-500" : "text-gray-900")}
+                  className={cn(
+                    "tabular-nums",
+                    row.isFailed ? "text-danger-muted" : "text-gray-900",
+                  )}
                 >
                   {String(index + 1).padStart(2, "0")}
                 </span>
@@ -183,7 +186,7 @@ export const RunDrawer = ({ result, isOpen, onClose }: RunDrawerProps) => {
                   onClick={() => playback.select(index)}
                   className="min-w-0 text-left whitespace-pre-wrap"
                 >
-                  <span className={row.isFailed ? "text-red-600" : "text-gray-1200"}>
+                  <span className={row.isFailed ? "text-danger" : "text-gray-1200"}>
                     {row.title}
                   </span>
                   {index === playback.stepIndex && row.detail && (
