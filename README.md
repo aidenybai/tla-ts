@@ -58,6 +58,17 @@ npm install tla-ts
 
 You can also skip the install and run `npx tla-ts [file].ts`.
 
+## CLI
+
+Pass a TypeScript file or a TLA+ spec:
+
+```shell
+npx tla-ts counter.ts   # transpile TypeScript to TLA+ and check it
+npx tla-ts Counter.tla  # check a TLA+ spec
+```
+
+For a TLA+ spec, tla-ts reads `Counter.cfg` from the same folder and takes TLC's options.
+
 ## API
 
 ### `check`
