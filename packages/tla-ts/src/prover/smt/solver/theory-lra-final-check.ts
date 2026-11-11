@@ -97,7 +97,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return this.registerVar(thVar);
   }
 
-  private checkNla(level: number) {
+  protected checkNla(level: number) {
     if (this.context.checkCanceled()) return FC_GIVEUP;
     const nla = this.nla;
     if (nla === undefined || !nla.hasRelevantMonomial()) return FC_DONE;

@@ -1,9 +1,8 @@
 // Ported from Z3 (src/opt/opt_solver.cpp, src/opt/opt_search.h), MIT license, see z3-license.txt.
-// The relaxation upper bounds come only from nonlinear arithmetic, which this solver does not
-// optimize, so it never probes them.
+import { SmtCanceledError } from "../../../errors";
 import type { AstManager } from "./ast";
 import { InfEps } from "./inf-eps";
-import { L_TRUE, L_UNDEF } from "./lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { AlgebraicManager } from "./nlsat/algebraic";
 import type { ParetoSolver } from "./opt-pareto";
 import type { ProtoModel } from "./proto-model";
@@ -13,6 +12,7 @@ import { SmtKernel } from "./smt-kernel";
 import type { KernelParams } from "./solver";
 
 const MODEL_BOUND_SCALE = Rational.of(10n ** 12n);
+const DUAL_BOUND_RLIMIT = 100;
 
 export interface MaximizeResult {
   // The no-model path accepts the hint without validating it.
@@ -20,6 +20,8 @@ export interface MaximizeResult {
   hint: InfEps;
   // L_TRUE: accepted; L_FALSE: obj >= hint refuted; L_UNDEF: undecided or unchecked.
   hintStatus: number;
+  // Independent of the hint, it holds over the current assertions.
+  upperBound: Rational | null;
 }
 
 // An irrational value gives the requested side of an isolating interval, rounded outward to
@@ -156,13 +158,21 @@ export class OptSolver {
   }
 
   // The arithmetic relaxation only hints at the optimum, so a finite hint is checked against
-  // the other theories before it becomes the objective's value.
-  maximizeObjective(index: number) {
+  // the other theories before it becomes the objective's value. With isDual, the relaxation of
+  // nonlinear arithmetic also yields an upper bound; one that holds only on the current branch is
+  // probed across all branches when isProbing.
+  maximizeObjective(index: number, isDual = false, isProbing = true) {
     this.model = null;
-    const maximized = this.arith.maximize(this.objectiveVars[index]);
+    const maximized = this.arith.maximize(this.objectiveVars[index], isDual);
     this.pinned.push(maximized.blocker);
     const value = maximized.value;
-    const result: MaximizeResult = { isBoundValid: false, hint: value, hintStatus: L_UNDEF };
+    const upper = maximized.upper;
+    const result: MaximizeResult = {
+      isBoundValid: false,
+      hint: value,
+      hintStatus: L_UNDEF,
+      upperBound: upper?.isGlobal === true ? upper.value : null,
+    };
     const outcome = { result, blocker: maximized.blocker };
     this.model = this.getContextModel();
     this.objectiveModels[index] ??= this.model;
@@ -171,7 +181,10 @@ export class OptSolver {
     if (bound !== undefined && InfEps.of(bound).compare(this.objectiveValues[index]) > 0)
       this.objectiveValues[index] = InfEps.of(bound);
     if (this.manager.limit.isExhausted()) return outcome;
-    if (value.isFinite()) {
+    if (isProbing && value.isFinite() && upper !== null && !upper.isGlobal) {
+      if (this.checkUpperBound(index, upper.value) === L_FALSE) result.upperBound = upper.value;
+      if (!this.manager.limit.inc() || !this.checkBound(index, value, result)) return outcome;
+    } else if (value.isFinite()) {
       this.kernel.context.updateModel();
       if (!this.checkBound(index, value, result)) return outcome;
     }
@@ -179,6 +192,33 @@ export class OptSolver {
     result.hintStatus = L_TRUE;
     result.isBoundValid = true;
     return outcome;
+  }
+
+  // Whether the objective can exceed the value at all, within a small resource budget.
+  private checkUpperBound(index: number, value: Rational) {
+    const limit = this.manager.limit;
+    if (!limit.inc()) return L_UNDEF;
+    const baseline = this.model;
+    try {
+      this.kernel.push();
+    } catch (error) {
+      if (!(error instanceof SmtCanceledError)) throw error;
+      return L_UNDEF;
+    }
+    limit.push(DUAL_BOUND_RLIMIT);
+    const result = (() => {
+      try {
+        this.assertExpr(this.mkGe(index, InfEps.of(value, Rational.one)));
+        return this.kernel.check();
+      } catch (error) {
+        if (!(error instanceof SmtCanceledError)) throw error;
+        return L_UNDEF;
+      }
+    })();
+    limit.pop();
+    this.kernel.pop(1);
+    this.model = baseline;
+    return result;
   }
 
   private checkBound(index: number, value: InfEps, result: MaximizeResult) {

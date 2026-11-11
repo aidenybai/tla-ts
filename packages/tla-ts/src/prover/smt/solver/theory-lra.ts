@@ -6,11 +6,14 @@ import { shrink } from "./array";
 import { OP_GE, OP_GT, OP_LE, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
 import type { Enode } from "./enode";
 import { InfEps } from "./inf-eps";
+import { L_TRUE } from "./lbool";
 import { LP_FEASIBLE, LP_OPTIMAL, LP_UNBOUNDED } from "./lp/core-solver";
+import { type Dependency, linearize } from "./lp/dependency";
 import { NULL_LPVAR } from "./lp/lar-solver";
 import { maximizeTerm } from "./lp/maximize-term";
 import { Impq } from "./lp/numeric-pair";
 import { Rational } from "./rational";
+import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./theory";
 import { TheoryLraFinalCheck } from "./theory-lra-final-check";
 
 export interface ArithBound {
@@ -54,36 +57,73 @@ export class TheoryLra extends TheoryLraFinalCheck {
     return InfEps.of(value.x, value.y);
   }
 
-  maximize(thVar: number) {
+  // With isComputingUpper, the maximum of the linear relaxation is also an upper bound of the
+  // objective when the bounds that prove it hold; it holds globally when they hold at the base
+  // level.
+  maximize(thVar: number, isComputingUpper = false) {
     const solver = this.solver;
     if (solver.hasIntVar()) solver.core.backupX();
     const column = solver.externalToLocalColumn(thVar);
-    const isMaximizing = column !== NULL_LPVAR && this.manager.limit.inc();
-    const maximum = isMaximizing
-      ? this.maximizeWithLp(column)
-      : { status: LP_UNBOUNDED, value: Impq.zero };
-    if (
-      isMaximizing &&
-      this.nla !== undefined &&
-      (maximum.status === LP_OPTIMAL || maximum.status === LP_UNBOUNDED)
-    )
-      throw new SmtUnsupportedError("optimization of nonlinear arithmetic");
-    if (maximum.status === LP_UNBOUNDED)
-      return { value: InfEps.infinity, blocker: this.manager.falseExpr };
-    if (maximum.status === LP_OPTIMAL) this.initVariableValues();
+    if (column === NULL_LPVAR || !this.manager.limit.inc())
+      return { ...this.getMaxResult(thVar, LP_UNBOUNDED, Impq.zero), upper: null };
+    const maximum = this.maximizeWithLp(column, isComputingUpper);
+    const result =
+      this.nla !== undefined && (maximum.status === LP_OPTIMAL || maximum.status === LP_UNBOUNDED)
+        ? this.maximizeWithNla(thVar, column, maximum.value)
+        : this.getMaxResult(thVar, maximum.status, maximum.value);
+    return { ...result, upper: maximum.upper };
+  }
+
+  private maximizeWithLp(column: number, isComputingUpper: boolean) {
+    const solver = this.solver;
+    if (!solver.isFeasible() || solver.columnsWithChangedBounds.size > 0) this.makeFeasible();
+    const isDual = isComputingUpper && this.nla !== undefined;
+    const maximum = maximizeTerm(solver, column, true, isDual);
+    const premises =
+      isDual && maximum.status === LP_OPTIMAL && !this.manager.limit.isExhausted()
+        ? this.getBoundPremises(maximum.dependency)
+        : null;
+    const upper =
+      premises === null ? null : { value: maximum.value.x, isGlobal: premises.isGlobal };
+    if (!solver.hasIntVar() || !solver.hasInfInt()) return { ...maximum, upper };
+    solver.restoreX();
+    return { status: LP_FEASIBLE, value: maximum.value, upper };
+  }
+
+  private getBoundPremises(dependency: Dependency) {
+    const context = this.context;
+    let isGlobal = true;
+    for (const constraint of linearize([dependency])) {
+      const literal = this.constraintSources[constraint];
+      if (literal === undefined) return null;
+      if (literal === null) continue;
+      if (context.getAssignment(literal) !== L_TRUE) return null;
+      isGlobal &&= context.getAssignLevel(literal) <= context.baseLevel;
+    }
+    return { isGlobal };
+  }
+
+  // The optimum of the linear relaxation is only a hint here, and its epsilon comes from the
+  // linearization, so it is dropped.
+  private maximizeWithNla(thVar: number, column: number, value: Impq) {
+    const solver = this.solver;
+    const relaxed = solver.getValue(column);
+    const nlaStatus = this.checkNla(2);
+    if (nlaStatus === FC_GIVEUP) {
+      solver.restoreX();
+      return this.getMaxResult(thVar, LP_UNBOUNDED, value);
+    }
+    if (nlaStatus === FC_CONTINUE) solver.restoreX();
     return {
-      value: InfEps.of(maximum.value.x, maximum.value.y),
-      blocker: this.mkGt(thVar, maximum.value),
+      value: InfEps.of(relaxed.x),
+      blocker: this.mkGt(thVar, nlaStatus === FC_DONE ? solver.getValue(column) : relaxed),
     };
   }
 
-  private maximizeWithLp(column: number) {
-    const solver = this.solver;
-    if (!solver.isFeasible() || solver.columnsWithChangedBounds.size > 0) this.makeFeasible();
-    const maximum = maximizeTerm(solver, column, true);
-    if (!solver.hasIntVar() || !solver.hasInfInt()) return maximum;
-    solver.restoreX();
-    return { status: LP_FEASIBLE, value: maximum.value };
+  private getMaxResult(thVar: number, status: number, value: Impq) {
+    if (status === LP_UNBOUNDED) return { value: InfEps.infinity, blocker: this.manager.falseExpr };
+    if (status === LP_OPTIMAL) this.initVariableValues();
+    return { value: InfEps.of(value.x, value.y), blocker: this.mkGt(thVar, value) };
   }
 
   private mkGt(thVar: number, value: Impq) {
