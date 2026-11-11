@@ -3491,23 +3491,35 @@ const translateExpressionStatement = (
   }
   if (ts.isYieldExpression(expression)) {
     const yielded = expression.expression;
+    const called = yielded && getCast(yielded);
+    const isCalled =
+      called !== undefined &&
+      ts.isCallExpression(called) &&
+      called.arguments.every((argument) => !hasCall(argument, context));
     if (
       frame.yieldTo === undefined ||
       expression.asteriskToken !== undefined ||
-      (yielded !== undefined && hasCall(yielded, context))
+      (yielded !== undefined && !isCalled && hasCall(yielded, context))
     ) {
       throw new TlaTypeScriptError("Unsupported yield", expression);
     }
     const yieldTo = frame.yieldTo;
     const throwTo = frame.throwTo;
     const uncaught = apply("Assert", [boolean(false), string(expression.getText())]);
+    const yieldWith = (current: Path, value: Expression | undefined) =>
+      yieldTo(current, value, continueWith, (rejected, thrown) =>
+        throwTo === undefined ? leaf(uncaught) : throwTo(rejected, { value: thrown, uncaught }),
+      );
+    // A yield of a call yields what the call gives.
+    if (isCalled && ts.isCallExpression(called)) {
+      return translateCallStatement(called, path, context, frame, (after, value) =>
+        yieldWith(after, value ?? getUndefined(context)),
+      );
+    }
     return allocate(yielded, path, context, (inner) =>
-      yieldTo(
+      yieldWith(
         inner,
         yielded === undefined ? undefined : translateExpression(yielded, inner.scope, context),
-        continueWith,
-        (rejected, thrown) =>
-          throwTo === undefined ? leaf(uncaught) : throwTo(rejected, { value: thrown, uncaught }),
       ),
     );
   }

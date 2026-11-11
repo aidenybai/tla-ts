@@ -3038,6 +3038,30 @@ describe("errors", () => {
     expect((await checkModel(getSource("sum !== 21"))).failure).toBeDefined();
   });
 
+  it("yields what a call gives as the generator resumes", async () => {
+    const getSource = (check: string) => `
+      let count = 0;
+      const bump = (step: number): number => {
+        count += step;
+        return count;
+      };
+      function* gen() {
+        yield bump(1);
+        yield bump(10);
+      }
+      const iter = gen();
+      const first = iter.next();
+      const atFirst = count;
+      const second = iter.next();
+      if (${check}) throw new Error("yield");
+    `;
+    expect(
+      (await checkModel(getSource("first.value !== 1 || atFirst !== 1 || second.value !== 11")))
+        .failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("atFirst !== 11"))).failure).toBeDefined();
+  });
+
   it("makes a new function object each time a function makes one as a property's value", async () => {
     const getSource = (comparison: string) => `
       const make = function () {
