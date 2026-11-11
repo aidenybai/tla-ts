@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist-mono";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -17,7 +19,28 @@
   --color-gray-1100: #6f6f6f;
   --color-gray-1200: #202020;
   --color-paragraph: #424242;
-  --shadow-custom: 0 0 0 1px #0000000f, 0 1px 2px -1px #0000000f, 0 2px 4px 0 #0000000a;
+  --color-surface: #fff;
+  --color-surface-raised: #fff;
+  --color-code-keyword: color(display-p3 0.391345 0.215644 0.85356);
+  --color-code-string: color(display-p3 0.259723 0.647032 0.276349);
+  --color-danger: oklch(57.7% 0.245 27.325);
+  --color-danger-muted: oklch(63.7% 0.237 25.331);
+  --color-danger-strong: oklch(50.5% 0.213 27.518);
+  --color-danger-soft: oklch(97.1% 0.013 17.38);
+  --color-danger-tint: oklch(93.6% 0.032 17.717);
+  --color-success: oklch(52.7% 0.154 150.069);
+  --color-success-soft: oklch(98.2% 0.018 155.826);
+  --color-success-tint: oklch(96.2% 0.044 156.743);
+  --color-changed: oklch(96.2% 0.059 95.617);
+  --color-overlay: rgb(32 32 32 / 0.05);
+  --color-shadow-edge: #0000000f;
+  --color-shadow-soft: #0000000a;
+  --color-shadow-strong: #00000029;
+  --color-scrollbar: rgb(0 0 0 / 0.15);
+  --shadow-custom:
+    0 0 0 1px var(--color-shadow-edge), 0 1px 2px -1px var(--color-shadow-edge),
+    0 2px 4px 0 var(--color-shadow-soft);
+  --shadow-drawer: 0 0 0 1px var(--color-shadow-edge), 0 -8px 24px -12px var(--color-shadow-strong);
   --animate-shake: shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 
   @keyframes shake {
@@ -47,12 +70,46 @@
   * {
     @apply border-gray-400;
     scrollbar-width: thin;
-    scrollbar-color: rgb(0 0 0 / 0.15) transparent;
+    scrollbar-color: var(--color-scrollbar) transparent;
   }
   html {
     @apply bg-gray-100 font-sans text-[16px]/[1.6] text-gray-1200 antialiased;
     color-scheme: light;
     -webkit-tap-highlight-color: transparent;
+  }
+  :root.dark {
+    color-scheme: dark;
+    --color-gray-100: #111;
+    --color-gray-200: #1f1f1f;
+    --color-gray-300: #262626;
+    --color-gray-400: #303030;
+    --color-gray-500: #3a3a3a;
+    --color-gray-600: #444;
+    --color-gray-700: #555;
+    --color-gray-800: #666;
+    --color-gray-900: #8f8f8f;
+    --color-gray-1000: #a1a1a1;
+    --color-gray-1100: #b4b4b4;
+    --color-gray-1200: #ededed;
+    --color-paragraph: #c7c7c7;
+    --color-surface: #191919;
+    --color-surface-raised: #363636;
+    --color-code-keyword: #c4a7ff;
+    --color-code-string: #6fdc8c;
+    --color-danger: oklch(70.4% 0.191 22.216);
+    --color-danger-muted: oklch(70.4% 0.191 22.216);
+    --color-danger-strong: oklch(80.8% 0.114 19.571);
+    --color-danger-soft: #391c1d;
+    --color-danger-tint: #4f1e20;
+    --color-success: oklch(79.2% 0.209 151.711);
+    --color-success-soft: #173124;
+    --color-success-tint: #15412b;
+    --color-changed: #473e1e;
+    --color-overlay: rgb(0 0 0 / 0.3);
+    --color-shadow-edge: #ffffff17;
+    --color-shadow-soft: #00000066;
+    --color-shadow-strong: #00000099;
+    --color-scrollbar: rgb(255 255 255 / 0.2);
   }
   ::selection {
     @apply bg-blue-500/20;

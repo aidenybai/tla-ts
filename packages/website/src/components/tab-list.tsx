@@ -15,6 +15,6 @@ export const TabList = ({ tabs }: TabListProps) => (
         {tab.label}
       </Tabs.Tab>
     ))}
-    <Tabs.Indicator className="absolute top-(--active-tab-top) left-(--active-tab-left) h-(--active-tab-height) w-(--active-tab-width) rounded-md bg-white shadow-custom transition-[left,width] duration-200" />
+    <Tabs.Indicator className="absolute top-(--active-tab-top) left-(--active-tab-left) h-(--active-tab-height) w-(--active-tab-width) rounded-md bg-surface-raised shadow-custom transition-[left,width] duration-200" />
   </Tabs.List>
 );

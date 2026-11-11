@@ -1,6 +1,7 @@
 import "./index.css";
 import { CodeBlock } from "./components/code-block";
 import { ExampleTabs } from "./components/example-tabs";
+import { ThemeToggle } from "./components/theme-toggle";
 import { PROOF_EXAMPLES, SPEC_EXAMPLES } from "./examples";
 
 const LINK_CLASS_NAME =
@@ -9,7 +10,10 @@ const HEADING_CLASS_NAME = "mt-5 font-semibold text-gray-1200 first:mt-0";
 
 export const App = () => (
   <main className="mx-auto max-w-2xl px-4 pt-12 pb-24 text-paragraph sm:px-6 sm:pt-24">
-    <h1 className="text-2xl font-semibold text-gray-1200">tla-ts</h1>
+    <div className="flex items-center justify-between">
+      <h1 className="text-2xl font-semibold text-gray-1200">tla-ts</h1>
+      <ThemeToggle />
+    </div>
     <div className="mt-3 flex flex-col gap-4 text-pretty">
       <p>
         tla-ts is a drop-in replacement for{" "}
