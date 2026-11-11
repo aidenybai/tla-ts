@@ -4419,6 +4419,7 @@ export const translateJoined = (
     return (
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
+      ts.isVariableDeclarationList(declaration.parent) &&
       (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
       ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined
     );
