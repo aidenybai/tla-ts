@@ -1074,6 +1074,12 @@ export const createSmtlibReader = (
   };
 
   const parsePattern = (sexpr: SExpr, at: SExpr) => {
+    if (sexpr.kind === ")") {
+      // Z3 skips a bad pattern as an s-expression, which cannot start with ')'.
+      if (options.isIgnoringBadPatterns)
+        throw new SmtParseError("invalid s-expression, unexpected ')'", sexpr);
+      throw new SmtParseError("invalid pattern, '(' expected", sexpr);
+    }
     if (sexpr.kind !== "list") return rejectPattern("invalid pattern, '(' expected", sexpr);
     if (sexpr.items.length === 0) return rejectPattern("invalid empty pattern", at);
     const head = sexpr.items[0];
@@ -1081,6 +1087,8 @@ export const createSmtlibReader = (
     const decl = head.text === "true" || head.text === "false" ? -1 : getFirstFunc(head.text);
     if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0))
       return rejectPattern("invalid constant pattern", head);
+    if (head.kind !== "symbol")
+      throw new SmtParseError("invalid pattern, '(' or identifier expected", head);
     return manager.mkPattern([parseTerm(sexpr)]);
   };
 
@@ -1168,7 +1176,10 @@ export const createSmtlibReader = (
         continue;
       }
       if (attribute.keyword.text !== ":pattern") continue;
-      const pattern = parsePattern(attribute.value ?? list.end, list.end);
+      const pattern = parsePattern(
+        attribute.value ?? (bodySExpr.kind === "list" ? bodySExpr.end : list.end),
+        list.end,
+      );
       if (pattern === undefined) continue;
       manager.incRef(pattern);
       patterns.push(pattern);
