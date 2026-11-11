@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packages/website/public/logo-dark.svg">
+  <img src="packages/website/public/logo-light.svg" alt="tla-ts logo" width="54" height="54">
+</picture>
+
 # tla-ts
 
 [![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
