@@ -1284,6 +1284,12 @@ const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["split", { operator: "StringSplit", parameters: ["string", "number"] }],
   ["replace", { operator: "StringReplace", parameters: ["string", "string"] }],
   ["replaceAll", { operator: "StringReplaceAll", parameters: ["string", "string"] }],
+  ["repeat", { operator: "StringRepeat", parameters: ["number"] }],
+  ["concat", { operator: "StringConcat", parameters: ["string", "string", "string"] }],
+  ["isWellFormed", { operator: "IsWellFormed", parameters: [] }],
+  ["toWellFormed", { operator: "ToWellFormed", parameters: [] }],
+  ["normalize", { operator: "StringNormalize", parameters: ["string"] }],
+  ["localeCompare", { operator: "LocaleCompare", parameters: ["string"] }],
 ]);
 
 // The methods that give a string itself, which only a string or a String object has, so that

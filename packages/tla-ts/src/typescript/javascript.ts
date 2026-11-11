@@ -1251,6 +1251,58 @@ StringReplace(value, search, template) ==
 StringReplaceAll(value, search, template) ==
   Replaced(Text(value), Text(search), Text(template), MatchPositions(Text(value), Text(search), 0), 0)
 
+\\* A string repeated a number of times, built by halves so that a long one recurses little.
+RECURSIVE Repeated(_, _)
+Repeated(text, times) ==
+  IF times = 0
+  THEN ""
+  ELSE LET half == Repeated(text, times \\div 2)
+       IN  half \\o half \\o (IF times % 2 = 1 THEN text ELSE "")
+
+\\* String.prototype.repeat, which throws a RangeError for a negative or infinite count.
+StringRepeat(value, count) ==
+  LET text == Text(value)
+      times == IntegerOf(count)
+  IN  CASE times \\in {Infinity, NegativeInfinity} \\/ times < 0 ->
+             Assert(FALSE, "tla-ts can't throw the RangeError of repeat")
+        [] text = "" -> ""
+        [] OTHER -> Repeated(text, times)
+
+\\* String.prototype.concat of the strings that a call passes.
+StringConcat(value, first, second, third) ==
+  LET Part(part) == IF part = Undefined THEN "" ELSE part
+  IN  Text(value) \\o Part(first) \\o Part(second) \\o Part(third)
+
+LOCAL IsAscii(text) == \\A character \\in CharactersOf(text) : character \\in DOMAIN AsciiCodes
+
+\\* String.prototype.isWellFormed, where a string of ASCII holds no lone surrogate.
+IsWellFormed(value) ==
+  IF IsAscii(Text(value))
+  THEN TRUE
+  ELSE Assert(FALSE, "tla-ts can't tell the surrogates of a character outside ASCII")
+
+\\* String.prototype.toWellFormed, which leaves a string of ASCII as it is.
+ToWellFormed(value) ==
+  IF IsAscii(Text(value))
+  THEN Text(value)
+  ELSE Assert(FALSE, "tla-ts can't tell the surrogates of a character outside ASCII")
+
+\\* String.prototype.normalize, which leaves a string of ASCII as it is in every form, and throws a
+\\* RangeError for any other form.
+StringNormalize(value, form) ==
+  LET text == Text(value)
+  IN  CASE form # Undefined /\\ form \\notin {"NFC", "NFD", "NFKC", "NFKD"} ->
+             Assert(FALSE, "tla-ts can't throw the RangeError of normalize")
+        [] IsAscii(text) -> text
+        [] OTHER -> Assert(FALSE, "tla-ts can't normalize a character outside ASCII")
+
+\\* String.prototype.localeCompare, which gives 0 for equal strings. The order of others depends on
+\\* the locale.
+LocaleCompare(value, that) ==
+  IF Text(value) = (IF that = Undefined THEN "undefined" ELSE that)
+  THEN 0
+  ELSE Assert(FALSE, "tla-ts can't compare different strings by locale")
+
 LOCAL Lowercase == "abcdefghijklmnopqrstuvwxyz"
 
 LOCAL Uppercase == "ABCDEFGHIJKLMNOPQRSTUVWXYZ"

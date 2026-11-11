@@ -3054,6 +3054,22 @@ describe("errors", () => {
     );
   });
 
+  it("repeats, concatenates, normalizes, and compares strings of ASCII", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const text: string = "abc";
+      if (text.repeat(3) !== "abcabcabc" || text.repeat(NaN) !== "" || ".".repeat(1000).length !== 1000) throw new Error("repeat");
+      if (text.concat() !== "abc" || text.concat("d", "e") !== "abcde") throw new Error("concat");
+      if (!text.isWellFormed() || text.toWellFormed() !== "abc" || text.normalize("NFKD") !== "abc") throw new Error("normalize");
+      if (text.localeCompare("abc") !== 0) throw new Error("locale");
+    `);
+    expect(result.failure).toBeUndefined();
+    const negative = await checkModel(
+      `const box = { size: 0 };\nconst count: number = -1;\nconst made = "a".repeat(count);`,
+    );
+    expect(negative.failure?.message).toContain("tla-ts can't throw the RangeError of repeat");
+  });
+
   it("splits and replaces at a string", async () => {
     const result = await checkModel(`
       const text: string = "one two  three";
