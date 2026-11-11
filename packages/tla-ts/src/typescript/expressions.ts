@@ -1386,6 +1386,19 @@ const translatePropertyAccess = (
   const size =
     name === "length" || name === "size" ? translateSize(receiver, scope, context) : undefined;
   if (size !== undefined) return size;
+  // An array holds only its elements and its length, so it reads any other property, such as its
+  // constructor, from its prototypes.
+  if (getKind(receiver, context) === "sequence" && context.heap !== undefined) {
+    return useJavaScript(
+      "Get",
+      [
+        getHeap(scope, node, context),
+        translateBuiltInValue("Array.prototype", node, context),
+        string(name),
+      ],
+      context,
+    );
+  }
   if (
     getKind(receiver, context) !== "other" ||
     context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0

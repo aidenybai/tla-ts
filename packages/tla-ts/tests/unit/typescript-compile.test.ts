@@ -3016,6 +3016,18 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't throw the TypeError of a string method");
   });
 
+  it("reads an array's constructor from Array.prototype", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const items = [1, 2];
+      const parts = "a b".split(" ");
+      if (items.constructor !== Array || parts.constructor !== Array) throw new Error("array");
+      Array.prototype.constructor = Object;
+      if (items.constructor !== Object) throw new Error("replaced");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("splits and replaces at a string", async () => {
     const result = await checkModel(`
       const text: string = "one two  three";
