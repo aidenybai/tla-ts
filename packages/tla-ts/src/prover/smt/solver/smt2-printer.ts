@@ -30,7 +30,7 @@ import {
 } from "./ast";
 import { isAssociativeBvOp } from "./bv-decl-plugin";
 import { getFpNumeral } from "./fpa-decl-plugin";
-import { biasExp, isInf, isNan, isZero, type Mpf } from "./mpf";
+import { biasExp, isDenormal, isInf, isNan, isZero, mkMinExp, type Mpf } from "./mpf";
 import { formatZstring } from "./seq-decl-plugin";
 
 interface TextFormat {
@@ -75,6 +75,7 @@ export interface PrintOptions {
   decimalPrecision: number;
   isBvLiterals: boolean;
   isBvNeg: boolean;
+  isFpRealLiterals: boolean;
 }
 
 export const DEFAULT_PRINT_OPTIONS: PrintOptions = {
@@ -91,6 +92,7 @@ export const DEFAULT_PRINT_OPTIONS: PrintOptions = {
   decimalPrecision: 10,
   isBvLiterals: true,
   isBvNeg: false,
+  isFpRealLiterals: false,
 };
 
 export interface PrintEnvironment {
@@ -301,6 +303,19 @@ const formatFpNumeral = (options: PrintOptions, value: Mpf) => {
           : "+zero"
         : undefined;
   if (special !== undefined) return mkText(`(_ ${special} ${value.ebits} ${value.sbits})`);
+  if (options.isFpRealLiterals) {
+    const isSubnormal = isDenormal(value);
+    const denominator = 1n << BigInt(value.sbits - 1);
+    const numerator = value.significand + (isSubnormal ? 0n : denominator);
+    const decimal =
+      numerator % denominator === 0n
+        ? `${numerator / denominator}.0`
+        : getDecimal(numerator, denominator, value.sbits);
+    const exponent = isSubnormal ? mkMinExp(value.ebits) : value.exponent;
+    return mkText(
+      `((_ to_fp ${value.ebits} ${value.sbits}) RTZ ${value.sign ? "-" : ""}${decimal} ${exponent})`,
+    );
+  }
   const sign = value.sign ? 1n : 0n;
   return mkText(
     `(fp ${options.isBvLiterals ? `#b${sign}` : `(_ bv${sign} 1)`} ${getBvLiteral(

@@ -104,6 +104,7 @@ const BOOLEAN_PRINT_OPTIONS = new Map<string, PrintOptionOf<boolean>>([
   [":pp.decimal", "isDecimal"],
   [":pp.bv_literals", "isBvLiterals"],
   [":pp.bv_neg", "isBvNeg"],
+  [":pp.fp_real_literals", "isFpRealLiterals"],
 ]);
 
 const SIMPLIFY_PARAMETERS = new Set([
