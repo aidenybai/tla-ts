@@ -6687,6 +6687,27 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the length and elements of an array or a typed array typed as array-like", async () => {
+    const result = await checkModel(`
+      function compareArray(a: ArrayLike<unknown>, b: ArrayLike<unknown>) {
+        if (b.length !== a.length) return false;
+        for (let i = 0; i < a.length; i++) {
+          if (!Object.is(b[i], a[i])) return false;
+        }
+        return true;
+      }
+      const sample = new Int8Array([42, 43, -0]);
+      sample.reverse();
+      if (!compareArray(sample, [0, 43, 42])) throw new Error("reverse");
+      if (compareArray(sample, [0, 43])) throw new Error("shorter");
+      if (compareArray(sample, [0, 43, 42, undefined])) throw new Error("longer");
+      const values = [1, NaN];
+      if (!compareArray(values, [1, NaN])) throw new Error("NaN");
+      if (compareArray(values, [1, 2])) throw new Error("other");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

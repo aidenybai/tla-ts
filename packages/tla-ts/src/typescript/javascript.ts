@@ -915,19 +915,28 @@ LOCAL IsError(value) ==
 \\* that JavaScript throws differs between engines, and tla-ts gives it none. A script can't read or
 \\* change the prototype of an error class that isn't an object tla-ts holds, so its constructor
 \\* property is still the class.
+LOCAL IsSequenceValue(value) ==
+  ~IsRef(value) /\\ TypeOf(value) = "object" /\\ SubSeq(ToString(value), 1, 2) = "<<"
+
 \\* A read of a key from an object or its prototypes, where a getter that reads a buffer's or a view's
-\\* internal slots reads the receiver's.
+\\* internal slots reads the receiver's. An array outside the heap, which a value typed only as
+\\* array-like may hold, holds its elements and its length, and reads the rest from its prototype.
 RECURSIVE GetFrom(_, _, _, _)
 GetFrom(heap, ref, key, receiver) ==
-  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
-  THEN IF TypedKey(key) = "index" THEN TypedElement(heap, ref, ToIndex(key)) ELSE Undefined
-  ELSE LET object == PropertiesOf(heap, ref, key)
-           path == GetterPath(object.values[key].get)
-       IN CASE key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
-                 /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
-            [] key \\in DOMAIN object.values -> Value(object, key)
-            [] object.prototype = Null -> Undefined
-            [] OTHER -> GetFrom(heap, object.prototype, key, receiver)
+  CASE IsSequenceValue(ref) ->
+         (CASE key = "length" -> Len(ref)
+            [] TypedKey(key) = "index" /\\ ToIndex(key) < Len(ref) -> ref[ToIndex(key) + 1]
+            [] OTHER -> GetFrom(heap, Ref :> "Array.prototype", key, receiver))
+    [] IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
+         IF TypedKey(key) = "index" THEN TypedElement(heap, ref, ToIndex(key)) ELSE Undefined
+    [] OTHER ->
+         LET object == PropertiesOf(heap, ref, key)
+             path == GetterPath(object.values[key].get)
+         IN CASE key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
+              [] key \\in DOMAIN object.values -> Value(object, key)
+              [] object.prototype = Null -> Undefined
+              [] OTHER -> GetFrom(heap, object.prototype, key, receiver)
 
 RECURSIVE Get(_, _, _)
 Get(heap, ref, key) ==
@@ -2983,9 +2992,6 @@ NewDataView(heap, prototype, arguments) ==
                                       CASE length # Undefined -> length
                                         [] object.maxLength # Undefined -> -1
                                         [] OTHER -> Len(object.bytes) - offset))
-
-LOCAL IsSequenceValue(value) ==
-  ~IsRef(value) /\\ TypeOf(value) = "object" /\\ SubSeq(ToString(value), 1, 2) = "<<"
 
 \\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
 \\* viewing a buffer.

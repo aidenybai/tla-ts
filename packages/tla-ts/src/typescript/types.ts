@@ -102,6 +102,7 @@ const LIBRARY_OBJECTS = new Set([
   "IteratorYieldResult",
   "IteratorReturnResult",
   "IArguments",
+  "ArrayLike",
   "Date",
   "ArrayBuffer",
   "SharedArrayBuffer",
