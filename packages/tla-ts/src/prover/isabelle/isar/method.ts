@@ -3,10 +3,20 @@
 // Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { asmRl, isNormHhf, multiResolves, normHhfEq, reflexiveThm, termI } from "../pure/drule";
-import { destEquals, isEquals, stripImpPrems, stripAssumsConcl } from "../pure/logic";
-import { addSimps, emptySimpset, type Simpset } from "../pure/raw-simplifier";
-import { genericRewriteGoalTac, rewriteCterm } from "../pure/rewriter";
+import {
+  absDef,
+  asmRl,
+  equalsCong,
+  isNormHhf,
+  multiResolves,
+  normHhfEq,
+  reflexiveThm,
+  termI,
+} from "../pure/drule";
+import { isEquals, stripImpPrems, stripAssumsConcl } from "../pure/logic";
+import { addSimps, congKey, emptySimpset, type Simpset } from "../pure/raw-simplifier";
+import { updateTable } from "../pure/table";
+import { genericRewriteGoalTac, rewriteCterm, simpleProver } from "../pure/rewriter";
 import { appendSeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
 import { fconvRule, premsConv } from "../pure/conv";
 import { atomizePremsTac } from "../pure/object-logic";
@@ -30,7 +40,6 @@ import {
   type Tactic,
 } from "../pure/tactical";
 import {
-  aconv,
   addFreeNames,
   addVars,
   funTs,
@@ -46,15 +55,11 @@ import {
   type Var,
 } from "../pure/term";
 import {
-  abstractRule,
   bicompose,
-  etaConversion,
   forallIntr,
   incrIndexesThm,
   instantiate,
   nprems,
-  symmetric,
-  transitive,
   trivial,
   type Thm,
 } from "../pure/thm";
@@ -63,6 +68,7 @@ import { autoTac, clarsimpTac, forceTac, type ClasimpContext } from "../provers/
 import {
   addUnsafeDest,
   addUnsafeIntro,
+  clarifyTac,
   fastTac,
   withClaset,
   type ClassicalContext,
@@ -81,6 +87,7 @@ export interface ProofContext {
   readonly atomizeRules: readonly Thm[];
   // PredicateLogic.thy's [symmetric, defn] rules, which Local_Defs.meta_rewrite_rule uses.
   readonly defnRules: readonly Thm[];
+  readonly rulifyRules: readonly Thm[];
   readonly blastDepthTac: (context: ClassicalContext, limit: number) => GoalTactic;
   readonly blastTac: (context: ClassicalContext) => GoalTactic;
 }
@@ -271,66 +278,73 @@ const liftAll = (index: number, state: Thm, fact: Thm): Thm => {
   );
 };
 
-// Local_Defs.meta_rewrite_rule: object-level equations and implications become meta-level ones;
-// Drule.equals_cong keeps meta-level equations as they are.
-const metaRewriteRule = (context: ProofContext, thm: Thm): Thm => {
-  if (isEquals(thm.prop)) return thm;
-  const simp = {
-    limits: context.limits,
-    simpset: addSimps(
-      { limits: context.limits, simpset: emptySimpset, bounds: 0 },
-      context.defnRules,
-    ),
-    bounds: 0,
-  };
-  return fconvRule(
-    (term) =>
-      rewriteCterm({ simprem: false, useprem: false, mutsimp: false }, () => undefined, simp, term),
-    thm,
+// Local_Defs.meta_rewrite_conv: object-level equations and implications become meta-level ones,
+// and Drule.equals_cong leaves meta-level equations alone.
+export const metaRewriteConv = (context: ProofContext, term: Term): Thm => {
+  const empty = { limits: context.limits, simpset: emptySimpset, bounds: 0 };
+  const simpset = addSimps(empty, context.defnRules);
+  return rewriteCterm(
+    { simprem: false, useprem: false, mutsimp: false },
+    () => undefined,
+    {
+      ...empty,
+      simpset: {
+        ...simpset,
+        congs: updateTable(simpset.congs, congKey({ isConst: true, name: "Pure.eq" }), equalsCong),
+      },
+    },
+    term,
   );
 };
 
-// Raw_Simplifier.rewrite_goals_rule.
-const rewriteGoalsRule = (limits: Limits, rules: readonly Thm[], state: Thm): Thm => {
-  const simp = {
-    limits,
-    simpset: addSimps({ limits, simpset: emptySimpset, bounds: 0 }, rules),
-    bounds: 0,
-  };
-  return fconvRule(
+const metaRewriteRule = (context: ProofContext, thm: Thm): Thm =>
+  fconvRule((term) => metaRewriteConv(context, term), thm);
+
+const initSimpset = (limits: Limits, rules: readonly Thm[]) => ({
+  limits,
+  simpset: addSimps({ limits, simpset: emptySimpset, bounds: 0 }, rules),
+  bounds: 0,
+});
+
+export const rewriteRule = (limits: Limits, rules: readonly Thm[], thm: Thm): Thm =>
+  rules.length === 0
+    ? thm
+    : fconvRule(
+        (term) =>
+          rewriteCterm(
+            { simprem: true, useprem: false, mutsimp: false },
+            simpleProver,
+            initSimpset(limits, rules),
+            term,
+          ),
+        thm,
+      );
+
+const rewriteGoalsRule = (limits: Limits, rules: readonly Thm[], state: Thm): Thm =>
+  fconvRule(
     premsConv((term) =>
-      rewriteCterm({ simprem: true, useprem: true, mutsimp: true }, () => undefined, simp, term),
+      rewriteCterm(
+        { simprem: true, useprem: true, mutsimp: true },
+        simpleProver,
+        initSimpset(limits, rules),
+        term,
+      ),
     ),
     state,
   );
-};
 
-// Drule.abs_def: f(?x, ?y) == t becomes f == %x y. t.
-const absDef = (thm: Thm): Thm => {
-  const contractLhs = (current: Thm) =>
-    transitive(symmetric(etaConversion(destEquals(current.prop)[0])), current);
-  const contracted = contractLhs(thm);
-  const varArgs = (term: Term): Term[] => {
-    if (term.kind !== "App" || term.arg.kind !== "Var") return [];
-    const rest = varArgs(term.fun);
-    return rest.some((arg) => aconv(arg, term.arg)) ? rest : [term.arg, ...rest];
+// Local_Defs.gen_unfold: the rules rewrite, then again as abstractions, which unfold the constants
+// they define where they are unapplied.
+const genUnfold =
+  (rewrite: (limits: Limits, rules: readonly Thm[], thm: Thm) => Thm) =>
+  (context: ProofContext, rules: readonly Thm[], thm: Thm): Thm => {
+    const metaRules = rules.map((rule) => metaRewriteRule(context, rule));
+    const absRules = metaRules.map((rule) => (isEquals(rule.prop) ? absDef(rule) : rule));
+    return rewrite(context.limits, absRules, rewrite(context.limits, metaRules, thm));
   };
-  return contractLhs(
-    varArgs(destEquals(contracted.prop)[0]).reduce(
-      (current, arg) => abstractRule(arg.kind === "Var" ? arg.name : "", arg, current),
-      contracted,
-    ),
-  );
-};
 
-// Local_Defs.unfold_tac.
-const unfoldTac = (context: ProofContext, rules: readonly Thm[]): Tactic => {
-  const metaRules = rules.map((rule) => metaRewriteRule(context, rule));
-  const absRules = metaRules.map((rule) => (isEquals(rule.prop) ? absDef(rule) : rule));
-  return primitive((state) =>
-    rewriteGoalsRule(context.limits, absRules, rewriteGoalsRule(context.limits, metaRules, state)),
-  );
-};
+export const unfoldRule = genUnfold(rewriteRule);
+export const unfoldGoals = genUnfold(rewriteGoalsRule);
 
 const assumeRuleTac = (limits: Limits): GoalTactic =>
   thenGoal(
@@ -460,6 +474,13 @@ const methodSource = (
           fastTac(withModifiers(context, modifiers), context.atomizeRules),
         );
     }
+    case "clarify": {
+      const modifiers = parseModifiers(isar, args);
+      return (facts) =>
+        simpleMethodHead(context, facts, (index) =>
+          changedProp(clarifyTac(withModifiers(context, modifiers))(index)),
+        );
+    }
     case "simp": {
       const modifiers = parseModifiers(isar, args);
       if (modifiers.some((modifier) => modifier.kind !== "simp"))
@@ -501,7 +522,10 @@ const methodSource = (
     case "unfold": {
       const rules = thms();
       return (facts) =>
-        thenTac(insertAllTac(context, facts), changedProp(unfoldTac(context, rules)));
+        thenTac(
+          insertAllTac(context, facts),
+          changedProp(primitive((state) => unfoldGoals(context, rules, state))),
+        );
     }
     case "-":
       noArgs();
@@ -511,12 +535,13 @@ const methodSource = (
   }
 };
 
-export const evaluate = (context: ProofContext, isar: IsarContext, text: MethodText): Method => {
+export const evaluate = (isar: IsarContext, text: MethodText): Method => {
+  const context = isar.tactics;
   switch (text.kind) {
     case "source":
       return methodSource(context, isar, text.name, text.args);
     case "then": {
-      const methods = text.texts.map((inner) => evaluate(context, isar, inner));
+      const methods = text.texts.map((inner) => evaluate(isar, inner));
       return (facts) => (state) =>
         methods.reduce<Seq<Thm>>(
           (results, method) => mapsSeq(method(facts), results),
@@ -524,16 +549,16 @@ export const evaluate = (context: ProofContext, isar: IsarContext, text: MethodT
         );
     }
     case "orelse": {
-      const methods = text.texts.map((inner) => evaluate(context, isar, inner));
+      const methods = text.texts.map((inner) => evaluate(isar, inner));
       return (facts) =>
         methods.reduceRight<Tactic>((rest, method) => orElse(method(facts), rest), noTac);
     }
     case "try": {
-      const method = evaluate(context, isar, text.texts[0]);
+      const method = evaluate(isar, text.texts[0]);
       return (facts) => orElse(method(facts), (state) => singleSeq(state));
     }
     case "repeat1": {
-      const method = evaluate(context, isar, text.texts[0]);
+      const method = evaluate(isar, text.texts[0]);
       return (facts) => thenTac(method(facts), repeat(method(facts)));
     }
     default:

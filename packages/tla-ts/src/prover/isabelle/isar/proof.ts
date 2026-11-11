@@ -25,6 +25,7 @@ import { aconv, mkVar, propT, type Term } from "../pure/term";
 import { bicompose, incrIndexesThm, instantiate, nprems, type Thm } from "../pure/thm";
 import {
   addAssumptions,
+  addFixes,
   assumptionsOf,
   augment,
   bindTerm,
@@ -36,10 +37,10 @@ import {
   type IsarContext,
   type ReadMode,
 } from "./context";
-import { evaluate, finishTac, normHhfTac, type ProofContext } from "./method";
-import type { MethodText, StatementPart } from "./theory";
+import { evaluate, finishTac, normHhfTac, unfoldGoals, unfoldRule } from "./method";
+import { parseType } from "./inner-syntax";
+import type { FixedVariable, MethodText, StatementPart } from "./theory";
 
-// Goal.init.
 export const initGoal = (prop: Term) =>
   instantiate([{ variable: mkVar("A", 0, propT), term: prop }], protectI);
 
@@ -90,17 +91,7 @@ const closeBlock = (state: State): State => {
 };
 
 const putFactsOf = (state: State, facts: readonly Thm[] | undefined): State =>
-  mapTop(state, (node) => ({
-    ...node,
-    facts,
-    context:
-      facts === undefined
-        ? {
-            ...node.context,
-            facts: new Map([...node.context.facts].filter((entry) => entry[0] !== "this")),
-          }
-        : putFacts(node.context, "this", facts),
-  }));
+  mapTop(state, (node) => ({ ...node, facts, context: putFacts(node.context, "this", facts) }));
 
 const theFacts = (state: State) => {
   const facts = top(state).facts;
@@ -138,18 +129,14 @@ const provideGoal = (state: State, thm: Thm) =>
 const usingFacts = (state: State, using: readonly Thm[]) =>
   mapGoal(state, (context, goal) => [context, { ...goal, using }]);
 
-export interface Runtime {
-  readonly tactics: ProofContext;
-}
-
 // Proof.refine: the method applies to the goal with its facts, in the given context.
-const refine = (runtime: Runtime, state: State, text: MethodText): Seq<State> => {
+const refine = (state: State, text: MethodText): Seq<State> => {
   const [, , goal] = findGoal(state);
-  const method = evaluate(runtime.tactics, contextOf(state), text);
+  const method = evaluate(contextOf(state), text);
   return mapSeq((thm: Thm) => provideGoal(state, thm), method(goal.using)(goal.goal));
 };
 
-export const proof = (runtime: Runtime, state: State, text: MethodText | undefined): Seq<State> => {
+export const proof = (state: State, text: MethodText | undefined): Seq<State> => {
   assertMode(state, ["backward"]);
   if (text === undefined) throw error("Unsupported default proof method");
   return mapSeq(
@@ -158,7 +145,7 @@ export const proof = (runtime: Runtime, state: State, text: MethodText | undefin
         ...node,
         goal: undefined,
       })),
-    refine(runtime, state, text),
+    refine(state, text),
   );
 };
 
@@ -169,30 +156,24 @@ const theResult = <Item>(seq: Seq<Item>, message: string): Item => {
 };
 
 // Proof.end_proof: the closing method, then the goal must have no subgoals.
-const endProof = (
-  runtime: Runtime,
-  state: State,
-  text: MethodText | undefined,
-  isImmediate: boolean,
-): Seq<State> => {
+const endProof = (state: State, text: MethodText | undefined, isImmediate: boolean): Seq<State> => {
   assertMode(state, ["forward"]);
   const closed = usingFacts(closeBlock(state), []);
   if (top(closed).goal === undefined) throw error("No goal in this block");
-  const finish: Seq<State> = text === undefined ? singleSeq(closed) : refine(runtime, closed, text);
+  const finish: Seq<State> = text === undefined ? singleSeq(closed) : refine(closed, text);
   return filterSeq(
     (result: State) => nprems(findGoal(result)[2].goal) === 0,
     mapsSeq(
       (result: State) =>
         mapSeq(
           (thm: Thm) => provideGoal(result, thm),
-          finishTac(runtime.tactics.limits, isImmediate)(findGoal(result)[2].goal),
+          finishTac(contextOf(result).tactics.limits, isImmediate)(findGoal(result)[2].goal),
         ),
       finish,
     ),
   );
 };
 
-// Proof.conclude_goal.
 const concludeGoal = (context: IsarContext, goal: Goal): Thm => {
   if (nprems(goal.goal) !== 0) throw error("Failed to finish proof");
   const thm = conclude(goal.goal);
@@ -211,22 +192,18 @@ const genericQed = (state: State): State => {
   return goal.afterQed(context, [concludeGoal(context, goal)], closeBlock(state));
 };
 
-export const qed = (runtime: Runtime, state: State, text: MethodText | undefined): State =>
-  genericQed(theResult(endProof(runtime, state, text, true), "Failed to finish proof"));
+export const qed = (state: State, text: MethodText | undefined): State =>
+  genericQed(theResult(endProof(state, text, true), "Failed to finish proof"));
 
 // Proof.terminal_proof, as by: the first initial result that the terminal method finishes.
 export const terminalProof = (
-  runtime: Runtime,
   state: State,
   initial: MethodText,
   terminal: MethodText | undefined,
 ): State =>
   genericQed(
     theResult(
-      mapsSeq(
-        (result: State) => endProof(runtime, result, terminal, true),
-        proof(runtime, state, initial),
-      ),
+      mapsSeq((result: State) => endProof(result, terminal, true), proof(state, initial)),
       "Failed to finish proof",
     ),
   );
@@ -389,14 +366,9 @@ const protectPrems = (thm: Thm): Thm => {
   return result;
 };
 
-const refineGoals = (
-  runtime: Runtime,
-  resultContext: IsarContext,
-  results: readonly Thm[],
-  state: State,
-): State => {
+const refineGoals = (resultContext: IsarContext, results: readonly Thm[], state: State): State => {
   const [, goalContext, goal] = findGoal(state);
-  const limits = runtime.tactics.limits;
+  const limits = goalContext.tactics.limits;
   const rules = results.map((result) =>
     exportThm(resultContext, goalContext, true, protectPrems(normHhf(limits, result))),
   );
@@ -410,14 +382,35 @@ const refineGoals = (
 export const have = (state: State, parts: readonly StatementPart[]) =>
   localGoal(state, parts, (_context, _results, result) => result);
 
-export const show = (runtime: Runtime, state: State, parts: readonly StatementPart[]) =>
+export const show = (state: State, parts: readonly StatementPart[]) =>
   localGoal(state, parts, (resultContext, results, result) =>
-    refineGoals(runtime, resultContext, results, result),
+    refineGoals(resultContext, results, result),
   );
 
 // Proof.chain: the current facts feed the next goal.
 export const chain = (state: State) =>
   putMode(putFactsOf(assertMode(state, ["forward"]), theFacts(state)), "chain");
+
+// Calculation.update_calculation: the calculation belongs to the block at the current level.
+const updateCalculation = (state: State, result: readonly Thm[] | undefined): State =>
+  mapContext(state, (context) => ({
+    ...putFacts(context, "calculation", result),
+    calculation: result === undefined ? undefined : { result, level: state.length },
+  }));
+
+// Calculation.moreover and ultimately: the current facts join the calculation, which ultimately
+// passes on to the next goal.
+export const collect = (state: State, isFinal: boolean): State => {
+  const facts = theFacts(assertMode(state, isFinal ? ["forward"] : ["forward", "chain"]));
+  const calculation = contextOf(state).calculation;
+  const previous = calculation?.level === state.length ? calculation.result : undefined;
+  if (previous === undefined && isFinal) throw error("No calculation yet");
+  const result = [...(previous ?? []), ...facts];
+  const updated = updateCalculation(state, result);
+  return isFinal
+    ? putMode(putFactsOf(updateCalculation(updated, undefined), result), "chain")
+    : updated;
+};
 
 export const assume = (state: State, parts: readonly StatementPart[]): State => {
   assertMode(state, ["forward"]);
@@ -444,6 +437,22 @@ export const assume = (state: State, parts: readonly StatementPart[]): State => 
   );
 };
 
+// Proof.fix: the variables are arbitrary but fixed from here on.
+export const fix = (state: State, variables: readonly FixedVariable[]): State =>
+  putFactsOf(
+    mapContext(assertMode(state, ["forward"]), (context) => {
+      const types = new Map(context.types);
+      for (const variable of variables)
+        if (variable.type === undefined) types.delete(variable.name);
+        else types.set(variable.name, parseType(variable.type));
+      return addFixes(
+        { ...context, types },
+        variables.map((variable) => variable.name),
+      );
+    }),
+    undefined,
+  );
+
 export const next = (state: State): State =>
   putFactsOf(
     mapTop(openBlock(closeBlock(assertMode(state, ["forward"]))), (node) => ({
@@ -456,7 +465,17 @@ export const next = (state: State): State =>
 export const using = (state: State, facts: readonly Thm[]): State =>
   usingFacts(assertMode(state, ["backward"]), [...findGoal(state)[2].using, ...facts]);
 
-// Proof.from_thmss and with_thmss.
+// Proof.unfolding: the facts unfold both the goal and the facts it uses.
+export const unfolding = (state: State, facts: readonly Thm[]): State =>
+  mapGoal(assertMode(state, ["backward"]), (context, goal) => [
+    context,
+    {
+      ...goal,
+      using: goal.using.map((thm) => unfoldRule(context.tactics, facts, thm)),
+      goal: unfoldGoals(context.tactics, facts, goal.goal),
+    },
+  ]);
+
 export const from = (state: State, facts: readonly Thm[], isWith: boolean): State =>
   chain(
     putFactsOf(assertMode(state, ["forward"]), isWith ? [...facts, ...theFacts(state)] : facts),

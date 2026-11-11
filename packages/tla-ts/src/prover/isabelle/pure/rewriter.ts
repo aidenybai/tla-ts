@@ -3,7 +3,7 @@
 
 import { TlaIsabelleError } from "../../../errors";
 import { gconvRule, impCongRule } from "./conv";
-import { impCong, swapPremsEq } from "./drule";
+import { betaEtaConversion, impCong, swapPremsEq } from "./drule";
 import { emptyTEnv } from "./envir";
 import {
   destEquals,
@@ -87,11 +87,6 @@ const isThmError = (error: unknown) =>
 
 const lhsOf = (thm: Thm) => destEquals(thm.prop)[0];
 const rhsOf = (thm: Thm) => destEquals(thm.prop)[1];
-
-const betaEtaConversion = (term: Term) => {
-  const beta = betaConversion(true, term);
-  return transitive(beta, etaConversion(rhsOf(beta)));
-};
 
 const instantiateMatch = (env: MatchEnv, rule: Thm): Thm => {
   const typed = instantiateTypes(env.tyenv, rule);

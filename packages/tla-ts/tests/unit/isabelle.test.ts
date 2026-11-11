@@ -32,6 +32,12 @@ describe("decideIsabelle gives Isabelle's verdict on tlapm's theories", () => {
     expect(decide(text)).toBe(verdict);
   });
 
+  // tlapm's isabelle/examples/Allocator.thy up to AllocateMutex, whose case analysis tla-ts can't
+  // run yet.
+  it("checks the definitions and structured proofs of Allocator", () => {
+    expect(decide(readTheory("Allocator"))).toBe("unsat");
+  });
+
   it("answers unknown for a theory tlapm stopped writing partway", () => {
     expect(decide(readTheory("Level_test-1"))).toBe("unknown");
   });
@@ -55,6 +61,23 @@ describe("decideIsabelle doesn't prove what doesn't follow", () => {
     const text = readTheory(name);
     expect(text).toContain("using assms by");
     expect(decide(text.replace("using assms by", "by"))).toBe("unknown");
+  });
+
+  it.each([
+    [
+      "InitMutex from the type invariant",
+      'InitMutex: "Init(unsat,alloc)',
+      'InitMutex: "TypeInvariant(unsat,alloc)',
+    ],
+    [
+      "ReturnMutex assuming the old allocation",
+      `rc': "r \\<in> alloc'[c']"`,
+      `rc': "r \\<in> alloc[c']"`,
+    ],
+  ])("Allocator's %s", (_name, text, replacement) => {
+    const theory = readTheory("Allocator");
+    expect(theory).toContain(text);
+    expect(decide(theory.replace(text, replacement))).toBe("unknown");
   });
 
   const falseGoal = readTheory("function_except_tuple_soundness_gh201_test-1").replace(

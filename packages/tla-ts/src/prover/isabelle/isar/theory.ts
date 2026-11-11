@@ -389,7 +389,6 @@ export const parseTheory = (text: string): TheoryText => {
   };
   const fixes = () => andList(variables).flat();
 
-  // Method.parser.
   const methodName = (): string => {
     const token = peek();
     if (token?.kind === "word" && !COMMANDS.has(token.text)) {
@@ -544,6 +543,8 @@ export const parseTheory = (text: string): TheoryText => {
     }
   };
 
+  // Document commands may precede the theory header.
+  while (peek()?.kind === "word" && DOCUMENT_COMMANDS.has(peek()?.text ?? "")) command();
   expectWord("theory");
   const theoryName = name();
   expectWord("imports");

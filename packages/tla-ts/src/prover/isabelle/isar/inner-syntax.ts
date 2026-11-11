@@ -213,6 +213,7 @@ const INFIXES = new Map<string, Infix>([
   ["\\<union>", infixl("SetTheory.union", 65)],
   ["\\cup", infixl("Zenon.cup", 65)],
   ["\\", infixl("SetTheory.setminus", 65)],
+  ["\\<setminus>", infixl("SetTheory.setminus", 65)],
   ["\\<inter>", infixl("SetTheory.inter", 70)],
   ["@@", infixl("Functions.extend", 70)],
   [":>", infixl("Functions.oneArg", 75)],
@@ -492,17 +493,61 @@ class Parser {
           10,
         );
       }
-      case "{":
+      case "{": {
         if (this.isDelimiter("}")) {
           this.position += 1;
           return term(constant("SetTheory.emptyset"), 100);
         }
+        // SetTheory's {x \<in> S : P} and {e : x \<in> S}, then an enumeration.
+        if (this.peek().kind === "id" && this.isDelimiter("\\<in>", 1)) {
+          const start = this.position;
+          const name = this.identifier();
+          this.position += 1;
+          const set = this.logic(0);
+          if (this.isDelimiter(":")) {
+            this.position += 1;
+            const body = this.logic(0);
+            this.expect("}");
+            return term(
+              apply(constant("SetTheory.subsetOf"), set, {
+                kind: "abs",
+                name,
+                type: undefined,
+                body,
+              }),
+            );
+          }
+          this.position = start;
+        }
+        const first = this.logic(0);
+        if (this.isDelimiter(":")) {
+          this.position += 1;
+          const name = this.identifier();
+          this.expect("\\<in>");
+          const set = this.logic(0);
+          this.expect("}");
+          return term(
+            apply(constant("SetTheory.setOfAll"), set, {
+              kind: "abs",
+              name,
+              type: undefined,
+              body: first,
+            }),
+          );
+        }
+        const elements = [first];
+        while (this.isDelimiter(",")) {
+          this.position += 1;
+          elements.push(this.logic(0));
+        }
+        this.expect("}");
         return term(
-          this.commaList("}").reduceRight(
+          elements.reduceRight(
             (set, element) => apply(constant("SetTheory.addElt"), element, set),
             constant("SetTheory.emptyset"),
           ),
         );
+      }
       case "<<":
         return term(
           this.isDelimiter(">>")

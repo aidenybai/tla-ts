@@ -1,5 +1,6 @@
 import { TlaIsabelleError } from "../../../errors";
 import type { ProofContext } from "../isar/method";
+import { normHhfEq } from "../pure/drule";
 import { emptyNet } from "../pure/net";
 import type { Limits } from "../pure/interrupt";
 import { insertTaggedBrl, type NetPair } from "../pure/tactic";
@@ -22,6 +23,9 @@ const ATOMIZE_RULES = [
   "PredicateLogic.atomize_imp",
   "PredicateLogic.atomize_all",
 ];
+
+// PredicateLogic.thy declares these [symmetric, rulify], newest first, after Pure's norm_hhf_eq.
+const RULIFY_RULES = ["PredicateLogic.atomize_imp", "PredicateLogic.atomize_all"];
 
 // PredicateLogic.thy declares these [symmetric, defn].
 const DEFN_RULES = [
@@ -69,6 +73,7 @@ export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext =
     },
     atomizeRules,
     defnRules: DEFN_RULES.map((name) => symmetric(getFact(logic, name))),
+    rulifyRules: [...RULIFY_RULES.map((name) => symmetric(getFact(logic, name))), normHhfEq],
     blastDepthTac: (context, limit) => blastDepthTac(toBlastContext(context), limit),
     blastTac: (context) => blastTac(toBlastContext(context)),
   };

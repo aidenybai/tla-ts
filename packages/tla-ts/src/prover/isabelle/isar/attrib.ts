@@ -3,13 +3,14 @@
 // Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { asmRl, compIncr, multiResolves } from "../pure/drule";
+import { asmRl, compIncr, genAll, multiResolves, zeroVarIndexes } from "../pure/drule";
 import { chopSeq } from "../pure/seq";
 import { stripImpConcl } from "../pure/logic";
 import { fastypeOf, type Term, type Var } from "../pure/term";
 import { instantiate, instantiateTypes, type Thm } from "../pure/thm";
 import { emptyTyEnv, matchTypes, substType, type TyEnv } from "../pure/type";
 import { getFact, readTerms, type IsarContext } from "./context";
+import { rewriteRule } from "./method";
 import type { AttributeSource, FactReference, OuterToken } from "./theory";
 
 const syntaxError = (token: OuterToken | undefined) =>
@@ -27,7 +28,6 @@ const innerText = (token: OuterToken) =>
     ? token.text.slice("\\<open>".length, -"\\<close>".length)
     : token.text;
 
-// Attrib.thms: names, each with its attributes.
 export const parseFactReferences = (tokens: readonly OuterToken[]): FactReference[] => {
   const references: FactReference[] = [];
   let position = 0;
@@ -153,7 +153,6 @@ const ofRule = (context: IsarContext, args: readonly OuterToken[], thm: Thm): Th
   );
 };
 
-// Rule_Insts.named_insts: ?x = "t" and ...
 const parseWhere = (args: readonly OuterToken[]) => {
   const insts: { name: string; index: number; text: string }[] = [];
   let position = 0;
@@ -180,18 +179,25 @@ const parseWhere = (args: readonly OuterToken[]) => {
 
 // Drule.OF: the facts resolve against the rule's premises, from the first, with a unique result.
 const ofFacts = (context: IsarContext, rule: Thm, facts: readonly Thm[]): Thm => {
-  const [results] = chopSeq(2, multiResolves(context.limits, facts, [rule]));
+  const [results] = chopSeq(2, multiResolves(context.tactics.limits, facts, [rule]));
   if (results.length === 0) throw new TlaIsabelleError("THM", "OF: no unifiers");
   if (results.length > 1) throw new TlaIsabelleError("THM", "OF: multiple unifiers");
   return results[0];
 };
 
-const applyAttribute = (context: IsarContext, attribute: AttributeSource, thm: Thm): Thm => {
+// Object_Logic.rulify: object-level rules become meta-level ones.
+const rulify = (context: IsarContext, thm: Thm): Thm =>
+  zeroVarIndexes(genAll(rewriteRule(context.tactics.limits, context.tactics.rulifyRules, thm)));
+
+export const applyAttribute = (context: IsarContext, attribute: AttributeSource, thm: Thm): Thm => {
   switch (attribute.name) {
     case "of":
       return ofRule(context, attribute.args, thm);
     case "where":
       return whereRule(context, parseWhere(attribute.args), thm);
+    case "rule_format":
+      if (attribute.args.length > 0) throw syntaxError(attribute.args[0]);
+      return rulify(context, thm);
     case "OF":
       return ofFacts(context, thm, getThms(context, parseFactReferences(attribute.args)));
     default:

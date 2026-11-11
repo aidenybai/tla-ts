@@ -5,7 +5,6 @@
 import { TlaIsabelleError } from "../../../errors";
 import { protectD } from "../pure/drule";
 import { above, betaNorm, emptyEnvir, normTerm, type Envir } from "../pure/envir";
-import type { Limits } from "../pure/interrupt";
 import { incrIndexes, protect } from "../pure/logic";
 import { filterSeq, seqHead } from "../pure/seq";
 import { normHhf, normHhfProtect } from "../pure/simplifier";
@@ -27,6 +26,7 @@ import { assume, generalize, impliesElim, impliesIntr, instantiate, type Thm } f
 import { smashUnifiers } from "../pure/unify";
 import type { ConstInfo } from "../tla/logic";
 import { parseProp, parseTerm } from "./inner-syntax";
+import type { ProofContext } from "./method";
 import { checkProps } from "./type-check";
 
 export interface NameScope {
@@ -44,13 +44,15 @@ interface Assumption {
 export interface IsarContext {
   readonly scope: NameScope;
   readonly getGlobalFact: (name: string) => readonly Thm[];
-  readonly limits: Limits;
+  readonly tactics: ProofContext;
   readonly fixes: readonly string[];
   // Variable.default_type: the types of the free variables the context declares.
   readonly types: ReadonlyMap<string, Typ>;
   readonly assumptions: readonly Assumption[];
   readonly facts: ReadonlyMap<string, readonly Thm[]>;
   readonly binds: ReadonlyMap<string, Term>;
+  // Calculation.get_calculation: the facts that moreover collects in the block at this level.
+  readonly calculation: { readonly result: readonly Thm[]; readonly level: number } | undefined;
   // Variable.is_body: statements in a proof body fix none of their free variables.
   readonly isBody: boolean;
 }
@@ -62,11 +64,19 @@ const bindKey = (name: string, index: number) => `${name}.${index}`;
 export const getFact = (context: IsarContext, name: string): readonly Thm[] =>
   context.facts.get(name) ?? context.getGlobalFact(name);
 
+// Proof_Context.put_thms: without theorems, the name is no longer bound.
 export const putFacts = (
   context: IsarContext,
   name: string,
-  thms: readonly Thm[],
-): IsarContext => ({ ...context, facts: new Map([...context.facts, [name, thms]]) });
+  thms: readonly Thm[] | undefined,
+): IsarContext => ({
+  ...context,
+  facts: new Map(
+    thms === undefined
+      ? [...context.facts].filter((entry) => entry[0] !== name)
+      : [...context.facts, [name, thms]],
+  ),
+});
 
 const freeNames = (term: Term, names: string[] = []): string[] => {
   if (term.kind === "Free" && !names.includes(term.name)) names.push(term.name);
@@ -119,7 +129,6 @@ export const bindTerm = (context: IsarContext, name: string, index: number, term
     term,
   );
 
-// Variable.expand_binds.
 const expandBinds = (context: IsarContext, term: Term): Term => {
   const expand = (current: Term): Term => {
     switch (current.kind) {
@@ -223,7 +232,7 @@ export const simultMatches = (
     filterSeq(
       (candidate: Envir) => above(candidate, maxidx),
       smashUnifiers(
-        context.limits,
+        context.tactics.limits,
         pairs,
         emptyEnvir(pairs.reduce((result, pair) => Math.max(result, maxidxOfTerm(pair[0])), maxidx)),
       ),
@@ -248,14 +257,13 @@ export const addAssumptions = (
   isPresumed: boolean,
   props: readonly Term[],
 ): [Thm[], IsarContext] => [
-  props.map((prop) => normHhf(context.limits, assume(prop))),
+  props.map((prop) => normHhf(context.tactics.limits, assume(prop))),
   { ...context, assumptions: [...context.assumptions, { isPresumed, props }] },
 ];
 
 export const assumptionsOf = (context: IsarContext) =>
   context.assumptions.flatMap((assumption) => assumption.props);
 
-// Drule.implies_intr_protected.
 const impliesIntrProtected = (props: readonly Term[], thm: Thm): Thm =>
   props.reduceRight(
     (result, prop) => impliesIntr(protect(prop), result),
@@ -280,7 +288,7 @@ export const exportThm = (
   thm: Thm,
 ): Thm => {
   const discharged = normHhfProtect(
-    inner.limits,
+    inner.tactics.limits,
     inner.assumptions
       .slice(outer.assumptions.length)
       .reduceRight(
@@ -288,7 +296,7 @@ export const exportThm = (
           isGoal && !assumption.isPresumed
             ? impliesIntrProtected(assumption.props, result)
             : assumption.props.reduceRight((current, prop) => impliesIntr(prop, current), result),
-        normHhfProtect(inner.limits, thm),
+        normHhfProtect(inner.tactics.limits, thm),
       ),
   );
   return generalize(
