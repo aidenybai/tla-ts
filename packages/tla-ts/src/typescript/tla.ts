@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import ts from "@typescript/typescript6";
 import {
   type Bound,
@@ -13,7 +12,9 @@ import {
 export const UNLOCATED: SourceLocation = { line: 0, column: 0 };
 
 export const getModuleName = (fileName: string) =>
-  basename(fileName, ".ts")
+  fileName
+    .slice(fileName.lastIndexOf("/") + 1)
+    .replace(/\.ts$/, "")
     .split(/[^A-Za-z0-9]+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join("");
