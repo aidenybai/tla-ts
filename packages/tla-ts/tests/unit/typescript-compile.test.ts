@@ -2723,6 +2723,24 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("changes a constant's array in place in a script with objects", async () => {
+    const result = await checkModel(`
+      const box = { n: 0 };
+      const run = () => {
+        const items: number[] = [];
+        const count = () => items.length;
+        for (let i = 0; i < 3; i++) items.push(i);
+        items[0] = 9;
+        const total = count();
+        return items.join(",") + total;
+      };
+      const names: string[] = [];
+      names.push("a");
+      if (run() !== "9,1,23" || names.length !== 1) throw new Error("arrays");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {

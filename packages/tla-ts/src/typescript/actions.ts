@@ -4436,9 +4436,11 @@ const bindDeclaration = (
   const symbol = ts.isIdentifier(declaration.name)
     ? getSymbol(declaration.name, context.checker)
     : undefined;
-  // Without a heap, a constant's object is a value, which changing in place rebinds.
+  // A constant's object outside the heap is a value, which changing in place rebinds.
   const isChangeable =
-    (declaration.parent.flags & ts.NodeFlags.Const) === 0 || context.heap === undefined;
+    (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+    context.heap === undefined ||
+    (ts.isIdentifier(declaration.name) && getKind(declaration.name, context) === "sequence");
   const mutable =
     isChangeable && symbol !== undefined ? new Set([...path.mutable, symbol]) : path.mutable;
   const rest = translateDeclarations(
