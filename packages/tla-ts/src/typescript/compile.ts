@@ -218,6 +218,14 @@ export const compile = (
       ].includes(node.text)) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
+    // An array that a script gives a named property, which only an object can hold.
+    (ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      node.left.name.text !== "length" &&
+      [context.checker.getTypeAtLocation(node.left.expression)]
+        .flatMap((type) => (type.isIntersection() ? type.types : [type]))
+        .some((type) => context.checker.isArrayType(type) || context.checker.isTupleType(type))) ||
     (ts.forEachChild(node, usesObjects) ?? false);
   if (heap !== undefined && isScript(sourceFile) && roots.some(usesObjects)) {
     context.heap = heap;

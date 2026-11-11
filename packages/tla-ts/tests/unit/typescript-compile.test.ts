@@ -2702,6 +2702,15 @@ describe("errors", () => {
     ).toThrow("Only state variables and local lets can change: names");
   });
 
+  it("holds an array that a script gives a named property as an object", async () => {
+    const result = await checkModel(`
+      const items: number[] & { tag?: string } = [1, 2];
+      items.tag = "t";
+      if (items.tag !== "t" || items.length !== 2) throw new Error("tag");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {
