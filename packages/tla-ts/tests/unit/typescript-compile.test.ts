@@ -1942,6 +1942,22 @@ describe("errors", () => {
     expect(wide.failure?.message).toContain("tla-ts can't tell the code of a character outside ASCII");
   });
 
+  it("converts a string to a number, and stops where the number is NaN in a script of integers", async () => {
+    const result = await checkModel(`
+      const read = (text: string) => Number(text);
+      if (read("42") !== 42 || read(" -7 ") !== -7 || read("0x1F") !== 31 || read("1e3") !== 1000) {
+        throw new Error("number");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`
+        const read = (text: string) => Number(text);
+        if (read("abc") === 0) throw new Error("nan");
+      `),
+    ).rejects.toThrow("tla-ts can't represent NaN in this script");
+  });
+
   it("reads the codes of ASCII characters, orders strings by them, and iterates a string", async () => {
     const result = await checkModel(`
       const text = "Az0 ~";

@@ -2212,6 +2212,12 @@ export const translateToNumber = (
   const value = translateExpression(argument, scope, context);
   if (kind === "number") return value;
   if (kind === "boolean") return ifExpression(value, number(1), number(0));
+  if (kind === "string") {
+    const converted = useJavaScript("ToNumber", [value], context);
+    return context.hasSpecialNumbers
+      ? converted
+      : useJavaScript("PlainNumber", [converted], context);
+  }
   throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
 };
 
