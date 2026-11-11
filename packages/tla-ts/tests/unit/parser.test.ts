@@ -20,7 +20,7 @@ const describeRange = (location: Module["definitions"][number]["location"]) => {
   const range = location.range;
   return (
     range &&
-    `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
+    `line ${range.startLine}, col ${range.startColumn} to line ${range.endLine}, col ${range.endColumn} of module ${range.module}`
   );
 };
 

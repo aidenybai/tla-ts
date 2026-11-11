@@ -90,8 +90,8 @@ export interface TokenSpan {
 }
 
 export const getRangeSpan = (file: SourceFile, range: SourceRange): TokenSpan => ({
-  start: getTokenIndex(file, range.start),
-  end: getEndTokenIndex(file, range.end),
+  start: getTokenIndex(file, { line: range.startLine, column: range.startColumn }),
+  end: getEndTokenIndex(file, { line: range.endLine, column: range.endColumn }),
 });
 
 export const getExpressionSpan = (file: SourceFile, expression: Expression): TokenSpan => {

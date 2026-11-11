@@ -120,7 +120,7 @@ export const addRuntimeInvariants = (
       : `${head}${invariant.expression}`;
   });
   const lines = source.split("\n");
-  const end = (parseModule(source).location.range?.end.line ?? lines.length) - 1;
+  const end = (parseModule(source).location.range?.endLine ?? lines.length) - 1;
   const terminator = lines[end].search(/={4,}/);
   return {
     names,

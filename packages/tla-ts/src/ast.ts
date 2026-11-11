@@ -8,10 +8,13 @@ export interface SourceLocation {
   range?: SourceRange;
 }
 
+// Flat, so that the ranges of a large specification don't each hold two location objects.
 export interface SourceRange {
   module: string;
-  start: SourceLocation;
-  end: SourceLocation;
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
 }
 
 export interface NumberExpression {

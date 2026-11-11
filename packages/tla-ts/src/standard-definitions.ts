@@ -213,8 +213,10 @@ export const getStandardRange = (module: string, name: string): SourceRange | un
   return (
     range && {
       module,
-      start: { line: range[0], column: range[1] },
-      end: { line: range[2], column: range[3] },
+      startLine: range[0],
+      startColumn: range[1],
+      endLine: range[2],
+      endColumn: range[3],
     }
   );
 };

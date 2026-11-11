@@ -575,7 +575,8 @@ export const createEnvironment = (
     const substitutionRange = instance.definitionRange
       ? {
           ...instance.definitionRange,
-          start: { line: instance.location.line, column: instance.location.column },
+          startLine: instance.location.line,
+          startColumn: instance.location.column,
         }
       : instance.instanceRange;
     const instantiation = createInstantiation({
@@ -605,7 +606,11 @@ export const createEnvironment = (
         frame: {
           kind: "Identifier",
           name: instance.name ?? instance.module,
-          location: { ...substitutionRange.start, range: substitutionRange },
+          location: {
+            line: substitutionRange.startLine,
+            column: substitutionRange.startColumn,
+            range: substitutionRange,
+          },
         },
       }),
     });

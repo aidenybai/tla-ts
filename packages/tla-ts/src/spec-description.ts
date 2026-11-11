@@ -59,17 +59,19 @@ const UNNAMED_ACTION = "UnnamedAction";
 
 const BUILTIN_RANGE: SourceRange = {
   module: "--TLA+ BUILTINS--",
-  start: { line: 0, column: 0 },
-  end: { line: 0, column: 0 },
+  startLine: 0,
+  startColumn: 0,
+  endLine: 0,
+  endColumn: 0,
 };
 
 const toLocationValue = (location: SourceLocation) => {
   const range = location.range ?? BUILTIN_RANGE;
   return createRecord([
-    ["beginLine", range.start.line],
-    ["beginColumn", range.start.column],
-    ["endLine", range.end.line],
-    ["endColumn", range.end.column],
+    ["beginLine", range.startLine],
+    ["beginColumn", range.startColumn],
+    ["endLine", range.endLine],
+    ["endColumn", range.endColumn],
     ["module", range.module],
   ]);
 };

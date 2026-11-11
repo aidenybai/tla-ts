@@ -115,10 +115,10 @@ export const createSource = (
 
   const getRangeLocus = (range: SourceRange): Locus => ({
     file,
-    startLine: range.start.line,
-    startColumn: range.start.column,
-    endLine: range.end.line,
-    endColumn: range.end.column + 1,
+    startLine: range.startLine,
+    startColumn: range.startColumn,
+    endLine: range.endLine,
+    endColumn: range.endColumn + 1,
   });
 
   const withPragma = (locus: Locus) => {
@@ -132,7 +132,7 @@ export const createSource = (
   };
 
   const getMethod = (range: SourceRange | undefined) =>
-    range && readOldMethod(lines, { line: range.end.line - 1, column: range.end.column });
+    range && readOldMethod(lines, { line: range.endLine - 1, column: range.endColumn });
 
   const withMethod = (range: SourceRange) => {
     const method = getMethod(range);
@@ -706,8 +706,9 @@ export const createSource = (
             },
             { location },
           );
-    const end = definition.location.range?.end;
-    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column });
+    const range = definition.location.range;
+    const methods =
+      range && readNewMethod(lines, { line: range.endLine - 1, column: range.endColumn });
     return methods
       ? { kind: "Bpragma", name, body: operatorBody, methods, location }
       : { kind: "Operator", name, body: operatorBody, location };
@@ -859,7 +860,11 @@ export const createSource = (
       case "Use":
       case "Hide": {
         const location = mergeLoci(
-          getRangeLocus({ ...step.head, end: step.head.start }),
+          getRangeLocus({
+            ...step.head,
+            endLine: step.head.startLine,
+            endColumn: step.head.startColumn,
+          }),
           getUseLocus(body),
         );
         const usable = convertUsable(body);

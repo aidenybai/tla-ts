@@ -175,7 +175,7 @@ export const digestSany = (document: XmlElement, moduleName: string): ModuleDige
 
 const formatRange = (location: SourceLocation) => {
   const range = location.range;
-  return range && `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`;
+  return range && `${range.startLine}:${range.startColumn}-${range.endLine}:${range.endColumn}`;
 };
 
 const getFactDigest = (fact: Fact) =>

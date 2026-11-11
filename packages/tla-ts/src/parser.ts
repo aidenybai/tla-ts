@@ -315,8 +315,8 @@ const mergeSpans = (left: Span, right: Span): Span => ({
 });
 
 const getSpan = (range: SourceRange): Span => ({
-  start: { line: range.start.line, column: range.start.column },
-  stop: { line: range.end.line, column: range.end.column + 1 },
+  start: { line: range.startLine, column: range.startColumn },
+  stop: { line: range.endLine, column: range.endColumn + 1 },
 });
 
 const createProofError = (message: string, span: Span, exception = "Proof.Parser") =>
@@ -439,26 +439,28 @@ const parse = (
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
 
+  const getStartColumn = (token: Token) =>
+    isTlapm && token.kind === "String" ? token.endColumn : token.column;
+
   const getLocation = (token: Token): SourceLocation => ({
     line: token.line,
-    column: isTlapm && token.kind === "String" ? token.endColumn : token.column,
+    column: getStartColumn(token),
     range: undefined,
   });
 
-  const tokenStarts: SourceLocation[] = [];
-  const tokenEnds: SourceLocation[] = [];
   const tokenRanges: SourceRange[] = [];
 
   const getRange = (startIndex: number, endIndex = cursor.index - 1) => {
     const cached = startIndex === endIndex ? tokenRanges[startIndex] : undefined;
     if (cached) return cached;
+    const first = tokens[startIndex];
     const last = tokens[endIndex];
-    tokenStarts[startIndex] ??= getLocation(tokens[startIndex]);
-    tokenEnds[endIndex] ??= { line: last.line, column: last.endColumn };
     const range = {
       module: openModules[0].name,
-      start: tokenStarts[startIndex],
-      end: tokenEnds[endIndex],
+      startLine: first.line,
+      startColumn: getStartColumn(first),
+      endLine: last.line,
+      endColumn: last.endColumn,
     };
     if (startIndex === endIndex) tokenRanges[startIndex] = range;
     return range;
@@ -720,7 +722,12 @@ const parse = (
       }
       const prefixArgs = elementArgs.slice(0, -1);
       const location = getLocation(token);
-      location.range = { ...getRange(start), end: selectorRanges[selectorRanges.length - 1].end };
+      const lastSelectorRange = selectorRanges[selectorRanges.length - 1];
+      location.range = {
+        ...getRange(start),
+        endLine: lastSelectorRange.endLine,
+        endColumn: lastSelectorRange.endColumn,
+      };
       const name = names.join("!");
       const subscript: Expression = prefixArgs.every((args) => args.length === 0)
         ? { kind: "Identifier", name, location }
@@ -1452,7 +1459,8 @@ const parse = (
       const left = state.left;
       if (token.text === "/\\" || token.text === "\\/") {
         const kind = token.text === "/\\" ? "And" : "Or";
-        const prefixEnds = [getRange(start).end];
+        const prefixRange = getRange(start);
+        const prefixEnds = [{ line: prefixRange.endLine, column: prefixRange.endColumn }];
         state.left =
           left.kind === kind && previous?.text === token.text
             ? {
@@ -1489,11 +1497,9 @@ const parse = (
   };
 
   const parseBody = () => {
-    const start = getLocation(peek());
+    const start = cursor.index;
     const body = parseExpression();
-    const last = tokens[cursor.index - 1];
-    const end = { line: last.line, column: last.endColumn };
-    return { body, bodyRange: { module: openModules[0].name, start, end } };
+    return { body, bodyRange: getRange(start) };
   };
 
   const parseDefinition = (isLocal: boolean): Definition | Instance => {
@@ -1505,8 +1511,8 @@ const parse = (
     name: named.name,
     arity: 0,
     location: {
-      line: named.range.start.line,
-      column: named.range.start.column,
+      line: named.range.startLine,
+      column: named.range.startColumn,
       range: named.range,
     },
   });
@@ -2074,7 +2080,10 @@ const parse = (
   const getStepSpan = (head: SourceRange, body: StepBody) => {
     if (body.kind !== "Use" && body.kind !== "Hide") return getSpan(head);
     const lastDef = body.defs[body.defs.length - 1]?.location.range;
-    return mergeSpans(getSpan({ ...head, end: head.start }), getSpan(lastDef ?? body.keyword));
+    return mergeSpans(
+      getSpan({ ...head, endLine: head.startLine, endColumn: head.startColumn }),
+      getSpan(lastDef ?? body.keyword),
+    );
   };
 
   const parsePreproof = (): Preproof => {
@@ -2324,8 +2333,10 @@ const parse = (
       if (token.kind === "ModuleEnd") {
         location.range = {
           module: openModules[0].name,
-          start: { line: location.line, column: location.column },
-          end: { line: token.line, column: token.endColumn },
+          startLine: location.line,
+          startColumn: location.column,
+          endLine: token.line,
+          endColumn: token.endColumn,
         };
         openModules.pop();
         recursiveScopes.pop();

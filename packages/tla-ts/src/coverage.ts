@@ -171,10 +171,10 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
   left !== undefined &&
   right !== undefined &&
   left.module === right.module &&
-  left.start.line === right.start.line &&
-  left.start.column === right.start.column &&
-  left.end.line === right.end.line &&
-  left.end.column === right.end.column;
+  left.startLine === right.startLine &&
+  left.startColumn === right.startColumn &&
+  left.endLine === right.endLine &&
+  left.endColumn === right.endColumn;
 
 export const getCoverageLabel = (
   name: string | undefined,
@@ -188,20 +188,30 @@ export const getCoverageLabel = (
   if (isSameRange(definition.body.location.range, range) || !range) {
     return `${definition.name} ${formatRange(head)}`;
   }
-  return `${definition.name} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;
+  return `${definition.name} ${formatRange(head)} (${range.startLine} ${range.startColumn} ${range.endLine} ${range.endColumn})`;
 };
 
 const getRangeKey = (range: SourceRange) =>
-  `${range.module}:${range.start.line}:${range.start.column}:${range.end.line}:${range.end.column}`;
+  `${range.module}:${range.startLine}:${range.startColumn}:${range.endLine}:${range.endColumn}`;
 
 const spanRanges = (first: SourceRange | undefined, last: SourceRange | undefined) =>
-  first && last ? { module: first.module, start: first.start, end: last.end } : undefined;
+  first && last
+    ? {
+        module: first.module,
+        startLine: first.startLine,
+        startColumn: first.startColumn,
+        endLine: last.endLine,
+        endColumn: last.endColumn,
+      }
+    : undefined;
 
 const getStartRange = (location: SourceLocation, last: SourceRange | undefined) =>
   last && {
     module: last.module,
-    start: location.range?.start ?? { line: location.line, column: location.column },
-    end: last.end,
+    startLine: location.range?.startLine ?? location.line,
+    startColumn: location.range?.startColumn ?? location.column,
+    endLine: last.endLine,
+    endColumn: last.endColumn,
   };
 
 const getJavaHashCode = (text: string) =>
@@ -356,7 +366,7 @@ export const buildCoverage = (
           const prefix = walkJunction(
             expression,
             count - 1,
-            range && end ? { ...range, end } : range,
+            range && end ? { ...range, endLine: end.line, endColumn: end.column } : range,
             locals,
           );
           coverage.prefixes[stack.at(-1) ?? -1] = prefix;
@@ -765,10 +775,10 @@ const compareRanges = (left: SourceRange | undefined, right: SourceRange | undef
   if (!left || !right) return left ? 1 : right ? -1 : 0;
   if (left.module !== right.module) return left.module < right.module ? -1 : 1;
   return (
-    left.start.line - right.start.line ||
-    left.start.column - right.start.column ||
-    left.end.line - right.end.line ||
-    left.end.column - right.end.column
+    left.startLine - right.startLine ||
+    left.startColumn - right.startColumn ||
+    left.endLine - right.endLine ||
+    left.endColumn - right.endColumn
   );
 };
 
