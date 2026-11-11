@@ -165,6 +165,17 @@ export class BoundManager {
     return true;
   }
 
+  // A non-strict lower bound at a strict upper bound counts too, as in Z3.
+  isInconsistent() {
+    for (const [variable, lower] of this.lowers) {
+      const upper = this.uppers.get(variable);
+      if (upper === undefined) continue;
+      const order = lower.value.compare(upper.value);
+      if (order > 0 || (order === 0 && !lower.isStrict && upper.isStrict)) return true;
+    }
+    return false;
+  }
+
   isZeroOne(variable: number) {
     const lower = this.lowers.get(variable)?.value;
     const upper = this.uppers.get(variable)?.value;

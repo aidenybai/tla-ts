@@ -31,6 +31,7 @@ import { elimUncnstr } from "./elim-uncnstr";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
 import { createDt2BvTactic } from "./dt2bv-tactic";
+import { createEq2BvTactic } from "./eq2bv-tactic";
 import { runElimSmallBv } from "./elim-small-bv-tactic";
 import { domSimplify } from "./dom-simplify";
 import { factor } from "./factor";
@@ -790,6 +791,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   ["dt2bv", { descrs: new Map(), build: (environment) => createDt2BvTactic(environment.manager) }],
+  ["eq2bv", { descrs: new Map(), build: (environment) => createEq2BvTactic(environment.manager) }],
   [
     "bit-blast",
     {
@@ -944,7 +946,7 @@ const UNPORTED_TACTICS = new Set(
     "add-bounds blast-term-ite " +
     "bv-slice bvarray2uf cofactor-term-ite collect-statistics " +
     "degree-shift demodulator diff-neq " +
-    "elim-predicates elim-uncnstr2 eq2bv " +
+    "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
     "nla2bv nlqsat nra pb-preprocess pb2bv pqffd " +
