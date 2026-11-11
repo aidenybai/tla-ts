@@ -1,9 +1,9 @@
 import ts from "@typescript/typescript6";
 import { getWritten } from "./actions";
 import { MUTATING_METHODS } from "./collections";
-import { type Context, getCallee, getSymbol, isMethodCall } from "./context";
+import { type Context, findNodes, getCallee, getSymbol, isMethodCall } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { getKind, isHeapType } from "./types";
+import { getKind, isHeapArray, isHeapType } from "./types";
 
 const COPYING_METHODS = new Set([
   "slice",
@@ -455,6 +455,43 @@ const isFreshCall = (node: ts.Node, context: Context) => {
 };
 
 export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
+  // Whether a reference to a function's own variable is the last that runs, so that nothing
+  // changes the variable's array after the reference shares it.
+  const isLastUse = (node: ts.Node, symbol: ts.Symbol) => {
+    const declaration = symbol.valueDeclaration;
+    if (
+      declaration === undefined ||
+      !ts.isVariableDeclaration(declaration) ||
+      (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export) !== 0
+    ) {
+      return false;
+    }
+    const owner = ts.findAncestor(declaration, ts.isFunctionLike) ?? declaration.getSourceFile();
+    const isRepeated =
+      ts.findAncestor(node, (inner) =>
+        inner === owner
+          ? "quit"
+          : ts.isIterationStatement(inner, false) &&
+            ts.findAncestor(declaration, (outer) => outer === inner) === undefined,
+      ) !== undefined;
+    return (
+      !isRepeated &&
+      findNodes(
+        owner,
+        (inner): inner is ts.Identifier =>
+          ts.isIdentifier(inner) &&
+          inner !== declaration.name &&
+          getSymbol(inner, context.checker) === symbol,
+      ).every(
+        (reference) =>
+          reference === node ||
+          (reference.end <= node.getStart() &&
+            (ts.findAncestor(reference.parent, ts.isFunctionLike) ?? reference.getSourceFile()) ===
+              owner),
+      )
+    );
+  };
+
   const reached = getReached(roots, context);
   const changed = new Map<ts.Symbol, number>();
   const addChanged = (written: Written[]) =>
@@ -463,6 +500,16 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
     );
   const collect = (node: ts.Node) => {
     const written = getWritten(node);
+    // An array that the heap holds keeps its identity as it changes in place.
+    const isHeapChange =
+      written !== undefined &&
+      (isHeapArray(written, context) ||
+        ((ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)) &&
+          isHeapArray(written.expression, context)));
+    if (isHeapChange) {
+      ts.forEachChild(node, collect);
+      return;
+    }
     if (isUpdate(node, context)) {
       const path = written && getPath(written, context);
       if (path !== undefined) addChanged([path]);
@@ -482,12 +529,15 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
     const isHeapRead =
       (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       getKind(node.expression, context) === "object";
+    // An array that the heap holds goes by reference, as JavaScript shares it.
     const symbol =
-      ts.isIdentifier(node) && !isName
-        ? getSymbol(node, context.checker)
-        : isHeapRead
-          ? context.heap
-          : undefined;
+      ts.isExpression(node) && !isName && isHeapArray(node, context)
+        ? undefined
+        : ts.isIdentifier(node) && !isName
+          ? getSymbol(node, context.checker)
+          : isHeapRead
+            ? context.heap
+            : undefined;
     if (symbol !== undefined || (ts.isCallExpression(node) && !isMethodCall(node))) {
       const escapes = getEscapes(
         node as ts.Expression,
@@ -495,7 +545,8 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
         context,
         new Set(),
       );
-      const sourceDepth = symbol === undefined ? undefined : changed.get(symbol);
+      const sourceDepth =
+        symbol === undefined || isLastUse(node, symbol) ? undefined : changed.get(symbol);
       // A target may change the top of a new object, which only it names.
       const freshDepth = isFreshCall(node, context) ? 1 : 0;
       const isShared = escapes.some((escape) => {

@@ -251,7 +251,11 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
     : apply("+", [position, number(1)]);
 };
 
-const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, context: Context) => {
+export const translateArrayLiteral = (
+  node: ts.ArrayLiteralExpression,
+  scope: Scope,
+  context: Context,
+) => {
   // Runs of plain elements become tuples, and each spread array stays a sequence of its own.
   const parts = node.elements.reduce<(Expression | Expression[])[]>((result, element) => {
     if (!ts.isSpreadElement(element)) {

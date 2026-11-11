@@ -40,7 +40,12 @@ import { TlaTypeScriptError } from "../errors";
 import { ARRAY_LIKE_METHODS, getHeapRegExpCall, IN_PLACE_METHODS } from "./collections";
 import { getJsonText, parseJson } from "./json";
 import { getConstructor } from "./exceptions";
-import { translateCondition, translateExpression, translateToString } from "./expressions";
+import {
+  translateArrayLiteral,
+  translateCondition,
+  translateExpression,
+  translateToString,
+} from "./expressions";
 import {
   getBuiltIn,
   isBuiltInObject,
@@ -972,13 +977,15 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     const holes = node.elements.flatMap((element, position) =>
       ts.isOmittedExpression(element) ? [number(position + 1)] : [],
     );
-    const elements = tuple(
-      node.elements.map((element) =>
-        ts.isOmittedExpression(element)
-          ? getUndefined(context)
-          : translateExpression(element, scope, context),
-      ),
-    );
+    const elements = node.elements.some(ts.isSpreadElement)
+      ? translateArrayLiteral(node, scope, context)
+      : tuple(
+          node.elements.map((element) =>
+            ts.isOmittedExpression(element)
+              ? getUndefined(context)
+              : translateExpression(element, scope, context),
+          ),
+        );
     const prototype = translateBuiltInValue("Array.prototype", node, context);
     const array =
       holes.length === 0
@@ -1765,9 +1772,7 @@ const getCalledName = (owner: ts.SignatureDeclaration) => {
 };
 
 const isPlainLiteral = (node: ts.Node | undefined): node is ts.ArrayLiteralExpression =>
-  node !== undefined &&
-  ts.isArrayLiteralExpression(node) &&
-  !node.elements.some(ts.isSpreadElement);
+  node !== undefined && ts.isArrayLiteralExpression(node);
 
 // The arrays that a function the script reaches changes in place through a parameter, which
 // JavaScript shares with its caller, live in the heap, with every variable, parameter, and field
@@ -1790,6 +1795,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       accesses.push(node);
     }
     if (ts.isObjectLiteralExpression(node)) objects.push(node);
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
     if (
       ts.isExpression(node) &&
       !(
@@ -1808,21 +1814,24 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     (type.isUnion() || type.isIntersection() ? type.types : [type]).flatMap(
       (member) => checker.getPropertyOfType(member, name) ?? [],
     );
-  const isInPlace = (use: ts.Identifier) => {
+  const isInPlace = (use: ts.Expression) => {
     const parent = use.parent;
     return (
       (ts.isPropertyAccessExpression(parent) &&
         IN_PLACE_METHODS.has(parent.name.text) &&
         ts.isCallExpression(parent.parent) &&
         parent.parent.expression === parent) ||
+      (ts.isPropertyAccessExpression(parent) &&
+        parent.name.text === "length" &&
+        isAssigned(parent)) ||
       (ts.isElementAccessExpression(parent) && parent.expression === use && isAssigned(parent))
     );
   };
-  const grow = (start: ts.Symbol) => {
+  const grow = (start: ts.Symbol[]) => {
     const group = new Set<ts.Node>();
     const names = new Set<string>();
     const nodes: ts.Node[] = [];
-    const pending = [start];
+    const pending = [...start];
     const isInGroup = (symbol: ts.Symbol) =>
       (symbol.declarations ?? []).some((declaration) => group.has(declaration));
     const isSame = (symbol: ts.Symbol, other: ts.Symbol) =>
@@ -1834,8 +1843,62 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       pending.push(...found);
       return found.length > 0;
     };
+    // Adds where a value that goes into one of the group's holders comes from: an array literal,
+    // which the heap holds, or another holder.
+    const addSource = (node: ts.Expression): boolean => {
+      if (isPlainLiteral(node)) {
+        nodes.push(node);
+        return true;
+      }
+      if (
+        ts.isParenthesizedExpression(node) ||
+        ts.isAsExpression(node) ||
+        ts.isSatisfiesExpression(node)
+      ) {
+        return addSource(node.expression);
+      }
+      // A holder may also hold undefined, which only an optional chain or a check reads.
+      if (ts.isIdentifier(node) && node.text === "undefined") {
+        return (checker.getTypeAtLocation(node).flags & ts.TypeFlags.Undefined) !== 0;
+      }
+      if (ts.isConditionalExpression(node)) {
+        return addSource(node.whenTrue) && addSource(node.whenFalse);
+      }
+      return addHolder(node);
+    };
+    // The fields that an object literal's property may be, by its own name and by its type.
+    const getPropertyFields = (property: ts.ObjectLiteralElementLike) => {
+      const own =
+        property.name === undefined ? undefined : checker.getSymbolAtLocation(property.name);
+      const contextual = ts.isObjectLiteralExpression(property.parent)
+        ? checker.getContextualType(property.parent)
+        : undefined;
+      return own === undefined
+        ? []
+        : [own, ...(contextual === undefined ? [] : getFields(contextual, own.name))];
+    };
     const isUse = (use: ts.Expression): boolean => {
       const parent = use.parent;
+      if (ts.isParenthesizedExpression(parent)) return isUse(parent);
+      if (ts.isConditionalExpression(parent) && parent.condition !== use) {
+        return (
+          addSource(parent.whenTrue === use ? parent.whenFalse : parent.whenTrue) && isUse(parent)
+        );
+      }
+      if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+        return addHolder(parent.name);
+      }
+      if (ts.isPropertyAssignment(parent) || ts.isShorthandPropertyAssignment(parent)) {
+        const fields = getPropertyFields(parent);
+        pending.push(...fields);
+        return fields.length > 0;
+      }
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        return parent.left === use ? addSource(parent.right) : addHolder(parent.left);
+      }
       if (ts.isPropertyAccessExpression(parent)) {
         const call = parent.parent;
         return (
@@ -1850,6 +1913,17 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return isNumberLike(parent.argumentExpression, context);
       }
       if (ts.isForOfStatement(parent)) return parent.expression === use;
+      // A check of whether a holder holds an array reads only the reference.
+      if (
+        (ts.isIfStatement(parent) && parent.expression === use) ||
+        (ts.isPrefixUnaryExpression(parent) &&
+          parent.operator === ts.SyntaxKind.ExclamationToken) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.left === use &&
+          parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)
+      ) {
+        return true;
+      }
       if (ts.isSpreadElement(parent)) return ts.isArrayLiteralExpression(parent.parent);
       if (ts.isBinaryExpression(parent)) {
         const kind = parent.operatorToken.kind;
@@ -1900,11 +1974,13 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         );
       }
       if (declaration !== undefined && ts.isVariableDeclaration(declaration)) {
-        if (declaration.initializer !== undefined) nodes.push(declaration.initializer);
+        const initializer = declaration.initializer;
+        nodes.push(declaration);
         return (
           (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
           ts.isIdentifier(declaration.name) &&
-          isPlainLiteral(declaration.initializer)
+          initializer !== undefined &&
+          addSource(initializer)
         );
       }
       // A field, which only object literals give its arrays.
@@ -1917,27 +1993,22 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           (fieldDeclaration) =>
             (ts.isPropertySignature(fieldDeclaration) &&
               fieldDeclaration.questionToken === undefined) ||
-            ts.isPropertyAssignment(fieldDeclaration),
+            ts.isPropertyAssignment(fieldDeclaration) ||
+            ts.isShorthandPropertyAssignment(fieldDeclaration),
         ) &&
-        objects.every((object) => {
-          const contextual = checker.getContextualType(object);
-          return object.properties.every((property) => {
-            const own =
-              property.name === undefined ? undefined : checker.getSymbolAtLocation(property.name);
-            const key = own?.name;
-            const isField =
-              own !== undefined &&
-              key !== undefined &&
-              [own, ...(contextual === undefined ? [] : getFields(contextual, key))].some((field) =>
-                isSame(field, symbol),
-              );
-            if (!isField) return true;
-            pending.push(own);
-            const value = ts.isPropertyAssignment(property) ? property.initializer : undefined;
-            if (value !== undefined) nodes.push(value);
-            return isPlainLiteral(value);
-          });
-        })
+        objects.every((object) =>
+          object.properties.every((property) => {
+            const fields = getPropertyFields(property);
+            if (!fields.some((field) => isSame(field, symbol))) return true;
+            pending.push(...fields);
+            if (ts.isShorthandPropertyAssignment(property)) {
+              const value = checker.getShorthandAssignmentValueSymbol(property);
+              if (value !== undefined) pending.push(value);
+              return value !== undefined;
+            }
+            return ts.isPropertyAssignment(property) && addSource(property.initializer);
+          }),
+        )
       );
     };
     const getUses = (symbol: ts.Symbol): ts.Expression[] => {
@@ -1996,28 +2067,115 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           owner === undefined ? undefined : checker.getSignatureFromDeclaration(owner);
         return signature !== undefined && keepsFields(type, signature.getReturnType());
       }
-      if (ts.isCallExpression(parent) && parent.arguments.includes(node)) {
-        const contextual = checker.getContextualType(node);
+      // An element of an array literal goes where the array's elements go.
+      if (ts.isArrayLiteralExpression(parent)) {
+        const element = checker.getIndexTypeOfType(
+          checker.getTypeAtLocation(parent),
+          ts.IndexKind.Number,
+        );
+        return element !== undefined && keepsFields(type, element);
+      }
+      if (
+        (ts.isCallExpression(parent) && parent.arguments.includes(node)) ||
+        (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
+        ts.isShorthandPropertyAssignment(parent)
+      ) {
+        // A property of a literal that nothing types takes the type of its value.
+        const property =
+          ts.isPropertyAssignment(parent) || ts.isShorthandPropertyAssignment(parent)
+            ? checker.getSymbolAtLocation(parent.name)
+            : undefined;
+        const contextual =
+          checker.getContextualType(node) ??
+          (property === undefined ? undefined : checker.getTypeOfSymbol(property));
         return contextual !== undefined && keepsFields(type, contextual);
+      }
+      // A spread copies each field, which keeps the array that the field holds.
+      if (ts.isSpreadAssignment(parent)) {
+        return keepsFields(type, checker.getTypeAtLocation(parent.parent));
+      }
+      // A check reads only whether the object is there, as && gives its left side only where
+      // that is falsy.
+      if (
+        ts.isIfStatement(parent) ||
+        ts.isPrefixUnaryExpression(parent) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.left === node &&
+          parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) ||
+        (ts.isBinaryExpression(parent) &&
+          [
+            ts.SyntaxKind.EqualsEqualsEqualsToken,
+            ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ].includes(parent.operatorToken.kind))
+      ) {
+        return true;
+      }
+      if (
+        ts.isConditionalExpression(parent) ||
+        (ts.isBinaryExpression(parent) &&
+          [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(parent.operatorToken.kind))
+      ) {
+        return keepsFields(type, checker.getTypeAtLocation(parent));
       }
       if (ts.isBinaryExpression(parent) && parent.right === node && isAssigned(parent.left)) {
         return keepsFields(type, checker.getTypeAtLocation(parent.left));
       }
+      // A target that an assignment writes, which reads none of its fields.
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.left === node &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        return true;
+      }
       return ts.isExpressionStatement(parent);
     };
     return expressions.every((node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node))
-      ? nodes
+      ? [...nodes, ...group]
       : [];
   };
-  return [...references.entries()]
-    .filter(
-      (entry) =>
-        entry[0].valueDeclaration !== undefined &&
-        ts.isParameter(entry[0].valueDeclaration) &&
-        ts.findAncestor(entry[0].valueDeclaration, (node) => isReached.has(node)) !== undefined &&
-        entry[1].some(isInPlace),
-    )
-    .flatMap((entry) => grow(entry[0]));
+  const isReachedNode = (node: ts.Node) =>
+    ts.findAncestor(node, (ancestor) => isReached.has(ancestor)) !== undefined;
+  // A parameter or a field whose array a function changes in place starts a group.
+  const starts = [
+    ...[...references.entries()].flatMap((entry) => {
+      const declaration = entry[0].valueDeclaration;
+      return declaration !== undefined &&
+        ts.isParameter(declaration) &&
+        isReachedNode(declaration) &&
+        entry[1].some(isInPlace)
+        ? [[entry[0]]]
+        : [];
+    }),
+    // A constant that names another's array, whose changes JavaScript shares.
+    ...[...references.entries()].flatMap((entry) => {
+      const declaration = entry[0].valueDeclaration;
+      return declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer !== undefined &&
+        !isPlainLiteral(declaration.initializer) &&
+        isReachedNode(declaration) &&
+        entry[1].some(isInPlace)
+        ? [[entry[0]]]
+        : [];
+    }),
+    ...accesses.flatMap((access) => {
+      const fields =
+        isReachedNode(access) && isInPlace(access) ? getAccessedFields(access, checker) : undefined;
+      return fields === undefined || fields.length === 0 ? [] : [fields];
+    }),
+  ];
+  const found = new Set<ts.Node>();
+  starts.forEach((start) => {
+    if (start.every((symbol) => (symbol.declarations ?? []).some((node) => found.has(node))))
+      return;
+    grow(start).forEach((node) => found.add(node));
+  });
+  return [...found];
 };
 
 export const findHeapArrays = (

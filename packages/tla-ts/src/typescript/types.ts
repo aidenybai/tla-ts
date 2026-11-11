@@ -226,9 +226,7 @@ export const getArrayLiteral = (node: ts.Expression, context: Context) => {
 export const getAccessedFields = (node: ts.Node, checker: ts.TypeChecker) => {
   if (ts.isPropertyAccessExpression(node) && !ts.isPrivateIdentifier(node.name)) {
     const symbol = checker.getSymbolAtLocation(node.name);
-    return symbol === undefined || (symbol.flags & ts.SymbolFlags.Transient) !== 0
-      ? undefined
-      : [symbol];
+    return symbol === undefined ? undefined : [symbol];
   }
   if (!ts.isElementAccessExpression(node)) return undefined;
   const keyType = checker.getTypeAtLocation(node.argumentExpression);
@@ -237,15 +235,17 @@ export const getAccessedFields = (node: ts.Node, checker: ts.TypeChecker) => {
   const fields = keys.map((key) =>
     key.isStringLiteral() ? checker.getPropertyOfType(objectType, key.value) : undefined,
   );
-  return fields.every(
-    (field) => field !== undefined && (field.flags & ts.SymbolFlags.Transient) === 0,
-  )
+  return fields.every((field) => field !== undefined)
     ? fields.filter((field) => field !== undefined)
     : undefined;
 };
 
-export const isHeapArray = (node: ts.Expression, context: Context) => {
+export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
   if (context.heapArrays.size === 0) return false;
+  if (ts.isParenthesizedExpression(node)) return isHeapArray(node.expression, context);
+  if (ts.isConditionalExpression(node)) {
+    return isHeapArray(node.whenTrue, context) && isHeapArray(node.whenFalse, context);
+  }
   const literal = getArrayLiteral(node, context);
   const declaration = ts.isIdentifier(node)
     ? getSymbol(node, context.checker)?.valueDeclaration
@@ -254,7 +254,9 @@ export const isHeapArray = (node: ts.Expression, context: Context) => {
   return (
     (literal !== undefined && context.heapArrays.has(literal)) ||
     (declaration !== undefined &&
-      (ts.isBindingElement(declaration) || ts.isParameter(declaration)) &&
+      (ts.isBindingElement(declaration) ||
+        ts.isParameter(declaration) ||
+        ts.isVariableDeclaration(declaration)) &&
       context.heapArrays.has(declaration)) ||
     (fields !== undefined &&
       fields.length > 0 &&

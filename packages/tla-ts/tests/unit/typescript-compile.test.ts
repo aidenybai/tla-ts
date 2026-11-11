@@ -1480,12 +1480,12 @@ describe("errors", () => {
 
   it.each([
     [
-      "an array that a heap object holds and that changes through it",
-      "const run = () => {\n  const items: number[] = [];\n  const wrapped = { inner: items };\n  wrapped.inner.push(1);\n  return items.length;\n};\nlet size = run();",
+      "an array that a heap object holds, changes through it, and goes to JSON",
+      "const run = () => {\n  const items: number[] = [];\n  const wrapped = { inner: items };\n  const text = JSON.stringify(wrapped);\n  wrapped.inner.push(1);\n  return items.length + text.length;\n};\nlet size = run();",
     ],
     [
-      "an array that a function puts in a heap object",
-      "const wrap = (inner: number[]) => ({ inner });\nconst run = () => {\n  const items: number[] = [];\n  const wrapped = wrap(items);\n  wrapped.inner.push(1);\n  return items.length;\n};\nlet size = run();",
+      "an array that a function puts in a heap object that goes to JSON",
+      "const wrap = (inner: number[]) => ({ inner });\nconst run = () => {\n  const items: number[] = [];\n  const wrapped = wrap(items);\n  const text = JSON.stringify(wrapped);\n  wrapped.inner.push(1);\n  return items.length + text.length;\n};\nlet size = run();",
     ],
   ])("rejects %s, as changing it would show through the other name", (_, source) => {
     expect(() => compile(source)).toThrow("items would share an object that changes in place");
@@ -2963,7 +2963,7 @@ describe("errors", () => {
         };
         const box: Box = { items: [] };
         add(box.items);
-        const copy = { ...box };
+        const text = JSON.stringify(box);
       `),
     ).toThrow("Only state variables and local lets can change: items");
   });
@@ -3070,6 +3070,97 @@ describe("errors", () => {
         count(2);
       `),
     ).toThrow("tla-ts can't run this call of a function from inside itself");
+  });
+
+  it("shares an array that a field holds and changes in place", async () => {
+    const result = await checkModel(`
+      interface Tree {
+        name: string;
+        children: Tree[];
+      }
+      const make = (name: string): Tree => ({ name, children: [] });
+      const root = make("r");
+      root.children.push(make("l"));
+      const copy = { ...root };
+      copy.children.push(make("x"));
+      const holder = { list: root.children };
+      holder.list.push(make("y"));
+      const trace: { sets: number[] | undefined } = { sets: undefined };
+      const enter = (value: number) => {
+        const sets = trace.sets;
+        sets?.push(value);
+        return sets?.length ?? -1;
+      };
+      const before = enter(1);
+      const list: number[] = [];
+      trace.sets = list;
+      const after = enter(2);
+      if (root.children.length !== 3 || before !== -1 || after !== 1 || list.length !== 1) {
+        throw new Error("fields");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const trace: { sets: number[] | undefined } = { sets: undefined };
+        const list: number[] = [];
+        trace.sets = list;
+        const snapshot = JSON.stringify(trace);
+        trace.sets.push(1);
+      `),
+    ).toThrow("list would share an object that changes in place, so copy it");
+  });
+
+  it("shares the arrays of a tree's nodes as the parser builds them", async () => {
+    const result = await checkModel(`
+      interface Node {
+        kind: string;
+        heirs: Node[];
+      }
+      const create = (kind: string, heirs: Node[]): Node => ({ kind, heirs });
+      const leaf = create("leaf", []);
+      const pair = create("pair", [leaf, leaf]);
+      const flat = (node: Node, isFlat: boolean) =>
+        create("flat", [...(isFlat ? node.heirs : [node]), leaf]);
+      const one = flat(pair, true);
+      const two = flat(pair, false);
+      pair.heirs.push(leaf);
+      const frame = { heirs: [] as Node[], node: undefined as Node | undefined };
+      frame.heirs.push(one);
+      frame.node = create("whole", frame.heirs);
+      frame.heirs.push(two);
+      if (
+        one.heirs.length !== 3 ||
+        two.heirs.length !== 2 ||
+        frame.node.heirs.length !== 2 ||
+        pair.heirs.length !== 3
+      ) {
+        throw new Error("heirs");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("shares an array that changes in place where nothing changes it after", async () => {
+    const result = await checkModel(`
+      const box = { list: [0] };
+      const make = () => {
+        const items: number[] = [];
+        items.push(1);
+        box.list = items;
+        return box.list.length;
+      };
+      if (make() !== 1 || box.list[0] !== 1) throw new Error("last");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const box = { list: [0] };
+        const items: number[] = [];
+        box.list = items;
+        items.push(1);
+      `),
+    ).toThrow("items would share an object that changes in place, so copy it");
   });
 
   it("names a function's model value so that TLC doesn't type it", async () => {

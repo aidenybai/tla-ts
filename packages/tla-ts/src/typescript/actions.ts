@@ -1257,36 +1257,44 @@ export const translateCallStatement = (
     const changeName = context.names.getFresh("change");
     const change = identifier(changeName);
     const method = arrayChange.method;
+    const changeArray = ifThenElse(
+      useJavaScript(
+        "HoldsBuiltIn",
+        [heap, ref, string(method), string(`Array.prototype.${method}`)],
+        context,
+      ),
+      bindOnce(
+        path,
+        changeName,
+        useJavaScript(
+          "ArrayChange",
+          [heap, ref, string(method), tuple(translateArguments(arrayChange.items))],
+          context,
+        ),
+        ifThenElse(
+          field(change, "isThrown"),
+          throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
+          continueWith(withHeap(field(change, "heap")), field(change, "value")),
+        ),
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call Array.prototype.${method} where a script replaced it`),
+        ]),
+      ),
+    );
+    // A holder that may hold undefined gives undefined to an optional chain, and throws otherwise.
     return bindOnce(
       path,
       arrayName,
       translateExpression(arrayChange.receiver, path.scope, context),
       ifThenElse(
-        useJavaScript(
-          "HoldsBuiltIn",
-          [heap, ref, string(method), string(`Array.prototype.${method}`)],
-          context,
-        ),
-        bindOnce(
-          path,
-          changeName,
-          useJavaScript(
-            "ArrayChange",
-            [heap, ref, string(method), tuple(translateArguments(arrayChange.items))],
-            context,
-          ),
-          ifThenElse(
-            field(change, "isThrown"),
-            throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
-            continueWith(withHeap(field(change, "heap")), field(change, "value")),
-          ),
-        ),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string(`tla-ts can't call Array.prototype.${method} where a script replaced it`),
-          ]),
-        ),
+        apply("\\in", [ref, set([getUndefined(context), identifier("Null")])]),
+        arrayChange.isOptional
+          ? continueWith(path, getUndefined(context))
+          : throwTypeError(path, expression, context, frame),
+        changeArray,
       ),
     );
   }

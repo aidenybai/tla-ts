@@ -1649,6 +1649,7 @@ export const getHeapArrayChange = (node: ts.Node, context: Context) =>
         method: node.expression.name.text,
         receiver: node.expression.expression,
         items: node.arguments,
+        isOptional: node.expression.questionDotToken !== undefined,
       }
     : undefined;
 
