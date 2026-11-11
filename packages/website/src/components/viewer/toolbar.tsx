@@ -33,7 +33,12 @@ const Run = () => {
       variant="ghost"
       onClick={() => {
         setResultOpen(true);
-        runner.run({ kind: "check", source: view.module.source, config: view.config });
+        runner.run({
+          kind: "check",
+          source: view.module.source,
+          config: view.config,
+          modules: view.modules,
+        });
       }}
     >
       <Play />
