@@ -1,83 +1,40 @@
-import { Check, Copy, Play } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
-import { cn, createPartsContext } from "@/lib/utils";
-import type { RunRequest } from "../run-worker";
-import { useRun } from "../use-run";
+import { useRef, useState, type ReactNode } from "react";
+import { cn } from "cn";
+import { createPartsContext } from "@/lib/utils";
+import { getTokenLines, type Language } from "../highlighter";
+import type { LineNote } from "../run-worker";
+import { useTokenMorph } from "../use-token-morph";
+import { CodeLine } from "./code-line";
+import { CopyIcon } from "./copy-icon";
+import { RunIcon } from "./run-icon";
+import { Button } from "./ui/button";
 
 const COPIED_MS = 1500;
-const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
-const SPINNER_INTERVAL_MS = 80;
-
-const KEYWORD = "text-code-keyword";
-const STRING = "text-code-string";
-const COMMENT = "text-gray-1000";
-
-const PATTERNS = {
-  shell: /^\S+/g,
-  typescript: /(?<comment>\/\/.*)|(?<string>"[^"]*")|\b(?:import|from|const|await)\b/g,
-  tla: /(?<comment>\\\*.*|-{4,}|={4,})|(?<string>"[^"]*")|\\[AE]\b|\\(?:in|cap)\b|<\d+>\d*\.?|\b(?:MODULE|EXTENDS|VARIABLES?|THEOREM|BY|DEF|IF|THEN|ELSE|QED)\b/g,
-};
-
-type Language = keyof typeof PATTERNS;
-
-interface Token {
-  text: string;
-  className?: string;
-}
-
-const BUTTON_CLASS_NAME =
-  "group flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg outline-none hover:bg-gray-300 focus-visible:ring-2 focus-visible:ring-blue-500/40 enabled:active:scale-[0.94] disabled:cursor-default disabled:hover:bg-transparent";
-const ICON_CLASS_NAME = "size-4.5 text-gray-1000 group-hover:text-gray-1200";
+const NO_HIGHLIGHTS = {};
 
 interface CodeState {
   code: string;
   language: Language;
   isMultiline: boolean;
-  runner: ReturnType<typeof useRun>;
-  isDrawerOpen: boolean;
-  setIsDrawerOpen: (isDrawerOpen: boolean) => void;
+  activeLine: number | undefined;
+  notes: LineNote[];
+  highlights: Record<string, string>;
+  onMorphEnd: (() => void) | undefined;
 }
 
 const codeContext = createPartsContext<CodeState>("Code.Root");
 
-export const useCode = codeContext.useParts;
-
-const getTokens = (code: string, language: Language) => {
-  const highlighted = [...code.matchAll(PATTERNS[language])].reduce<{
-    tokens: Token[];
-    end: number;
-  }>(
-    (state, match) => ({
-      tokens: [
-        ...state.tokens,
-        { text: code.slice(state.end, match.index) },
-        {
-          text: match[0],
-          className: match.groups?.comment ? COMMENT : match.groups?.string ? STRING : KEYWORD,
-        },
-      ],
-      end: match.index + match[0].length,
-    }),
-    { tokens: [], end: 0 },
-  );
-  return [
-    ...highlighted.tokens,
-    {
-      text: code.slice(highlighted.end),
-      className: language === "shell" ? STRING : undefined,
-    },
-  ];
-};
-
 interface RootProps {
   code: string;
   language: Language;
+  activeLine?: number;
+  notes?: LineNote[];
+  highlights?: Record<string, string>;
+  onMorphEnd?: () => void;
   children: ReactNode;
 }
 
 export const CodeRoot = (props: RootProps) => {
-  const runner = useRun();
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const isMultiline = props.code.includes("\n");
   return (
     <codeContext.PartsContext
@@ -85,15 +42,16 @@ export const CodeRoot = (props: RootProps) => {
         code: props.code,
         language: props.language,
         isMultiline,
-        runner,
-        isDrawerOpen,
-        setIsDrawerOpen,
+        activeLine: props.activeLine,
+        notes: props.notes ?? [],
+        highlights: props.highlights ?? NO_HIGHLIGHTS,
+        onMorphEnd: props.onMorphEnd,
       }}
     >
       <div
         className={cn(
-          "relative flex w-full gap-2 overflow-hidden rounded-xl bg-surface pl-4 shadow-custom",
-          isMultiline ? "py-3 pr-4" : "h-11 items-center pr-1",
+          "relative flex w-full flex-wrap gap-2 overflow-hidden rounded-xl bg-card pl-4 ring-1 ring-border",
+          isMultiline ? "py-4 pr-4" : "h-11 items-center pr-1.5",
         )}
       >
         {props.children}
@@ -103,121 +61,95 @@ export const CodeRoot = (props: RootProps) => {
 };
 
 export const CodeContent = () => {
-  const code = useCode();
+  const code = codeContext.useParts();
+  const contentRef = useRef<HTMLElement>(null);
+  useTokenMorph(contentRef, code.code, code.highlights, code.onMorphEnd);
+  const lines = getTokenLines(code.code, code.language);
+  if (!code.isMultiline)
+    return (
+      <code className="min-w-0 flex-1 truncate font-mono text-[13px]/[1.7] text-foreground">
+        <CodeLine tokens={lines[0]} />
+      </code>
+    );
   return (
     <code
-      className={cn(
-        "flex-1 font-mono text-sm",
-        code.isMultiline ? "overflow-x-auto whitespace-pre" : "truncate",
-      )}
+      ref={contentRef}
+      className="relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground"
     >
-      {getTokens(code.code, code.language).map((token, index) => (
-        <span key={index} className={token.className}>
-          {token.text}
-        </span>
-      ))}
+      {lines
+        .map((tokens, index) => ({ tokens, number: index + 1 }))
+        .map((line) => (
+          <CodeLine
+            key={line.number}
+            tokens={line.tokens}
+            note={code.notes.find((note) => note.line === line.number)}
+            isActive={code.activeLine === line.number}
+            className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number === 1 && "pr-14")}
+          />
+        ))}
     </code>
   );
 };
+
+interface FooterProps {
+  children: ReactNode;
+}
+
+export const CodeFooter = (props: FooterProps) => (
+  <div className="-mr-4 -mb-4 -ml-4 flex shrink-0 basis-[calc(100%+2rem)] items-center gap-1.5 border-t py-2 pr-2.5 pl-4 text-sm">
+    {props.children}
+  </div>
+);
 
 interface ActionsProps {
   children: ReactNode;
 }
 
 export const CodeActions = (props: ActionsProps) => {
-  const code = useCode();
+  const code = codeContext.useParts();
   return (
-    <div className={cn("flex shrink-0 items-center", code.isMultiline && "absolute top-1 right-1")}>
+    <div
+      className={cn(
+        "flex shrink-0 items-center gap-1.5",
+        code.isMultiline && "absolute top-2.5 right-2.5",
+      )}
+    >
       {props.children}
     </div>
   );
 };
 
-const Progress = () => {
-  const [elapsedMs, setElapsedMs] = useState(0);
-
-  useEffect(() => {
-    const startedAt = performance.now();
-    const interval = setInterval(
-      () => setElapsedMs(performance.now() - startedAt),
-      SPINNER_INTERVAL_MS,
-    );
-    return () => clearInterval(interval);
-  }, []);
-
-  return (
-    <span className="px-2 text-sm text-gray-1000 tabular-nums">
-      {SPINNER[Math.floor(elapsedMs / SPINNER_INTERVAL_MS) % SPINNER.length]}{" "}
-      {(elapsedMs / 1000).toFixed(1)} s
-    </span>
-  );
-};
-
-export const CodeStatus = () => {
-  const code = useCode();
-  const result = code.runner.result;
-  if (code.runner.isRunning) return <Progress />;
-  if (result === undefined || code.isDrawerOpen) return null;
-  return (
-    <button
-      type="button"
-      onClick={() => code.setIsDrawerOpen(true)}
-      className={cn(
-        "mr-1 flex h-8 min-w-0 items-center gap-1.5 self-center rounded-full px-3 text-sm",
-        result.isPassed
-          ? "bg-success-soft text-success hover:bg-success-tint"
-          : "bg-danger-soft text-danger hover:bg-danger-tint",
-      )}
-    >
-      <span aria-hidden>{result.isPassed ? "✓" : "✕"}</span>
-      <span className="truncate max-[400px]:sr-only">
-        {result.isPassed ? "Passed" : (result.name ?? result.title)}
-      </span>
-    </button>
-  );
-};
-
 interface RunProps {
-  request: RunRequest;
+  isRunning: boolean;
+  isDone: boolean;
+  onRun: () => void;
 }
 
-export const CodeRun = (props: RunProps) => {
-  const code = useCode();
-  return (
-    <button
-      type="button"
-      aria-label="Run"
-      disabled={code.runner.isRunning}
-      onClick={() => {
-        code.setIsDrawerOpen(true);
-        code.runner.run(props.request);
-      }}
-      className={BUTTON_CLASS_NAME}
-    >
-      <Play className={ICON_CLASS_NAME} />
-    </button>
-  );
-};
+export const CodeRun = (props: RunProps) => (
+  <Button
+    size="icon"
+    aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
+    disabled={props.isRunning}
+    onClick={props.onRun}
+  >
+    <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
+  </Button>
+);
 
 export const CodeCopy = () => {
-  const code = useCode();
+  const code = codeContext.useParts();
   const [isCopied, setIsCopied] = useState(false);
   return (
-    <button
-      type="button"
+    <Button
+      size="icon"
       aria-label={isCopied ? "Copied" : "Copy"}
       onClick={async () => {
         await navigator.clipboard.writeText(code.code);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), COPIED_MS);
       }}
-      className={BUTTON_CLASS_NAME}
     >
-      {isCopied ? (
-        <Check className="size-4.5 text-gray-1200" />
-      ) : (
-        <Copy className={ICON_CLASS_NAME} />
-      )}
-    </button>
+      <CopyIcon isCopied={isCopied} />
+    </Button>
   );
 };

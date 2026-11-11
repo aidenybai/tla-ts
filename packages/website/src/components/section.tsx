@@ -5,9 +5,9 @@ interface PartProps {
 }
 
 export const SectionRoot = (props: PartProps) => (
-  <section className="flex flex-col gap-3">{props.children}</section>
+  <section className="flex flex-col gap-4">{props.children}</section>
 );
 
 export const SectionTitle = (props: PartProps) => (
-  <h2 className="font-semibold text-gray-1200">{props.children}</h2>
+  <h2 className="scroll-m-4 font-medium text-foreground">{props.children}</h2>
 );

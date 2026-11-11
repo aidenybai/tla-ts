@@ -1,34 +1,21 @@
 import type { ReactNode } from "react";
+import { Logo } from "./logo";
 
 interface PartProps {
   children: ReactNode;
 }
 
-interface LinkProps extends PartProps {
-  href: string;
-}
-
 export const HeroRoot = (props: PartProps) => (
-  <header className="flex flex-col gap-3">{props.children}</header>
-);
-
-export const HeroHeader = (props: PartProps) => (
-  <div className="flex items-center justify-between">{props.children}</div>
+  <header className="flex flex-col gap-4">{props.children}</header>
 );
 
 export const HeroTitle = (props: PartProps) => (
-  <h1 className="text-2xl font-semibold text-gray-1200">{props.children}</h1>
+  <h1 className="flex items-center gap-2 text-xl font-medium text-foreground">
+    <Logo />
+    {props.children}
+  </h1>
 );
 
 export const HeroBody = (props: PartProps) => (
-  <div className="flex flex-col gap-4 text-pretty">{props.children}</div>
-);
-
-export const HeroLink = (props: LinkProps) => (
-  <a
-    href={props.href}
-    className="text-gray-1200 underline decoration-gray-700 underline-offset-[3px] hover:decoration-gray-1200"
-  >
-    {props.children}
-  </a>
+  <div className="flex flex-col gap-3 text-pretty">{props.children}</div>
 );

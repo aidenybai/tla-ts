@@ -1,141 +1,89 @@
-import { check, formatValue, prove, TlaError, type CheckStatus } from "tla-ts";
+import { check, formatValue, parseModule, TlaError, type CheckResult, type Value } from "tla-ts";
 import { getErrorResult } from "./run-error";
 
-export type RunRequest =
-  | { kind: "check"; source: string; config: string; modules?: Record<string, string> }
-  | { kind: "prove"; source: string };
-
-export interface TraceStepSummary {
-  number: number;
-  action: string | undefined;
-  variables: [string, string][];
+export interface RunRequest {
+  source: string;
+  config: string;
 }
 
-// What a check counted, which the editor shows apart from the summary.
-export interface CheckStats {
-  status: CheckStatus;
-  distinctStates: number;
-  totalStates: number;
-  elapsedMs: number;
+export interface LineNote {
+  line: number;
+  text: string;
+  tone: "neutral" | "danger";
 }
 
 export interface RunResult {
   isPassed: boolean;
   title: string;
-  // Only a check that finished has stats.
-  stats: CheckStats | undefined;
-  // The invariant or property that failed, shown next to the title.
-  name: string | undefined;
-  summary: string;
-  // A check's counterexample, which the drawer steps through.
-  trace: TraceStepSummary[];
-  loopStart: number | undefined;
-  // A proof's obligations, or why the run failed.
-  rows: RunRow[];
+  activeLine: number | undefined;
+  notes: LineNote[];
 }
 
-interface RunRow {
-  id: number;
-  title: string;
-  // Shown while the row is the active step, such as the goal an obligation proves.
-  detail: string;
-  isFailed: boolean;
-}
-
-const STATUS_TITLES: Record<CheckStatus, string> = {
-  success: "No error found",
-  "assumption-violation": "Assumption is false",
-  "invariant-violation": "Invariant violated",
-  "property-violation": "Property violated",
-  "liveness-violation": "Temporal property violated",
-  "postcondition-violation": "Postcondition is false",
-  deadlock: "Deadlock reached",
-  error: "Error",
+const getTitle = (result: CheckResult) => {
+  const name = result.violation?.name;
+  return {
+    success: "No error found",
+    error: result.failure?.message ?? "Error",
+    "assumption-violation": `Assumption ${name} is false`,
+    "invariant-violation": `Invariant ${name} violated`,
+    "property-violation": `Property ${name} violated`,
+    "liveness-violation": `Property ${name} violated`,
+    "postcondition-violation": `Postcondition ${name} is false`,
+    deadlock: "Deadlock reached",
+  }[result.status];
 };
 
-const formatElapsed = (elapsedMs: number) => `${Math.round(elapsedMs).toLocaleString()} ms`;
+const getNote = (line: number, text: string, tone: LineNote["tone"]): LineNote => ({
+  line,
+  text,
+  tone,
+});
 
-const getElapsed = (startedAt: number) => formatElapsed(performance.now() - startedAt);
+const getStateText = (state: Record<string, Value>) =>
+  Object.entries(state)
+    .map(([name, value]) => `${name} = ${formatValue(value)}`)
+    .join(", ");
 
-const getCheckResult = async (
-  source: string,
-  config: string,
-  modules: Record<string, string> | undefined,
-): Promise<RunResult> => {
-  const startedAt = performance.now();
-  const result = await check({ source, config, loadModule: (name) => modules?.[name] });
-  const elapsedMs = performance.now() - startedAt;
-  if (result.failure) {
-    return getErrorResult("Error", result.failure.message, formatElapsed(elapsedMs));
-  }
+const getCheckResult = async (source: string, config: string): Promise<RunResult> => {
+  const result = await check({ source, config });
+  const lastStep = result.violation?.trace.at(-1);
+  const module = parseModule(source);
+  const getDefinitionLine = (name: string | undefined) =>
+    module.definitions.find((definition) => definition.name === name)?.location.line;
+  const variableLine = module.variables.at(0)?.location.line;
+  const violatedLine = getDefinitionLine(
+    result.status === "deadlock"
+      ? (/\bNEXT\s+(\w+)/.exec(config)?.[1] ?? "Next")
+      : result.violation?.name,
+  );
+  const actionLine = / line (\d+), col/.exec(lastStep?.label ?? "")?.[1];
   return {
     isPassed: result.status === "success",
-    title: STATUS_TITLES[result.status],
-    stats: {
-      status: result.status,
-      distinctStates: result.distinctStates,
-      totalStates: result.generatedStates,
-      elapsedMs,
-    },
-    name: result.status === "deadlock" ? undefined : result.violation?.name,
-    summary: `${result.distinctStates.toLocaleString()} states, depth ${result.depth}, ${formatElapsed(elapsedMs)}`,
-    trace: (result.violation?.trace ?? []).map((step, index) => ({
-      number: index + 1,
-      // TLC labels a step "Announce(1) line 138, col 5 to …", and only the call is shown.
-      action:
-        step.action === undefined ? undefined : (step.label ?? step.action).split(" line ")[0],
-      variables: Object.entries(step.state).map(([name, value]): [string, string] => [
-        name,
-        formatValue(value),
-      ]),
-    })),
-    loopStart: result.violation?.loopStart,
-    rows: [],
-  };
-};
-
-const getProveResult = async (source: string): Promise<RunResult> => {
-  const startedAt = performance.now();
-  const result = await prove({ source });
-  const count = result.obligations.length;
-  const provedCount = result.obligations.filter(
-    (obligation) => obligation.status === "proved" || obligation.status === "trivial",
-  ).length;
-  return {
-    isPassed: provedCount === count,
-    title:
-      provedCount === count
-        ? `All ${count} obligations proved`
-        : `${provedCount} of ${count} obligations proved`,
-    stats: undefined,
-    name: undefined,
-    summary: getElapsed(startedAt),
-    trace: [],
-    loopStart: undefined,
-    rows: result.obligations.map((obligation) => ({
-      id: obligation.id,
-      title: `Line ${obligation.location.split(":")[0]}, ${
-        obligation.status === "proved"
-          ? `proved by ${obligation.prover}`
-          : obligation.status === "trivial"
-            ? "trivial"
-            : `${obligation.status}: ${obligation.reason}`
-      }`,
-      detail: obligation.text.trim(),
-      isFailed: obligation.status === "failed" || obligation.status === "unsupported",
-    })),
+    title: getTitle(result),
+    activeLine:
+      lastStep?.label === undefined
+        ? getDefinitionLine(/\bINIT\s+(\w+)/.exec(config)?.[1] ?? "Init")
+        : actionLine
+          ? Number(actionLine)
+          : undefined,
+    notes: [
+      ...(lastStep === undefined || variableLine === undefined
+        ? []
+        : [getNote(variableLine, getStateText(lastStep.state), "neutral")]),
+      ...(lastStep === undefined || violatedLine === undefined
+        ? []
+        : [
+            getNote(violatedLine, result.status === "deadlock" ? "deadlock" : "violated", "danger"),
+          ]),
+    ],
   };
 };
 
 self.onmessage = async (event: MessageEvent<RunRequest>) => {
   try {
-    self.postMessage(
-      event.data.kind === "check"
-        ? await getCheckResult(event.data.source, event.data.config, event.data.modules)
-        : await getProveResult(event.data.source),
-    );
+    self.postMessage(await getCheckResult(event.data.source, event.data.config));
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    self.postMessage(getErrorResult(error.name, error.message));
+    self.postMessage(getErrorResult(error.message));
   }
 };

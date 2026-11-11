@@ -1,15 +1,18 @@
-import type { ComponentProps } from "react";
 import type { VariantProps } from "class-variance-authority";
+import type { ComponentProps } from "react";
+import { cn } from "cn";
 import { buttonVariants } from "./button-variants";
-import { cn } from "@/lib/utils";
 
-type ButtonProps = ComponentProps<"button"> & VariantProps<typeof buttonVariants>;
+interface ButtonProps extends ComponentProps<"button">, VariantProps<typeof buttonVariants> {}
 
-export const Button = ({ className, variant, size, type = "button", ...props }: ButtonProps) => (
-  <button
-    data-slot="button"
-    type={type}
-    className={cn(buttonVariants({ variant, size }), className)}
-    {...props}
-  />
-);
+export const Button = (props: ButtonProps) => {
+  const { variant, size, className, ...buttonProps } = props;
+  return (
+    <button
+      type="button"
+      data-slot="button"
+      {...buttonProps}
+      className={cn(buttonVariants({ variant, size }), className)}
+    />
+  );
+};

@@ -1,22 +1,27 @@
 import { cva } from "class-variance-authority";
+import { cn } from "cn";
+
+export const LINK_CLASS_NAME =
+  "text-foreground underline decoration-input decoration-dotted decoration-[1.5px] underline-offset-[3px] hover:decoration-faint";
 
 export const buttonVariants = cva(
-  "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 font-medium whitespace-nowrap transition-colors duration-150 outline-none focus-visible:shadow-focus disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:shrink-0",
+  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-transparent text-sm whitespace-nowrap outline-none transition-[scale,background-color,color] duration-150 ease-out focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        ghost:
-          "text-muted-foreground hover:bg-muted hover:text-foreground active:bg-well-2 aria-pressed:text-foreground",
+        outline:
+          "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground enabled:active:scale-[0.97]",
+        link: cn(
+          LINK_CLASS_NAME,
+          "inline-grid rounded-none aria-pressed:font-medium aria-pressed:no-underline",
+        ),
       },
       size: {
-        default: "px-2.5",
-        icon: "w-7 px-0",
+        default: "h-8 px-2.5",
+        icon: "size-8",
+        inline: "h-auto p-0 text-[length:inherit]",
       },
     },
-    defaultVariants: {
-      variant: "default",
-      size: "default",
-    },
+    defaultVariants: { variant: "outline", size: "default" },
   },
 );
