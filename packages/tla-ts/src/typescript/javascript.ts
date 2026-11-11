@@ -2816,7 +2816,9 @@ NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
       offset == IndexOfArgument(argument(2))
       length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
       byteLength == Len(object.bytes)
-  IN CASE ~IsObjectIn(heap, first) ->
+  IN CASE type \\in {"BigInt64", "BigUint64"} ->
+            Assert(FALSE, "tla-ts can't hold BigInts in a typed array")
+       [] ~IsObjectIn(heap, first) ->
             LET count == IndexOfArgument(first)
             IN CASE count = -1 -> RangeError("an invalid length")
                  [] count * size > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")
@@ -3425,7 +3427,12 @@ export const translateToNumber = (
   const value = translateExpression(argument, scope, context);
   if (kind === "number") return value;
   if (kind === "boolean") return ifExpression(value, number(1), number(0));
-  if (kind === "string") {
+  // ToNumber stops at an object, whose valueOf and toString an expression can't call.
+  if (
+    kind === "string" ||
+    (context.heap !== undefined &&
+      (context.checker.getTypeAtLocation(argument).flags & ts.TypeFlags.Unknown) !== 0)
+  ) {
     const converted = useJavaScript("ToNumber", [value], context);
     return context.hasSpecialNumbers
       ? converted

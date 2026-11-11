@@ -639,6 +639,18 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     ],
     true,
   ],
+  Float16Array: [
+    "%Int8Array.[[Prototype]]%",
+    true,
+    true,
+    [
+      ["length", "c", "n3"],
+      ["name", "c", "sFloat16Array"],
+      ["prototype", "", "oFloat16Array.prototype"],
+      ["BYTES_PER_ELEMENT", "", "n2"],
+    ],
+    true,
+  ],
   Float32Array: [
     "%Int8Array.[[Prototype]]%",
     true,
@@ -3132,6 +3144,16 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     [
       ["constructor", "wc", "oUint32Array"],
       ["BYTES_PER_ELEMENT", "", "n4"],
+    ],
+    false,
+  ],
+  "Float16Array.prototype": [
+    "%Int8Array.prototype.[[Prototype]]%",
+    false,
+    true,
+    [
+      ["constructor", "wc", "oFloat16Array"],
+      ["BYTES_PER_ELEMENT", "", "n2"],
     ],
     false,
   ],

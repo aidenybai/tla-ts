@@ -302,6 +302,8 @@ export const translateBuiltInValue = (
     | "RegExp.prototype"
     | "ArrayBuffer"
     | "SharedArrayBuffer"
+    | "DataView"
+    | `${string}Array`
     | `${string}Buffer.prototype`
     | `${string}Array.prototype`
     | "DataView.prototype"
@@ -554,7 +556,7 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     );
   }
   if (isOfObject && isPrototypeCall(node, context)) {
-    if (!isCompared(node, context)) {
+    if (!isCompared(node, context) && !isBuiltInObject(node.arguments[0], context)) {
       throw new TlaTypeScriptError(
         `Compare ${node.getText()} only with === or assert.sameValue`,
         node,
@@ -591,8 +593,13 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     return undefined;
   }
   // A script's heap holds the built-in objects, so it can read and pass them as values, though
-  // getPrototypeOf's answer here doesn't read the heap.
-  const isOnHeap = !isCall && context.heap !== undefined && scope.bindings.has(context.heap);
+  // getPrototypeOf's answer here doesn't read the heap, which it needn't where nothing in the
+  // script changes a prototype.
+  const isOnHeap =
+    context.heap !== undefined &&
+    (isCall
+      ? !/setPrototypeOf|__proto__/.test(node.getSourceFile().text)
+      : scope.bindings.has(context.heap));
   if (!isOnHeap && !isCompared(node, context)) {
     throw new TlaTypeScriptError(
       `Compare ${node.getText()} only with === or assert.sameValue`,

@@ -79,6 +79,7 @@ import {
   isHeapType,
   isNumberLike,
   isSequenceType,
+  TYPED_ARRAYS,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -986,34 +987,27 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           context,
         );
   }
-  const buffer = getNewBuffer(node, context);
-  if (buffer !== undefined && ts.isNewExpression(node)) {
-    // The constructor, which the prototype's constructor property holds.
-    context.builtIns.add(buffer);
-    const prototype = translateBuiltInValue(`${buffer}.prototype`, node, context);
+  const buffers = getNewBuffer(node, context);
+  if (buffers !== undefined && ts.isNewExpression(node)) {
     const values = tuple(
       (node.arguments ?? []).map((value) => translateExpression(value, scope, context)),
     );
-    const type = TYPED_ARRAYS.get(buffer);
-    return type !== undefined
-      ? useJavaScript(
-          "NewTypedArray",
-          [
-            heap,
-            string(type),
-            prototype,
-            translateBuiltInValue("ArrayBuffer.prototype", node, context),
-            values,
-          ],
-          context,
+    const callee = translateExpression(node.expression, scope, context);
+    return getBuiltIn(node.expression, context) === undefined
+      ? buffers.reduceRight<Expression>(
+          (rest, buffer) =>
+            ifExpression(
+              useJavaScript(
+                "SameValue",
+                [callee, translateBuiltInValue(buffer, node, context)],
+                context,
+              ),
+              translateNewBuffer(buffer, heap, values, node, context),
+              rest,
+            ),
+          apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
         )
-      : buffer === "DataView"
-        ? useJavaScript("NewDataView", [heap, prototype, values], context)
-        : useJavaScript(
-            "NewBuffer",
-            [heap, prototype, values, boolean(buffer === "SharedArrayBuffer")],
-            context,
-          );
+      : translateNewBuffer(buffers[0], heap, values, node, context);
   }
   if (isNewDate(node, context)) {
     const values = node.arguments ?? [];
@@ -1432,38 +1426,62 @@ export const translateDateFields = (
     context,
   );
 
-// The type of each typed array's elements. A BigInt array's elements are BigInts, which tla-ts
-// doesn't hold in one.
-export const TYPED_ARRAYS = new Map(
-  [
-    "Int8",
-    "Uint8",
-    "Uint8Clamped",
-    "Int16",
-    "Uint16",
-    "Int32",
-    "Uint32",
-    "Float16",
-    "Float32",
-    "Float64",
-  ].map((type) => [`${type}Array`, type]),
-);
-
 // new of an ArrayBuffer, a SharedArrayBuffer, a DataView, or a typed array, which a statement makes
-// on the heap.
+// on the heap, with the constructors that it may call. A callee that isn't the global may hold any
+// typed array constructor that its type allows.
 export const getNewBuffer = (node: ts.Node, context: Context) => {
-  const name =
-    context.heap !== undefined &&
-    ts.isNewExpression(node) &&
-    !(node.arguments ?? []).some(ts.isSpreadElement)
-      ? getBuiltIn(node.expression, context)
-      : undefined;
-  return name !== undefined && isBufferName(name) ? name : undefined;
+  if (
+    context.heap === undefined ||
+    !ts.isNewExpression(node) ||
+    (node.arguments ?? []).some(ts.isSpreadElement)
+  ) {
+    return undefined;
+  }
+  const name = getBuiltIn(node.expression, context);
+  if (name !== undefined) return isBufferName(name) ? [name] : undefined;
+  const type = context.checker.getTypeAtLocation(node.expression);
+  const names = (type.isUnion() ? type.types : [type]).map(
+    (inner) => inner.getSymbol()?.name.replace(/Constructor$/, "") ?? "",
+  );
+  const candidates = names.filter(isBufferName).filter((inner) => TYPED_ARRAYS.has(inner));
+  return candidates.length === names.length ? candidates : undefined;
 };
 
-const isBufferName = (
-  name: string,
-): name is "ArrayBuffer" | "SharedArrayBuffer" | "DataView" | `${string}Array` =>
+const translateNewBuffer = (
+  buffer: BufferName,
+  heap: Expression,
+  values: Expression,
+  node: ts.NewExpression,
+  context: Context,
+) => {
+  // The constructor, which the prototype's constructor property holds.
+  context.builtIns.add(buffer);
+  const prototype = translateBuiltInValue(`${buffer}.prototype`, node, context);
+  const type = TYPED_ARRAYS.get(buffer);
+  return type !== undefined
+    ? useJavaScript(
+        "NewTypedArray",
+        [
+          heap,
+          string(type),
+          prototype,
+          translateBuiltInValue("ArrayBuffer.prototype", node, context),
+          values,
+        ],
+        context,
+      )
+    : buffer === "DataView"
+      ? useJavaScript("NewDataView", [heap, prototype, values], context)
+      : useJavaScript(
+          "NewBuffer",
+          [heap, prototype, values, boolean(buffer === "SharedArrayBuffer")],
+          context,
+        );
+};
+
+type BufferName = "ArrayBuffer" | "SharedArrayBuffer" | "DataView" | `${string}Array`;
+
+const isBufferName = (name: string): name is BufferName =>
   name === "ArrayBuffer" ||
   name === "SharedArrayBuffer" ||
   name === "DataView" ||

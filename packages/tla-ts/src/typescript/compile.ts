@@ -17,7 +17,6 @@ import {
   findChangedArrays,
   findHeapArrays,
   isHoleyArray,
-  TYPED_ARRAYS,
   translateConstantFunctions,
 } from "./heap";
 import { translateBuiltIns } from "./intrinsics";
@@ -30,7 +29,8 @@ import { createStateScope } from "./scope";
 import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
 import { apply, define, getLocation, getModuleName, identifier, locate, tuple } from "./tla";
-import { getDomain } from "./types";
+import { BUILT_INS } from "./built-ins";
+import { getDomain, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
@@ -264,6 +264,26 @@ export const compile = (
       (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
+    // A variable may hold any typed array's constructor, so the heap holds them all, their
+    // prototypes, and the methods that they share.
+    const usesTypedArrays = (node: ts.Node): boolean =>
+      (ts.isIdentifier(node) && TYPED_ARRAYS.has(node.text)) ||
+      (ts.forEachChild(node, usesTypedArrays) ?? false);
+    if (roots.some(usesTypedArrays)) {
+      const shared = ["%Int8Array.[[Prototype]]%", "%Int8Array.prototype.[[Prototype]]%"];
+      [
+        ...[...TYPED_ARRAYS.keys()].flatMap((name) => [name, `${name}.prototype`]),
+        ...shared,
+        ...shared.flatMap((name) =>
+          BUILT_INS[name][3].flatMap((property) =>
+            property
+              .slice(2)
+              .filter((value) => value.startsWith("o"))
+              .map((value) => value.slice(1)),
+          ),
+        ),
+      ].forEach((name) => context.builtIns.add(name));
+    }
     context.heapArrays = findHeapArrays(roots, changedArrays, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>

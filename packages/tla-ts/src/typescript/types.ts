@@ -74,6 +74,24 @@ export const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
     : (type.flags & flags) !== 0;
 
 // The plain objects that built-in functions take or give.
+// The type of each typed array's elements. tla-ts stops where a script makes a BigInt array.
+export const TYPED_ARRAYS = new Map(
+  [
+    "Int8",
+    "Uint8",
+    "Uint8Clamped",
+    "Int16",
+    "Uint16",
+    "Int32",
+    "Uint32",
+    "Float16",
+    "Float32",
+    "Float64",
+    "BigInt64",
+    "BigUint64",
+  ].map((type) => [`${type}Array`, type]),
+);
+
 const LIBRARY_OBJECTS = new Set([
   "Promise",
   "PromiseFulfilledResult",
@@ -98,6 +116,8 @@ const LIBRARY_OBJECTS = new Set([
   "Float16Array",
   "Float32Array",
   "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
   "Boolean",
   "Number",
   "String",
@@ -118,6 +138,16 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
       isHeapFunction(declaration, context) ||
       isFunctionObject(declaration, context) ||
       isNestedFunction(declaration, context))
+  ) {
+    return true;
+  }
+  // A typed array's constructor, which a variable may hold where a script picks one, and whose
+  // properties a script reads from the heap.
+  const constructed = symbol?.name.match(/^(.+Array)Constructor$/)?.[1];
+  if (
+    constructed !== undefined &&
+    TYPED_ARRAYS.has(constructed) &&
+    (symbol?.declarations ?? []).every((inner) => inner.getSourceFile().isDeclarationFile)
   ) {
     return true;
   }

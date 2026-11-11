@@ -5994,6 +5994,38 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("constructs the typed array that a variable holds", async () => {
+    const result = await checkModel(`
+      const constructors = [Int8Array, Uint16Array, Float64Array];
+      let sizes = "";
+      for (const TA of constructors) {
+        const sample = new TA(3);
+        sample[1] = -1;
+        sizes += sample.byteLength + "," + sample[1] + ";";
+      }
+      if (sizes !== "3,-1;6,65535;24,-1;") throw new Error(sizes);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("reads the properties of the typed array constructor that a variable holds", async () => {
+    const result = await checkModel(`
+      const constructors = [Int8Array, Float64Array, Float16Array];
+      let sizes = 0;
+      let names = "";
+      for (const TA of constructors) {
+        sizes += TA.BYTES_PER_ELEMENT;
+        names += TA.name;
+      }
+      if (sizes !== 11) throw new Error("sizes");
+      if (names !== "Int8ArrayFloat64ArrayFloat16Array") throw new Error(names);
+      const TypedArray: Int8ArrayConstructor = Object.getPrototypeOf(Int8Array);
+      const typedArrays = [TypedArray];
+      if (typedArrays[0] !== Object.getPrototypeOf(Float16Array)) throw new Error("prototype");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);
