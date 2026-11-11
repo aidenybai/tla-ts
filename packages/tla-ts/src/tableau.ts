@@ -8,7 +8,7 @@ interface LiveBoolean {
   value: boolean;
 }
 
-interface LiveState {
+export interface LiveState {
   kind: "State";
   expression: Expression;
   scope: Scope | undefined;
@@ -20,7 +20,7 @@ export interface LiveEnabled {
   scope: Scope | undefined;
 }
 
-interface LiveAction {
+export interface LiveAction {
   kind: "Action";
   expression: Expression;
   subscript: Expression | undefined;
