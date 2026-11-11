@@ -29,6 +29,7 @@ import {
   getLocalCaptures,
   isPlain,
   getNewClass,
+  isInertValue,
   skipCasts,
   isPrivateMember,
   isStatic,
@@ -2819,24 +2820,6 @@ const translateDelegatedYield = (
   );
 };
 
-// A value that evaluating can't throw or change.
-const isInert = (argument: ts.Expression): boolean =>
-  ts.isLiteralExpression(argument) ||
-  ts.isIdentifier(argument) ||
-  ts.isFunctionExpression(argument) ||
-  ts.isArrowFunction(argument) ||
-  [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
-    argument.kind,
-  ) ||
-  (ts.isArrayLiteralExpression(argument) && argument.elements.every(isInert)) ||
-  (ts.isObjectLiteralExpression(argument) &&
-    argument.properties.every(
-      (property) =>
-        ts.isPropertyAssignment(property) &&
-        !ts.isComputedPropertyName(property.name) &&
-        isInert(property.initializer),
-    ));
-
 const COLLECTIONS: readonly Collection[] = ["Set", "Map", "WeakMap", "WeakSet"];
 
 // A call of a collection's method through call, such as Set.prototype.add.call({}), on a receiver
@@ -2849,7 +2832,7 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
     callee.name.text !== "call" ||
     !ts.isPropertyAccessExpression(callee.expression) ||
     receiver === undefined ||
-    !node.arguments.slice(1).every(isInert)
+    !node.arguments.slice(1).every(isInertValue)
   ) {
     return undefined;
   }
@@ -2871,7 +2854,7 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
     cast.arguments.every(ts.isStringLiteral);
   // A primitive, an object that a literal makes, a built-in prototype, or another collection.
   const isOther =
-    (!ts.isIdentifier(cast) && isInert(cast)) ||
+    (!ts.isIdentifier(cast) && isInertValue(cast)) ||
     isUndefinedLiteral(cast, context) ||
     isSymbol ||
     (made !== collection && COLLECTIONS.some((candidate) => candidate === made)) ||
@@ -3112,7 +3095,7 @@ const translateExpressionStatement = (
     getErrorClass(getSymbol(expression.expression, context.checker), context.checker) ===
       undefined &&
     !["Set", "Map"].includes(expression.expression.getText()) &&
-    (expression.arguments ?? []).every(isInert)
+    (expression.arguments ?? []).every(isInertValue)
   ) {
     return ifThenElse(
       useJavaScript(

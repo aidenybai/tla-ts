@@ -6,6 +6,7 @@ import {
   type Context,
   type FunctionNode,
   getNewClass,
+  isInertValue,
   getParameters,
   getObjectMethod,
   getRunConstructor,
@@ -666,6 +667,24 @@ const translateInstance = (
     return base === undefined ? [current] : [...getChain(base), current];
   };
   const builtInBase = ts.isClassLike(created) ? getBuiltInBase(created, context) : undefined;
+  // No constructor body runs, so the arguments and the parameters' defaults are only evaluated
+  // where evaluating them can't throw or change anything. A wrapper base reads its first argument.
+  const dropped =
+    builtInBase === undefined || builtInBase === "Object"
+      ? (node.arguments ?? [])
+      : (node.arguments ?? []).slice(1);
+  const defaults = getChain(created).flatMap((current) =>
+    (ts.isClassLike(current)
+      ? (current.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
+      : current.parameters
+    ).flatMap((parameter) => (parameter.initializer === undefined ? [] : [parameter.initializer])),
+  );
+  if (
+    getRunConstructor(created, context) === undefined &&
+    ![...dropped, ...defaults].every(isInertValue)
+  ) {
+    throw new TlaTypeScriptError("Unsupported arguments to a constructor that runs no code", node);
+  }
   const members = getChain(created).flatMap((current) =>
     ts.isClassLike(current) ? [...current.members] : [],
   );

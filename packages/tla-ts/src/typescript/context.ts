@@ -1048,6 +1048,24 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
     : undefined;
 };
 
+// A value that evaluating can't throw or change.
+export const isInertValue = (argument: ts.Expression): boolean =>
+  ts.isLiteralExpression(argument) ||
+  ts.isIdentifier(argument) ||
+  ts.isFunctionExpression(argument) ||
+  ts.isArrowFunction(argument) ||
+  [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+    argument.kind,
+  ) ||
+  (ts.isArrayLiteralExpression(argument) && argument.elements.every(isInertValue)) ||
+  (ts.isObjectLiteralExpression(argument) &&
+    argument.properties.every(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        !ts.isComputedPropertyName(property.name) &&
+        isInertValue(property.initializer),
+    ));
+
 // The heap class that a new names.
 export const getNewClass = (node: ts.Node, context: Context) =>
   ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;

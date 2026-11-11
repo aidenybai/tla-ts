@@ -1483,6 +1483,21 @@ describe("errors", () => {
     ).toThrow("spec.ts:4:15 Unsupported expression: new.target");
   });
 
+  it("rejects arguments that a new would drop where no constructor runs", async () => {
+    expect(() =>
+      compile(
+        "class Empty {}\nconst box = { size: 0 };\n// @ts-ignore\nconst made = new Empty((box.size = 5));",
+      ),
+    ).toThrow("spec.ts:4:14 Unsupported arguments to a constructor that runs no code");
+    const result = await checkModel(`
+      class Empty {}
+      // @ts-ignore
+      const made = new Empty(1, "x", { a: 1 });
+      if (!(made instanceof Empty)) throw new Error("instance");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs a derived class's constructor through super", async () => {
     const result = await checkModel(`
       const log = { text: "" };
