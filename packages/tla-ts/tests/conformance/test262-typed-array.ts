@@ -27,7 +27,7 @@ type BoundArgFactory = (primitiveOrIterable: unknown) => any;
 
 type TypedArrayTest<C> = (TA: C, makeCtorArg: BoundArgFactory) => void;
 
-interface ArrayLike {
+interface Indexed {
   [index: number]: unknown;
   length: number;
 }
@@ -96,7 +96,7 @@ function makeArrayLike(TA: AnyTypedArrayConstructor, primitiveOrIterable: unknow
   const arr = makeArray(TA, primitiveOrIterable);
   if (isPrimitive(arr)) return arr;
   const elements = arr as unknown[];
-  const obj: ArrayLike = { length: elements.length };
+  const obj: Indexed = { length: elements.length };
   for (let i = 0; i < obj.length; i++) obj[i] = elements[i];
   return obj;
 }

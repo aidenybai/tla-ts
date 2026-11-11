@@ -24,6 +24,16 @@ function assert(mustBeTrue: unknown, message?: string) {
   if (mustBeTrue !== true) throw new Test262Error(message ?? "Expected true");
 }
 
+// compareArray.js's compareArray, whose isSameValue is Object.is.
+// oxlint-disable-next-line no-unused-vars
+function compareArray(a: ArrayLike<unknown>, b: ArrayLike<unknown>) {
+  if (b.length !== a.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!Object.is(b[i], a[i])) return false;
+  }
+  return true;
+}
+
 // oxlint-disable-next-line no-unused-vars
 function $DONOTEVALUATE(): never {
   throw "Test262: This statement should not be evaluated.";
