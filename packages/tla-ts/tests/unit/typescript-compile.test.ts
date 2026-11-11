@@ -3045,6 +3045,15 @@ describe("errors", () => {
     );
   });
 
+  it("stops where a branch that runs converts a function to a string", async () => {
+    const source = (constructor: string) =>
+      `const text = new String("ab");\nif (text.constructor !== ${constructor}) throw new Error("constructor " + text.constructor);`;
+    expect((await checkModel(source("String"))).failure).toBeUndefined();
+    expect((await checkModel(source("Number"))).failure?.message).toContain(
+      "tla-ts can't convert a function to a string",
+    );
+  });
+
   it("splits and replaces at a string", async () => {
     const result = await checkModel(`
       const text: string = "one two  three";

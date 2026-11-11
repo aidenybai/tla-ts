@@ -887,8 +887,12 @@ export const translateToString = (node: ts.Expression, scope: Scope, context: Co
   if (isBooleanLike(node, context)) return ifExpression(value, string("true"), string("false"));
   if (flags & ts.TypeFlags.Null) return string("null");
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
-  if (getTypeNames(context.checker.getTypeAtLocation(node), context.checker) === undefined) {
-    return useJavaScript("StringOf", [value], context);
+  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
+  if (names === undefined) return useJavaScript("StringOf", [value], context);
+  // A function converts to its source text, which a branch that never runs, such as an error's
+  // message, may still hold.
+  if (names.every((name) => name === "function")) {
+    return apply("Assert", [boolean(false), string("tla-ts can't convert a function to a string")]);
   }
   throw new TlaTypeScriptError(`Convert this to a string explicitly: ${node.getText()}`, node);
 };
