@@ -4,12 +4,12 @@ import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import typescript from "@typescript/typescript6";
 import react from "@vitejs/plugin-react";
-import { defineConfig, type Plugin } from "vite-plus";
+import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { printModule } from "../tla-ts/src/printer";
 import { compile } from "../tla-ts/src/typescript/compile";
 import { createHighlighter } from "./src/highlighter";
 import { LOGO_PATH } from "./src/logo";
-import type { Benchmark, CompiledExample } from "./src/site-data";
+import type { Benchmark, CompiledExample, ReferenceBlock, ReferenceSection } from "./src/site-data";
 
 const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
@@ -59,6 +59,42 @@ const getBenchmarks = (): Benchmark[] => {
   });
 };
 
+const REFERENCE_TITLES = ["CLI", "API"];
+const REFERENCE_BLOCK =
+  /^```(?<language>\w+)\n(?<code>[\s\S]*?)\n```$|^### (?<heading>.+)$|(?<table>(?:^\|.*\n?)+)|^(?<paragraph>[^#\n].*)$/gm;
+
+const getCells = (row: string) =>
+  row
+    .split("|")
+    .slice(1, -1)
+    .map((cell) => cell.trim());
+
+const getReference = (
+  highlight: Awaited<ReturnType<typeof createHighlighter>>,
+): ReferenceSection[] => {
+  const readme = readFileSync(README_URL, "utf8");
+  return REFERENCE_TITLES.map((title) => {
+    const start = readme.indexOf(`## ${title}\n`);
+    const body = readme.slice(readme.indexOf("\n", start), readme.indexOf("\n## ", start));
+    return {
+      title,
+      blocks: [...body.matchAll(REFERENCE_BLOCK)].map((match): ReferenceBlock => {
+        const groups = match.groups ?? {};
+        if (groups.code !== undefined) {
+          return {
+            kind: "code",
+            source: highlight(groups.code, groups.language === "ts" ? "typescript" : "shellscript"),
+          };
+        }
+        if (groups.heading !== undefined) return { kind: "heading", text: groups.heading };
+        if (groups.table === undefined) return { kind: "paragraph", text: groups.paragraph };
+        const rows = groups.table.trim().split("\n").map(getCells);
+        return { kind: "table", header: rows[0], rows: rows.slice(2) };
+      }),
+    };
+  });
+};
+
 const siteData = (): Plugin => ({
   name: "site-data",
   resolveId: (id) => (id === SITE_DATA ? `\0${SITE_DATA}` : undefined),
@@ -71,6 +107,7 @@ const siteData = (): Plugin => ({
       `export const examples = ${JSON.stringify(paths.map((path) => getExample(path, highlight)))};`,
       `export const benchmarks = ${JSON.stringify(getBenchmarks())};`,
       `export const install = ${JSON.stringify(highlight("npm install tla-ts", "shellscript"))};`,
+      `export const reference = ${JSON.stringify(getReference(highlight))};`,
     ].join("\n");
   },
 });
@@ -117,8 +154,38 @@ const logoFiles = (): Plugin => ({
   },
 });
 
+const EMPTY_ROOT = '<div id="root"></div>';
+
+const pages = (): Plugin => ({
+  name: "pages",
+  configureServer(server) {
+    server.middlewares.use((request, _response, next) => {
+      if (request.url?.replace(/\/$/, "") === "/playground") request.url = "/playground.html";
+      next();
+    });
+  },
+  transformIndexHtml: {
+    order: "post",
+    async handler(html, context) {
+      if (context.server || !context.filename.endsWith("/index.html")) return html;
+      const server = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+      const prerender = await server.ssrLoadModule("/src/prerender.tsx");
+      await server.close();
+      return html.replace(EMPTY_ROOT, `<div id="root">${prerender.getAppHtml()}</div>`);
+    },
+  },
+});
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), siteData(), typescriptLibraries(), logoFiles()],
+  plugins: [react(), tailwindcss(), siteData(), typescriptLibraries(), logoFiles(), pages()],
+  build: {
+    rollupOptions: {
+      input: [
+        fileURLToPath(new URL("./index.html", import.meta.url)),
+        fileURLToPath(new URL("./playground.html", import.meta.url)),
+      ],
+    },
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

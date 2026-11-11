@@ -1,4 +1,4 @@
-import { CaretDown, Play, Stop } from "@phosphor-icons/react";
+import { CaretDown } from "@phosphor-icons/react";
 import { use, useMemo, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
@@ -17,6 +17,7 @@ import { CodeLine } from "./code-line";
 import { Connector } from "./connector";
 import { GitHubIcon } from "./github-icon";
 import { Logo } from "./logo";
+import { RunIcon } from "./run-icon";
 import { ThemeMenu } from "./theme-menu";
 import { Verdict } from "./verdict";
 import { Button } from "./ui/button";
@@ -48,7 +49,6 @@ interface PlaygroundState {
   isRunning: boolean;
   result: RunResult | undefined;
   run: () => void;
-  stop: () => void;
 }
 
 const highlighting = createHighlighter();
@@ -112,7 +112,6 @@ export const PlaygroundRoot = (props: PartProps) => {
             modules: compiler.compilation.modules,
           });
         },
-        stop: runner.stop,
       }}
     >
       <div className="flex h-dvh flex-col text-prose">{props.children}</div>
@@ -148,21 +147,16 @@ export const PlaygroundHeader = () => {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        {state.isRunning ? (
-          <Button variant="danger" onClick={state.stop}>
-            <Stop weight="fill" className="size-3" />
-            Stop
-          </Button>
-        ) : (
-          <Button
-            disabled={state.compilation === undefined || state.isCompiling || !!state.error}
-            variant="success"
-            onClick={state.run}
-          >
-            <Play weight="fill" className="size-3" />
-            Run
-          </Button>
-        )}
+        <Button
+          disabled={
+            state.isRunning || state.compilation === undefined || state.isCompiling || !!state.error
+          }
+          variant="success"
+          onClick={state.run}
+        >
+          <RunIcon isRunning={state.isRunning} isDone={false} />
+          {state.isRunning ? "Processing" : "Run"}
+        </Button>
       </div>
     </header>
   );
@@ -252,9 +246,7 @@ export const PlaygroundStatus = () => {
         ) : state.result ? (
           <Verdict result={state.result} />
         ) : (
-          <span className="text-faint">
-            {state.isCompiling ? "Compiling" : "Edit the TypeScript, then run the check."}
-          </span>
+          state.isCompiling && <span className="text-faint">Compiling</span>
         )}
       </output>
       <a

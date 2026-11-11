@@ -1,9 +1,15 @@
 import { m } from "motion/react";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useSyncExternalStore, type ReactNode } from "react";
 import { createPartsContext } from "@/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const STORAGE_KEY = "tla-ts-theme";
+const THEME_EVENT = "tla-ts-theme-change";
+
+const subscribeToTheme = (onChange: () => void) => {
+  addEventListener(THEME_EVENT, onChange);
+  return () => removeEventListener(THEME_EVENT, onChange);
+};
 
 interface ThemeSwitcherState {
   theme: string;
@@ -17,7 +23,11 @@ interface RootProps {
 }
 
 export const ThemeSwitcherRoot = (props: RootProps) => {
-  const [theme, setTheme] = useState(() => localStorage.getItem(STORAGE_KEY) ?? "system");
+  const theme = useSyncExternalStore(
+    subscribeToTheme,
+    () => localStorage.getItem(STORAGE_KEY) ?? "system",
+    () => "system",
+  );
   const indicatorId = useId();
   return (
     <themeSwitcherContext.PartsContext value={{ theme, indicatorId }}>
@@ -32,7 +42,7 @@ export const ThemeSwitcherRoot = (props: RootProps) => {
             nextTheme === "dark" ||
               (nextTheme === "system" && matchMedia("(prefers-color-scheme: dark)").matches),
           );
-          setTheme(nextTheme);
+          dispatchEvent(new Event(THEME_EVENT));
         }}
         className="rounded-lg"
       >

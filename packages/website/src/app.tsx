@@ -2,15 +2,15 @@ import { Play } from "@phosphor-icons/react";
 import { BenchmarkChart } from "./components/benchmark-chart";
 import { GitHubIcon } from "./components/github-icon";
 import { Code, Example, Hero, Section } from "./components/parts";
+import { Reference } from "./components/reference";
 import { ThemeMenu } from "./components/theme-menu";
+import { InlineCode } from "./components/ui/inline-code";
 import { Test262Chart } from "./components/test262-chart";
 import { buttonVariants } from "./components/ui/button-variants";
 import { Link } from "./components/ui/link";
 import { cn } from "cn";
 import { install } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "./test262";
-
-const INLINE_CODE_CLASS_NAME = "rounded-md border bg-card px-1 py-0.5 text-[13px] text-foreground";
 
 export const App = () => (
   <main className="mx-auto max-w-[700px] px-4 pt-16 pb-16 text-prose lg:pt-[92px]">
@@ -41,7 +41,7 @@ export const App = () => (
         <Section.Title>How it works</Section.Title>
         <ol className="flex list-decimal flex-col gap-1.5 pl-5 marker:text-faint">
           <li>
-            Run <code className={INLINE_CODE_CLASS_NAME}>npx tla-ts [file].ts</code>
+            Run <InlineCode>npx tla-ts [file].ts</InlineCode>
           </li>
           <li>TLA-ts transpiles TypeScript into TLA+</li>
           <li>TLA-ts model checks TypeScript code and finds violations</li>
@@ -61,10 +61,10 @@ export const App = () => (
           </Code.Actions>
         </Code.Root>
         <p className="text-pretty">
-          Or skip the install and run{" "}
-          <code className={INLINE_CODE_CLASS_NAME}>npx tla-ts [file].ts</code> directly.
+          Or skip the install and run <InlineCode>npx tla-ts [file].ts</InlineCode> directly.
         </p>
       </Section.Root>
+      <Reference />
       <Section.Root>
         <Section.Title>About</Section.Title>
         <p className="text-pretty">

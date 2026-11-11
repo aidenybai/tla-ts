@@ -17,11 +17,13 @@ export const BenchmarkChart = () => {
   return (
     <figure
       ref={chartRef}
-      className="my-3 grid grid-cols-[auto_1fr_auto] gap-x-4 gap-y-2.5 text-sm tabular-nums"
+      className="my-3 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2.5 sm:grid-cols-[auto_1fr_auto] text-sm tabular-nums"
     >
       {benchmarks.map((benchmark) => (
         <Fragment key={benchmark.name}>
-          <span className="h-5 leading-5 text-faint">{benchmark.name}</span>
+          <span className="h-5 leading-5 text-faint max-sm:col-span-2 max-sm:-mb-1.5 max-sm:not-first:mt-1.5">
+            {benchmark.name}
+          </span>
           <div
             title={`${benchmark.tlaTsSeconds} s, against TLC's ${benchmark.tlcSeconds} s`}
             className="relative my-1.5 h-2 bg-accent"
@@ -52,7 +54,7 @@ export const BenchmarkChart = () => {
           </span>
         </Fragment>
       ))}
-      <div className="relative col-start-2 h-8 border-t border-border">
+      <div className="relative h-8 border-t border-border sm:col-start-2">
         {AXIS_TICKS.map((tick) => (
           <span
             key={tick.share}

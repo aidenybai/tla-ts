@@ -29,3 +29,31 @@ export interface Mark {
   end: number;
   name: string;
 }
+
+export interface HeadingBlock {
+  kind: "heading";
+  text: string;
+}
+
+export interface ParagraphBlock {
+  kind: "paragraph";
+  text: string;
+}
+
+export interface CodeBlock {
+  kind: "code";
+  source: Source;
+}
+
+export interface TableBlock {
+  kind: "table";
+  header: string[];
+  rows: string[][];
+}
+
+export type ReferenceBlock = HeadingBlock | ParagraphBlock | CodeBlock | TableBlock;
+
+export interface ReferenceSection {
+  title: string;
+  blocks: ReferenceBlock[];
+}

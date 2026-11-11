@@ -8,4 +8,5 @@ export const useMediaQuery = (query: string) =>
       return () => media.removeEventListener("change", onChange);
     },
     () => matchMedia(query).matches,
+    () => false,
   );
