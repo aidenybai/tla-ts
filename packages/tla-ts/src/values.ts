@@ -1191,15 +1191,39 @@ const isAscendingIntegers = (elements: Value[]) => {
   return true;
 };
 
+// Insertion shifts the elements after each one it inserts, which the builtin sort outruns on long
+// arrays.
+const MAXIMUM_INSERTION_SORT_LENGTH = 32;
+
 export const createSet = (elements: Value[]): SetValue => {
   for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
   if (elements.length < 2 || isStrictlySorted(elements)) return createSortedSet(elements);
-  const sorted = [...elements].sort(compareValues);
-  const unique = [sorted[0]];
-  for (let index = 1; index < sorted.length; index++) {
-    if (compareValues(unique[unique.length - 1], sorted[index]) !== 0) unique.push(sorted[index]);
+  if (elements.length > MAXIMUM_INSERTION_SORT_LENGTH) {
+    const sorted = [...elements].sort(compareValues);
+    const unique = [sorted[0]];
+    for (let index = 1; index < sorted.length; index++) {
+      if (compareValues(unique[unique.length - 1], sorted[index]) !== 0) unique.push(sorted[index]);
+    }
+    return createSortedSet(unique);
   }
-  return createSortedSet(unique);
+  // TLC's ValueVec.sort: a binary insertion sort that drops each duplicate as it finds it.
+  const sorted = [elements[0]];
+  for (let index = 1; index < elements.length; index++) {
+    const element = elements[index];
+    let low = 0;
+    let high = sorted.length;
+    let middle = 0;
+    let comparison = 0;
+    while (low < high) {
+      middle = (low + high) >>> 1;
+      comparison = compareValues(element, sorted[middle]);
+      if (comparison === 0) break;
+      if (comparison < 0) high = middle;
+      else low = middle + 1;
+    }
+    if (comparison !== 0) sorted.splice(comparison < 0 ? middle : middle + 1, 0, element);
+  }
+  return createSortedSet(sorted);
 };
 
 export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
