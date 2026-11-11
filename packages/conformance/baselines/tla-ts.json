@@ -129,7 +129,6 @@
   "tlapm/encodings/smt/arithmetic/smarter_types_plus": "exit-mismatch",
   "tlapm/encodings/smt/arithmetic/smarter_types_range": "exit-mismatch",
   "tlapm/encodings/smt/arithmetic/smarter_types_shared_bound": "exit-mismatch",
-  "tlapm/encodings/smt/functions/multiple_arguments": "exit-mismatch",
   "tlapm/encodings/smt/sets/smarter_types_finite_set": "exit-mismatch",
   "tlapm/errors/parse/incomplete_expression": "text-mismatch",
   "tlapm/errors/parse/mixed_bounded_unbounded_quantifier": "text-mismatch",

@@ -37,10 +37,10 @@ export const removeUnprimable = (text: string): string => {
   );
 };
 
-// Flatten.compare_expr ignores outer bound variables and can't compare quantifiers or conditionals,
-// so those match nothing.
+// Flatten.compare_expr ignores outer bound variables and can't compare quantifiers, conditionals or
+// LETs, so those match nothing.
 const getFlatKey = (text: string, depth: number) =>
-  /\((forall|exists|ite) /.test(text)
+  /\((forall|exists|ite|let) /.test(text)
     ? undefined
     : text.replace(/[^\s()]+#(\d+)/g, (_match, found: string) =>
         Number(found) < depth ? "#" : `#${Number(found) - depth}`,

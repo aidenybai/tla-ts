@@ -35,7 +35,6 @@ import {
   tla,
   TT_IDV,
 } from "./format";
-import { getIntegers } from "./axioms";
 import { getEquality, resolveTriggers, type Polarity } from "./extensionality";
 import {
   getChooseAxioms,
@@ -252,7 +251,11 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
     return idv(call(symbol, [...domains, ...free]));
   };
 
-  // Rewrite.elim_multiarg: a function of several arguments is a function of a tuple.
+  // Rewrite.elim_multiarg: a function of several arguments is a function of a tuple, whose
+  // components a LET binds. tlapm builds every component from Ix 1, which inside the LET is the
+  // previous component, doesn't shift the body past the tuple, and indexes the tuple with
+  // untyped numbers that no axiom relates to the tuple's, so this binds each component to its
+  // typed index.
   const encodeFunction = (
     expression: Extract<Expr, { kind: "Fcn" }>,
     env: Env | undefined,
@@ -266,21 +269,28 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       mode.depth,
     );
     const inner = { ...neither(mode), depth: mode.depth + 1 };
-    const bodyEnv =
-      domains.length === 1
-        ? push(env, { kind: "constant", symbol: variable })
-        : getIntegers(domains.length).reduce<Env | undefined>(
-            (current, key) =>
-              push(current, { kind: "constant", symbol: `(${FUN_APP} ${variable} ${key})` }),
-            env,
-          );
-    const body = encodeIdv(expression.body, bodyEnv, inner);
-    const free = getFree(body, mode.depth);
+    const components = bindVariables(
+      domains.length === 1 ? [] : expression.bounds.map((bound) => bound.name),
+      env,
+      inner,
+    );
+    const body = encodeIdv(
+      expression.body,
+      domains.length === 1 ? push(env, { kind: "constant", symbol: variable }) : components.env,
+      components.mode,
+    );
+    const definitions = components.variables.map(
+      (component, index) => `(${component} (${FUN_APP} ${variable} (${CAST_INT} ${index + 1})))`,
+    );
+    // Smtlib prints the definitions of a LET last first, and N_axiomatize visits them in order.
+    const value =
+      domains.length === 1 ? body : `(let (${definitions.toReversed().join(" ")}) ${body})`;
+    const free = getFree(value, mode.depth);
     const symbol = flatten(
       "FunFcn",
-      body,
+      domains.length === 1 ? body : `(let (${definitions.join(" ")}) ${body})`,
       mode,
-      (name, axioms) => getFunctionAxioms(name, free, body, variable, axioms),
+      (name, axioms) => getFunctionAxioms(name, free, value, variable, axioms),
       free.length + 1,
     );
     return idv(call(symbol, [domain, ...free]));

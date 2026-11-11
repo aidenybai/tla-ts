@@ -7,6 +7,24 @@ interface QuantifierScope {
   exits: (() => void)[];
 }
 
+interface LetScope {
+  depth: number;
+  names: number[];
+}
+
+// The index of each name a LET binds, and of the parenthesis that closes its definitions.
+const getLetNames = (tokens: RegExpMatchArray[], start: number) => {
+  const state = { index: start, depth: 0, names: [] as number[] };
+  do {
+    const token = tokens[state.index][0];
+    if (token === "(") state.depth++;
+    if (token === ")") state.depth--;
+    if (token === "(" && state.depth === 2) state.names.push(state.index + 1);
+    state.index++;
+  } while (state.depth > 0);
+  return { names: state.names, end: state.index - 1 };
+};
+
 export interface Identifier {
   base: string;
   salt: number;
@@ -56,9 +74,14 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
     const replacements = new Map<number, string>();
     const renames = new Map<string, string[]>();
     const scopes: QuantifierScope[] = [];
+    const lets = new Map<number, LetScope>();
     const state = { index: 0, depth: 0 };
     while (state.index < tokens.length) {
       const token = tokens[state.index][0];
+      if (token === "(" && tokens[state.index + 1]?.[0] === "let") {
+        const found = getLetNames(tokens, state.index + 2);
+        lets.set(found.end, { depth: state.depth + 1, names: found.names });
+      }
       const isQuantifier =
         token === "(" &&
         (tokens[state.index + 1]?.[0] === "forall" || tokens[state.index + 1]?.[0] === "exists") &&
@@ -91,6 +114,21 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
       }
       const name = renames.get(token)?.at(-1);
       if (name !== undefined) replacements.set(state.index, name);
+      // Smtlib names a LET's definitions in order, though it prints them last first, and only its
+      // body sees them.
+      const letScope = lets.get(state.index);
+      if (letScope !== undefined) {
+        const scope: QuantifierScope = { depth: letScope.depth, exits: [] };
+        letScope.names.toReversed().forEach((index) => {
+          const raw = tokens[index][0];
+          const identifier = context.adjoin(raw.replace(/#\d+$/, ""));
+          const stack = renames.get(raw) ?? [];
+          renames.set(raw, [...stack, identifier.name]);
+          scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
+          replacements.set(index, identifier.name);
+        });
+        scopes.push(scope);
+      }
       state.index++;
     }
     return tokens
