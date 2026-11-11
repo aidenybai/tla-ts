@@ -40,6 +40,15 @@ import { findQuasiMacros } from "./quasi-macros";
 import { reduceArgs } from "./reduce-args";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
+import { propagateIneqs } from "./bound-simplifier";
+import { diffNeq } from "./diff-neq";
+import { lia2pb } from "./lia2pb";
+import { runPb2Bv } from "./pb2bv-tactic";
+import { fm } from "./fm-tactic";
+import { addBounds } from "./add-bounds-tactic";
+import { cofactorTermIte } from "./cofactor-elim-term-ite";
+import { nla2bv } from "./nla2bv-tactic";
+import { Rational } from "./rational";
 import { runNlsat } from "./nlsat-tactic";
 import { occf } from "./occf";
 import { propagateValues } from "./propagate-values";
@@ -71,6 +80,7 @@ import { tseitinCnf } from "./tseitin-cnf";
 const PARAM_BOOL = 0;
 const PARAM_UINT = 1;
 const PARAM_SYMBOL = 2;
+const PARAM_NUMERAL = 3;
 
 export type TacticParam = boolean | number | string;
 export type TacticParams = ReadonlyMap<string, TacticParam>;
@@ -177,6 +187,17 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["ignore_patterns_on_ground_qbody", PARAM_BOOL, true],
 ]);
 
+const BOOL_REWRITER_PARAMS = [
+  "ite_extra_rules",
+  "flat_and_or",
+  "sort_disjunctions",
+  "elim_ite",
+  "local_ctx",
+  "local_ctx_limit",
+  "blast_distinct",
+  "blast_distinct_threshold",
+];
+
 const getBool = (params: TacticParams, name: string, defaultValue: boolean) => {
   const value = params.get(name);
   return typeof value === "boolean" ? value : defaultValue;
@@ -185,6 +206,13 @@ const getBool = (params: TacticParams, name: string, defaultValue: boolean) => {
 const getUint = (params: TacticParams, name: string, defaultValue: number) => {
   const value = params.get(name);
   return typeof value === "number" ? value : defaultValue;
+};
+
+const getNumeral = (params: TacticParams, name: string, defaultValue: string) => {
+  const value = params.get(name);
+  const parts = (typeof value === "string" ? value : defaultValue).split(".");
+  const fraction = parts[1] ?? "";
+  return Rational.of(BigInt(parts[0] + fraction), 10n ** BigInt(fraction.length));
 };
 
 export const getRewriterOptions = (manager: AstManager, params: TacticParams): RewriterOptions => ({
@@ -701,6 +729,153 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "propagate-ineqs",
+    {
+      descrs: getDescrs("", [["bound_max_refinements", PARAM_UINT, 16, true]]),
+      build: (environment) => inPlace((goal) => propagateIneqs(environment.manager, goal)),
+    },
+  ],
+  [
+    "lia2pb",
+    {
+      descrs: new Map([
+        ...REWRITER_DESCRS,
+        ...getDescrs("", [
+          ["lia2pb_partial", PARAM_BOOL, false, true],
+          ["lia2pb_max_bits", PARAM_UINT, 32, true],
+          ["lia2pb_total_bits", PARAM_UINT, 2048, true],
+        ]),
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          lia2pb(environment.manager, goal, {
+            isPartial: getBool(params, "lia2pb_partial", false),
+            maxBits: getUint(params, "lia2pb_max_bits", 32),
+            totalBits: getUint(params, "lia2pb_total_bits", 2048),
+            rewriter: getRewriterOptions(environment.manager, params),
+          }),
+        ),
+    },
+  ],
+  [
+    "pb2bv",
+    {
+      descrs: new Map([
+        ...[...REWRITER_DESCRS].filter(([name]) => BOOL_REWRITER_PARAMS.includes(name)),
+        ...getDescrs("", [
+          ["max_memory", PARAM_UINT, UINT_MAX, true],
+          ["pb2bv_all_clauses_limit", PARAM_UINT, 8, true],
+          ["pb2bv_cardinality_limit", PARAM_UINT, UINT_MAX, true],
+          ["keep_cardinality_constraints", PARAM_BOOL, false, true],
+          ["pb.solver", PARAM_SYMBOL, "solver", true],
+          ["cardinality.encoding", PARAM_SYMBOL, "none", true],
+        ]),
+      ]),
+      build: (environment, params) =>
+        runPb2Bv(environment.manager, params, getRewriterOptions(environment.manager, params)),
+    },
+  ],
+  [
+    "diff-neq",
+    {
+      descrs: getDescrs("", [["diff_neq_max_k", PARAM_UINT, 1024, true]]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          diffNeq(environment.manager, goal, getUint(params, "diff_neq_max_k", 1024)),
+        ),
+    },
+  ],
+  [
+    "fm",
+    {
+      descrs: new Map([
+        ...REWRITER_DESCRS,
+        ...getDescrs("", [
+          ["produce_models", PARAM_BOOL, false, true],
+          ["fm_real_only", PARAM_BOOL, true, true],
+          ["fm_occ", PARAM_BOOL, false, true],
+          ["fm_limit", PARAM_UINT, 5000000, true],
+          ["fm_cutoff1", PARAM_UINT, 8, true],
+          ["fm_cutoff2", PARAM_UINT, 256, true],
+          ["fm_extra", PARAM_UINT, 0, true],
+        ]),
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) => {
+          const manager = environment.manager;
+          simplifyGoal(
+            manager,
+            goal,
+            getRewriterOptions(
+              manager,
+              new Map([...params, ["arith_lhs", true], ["elim_and", true], ["som", true]]),
+            ),
+          );
+          fm(manager, goal, {
+            isRealOnly: getBool(params, "fm_real_only", true),
+            limit: getUint(params, "fm_limit", 5000000),
+            cutoff1: getUint(params, "fm_cutoff1", 8),
+            cutoff2: getUint(params, "fm_cutoff2", 256),
+            extra: getUint(params, "fm_extra", 0),
+            isOcc: getBool(params, "fm_occ", false),
+          });
+        }),
+    },
+  ],
+  [
+    "add-bounds",
+    {
+      descrs: getDescrs("", [
+        ["add_bound_lower", PARAM_NUMERAL, "-2", true],
+        ["add_bound_upper", PARAM_NUMERAL, "2", true],
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          addBounds(
+            environment.manager,
+            goal,
+            getNumeral(params, "add_bound_lower", "-2"),
+            getNumeral(params, "add_bound_upper", "2"),
+          ),
+        ),
+    },
+  ],
+  [
+    "cofactor-term-ite",
+    {
+      descrs: getDescrs("", [["cofactor_equalities", PARAM_BOOL, true, true]]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          cofactorTermIte(
+            environment.manager,
+            goal,
+            getRewriterOptions(environment.manager, params),
+            getBool(params, "cofactor_equalities", true),
+          ),
+        ),
+    },
+  ],
+  [
+    "nla2bv",
+    {
+      descrs: getDescrs("", [
+        ["nla2bv_max_bv_size", PARAM_UINT, UINT_MAX, true],
+        ["nla2bv_bv_size", PARAM_UINT, 4, true],
+        ["nla2bv_root", PARAM_UINT, 2, true],
+        ["nla2bv_divisor", PARAM_UINT, 2, true],
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          nla2bv(environment.manager, goal, {
+            maxBvSize: getUint(params, "nla2bv_max_bv_size", UINT_MAX),
+            bvSize: getUint(params, "nla2bv_bv_size", 4),
+            root: getUint(params, "nla2bv_root", 2),
+            divisor: getUint(params, "nla2bv_divisor", 2),
+          }),
+        ),
+    },
+  ],
+  [
     "fix-dl-var",
     {
       descrs: REWRITER_DESCRS,
@@ -895,7 +1070,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runNlsat(environment.manager),
+      build: (environment, params) =>
+        runNlsat(environment.manager, {
+          seed: getUint(params, "seed", 0),
+          isShufflingVars: getBool(params, "shuffle_vars", false),
+          variableOrderingStrategy: getUint(params, "variable_ordering_strategy", 0),
+        }),
     },
   ],
   [
@@ -989,16 +1169,13 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "add-bounds blast-term-ite " +
-    "bv-slice bvarray2uf cofactor-term-ite collect-statistics " +
-    "degree-shift demodulator diff-neq " +
+    "blast-term-ite " +
+    "bv-slice bvarray2uf collect-statistics " +
+    "degree-shift demodulator " +
     "elim-predicates elim-uncnstr2 " +
-    "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
-    "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
-    "nla2bv nlqsat nra pb-preprocess pb2bv pqffd " +
-    "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
-    "qfbv-sls qffd qfnra " +
-    "qfufbv recover-01 reduce-args2 " +
+    "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fold-unfold fpa2bv horn " +
+    "horn-simplify injectivity nlqsat nra pb-preprocess pqffd propagate-bv-bounds " +
+    "propagate-bv-bounds2 propagate-values2 psmt qfbv-sls qffd qfufbv recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
   ).split(" "),
@@ -1029,9 +1206,13 @@ const parseParamValue = (kind: number, value: SExpr) =>
       ? isUnsigned(value)
         ? Number(value.text)
         : undefined
-      : isSymbol(value)
-        ? value.text
-        : undefined;
+      : kind === PARAM_NUMERAL
+        ? value.kind === "numeral" || value.kind === "decimal"
+          ? value.text
+          : undefined
+        : isSymbol(value)
+          ? value.text
+          : undefined;
 
 const getUntypedParamValue = (value: SExpr) =>
   value.kind === "list"
@@ -1090,7 +1271,9 @@ const getParams = (
           ? "invalid parameter value, true or false expected"
           : found.descr.kind === PARAM_UINT
             ? "invalid parameter value, unsigned integer expected"
-            : "invalid parameter value, symbol expected",
+            : found.descr.kind === PARAM_NUMERAL
+              ? "invalid parameter value, numeral expected"
+              : "invalid parameter value, symbol expected",
         end,
       );
     if (isUnportedParam(found.descr, parsed))

@@ -68,7 +68,7 @@ const isPb = (manager: AstManager, first: number, second: number) => {
 };
 
 // The port has no pseudo-Boolean constraints, so a comparison the encoder would rewrite is unsupported.
-const checkPbFree = (manager: AstManager, form: number) => {
+export const checkPbFree = (manager: AstManager, form: number) => {
   const visited = new Set<number>();
   const todo = [form];
   while (todo.length > 0) {
