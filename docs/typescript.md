@@ -152,6 +152,8 @@ JSDoc tags cover what TypeScript has no syntax for:
 | `@terminating`         | A boolean function             | Stopping where it holds isn't a deadlock           |
 | `@noDeadlock`          | The first statement            | Allow states where no action can run               |
 
+A boolean function without parameters that reads no state needs no `@assume`, as it holds in every state or in none.
+
 A function that takes `before` reads the state before the step from it, and the variables themselves hold the state after the step.
 
 Parameters of a temporal property hold for every value of their type. `@leadsTo` passes them to the target.

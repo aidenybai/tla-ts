@@ -494,6 +494,31 @@ describe("tags", () => {
     `);
     expect(result.status).toBe("assumption-violation");
   });
+
+  it("checks a function that reads no state once before the search, without @assume", async () => {
+    const result = await checkModel(`
+      const LIMIT = 0;
+      const isAbove = (value: number) => value > 0;
+      let count = 0;
+      export const step = () => {
+        count = 1 - count;
+      };
+      export const isPositive = () => isAbove(LIMIT);
+    `);
+    expect(result.status).toBe("assumption-violation");
+  });
+
+  it("checks a function that reads state through a helper in every state", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      const getCount = () => count;
+      export const step = () => {
+        count = 1 - count;
+      };
+      export const isZero = () => getCount() === 0;
+    `);
+    expect([result.status, result.violation?.name]).toEqual(["invariant-violation", "isZero"]);
+  });
 });
 
 describe("errors", () => {

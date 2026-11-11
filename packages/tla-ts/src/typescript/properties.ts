@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { type Context, getSymbol } from "./context";
+import { type Context, getSymbol, getTopLevelDeclaration } from "./context";
 import type { Sections } from "./emit";
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition } from "./expressions";
@@ -124,6 +124,21 @@ export const translateProperty = (
   }
 };
 
+// Whether a node reads a state variable, directly or through the top-level declarations it names.
+const readsState = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  if (symbol !== undefined && context.variables.has(symbol)) return true;
+  const declaration = getTopLevelDeclaration(symbol);
+  if (declaration !== undefined && !visited.has(declaration)) {
+    visited.add(declaration);
+    if (readsState(declaration, context, visited)) return true;
+  }
+  return (
+    ts.forEachChild(node, (child) => readsState(child, context, visited) || undefined) ?? false
+  );
+};
+
+// A boolean function that reads no state is a constant, which TLC checks once before the search.
 export const translateInvariant = (definition: Exported, sections: Sections, context: Context) => {
   const parameters = definition.node.parameters;
   if (parameters.length > 0) {
@@ -135,5 +150,6 @@ export const translateInvariant = (definition: Exported, sections: Sections, con
     ? translateBody(body, scope, context)
     : translateCondition(body, scope, context);
   sections.predicates.push(`${definition.name} ==\n  ${indent(value, "  ")}`);
-  sections.invariants.push(definition.name);
+  const isStateLevel = readsState(body, context, new Set([definition.declaration]));
+  (isStateLevel ? sections.invariants : sections.assumptions).push(definition.name);
 };
