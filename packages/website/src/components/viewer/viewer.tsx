@@ -4,7 +4,6 @@ import { useHighlighterWarmup } from "@/hooks/use-highlighter";
 import type { Example, ViewFile } from "@/model";
 import { ViewerProvider } from "./context";
 import { RunPanel } from "./run-panel";
-import { SourceMap } from "./source-map";
 import { SourcePane } from "./source-pane";
 import { Status } from "./status";
 import { Toolbar } from "./toolbar";
@@ -41,10 +40,10 @@ const Source = () => (
   <main className="flex min-h-0 flex-col">
     <div className="min-h-0 flex-1">
       <ErrorBoundary FallbackComponent={Crash}>
-        <SourceMap>
+        <div className="grid h-full min-h-0 grid-rows-2 max-sm:divide-y sm:grid-cols-2 sm:grid-rows-1 sm:divide-x">
           <SourcePane pane="code" />
           <SourcePane pane="module" />
-        </SourceMap>
+        </div>
       </ErrorBoundary>
     </div>
     <ErrorBoundary FallbackComponent={Crash}>

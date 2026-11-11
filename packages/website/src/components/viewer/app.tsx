@@ -15,12 +15,10 @@ export const App = (props: AppProps) => (
       <Toolbar.Brand />
       <Toolbar.FileMenu />
       <Toolbar.Run />
-      <Toolbar.Arrows />
     </Viewer.Toolbar>
     <Viewer.Source />
     <Viewer.Status>
       <Status.Hover />
-      <Status.Key />
       <Status.Controls />
     </Viewer.Status>
   </Viewer>
