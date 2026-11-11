@@ -159,6 +159,7 @@ export class TheorySeq extends TheorySeqRegex {
       ? context.getEnode(term)!
       : context.mkEnode(term, false, isBool, true);
     this.mkVar(node);
+    if (!context.relevancy.isEnabled) this.relevantEh(term);
     return true;
   }
 
