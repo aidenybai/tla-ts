@@ -14,9 +14,8 @@ const subscribe = (onChange: () => void): (() => void) => {
 
 export const usePathname = (): string => useSyncExternalStore(subscribe, () => location.pathname);
 
-export const navigate = (href: string, isReplace = false): void => {
-  if (isReplace) window.history.replaceState(null, "", href);
-  else window.history.pushState(null, "", href);
+const navigate = (href: string): void => {
+  window.history.pushState(null, "", href);
   window.dispatchEvent(new Event(NAVIGATE_EVENT));
 };
 

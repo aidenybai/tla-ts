@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { ArcKey } from "./arc-key";
 import { Chip } from "./chip";
 import { useFocusedNode } from "@/store/viewer";
-import { useViewer } from "./context";
 import { ThemeToggle } from "./theme-toggle";
 
 const Root = ({ children }: { children: ReactNode }) => (
@@ -30,15 +29,10 @@ const Hover = () => {
   );
 };
 
-const Key = () => {
-  const { mode } = useViewer();
-  return mode === "code" ? <ArcKey /> : null;
-};
-
 const Controls = () => (
   <div className="flex shrink-0 items-center gap-0.5">
     <ThemeToggle />
   </div>
 );
 
-export const Status = Object.assign(Root, { Hover, Key, Controls });
+export const Status = Object.assign(Root, { Hover, Key: ArcKey, Controls });

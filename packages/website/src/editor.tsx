@@ -2,7 +2,7 @@ import "./editor.css";
 import { App } from "@/components/viewer/app";
 import { Spinner } from "@/components/ui/spinner";
 import { usePathname } from "@/lib/navigation";
-import { getSlug, parseRoute } from "@/lib/route";
+import { getRouteName } from "@/lib/route";
 import { getFileTitle } from "@/lib/source";
 import { buildViewFile } from "@/lib/view-model";
 import type { Example } from "@/model";
@@ -19,7 +19,8 @@ const EXAMPLES: Example[] = TYPESCRIPT_EXAMPLES.map((example) => ({
 const NAMES = new Set(EXAMPLES.map((example) => example.name));
 
 export const Editor = () => {
-  const name = parseRoute(getSlug(usePathname()), NAMES)?.name ?? DEFAULT_NAME;
+  const routeName = getRouteName(usePathname());
+  const name = routeName !== undefined && NAMES.has(routeName) ? routeName : DEFAULT_NAME;
   const example =
     TYPESCRIPT_EXAMPLES.find((candidate) => candidate.fileName === `${name}.ts`) ??
     TYPESCRIPT_EXAMPLES[0];
@@ -40,7 +41,6 @@ export const Editor = () => {
         examples={EXAMPLES}
         name={name}
         view={buildViewFile(example.fileName, example.source, compilation.spec)}
-        json={JSON.stringify(compilation.spec, null, 2)}
       />
     </>
   );
