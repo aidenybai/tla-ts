@@ -76,34 +76,6 @@ Wall time on 8 workers, also including startup. Each time is the median of 3 run
 
 tla-ts currently maintains 32.32% conformance with [test262](https://github.com/tc39/test262) (17,372 / 53,755 passing).
 
-## Check TypeScript
-
-tla-ts compiles a TypeScript file to a TLA+ spec and config in memory, and checks them. Variables become state, exported functions that change state become actions, and exported functions that return a boolean become invariants.
-
-```ts
-// bank.ts
-type Account = "alice" | "bob";
-
-let balances: Record<Account, number> = { alice: 10, bob: 10 };
-
-export const transfer = (from: Account, to: Account, amount: 1 | 2 | 3) => {
-  balances[from] -= amount;
-  balances[to] += amount;
-};
-
-export const noOverdraft = () => balances.alice >= 0 && balances.bob >= 0;
-```
-
-`npx tla-ts bank.ts` reports that `noOverdraft` is violated after four transfers from `bob`. [Check TypeScript](https://github.com/aidenybai/tla-ts/blob/main/docs/typescript.md) lists every construct tla-ts compiles.
-
-## Command line
-
-```shell
-npx tla-ts bank.ts           # compile TypeScript to TLA+ and check it
-npx tla-ts Spec.tla          # check a spec with TLC's options
-npx tla-ts tlapm Module.tla  # tlapm's command line, with tla-ts's provers
-```
-
 ## API
 
 ### `check`
