@@ -4426,31 +4426,38 @@ const bindIteration = (
         ? undefined
         : getOptionalField(element, key.text, context);
   };
-  const pending =
-    ts.isVariableDeclarationList(declared) && !ts.isIdentifier(name)
-      ? name.elements.flatMap((inner: ts.ArrayBindingElement, position) => {
-          const initializer = ts.isBindingElement(inner) ? inner.initializer : undefined;
-          const call = initializer && getCast(initializer);
-          const part =
-            ts.isBindingElement(inner) &&
-            ts.isIdentifier(inner.name) &&
-            inner.dotDotDotToken === undefined
-              ? getPart(inner, position)
-              : undefined;
-          return call !== undefined &&
-            part !== undefined &&
-            ts.isCallExpression(call) &&
-            !path.scope.results.has(call) &&
-            (isStatementCall(call, path, context) ||
-              (path.scope.isCatching && mayThrow(call, context))) &&
-            !(
-              ts.isObjectBindingPattern(name) &&
-              getChanged(call, path, context).some((symbol) => symbol === context.heap)
-            )
-            ? [{ call, part }]
-            : [];
-        })
-      : [];
+  const pending = !ts.isIdentifier(name)
+    ? name.elements.flatMap((inner: ts.ArrayBindingElement, position) => {
+        const initializer = ts.isBindingElement(inner) ? inner.initializer : undefined;
+        const call = initializer && getCast(initializer);
+        // A nested array pattern takes its values from the generator that its default makes.
+        const pattern =
+          ts.isBindingElement(inner) &&
+          ts.isArrayBindingPattern(inner.name) &&
+          call !== undefined &&
+          isGeneratorType(call, context)
+            ? inner.name
+            : undefined;
+        const part =
+          ts.isBindingElement(inner) &&
+          (ts.isIdentifier(inner.name) || pattern !== undefined) &&
+          inner.dotDotDotToken === undefined
+            ? getPart(inner, position)
+            : undefined;
+        return call !== undefined &&
+          part !== undefined &&
+          ts.isCallExpression(call) &&
+          !path.scope.results.has(call) &&
+          (isStatementCall(call, path, context) ||
+            (path.scope.isCatching && mayThrow(call, context))) &&
+          !(
+            ts.isObjectBindingPattern(name) &&
+            getChanged(call, path, context).some((symbol) => symbol === context.heap)
+          )
+          ? [{ call, part, pattern }]
+          : [];
+      })
+    : [];
   const first = pending.at(0);
   if (first !== undefined) {
     const bound = new Set(
@@ -4488,7 +4495,9 @@ const bindIteration = (
       (next) =>
         ifThenElse(
           apply("=", [first.part, getUndefined(context)]),
-          translateCallStatement(first.call, path, context, frame, next),
+          (first.pattern &&
+            takeFromGenerator(first.pattern, first.call, [], path, context, frame, next)) ||
+            translateCallStatement(first.call, path, context, frame, next),
           next(path, getUndefined(context)),
         ),
     );

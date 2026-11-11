@@ -2976,6 +2976,24 @@ describe("errors", () => {
     `;
     expect((await checkModel(getObjectSource("1,0,0;10,3,1;20,30,3;"))).failure).toBeUndefined();
     expect((await checkModel(getObjectSource("1,0,0;10,3,1;20,20,3;"))).failure).toBeDefined();
+    const getGeneratorSource = (check: string) => `
+      let first = 0;
+      let second = 0;
+      function* g() {
+        first += 1;
+        yield 4;
+        second += 1;
+        yield 5;
+      }
+      let seen = "";
+      const items: number[][][] = [[], [[7]]];
+      for (const [[a, b = -1] = g()] of items) {
+        seen = seen + \`\${a},\${b},\${first},\${second};\`;
+      }
+      if (seen !== "${check}") throw new Error(seen);
+    `;
+    expect((await checkModel(getGeneratorSource("4,5,1,1;7,-1,1,1;"))).failure).toBeUndefined();
+    expect((await checkModel(getGeneratorSource("4,5,1,0;7,-1,1,1;"))).failure).toBeDefined();
   });
 
   it("makes a new function object each time a function makes one as a property's value", async () => {
