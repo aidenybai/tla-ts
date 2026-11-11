@@ -662,22 +662,32 @@ const ignoreSoundErrors = () => {
       declarations.every((declaration) => !declaration.getSourceFile().isDeclarationFile)
     );
   };
+  const isSound = (diagnostic: ts.Diagnostic) => {
+    const node = getNode(diagnostic.start ?? 0);
+    return (
+      diagnostic.code === UNUSED_OPERAND_ERROR ||
+      (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
+      (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
+      // Node may define a global that TypeScript doesn't know, such as print.
+      (diagnostic.code === UNRESOLVED_NAME_ERROR &&
+        ts.isIdentifier(node) &&
+        !(node.text in globalThis))
+    );
+  };
+  const getLine = (diagnostic: ts.Diagnostic) =>
+    sourceFile.getLineAndCharacterOfPosition(diagnostic.start ?? 0).line;
+  const diagnostics = service.getSemanticDiagnostics(PROGRAM_PATH);
+  // @ts-ignore hides each error on its line, so a line with an error that stays keeps it.
+  const kept = new Set(
+    diagnostics
+      .filter((diagnostic) => !isSound(diagnostic))
+      .map((diagnostic) => getLine(diagnostic)),
+  );
   const lines = new Set(
-    service
-      .getSemanticDiagnostics(PROGRAM_PATH)
-      .filter((diagnostic) => {
-        const node = getNode(diagnostic.start ?? 0);
-        return (
-          diagnostic.code === UNUSED_OPERAND_ERROR ||
-          (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
-          (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
-          // Node may define a global that TypeScript doesn't know, such as print.
-          (diagnostic.code === UNRESOLVED_NAME_ERROR &&
-            ts.isIdentifier(node) &&
-            !(node.text in globalThis))
-        );
-      })
-      .map((diagnostic) => sourceFile.getLineAndCharacterOfPosition(diagnostic.start ?? 0).line),
+    diagnostics
+      .filter((diagnostic) => isSound(diagnostic))
+      .map((diagnostic) => getLine(diagnostic))
+      .filter((line) => !kept.has(line)),
   );
   const starts = [...lines]
     .map((line) => sourceFile.getPositionOfLineAndCharacter(line, 0))
