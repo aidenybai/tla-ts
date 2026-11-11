@@ -11,7 +11,6 @@ interface State {
 
 const N = 3;
 
-/** @noDeadlock */
 let active!: State["active"];
 let color!: State["color"];
 let tpos!: Node;

@@ -340,6 +340,25 @@ describe("tags", () => {
     export const reachesThree = () => count === 3;
   `;
 
+  it("leaves a spec with liveness properties to judge a state where it stops", async () => {
+    const getSpec = (jam: string) => `
+      let count = 0;
+      let isJammed = false;
+      export const tick = () => {
+        if (isJammed || count >= 3) return;
+        count++;
+      };
+      export const jam = () => {
+        if (${jam} || isJammed) return;
+        isJammed = true;
+      };
+      /** @eventually */
+      export const reachesThree = () => count === 3;
+    `;
+    expect((await checkModel(getSpec("count !== 3"))).status).toBe("success");
+    expect((await checkModel(getSpec("count !== 1"))).status).toBe("liveness-violation");
+  });
+
   it("checks eventually with weak fairness", async () => {
     expect((await checkModel(getTicker("/** @fair */"))).status).toBe("success");
   });

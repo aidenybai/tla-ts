@@ -1,4 +1,4 @@
----- MODULE Counter_TTrace_1794368217 ----
+---- MODULE Counter_TTrace_1794368803 ----
 EXTENDS Sequences, TLCExt, Counter, Toolbox, Naturals, TLC
 
 _expression ==
@@ -35,7 +35,7 @@ _next ==
 \* to `JsonSerialize`. For example, a sub-sequence of _TETrace.
     \* ASSUME
     \*     LET J == INSTANCE Json
-    \*         IN J!JsonSerialize("Counter_TTrace_1794368217.json", _TETrace)
+    \*         IN J!JsonSerialize("Counter_TTrace_1794368803.json", _TETrace)
 
 =============================================================================
 
@@ -87,7 +87,7 @@ Parsing and semantic processing can take forever if the trace below is long.
 \*---- MODULE Counter_TETrace ----
 \*EXTENDS IOUtils, Counter, TLC
 \*
-\*trace == IODeserialize("Counter_TTrace_1794368217.bin", TRUE)
+\*trace == IODeserialize("Counter_TTrace_1794368803.bin", TRUE)
 \*
 \*=============================================================================
 \*
@@ -107,7 +107,7 @@ trace ==
 
 =============================================================================
 
----- CONFIG Counter_TTrace_1794368217 ----
+---- CONFIG Counter_TTrace_1794368803 ----
 CONSTANTS
     Limit = 3
 
@@ -130,4 +130,4 @@ CONSTANT
 ALIAS
     _expression
 =============================================================================
-\* Generated on Tue Nov 10 19:36:57 PST 2026
+\* Generated on Tue Nov 10 19:46:44 PST 2026

@@ -127,7 +127,8 @@ export const emit = (
     ...formatConfigSection("VIEW", sections.views),
     ...formatConfigSection("POSTCONDITIONS", sections.postconditions),
     ...(symmetrySets.length > 0 ? ["SYMMETRY Perms"] : []),
-    ...(model.isDeadlockChecked ? [] : ["CHECK_DEADLOCK FALSE"]),
+    // TLC lets a state without successors stutter forever, which the liveness properties judge.
+    ...(model.isDeadlockChecked && sections.liveness.length === 0 ? [] : ["CHECK_DEADLOCK FALSE"]),
   ].join("\n");
   return { name: moduleName, source, config };
 };
