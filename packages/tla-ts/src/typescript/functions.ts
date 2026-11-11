@@ -367,7 +367,7 @@ export const translateHelperCall = (
 // functions around them, which a lifted definition takes as parameters.
 const getCaptured = (callee: FunctionNode, context: Context) => {
   const isLocal = (node: ts.Node) => ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined;
-  const reached = new Set<FunctionNode>([callee]);
+  const reached = new Set<ts.Node>([callee]);
   const pending = [callee];
   while (pending.length > 0) {
     findNodes(pending.pop() ?? callee, ts.isIdentifier).forEach((name) => {
@@ -379,7 +379,7 @@ const getCaptured = (callee: FunctionNode, context: Context) => {
     });
   }
   const isInside = (node: ts.Node) =>
-    ts.findAncestor(node, (ancestor) => reached.has(ancestor as FunctionNode)) !== undefined;
+    ts.findAncestor(node, (ancestor) => reached.has(ancestor)) !== undefined;
   const captured = new Set<ts.Symbol>();
   reached.forEach((current) =>
     findNodes(current, ts.isIdentifier).forEach((name) => {
@@ -402,10 +402,6 @@ const getCaptured = (callee: FunctionNode, context: Context) => {
   return { reached: [...reached], captured: [...captured] };
 };
 
-// A local function that a call reaches again while tla-ts inlines it, compiled once as a definition
-// beside the top-level ones. It takes the names it reads from the functions around it as
-// parameters, which a call passes as they are then, as JavaScript reads them then. It may change
-// none of them, and reads no state, which a definition would read as the step began.
 // Whether tla-ts can compile a local function as a definition that takes the names it reads from
 // the functions around it: one that changes none of them and reads no state, which a definition
 // would read as the step began.
@@ -444,6 +440,10 @@ export const isLiftable = (callee: FunctionNode, context: Context) => {
   );
 };
 
+// A local function that a call reaches again while tla-ts inlines it, compiled once as a definition
+// beside the top-level ones. It takes the names it reads from the functions around it as
+// parameters, which a call passes as they are then, as JavaScript reads them then. It may change
+// none of them, and reads no state, which a definition would read as the step began.
 export const translateLiftedCall = (
   callee: FunctionNode,
   node: ts.CallExpression,
