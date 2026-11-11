@@ -172,6 +172,14 @@ export const getMethodValue = (
   return getModelValue(method, symbol, `${name}Method`, context);
 };
 
+// The model value of a function that a value may hold.
+export const getCandidateValue = (node: FunctionNode, context: Context) =>
+  ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)
+    ? getMethodValue(node, context)
+    : ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+      ? translateFunctionValue(node, context)
+      : undefined;
+
 // A getter or setter has its own value, though it shares its property's symbol.
 export const getAccessorValue = (
   accessor: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
@@ -333,7 +341,7 @@ const getFunctionName = (node: HeapClass | ts.ArrowFunction) => {
 
 // A function's length: its parameters before the first with a default or the rest parameter. A
 // parameter that only TypeScript marks optional still counts.
-const getFunctionLength = (parameters: readonly ts.ParameterDeclaration[]) => {
+export const getFunctionLength = (parameters: readonly ts.ParameterDeclaration[]) => {
   const index = parameters.findIndex(
     (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
   );

@@ -11,12 +11,15 @@ import {
 import type { Expression } from "../ast";
 import {
   type Context,
+  type FunctionNode,
   getAccessKey,
   getCalledMethod,
   getObjectGetter,
   getCallee,
   getElement,
   getFunction,
+  getFunctionCandidates,
+  getParameters,
   getFunctionValue,
   getNewClass,
   getArgumentsOwner,
@@ -49,6 +52,8 @@ import {
   translateLocalCall,
 } from "./functions";
 import {
+  getCandidateValue,
+  getFunctionLength,
   getHeap,
   isCreation,
   isDescription,
@@ -1147,6 +1152,55 @@ const translatePropertyAccess = (
     getSymbol(receiver, context.checker) === scope.previous
   ) {
     return getPreviousVariable(name, node, context);
+  }
+  // A function that isn't an object keeps the length and the name it starts with. tla-ts tells the
+  // name only where the function's own syntax gives it.
+  if (
+    (name === "length" || name === "name") &&
+    context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0
+  ) {
+    const getProperty = (candidate: FunctionNode) => {
+      if (name === "length") return number(getFunctionLength(getParameters(candidate)));
+      const parent = candidate.parent;
+      const given =
+        (ts.isFunctionDeclaration(candidate) || ts.isFunctionExpression(candidate)) &&
+        candidate.name !== undefined
+          ? candidate.name
+          : ts.isMethodDeclaration(candidate) &&
+              (ts.isIdentifier(candidate.name) ||
+                ts.isPrivateIdentifier(candidate.name) ||
+                ts.isStringLiteral(candidate.name))
+            ? candidate.name
+            : (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)) &&
+                ts.isVariableDeclaration(parent) &&
+                parent.initializer === candidate &&
+                ts.isIdentifier(parent.name)
+              ? parent.name
+              : undefined;
+      return given === undefined ? undefined : string(given.text);
+    };
+    const symbol = ts.isIdentifier(receiver) ? getSymbol(receiver, context.checker) : undefined;
+    const held = symbol === undefined ? undefined : scope.functions.get(symbol);
+    const heldProperty = held === undefined ? undefined : getProperty(held);
+    if (heldProperty !== undefined) return heldProperty;
+    if (held !== undefined || context.heap === undefined) {
+      throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
+    }
+    return share(translateExpression(receiver, scope, context), "function", context, (value) =>
+      getFunctionCandidates(receiver, context).reduceRight<Expression>(
+        (otherwise, candidate) => {
+          const candidateValue = getCandidateValue(candidate, context);
+          const property = getProperty(candidate);
+          return candidateValue === undefined || property === undefined
+            ? otherwise
+            : ifExpression(apply("=", [value, candidateValue]), property, otherwise);
+        },
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this value holds"),
+        ]),
+      ),
+    );
   }
   const size =
     name === "length" || name === "size" ? translateSize(receiver, scope, context) : undefined;

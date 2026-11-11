@@ -1215,6 +1215,29 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the length and the name of the function that a value holds", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      function two(first: number, second: number) {
+        holder.count = first * second;
+      }
+      const restOne = (first: number, ...rest: number[]) => {
+        holder.count = first + rest.length;
+      };
+      let ref: (first: number, second: number) => void;
+      ref = (first: number, second = 39) => {
+        holder.count = first + second;
+      };
+      if (ref.length !== 1) throw new Error("default");
+      ref = two;
+      if (ref.length !== 2) throw new Error("plain");
+      const chosen = holder.count > 5 ? two : restOne;
+      if (chosen.length !== 1) throw new Error("rest");
+      if (chosen.name !== "restOne" || ref.name !== "two") throw new Error("name");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a callee holds a function that the script doesn't declare", async () => {
     const result = await checkModel(`
       const holder = {};

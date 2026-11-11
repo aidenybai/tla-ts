@@ -11,8 +11,9 @@ import {
   removeLast,
 } from "./collections";
 import {
+  findNodes,
+  getFunctionCandidates,
   getObjectGetter,
-  getObjectMethod,
   type HeapFunction,
   type Context,
   type FunctionNode,
@@ -78,8 +79,8 @@ import {
 import {
   getAccessorValue,
   getAllocated,
+  getCandidateValue,
   getHeap,
-  getMethodValue,
   isAllocation,
   isObjectChange,
   translateAllocated,
@@ -987,7 +988,7 @@ export const translateCallStatement = (
     if (dispatched.some(isAnyGenerator)) rejectGeneratorUse(expression, context);
     return dispatched.reduceRight(
       (otherwise, candidate) => {
-        const candidateValue = getFunctionValue(candidate, context);
+        const candidateValue = getCandidateValue(candidate, context);
         if (candidateValue === undefined || frame.inlining.has(candidate)) return otherwise;
         const candidateReceiver = ts.isArrowFunction(candidate)
           ? undefined
@@ -2088,19 +2089,6 @@ const getLiteralDefaults = (
   return [];
 };
 
-// The nodes in a tree, its root included, that a test picks.
-const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
-  const found: T[] = [];
-  const visit = (node: ts.Node) => {
-    if (test(node)) found.push(node);
-    ts.forEachChild(node, (child) => {
-      visit(child);
-    });
-  };
-  visit(root);
-  return found;
-};
-
 // The global undefined, which a local variable could shadow.
 const isUndefinedLiteral = (node: ts.Expression, context: Context) =>
   ts.isIdentifier(node) &&
@@ -3090,8 +3078,6 @@ const isHeapCall = (
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
 };
 
-const candidates = new WeakMap<ts.SourceFile, FunctionNode[]>();
-
 // The functions that a call through a value may run, where tla-ts can't tell which one it names:
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
@@ -3109,35 +3095,9 @@ const getDispatched = (node: ts.CallExpression, path: Path, context: Context) =>
   ) {
     return undefined;
   }
-  const sourceFile = node.getSourceFile();
-  const found =
-    candidates.get(sourceFile) ??
-    findNodes(sourceFile, (inner): inner is FunctionNode => {
-      const candidate =
-        ts.isFunctionDeclaration(inner) ||
-        ts.isFunctionExpression(inner) ||
-        ts.isArrowFunction(inner)
-          ? inner
-          : getObjectMethod(inner, context);
-      return (
-        candidate?.body !== undefined &&
-        ts.findAncestor(candidate.parent, ts.isFunctionLike) === undefined
-      );
-    });
-  candidates.set(sourceFile, found);
-  const type = context.checker.getTypeAtLocation(callee);
-  const dispatched = found.filter((candidate) =>
-    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type),
-  );
+  const dispatched = getFunctionCandidates(callee, context);
   return dispatched.length > 0 ? dispatched : undefined;
 };
-
-const getFunctionValue = (node: FunctionNode, context: Context) =>
-  ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)
-    ? getMethodValue(node, context)
-    : ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)
-      ? translateFunctionValue(node, context)
-      : undefined;
 
 // A call to a function or a method that changes state, which inlines as statements that give its
 // result.

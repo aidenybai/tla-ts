@@ -909,3 +909,43 @@ export const getElement = (
       ifExpression(apply("\\in", [at, apply("DOMAIN", [shared])]), index(shared, [at]), missing),
     ),
   );
+
+// The nodes in a tree, its root included, that a test picks.
+export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
+  const found: T[] = [];
+  const visit = (node: ts.Node) => {
+    if (test(node)) found.push(node);
+    ts.forEachChild(node, (child) => {
+      visit(child);
+    });
+  };
+  visit(root);
+  return found;
+};
+
+const candidates = new WeakMap<ts.SourceFile, FunctionNode[]>();
+
+// The functions that a value whose type has calls may hold, where tla-ts can't tell which: those
+// that no other function encloses, whose type TypeScript lets the value hold.
+export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
+  const sourceFile = callee.getSourceFile();
+  const found =
+    candidates.get(sourceFile) ??
+    findNodes(sourceFile, (inner): inner is FunctionNode => {
+      const candidate =
+        ts.isFunctionDeclaration(inner) ||
+        ts.isFunctionExpression(inner) ||
+        ts.isArrowFunction(inner)
+          ? inner
+          : getObjectMethod(inner, context);
+      return (
+        candidate?.body !== undefined &&
+        ts.findAncestor(candidate.parent, ts.isFunctionLike) === undefined
+      );
+    });
+  candidates.set(sourceFile, found);
+  const type = context.checker.getTypeAtLocation(callee);
+  return found.filter((candidate) =>
+    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type),
+  );
+};
