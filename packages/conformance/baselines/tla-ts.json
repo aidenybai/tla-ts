@@ -136,7 +136,6 @@
   "tlapm/errors/parse/unbalanced_parenthesis": "text-mismatch",
   "tlapm/imported/fast/basic/cvc3_false_test": "text-mismatch",
   "tlapm/imported/isabelle/examples/Allocator.thy": "message-mismatch",
-  "tlapm/imported/isabelle/tests/Tests.thy": "message-mismatch",
   "tlapm/imported/parser/infix_op/infix_op_infix_minus_as_parameter": "text-mismatch",
   "tlapm/imported/parser/number/number_bitfield_number_formats": "text-mismatch",
   "tlapm/imported/parser/operators/operators_nonfix_double_exclamation_operator_gh_tstla_gh97_gh_tlaplus_tlaplus_884": "text-mismatch",
