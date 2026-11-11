@@ -1273,7 +1273,7 @@ const SPECIES_METHODS = new Set(["concat", "filter", "flat", "flatMap", "map", "
 export const translateMethodElements = (
   method: string,
   owner: Expression,
-  read: "ArrayLike" | "PresentElements" | undefined,
+  read: "ArrayLike" | "ArrayLikeValues" | "PresentElements" | undefined,
   node: ts.Node,
   scope: Scope,
   context: Context,
@@ -1329,6 +1329,19 @@ export const HOLE_SKIPPING_METHODS = new Set([
   "reduceRight",
 ]);
 
+// The array methods that read each index below the length through Get, so that a hole reads as
+// what a prototype holds there, or undefined.
+export const EVERY_INDEX_METHODS = new Set([
+  "at",
+  "with",
+  "toReversed",
+  "includes",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+]);
+
 // Array.prototype.method.call(object, ...arguments) on an array-like object, or a method call on
 // an array that the heap holds, which runs on the object's elements, or undefined for any other
 // call.
@@ -1375,7 +1388,14 @@ export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, co
           (present) => operate(owner, field(present, "values"), field(present, "indices")),
         )
       : share(
-          translateMethodElements(method, owner, "ArrayLike", node, scope, context),
+          translateMethodElements(
+            method,
+            owner,
+            EVERY_INDEX_METHODS.has(method) ? "ArrayLikeValues" : "ArrayLike",
+            node,
+            scope,
+            context,
+          ),
           "sequence",
           context,
           (sequence) => operate(owner, sequence),

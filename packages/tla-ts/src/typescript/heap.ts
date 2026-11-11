@@ -56,6 +56,7 @@ import {
   junction,
   number,
   record,
+  set,
   string,
   tuple,
 } from "./tla";
@@ -906,14 +907,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     return useJavaScript("Allocate", [heap, translateObject(node, scope, context)], context);
   }
   if (ts.isArrayLiteralExpression(node)) {
-    const array = useJavaScript(
-      "ArrayObject",
-      [
-        translateBuiltInValue("Array.prototype", node, context),
-        tuple(node.elements.map((element) => translateExpression(element, scope, context))),
-      ],
-      context,
+    // An elision is a hole, which the array has no element for, though its length counts it.
+    const holes = node.elements.flatMap((element, position) =>
+      ts.isOmittedExpression(element) ? [number(position + 1)] : [],
     );
+    const elements = tuple(
+      node.elements.map((element) =>
+        ts.isOmittedExpression(element)
+          ? getUndefined(context)
+          : translateExpression(element, scope, context),
+      ),
+    );
+    const prototype = translateBuiltInValue("Array.prototype", node, context);
+    const array =
+      holes.length === 0
+        ? useJavaScript("ArrayObject", [prototype, elements], context)
+        : useJavaScript("ArrayObjectWithHoles", [prototype, elements, set(holes)], context);
     return useJavaScript("Allocate", [heap, array], context);
   }
   if (isNewObject(node, context)) {
@@ -1482,6 +1491,19 @@ export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
       )
     ) {
       arrays.add(literal);
+    }
+    // An array literal with holes, which a sequence can't hold, where a variable that only reads it
+    // as an object holds it, or a method reads it.
+    if (
+      ts.isArrayLiteralExpression(node) &&
+      node.elements.some(ts.isOmittedExpression) &&
+      !node.elements.some(ts.isSpreadElement) &&
+      ((ts.isVariableDeclaration(node.parent) &&
+        node.parent.initializer === node &&
+        ts.isIdentifier(node.parent.name)) ||
+        (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node))
+    ) {
+      arrays.add(node);
     }
     ts.forEachChild(node, find);
   };

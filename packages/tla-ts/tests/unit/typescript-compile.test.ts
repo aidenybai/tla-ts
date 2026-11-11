@@ -1466,6 +1466,32 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("keeps an array literal's holes, which methods skip or read through the prototype", async () => {
+    const result = await checkModel(`
+      const holey = [1, 2, , 4];
+      if (holey.length !== 4 || 2 in holey || holey[2] !== undefined) throw new Error("hole");
+      if (holey.at(2) !== undefined || holey.indexOf(undefined) !== -1) throw new Error("read");
+      let visited = 0;
+      holey.forEach(() => {
+        visited += 1;
+      });
+      if (visited !== 3 || holey.filter(() => true).length !== 3) throw new Error("skip");
+      if (holey.findIndex((value) => value === undefined) !== 2) throw new Error("find");
+      Array.prototype[2] = 9;
+      if (holey.at(2) !== 9 || holey.indexOf(9) !== 2) throw new Error("inherited");
+    `);
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(`
+      const holey = [1, , 3];
+      let visited = 0;
+      holey.forEach(() => {
+        visited += 1;
+      });
+      if (visited !== 3) throw new Error("visited");
+    `);
+    expect(wrong.failure?.message).toContain("visited");
+  });
+
   it("describes Array.prototype as the built-in object it is", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };
@@ -4077,8 +4103,8 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("rejects a hole in an array that a script reads", () => {
-    expect(() => compile("const holder = {};\nconst items = [1, , 3];")).toThrow(
+  it("rejects a hole in an array that no variable holds", () => {
+    expect(() => compile("const holder = {};\nconst items = [[1, , 3]];")).toThrow(
       "Unsupported expression",
     );
   });

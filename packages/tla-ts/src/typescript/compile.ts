@@ -108,6 +108,7 @@ export const compile = (
     (ts.isIdentifier(node) &&
       ["arguments", "Symbol", "Promise", "setTimeout", "JSON"].includes(node.text)) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
+    (ts.isArrayLiteralExpression(node) && node.elements.some(ts.isOmittedExpression)) ||
     (ts.forEachChild(node, usesObjects) ?? false);
   if (heap !== undefined && isScript(sourceFile) && usesObjects(sourceFile)) {
     context.heap = heap;

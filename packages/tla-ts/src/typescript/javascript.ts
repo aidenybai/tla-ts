@@ -789,6 +789,14 @@ ArrayLike(heap, ref) ==
      THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
      ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
 
+\\* The values of an array-like object at each index below its length, which Get reads, so that a
+\\* hole gives what a prototype holds there, or undefined.
+ArrayLikeValues(heap, ref) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+  IN IF length > KeyCount(heap, ref)
+     THEN Assert(FALSE, "tla-ts can't read an array-like object this long")
+     ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
+
 RECURSIVE IndexKeys(_, _)
 IndexKeys(heap, ref) ==
   LET object == Lookup(heap, ref)
@@ -1397,9 +1405,12 @@ SpeciesElements(heap, ref, array, elements) ==
   IF IsArray(heap, ref) THEN Species(Get(heap, ref, "constructor"), array, elements) ELSE elements
 
 \\* An array that a script makes, which holds its elements under their indices, and its length.
-ArrayObject(prototype, elements) ==
-  LET indices == {ToString(position - 1) : position \\in DOMAIN elements}
-  IN [keys |-> [position \\in DOMAIN elements |-> ToString(position - 1)] \\o <<"length">>,
+\\* The positions in holes have no element, though the length counts them.
+ArrayObjectWithHoles(prototype, elements, holes) ==
+  LET present == SelectSeq([position \\in DOMAIN elements |-> position], LAMBDA position :
+                   position \\notin holes)
+      indices == {ToString(present[offset] - 1) : offset \\in DOMAIN present}
+  IN [keys |-> [offset \\in DOMAIN present |-> ToString(present[offset] - 1)] \\o <<"length">>,
       values |-> [key \\in indices \\cup {"length"} |->
                    IF key = "length" THEN Len(elements) ELSE elements[ToIndex(key) + 1]],
       attributes |-> [key \\in indices \\cup {"length"} |->
@@ -1408,6 +1419,8 @@ ArrayObject(prototype, elements) ==
                        ELSE Writable],
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, isArray |-> TRUE]
+
+ArrayObject(prototype, elements) == ArrayObjectWithHoles(prototype, elements, {})
 
 \\* The description of a property of an array that a sequence holds.
 DescribeElement(elements, key) == DescribeObject(ArrayObject(Null, elements), key)

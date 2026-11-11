@@ -5,6 +5,7 @@ import {
   getArrayLikeCall,
   getCallbackReceiver,
   getUpdatedValue,
+  EVERY_INDEX_METHODS,
   HOLE_SKIPPING_METHODS,
   translateMethodElements,
   MUTATING_METHODS,
@@ -2681,7 +2682,11 @@ const translateLoopCall = (
           : translateMethodElements(
               method,
               owner,
-              loop.isArrayLike ? "ArrayLike" : undefined,
+              loop.isArrayLike
+                ? EVERY_INDEX_METHODS.has(method)
+                  ? "ArrayLikeValues"
+                  : "ArrayLike"
+                : undefined,
               receiver,
               path.scope,
               context,
