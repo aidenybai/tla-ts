@@ -1942,6 +1942,27 @@ describe("errors", () => {
     expect(wide.failure?.message).toContain("tla-ts can't tell the code of a character outside ASCII");
   });
 
+  it("parses an integer in a radix with parseInt", async () => {
+    const result = await checkModel(`
+      const read = (text: string, radix?: number) => parseInt(text, radix);
+      if (read("ff", 16) !== 255 || read("0x1A") !== 26 || read("  -12abc") !== -12) {
+        throw new Error("hex");
+      }
+      if (read("zz", 36) !== 1295 || read("19", 8) !== 1 || Number.parseInt("101", 2) !== 5) {
+        throw new Error("radix");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const special = await checkModel(`
+      const read = (text: string, radix?: number) => parseInt(text, radix);
+      const missing = NaN;
+      if (!Number.isNaN(read("x")) || !Number.isNaN(read("1", 37)) || !Object.is(read("-0"), -0)) {
+        throw new Error("special");
+      }
+    `);
+    expect(special.failure).toBeUndefined();
+  });
+
   it("pads a string at its start or end", async () => {
     const result = await checkModel(`
       const pad = (value: number) => String(value).padStart(2, "0");

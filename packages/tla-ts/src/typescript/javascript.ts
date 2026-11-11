@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getSymbol } from "./context";
+import { type Context, getSymbol, getUndefined } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
 import { translateExpression } from "./expressions";
@@ -1420,6 +1420,39 @@ ToNumber(value) ==
     [] IsRef(value) -> Assert(FALSE, "tla-ts can't convert this object to a number")
     [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of converting a symbol to a number")
 
+\\* The longest start of a text made of a radix's digits.
+RECURSIVE DigitPrefix(_, _)
+DigitPrefix(text, radix) ==
+  IF text # "" /\\ SubSeq(text, 1, 1) \\in DigitsOf(radix)
+  THEN SubSeq(text, 1, 1) \\o DigitPrefix(Tail(text), radix)
+  ELSE ""
+
+\\* The value of a radix's digits, which stops before it would leave TLC's integers.
+RECURSIVE CheckedDigits(_, _, _)
+CheckedDigits(text, radix, value) ==
+  IF text = ""
+  THEN value
+  ELSE LET digit == DigitValue(SubSeq(text, 1, 1))
+       IN  IF value > (2147483647 - digit) \\div radix
+           THEN Assert(FALSE, "tla-ts can't represent the number that parseInt reads")
+           ELSE CheckedDigits(Tail(text), radix, value * radix + digit)
+
+\\* parseInt of a string and a radix, where an undefined radix is 0.
+ParseInt(value, radix) ==
+  LET text == TrimStart(Text(value))
+      isNegative == Prefix(text, 1) = "-"
+      unsigned == IF Prefix(text, 1) \\in {"+", "-"} THEN Tail(text) ELSE text
+      requested == IF radix = Undefined THEN 0 ELSE Int32(ToNumber(radix))
+      isHex == requested \\in {0, 16} /\\ Prefix(unsigned, 2) \\in {"0x", "0X"}
+      base == CASE isHex -> 16 [] requested = 0 -> 10 [] OTHER -> requested
+      digits == DigitPrefix(IF isHex THEN SubSeq(unsigned, 3, Len(unsigned)) ELSE unsigned, base)
+  IN  IF (requested # 0 /\\ (requested < 2 \\/ requested > 36)) \\/ digits = ""
+      THEN NaN
+      ELSE LET magnitude == CheckedDigits(digits, base, 0)
+           IN  CASE ~isNegative -> magnitude
+                 [] magnitude = 0 -> NegativeZero
+                 [] OTHER -> -magnitude
+
 \\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds
 \\* them as numbers otherwise.
 AddPrimitives(left, right) ==
@@ -2239,6 +2272,34 @@ export const translateToNumber = (
   throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
 };
 
+// parseInt(string, radix), or Number.parseInt, of a string and a radix that may be undefined, or
+// undefined for any other.
+export const translateParseInt = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const [text, radix] = node.arguments;
+  const isRadixTyped =
+    radix === undefined ||
+    (getTypeNames(context.checker.getTypeAtLocation(radix), context.checker) ?? []).every(
+      (radixName) => radixName === "number" || radixName === "undefined",
+    );
+  if (
+    text === undefined ||
+    node.arguments.length > 2 ||
+    getKind(text, context) !== "string" ||
+    !isRadixTyped
+  ) {
+    return undefined;
+  }
+  const parsed = useJavaScript(
+    "ParseInt",
+    [
+      translateExpression(text, scope, context),
+      radix === undefined ? getUndefined(context) : translateExpression(radix, scope, context),
+    ],
+    context,
+  );
+  return context.hasSpecialNumbers ? parsed : useJavaScript("PlainNumber", [parsed], context);
+};
+
 // A call to Boolean, String, Number, parseInt, parseFloat, isNaN, or isFinite, or undefined for any
 // other call.
 export const translateConversion = (node: ts.CallExpression, scope: Scope, context: Context) => {
@@ -2260,6 +2321,10 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     if (name === "String") return string("");
     if (name === "Number") return number(0);
     throw unsupported;
+  }
+  if (name === "parseInt" && !(ts.isStringLiteral(argument) && node.arguments.length === 1)) {
+    const parsed = translateParseInt(node, scope, context);
+    if (parsed !== undefined) return parsed;
   }
   if (node.arguments.length > 1) throw unsupported;
   if (name === "Number") return translateToNumber(argument, node, scope, context);

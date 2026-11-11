@@ -89,6 +89,7 @@ import {
   isComparable,
   mayBeNumber,
   translateConversion,
+  translateParseInt,
   translateToNumber,
   translateTypeOf,
   useJavaScript,
@@ -567,6 +568,11 @@ const translateCall = (
   if (global === "Math" && method !== "hasOwnProperty") {
     return translateMath(node, method, scope, context);
   }
+  const parsed =
+    global === "Number" && method === "parseInt"
+      ? translateParseInt(node, scope, context)
+      : undefined;
+  if (parsed !== undefined) return parsed;
   // Every number that TLA+ holds, but NaN and the infinities, is a safe integer.
   if (global === "Number" && NUMBER_TESTS.has(method) && node.arguments.length <= 1) {
     const argument = node.arguments.at(0);
