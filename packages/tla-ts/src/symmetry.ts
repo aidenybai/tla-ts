@@ -387,9 +387,9 @@ export const getRepresentative = (
   // The state itself stays a candidate until a permutation makes a variable smaller.
   const permutations = group.permutations;
   const permutationCount = permutations.length;
-  const candidates = new Int32Array(permutationCount);
+  const candidates: number[] = [];
   for (let permutation = 0; permutation < permutationCount; permutation++) {
-    candidates[permutation] = permutation;
+    candidates.push(permutation);
   }
   let candidateCount = permutationCount;
   let isStateSmallest = true;
@@ -405,28 +405,25 @@ export const getRepresentative = (
     if (mask === 0) continue;
     // A value that holds only some orbits has one image per distinct restriction to them, so each
     // restriction is permuted once.
-    const strides: number[] = [];
     let restrictionCount = 1;
-    if (mask !== allOrbits) {
-      for (let orbit = 0; orbit < group.orbitCount; orbit++) {
-        strides.push((mask >> orbit) & 1 ? restrictionCount : 0);
-        if ((mask >> orbit) & 1) restrictionCount *= group.restrictionCounts[orbit];
-      }
+    for (let orbit = 0, bits = mask; mask !== allOrbits && bits !== 0; orbit++, bits >>= 1) {
+      if (bits & 1) restrictionCount *= group.restrictionCounts[orbit];
     }
     if (mask !== allOrbits && restrictionCount < candidateCount) {
-      const getKey = (permutation: number) => {
-        let key = 0;
-        for (let orbit = 0; orbit < strides.length; orbit++) {
-          key += group.restrictions[orbit * permutationCount + permutation] * strides[orbit];
-        }
-        return key;
-      };
+      const keys: number[] = [];
       const imageOfKey: (Value | undefined)[] = [];
       let minimum = isStateSmallest ? value : undefined;
       let isMinimumState = isStateSmallest;
       for (let candidate = 0; candidate < candidateCount; candidate++) {
         const permutation = candidates[candidate];
-        const key = getKey(permutation);
+        let key = 0;
+        let stride = 1;
+        for (let orbit = 0, bits = mask; bits !== 0; orbit++, bits >>= 1) {
+          if ((bits & 1) === 0) continue;
+          key += group.restrictions[orbit * permutationCount + permutation] * stride;
+          stride *= group.restrictionCounts[orbit];
+        }
+        keys.push(key);
         if (imageOfKey[key] !== undefined) continue;
         const permuted = permuteValue(value, permutations[permutation]);
         imageOfKey[key] = permuted;
@@ -438,8 +435,7 @@ export const getRepresentative = (
       const isTiedKey: (boolean | undefined)[] = [];
       let kept = 0;
       for (let candidate = 0; candidate < candidateCount; candidate++) {
-        const permutation = candidates[candidate];
-        const key = getKey(permutation);
+        const key = keys[candidate];
         let isTied = isTiedKey[key];
         if (isTied === undefined) {
           const image = imageOfKey[key];
@@ -448,7 +444,7 @@ export const getRepresentative = (
             (image !== undefined && minimum !== undefined && compareValues(image, minimum) === 0);
           isTiedKey[key] = isTied;
         }
-        if (isTied) candidates[kept++] = permutation;
+        if (isTied) candidates[kept++] = candidates[candidate];
       }
       if (!isMinimumState && minimum !== undefined) {
         smallest[index] = minimum;
