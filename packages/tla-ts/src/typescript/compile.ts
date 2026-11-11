@@ -10,6 +10,7 @@ import { translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
+import { link } from "./regions";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
 import { createStateScope } from "./scope";
 import { TlaTypeScriptError } from "../errors";
@@ -177,7 +178,15 @@ export const compile = (
           ts.isIdentifier(declaration.name),
         ),
     )
-      ? model.variables.map((variable) => translateInitial(variable, context))
+      ? model.variables.map((variable) =>
+          link(
+            context,
+            "init",
+            variable.name,
+            variable.declaration,
+            translateInitial(variable, context),
+          ),
+        )
       : [
           locate(
             render(translateScript(model.script, model.exported.length === 0, context)),

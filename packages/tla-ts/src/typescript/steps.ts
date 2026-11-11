@@ -6,6 +6,7 @@ import type { Sections } from "./emit";
 import { translateExpression } from "./expressions";
 import { render } from "./formula";
 import type { Exported } from "./model";
+import { link } from "./regions";
 import { bindNames, createStateScope, declareParameters, type Parameter } from "./scope";
 import { apply, bound, call, fairness as getFairness, identifier, junction, quantify } from "./tla";
 import {
@@ -132,14 +133,21 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     name,
     parameters.map((parameter) => identifier(parameter.name)),
   );
+  const node = definition.declaration;
   sections.actions.push(
-    defineWithUnknowns(
-      definition.node,
+    link(
+      context,
+      "action",
       name,
-      parameters.map((parameter) => ({ name: parameter.name, arity: 0 })),
-      "Exists",
-      render(action.value),
-      action.unknowns,
+      node,
+      defineWithUnknowns(
+        definition.node,
+        name,
+        parameters.map((parameter) => ({ name: parameter.name, arity: 0 })),
+        "Exists",
+        render(action.value),
+        action.unknowns,
+      ),
     ),
   );
   const fairness = definition.tags.has("strongFair")
@@ -148,7 +156,7 @@ export const translateStep = (definition: Exported, sections: Sections, context:
       ? "WeakFairness"
       : undefined;
   if (parameters.length === 0) {
-    sections.next.push(head);
+    sections.next.push(link(context, "next", name, node, head));
     if (fairness !== undefined)
       sections.fairness.push(getFairness(fairness, identifier("vars"), head));
     return;
@@ -175,7 +183,7 @@ export const translateStep = (definition: Exported, sections: Sections, context:
         head,
       ),
   );
-  sections.next.push(step);
+  sections.next.push(link(context, "next", name, node, step));
   if (fairness === undefined) return;
   // Fairness holds for each parameter value when every parameter has a finite type, with the
   // guards that chose parameters kept inside the action.

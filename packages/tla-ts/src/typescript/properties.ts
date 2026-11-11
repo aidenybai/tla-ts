@@ -6,6 +6,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateCondition } from "./expressions";
 import { getDefinition, readsState, translateBody } from "./functions";
 import type { Exported, Model } from "./model";
+import { link } from "./regions";
 import { bindNames, createStateScope, declareParameter, type Scope } from "./scope";
 import {
   apply,
@@ -122,7 +123,9 @@ export const translateProperty = (
   const operator = TEMPORAL_OPERATORS.get(tag);
   const predicate = PREDICATE_TAGS.get(tag);
   const addTemporal = (body: Expression) => {
-    sections.temporal.push(defineAt(node, name, [], body));
+    sections.temporal.push(
+      link(context, "property", name, definition.declaration, defineAt(node, name, [], body)),
+    );
     sections.properties.push(name);
   };
   if (operator !== undefined) addTemporal(forAll(operator(value)));
@@ -139,9 +142,15 @@ export const translateProperty = (
       ),
     );
   }
-  if (tag === "initially") sections.init.push(locate(value, getLocation(node)));
+  if (tag === "initially") {
+    sections.init.push(
+      link(context, "init", name, definition.declaration, locate(value, getLocation(node))),
+    );
+  }
   if (predicate !== undefined) {
-    sections.predicates.push(defineAt(node, name, [], value));
+    sections.predicates.push(
+      link(context, "predicate", name, definition.declaration, defineAt(node, name, [], value)),
+    );
     sections[predicate].push(name);
   }
 };
@@ -164,17 +173,23 @@ export const translateCall = (definition: Exported, sections: Sections, context:
     apply("=", [identifier(result), identifier(result)]),
   );
   sections.predicates.push(
-    defineWithUnknowns(
-      definition.node,
+    link(
+      context,
+      "predicate",
       definition.name,
-      [],
-      "Forall",
-      quantify(
+      definition.declaration,
+      defineWithUnknowns(
+        definition.node,
+        definition.name,
+        [],
         "Forall",
-        quantified.map((parameter) => bound(parameter.name, parameter.domain)),
-        checked,
+        quantify(
+          "Forall",
+          quantified.map((parameter) => bound(parameter.name, parameter.domain)),
+          checked,
+        ),
+        body.unknowns,
       ),
-      body.unknowns,
     ),
   );
   const isStateLevel = readsState(
@@ -199,7 +214,20 @@ export const translateInvariant = (definition: Exported, sections: Sections, con
       : translateCondition(body, scope, context),
   );
   sections.predicates.push(
-    defineWithUnknowns(definition.node, definition.name, [], "Forall", value.value, value.unknowns),
+    link(
+      context,
+      "predicate",
+      definition.name,
+      definition.declaration,
+      defineWithUnknowns(
+        definition.node,
+        definition.name,
+        [],
+        "Forall",
+        value.value,
+        value.unknowns,
+      ),
+    ),
   );
   sections.invariants.push(definition.name);
 };
