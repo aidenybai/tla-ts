@@ -13,7 +13,10 @@ export class SmtKernel {
 
   constructor(manager: AstManager, params: KernelParams) {
     this.asserted = new AssertedFormulas(manager, params.isFindingMacros);
-    this.context = new Context(manager, { isMbqi: params.isMbqi, relevancyLevel: 2 });
+    this.context = new Context(manager, {
+      isMbqi: params.isMbqi,
+      relevancyLevel: params.relevancyLevel ?? 2,
+    });
   }
 
   private setupContext() {
