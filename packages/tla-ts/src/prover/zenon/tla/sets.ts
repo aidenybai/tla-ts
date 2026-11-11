@@ -286,15 +286,16 @@ export const getSubsetNodes = (literal: Literal): Item[] | undefined => {
         : node("arity", makeRule("cup_subseteq", [formula, first, second]), [[first, second]]);
     }
     if (isApp(right, "TLA.cap", 2)) {
-      // Zenon builds the same subset twice here, from the second set.
-      const subset = exprs.eapp("TLA.subseteq", [left, right.args[1]]);
+      // tlapm's Zenon builds both subsets from the second set, and Isabelle rejects its proofs.
+      const first = exprs.eapp("TLA.subseteq", [left, right.args[0]]);
+      const second = exprs.eapp("TLA.subseteq", [left, right.args[1]]);
       return isNegated
         ? node(
             "arity",
-            makeRule("not_subseteq_cap", [formula, exprs.enot(subset), exprs.enot(subset)]),
-            [[exprs.enot(subset)], [exprs.enot(subset)]],
+            makeRule("not_subseteq_cap", [formula, exprs.enot(first), exprs.enot(second)]),
+            [[exprs.enot(first)], [exprs.enot(second)]],
           )
-        : node("arity", makeRule("subseteq_cap", [formula, subset, subset]), [[subset, subset]]);
+        : node("arity", makeRule("subseteq_cap", [formula, first, second]), [[first, second]]);
     }
   }
   return undefined;

@@ -12,7 +12,8 @@ const FIXTURES = join(import.meta.dirname, "../fixtures/zenon");
 const readFixture = (path: string) => readFileSync(join(FIXTURES, path), "utf8");
 
 // Real .znn files that tlapm wrote, and in rules/ small true goals that need the rule in their name,
-// which no corpus proof uses. Each comes with what tlapm's Zenon reports for it under -stats.
+// which no corpus proof uses. Each comes with what tlapm's Zenon reports for it under -stats, except
+// rules/subseteq_cap, where tlapm's Zenon builds a \subseteq c in place of a \subseteq b.
 const statistics: Record<string, { nodesSearched: number; proofNodes: number }> = JSON.parse(
   readFixture("statistics.json"),
 );
@@ -187,6 +188,9 @@ const FALSE_GOALS = {
   "EXCEPT changes every argument": "$goal (= (TLA.fapply (TLA.except f a b) c) b)",
   "every set is a subset": "$goal (TLA.in a (TLA.SUBSET b))",
   "subset is symmetric": '$hyp "h" (TLA.subseteq a b)\n$goal (TLA.subseteq b a)',
+  // tlapm's Zenon proves this, since its rule for ~(a \subseteq b \cap c) loses b.
+  "a subset of c is a subset of b \\cap c":
+    '$hyp "h" (TLA.subseteq a c)\n$goal (TLA.subseteq a (TLA.cap b c))',
   "records with different fields are equal": '$goal (= (TLA.record "a" x) (TLA.record "a" y))',
   "a relation is symmetric": '$hyp "h" (R a b)\n$goal (R b a)',
   "a symmetric relation is transitive":
@@ -196,16 +200,6 @@ const FALSE_GOALS = {
 describe("Zenon finds no proof of a false goal", () => {
   it.each(Object.entries(FALSE_GOALS))("%s", (_, text) => {
     expect(decideZenon(text, { timeLimitMs: 1000 }).verdict).toBe("unknown");
-  });
-
-  it("rejects the proof that Zenon's not_subseteq_cap rule gives", () => {
-    // tlapm's Zenon proves this. Its rule for ~(a \subseteq b \cap c) opens two branches, both
-    // ~(a \subseteq c), where Zenon.thy's lemma has ~(a \subseteq b) and ~(a \subseteq c).
-    const text = '$hyp "h" (TLA.subseteq a c)\n$goal (TLA.subseteq a (TLA.cap b c))';
-    const run = runZenon(text, { timeLimitMs: TIME_LIMIT_MS });
-    expect(run.proof).toBeDefined();
-    expect(run.isar).toBeUndefined();
-    expect(decideZenon(text, { timeLimitMs: TIME_LIMIT_MS }).verdict).toBe("unknown");
   });
 });
 

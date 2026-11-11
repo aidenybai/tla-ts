@@ -5,8 +5,6 @@ proof (rule zenon_nnpp)
  using h by blast
  assume z_Hb:"(~(a \\subseteq c))" (is "~?z_hg")
  have z_Hg: "?z_hg"
- by (rule zenon_subseteq_cap_0 [of , OF z_Ha])
- have z_Hg: "?z_hg"
  by (rule zenon_subseteq_cap_1 [of , OF z_Ha])
  show FALSE
  by (rule notE [OF z_Hb z_Hg])
