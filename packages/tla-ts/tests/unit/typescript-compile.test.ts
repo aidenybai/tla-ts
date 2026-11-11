@@ -3016,6 +3016,22 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't throw the TypeError of a string method");
   });
 
+  it("throws the TypeError of a new of a built-in method that a declaration holds", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const factory = String.prototype.charAt;
+      let caught = false;
+      try {
+        // @ts-ignore
+        const made = new factory();
+      } catch (error) {
+        caught = error instanceof TypeError;
+      }
+      if (!caught) throw new Error("constructed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("writes numbers in a radix", async () => {
     const result = await check(
       compile(

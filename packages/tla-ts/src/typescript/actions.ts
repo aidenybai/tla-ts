@@ -3411,30 +3411,8 @@ const translateExpressionStatement = (
       throwTypeError(path, expression, context, frame),
     );
   }
-  // A new of a value that isn't a class that the script declares, such as a built-in method,
-  // throws a TypeError if the value isn't a constructor. tla-ts can't call one that is. Its
-  // arguments run first, so they must be values that can't throw.
-  if (
-    ts.isNewExpression(expression) &&
-    context.heap !== undefined &&
-    getNewClass(expression, context) === undefined &&
-    getErrorClass(getSymbol(expression.expression, context.checker), context.checker) ===
-      undefined &&
-    !["Set", "Map"].includes(expression.expression.getText()) &&
-    (expression.arguments ?? []).every(isInertValue)
-  ) {
-    return ifThenElse(
-      useJavaScript(
-        "IsConstructor",
-        [
-          getHeap(path.scope, expression, context),
-          translateExpression(getCast(expression.expression), path.scope, context),
-        ],
-        context,
-      ),
-      leaf(apply("Assert", [boolean(false), string("tla-ts can't call this constructor")])),
-      throwTypeError(path, expression, context, frame),
-    );
+  if (isForeignNew(expression, context)) {
+    return translateForeignNew(expression, path, context, frame);
   }
   // A statement that only reads, such as void await x once x settles, evaluates its value and drops
   // it, so that a getter it reads, which tla-ts can't call, stops the check.
@@ -3747,6 +3725,36 @@ const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => F
   );
 };
 
+// A new of a value that isn't a class that the script declares, such as a built-in method, which
+// throws a TypeError if the value isn't a constructor. tla-ts can't call one that is. Its arguments
+// run first, so they must be values that can't throw.
+const isForeignNew = (node: ts.Node, context: Context): node is ts.NewExpression =>
+  ts.isNewExpression(node) &&
+  context.heap !== undefined &&
+  getNewClass(node, context) === undefined &&
+  getErrorClass(getSymbol(node.expression, context.checker), context.checker) === undefined &&
+  !["Set", "Map"].includes(node.expression.getText()) &&
+  (node.arguments ?? []).every(isInertValue);
+
+const translateForeignNew = (
+  expression: ts.NewExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+) =>
+  ifThenElse(
+    useJavaScript(
+      "IsConstructor",
+      [
+        getHeap(path.scope, expression, context),
+        translateExpression(getCast(expression.expression), path.scope, context),
+      ],
+      context,
+    ),
+    leaf(apply("Assert", [boolean(false), string("tla-ts can't call this constructor")])),
+    throwTypeError(path, expression, context, frame),
+  );
+
 const translateDeclarations = (
   declarations: readonly ts.VariableDeclaration[],
   path: Path,
@@ -3758,6 +3766,18 @@ const translateDeclarations = (
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
   const initializer = declaration.initializer;
+  // A declaration that a new of a function that TypeScript gives no construct signature
+  // initializes throws before it binds anything.
+  if (initializer !== undefined && isForeignNew(initializer, context)) {
+    const callee = context.checker.getTypeAtLocation(getCast(initializer.expression));
+    if (
+      (callee.flags & ts.TypeFlags.Any) === 0 &&
+      callee.getCallSignatures().length > 0 &&
+      callee.getConstructSignatures().length === 0
+    ) {
+      return translateForeignNew(initializer, path, context, frame);
+    }
+  }
   if (isInlined(initializer, context)) {
     return translateDeclarations(
       declarations.slice(1),
