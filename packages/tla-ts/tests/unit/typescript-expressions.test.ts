@@ -66,7 +66,8 @@ const CASES: Record<string, (string | [string, string])[]> = {
     '["x1y22z".split(/\\d+/), "a1b2".split(/(\\d)/, 3), "".split(/x/), "".split(/x*/), "ab".split(/(?:)/)]',
     '["abcabc".search(/c/), "abc".search(/d/), "ab".search(/b/y)]',
     '["aBc".match(/b/i)![0], "a1b22".match(/\\d+/g)!.length, "a1b22".match(/\\d+/g)![1]]',
-    '[/a/g.source, /a/gimsy.flags, /a/.global, /a/g.lastIndex]',
+    "[/a/g.source, /a/gimsy.flags, /a/.global, /a/g.lastIndex]",
+    '[new RegExp("a/b", "gi").source, new RegExp("x").test("axb"), RegExp("b").exec("ab")!.index]',
     '[/[\\d-z]+/.exec("1-z")![0], /[\\x7f-\\uffff]+/.exec("aé😀b")![0].length, /\\cJ/.test("\\n")]',
   ],
   strings: [

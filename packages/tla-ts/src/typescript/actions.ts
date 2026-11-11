@@ -3,6 +3,7 @@ import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
   checkElement,
   getCallbackReceiver,
+  getRegExpCall,
   getStringCall,
   getUpdatedValue,
   EVERY_INDEX_METHODS,
@@ -1127,6 +1128,56 @@ export const translateCallStatement = (
               ]),
             ),
           ),
+    );
+  }
+  const regExpCall = context.heap === undefined ? undefined : getRegExpCall(expression, context);
+  if (regExpCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const regexp = context.names.getFresh("regexp");
+    const changeName = context.names.getFresh("change");
+    const change = identifier(changeName);
+    const method = regExpCall.method;
+    const text = translateExpression(regExpCall.text, path.scope, context);
+    const values = regExpCall.values.map((value) =>
+      translateExpression(value, path.scope, context),
+    );
+    // exec and match make arrays, and split's limit is undefined where the call passes none.
+    const operation = useJavaScript(
+      regExpCall.operator,
+      [
+        heap,
+        identifier(regexp),
+        text,
+        ...(method === "exec" || method === "match"
+          ? [translateBuiltInValue("Array.prototype", expression, context)]
+          : method === "split" && values.length === 0
+            ? [getUndefined(context)]
+            : values),
+      ],
+      context,
+    );
+    const run = bindOnce(
+      path,
+      changeName,
+      operation,
+      continueWith(withHeap(field(change, "heap")), field(change, "value")),
+    );
+    // replaceAll throws a TypeError where the regexp isn't global, as its flags tell.
+    const changeable = set([string("RegExp.prototype"), string("String.prototype")]);
+    return bindOnce(
+      path,
+      regexp,
+      translateExpression(regExpCall.regexp, path.scope, context),
+      method === "replaceAll"
+        ? ifThenElse(
+            field(
+              useJavaScript("RegExpOf", [heap, identifier(regexp), changeable], context),
+              "global",
+            ),
+            run,
+            throwTypeError(path, expression, context, frame),
+          )
+        : run,
     );
   }
   const stringCall = getStringCall(expression, context);
@@ -3897,6 +3948,7 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getBound(node.expression, context) !== undefined ||
   getDateCall(node, context) !== undefined ||
+  (context.heap !== undefined && getRegExpCall(node, context) !== undefined) ||
   getStringCall(node, context) !== undefined ||
   isDescriptorsRead(node, context) ||
   isRevoke(node, context) ||
@@ -3933,8 +3985,8 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
 };
 
 // Makes the objects that a node's object literals create, before the statement that evaluates
-// them runs, since an expression can't change the heap. A conversion that ran already made those
-// of its operands.
+// them runs, since an expression can't change the heap. A conversion or a call that ran already
+// made those of its operands.
 export const allocate = (
   node: ts.Node | undefined,
   path: Path,
@@ -3951,7 +4003,7 @@ export const allocate = (
                 ? "quit"
                 : ts.isExpression(ancestor) &&
                   path.scope.results.has(ancestor) &&
-                  getConversion(ancestor, context) !== undefined,
+                  (getConversion(ancestor, context) !== undefined || ts.isCallExpression(ancestor)),
             ) === undefined,
         ),
     path,
@@ -4323,6 +4375,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       isRevoke(node, context) ||
       isProxyOperation(node, context) ||
       getDateCall(node, context) !== undefined ||
+      getRegExpCall(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
@@ -5284,6 +5337,7 @@ const translateTry = (
 // A callee like f or assert.sameValue, whose evaluation reads no getter.
 const isPlainCallee = (node: ts.Expression, context: Context): boolean =>
   ts.isIdentifier(node) ||
+  ts.isLiteralExpression(node) ||
   (ts.isPropertyAccessExpression(node) &&
     !ts.isPrivateIdentifier(node.name) &&
     getObjectGetter(node, context) === undefined &&
@@ -5695,8 +5749,13 @@ const getLeadingCall = (
 ) => {
   const before: ts.Node[] = [];
   const call = findLeadingCall(node, before, path, context).call;
-  // The statement makes the objects that the call's arguments make.
-  if (call === undefined || !isHoisted(call) || getAllocated(call, context).length > 0) {
+  // The statement makes the objects that the call's arguments make, but for regexps, which the call
+  // makes as it runs first.
+  if (
+    call === undefined ||
+    !isHoisted(call) ||
+    getAllocated(call, context).some((made) => !ts.isRegularExpressionLiteral(made))
+  ) {
     return undefined;
   }
   rejectEarlyRun(call, [call], before, path, context);
@@ -5833,21 +5892,23 @@ export const translateStatements = (
   }
   const hoistedCall = getHoistedCall(statement, path, context);
   if (hoistedCall !== undefined) {
-    return translateCallStatement(hoistedCall, path, context, frame, (after, value) =>
-      translateStatements(
-        statements,
-        {
-          ...after,
-          scope: {
-            ...after.scope,
-            results: new Map([
-              ...after.scope.results,
-              [hoistedCall, value ?? getUndefined(context)],
-            ]),
+    return allocate(hoistedCall, path, context, (allocated) =>
+      translateCallStatement(hoistedCall, allocated, context, frame, (after, value) =>
+        translateStatements(
+          statements,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([
+                ...after.scope.results,
+                [hoistedCall, value ?? getUndefined(context)],
+              ]),
+            },
           },
-        },
-        context,
-        frame,
+          context,
+          frame,
+        ),
       ),
     );
   }

@@ -1892,6 +1892,7 @@ LOCAL ClassOf(heap, ref) ==
            [] TypeOf(Lookup(heap, ref).primitive) = "string" -> "String"
            [] OTHER -> "Number"
     [] IsHeap(ref) /\\ "time" \\in DOMAIN Lookup(heap, ref) -> "Date"
+    [] IsHeap(ref) /\\ "regexp" \\in DOMAIN Lookup(heap, ref) -> "RegExp"
     [] IsHeap(ref) -> IF Lookup(heap, ref).isCallable THEN "Function" ELSE "Object"
     [] BuiltInKey(ref) = "Array.prototype" -> "Array"
     [] Lookup(heap, ref).isCallable -> "Function"
@@ -2310,6 +2311,134 @@ DateChange(heap, ref, time, method, position, values) ==
                                         ELSE year>>)
                 [] OTHER -> DateSet(time, position, values)
   IN [heap |-> Update(heap, ref, [Lookup(heap, ref) EXCEPT !.time = next]), time |-> next]
+
+\\* The object that a regular expression literal makes, which holds the record of its pattern, and
+\\* whose lastIndex is a property of its own.
+RegExpObject(prototype, regexp) ==
+  [EmptyObject EXCEPT
+     !.prototype = prototype,
+     !.keys = <<"lastIndex">>,
+     !.values = "lastIndex" :> 0,
+     !.attributes = "lastIndex" :> [Writable EXCEPT !.enumerable = FALSE, !.configurable = FALSE]]
+    @@ [regexp |-> regexp]
+
+LOCAL IsRegExp(heap, value) == IsHeap(value) /\\ "regexp" \\in DOMAIN heap.objects[value[Ref]]
+
+\\* The record of a regexp's pattern, where tla-ts follows the built-in methods only while a script
+\\* has given the regexp no property but its lastIndex and hasn't changed the built-in objects in
+\\* changeable, which hold the methods that the call reads.
+RegExpOf(heap, ref, changeable) ==
+  IF /\\ IsRegExp(heap, ref)
+     /\\ heap.objects[ref[Ref]].prototype = Ref :> "RegExp.prototype"
+     /\\ heap.objects[ref[Ref]].keys = <<"lastIndex">>
+     /\\ DOMAIN heap.changed \\cap changeable = {}
+  THEN heap.objects[ref[Ref]].regexp
+  ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
+
+LOCAL LastIndexValue(heap, ref) == heap.objects[ref[Ref]].values["lastIndex"]
+
+\\* The heap after Set of a regexp's lastIndex, which throws a TypeError where it isn't writable.
+LOCAL SetLastIndex(heap, ref, value) ==
+  IF heap.objects[ref[Ref]].attributes["lastIndex"].writable
+  THEN [heap EXCEPT !.objects[ref[Ref]].values["lastIndex"] = value]
+  ELSE Assert(FALSE, "tla-ts can't throw the TypeError of setting a lastIndex that isn't writable")
+
+\\* RegExpBuiltinExec, as the heap after it sets the lastIndex of a global or sticky regexp, and the
+\\* match it finds from there, or a failure. It reads lastIndex with ToLength whatever the flags.
+LOCAL RegExpRun(heap, ref, regexp, text) ==
+  LET read == LastIndexValue(heap, ref)
+      start == IF read = Infinity THEN Len(text) + 1 ELSE ToLength(read)
+      isUpdating == regexp.global \\/ regexp.sticky
+      found == CASE ~isUpdating /\\ start = start -> RegExpSearch(regexp, text, 0)
+                 [] start > Len(text) -> RegExpFailure
+                 [] OTHER -> RegExpSearch(regexp, text, start)
+  IN  [heap |-> CASE ~isUpdating -> heap
+                  [] found.end = -1 -> SetLastIndex(heap, ref, 0)
+                  [] OTHER -> SetLastIndex(heap, ref, found.end),
+       match |-> found]
+
+\\* The heap once RegExpBuiltinExec makes the array of a match, which is the last object it holds,
+\\* after the object of the match's named groups where the regexp has them.
+LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
+  LET groups == RegExpGroups(regexp, text, match)
+      hasGroups == regexp.groupNames # <<>>
+      grouped ==
+        IF hasGroups
+        THEN Allocate(heap, [EmptyObject EXCEPT
+                               !.prototype = Null,
+                               !.keys = regexp.groupNames,
+                               !.values = groups,
+                               !.attributes = [name \\in DOMAIN groups |-> Writable]])
+        ELSE heap
+      array == ArrayObject(prototype, [position \\in 1..(regexp.captures + 1) |->
+                                         RegExpCapture(text, match, position - 1)])
+      added == ("index" :> match.start) @@ ("input" :> text)
+                 @@ ("groups" :> IF hasGroups THEN Allocated(grouped) ELSE Undefined)
+  IN  Allocate(grouped, [array EXCEPT
+                           !.keys = @ \\o <<"index", "input", "groups">>,
+                           !.values = @ @@ added,
+                           !.attributes = @ @@ [key \\in DOMAIN added |-> Writable]])
+
+\\* RegExp.prototype.exec, as the heap after it and the array of the match it finds, or null.
+RegExpExecIn(heap, ref, value, prototype) ==
+  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
+      text == RegExpText(regexp, value)
+      run == RegExpRun(heap, ref, regexp, text)
+      made == RegExpResult(run.heap, prototype, regexp, text, run.match)
+  IN  IF run.match.end = -1
+      THEN [heap |-> run.heap, value |-> Null]
+      ELSE [heap |-> made, value |-> Allocated(made)]
+
+\\* RegExp.prototype.test, as the heap after it and whether exec finds a match.
+RegExpTestIn(heap, ref, value) ==
+  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
+      run == RegExpRun(heap, ref, regexp, RegExpText(regexp, value))
+  IN  [heap |-> run.heap, value |-> run.match.end # -1]
+
+\\* String.prototype.match through RegExp.prototype[@@match]: what exec gives for a regexp that isn't
+\\* global, and else the array of each match's text, or null, which leaves lastIndex at 0.
+RegExpMatchIn(heap, ref, value, prototype) ==
+  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
+      text == RegExpText(regexp, value)
+      reset == SetLastIndex(heap, ref, 0)
+      matches == RegExpMatches(regexp, text, 0)
+      made == Allocate(reset, ArrayObject(prototype, [position \\in DOMAIN matches |->
+                                                         RegExpCapture(text, matches[position], 0)]))
+  IN  CASE ~regexp.global -> RegExpExecIn(heap, ref, value, prototype)
+        [] matches = <<>> -> [heap |-> reset, value |-> Null]
+        [] OTHER -> [heap |-> made, value |-> Allocated(made)]
+
+\\* String.prototype.replace or replaceAll through RegExp.prototype[@@replace], with a replacement
+\\* template. A global regexp replaces each match and leaves lastIndex at 0, and another the match
+\\* that exec finds.
+RegExpReplaceIn(heap, ref, value, template) ==
+  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
+      text == RegExpText(regexp, value)
+      run == RegExpRun(heap, ref, regexp, text)
+  IN  IF regexp.global
+      THEN [heap |-> SetLastIndex(heap, ref, 0),
+            value |-> RegExpReplaced(regexp, text, RegExpMatches(regexp, text, 0), Text(template))]
+      ELSE [heap |-> run.heap,
+            value |-> RegExpReplaced(regexp, text, IF run.match.end = -1 THEN <<>> ELSE <<run.match>>,
+                                     Text(template))]
+
+\\* String.prototype.search through RegExp.prototype[@@search], which sets lastIndex to 0 while exec
+\\* runs and then back.
+RegExpSearchIn(heap, ref, value) ==
+  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
+      previous == LastIndexValue(heap, ref)
+      reset == IF SameValue(previous, 0) THEN heap ELSE SetLastIndex(heap, ref, 0)
+      run == RegExpRun(reset, ref, regexp, RegExpText(regexp, value))
+      restored == IF SameValue(LastIndexValue(run.heap, ref), previous)
+                  THEN run.heap
+                  ELSE SetLastIndex(run.heap, ref, previous)
+  IN  [heap |-> restored, value |-> IF run.match.end = -1 THEN -1 ELSE run.match.start]
+
+\\* String.prototype.split through RegExp.prototype[@@split], which splits with a new regexp that the
+\\* RegExp constructor makes, so the regexp's lastIndex stays as it is.
+RegExpSplitIn(heap, ref, value, limit) ==
+  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype", "RegExp"})
+  IN  [heap |-> heap, value |-> RegExpPieces(regexp, RegExpText(regexp, value), limit)]
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==

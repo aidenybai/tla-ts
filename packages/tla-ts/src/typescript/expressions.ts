@@ -85,7 +85,8 @@ import {
   translateBuiltInObject,
   translateIntrinsic,
   translateBuiltInValue,
-  translateRegExpLiteral,
+  getMadeRegExp,
+  translateRegExpValue,
   translateSymbolProperty,
 } from "./intrinsics";
 import {
@@ -1361,8 +1362,8 @@ const REGEXP_PROPERTIES = new Set([
   "lastIndex",
 ]);
 
-// A read of a regexp's property, or of an element or a property of the array that exec or match
-// gives, without objects. An optional read gives undefined where the array is null, though not for
+// A read of a regexp's property, or without objects of an element or a property of the array that
+// exec or match gives. An optional read gives undefined where the array is null, though not for
 // the rest of a chain.
 const translateRegExpRead = (
   node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
@@ -1370,9 +1371,29 @@ const translateRegExpRead = (
   scope: Scope,
   context: Context,
 ) => {
-  if (context.heap !== undefined) return undefined;
   const type = context.checker.getTypeAtLocation(node.expression);
   const isRegExp = type.getSymbol()?.name === "RegExp";
+  // With objects, a flag or the source is what a getter of RegExp.prototype reads from the regexp.
+  if (context.heap !== undefined) {
+    const name = ts.isPropertyAccessExpression(node) ? node.name.text : "";
+    return isRegExp &&
+      node.questionDotToken === undefined &&
+      name !== "lastIndex" &&
+      REGEXP_PROPERTIES.has(name)
+      ? field(
+          useJavaScript(
+            "RegExpOf",
+            [
+              getHeap(scope, node, context),
+              translateExpression(node.expression, scope, context),
+              set([string("RegExp.prototype")]),
+            ],
+            context,
+          ),
+          name,
+        )
+      : undefined;
+  }
   if (!isRegExp && !isRegExpArray(context.checker.getNonNullableType(type))) return undefined;
   const name = ts.isPropertyAccessExpression(node) ? node.name.text : undefined;
   const key = getKey();
@@ -1958,6 +1979,16 @@ const translateNode = (
   if (ts.isElementAccessExpression(node)) {
     return translateElementAccess(node, scope, context, isDefined);
   }
+  // A regexp is the record of its pattern without objects, and else the object that a statement
+  // makes.
+  if (ts.isRegularExpressionLiteral(node) || getMadeRegExp(node, context) !== undefined) {
+    const allocated = scope.allocated.get(node);
+    if (context.heap === undefined) return translateRegExpValue(node, context);
+    if (allocated === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return allocated;
+  }
   if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
   // The operand runs though nothing reads it, as a comma's left operand does.
@@ -1969,9 +2000,6 @@ const translateNode = (
       getUndefined(context),
       getUndefined(context),
     );
-  }
-  if (ts.isRegularExpressionLiteral(node) && context.heap === undefined) {
-    return translateRegExpLiteral(node, context);
   }
   const functionValue = getFunctionValue(node, context);
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);

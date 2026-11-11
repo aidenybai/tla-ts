@@ -207,10 +207,23 @@ export const getCollection = (node: ts.Expression, context: Context) => {
       : undefined;
 };
 
-// The array that a RegExp's exec or a string's match gives, which without objects is a function
-// from its keys rather than a sequence.
+// The array that a RegExp's exec or a string's match gives, which is an object on the heap, or
+// without objects a function from its keys rather than a sequence.
 export const isRegExpArray = (type: ts.Type) =>
   ["RegExpExecArray", "RegExpMatchArray"].includes(type.getSymbol()?.name ?? "");
+
+// The groups of the array that exec or match gives.
+const isRegExpGroups = (node: ts.Expression, context: Context): boolean => {
+  const inner =
+    ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node) ? node.expression : node;
+  return inner !== node
+    ? isRegExpGroups(inner, context)
+    : ts.isPropertyAccessExpression(node) &&
+        node.name.text === "groups" &&
+        isRegExpArray(
+          context.checker.getNonNullableType(context.checker.getTypeAtLocation(node.expression)),
+        );
+};
 
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
@@ -231,7 +244,13 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     return "object";
   }
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
-  if (context.heap === undefined && isRegExpArray(type)) return "other";
+  if (isRegExpArray(type)) return context.heap === undefined ? "other" : "object";
+  if (
+    context.heap !== undefined &&
+    (type.getSymbol()?.name === "RegExp" || isRegExpGroups(node, context))
+  ) {
+    return "object";
+  }
   if (isSequenceType(type, checker)) return "sequence";
   if (isSetType(type)) return "set";
   if (isMapType(type)) return "map";

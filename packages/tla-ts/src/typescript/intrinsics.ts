@@ -299,6 +299,7 @@ export const translateBuiltInValue = (
     | "String.prototype"
     | `String.prototype.${string}`
     | "Date.prototype"
+    | "RegExp.prototype"
     | "Symbol.prototype"
     | "Promise"
     | "Promise.prototype"
@@ -1098,14 +1099,20 @@ const REGEXP_FLAGS = [
 
 // A pattern and its flags as the record that the JavaScript module's RegExp operators read, which
 // holds its matchers, its groups, its source, and its flags.
-export const translateRegExp = (source: string, flags: string, node: ts.Node, context: Context) => {
+const translateRegExp = (
+  pattern: string,
+  flags: string,
+  source: string,
+  node: ts.Node,
+  context: Context,
+) => {
   if (/[dv]/.test(flags)) {
     throw new TlaTypeScriptError(
       "tla-ts can't match a regular expression with the d or v flag",
       node,
     );
   }
-  const parsed = parsePattern(source, flags, node);
+  const parsed = parsePattern(pattern, flags, node);
   context.prelude.add("JavaScript");
   return record("Record", [
     { name: "pattern", value: translateMatcher(parsed.pattern, flags) },
@@ -1131,9 +1138,42 @@ export const translateRegExp = (source: string, flags: string, node: ts.Node, co
   ]);
 };
 
-// A regular expression literal, which without objects is the record of its pattern, whose
-// lastIndex stays 0.
-export const translateRegExpLiteral = (node: ts.RegularExpressionLiteral, context: Context) => {
+// new RegExp or RegExp of a pattern and flags that literals write and that make a valid regexp,
+// whose source the engine that tla-ts runs on escapes as the spec's EscapeRegExpPattern does.
+export const getMadeRegExp = (node: ts.Node, context: Context) => {
+  if (
+    (!ts.isNewExpression(node) && !ts.isCallExpression(node)) ||
+    getBuiltIn(node.expression, context) !== "RegExp"
+  ) {
+    return undefined;
+  }
+  const values = node.arguments ?? [];
+  const texts = values.flatMap((value) => (ts.isStringLiteralLike(value) ? [value.text] : []));
+  if (values.length > 2 || texts.length < values.length) return undefined;
+  const pattern = texts.at(0) ?? "";
+  const flags = texts.at(1) ?? "";
+  const made = getValidRegExp(pattern, flags);
+  return made === undefined ? undefined : { pattern, flags, source: made.source };
+};
+
+const getValidRegExp = (pattern: string, flags: string) => {
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return undefined;
+  }
+};
+
+// A regular expression literal, or a regexp that getMadeRegExp reads, as the record of its pattern,
+// which without objects is the regexp itself, whose lastIndex stays 0.
+export const translateRegExpValue = (node: ts.Node, context: Context) => {
+  const made = ts.isRegularExpressionLiteral(node) ? undefined : getMadeRegExp(node, context);
+  if (made !== undefined) {
+    return translateRegExp(made.pattern, made.flags, made.source, node, context);
+  }
+  if (!ts.isRegularExpressionLiteral(node))
+    throw new TlaTypeScriptError("Unsupported regexp", node);
   const end = node.text.lastIndexOf("/");
-  return translateRegExp(node.text.slice(1, end), node.text.slice(end + 1), node, context);
+  const pattern = node.text.slice(1, end);
+  return translateRegExp(pattern, node.text.slice(end + 1), pattern, node, context);
 };

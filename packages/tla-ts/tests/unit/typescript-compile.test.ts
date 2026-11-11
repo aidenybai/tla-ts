@@ -5526,6 +5526,74 @@ describe("regular expressions", () => {
     expect(result.failure?.message).toContain("tla-ts can't tell whether a class matches");
   });
 
+  it("keep a regexp's lastIndex on the heap as exec and string methods set it", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      const pattern = /a(b)?/g;
+      const first = pattern.exec("xab ab");
+      if (first === null || first[0] !== "ab" || first[1] !== "b" || first.index !== 1) {
+        throw new Error("first");
+      }
+      if (first.input !== "xab ab" || pattern.lastIndex !== 3) throw new Error("lastIndex");
+      const second = pattern.exec("xab ab");
+      if (second === null || second.index !== 4 || second[1] !== "b") throw new Error("second");
+      const third = pattern.exec("xab ab");
+      const after: number = pattern.lastIndex;
+      if (third !== null || after !== 0) throw new Error("third");
+      pattern.lastIndex = 4;
+      if (!pattern.test("xab ab") || pattern.lastIndex !== 6) throw new Error("test");
+      pattern.lastIndex = 2;
+      if ("abcb".search(pattern) !== 0 || (pattern.lastIndex as number) !== 2) {
+        throw new Error("search");
+      }
+      if ("a-b-c".replace(/-/g, "+") !== "a+b+c") throw new Error("replace");
+      if ("ab".replace(pattern, "$&!") !== "ab!") throw new Error("global replace");
+      if ((pattern.lastIndex as number) !== 0) throw new Error("replace's lastIndex");
+      const sticky = /b/y;
+      sticky.lastIndex = 1;
+      if ("abb".replace(sticky, "c") !== "acb" || (sticky.lastIndex as number) !== 2) {
+        throw new Error("sticky");
+      }
+      const parts = "a1b2c".split(/(\\d)/, 4);
+      if (parts.length !== 4 || parts[3] !== "2") throw new Error("split");
+      const all = "a1b22".match(/\\d+/g);
+      if (all === null || all.length !== 2 || all[1] !== "22") throw new Error("match");
+      const named = /(?<word>\\w+)/.exec("hi there");
+      if (named === null || named.groups === undefined || named.groups.word !== "hi") {
+        throw new Error("groups");
+      }
+      const made = new RegExp("a/b", "gi");
+      if (made.source !== "a\\\\/b" || made.flags !== "gi") throw new Error("made");
+      if (!made.test("A/B")) throw new Error("made's test");
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
+  it("throw the TypeError of replaceAll with a regexp that isn't global", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      let isThrown = false;
+      try {
+        "ab".replaceAll(/b/, "c");
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown) throw new Error("replaceAll");
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
+  it("stop where a script changed what a regexp's method reads", async () => {
+    const result = await checkModel(`
+      const pattern = /a/;
+      Object.defineProperty(pattern, "exec", { value: () => null });
+      let found = pattern.test("a");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call a regexp's method");
+  });
+
   it("stop where a regexp with the u flag matches text outside ASCII", async () => {
     const result = await checkModel(`
       let found = /./u.test("😀");

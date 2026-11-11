@@ -37,6 +37,7 @@ import {
   skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getRegExpCall } from "./collections";
 import { getJsonText, parseJson } from "./json";
 import { getConstructor } from "./exceptions";
 import { translateExpression, translateToString } from "./expressions";
@@ -45,6 +46,8 @@ import {
   isBuiltInObject,
   translateBuiltInObject,
   translateBuiltInValue,
+  getMadeRegExp,
+  translateRegExpValue,
 } from "./intrinsics";
 import {
   getTypeNames,
@@ -781,6 +784,25 @@ export const translateHasPrivate = (
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
+  if (ts.isRegularExpressionLiteral(node) || getMadeRegExp(node, context) !== undefined) {
+    // The constructor, which the prototype's constructor property holds.
+    context.builtIns.add("RegExp");
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "RegExpObject",
+          [
+            translateBuiltInValue("RegExp.prototype", node, context),
+            translateRegExpValue(node, context),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   if (isNestedFunction(node, context)) {
     const isMethod = ts.isMethodDeclaration(node);
     return useJavaScript(
@@ -1505,6 +1527,8 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
   const isAllocated =
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
     (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
+    ts.isRegularExpressionLiteral(node) ||
+    getMadeRegExp(node, context) !== undefined ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
     isNewProxy(node, context) ||
@@ -1694,7 +1718,8 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
 // The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
 // failed definition or Reflect.construct, a new of a value that isn't a constructor, or a reduce
 // of an empty array, the RangeError of an array's invalid length, and a Date method's TypeError
-// on another receiver and toISOString's RangeError of an invalid date.
+// on another receiver and toISOString's RangeError of an invalid date, and replaceAll's TypeError
+// of a regexp that isn't global.
 export const getEngineErrors = (node: ts.Node, context: Context) => {
   const isDefinition =
     isObjectChange(node, context) && node.expression.name.text.startsWith("define");
@@ -1716,6 +1741,9 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
       ...(dateCall.callee === undefined ? [] : ["TypeError"]),
       ...(dateCall.method === "toISOString" ? ["RangeError"] : []),
     ];
+  }
+  if (context.heap !== undefined && getRegExpCall(node, context)?.method === "replaceAll") {
+    return ["TypeError"];
   }
   const created = ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
