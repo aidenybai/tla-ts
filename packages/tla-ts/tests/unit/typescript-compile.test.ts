@@ -2846,6 +2846,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("destructures arrays from a generator that a default's function returns", async () => {
+    const getSource = (check: string) => `
+      const object = {};
+      let initCount = 0;
+      let iterCount = 0;
+      const iter = (function* () {
+        iterCount += 1;
+        yield 5;
+        iterCount += 1;
+        yield 6;
+      })();
+      function* take([[, second] = (function () {
+        initCount += 1;
+        return iter;
+      })()]: Generator<number, void, unknown>[]) {
+        if (${check}) throw new Error("taken");
+      }
+      take([]).next();
+    `;
+    expect(
+      (await checkModel(getSource("second !== 6 || initCount !== 1 || iterCount !== 2"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("iterCount !== 1"))).failure).toBeDefined();
+  });
+
   it("makes a new function object each time a function makes one as a property's value", async () => {
     const getSource = (comparison: string) => `
       const make = function () {

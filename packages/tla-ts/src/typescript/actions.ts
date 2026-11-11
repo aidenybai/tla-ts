@@ -2194,6 +2194,17 @@ const takeFromGenerator = (
       take(ref ?? getUndefined(context), [created.generator], after),
     );
   }
+  // A default that calls a function in place, which gives a generator object that the statements
+  // made.
+  if (ts.isCallExpression(node) && isGeneratorType(node, context)) {
+    return translateCallStatement(node, path, context, frame, (after, ref) =>
+      take(
+        ref ?? getUndefined(context),
+        [...after.generators.values()].map((suspension) => suspension.generator),
+        after,
+      ),
+    );
+  }
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
   const held = symbol && path.scope.bindings.get(symbol);
   if (held === undefined) return undefined;

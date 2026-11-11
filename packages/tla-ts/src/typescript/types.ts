@@ -252,6 +252,29 @@ const isAutoTyped = (node: ts.Identifier, context: Context) => {
   );
 };
 
+// A return of a function that an array pattern's default calls in place, whose generator object the
+// pattern takes values from.
+const isPatternDefaultReturn = (node: ts.ReturnStatement) => {
+  const owner = ts.findAncestor(node, ts.isFunctionLike);
+  if (owner === undefined || !(ts.isFunctionExpression(owner) || ts.isArrowFunction(owner))) {
+    return false;
+  }
+  const callee = ts.findAncestor(
+    owner.parent,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor),
+  );
+  const call = callee !== undefined && ts.isCallExpression(callee) ? callee : undefined;
+  const binding =
+    call && ts.findAncestor(call.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor));
+  return (
+    call !== undefined &&
+    binding !== undefined &&
+    (ts.isBindingElement(binding) || ts.isParameter(binding)) &&
+    binding.initializer !== undefined &&
+    ts.isArrayBindingPattern(binding.name)
+  );
+};
+
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
 // call of its methods, into a comparison, or into a for await. Elsewhere, such as an array pattern, a spread, or a
 // function's parameter, code would iterate it in ways that tla-ts doesn't follow.
@@ -276,7 +299,8 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
       (ts.isForOfStatement(outer) &&
         outer.awaitModifier !== undefined &&
         outer.expression === node) ||
-      ts.isExpressionStatement(outer));
+      ts.isExpressionStatement(outer) ||
+      (ts.isReturnStatement(outer) && isPatternDefaultReturn(outer)));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };
 
