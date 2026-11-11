@@ -3017,6 +3017,27 @@ describe("errors", () => {
     expect((await checkModel(getSource("keys.length !== 3"))).failure).toBeDefined();
   });
 
+  it("iterates with for await the async generator that a call makes", async () => {
+    const getSource = (check: string) => `
+      let made = 0;
+      async function* g() {
+        made += 1;
+        yield 1;
+        yield 2;
+      }
+      let sum = 0;
+      const run = async () => {
+        for await (const value of g()) {
+          sum = sum * 10 + value;
+        }
+      };
+      await run();
+      if (${check}) throw new Error("for await");
+    `;
+    expect((await checkModel(getSource("sum !== 12 || made !== 1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("sum !== 21"))).failure).toBeDefined();
+  });
+
   it("makes a new function object each time a function makes one as a property's value", async () => {
     const getSource = (comparison: string) => `
       const make = function () {

@@ -4578,11 +4578,8 @@ const translateForAwait = (
     bindIteration(loop.initializer, value, source, current, context, bodyFrame, (bound) =>
       translateStatements([loop.statement], bound, context, bodyFrame),
     );
-  if (!ts.isArrayLiteralExpression(iterated)) {
-    if (hasCall(iterated, context)) {
-      throw new TlaTypeScriptError("for await iterates only arrays and async generators", iterated);
-    }
-    const receiver = translateExpression(iterated, path.scope, context);
+  // A for await over a generator, which it makes where it calls a generator function.
+  const iterateGenerator = (start: Path, receiver: Expression) => {
     // Calls the generator's next or return, and awaits the promise it gives.
     const request = (
       current: Path,
@@ -4641,7 +4638,21 @@ const translateForAwait = (
         },
         throwWith,
       );
-    return iterate(path);
+    return iterate(start);
+  };
+  if (!ts.isArrayLiteralExpression(iterated)) {
+    const created = ts.isCallExpression(iterated)
+      ? getCreatedGenerator(iterated, path, context)
+      : undefined;
+    if (created !== undefined && ts.isCallExpression(iterated)) {
+      return translateGeneratorCall(iterated, created, path, context, frame, (after, ref) =>
+        iterateGenerator(after, ref ?? getUndefined(context)),
+      );
+    }
+    if (hasCall(iterated, context)) {
+      throw new TlaTypeScriptError("for await iterates only arrays and async generators", iterated);
+    }
+    return iterateGenerator(path, translateExpression(iterated, path.scope, context));
   }
   if (iterated.elements.some((element) => ts.isSpreadElement(element))) {
     throw new TlaTypeScriptError("for await iterates only arrays and async generators", iterated);
