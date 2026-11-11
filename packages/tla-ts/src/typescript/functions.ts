@@ -5,6 +5,8 @@ import {
   type Context,
   type Definition,
   type FunctionNode,
+  findNodes,
+  getAnyFunction,
   getCallee,
   getFunction,
   getGetters,
@@ -13,9 +15,10 @@ import {
   getUndefined,
   type HelperDeclaration,
   isInlined,
+  isPlain,
   share,
 } from "./context";
-import { translateLocalStatements } from "./actions";
+import { getWritten, getWrittenRoots, translateLocalStatements } from "./actions";
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
@@ -360,6 +363,166 @@ export const translateHelperCall = (
   );
 };
 
+// The local functions that a function calls by name, with it, and the names it reads from the
+// functions around them, which a lifted definition takes as parameters.
+const getCaptured = (callee: FunctionNode, context: Context) => {
+  const isLocal = (node: ts.Node) => ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined;
+  const reached = new Set<FunctionNode>([callee]);
+  const pending = [callee];
+  while (pending.length > 0) {
+    findNodes(pending.pop() ?? callee, ts.isIdentifier).forEach((name) => {
+      const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+      const found = getAnyFunction(declaration);
+      if (found === undefined || !isLocal(found) || reached.has(found)) return;
+      reached.add(found);
+      pending.push(found);
+    });
+  }
+  const isInside = (node: ts.Node) =>
+    ts.findAncestor(node, (ancestor) => reached.has(ancestor as FunctionNode)) !== undefined;
+  const captured = new Set<ts.Symbol>();
+  reached.forEach((current) =>
+    findNodes(current, ts.isIdentifier).forEach((name) => {
+      const symbol = getSymbol(name, context.checker);
+      const declaration = symbol?.valueDeclaration;
+      if (
+        symbol !== undefined &&
+        declaration !== undefined &&
+        (ts.isVariableDeclaration(declaration) ||
+          ts.isParameter(declaration) ||
+          ts.isBindingElement(declaration)) &&
+        getAnyFunction(declaration) === undefined &&
+        isLocal(declaration) &&
+        !isInside(declaration)
+      ) {
+        captured.add(symbol);
+      }
+    }),
+  );
+  return { reached: [...reached], captured: [...captured] };
+};
+
+// A local function that a call reaches again while tla-ts inlines it, compiled once as a definition
+// beside the top-level ones. It takes the names it reads from the functions around it as
+// parameters, which a call passes as they are then, as JavaScript reads them then. It may change
+// none of them, and reads no state, which a definition would read as the step began.
+// Whether tla-ts can compile a local function as a definition that takes the names it reads from
+// the functions around it: one that changes none of them and reads no state, which a definition
+// would read as the step began.
+export const isLiftable = (callee: FunctionNode, context: Context) => {
+  if (ts.findAncestor(callee.parent, ts.isFunctionLike) === undefined) return false;
+  const found = getCaptured(callee, context);
+  const isCapturedWritten = (node: ts.Node) => {
+    const written = getWritten(node);
+    return (
+      written !== undefined &&
+      getWrittenRoots(written).some((root) => {
+        const symbol = getSymbol(root, context.checker);
+        return symbol !== undefined && found.captured.includes(symbol);
+      })
+    );
+  };
+  return (
+    context.heap === undefined &&
+    (ts.isArrowFunction(callee) ||
+      ts.isFunctionExpression(callee) ||
+      ts.isFunctionDeclaration(callee)) &&
+    callee.body !== undefined &&
+    isPlain(callee) &&
+    callee.parameters.every(
+      (parameter) =>
+        ts.isIdentifier(parameter.name) &&
+        parameter.initializer === undefined &&
+        parameter.dotDotDotToken === undefined &&
+        context.checker.getTypeAtLocation(parameter).getCallSignatures().length === 0,
+    ) &&
+    found.reached.every(
+      (reached) =>
+        !readsState(reached, context, new Set()) &&
+        findNodes(reached, (inner): inner is ts.Node => isCapturedWritten(inner)).length === 0,
+    )
+  );
+};
+
+export const translateLiftedCall = (
+  callee: FunctionNode,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const found = getCaptured(callee, context);
+  if (!isLiftable(callee, context) || callee.body === undefined) {
+    throw new TlaTypeScriptError(
+      "A local function can't call itself, so declare it at the top level",
+      node,
+    );
+  }
+  const existing = context.definitions.get(callee);
+  if (existing !== undefined) context.recursive.add(callee);
+  const definition =
+    existing ??
+    (() => {
+      const parameters = declareParameters(callee.parameters, context);
+      const captured = found.captured.map((symbol) => ({
+        symbol,
+        name: context.names.getFresh(symbol.name),
+      }));
+      const named = ts.isVariableDeclaration(callee.parent) ? callee.parent.name : callee.name;
+      const lifted: Definition = {
+        name: context.names.getFresh(
+          named !== undefined && ts.isIdentifier(named) ? named.text : "local",
+        ),
+        parameters: [...parameters, ...captured].map((parameter) => ({
+          name: parameter.name,
+          arity: 0,
+        })),
+        readsState: false,
+      };
+      context.definitions.set(callee, lifted);
+      const outer = context.inProgress;
+      context.inProgress = new Set([callee]);
+      const value = translateBody(
+        callee.body,
+        bindNames(createStateScope(context), [...parameters, ...captured]),
+        context,
+      );
+      context.inProgress = outer;
+      context.output.push(
+        link(
+          context,
+          "definition",
+          lifted.name,
+          callee,
+          defineAt(callee, lifted.name, lifted.parameters, value),
+        ),
+      );
+      return lifted;
+    })();
+  const capturedValues = found.captured.map((symbol) => {
+    const binding = scope.bindings.get(symbol);
+    if (binding === undefined) {
+      throw new TlaTypeScriptError(
+        `A local function can't read ${symbol.name} where it calls itself`,
+        node,
+      );
+    }
+    return binding;
+  });
+  const values = shareArguments(
+    node.arguments.map((argument) => translateExpression(argument, scope, context)),
+    context,
+  );
+  const operands = callee.parameters.map(
+    (_, position) => values.shared[position] ?? getUndefined(context),
+  );
+  return render(
+    values.evaluate(
+      leaf(call(definition.name, [...operands, ...capturedValues])),
+      leaf(getUndefined(context)),
+    ),
+  );
+};
+
 // A call to a function declared inside another, or to a method a caller resolves, which is
 // inlined.
 export const translateLocalCall = (
@@ -376,13 +539,8 @@ export const translateLocalCall = (
   if (callee === undefined) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
-  if (context.inProgress.has(callee)) {
-    throw new TlaTypeScriptError(
-      "A local function can't call itself, so declare it at the top level",
-      node,
-    );
-  }
   rejectCaught(node, callee, scope, context);
+  if (context.inProgress.has(callee)) return translateLiftedCall(callee, node, scope, context);
   return inlineCall(callee, node.arguments, scope, context, called);
 };
 

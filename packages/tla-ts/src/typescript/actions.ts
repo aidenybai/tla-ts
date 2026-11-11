@@ -134,7 +134,9 @@ import {
   getReceiver,
   mayThrow,
   shareArguments,
+  isLiftable,
   translateIf,
+  translateLiftedCall,
   translateSwitch,
   translateThrow,
 } from "./functions";
@@ -1575,31 +1577,37 @@ export const inlineBody = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula =>
-  bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) =>
-    translateJoined(node, inner, context, continueWith, (next) => {
-      const afterCall = (after: Path, value?: Expression) =>
-        next({ ...after, scope: { ...after.scope, previous: inner.scope.previous } }, value);
-      return letIn(
-        bound.definitions,
-        forceHeap(
-          inner.scope,
-          bound.scope,
-          translateStatements(getBody(callee), { ...inner, scope: bound.scope }, context, {
-            next: afterCall,
-            exit: afterCall,
-            breakTo: undefined,
-            continueTo: undefined,
-            throwTo: frame.throwTo,
-            yieldTo: undefined,
-            awaitTo: undefined,
-            inlining: new Set([...frame.inlining, callee]),
-          }),
-          leaf(boolean(false)),
-          context,
-        ),
+  // A call that reaches a local function that it's already inside runs the function's definition.
+  (frame.inlining.has(callee) || context.inProgress.has(callee)) &&
+  ts.isCallExpression(node) &&
+  argumentNodes === node.arguments &&
+  isLiftable(callee, context)
+    ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
+    : bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) =>
+        translateJoined(node, inner, context, continueWith, (next) => {
+          const afterCall = (after: Path, value?: Expression) =>
+            next({ ...after, scope: { ...after.scope, previous: inner.scope.previous } }, value);
+          return letIn(
+            bound.definitions,
+            forceHeap(
+              inner.scope,
+              bound.scope,
+              translateStatements(getBody(callee), { ...inner, scope: bound.scope }, context, {
+                next: afterCall,
+                exit: afterCall,
+                breakTo: undefined,
+                continueTo: undefined,
+                throwTo: frame.throwTo,
+                yieldTo: undefined,
+                awaitTo: undefined,
+                inlining: new Set([...frame.inlining, callee]),
+              }),
+              leaf(boolean(false)),
+              context,
+            ),
+          );
+        }),
       );
-    }),
-  );
 
 // The path of the code that resumed a function's body, with what the body changed outside itself.
 export const leaveBody = (
@@ -4814,6 +4822,24 @@ const isLibraryCall = (node: ts.CallExpression, context: Context) =>
 
 // Whether evaluating a node calls a function, which a function's body doesn't, as it only runs
 // where something calls it.
+// Whether each call that a value makes is to a local function that an expression can run, as one
+// that reads no state and changes nothing outside it.
+const hasOnlyLiftableCalls = (node: ts.Node, path: Path, context: Context): boolean => {
+  if (ts.isFunctionLike(node)) return true;
+  if (ts.isNewExpression(node)) return false;
+  if (ts.isCallExpression(node) && !isLibraryCall(node, context)) {
+    const symbol = getSymbol(node.expression, context.checker);
+    const callee =
+      (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
+    if (callee === undefined || !isLiftable(callee, context)) return false;
+  }
+  return !(
+    ts.forEachChild(node, (child) =>
+      hasOnlyLiftableCalls(child, path, context) ? undefined : true,
+    ) ?? false
+  );
+};
+
 const hasCall = (node: ts.Node, context: Context): boolean =>
   !ts.isFunctionLike(node) &&
   ((ts.isCallExpression(node) && !isLibraryCall(node, context)) ||
@@ -5482,7 +5508,11 @@ export const translateStatements = (
       ) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }
-      if (hasCall(returned, context) && !inner.scope.results.has(skipCasts(returned))) {
+      if (
+        hasCall(returned, context) &&
+        !inner.scope.results.has(skipCasts(returned)) &&
+        !hasOnlyLiftableCalls(returned, inner, context)
+      ) {
         throw new TlaTypeScriptError("Unsupported return", statement);
       }
       return frame.exit(inner, translateExpression(returned, inner.scope, context));

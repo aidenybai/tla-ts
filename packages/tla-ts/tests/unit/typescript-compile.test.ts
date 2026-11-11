@@ -890,6 +890,59 @@ describe("calls", () => {
     await expect(checkModel(getSource(20))).rejects.toThrow("twice");
   });
 
+  it("calls a local function that calls itself, with the names it reads as they are then", async () => {
+    const getSource = (expected: number) => `
+      const run = (): number => {
+        let base = 1;
+        const down = (index: number): number => (index <= 0 ? base : down(index - 1));
+        const first = down(2);
+        base = 5;
+        return first * 10 + down(2);
+      };
+      if (run() !== ${expected}) throw new Error("run");
+    `;
+    expect((await checkModel(getSource(15))).failure).toBeUndefined();
+    await expect(checkModel(getSource(11))).rejects.toThrow("run");
+  });
+
+  it("calls local functions that call each other from statements", async () => {
+    const result = await checkModel(`
+      let result = 0;
+      const parity = (value: number): number => {
+        const isEven = (n: number): boolean => (n === 0 ? true : isOdd(n - 1));
+        const isOdd = (n: number): boolean => {
+          if (n === 0) return false;
+          return isEven(n - 1);
+        };
+        const factorial = (k: number): number => {
+          if (k <= 1) return 1;
+          return k * factorial(k - 1);
+        };
+        return isEven(value) ? factorial(value) : 0;
+      };
+      result = parity(4);
+      if (result !== 24 || parity(3) !== 0) throw new Error("parity");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects a local function that calls itself and changes a name around it", () => {
+    expect(() =>
+      compile(`
+        const outer = (limit: number): number => {
+          const seen = [0];
+          const add = (index: number): number => {
+            seen.push(index);
+            return index >= limit ? seen.length : add(index + 1);
+          };
+          return add(0);
+        };
+        const total = outer(2);
+        if (total !== 4) throw new Error("total");
+      `),
+    ).toThrow("Only state variables and local lets can change: seen");
+  });
+
   it("maps with a local function that a name holds", async () => {
     const result = await checkModel(`
       const scale = (items: number[]): number[] => {
