@@ -247,9 +247,6 @@ const getProofInstances = (proof: Proof | undefined): Instance[] =>
         ...getProofInstances(step.proof),
       ]);
 
-// SANY resolves a top-level INSTANCE to an inner module only when the module's first top-level
-// INSTANCE follows the inner module, and otherwise looks for a file. It looks for a file for an
-// INSTANCE in a LET or a proof step too, where tla-ts takes an inner module defined before it.
 const isInternalInstance = (module: Module, instance: Instance) => {
   const seen = new Set<string>();
   for (const unit of module.units) {
@@ -276,13 +273,10 @@ interface LabelScope {
   params: FormalParamNode[][];
 }
 
-// SANY looks at a module's own EXTENDS and INSTANCEs before those of its inner modules.
 const getDependencies = (module: Module) => {
   const extendees: string[] = [];
   const instancees: string[] = [];
   const importers = new Map<string, string>();
-  // A module knows the inner modules defined before it in its enclosing modules and those of the
-  // modules it extends, but not itself.
   const visit = (current: Module, context: Map<string, Module>) => {
     const isRoot = current === module;
     const addImports = (names: string[], imports: string[]) =>
@@ -344,7 +338,6 @@ const OPERATOR_ARGUMENT_KINDS = new Set<Expression["kind"]>([
   "Lambda",
 ]);
 
-// A name such as K(1)!C, whose last part takes no arguments, is a GeneralId too.
 const isOperatorArgument = (argument: Expression) => {
   const items = argument.kind === "Apply" ? getSelectorItems(argument) : undefined;
   return OPERATOR_ARGUMENT_KINDS.has(argument.kind) || (items !== undefined && isGeneralId(items));
@@ -402,7 +395,6 @@ const NESTED_FIRST_CHILD_KINDS = new Set([
 
 const POSTFIX_OPERATOR_TEXTS = new Set(["'", "^+", "^*", "^#"]);
 
-// SANY's parser reads a prefix operator other than ~ and -. as a LAMBDA.
 const getOperatorNodeKind = (
   expression: Expression & { kind: "OperatorReference" | "Lambda" },
   text: string,
@@ -423,10 +415,9 @@ export const generateSanySpecification = (
     addSanyMessage(messages, { location, text, isWarning: false });
   const addWarning = (location: SanyLocation | undefined, text: string) =>
     addSanyMessage(messages, { location, text, isWarning: true });
-  // TLC 1.7.4's SANY numbers its first node 0, and the master builds create one before.
-  const counter = { value: options.version === "1.7.4" ? -1 : 0 };
-  const getId = () => ++counter.value;
-  const nullApplication = { id: 0 };
+  let lastId = options.version === "1.7.4" ? -1 : 0;
+  const getId = () => ++lastId;
+  let nullApplicationId = 0;
 
   const addSymbol = (table: SymbolTable, symbol: SymbolNode) => {
     const binding = resolveSymbol(table, symbol.name);
@@ -439,7 +430,6 @@ export const generateSanySpecification = (
       symbol.kind === "FormalParam" ||
       getSymbolKind(binding) !== getSymbolKind(symbol) ||
       getSymbolArity(binding) !== getSymbolArity(symbol);
-    // TLC 1.7.4's SANY reports a conflict before the redefinition of a built-in operator.
     const isBuiltIn = binding.kind === "OpDef" && binding.defKind === "BuiltIn";
     if (isBuiltIn && !(isConflict && options.version === "1.7.4")) {
       addError(
@@ -460,8 +450,7 @@ export const generateSanySpecification = (
       );
     }
   };
-  // Context's static initializer creates the builtins and SANY.frontEndInitialize creates them
-  // again; TLC 1.7.4's SANY creates them only once.
+  // SANY creates the builtins twice, in Context's static initializer and in frontEndInitialize.
   if (options.version !== "1.7.4") createBuiltins(getId);
   const builtins = createBuiltins(getId);
   getId();
@@ -525,8 +514,6 @@ export const generateSanySpecification = (
     path.pop();
     order.push(name);
   };
-  // SANY resolves the first unresolved name from the root, every extended module before any
-  // instantiated one, each in the context of the module that names it.
   const resolutions = new Set<string>();
   const isResolved = (importer: string, name: string) => resolutions.has(`${importer} ${name}`);
   const findUnresolved = (
@@ -564,7 +551,6 @@ export const generateSanySpecification = (
     }
   };
   const rootName = options.rootFileName ?? parseSource("", rootSource).name;
-  // The post conditions' modules join the root module's own extendees, before its inner modules'.
   const getModuleDependencies = (name: string, module: Module) => {
     const dependencies = getDependencies(module);
     if (name !== rootName || options.rootExtendees === undefined) return dependencies;
@@ -730,9 +716,8 @@ export const generateSanySpecification = (
       location,
     });
 
-    // nullOAN has no syntax tree node, so SANY locates it at the builtins.
     const createNullNode = (): OpApplNode => ({
-      ...createOpAppl(getBuiltin("$Nop"), [], BUILTIN_LOCATION, {}, nullApplication.id),
+      ...createOpAppl(getBuiltin("$Nop"), [], BUILTIN_LOCATION, {}, nullApplicationId),
       isNull: true,
     });
 
@@ -756,10 +741,10 @@ export const generateSanySpecification = (
       location,
     });
 
-    const createOpArg = (op: SymbolNode, location: SanyLocation): OpArgNode => ({
+    const createOpArg = (operator: SymbolNode, location: SanyLocation): OpArgNode => ({
       ...createLevelFields(getId()),
       kind: "OpArg",
-      op,
+      op: operator,
       location,
     });
 
@@ -773,8 +758,6 @@ export const generateSanySpecification = (
       return symbol;
     };
 
-    // A definition's parameter count differs from its arity only where its RECURSIVE declaration
-    // gives another.
     const matchArguments = (
       operator: SymbolNode,
       operands: ExprOrOpArgNode[],
@@ -871,21 +854,21 @@ export const generateSanySpecification = (
     });
 
     const locateSelectorItems = (items: SelectorItem[], span: TokenSpan) => {
-      const cursor = { value: span.start };
+      let cursor = span.start;
       return items.map((item): SelectorItem => {
         const text = item.op === "Name" ? item.name : item.op === "Null" ? "(" : String(item.op);
-        const index = findToken(file, cursor.value, span.end, text);
+        const index = findToken(file, cursor, span.end, text);
         if (index === -1) return item;
         if (item.op === "Null") {
           const close = getMatchingIndex(file, index);
-          cursor.value = close + 1;
+          cursor = close + 1;
           return { ...item, location: getSpanLocation(file, { start: index, end: close }) };
         }
-        cursor.value = index + 1;
+        cursor = index + 1;
         const location = getTokenLocation(file, index);
         if (item.args === undefined || !isToken(file, index + 1, "(")) return { ...item, location };
         const close = getMatchingIndex(file, index + 1);
-        cursor.value = close + 1;
+        cursor = close + 1;
         return {
           ...item,
           location,
@@ -924,7 +907,6 @@ export const generateSanySpecification = (
       if (recursive) recursive.node.operator = getBuiltin("$RecursiveFcnSpec");
     };
 
-    // tla-ts expands \A x, y \in S into a bound per name that shares the set; SANY keeps one group.
     const getBoundGroups = (bounds: Bound[]) =>
       bounds.reduce<Bound[][]>((groups, bound) => {
         const last = groups[groups.length - 1];
@@ -938,7 +920,6 @@ export const generateSanySpecification = (
         return groups;
       }, []);
 
-    // SANY generates every bounding set before it declares the symbols.
     const generateBounds = (bounds: Bound[], searchStart: number) =>
       generateBoundsWithRanges(
         bounds,
@@ -953,6 +934,19 @@ export const generateSanySpecification = (
       scope?.params.pop();
       return node;
     };
+
+    const generateBoundApplication = (
+      name: string,
+      bounds: Bound[],
+      searchStart: number,
+      body: Expression,
+      location: SanyLocation,
+    ) =>
+      withContext(createContext(), () => {
+        const symbols = generateBounds(bounds, searchStart);
+        const operand = generateWithParams(symbols.bounded.flat(), body);
+        return applyBuiltin(name, [operand], location, symbols);
+      });
 
     const generateLambda = (expression: Expression & { kind: "Lambda" }): OpDefNode => {
       const span = getExpressionSpan(file, expression);
@@ -972,7 +966,6 @@ export const generateSanySpecification = (
       });
     };
 
-    // tla-ts desugars an operator symbol argument, such as SUBSET or -., into a LAMBDA naming it.
     const getOperatorArgumentName = (argument: Expression) =>
       argument.kind === "OperatorReference"
         ? argument.operator
@@ -1069,7 +1062,6 @@ export const generateSanySpecification = (
       return createNullNode();
     };
 
-    // A /\ B /\ C nests as ((A /\ B) /\ C) in SANY; tla-ts flattens it.
     const generateJunction = (expression: Expression & { kind: "And" | "Or" }) => {
       const location = getLocation(expression);
       if (expression.isBulleted) {
@@ -1134,21 +1126,21 @@ export const generateSanySpecification = (
       const operands: ExprOrOpArgNode[] = [generateExpression(expression.function)];
       const exceptNode = applyBuiltin("$Except", operands, location);
       const functionSpan = getExpressionSpan(file, expression.function);
-      const cursor = { value: findToken(file, functionSpan.end + 1, span.end, "EXCEPT") + 1 };
+      let cursor = findToken(file, functionSpan.end + 1, span.end, "EXCEPT") + 1;
       expression.updates.forEach((update) => {
-        const bang = findToken(file, cursor.value, span.end, "!");
+        const bang = findToken(file, cursor, span.end, "!");
         const valueSpan = getParenthesizedSpan(file, getExpressionSpan(file, update.value));
         const specLocation = getSpanLocation(file, { start: bang, end: valueSpan.end });
-        const pathCursor = { value: bang + 1 };
+        let pathCursor = bang + 1;
         const components = update.path.map((step): ExprNode => {
           if (step.kind === "Field") {
-            const nameIndex = findNameOrKeyword(pathCursor.value, step.name);
-            pathCursor.value = nameIndex + 1;
+            const nameIndex = findNameOrKeyword(pathCursor, step.name);
+            pathCursor = nameIndex + 1;
             return createString(step.name, getTokenLocation(file, nameIndex));
           }
-          const open = findToken(file, pathCursor.value, span.end, "[");
+          const open = findToken(file, pathCursor, span.end, "[");
           const close = getMatchingIndex(file, open);
-          pathCursor.value = close + 1;
+          pathCursor = close + 1;
           if (step.args.length === 1) return generateExpression(step.args[0]);
           return applyBuiltin(
             "$Tuple",
@@ -1164,7 +1156,7 @@ export const generateSanySpecification = (
         exceptSpecStack.pop();
         exceptStack.pop();
         operands.push(pair);
-        cursor.value = valueSpan.end + 1;
+        cursor = valueSpan.end + 1;
       });
       return exceptNode;
     };
@@ -1181,11 +1173,11 @@ export const generateSanySpecification = (
       expression: Expression & { kind: "Record" | "RecordSet" },
     ) => {
       const span = getExpressionSpan(file, expression);
-      const cursor = { value: span.start + 1 };
+      let cursor = span.start + 1;
       const pairs = expression.fields.map((field, fieldIndex) => {
-        const nameIndex = findNameOrKeyword(cursor.value, field.name);
+        const nameIndex = findNameOrKeyword(cursor, field.name);
         const valueSpan = getParenthesizedSpan(file, getExpressionSpan(file, field.value));
-        cursor.value = valueSpan.end + 1;
+        cursor = valueSpan.end + 1;
         if (expression.fields.slice(0, fieldIndex).some((other) => other.name === field.name)) {
           addError(getTokenLocation(file, nameIndex), "Non-unique fields in constructor.");
         }
@@ -1208,7 +1200,6 @@ export const generateSanySpecification = (
       column: file.tokens[index].column,
     });
 
-    // The syntax tree of a LET leaves out its RECURSIVE declarations, so read them from the tokens.
     const getRecursiveDeclarations = (start: number) => {
       const declarations: Declaration[] = [];
       let index = start;
@@ -1303,7 +1294,6 @@ export const generateSanySpecification = (
         const names = pattern.kind === "Name" ? [pattern.name] : pattern.names;
         if (expression.set === undefined) {
           const indexes = findNameTokens(file, span.start, span.end, names);
-          // SANY locates the symbol of CHOOSE x : P at the CHOOSE keyword.
           const params = names.map((name, index) =>
             createFormalParam(
               name,
@@ -1342,7 +1332,6 @@ export const generateSanySpecification = (
         return undefined;
       }
       const span = getExpressionSpan(file, expression);
-      // SANY reports an operator applied like a function, as in op(a, b), as an unknown operator.
       if (
         file.tokens[span.start].text === expression.operator &&
         isToken(file, span.start + 1, "(")
@@ -1455,19 +1444,14 @@ export const generateSanySpecification = (
         case "Let":
           return generateLet(expression);
         case "Forall":
-        case "Exists": {
-          const span = getExpressionSpan(file, expression);
-          return withContext(createContext(), () => {
-            const bounds = generateBounds(expression.bounds, span.start);
-            const body = generateWithParams(bounds.bounded.flat(), expression.body);
-            return applyBuiltin(
-              expression.kind === "Forall" ? "$BoundedForall" : "$BoundedExists",
-              [body],
-              location,
-              bounds,
-            );
-          });
-        }
+        case "Exists":
+          return generateBoundApplication(
+            expression.kind === "Forall" ? "$BoundedForall" : "$BoundedExists",
+            expression.bounds,
+            getExpressionSpan(file, expression).start,
+            expression.body,
+            location,
+          );
         case "UnboundedQuantifier": {
           const span = getExpressionSpan(file, expression);
           const bodySpan = getExpressionSpan(file, expression.body);
@@ -1506,22 +1490,22 @@ export const generateSanySpecification = (
             return applyBuiltin("$SubsetOf", [body], location, bounds);
           });
         }
-        case "SetMap": {
-          const expressionSpan = getExpressionSpan(file, expression.expression);
-          return withContext(createContext(), () => {
-            const bounds = generateBounds(expression.bounds, expressionSpan.end + 1);
-            const body = generateWithParams(bounds.bounded.flat(), expression.expression);
-            return applyBuiltin("$SetOfAll", [body], location, bounds);
-          });
-        }
-        case "FunctionConstruction": {
-          const span = getExpressionSpan(file, expression);
-          return withContext(createContext(), () => {
-            const bounds = generateBounds(expression.bounds, span.start);
-            const body = generateWithParams(bounds.bounded.flat(), expression.body);
-            return applyBuiltin("$FcnConstructor", [body], location, bounds);
-          });
-        }
+        case "SetMap":
+          return generateBoundApplication(
+            "$SetOfAll",
+            expression.bounds,
+            getExpressionSpan(file, expression.expression).end + 1,
+            expression.expression,
+            location,
+          );
+        case "FunctionConstruction":
+          return generateBoundApplication(
+            "$FcnConstructor",
+            expression.bounds,
+            getExpressionSpan(file, expression).start,
+            expression.body,
+            location,
+          );
         case "FunctionSet":
           return applyBuiltin(
             "$SetOfFcns",
@@ -1551,7 +1535,6 @@ export const generateSanySpecification = (
         }
         case "FunctionApplication": {
           const functionNode = generateExpression(expression.function);
-          // SANY leaves the whole application null, without generating its arguments.
           if (isAbsent(functionNode)) return functionNode;
           checkRecursion(functionNode);
           const operator = functionNode.kind === "OpAppl" ? functionNode.operator : undefined;
@@ -1624,14 +1607,14 @@ export const generateSanySpecification = (
       ranges: ExprNode[],
     ): BoundSymbols => {
       const groups = getBoundGroups(bounds);
-      const cursor = { value: searchStart };
+      let cursor = searchStart;
       const bounded = groups.map((group) => {
         const setSpan = getExpressionSpan(file, group[0].set);
         const names = group.flatMap((bound) =>
           bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
         );
-        const indexes = findNameTokens(file, cursor.value, setSpan.start, names);
-        cursor.value = setSpan.end + 1;
+        const indexes = findNameTokens(file, cursor, setSpan.start, names);
+        cursor = setSpan.end + 1;
         return names.map((name, index) =>
           createFormalParam(name, 0, getTokenLocation(file, indexes[index]), true),
         );
@@ -1650,7 +1633,6 @@ export const generateSanySpecification = (
         addError(location, "Label not in definition or proof step.");
         return createNullNode();
       }
-      // No label may lie in the scope of a declaration of a nested ASSUME/PROVE.
       if (assumeProveState.isDeclared.slice(2, assumeProveState.depth + 1).some(Boolean)) {
         addError(location, "Label not allowed within scope of declaration in nested ASSUME/PROVE.");
         return createNullNode();
@@ -1716,14 +1698,13 @@ export const generateSanySpecification = (
       span: TokenSpan,
       isAdded: boolean,
     ) => {
-      const cursor = { value: span.start };
+      let cursor = span.start;
       return definition.params.map((param) => {
         const index = param.location
           ? getTokenIndex(file, param.location)
-          : findNameOrKeyword(cursor.value, param.name);
+          : findNameOrKeyword(cursor, param.name);
         const paramSpan = getOperatorSpan(index, param.arity);
-        cursor.value = paramSpan.end + 1;
-        // SANY keeps the spelling of a prefix parameter, so ~ _ does not redefine \lnot.
+        cursor = paramSpan.end + 1;
         const isPrefix = param.arity === 1 && isToken(file, index + 1, "_");
         return createFormalParam(
           isPrefix ? (file.tokens[index].spelling ?? param.name) : resolveSynonym(param.name),
@@ -1766,7 +1747,6 @@ export const generateSanySpecification = (
                 `Definition of ${existing.name} has different arity than its RECURSIVE declaration.`,
               );
             }
-            // SANY sets the parameters before it analyzes the body.
             existing.params = params;
           }
         } else if (existing !== undefined) {
@@ -1871,7 +1851,6 @@ export const generateSanySpecification = (
           : existing.kind === "OpDef" && (isRecursive || !isPendingRecursive)
             ? existing
             : undefined;
-      // A function whose RECURSIVE declaration has parameters stays undefined.
       if (isRecursive) {
         if (existing.arity === 0) endOpDefNode(existing, node, location, preComments);
       } else if (existing === undefined && definitionNode !== undefined) {
@@ -1884,7 +1863,6 @@ export const generateSanySpecification = (
       }
       functions.unshift({ name: definition.name, node });
       pushLabelScope();
-      // The bound identifiers are bound in the body only of a function with an OpDefNode.
       const generateBody = () => generateWithParams(bounds.bounded.flat(), definition.body);
       const body =
         definitionNode === undefined ? generateBody() : withContext(context, generateBody);
@@ -1936,8 +1914,6 @@ export const generateSanySpecification = (
       state.unresolvedSum -= state.unresolvedCount[state.curLevel];
     };
 
-    // Implicit substitutions in the order of the instantiated module's Hashtable, then the explicit
-    // WITH substitutions.
     const processSubstitutions = (
       instance: Instance,
       instanceeContext: Context,
@@ -1963,7 +1939,6 @@ export const generateSanySpecification = (
           },
         ];
       });
-      // SANY locates an arity error at its builtins for the nullOpArg it substitutes after an error.
       const checkArity = (target: OpDeclNode, substitute: ExprOrOpArgNode) => {
         const arity = substitute.kind === "OpArg" ? getSymbolArity(substitute.op) : 0;
         if (arity !== target.arity) {
@@ -1974,12 +1949,11 @@ export const generateSanySpecification = (
         }
       };
       const span = getDefinitionSpan(instance);
-      const cursor = { value: findToken(file, span.start, span.end, "WITH") + 1 };
+      let cursor = findToken(file, span.start, span.end, "WITH") + 1;
       instance.substitutions.forEach((substitution) => {
-        const targetIndex = findToken(file, cursor.value, span.end, substitution.name);
-        // The next target follows this substitution's expression, which may name it too.
+        const targetIndex = findToken(file, cursor, span.end, substitution.name);
         if (targetIndex !== -1) {
-          cursor.value = getExpressionSpan(file, substitution.expression).end + 1;
+          cursor = getExpressionSpan(file, substitution.expression).end + 1;
         }
         const target = getContextSymbol(instanceeContext, resolveSynonym(substitution.name));
         if (target?.kind !== "OpDecl") {
@@ -2005,7 +1979,6 @@ export const generateSanySpecification = (
           existing.isImplicit = false;
         } else substs.push({ op: target, expr: substitute, isImplicit: false });
       });
-      // TLC 1.7.4's SANY checks the arity of only the substitutions that the INSTANCE writes.
       substs
         .filter((subst) => subst.isImplicit && options.version !== "1.7.4")
         .forEach((subst) => checkArity(subst.op, subst.expr));
@@ -2150,12 +2123,9 @@ export const generateSanySpecification = (
         preComments,
       });
       addSymbol(symbolTable, moduleDefinition);
-      // TLC 1.7.4's SANY leaves the definition out of the definitions of a LET.
       if (options.version !== "1.7.4") definitions?.push(moduleDefinition);
     };
 
-    // An INSTANCE proof step is located at the step's body and adds no theorem definitions or
-    // instance to the module.
     const generateInstance = (
       instance: Instance,
       isTopLevel = true,
@@ -2204,8 +2174,6 @@ export const generateSanySpecification = (
         currentModule.definitions.push(node);
         setRecursionFields(node);
       });
-      // SANY reuses a theorem of a parameter-free module without adding it to the symbol table when
-      // the instantiated module has parameters.
       getHashtableValues(instanceeContext.table).forEach((symbol) => {
         if (symbol.kind !== "ThmOrAssumpDef" || symbol.isLocal) return;
         const copyFrom = (module: ModuleNode, body: LevelNode) => {
@@ -2290,15 +2258,12 @@ export const generateSanySpecification = (
       if (expression.kind === "Apply") return getApplicationKind(expression, span);
       return SYNTAX_KINDS.get(expression.kind);
     };
-    // Generator.genIdToSelector takes a childless first child for an empty prefix of a name.
     const hasChildlessFirstChild = (expression: Expression, span: TokenSpan) => {
       if (expression.kind === "String" && !isParenthesized(span)) return false;
       if (expression.kind === "Identifier" && !expression.name.includes("!")) return true;
       const kind = getSyntaxKind(expression, span);
       return kind === undefined || NESTED_FIRST_CHILD_KINDS.has(kind) ? undefined : true;
     };
-    // Generator.genIdToSelector reads a DEF entry that isn't a name as one: its first child as the
-    // prefix and its second as the last part.
     const getDefEntryParts = (
       expression: Expression,
       span: TokenSpan,
@@ -2387,7 +2352,6 @@ export const generateSanySpecification = (
       }
       return undefined;
     };
-    // False where SANY's reading of the entry isn't modeled.
     const reportDefEntry = (expression: Expression) => {
       const span = getParenthesizedSpan(file, getExpressionSpan(file, expression));
       const isName =
@@ -2423,8 +2387,6 @@ export const generateSanySpecification = (
           false,
           true,
         );
-        // SANY rejects a proof step name in a DEF clause and leaves out an entry it rejects.
-        // Errors.addMessage drops the message when selectorToNode already reported it.
         const isDefinition =
           symbol.kind === "OpDef" ||
           (symbol.kind === "ThmOrAssumpDef" && !symbol.name.startsWith("<"));
@@ -2435,7 +2397,6 @@ export const generateSanySpecification = (
         return [symbol];
       });
 
-    // SANY rejects a BY, USE or HIDE with nothing after its keyword before it reads the facts.
     const checkKeywordOnly = (
       statement: UseOrHide | Extract<Proof, { kind: "By" }>,
       location: SanyLocation,
@@ -2450,7 +2411,6 @@ export const generateSanySpecification = (
       const facts = generateFacts(use.facts);
       const defs = generateDefs(use.defs);
       if (facts.length + defs.length === 0) addError(location, "Empty USE or HIDE statement.");
-      // A HIDE cites facts by name only.
       if (use.kind === "Hide") {
         facts
           .filter((fact) => fact.kind === "OpAppl" && fact.operator.kind !== "ThmOrAssumpDef")
@@ -2472,7 +2432,6 @@ export const generateSanySpecification = (
       };
     };
 
-    // SANY generates the set before it declares the symbol.
     const generateNewSymbol = (symbol: NewSymbol): NewSymbNode => {
       const span = getUnitSpan(symbol.location);
       const set = symbol.set && generateExpression(symbol.set);
@@ -2579,7 +2538,6 @@ export const generateSanySpecification = (
       return node;
     };
 
-    // SANY numbers the ThmOrAssumpDefNode before it generates what it asserts.
     const createTheoremDefinition = (
       id: number,
       name: string,
@@ -2684,10 +2642,7 @@ export const generateSanySpecification = (
       symbolTable.contexts.push(proofContext);
       const instances: InstanceNode[] = [];
       const sufficesContexts: Context[] = [];
-      // An assertion step @ = e continues the step before it, whose right side the @ stands for.
-      const infixStep: { previousRight: ExprOrOpArgNode | undefined } = {
-        previousRight: undefined,
-      };
+      let previousRight: ExprOrOpArgNode | undefined;
       const generateOtherStep = (
         body: ProofStep["body"],
         stepSpan: TokenSpan,
@@ -2733,11 +2688,9 @@ export const generateSanySpecification = (
         }
         if (step.name !== undefined) pushLabelScope();
         const definitionId = step.name === undefined ? undefined : getId();
-        if (body.kind !== "Assert") infixStep.previousRight = undefined;
+        if (body.kind !== "Assert") previousRight = undefined;
         const otherStep = generateOtherStep(body, stepSpan, bodySpan);
         if (otherStep !== undefined) {
-          // SANY puts a definition for a named step that asserts nothing in the symbol table, for a DEF
-          // clause to name.
           if (step.name !== undefined) {
             addSymbol(
               symbolTable,
@@ -2753,7 +2706,7 @@ export const generateSanySpecification = (
           return otherStep;
         }
         const isAssumeProve = body.kind === "Assert" && body.statement.kind === "AssumeProve";
-        if (isAssumeProve) infixStep.previousRight = undefined;
+        if (isAssumeProve) previousRight = undefined;
         const isSuffices = body.kind === "Assert" && body.isSuffices;
         const assumeContext = createContext();
         const generateAssertion = (statement: Expression | AssumeProve): LevelNode => {
@@ -2772,7 +2725,6 @@ export const generateSanySpecification = (
             const expression = generateExpression(statement);
             return applyBuiltin("$Suffices", [expression], getSpanLocation(file, bodySpan));
           }
-          const previousRight = infixStep.previousRight;
           const isAtStep =
             previousRight !== undefined &&
             statement.kind === "Apply" &&
@@ -2788,7 +2740,7 @@ export const generateSanySpecification = (
               )
             : generateExpression(statement);
           const right = expression.kind === "OpAppl" ? expression.operands[1] : undefined;
-          infixStep.previousRight = isInfixExpression(statement) ? right : undefined;
+          previousRight = isInfixExpression(statement) ? right : undefined;
           return expression;
         };
         const generated =
@@ -2919,8 +2871,6 @@ export const generateSanySpecification = (
 
     const createDeclaration = (declaration: Declaration, declKind: number): OpDeclNode => {
       const span = getDeclarationSpan(declaration);
-      // Generator.processParameters makes this check of a constant too, of its syntax node's name,
-      // which is never @.
       if (declaration.name === "@" && declKind === VARIABLE_DECL_KIND) {
         addError(getSpanLocation(file, span), "Attempted to declare '@' as a variable.");
       }
@@ -2943,8 +2893,6 @@ export const generateSanySpecification = (
       return node;
     };
 
-    // The extended module's symbols join in the order they joined it, apart from LOCAL ones and
-    // those already present.
     ast.extends.forEach((name) => {
       const extendee = getModule(name);
       currentModule.extendees.push(extendee);
@@ -3047,10 +2995,9 @@ export const generateSanySpecification = (
   const modules = order.map((name) => {
     options.onAnalyze?.(name);
     // Each module's Generator creates its nullODN, nullOAN, nullOpArg and nullLabelNode.
-    nullApplication.id = Array.from({ length: 4 }, getId)[1];
+    nullApplicationId = Array.from({ length: 4 }, getId)[1];
     const entry = getSource(name, undefined);
     const context = createContext();
-    // SANY's global context lists its builtins from the last to the first.
     builtins.toReversed().forEach((builtin) => addToContext(context, builtin));
     const module = generateModule(entry.module, entry.file, undefined, {
       contexts: [context],
