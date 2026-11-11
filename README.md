@@ -3,26 +3,44 @@
 [![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 [![downloads](https://img.shields.io/npm/dt/tla-ts.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 
-tla-ts is a drop-in replacement for [TLC](https://github.com/tlaplus/tlaplus) that's **2× faster**.
+tla-ts formally verifies your TypeScript code with [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
 
-TLA+ lets you write formal models of a system, and TLC model checks them. But TLC is written in Java and needs the JVM. tla-ts runs anywhere JavaScript runs, such as the browser, Node, and Bun. Try it in the [playground](https://tla-ts.aidenybai.com).
+## How it works
+
+1. Run `npx tla-ts [file].ts`.
+2. tla-ts transpiles TypeScript into TLA+.
+3. tla-ts model checks TypeScript code and finds violations.
+
+Here, tla-ts checks a counter:
 
 ```ts
-import { check } from "tla-ts";
+// counter.ts
+let count = 0;
 
-const result = await check({
-  source: `---- MODULE Counter ----
-EXTENDS Naturals
-VARIABLE x
-Init == x = 0
-Next == x' = x + 1
-Small == x < 3
-====`,
-  config: "INIT Init NEXT Next INVARIANT Small",
-});
+export const increment = () => {
+  count += 1;
+};
 
-result.status; // "invariant-violation"
+export const small = () => count < 3;
 ```
+
+tla-ts transpiles it into this TLA+ module:
+
+```tla
+---- MODULE Counter ----
+EXTENDS Integers, Sequences, FiniteSets, TLC
+VARIABLES count
+vars == <<count>>
+Init == count = 0
+increment == count' = count + 1
+Next == increment
+Spec == /\ Init
+        /\ [][Next]_vars
+small == count < 3
+====
+```
+
+`npx tla-ts counter.ts` reports that `small` is violated after three calls to `increment`.
 
 ## Install
 
@@ -30,13 +48,33 @@ result.status; // "invariant-violation"
 npm install tla-ts
 ```
 
-## Command line
+You can also skip the install and run `npx tla-ts [file].ts`.
 
-```shell
-npx tla-ts Spec.tla          # check a spec with TLC's options
-npx tla-ts bank.ts           # compile TypeScript to TLA+ and check it
-npx tla-ts tlapm Module.tla  # tlapm's command line, with tla-ts's provers
-```
+## About
+
+tla-ts is a research project by [Aiden Bai](https://aidenybai.com).
+
+Under the hood, tla-ts is a transpiler that turns TypeScript/JavaScript into TLA+. It uses a 1:1 reimplementation of [TLC](https://github.com/tlaplus/tlaplus)/[TLAPM](https://proofs.tlapl.us) in TypeScript that runs 2× faster.
+
+Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
+
+| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
+| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
+| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |    2.2× |
+| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.06 s |  0.71 s |    1.5× |
+| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.37 s |  0.17 s |    2.2× |
+| 542 conformance models                                         |                 | 986.6 s | 403.3 s |    2.4× |
+
+Wall time on 8 workers, also including startup. Each time is the median of 3 runs on an Apple M4 Pro.
+
+| Spec                                                                                                                  | Distinct states |     TLC | tla-ts | Speedup |
+| --------------------------------------------------------------------------------------------------------------------- | --------------: | ------: | -----: | ------: |
+| [Raft with reconfiguration](https://github.com/will62794/tla-web/blob/8193eb0/specs/RaftWithReconfigSingleServer.tla) |         298,493 | 10.50 s | 8.96 s |    1.2× |
+| [Sailfish](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/dag-consensus)                             |         109,604 |  4.34 s | 4.07 s |    1.1× |
+| [Fast Paxos](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/SimplifiedFastPaxos)                     |          25,617 |  3.91 s | 2.57 s |    1.5× |
+| [Buffered random access file](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/braf)                   |           3,316 |  4.70 s | 3.61 s |    1.3× |
+
+tla-ts currently maintains 32.32% conformance with [test262](https://github.com/tc39/test262) (17,372 / 53,755 passing).
 
 ## Check TypeScript
 
@@ -56,7 +94,15 @@ export const transfer = (from: Account, to: Account, amount: 1 | 2 | 3) => {
 export const noOverdraft = () => balances.alice >= 0 && balances.bob >= 0;
 ```
 
-`npx tla-ts bank.ts` writes `Bank.tla` and `Bank.cfg`, and reports that `noOverdraft` is violated after four transfers from `bob`. [Check TypeScript](https://github.com/aidenybai/tla-ts/blob/main/docs/typescript.md) lists every construct tla-ts compiles.
+`npx tla-ts bank.ts` reports that `noOverdraft` is violated after four transfers from `bob`. [Check TypeScript](https://github.com/aidenybai/tla-ts/blob/main/docs/typescript.md) lists every construct tla-ts compiles.
+
+## Command line
+
+```shell
+npx tla-ts bank.ts           # compile TypeScript to TLA+ and check it
+npx tla-ts Spec.tla          # check a spec with TLC's options
+npx tla-ts tlapm Module.tla  # tlapm's command line, with tla-ts's provers
+```
 
 ## API
 
@@ -122,26 +168,6 @@ formatValue(step.state.queue); // "<<1, 2>>"
 | `TlaEvaluationError`  | Evaluating the spec fails                       |
 | `TlaUnsupportedError` | The spec or call uses something tla-ts can't do |
 
-## Benchmarks
-
-Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
-
-| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
-| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
-| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |    2.2× |
-| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.06 s |  0.71 s |    1.5× |
-| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.37 s |  0.17 s |    2.2× |
-| 542 conformance models                                         |                 | 986.6 s | 403.3 s |    2.4× |
-
-Wall time on 8 workers, also including startup. Each time is the median of 3 runs on an Apple M4 Pro.
-
-| Spec                                                                                                                  | Distinct states |     TLC | tla-ts | Speedup |
-| --------------------------------------------------------------------------------------------------------------------- | --------------: | ------: | -----: | ------: |
-| [Raft with reconfiguration](https://github.com/will62794/tla-web/blob/8193eb0/specs/RaftWithReconfigSingleServer.tla) |         298,493 | 10.50 s | 8.96 s |    1.2× |
-| [Sailfish](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/dag-consensus)                             |         109,604 |  4.34 s | 4.07 s |    1.1× |
-| [Fast Paxos](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/SimplifiedFastPaxos)                     |          25,617 |  3.91 s | 2.57 s |    1.5× |
-| [Buffered random access file](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/braf)                   |           3,316 |  4.70 s | 3.61 s |    1.3× |
-
 ## Development
 
 ```shell
@@ -150,7 +176,7 @@ pnpm test
 pnpm dev
 ```
 
-`pnpm dev` starts the playground in `packages/website`.
+`pnpm dev` starts the website in `packages/website`.
 
 Run the conformance suite against TLC's recorded results:
 
