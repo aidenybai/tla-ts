@@ -710,6 +710,15 @@ describe("values", () => {
     `);
     expect(result.failure).toBeUndefined();
   });
+
+  it("converts an object in an error's message before it makes the error", async () => {
+    const result = await checkModel(`
+      const value: { [key: string]: unknown } = { valueOf: () => 1 };
+      // @ts-ignore
+      if (value << 1 !== 3) throw new Error("got " + (value << 1));
+    `);
+    expect(result.failure?.message).toContain("got 2");
+  });
 });
 
 describe("bounds", () => {

@@ -4865,10 +4865,15 @@ const findLeadingCall = (
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
     return isAssignment ? blocked : thenConverted(inOrder([node.left, node.right]));
   }
-  // A Boolean, Number, or String object runs no code where a statement makes it.
+  // A Boolean, Number, or String object runs no code where a statement makes it. Any other new
+  // runs a conversion among its arguments first, such as one in an error's message.
   if (ts.isNewExpression(node) && getNewWrapper(node, context) !== undefined) {
     const found = inOrder(node.arguments ?? []);
     return found.call !== undefined || found.isBlocked ? found : evaluate(node);
+  }
+  if (ts.isNewExpression(node)) {
+    const found = inOrder([node.expression, ...(node.arguments ?? [])]);
+    return found.conversion === undefined ? blocked : found;
   }
   if (ts.isCallExpression(node)) {
     if (!isPlainCallee(node.expression, context)) return blocked;
