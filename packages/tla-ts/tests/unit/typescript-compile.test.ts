@@ -1164,6 +1164,28 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes the generator or runs the async function that a callee holds", async () => {
+    const result = await checkModel(`
+      let callCount = 0;
+      const obj = {
+        *generate(first: number) {
+          if (first !== 42) throw new Error("generate");
+          callCount = callCount + 1;
+        },
+        async run(first: number) {
+          if (first !== 7) throw new Error("run");
+          callCount = callCount + 10;
+        },
+      };
+      const generate = obj.generate;
+      generate(42).next();
+      const run = obj.run;
+      await run(7);
+      if (callCount !== 11) throw new Error("count");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a callee holds a function that the script doesn't declare", async () => {
     const result = await checkModel(`
       const holder = {};
