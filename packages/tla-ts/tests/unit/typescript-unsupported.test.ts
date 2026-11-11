@@ -70,7 +70,6 @@ const CASES: [string, string][] = [
   ["reverse", "values.reverse();"],
   ["splice", "values.splice(0, 1);"],
   ["array length assignment", "values.length = 0;"],
-  ["string comparison", "if (label < 'b') count++;"],
   ["returning a value from an action", "count++; return count;"],
   ["assigning a constant", "LIMIT = 3;"],
   ["calling an action from an action", "step();"],

@@ -896,7 +896,20 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     ]);
   }
   if (ORDERING_OPERATORS.has(kind) && isString) {
-    throw new TlaTypeScriptError("TLA+ strings have no order, so compare them with === only", node);
+    if (getKind(node.left, context) !== "string" || getKind(node.right, context) !== "string") {
+      throw new TlaTypeScriptError("Compare a string only with another string", node);
+    }
+    const left = translate(node.left);
+    const right = translate(node.right);
+    const isLess = (lesser: Expression, greater: Expression) =>
+      useJavaScript("StringLessThan", [lesser, greater], context);
+    return kind === ts.SyntaxKind.LessThanToken
+      ? isLess(left, right)
+      : kind === ts.SyntaxKind.GreaterThanToken
+        ? isLess(right, left)
+        : kind === ts.SyntaxKind.LessThanEqualsToken
+          ? not(isLess(right, left))
+          : not(isLess(left, right));
   }
   if (
     ARITHMETIC_OPERATORS.has(kind) &&

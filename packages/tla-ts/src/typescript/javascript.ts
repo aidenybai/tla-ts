@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import { type Context, getSymbol } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { formatString } from "../printer";
 import { translateExpression } from "./expressions";
 import type { Scope } from "./scope";
 import { getKind } from "./types";
@@ -1129,6 +1130,52 @@ EndsWith(value, search, position) ==
       end == IF position = Undefined THEN Len(text) ELSE Clamp(IntegerOf(position), Len(text))
   IN  end >= Len(Text(search)) /\\ OccursAt(text, search, end - Len(search))
 
+\\* The characters whose codes are below 128, in order. tla-ts tells the codes of these only.
+LOCAL AsciiCharacters == ${formatString(String.fromCharCode(...Array.from({ length: 128 }, (_, code) => code)))}
+
+LOCAL AsciiCodes ==
+  [character \\in CharactersOf(AsciiCharacters) |->
+     CHOOSE code \\in 0..127 : SubSeq(AsciiCharacters, code + 1, code + 1) = character]
+
+\\* The code of a character, which a for-of visits and charCodeAt reads.
+LOCAL CharacterCode(character) ==
+  IF character \\in DOMAIN AsciiCodes
+  THEN AsciiCodes[character]
+  ELSE Assert(FALSE, "tla-ts can't tell the code of a character outside ASCII")
+
+\\* The code of the character at an index, or outside where the index is out of range.
+LOCAL CodeAt(value, index, outside) ==
+  LET text == Text(value)
+      position == IntegerOf(index)
+  IN  IF position \\notin {Infinity, NegativeInfinity} /\\ position >= 0 /\\ position < Len(text)
+      THEN CharacterCode(SubSeq(text, position + 1, position + 1))
+      ELSE outside
+
+CharCodeAt(value, index) == CodeAt(value, index, NaN)
+
+\\* String.prototype.codePointAt, which reads the code of a surrogate pair, though an ASCII
+\\* character's code point is its code.
+CodePointAt(value, index) == CodeAt(value, index, Undefined)
+
+\\* JavaScript's < of two strings, which compares the codes of their first different characters.
+RECURSIVE StringLessThan(_, _)
+StringLessThan(left, right) ==
+  CASE left = right -> FALSE
+    [] left = "" -> TRUE
+    [] right = "" -> FALSE
+    [] SubSeq(left, 1, 1) = SubSeq(right, 1, 1) ->
+         StringLessThan(SubSeq(left, 2, Len(left)), SubSeq(right, 2, Len(right)))
+    [] OTHER -> CharacterCode(SubSeq(left, 1, 1)) < CharacterCode(SubSeq(right, 1, 1))
+
+\\* The values that a for-of over a string visits, its code points, which are its characters where
+\\* each is ASCII.
+StringCharacters(value) ==
+  [position \\in 1..Len(value) |->
+     LET character == SubSeq(value, position, position)
+     IN  IF character \\in DOMAIN AsciiCodes
+         THEN character
+         ELSE Assert(FALSE, "tla-ts can't iterate a string with a character outside ASCII")]
+
 RECURSIVE RadixDigits(_, _)
 RadixDigits(value, radix) ==
   LET digit == value % radix
@@ -1362,16 +1409,16 @@ AddPrimitives(left, right) ==
   THEN StringOf(left) \\o StringOf(right)
   ELSE Add(ToNumber(left), ToNumber(right))
 
-\\* JavaScript's < of two primitives. TLA+ strings have no order.
+\\* JavaScript's < of two primitives.
 LessThanPrimitives(left, right) ==
   IF TypeOf(left) = "string" /\\ TypeOf(right) = "string"
-  THEN Assert(FALSE, "tla-ts can't order strings")
+  THEN StringLessThan(left, right)
   ELSE LessThan(ToNumber(left), ToNumber(right))
 
-\\* JavaScript's <= of two primitives. TLA+ strings have no order.
+\\* JavaScript's <= of two primitives.
 LessOrEqualPrimitives(left, right) ==
   IF TypeOf(left) = "string" /\\ TypeOf(right) = "string"
-  THEN Assert(FALSE, "tla-ts can't order strings")
+  THEN ~StringLessThan(right, left)
   ELSE LessOrEqual(ToNumber(left), ToNumber(right))
 
 \\* A number in a script that holds only integers, which can't hold NaN, the infinities, or -0.

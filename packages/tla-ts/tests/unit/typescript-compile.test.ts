@@ -1929,8 +1929,41 @@ describe("errors", () => {
       const second = { toString: () => "b" };
       // @ts-ignore
       const isOrdered = first <= second;
+      if (!isOrdered) throw new Error("ordered");
     `);
-    expect(ordered.failure?.message).toContain("tla-ts can't order strings");
+    expect(ordered.failure).toBeUndefined();
+    const wide = await checkModel(`
+      const first = { toString: () => "e" };
+      const second = { toString: () => "\u00e9" };
+      // @ts-ignore
+      const isOrdered = first <= second;
+      if (!isOrdered) throw new Error("ordered");
+    `);
+    expect(wide.failure?.message).toContain("tla-ts can't tell the code of a character outside ASCII");
+  });
+
+  it("reads the codes of ASCII characters, orders strings by them, and iterates a string", async () => {
+    const result = await checkModel(`
+      const text = "Az0 ~";
+      if (text.charCodeAt(0) !== 65 || text.charCodeAt(4) !== 126 || text.codePointAt(9) !== undefined) {
+        throw new Error("codes");
+      }
+      if (!("Z" < "a") || !("10" < "9") || !("ab" < "abc") || "a" > "a" || !("b" >= "a")) {
+        throw new Error("order");
+      }
+      const box = { digits: "" };
+      for (const character of "1.5x") {
+        if (character >= "0" && character <= "9") box.digits += character;
+      }
+      if (box.digits !== "15") throw new Error("iterate");
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`
+        const text = "a\u00e9";
+        if (text.charCodeAt(1) !== 233) throw new Error("wide");
+      `),
+    ).rejects.toThrow("tla-ts can't tell the code of a character outside ASCII");
   });
 
   it("converts the arguments of Math's functions, and stops where it can't", async () => {

@@ -4419,10 +4419,16 @@ const translateIterations = (
   if (ts.isForInStatement(loop) && !isForIn) {
     throw new TlaTypeScriptError("for-in iterates only objects", loop.expression);
   }
+  // A for-of over a string visits its characters.
+  const isStringIteration =
+    iterated !== undefined &&
+    ts.isForOfStatement(iterated) &&
+    getKind(iterated.expression, context) === "string";
   if (
     iterated !== undefined &&
     !isForIn &&
     !isIterator &&
+    !isStringIteration &&
     getKind(iterated.expression, context) !== "sequence"
   ) {
     throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
@@ -4670,7 +4676,13 @@ const translateIterations = (
                       ],
                       context,
                     )
-                  : translateExpression(iterated.expression, path.scope, context),
+                  : isStringIteration
+                    ? useJavaScript(
+                        "StringCharacters",
+                        [translateExpression(iterated.expression, path.scope, context)],
+                        context,
+                      )
+                    : translateExpression(iterated.expression, path.scope, context),
               ),
             ]),
         operator,

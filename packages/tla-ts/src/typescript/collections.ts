@@ -1122,7 +1122,7 @@ export const translateMethod = (
   }
   const translateOptional = (argument: ts.Expression | undefined) =>
     argument === undefined ? getUndefined(context) : translateExpression(argument, scope, context);
-  return useJavaScript(
+  const result = useJavaScript(
     primitiveMethod.operator,
     [
       primitiveCall.wrapper !== undefined
@@ -1150,6 +1150,10 @@ export const translateMethod = (
     ],
     context,
   );
+  // A script that holds only integers can't hold the NaN that a method may give.
+  return primitiveMethod.isNaNable === true && !context.hasSpecialNumbers
+    ? useJavaScript("PlainNumber", [result], context)
+    : result;
 };
 
 // A method call on a string or a number, or String.prototype.method.call(value, ...arguments),
@@ -1206,11 +1210,14 @@ interface PrimitiveMethod {
   // The kinds of the arguments, where one that a call omits is undefined.
   parameters: ("number" | "string")[];
   trimmed?: [boolean, boolean];
+  isNaNable?: boolean;
 }
 
 const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["at", { operator: "StringAt", parameters: ["number"] }],
   ["charAt", { operator: "CharAt", parameters: ["number"] }],
+  ["charCodeAt", { operator: "CharCodeAt", parameters: ["number"], isNaNable: true }],
+  ["codePointAt", { operator: "CodePointAt", parameters: ["number"] }],
   ["slice", { operator: "StringSlice", parameters: ["number", "number"] }],
   ["substring", { operator: "Substring", parameters: ["number", "number"] }],
   ["indexOf", { operator: "StringIndexOf", parameters: ["string", "number"] }],
