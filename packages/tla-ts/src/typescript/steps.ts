@@ -119,14 +119,16 @@ export const translateStep = (definition: Exported, sections: Sections, context:
       ? name
       : `${name}(${parameters.map((parameter) => parameter.name).join(", ")})`;
   sections.actions.push(`${head} ==\n  ${indent(render(formula), "  ")}`);
-  const fairness = definition.tags.has("strongFair")
+  const tagged = definition.tags.has("strongFair")
     ? "SF_vars"
     : definition.tags.has("fair")
       ? "WF_vars"
       : undefined;
+  const fairness = tagged ?? "WF_vars";
+  const fairnessSection = tagged === undefined ? sections.defaultFairness : sections.fairness;
   if (parameters.length === 0) {
     sections.next.push(name);
-    if (fairness !== undefined) sections.fairness.push(`${fairness}(${name})`);
+    fairnessSection.push(`${fairness}(${name})`);
     return;
   }
   const getType = (parameter: Parameter) => context.checker.getTypeAtLocation(parameter.node.name);
@@ -145,7 +147,6 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     .map((entry) => `\\E ${entry[0].name} \\in ${entry[1].domain} : `);
   const step = `\\E ${independent.join(", ")} : ${dependent.join("")}${head}`;
   sections.next.push(step);
-  if (fairness === undefined) return;
   const typeDomains = parameters.map((parameter, index) =>
     guards.chosen.has(parameter) ? findDomain(getType(parameter), context) : domains[index],
   );
@@ -153,13 +154,13 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     guards.chosen.has(parameter) ? [`${parameter.name} \\in ${wrap(domains[index])}`] : [],
   );
   if (!typeDomains.every((domain): domain is string => typeof domain === "string")) {
-    sections.fairness.push(`${fairness}(${step})`);
+    fairnessSection.push(`${fairness}(${step})`);
     return;
   }
   const forAll = parameters.map(
     (parameter, index) => `${parameter.name} \\in ${typeDomains[index]}`,
   );
-  sections.fairness.push(
+  fairnessSection.push(
     `\\A ${forAll.join(", ")} : ${fairness}(${[...conditions, head].join(" /\\ ")})`,
   );
 };

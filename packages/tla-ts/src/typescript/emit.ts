@@ -7,6 +7,7 @@ export interface Sections {
   actions: string[];
   next: string[];
   fairness: string[];
+  defaultFairness: string[];
   predicates: string[];
   temporal: string[];
   // The properties that need steps to happen, such as @eventually, which no behavior satisfies
@@ -38,6 +39,7 @@ export const createSections = (): Sections => ({
   actions: [],
   next: [],
   fairness: [],
+  defaultFairness: [],
   predicates: [],
   temporal: [],
   liveness: [],
@@ -102,7 +104,7 @@ export const emit = (
       "Init",
       "[][Next]_vars",
       ...(sections.fairness.length === 0 && sections.liveness.length > 0
-        ? ["WF_vars(Next)"]
+        ? sections.defaultFairness
         : sections.fairness),
     ])}`,
     ...sections.predicates,

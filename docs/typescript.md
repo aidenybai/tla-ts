@@ -154,7 +154,7 @@ JSDoc tags cover what TypeScript has no syntax for:
 
 A function that takes `before` reads the state before the step from it, and the variables themselves hold the state after the step.
 
-A spec with `@eventually`, `@alwaysEventually`, `@eventuallyAlways`, or `@leadsTo` and no `@fair` or `@strongFair` action takes some step whenever one can run, as `WF_vars(Next)` says. Tag an action `@fair` when other steps could otherwise keep it from running.
+A spec with `@eventually`, `@alwaysEventually`, `@eventuallyAlways`, or `@leadsTo` makes every action weakly fair, for each parameter value, unless it tags some actions `@fair` or `@strongFair`. Then only those are fair. Tag only the fair actions when the others may never run, such as steps that something outside the system takes.
 
 Parameters of a temporal property hold for every value of their type. `@leadsTo` passes them to the target.
 
