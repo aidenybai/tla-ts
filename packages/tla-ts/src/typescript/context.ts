@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { JAVASCRIPT_OPERATORS } from "./javascript";
+import { getBuiltIn } from "./intrinsics";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
 import type { Link } from "./regions";
@@ -626,6 +627,24 @@ const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
   );
 };
 
+// The built-in constructor that makes the instances of a class without a constructor, which
+// extends it or extends a class that does. Its default constructor passes new's arguments on.
+export const getBuiltInBase = (
+  node: ts.ClassLikeDeclaration,
+  context: Context,
+): "Object" | "Boolean" | "Number" | "String" | undefined => {
+  if (node.members.some(ts.isConstructorDeclaration)) return undefined;
+  const heritage = node.heritageClauses?.find(
+    (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+  )?.types[0]?.expression;
+  const name = heritage === undefined ? undefined : getBuiltIn(heritage, context);
+  if (name === "Object" || name === "Boolean" || name === "Number" || name === "String") {
+    return name;
+  }
+  const base = getBaseClass(node, context);
+  return base === undefined ? undefined : getBuiltInBase(base, context);
+};
+
 // The class that a class extends, which the script defines before it.
 export const getBaseClass = (node: ts.ClassLikeDeclaration, context: Context) => {
   const heritage = node.heritageClauses?.find(
@@ -724,8 +743,14 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
   const base = getBaseClass(node, context);
   const isHeap =
     (base === undefined
-      ? !hasExtends(node) || isNullSafe(node, context)
-      : isHeapClass(base, context) && !isNullBased(base) && isDerivedSafe(node, base, context)) &&
+      ? !hasExtends(node) ||
+        isNullSafe(node, context) ||
+        getBuiltInBase(node, context) !== undefined
+      : isHeapClass(base, context) &&
+        !isNullBased(base) &&
+        isDerivedSafe(node, base, context) &&
+        (getBuiltInBase(base, context) === undefined ||
+          getBuiltInBase(node, context) !== undefined)) &&
     symbol !== undefined &&
     (ts.isClassDeclaration(node) || ts.isVariableDeclaration(declared)) &&
     isOnce(node) &&

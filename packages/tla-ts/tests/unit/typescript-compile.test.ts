@@ -1941,6 +1941,21 @@ describe("errors", () => {
     ).rejects.toThrow("not a RangeError");
   });
 
+  it("makes instances of classes that extend Object or a wrapper constructor", async () => {
+    const result = await check(
+      compile(
+        `class Bln extends Boolean {}\nconst Str = class extends String {\n  extra = 1;\n  get first() {\n    return this.charAt(0);\n  }\n};\nclass Trimmed extends Str {\n  trim() {\n    return "own";\n  }\n}\nclass Plain extends Object {}\nconst flag = new Bln(0);\nconst text = new Str(" ab ");\nconst trimmed = new Trimmed(" cd ");\nconst plain = new Plain(5);\nif (flag.valueOf() !== false || !(flag instanceof Bln) || !(flag instanceof Boolean) || Object.getPrototypeOf(Bln) !== Boolean) throw new Error("missed");\nif (text.trim() !== "ab" || text.length !== 4 || text.extra !== 1 || text.first !== " " || !(text instanceof String)) throw new Error("missed");\nif (trimmed.trim() !== "own" || trimmed.valueOf() !== " cd " || !(trimmed instanceof Str)) throw new Error("missed");\nif (!(plain instanceof Plain) || !(plain instanceof Object) || Object.keys(plain).length !== 0) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    const failed = await check(
+      compile(
+        `class Num extends Number {}\nconst one = new Num(1);\nif (one.valueOf() !== 2) throw new Error("not two");`,
+      ),
+    );
+    expect(failed.failure?.message).toContain("not two");
+  });
+
   it("runs the defaults that a call or a declaration certainly evaluates", async () => {
     const result = await check(
       compile(

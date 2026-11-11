@@ -91,7 +91,14 @@ export const compile = (
     .find((symbol) => symbol.name === "PropertyKey");
   const usesObjects = (node: ts.Node): boolean =>
     ts.isObjectLiteralExpression(node) ||
-    (ts.isClassLike(node) && node.heritageClauses === undefined) ||
+    (ts.isClassLike(node) &&
+      (node.heritageClauses ?? []).every((clause) =>
+        clause.types.every(
+          (type) =>
+            ts.isIdentifier(type.expression) &&
+            ["Object", "Boolean", "Number", "String"].includes(type.expression.text),
+        ),
+      )) ||
     (ts.isPropertyAccessExpression(node) &&
       ((ts.isIdentifier(node.expression) && node.expression.text === "Object") ||
         node.name.text === "hasOwnProperty")) ||

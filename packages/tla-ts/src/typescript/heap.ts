@@ -25,6 +25,7 @@ import {
   isUnresolved,
   getBinding,
   getBaseClass,
+  getBuiltInBase,
   isAmbient,
   isNullBased,
   getHeapClass,
@@ -438,13 +439,22 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
           );
     }, object);
   const base = ts.isClassLike(node) ? getBaseClass(node, context) : undefined;
-  const baseRef = base === undefined ? undefined : translateClassRef(base, scope, context);
+  const builtInBase =
+    ts.isClassLike(node) && base === undefined ? getBuiltInBase(node, context) : undefined;
+  const baseRef =
+    base !== undefined
+      ? translateClassRef(base, scope, context)
+      : builtInBase === undefined
+        ? undefined
+        : translateBuiltInValue(builtInBase, node, context);
   const basePrototype =
-    baseRef !== undefined
-      ? useJavaScript("Get", [heap, baseRef, string("prototype")], context)
-      : ts.isClassLike(node) && isNullBased(node)
-        ? identifier("Null")
-        : undefined;
+    builtInBase !== undefined
+      ? translateBuiltInValue(`${builtInBase}.prototype`, node, context)
+      : baseRef !== undefined
+        ? useJavaScript("Get", [heap, baseRef, string("prototype")], context)
+        : ts.isClassLike(node) && isNullBased(node)
+          ? identifier("Null")
+          : undefined;
   const prototype = defineMethods(
     define(
       basePrototype === undefined
@@ -578,6 +588,31 @@ const translateClassObject = (node: ts.ClassExpression, heap: Expression, contex
   );
 };
 
+// The object that a new of Boolean, Number, or String makes, or of a class that extends one, from
+// the new's first argument.
+const translateWrapperObject = (
+  node: ts.NewExpression,
+  wrapper: "Boolean" | "Number" | "String",
+  prototype: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const argument = node.arguments?.at(0);
+  const primitive =
+    wrapper === "Boolean"
+      ? argument === undefined
+        ? boolean(false)
+        : useJavaScript("ToBoolean", [translateExpression(argument, scope, context)], context)
+      : wrapper === "Number"
+        ? argument === undefined
+          ? number(0)
+          : translateToNumber(argument, node, scope, context)
+        : argument === undefined
+          ? string("")
+          : translateToString(argument, scope, context);
+  return useJavaScript("WrapperObject", [prototype, primitive], context);
+};
+
 // An instance of a heap class with its fields, before the constructor runs. An instance of a class
 // with private methods or accessors has the class's key in its private names first.
 const translateInstance = (
@@ -591,6 +626,7 @@ const translateInstance = (
     const base = ts.isClassLike(current) ? getBaseClass(current, context) : undefined;
     return base === undefined ? [current] : [...getChain(base), current];
   };
+  const builtInBase = ts.isClassLike(created) ? getBuiltInBase(created, context) : undefined;
   const members = getChain(created).flatMap((current) =>
     ts.isClassLike(current) ? [...current.members] : [],
   );
@@ -612,7 +648,9 @@ const translateInstance = (
             context,
           )
         : object,
-    identifier("EmptyObject"),
+    builtInBase === undefined || builtInBase === "Object"
+      ? identifier("EmptyObject")
+      : translateWrapperObject(node, builtInBase, identifier("Null"), scope, context),
   );
   return members.reduce<Expression>(
     (object, member) => {
@@ -813,26 +851,15 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (wrapper !== undefined && ts.isNewExpression(node)) {
     // The wrapper's constructor, which its prototype's constructor property holds.
     context.builtIns.add(wrapper);
-    const argument = node.arguments?.at(0);
-    const primitive =
-      wrapper === "Boolean"
-        ? argument === undefined
-          ? boolean(false)
-          : useJavaScript("ToBoolean", [translateExpression(argument, scope, context)], context)
-        : wrapper === "Number"
-          ? argument === undefined
-            ? number(0)
-            : translateToNumber(argument, node, scope, context)
-          : argument === undefined
-            ? string("")
-            : translateToString(argument, scope, context);
     return useJavaScript(
       "Allocate",
       [
         heap,
-        useJavaScript(
-          "WrapperObject",
-          [translateBuiltInValue(`${wrapper}.prototype`, node, context), primitive],
+        translateWrapperObject(
+          node,
+          wrapper,
+          translateBuiltInValue(`${wrapper}.prototype`, node, context),
+          scope,
           context,
         ),
       ],

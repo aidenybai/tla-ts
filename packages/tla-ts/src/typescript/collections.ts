@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import {
   type Context,
   type FunctionNode,
+  getBuiltInBase,
   getCallee,
   getParameters,
   getSymbol,
@@ -1114,9 +1115,15 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
       wrapper: undefined,
     };
   }
-  // A String, Number, or Boolean object, whose primitive the method reads.
+  // A String, Number, or Boolean object, or an instance of a class that extends one, whose
+  // primitive the method reads.
+  const symbol =
+    kind === "object" ? context.checker.getTypeAtLocation(receiver).getSymbol() : undefined;
+  const declaration = symbol?.valueDeclaration;
   const wrapper =
-    kind === "object" ? context.checker.getTypeAtLocation(receiver).getSymbol()?.name : undefined;
+    declaration !== undefined && ts.isClassLike(declaration)
+      ? getBuiltInBase(declaration, context)
+      : symbol?.name;
   const methods =
     kind === "string" || wrapper === "String"
       ? new Map([...STRING_METHODS, ...STRING_VALUE_METHODS])
