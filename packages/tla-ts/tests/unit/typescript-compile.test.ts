@@ -6635,6 +6635,58 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a typed array's methods", async () => {
+    const result = await checkModel(`
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      const sample = new Int16Array([5, -1, 5, NaN, 7]);
+      check(sample.at(-1), 7, "at");
+      check(sample.at(9), undefined, "at past");
+      check(sample.includes(-1), true, "includes");
+      check(sample.includes(5, 3), false, "includes from");
+      check(sample.indexOf(5, 1), 2, "indexOf");
+      check(sample.indexOf(9), -1, "indexOf missing");
+      check(sample.lastIndexOf(5), 2, "lastIndexOf");
+      check(sample.lastIndexOf(5, -4), 0, "lastIndexOf from");
+      check(sample.join("-"), "5--1-5-0-7", "join");
+      check(sample.fill(3, 1, -2), sample, "fill");
+      check(sample.join(), "5,3,3,0,7", "filled");
+      sample.reverse();
+      check(sample.join(), "7,0,3,3,5", "reverse");
+      const sliced = sample.slice(1, 3);
+      sliced[0] = 9;
+      check(sliced.join(), "9,3", "slice");
+      check(sample[1], 0, "slice copies");
+      check(sliced instanceof Int16Array, true, "slice kind");
+      const floats = new Float64Array([NaN, -0]);
+      check(floats.includes(NaN), true, "NaN includes");
+      check(floats.indexOf(NaN), -1, "NaN indexOf");
+      check(floats.indexOf(0), 1, "zero indexOf");
+      check(floats.join(), "NaN,0", "float join");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("throws a TypeError from a method of a typed array out of its buffer's bounds", async () => {
+    const result = await checkModel(`
+      const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+      const sample = new Int8Array(buffer, 0, 4);
+      buffer.resize(2);
+      let threw = false;
+      try {
+        sample.fill(3);
+      } catch (error) {
+        threw = error instanceof TypeError;
+      }
+      if (!threw) throw new Error("out of bounds");
+      const tracking = new Int8Array(buffer);
+      tracking.fill(6);
+      if (tracking.join() !== "6,6") throw new Error("tracking");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

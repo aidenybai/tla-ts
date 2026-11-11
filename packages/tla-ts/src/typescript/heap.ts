@@ -1539,16 +1539,33 @@ const isBufferName = (name: string): name is BufferName =>
   name === "DataView" ||
   TYPED_ARRAYS.has(name);
 
+// The methods of %TypedArray%.prototype that tla-ts runs.
+const TYPED_ARRAY_METHODS = new Set([
+  "at",
+  "includes",
+  "indexOf",
+  "lastIndexOf",
+  "join",
+  "fill",
+  "reverse",
+  "slice",
+]);
+
 const VIEW_ACCESSOR = /^[gs]et(?:Int8|Uint8|Int16|Uint16|Int32|Uint32|Float16|Float32|Float64)$/;
 
-// A DataView's get or set method, or a buffer's resize, grow, or slice, which a statement runs, as
-// each may throw.
+// A DataView's get or set method, a buffer's resize, grow, or slice, or a typed array's method,
+// which a statement runs, as each may throw.
 export const getViewCall = (node: ts.Node, context: Context) => {
   if (context.heap === undefined || !isMethodCall(node)) return undefined;
   const receiver = node.expression.expression;
   const method = node.expression.name.text;
-  const owner = context.checker.getTypeAtLocation(receiver).getSymbol()?.name;
+  const type = context.checker.getTypeAtLocation(receiver);
+  const isTypedArray = (type.isUnion() ? type.types : [type]).every((member) =>
+    TYPED_ARRAYS.has(member.getSymbol()?.name ?? ""),
+  );
+  const owner = isTypedArray ? "TypedArray" : type.getSymbol()?.name;
   const isKnown =
+    (owner === "TypedArray" && TYPED_ARRAY_METHODS.has(method)) ||
     (owner === "DataView" && VIEW_ACCESSOR.test(method)) ||
     (owner === "ArrayBuffer" && method === "resize") ||
     (owner === "SharedArrayBuffer" && method === "grow") ||

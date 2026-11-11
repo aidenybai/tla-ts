@@ -3113,6 +3113,85 @@ BufferSlice(heap, ref, start, end, isShared, constructor) ==
                                                     Undefined, isShared))
             IN Returned(made, Allocated(made))
 
+\\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
+\\* heap after them, their value, and the error they throw, if any. slice makes its typed array
+\\* through the receiver's constructor, of those that constructors holds by their element types,
+\\* where tla-ts follows only the built-in one.
+TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
+  LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
+      integer(position) == ToIntegerOrInfinity(ToNumber(argument(position)))
+      view == heap.objects[ref[Ref]]
+      length == ViewLength(heap, view)
+      clamped(index) == IF index < 0 THEN 0 ELSE IF index > length THEN length ELSE index
+      start(position) == clamped(RelativeIndex(integer(position), length))
+      end(position) ==
+        IF argument(position) = Undefined THEN length ELSE clamped(RelativeIndex(integer(position), length))
+      elements == [position \\in 1..length |-> TypedElement(heap, ref, position - 1)]
+      at == RelativeIndex(integer(1), length)
+      from ==
+        LET index == integer(2)
+        IN CASE index = NegativeInfinity -> 0
+             [] index = Infinity -> length
+             [] index < 0 -> IF length + index < 0 THEN 0 ELSE length + index
+             [] OTHER -> index
+      found(Equal(_, _)) == {index \\in from..(length - 1) : Equal(elements[index + 1], argument(1))}
+      last ==
+        LET index == IF Len(arguments) >= 2 THEN integer(2) ELSE length - 1
+        IN CASE index = NegativeInfinity -> -1
+             [] index = Infinity -> length - 1
+             [] index < 0 -> length + index
+             [] index >= length -> length - 1
+             [] OTHER -> index
+      separator == IF argument(1) = Undefined THEN "," ELSE StringOf(argument(1))
+      write(current, first, values) ==
+        IF values = <<>>
+        THEN current
+        ELSE WithBytes(current, view, view.byteOffset + first * ElementSize(view.elementType),
+                       NumbersBytes(view.elementType, values))
+      constructor == Get(heap, ref, "constructor")
+      own == constructors[view.elementType]
+      species ==
+        IF /\\ constructor \\in {Undefined, own}
+           /\\ GetterOf(heap, own, WellKnownSymbol("species"))
+                = Ref :> "get %Int8Array.[[Prototype]]%.@@species"
+        THEN own
+        ELSE Assert(FALSE, "tla-ts can't make a typed array through a constructor that a script gives")
+      made(current, kept) ==
+        LET allocated == Allocate(current, BufferObject(bufferPrototype,
+                                                        NumbersBytes(view.elementType, kept),
+                                                        Undefined, FALSE))
+            prototype == Get(allocated, species, "prototype")
+            result == Allocate(allocated, [elementType |-> view.elementType]
+                                            @@ ViewObject(prototype, Allocated(allocated), 0, Len(kept)))
+        IN Returned(result, Allocated(result))
+  IN CASE ~IsTypedArray(heap, ref) \\/ IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
+       [] method = "at" ->
+            Returned(heap, IF at \\in 0..(length - 1) THEN elements[at + 1] ELSE Undefined)
+       [] method = "includes" ->
+            Returned(heap, length > 0 /\\ found(SameValueZero) # {})
+       [] method = "indexOf" ->
+            LET indices == found(StrictEquals)
+            IN Returned(heap, IF length = 0 \\/ indices = {} THEN -1
+                              ELSE CHOOSE index \\in indices : \\A other \\in indices : index <= other)
+       [] method = "lastIndexOf" ->
+            LET indices == {index \\in 0..last : StrictEquals(elements[index + 1], argument(1))}
+            IN Returned(heap, IF length = 0 \\/ indices = {} THEN -1
+                              ELSE CHOOSE index \\in indices : \\A other \\in indices : index >= other)
+       [] method = "join" -> Returned(heap, Join([position \\in 1..length |-> StringOf(elements[position])], separator))
+       [] method = "fill" ->
+            LET number == ToNumber(argument(1))
+                first == start(2)
+                final == end(3)
+                count == IF final > first THEN final - first ELSE 0
+            IN Returned(write(heap, first, [position \\in 1..count |-> number]), ref)
+       [] method = "reverse" ->
+            Returned(write(heap, 0, [position \\in 1..length |-> elements[length + 1 - position]]), ref)
+       [] method = "slice" ->
+            LET first == start(1)
+                final == end(2)
+            IN made(heap, IF final > first THEN SubSeq(elements, first + 1, final) ELSE <<>>)
+       [] OTHER -> Assert(FALSE, "tla-ts can't run this typed array method")
+
 SetProperty(heap, ref, key, value) ==
   LET accessor == AccessorOf(heap, ref, key)
       object == PropertiesOf(heap, ref, key)

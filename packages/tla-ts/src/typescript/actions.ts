@@ -1353,29 +1353,54 @@ export const translateCallStatement = (
     const method = viewCall.method;
     const type = string(method.slice(3));
     const isShared = boolean(viewCall.owner === "SharedArrayBuffer");
+    const prototypePath =
+      viewCall.owner === "TypedArray"
+        ? "%Int8Array.prototype.[[Prototype]]%"
+        : `${viewCall.owner}.prototype`;
     const operation =
-      viewCall.owner === "DataView"
-        ? method.startsWith("get")
-          ? useJavaScript("DataViewGet", [heap, ref, type, values[0], values[1]], context)
-          : useJavaScript("DataViewSet", [heap, ref, type, ...values], context)
-        : method === "slice"
-          ? useJavaScript(
-              "BufferSlice",
-              [
-                heap,
-                ref,
-                values[0],
-                values[1],
-                isShared,
-                translateBuiltInValue(
-                  viewCall.owner === "SharedArrayBuffer" ? "SharedArrayBuffer" : "ArrayBuffer",
-                  expression,
-                  context,
-                ),
-              ],
-              context,
-            )
-          : useJavaScript("Resize", [heap, ref, values[0], isShared], context);
+      viewCall.owner === "TypedArray"
+        ? useJavaScript(
+            "TypedArrayMethod",
+            [
+              heap,
+              ref,
+              string(method),
+              tuple(
+                viewCall.values.map((value) => translateExpression(value, path.scope, context)),
+              ),
+              translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+              record(
+                "Record",
+                [...TYPED_ARRAYS.values()].map((type) => ({
+                  name: type,
+                  value: translateBuiltInValue(`${type}Array`, expression, context),
+                })),
+              ),
+            ],
+            context,
+          )
+        : viewCall.owner === "DataView"
+          ? method.startsWith("get")
+            ? useJavaScript("DataViewGet", [heap, ref, type, values[0], values[1]], context)
+            : useJavaScript("DataViewSet", [heap, ref, type, ...values], context)
+          : method === "slice"
+            ? useJavaScript(
+                "BufferSlice",
+                [
+                  heap,
+                  ref,
+                  values[0],
+                  values[1],
+                  isShared,
+                  translateBuiltInValue(
+                    viewCall.owner === "SharedArrayBuffer" ? "SharedArrayBuffer" : "ArrayBuffer",
+                    expression,
+                    context,
+                  ),
+                ],
+                context,
+              )
+            : useJavaScript("Resize", [heap, ref, values[0], isShared], context);
     const run = bindOnce(
       path,
       changeName,
@@ -1397,7 +1422,7 @@ export const translateCallStatement = (
       ifThenElse(
         useJavaScript(
           "HoldsBuiltIn",
-          [heap, ref, string(method), string(`${viewCall.owner}.prototype.${method}`)],
+          [heap, ref, string(method), string(`${prototypePath}.${method}`)],
           context,
         ),
         viewCall.owner === "DataView"
@@ -1410,9 +1435,7 @@ export const translateCallStatement = (
         leaf(
           apply("Assert", [
             boolean(false),
-            string(
-              `tla-ts can't call ${viewCall.owner}.prototype.${method} where a script replaced it`,
-            ),
+            string(`tla-ts can't call ${prototypePath}.${method} where a script replaced it`),
           ]),
         ),
       ),
