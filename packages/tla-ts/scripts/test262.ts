@@ -220,8 +220,8 @@ const isDescriptor = (type: ts.Type | undefined) =>
 
 // Types for the objects that test262 builds up and describes, which TypeScript can't infer:
 // a descriptor that is possibly undefined, an object given properties after it's made, a
-// descriptor whose attributes aren't booleans, an object that Object.create makes, and a parameter
-// or variable with no type to infer. Each only adds types, so Node runs the same program.
+// descriptor whose attributes aren't booleans, an object that Object.create or Object.fromEntries
+// makes, and a parameter or variable with no type to infer. Each only adds types, so Node runs the same program.
 const isKeyType = (type: ts.Type) =>
   (type.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.ESSymbolLike)) !==
   0;
@@ -502,7 +502,7 @@ const loosen = () => {
       node.type === undefined &&
       initializer !== undefined &&
       ts.isCallExpression(initializer) &&
-      initializer.expression.getText() === "Object.create"
+      ["Object.create", "Object.fromEntries"].includes(initializer.expression.getText())
     ) {
       edits.set(node.name.getEnd(), ": { [key: string | symbol]: unknown }");
     }

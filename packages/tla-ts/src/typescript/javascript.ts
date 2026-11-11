@@ -1437,6 +1437,25 @@ DefineProperties(heap, ref, properties) ==
                    isRangeError |-> applied.isRangeError]
              ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
+LOCAL EntryPart(heap, entry, position) ==
+  CASE IsRef(entry) -> Get(heap, entry, ToString(position - 1))
+    [] TypeOf(entry) = "object" /\\ entry # Null /\\ SubSeq(ToString(entry), 1, 2) = "<<" ->
+         IF position <= Len(entry) THEN entry[position] ELSE Undefined
+    [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of Object.fromEntries")
+
+RECURSIVE PutEntries(_, _, _)
+PutEntries(heap, object, entries) ==
+  IF entries = <<>>
+  THEN object
+  ELSE PutEntries(heap,
+                  Put(object, PropertyKey(EntryPart(heap, Head(entries), 1)),
+                      EntryPart(heap, Head(entries), 2)),
+                  Tail(entries))
+
+\\* Object.fromEntries of an array of entries, each of which holds its key at "0" and its value at
+\\* "1". A later entry's value replaces an earlier one's, where the key keeps its place.
+FromEntries(heap, entries) == Allocate(heap, PutEntries(heap, EmptyObject, entries))
+
 \\* Object.create as a change, which fails where it throws a TypeError.
 CreateChange(heap, prototype, properties) ==
   LET created == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype])

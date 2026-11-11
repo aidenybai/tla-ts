@@ -61,6 +61,7 @@ import {
   isCreation,
   isDescription,
   isElementDescription,
+  isFromEntries,
   isSymbolCall,
   isNewObject,
   getNewWrapper,
@@ -658,13 +659,17 @@ const translateCall = (
       return boolean(method === "isExtensible");
     }
   }
-  if (isCreation(node, context)) {
+  const isFromEntriesCall = isFromEntries(node, context);
+  if (isCreation(node, context) || isFromEntriesCall) {
     const contextual = context.checker.getContextualType(node);
     const isTyped =
       contextual !== undefined &&
       ((contextual.flags & ts.TypeFlags.Unknown) !== 0 || isHeapType(contextual, node, context));
     if (!isTyped) {
-      throw new TlaTypeScriptError("Give the object Object.create makes an object type", node);
+      throw new TlaTypeScriptError(
+        `Give the object Object.${isFromEntriesCall ? "fromEntries" : "create"} makes an object type`,
+        node,
+      );
     }
     const created = scope.allocated.get(node);
     if (created === undefined) {

@@ -1318,6 +1318,17 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't call valueOf or toString");
   });
 
+  it("makes an object from an array's entries", async () => {
+    const result = await checkModel(`
+      const entries = [["z", 1], ["y", 2], ["x", 3], ["y", 4]];
+      const made: { [key: string]: unknown } = Object.fromEntries(entries);
+      const names = Object.getOwnPropertyNames(made);
+      if (made.z !== 1 || made.y !== 4 || names.join() !== "z,y,x") throw new Error("entries");
+      if (Object.getPrototypeOf(made) !== Object.prototype) throw new Error("prototype");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("throws the TypeError of an Object.create that nothing reads", async () => {
     const result = await checkModel(`
       const properties = { a: { get: null } } as unknown as PropertyDescriptorMap;

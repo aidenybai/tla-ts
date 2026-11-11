@@ -854,6 +854,13 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         );
     return useJavaScript("Allocate", [heap, described], context);
   }
+  if (ts.isCallExpression(node) && isFromEntries(node, context)) {
+    return useJavaScript(
+      "FromEntries",
+      [heap, translateExpression(node.arguments[0], scope, context)],
+      context,
+    );
+  }
   if (!ts.isCallExpression(node) || !isCreation(node, context)) {
     throw new TlaTypeScriptError("Unsupported object", node);
   }
@@ -928,6 +935,14 @@ export const isCreation = (node: ts.Node, context: Context) => {
   );
 };
 
+// Object.fromEntries of an array that tla-ts keeps outside the heap.
+export const isFromEntries = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  node.expression.expression.getText() === "Object" &&
+  node.expression.name.text === "fromEntries" &&
+  node.arguments.length > 0 &&
+  getKind(node.arguments[0], context) === "sequence";
+
 // A call of Symbol, which changes the heap as an allocation does, to record the symbol it makes.
 export const isSymbolCall = (node: ts.Node, context: Context) =>
   ts.isCallExpression(node) &&
@@ -970,7 +985,10 @@ export const translateAllocatedValue = (
 export const isAllocation = (node: ts.Node, context: Context) =>
   getBinding(node, context) !== undefined ||
   (ts.isCallExpression(node) &&
-    (isDescription(node, context) || isCreation(node, context) || isSymbolCall(node, context))) ||
+    (isDescription(node, context) ||
+      isCreation(node, context) ||
+      isFromEntries(node, context) ||
+      isSymbolCall(node, context))) ||
   isNewObject(node, context) ||
   getNewWrapper(node, context) !== undefined;
 
