@@ -1,9 +1,10 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="packages/website/public/logo-dark.svg">
-  <img src="packages/website/public/logo-light.svg" alt="tla-ts logo" width="54" height="54">
-</picture>
-
-# tla-ts
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="packages/website/public/logo-dark.svg">
+    <img src="packages/website/public/logo-light.svg" width="36" alt="" valign="middle" />
+  </picture>
+  tla-ts
+</h1>
 
 [![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 [![downloads](https://img.shields.io/npm/dt/tla-ts.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
