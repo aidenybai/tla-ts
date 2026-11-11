@@ -4316,6 +4316,7 @@ const rejectCatchRedeclaration = (declaration: ts.VariableDeclaration) => {
 // Binds each declared local to a LET definition. A let can change later, and a const can't.
 // Whether a function, or one it calls, makes or reads objects, which only statements can do.
 const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
+  if (ts.isTypeNode(node)) return false;
   if (ts.isObjectLiteralExpression(node) || isAllocation(node, context)) return true;
   const isRead =
     (ts.isIdentifier(node) && getKind(node, context) === "object") ||
