@@ -1241,6 +1241,19 @@ describe("errors", () => {
     expect(() => compile(source)).toThrow("items would share an object that changes in place");
   });
 
+  it.each([
+    [
+      "an array that a heap object holds and that changes through it",
+      "const run = () => {\n  const items: number[] = [];\n  const wrapped = { inner: items };\n  wrapped.inner.push(1);\n  return items.length;\n};\nlet size = run();",
+    ],
+    [
+      "an array that a function puts in a heap object",
+      "const wrap = (inner: number[]) => ({ inner });\nconst run = () => {\n  const items: number[] = [];\n  const wrapped = wrap(items);\n  wrapped.inner.push(1);\n  return items.length;\n};\nlet size = run();",
+    ],
+  ])("rejects %s, as changing it would show through the other name", (_, source) => {
+    expect(() => compile(source)).toThrow("items would share an object that changes in place");
+  });
+
   it("returns a local that a function changes, as the caller holds its only name", async () => {
     const result = await checkModel(`
       const build = (size: number) => {
@@ -1939,7 +1952,9 @@ describe("errors", () => {
       const isOrdered = first <= second;
       if (!isOrdered) throw new Error("ordered");
     `);
-    expect(wide.failure?.message).toContain("tla-ts can't tell the code of a character outside ASCII");
+    expect(wide.failure?.message).toContain(
+      "tla-ts can't tell the code of a character outside ASCII",
+    );
   });
 
   it("changes the case of ASCII letters", async () => {

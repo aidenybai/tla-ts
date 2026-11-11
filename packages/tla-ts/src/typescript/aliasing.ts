@@ -238,9 +238,13 @@ const getEscapes = (
   }
   if (ts.isArrayLiteralExpression(parent)) return getFrom(parent, getContainer(depths));
   if (ts.isPropertyAssignment(parent) || ts.isShorthandPropertyAssignment(parent)) {
-    return parent.name === node && ts.isPropertyAssignment(parent)
-      ? []
-      : getFrom(parent.parent, getContainer(depths));
+    if (parent.name === node && ts.isPropertyAssignment(parent)) return [];
+    const literal = parent.parent;
+    // A heap object's fields are part of the heap, as where an assignment sets one.
+    if (context.heap !== undefined && getKind(literal, context) === "object") {
+      return land([context.heap], depths);
+    }
+    return getFrom(literal, getContainer(depths));
   }
   if (ts.isSpreadElement(parent) || ts.isSpreadAssignment(parent)) {
     return getFrom(parent.parent, getCopy(depths));
