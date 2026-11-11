@@ -102,16 +102,6 @@ const getSpanRows = (
   return mergeRows([...range.getClientRects()], lookup.origin);
 };
 
-const getLocationRows = (lookup: LineLookup, loc: ViewLocation): Box[] => {
-  const isSingleLine = loc.start.line === loc.end.line;
-  return getSpanRows(
-    lookup,
-    loc.start.line,
-    loc.start.column,
-    isSingleLine ? loc.end.column : Number.MAX_SAFE_INTEGER,
-  );
-};
-
 export const getRangeRows = (lookup: LineLookup, loc: ViewLocation): Box[] =>
   Array.from(
     { length: loc.end.line - loc.start.line + 1 },
@@ -124,9 +114,6 @@ export const getRangeRows = (lookup: LineLookup, loc: ViewLocation): Box[] =>
       line === loc.end.line ? loc.end.column : Number.MAX_SAFE_INTEGER,
     ),
   );
-
-export const getLocationBox = (lookup: LineLookup, loc: ViewLocation): Box | null =>
-  getBoundingBox(getLocationRows(lookup, loc));
 
 export const getLinesBox = (lookup: LineLookup, loc: ViewLocation): Box | null => {
   const first = getLineBox(lookup, loc.start.line);

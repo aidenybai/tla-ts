@@ -51,8 +51,11 @@ export const useViewerStore = <Selected>(
   selector: (state: ViewerStoreState) => Selected,
 ): Selected => useStore(useViewerStoreApi(), selector);
 
-export const useIsHovered = (nodeId: string): boolean =>
-  useViewerStore((state) => (state.hoveredNodeId ?? state.selectedNodeId) === nodeId);
+export const useIsHovered = (nodeIds: string[]): boolean =>
+  useViewerStore((state) => {
+    const nodeId = state.hoveredNodeId ?? state.selectedNodeId;
+    return nodeId !== null && nodeIds.includes(nodeId);
+  });
 
 export const useFocusedNode = (): GraphNode | null =>
   useViewerStore((state) => {

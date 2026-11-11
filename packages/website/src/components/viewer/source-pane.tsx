@@ -6,7 +6,8 @@ import { useHighlighter } from "@/hooks/use-highlighter";
 import { useTokenBoxes, type PlacedToken } from "@/hooks/use-token-boxes";
 import { revealLine, type Box } from "@/lib/positions";
 import { getFileTitle } from "@/lib/source";
-import type { GraphNode, Pane } from "@/model";
+import { getInnermost, getMarks, type Mark } from "@/lib/marks";
+import type { Pane } from "@/model";
 import { getCausalNodeIds } from "@/lib/graph";
 import { useViewerStore } from "@/store/viewer";
 import { useViewer } from "./context";
@@ -15,13 +16,8 @@ import { TokenMark } from "./token-mark";
 const contains = (box: Box, x: number, y: number): boolean =>
   x >= box.x - 2 && x <= box.x + box.width + 2 && y >= box.y && y <= box.y + box.height;
 
-// A multi-line region is under the pointer only at its anchor, such as the name it defines.
 const findTokenAt = (tokens: PlacedToken[], x: number, y: number): PlacedToken | null =>
-  tokens.find((token) =>
-    token.isMultiLine
-      ? token.anchorBox !== null && contains(token.anchorBox, x, y)
-      : token.rows.some((row) => contains(row, x, y)),
-  ) ?? null;
+  getInnermost(tokens.filter((token) => token.rows.some((row) => contains(row, x, y))));
 
 const getTokenAtEvent = (wrapper: HTMLElement, tokens: PlacedToken[], event: MouseEvent) => {
   const origin = wrapper.getBoundingClientRect();
@@ -38,14 +34,14 @@ const usePointerTracking = (
     const wrapper = wrapperRef.current;
     if (!wrapper || event.buttons !== 0) return;
     const token = getTokenAtEvent(wrapper, tokens, event);
-    if (token) hover(token.node.id);
+    if (token) hover(token.mark.nodes[0].id);
     else leave();
   };
 };
 
-const useColoredNodes = (pane: Pane): GraphNode[] => {
+const useMarks = (pane: Pane): Mark[] => {
   const { view, colorByNodeId } = useViewer();
-  return view.nodes.filter((node) => node.pane === pane && colorByNodeId.has(node.id));
+  return getMarks(view.nodes.filter((node) => node.pane === pane && colorByNodeId.has(node.id)));
 };
 
 // Selecting a node brings its first linked line in this pane into view.
@@ -68,7 +64,9 @@ const useRevealLinked = (wrapperRef: RefObject<HTMLDivElement | null>, pane: Pan
 const getRowKey = (row: Box): string => `${row.x}-${row.y}-${row.width}`;
 
 const getFocusRows = (tokens: PlacedToken[], nodeIds: Set<string> | null): Box[] => {
-  const rows = tokens.filter((token) => nodeIds?.has(token.node.id)).flatMap((token) => token.rows);
+  const rows = tokens
+    .filter((token) => token.mark.nodes.some((node) => nodeIds?.has(node.id)))
+    .flatMap((token) => token.rows);
   return [...new Map(rows.map((row) => [getRowKey(row), row])).values()];
 };
 
@@ -118,9 +116,9 @@ const Overlay = ({ tokens }: { tokens: PlacedToken[] }) => {
       <FocusScrim tokens={tokens} />
       {tokens.map((token) => (
         <TokenMark
-          key={token.node.id}
+          key={token.mark.nodes[0].id}
           {...token}
-          color={colorByNodeId.get(token.node.id) ?? "transparent"}
+          color={colorByNodeId.get(token.mark.nodes[0].id) ?? "transparent"}
         />
       ))}
     </svg>
@@ -139,7 +137,7 @@ const CodeView = ({ pane, fileName, source }: CodeViewProps) => {
   const [renderCount, setRenderCount] = useState(0);
   const options = useFileOptions(() => setRenderCount((count) => count + 1));
   const file = { name: getFileTitle(fileName), contents: source };
-  const tokens = useTokenBoxes(wrapperRef, useColoredNodes(pane), renderCount);
+  const tokens = useTokenBoxes(wrapperRef, useMarks(pane), renderCount);
   const trackPointer = usePointerTracking(wrapperRef, tokens);
   const leave = useViewerStore((state) => state.leave);
   const select = useViewerStore((state) => state.select);
@@ -153,7 +151,9 @@ const CodeView = ({ pane, fileName, source }: CodeViewProps) => {
       onMouseLeave={leave}
       onClick={(event) => {
         const wrapper = wrapperRef.current;
-        const nodeId = wrapper ? getTokenAtEvent(wrapper, tokens, event)?.node.id : undefined;
+        const nodeId = wrapper
+          ? getTokenAtEvent(wrapper, tokens, event)?.mark.nodes[0].id
+          : undefined;
         // A second click on the selected token, or a click on empty space, clears the selection.
         select(nodeId === undefined || nodeId === selectedNodeId ? null : nodeId);
       }}
