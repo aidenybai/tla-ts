@@ -15,7 +15,7 @@ export const buttonVariants = cva(
         outline:
           "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground enabled:active:scale-[0.97]",
         primary:
-          "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.97] disabled:opacity-60",
+          "bg-input text-foreground hover:bg-input/80 active:scale-[0.97] disabled:opacity-60",
         success: cn(
           RAISED_CLASS_NAME,
           "border-[oklch(48%_0.11_152)] from-[oklch(66%_0.13_152)] to-[oklch(57%_0.13_152)] dark:border-[oklch(40%_0.1_152)] dark:from-[oklch(58%_0.13_152)] dark:to-[oklch(49%_0.12_152)]",
