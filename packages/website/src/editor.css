@@ -84,6 +84,45 @@
   color-scheme: dark;
 }
 
+/* The trace table also serves the home page, so it names the home page's colors. Here they take the
+   viewer's tokens, which follow the theme. */
+@theme inline {
+  --color-white: var(--ground);
+  --color-gray-200: var(--well);
+  --color-gray-300: var(--rule);
+  --color-gray-900: var(--muted);
+  --color-gray-1000: var(--muted);
+  --color-gray-1200: var(--ink);
+  --color-red-50: color-mix(in oklab, var(--alarm) 8%, transparent);
+  --color-red-100: color-mix(in oklab, var(--alarm) 18%, transparent);
+  --color-red-500: var(--alarm);
+  --color-red-600: var(--alarm);
+  --color-red-700: var(--alarm);
+  --color-amber-100: color-mix(in oklab, rgb(250 192 61) 30%, transparent);
+  --animate-shake: shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  @keyframes shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    15% {
+      transform: translateX(-10px);
+    }
+    30% {
+      transform: translateX(8px);
+    }
+    45% {
+      transform: translateX(-6px);
+    }
+    60% {
+      transform: translateX(4px);
+    }
+    75% {
+      transform: translateX(-2px);
+    }
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
