@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import { getAssignedRoot } from "./actions";
 import { type Context, getSymbol } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import type { Model } from "./model";
@@ -33,7 +34,8 @@ export interface Span {
 
 export type RegionKind =
   | "variable"
-  | "reference"
+  | "read"
+  | "write"
   | "init"
   | "action"
   | "next"
@@ -133,6 +135,10 @@ const getRegions = (parts: Part[]) => {
   return regions;
 };
 
+const isAssigned = (node: ts.Node, ancestor: ts.Node | undefined): boolean =>
+  ancestor !== undefined &&
+  (getAssignedRoot(ancestor) === node || isAssigned(node, ancestor.parent));
+
 // Each use of a state variable in the TypeScript, linked to where the module declares it.
 const getReferences = (node: ts.Node, declared: Map<string, Span>, context: Context): Region[] => {
   const isReference =
@@ -143,7 +149,14 @@ const getReferences = (node: ts.Node, declared: Map<string, Span>, context: Cont
   if (name === undefined || output === undefined) {
     return node.getChildren().flatMap((child) => getReferences(child, declared, context));
   }
-  return [{ kind: "reference", name, source: { start: node.getStart(), end: node.end }, output }];
+  return [
+    {
+      kind: isAssigned(node, node.parent) ? "write" : "read",
+      name,
+      source: { start: node.getStart(), end: node.end },
+      output,
+    },
+  ];
 };
 
 export const emit = (

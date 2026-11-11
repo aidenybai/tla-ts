@@ -46,8 +46,10 @@ const Hovered = () => {
   const hovered = useHighlight().hovered;
   const regions = compilation?.spec.regions.filter((region) => region.name === hovered) ?? [];
   const region =
-    regions.find((candidate) => candidate.kind !== "reference" && candidate.kind !== "next") ??
-    regions[0];
+    regions.find(
+      (candidate) =>
+        candidate.kind !== "read" && candidate.kind !== "write" && candidate.kind !== "next",
+    ) ?? regions[0];
   if (compilation === undefined || region === undefined) return null;
   return (
     <span className="truncate">

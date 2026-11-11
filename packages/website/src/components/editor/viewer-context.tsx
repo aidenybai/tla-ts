@@ -73,15 +73,15 @@ const getLinks = (compilation: Compilation | undefined, source: string) => {
       compilation.input === source
         ? spec.regions.map((region) => getLink(region, region.source))
         : [],
-    // A reference region's output is the declaration, so the module's own uses come from its text.
+    // A read or write region's output is the declaration, so the module's own uses come from its text.
     outputLinks: [
       ...spec.regions
-        .filter((region) => region.kind !== "reference")
+        .filter((region) => region.kind !== "read" && region.kind !== "write")
         .map((region) => getLink(region, region.output)),
       ...getNameLinks(
         spec.source,
         getTokens(spec.source, "tla"),
-        new Map(variables.map((region) => [region.name, "reference" as const])),
+        new Map(variables.map((region) => [region.name, "read" as const])),
       ).filter((link) => !declared.has(link.start)),
     ],
     configLinks: getNameLinks(

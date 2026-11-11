@@ -456,31 +456,36 @@ const getRoot = (node: ts.Expression): ts.Expression => {
     : node;
 };
 
+// The variable or other root expression that a node assigns, increments, or mutates in place.
+export const getAssignedRoot = (node: ts.Node) => {
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return getRoot(node.left);
+  }
+  if (
+    (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
+    INCREMENT_OPERATORS.has(node.operator)
+  ) {
+    return getRoot(node.operand);
+  }
+  return isMethodCall(node) && MUTATING_METHODS.has(node.expression.name.text)
+    ? getRoot(node.expression.expression)
+    : undefined;
+};
+
 // Whether a function assigns a state variable, directly or through a helper it calls.
 export const writesState = (
   node: ts.Node,
   context: Context,
   visited = new Set<ts.Node>(),
 ): boolean => {
-  const isStateRoot = (target: ts.Expression) => {
-    const root = getRoot(target);
-    const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
-    return symbol !== undefined && context.variables.has(symbol);
-  };
-  const isAssignment =
-    ts.isBinaryExpression(node) &&
-    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-    isStateRoot(node.left);
-  const isUpdate =
-    (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
-    INCREMENT_OPERATORS.has(node.operator) &&
-    isStateRoot(node.operand);
-  const isMutation =
-    isMethodCall(node) &&
-    MUTATING_METHODS.has(node.expression.name.text) &&
-    isStateRoot(node.expression.expression);
-  if (isAssignment || isUpdate || isMutation) return true;
+  const root = getAssignedRoot(node);
+  const symbol =
+    root !== undefined && ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+  if (symbol !== undefined && context.variables.has(symbol)) return true;
   if (ts.isCallExpression(node)) {
     const helper = getTopLevelDeclaration(getSymbol(node.expression, context.checker));
     if (helper !== undefined && !visited.has(helper)) {

@@ -138,7 +138,7 @@
     background-color: rgb(var(--region) / var(--alpha));
     transition: background-color 120ms ease-out;
   }
-  .region:is([data-kind="variable"], [data-kind="reference"], [data-chip]) {
+  .region:is([data-kind="variable"], [data-kind="read"], [data-kind="write"], [data-chip]) {
     --alpha: 0.3;
     border-radius: 2px;
   }
@@ -148,7 +148,12 @@
   .region[data-active] {
     --alpha: 0.32;
   }
-  .region[data-active]:is([data-kind="variable"], [data-kind="reference"], [data-chip]) {
+  .region[data-active]:is(
+      [data-kind="variable"],
+      [data-kind="read"],
+      [data-kind="write"],
+      [data-chip]
+    ) {
     --alpha: 0.55;
     box-shadow: 0 0 0 1px rgb(var(--region));
   }
