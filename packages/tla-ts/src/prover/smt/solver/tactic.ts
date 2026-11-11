@@ -331,7 +331,7 @@ const NNF_DESCRS = getDescrs("nnf", [
   ["mode", PARAM_SYMBOL, "skolem", true],
   ["max_memory", PARAM_UINT, UINT_MAX, true],
   ["sk_hack", PARAM_BOOL, false],
-  ["ignore_labels", PARAM_BOOL, false],
+  ["ignore_labels", PARAM_BOOL, false, true],
 ]);
 
 const TSEITIN_DESCRS = getDescrs("", [
@@ -347,7 +347,7 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   const mode = NNF_MODES.get(String(params.get("mode") ?? "skolem"));
   if (mode === undefined) throw new SmtUnsupportedError("an invalid NNF mode");
   const names = new DefinedNames(manager);
-  const nnf = new Nnf(manager, names, mode);
+  const nnf = new Nnf(manager, names, mode, getBool(params, "ignore_labels", false));
   const definitions = new RefVector(manager);
   const size = goal.forms.size;
   for (let index = 0; !goal.isInconsistent && index < size; index++) {

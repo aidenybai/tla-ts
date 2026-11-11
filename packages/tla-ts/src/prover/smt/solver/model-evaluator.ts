@@ -3,6 +3,7 @@ import { SmtUnsupportedError } from "../../../errors";
 import { mkArrayApp } from "./array-decl-plugin";
 import {
   FAMILY_ARITH,
+  FAMILY_LABEL,
   FAMILY_ARRAY,
   FAMILY_USER,
   KIND_APP,
@@ -105,6 +106,7 @@ export class ModelEvaluator extends RewriterTpl {
       const reduced = this.mkArithAndCore(args);
       if (reduced !== undefined) return reduced;
     }
+    if (family === FAMILY_LABEL && args.length === 1) return args[0];
     const rewritten = this.rewriter.reduceAppCore(decl, args);
     const reduced =
       rewritten === -1 && family === FAMILY_ARITH

@@ -23,6 +23,8 @@ import {
   OP_MUL,
   OP_NUM,
   OP_OR,
+  OP_LABEL,
+  OP_LABEL_LIT,
   OP_PATTERN,
   OP_XOR,
   SORT_INT,
@@ -428,6 +430,19 @@ const getSharedTerms = (manager: AstManager, root: number) => {
   return shared;
 };
 
+const formatLabels = (isPositive: boolean, names: string[], format: Format) =>
+  names.length === 0
+    ? format
+    : mkSeq1(
+        [
+          format,
+          ...names.map((name) =>
+            mkCompose(mkText(isPositive ? ":lblpos " : ":lblneg "), mkText(getQuotedName(name))),
+          ),
+        ],
+        "!",
+      );
+
 const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
   const options = environment.options;
   const varNames: string[] = [];
@@ -456,9 +471,10 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
     const chars = manager.getString(expr);
     if (chars !== undefined) return mkText(formatZstring(chars));
     const fpValue = getFpNumeral(manager, expr);
-    return fpValue === undefined
-      ? formatDeclName(manager.decls[expr])
-      : formatFpNumeral(options, fpValue);
+    if (fpValue !== undefined) return formatFpNumeral(options, fpValue);
+    return manager.getOp(expr) === OP_LABEL_LIT
+      ? formatLabels(true, manager.getLabelNames(manager.decls[expr]), mkText("true"))
+      : formatDeclName(manager.decls[expr]);
   };
 
   const formatExpr = (root: number) => {
@@ -591,20 +607,23 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
       const declName = getDeclName(manager, decl);
       const nameLength =
         !environment.isClashing(decl) && declName.startsWith("(") ? Infinity : declName.length;
+      const op = manager.getOp(frame.expr);
       const format =
-        manager.getOp(frame.expr) === OP_PATTERN
-          ? mkSeq5(args)
-          : mkGroup(
-              mkCompose(
-                mkIndent(1, mkCompose(mkText("("), name)),
-                nameLength > MAX_INDENT
-                  ? mkIndent(SMALL_INDENT, mkCompose(mkSeq(args), mkText(")")))
-                  : mkIndent(
-                      nameLength + 2,
-                      mkCompose(mkText(" "), args[0], mkSeq(args.slice(1)), mkText(")")),
-                    ),
-              ),
-            );
+        op === OP_LABEL
+          ? formatLabels(manager.isLabelPositive(decl), manager.getLabelNames(decl), args[0])
+          : op === OP_PATTERN
+            ? mkSeq5(args)
+            : mkGroup(
+                mkCompose(
+                  mkIndent(1, mkCompose(mkText("("), name)),
+                  nameLength > MAX_INDENT
+                    ? mkIndent(SMALL_INDENT, mkCompose(mkSeq(args), mkText(")")))
+                    : mkIndent(
+                        nameLength + 2,
+                        mkCompose(mkText(" "), args[0], mkSeq(args.slice(1)), mkText(")")),
+                      ),
+                ),
+              );
       const info = { level: 0, weight: 1, depth: 1 };
       for (const argInfo of infos.slice(frame.start)) {
         info.level = Math.max(info.level, argInfo.level);

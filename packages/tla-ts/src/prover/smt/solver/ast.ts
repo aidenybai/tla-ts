@@ -29,6 +29,7 @@ export const FAMILY_DATATYPE = 7;
 export const FAMILY_FPA = 8;
 export const FAMILY_CHAR = 9;
 export const FAMILY_SEQ = 10;
+export const FAMILY_LABEL = 11;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -302,6 +303,9 @@ export const OP_CHAR_TO_INT = CHAR_OP_BASE + 2;
 export const OP_CHAR_TO_BV = CHAR_OP_BASE + 3;
 export const OP_CHAR_FROM_BV = CHAR_OP_BASE + 4;
 export const OP_CHAR_IS_DIGIT = CHAR_OP_BASE + 5;
+const LABEL_OP_BASE = 700;
+export const OP_LABEL = LABEL_OP_BASE;
+export const OP_LABEL_LIT = LABEL_OP_BASE + 1;
 
 // The number of elements of a sort, with -1 for an infinite sort and -2 for a very big one.
 export const SORT_SIZE_INFINITE = -1n;
@@ -405,6 +409,7 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
 
 // Z3's family ids and decl kinds, which its AST hashes include.
 const Z3_BASIC_FAMILY = 0;
+const Z3_LABEL_FAMILY = 1;
 const Z3_PATTERN_FAMILY = 2;
 const Z3_MODEL_VALUE_FAMILY = 3;
 const Z3_USER_SORT_FAMILY = 4;
@@ -584,7 +589,8 @@ const hasOwnDeclHash = (family: number) =>
   family === FAMILY_DATATYPE ||
   family === FAMILY_FPA ||
   family === FAMILY_CHAR ||
-  family === FAMILY_SEQ;
+  family === FAMILY_SEQ ||
+  family === FAMILY_LABEL;
 
 export class AstManager {
   // The tables of the expressions are typed arrays indexed by expression, which the collector does
@@ -610,6 +616,7 @@ export class AstManager {
   // One more than the largest free de Bruijn index, so 0 means the expression is ground.
   freeVarBounds = new Int32Array(1024);
   hasQuantifierFlags = new Uint8Array(1024);
+  hasLabelFlags = new Uint8Array(1024);
   depths = new Int32Array(1024);
   // Z3's hash of each expression, which orders Z3's hash tables.
   hashes = new Uint32Array(1024);
@@ -642,6 +649,10 @@ export class AstManager {
   private fpSorts = new Map<string, number>();
   private rmSort = -1;
   private fpaDecls = new Map<string, number>();
+  private labelDecls = new Map<string, number>();
+  // The names of the labels, which the parameters of a label declaration index.
+  private labelNames: string[] = [];
+  private labelNameIds = new Map<string, number>();
   private fpValues: Mpf[] = [];
   private fpValueIds = new Map<string, number>();
   private charSort = -1;
@@ -1878,6 +1889,7 @@ export class AstManager {
       this.values = grow(this.values);
       this.freeVarBounds = grow(this.freeVarBounds);
       this.hasQuantifierFlags = grow(this.hasQuantifierFlags);
+      this.hasLabelFlags = grow(this.hasLabelFlags);
       this.depths = grow(this.depths);
       this.hashes = grow(this.hashes);
       this.ids = grow(this.ids);
@@ -1905,15 +1917,18 @@ export class AstManager {
     this.values[id] = value;
     let freeVarBound = kind === KIND_VAR ? value + 1 : 0;
     let hasQuantifier = kind === KIND_QUANTIFIER;
+    let hasLabel = kind === KIND_APP && this.funcDecls[decl].op === OP_LABEL;
     let depth = 1;
     for (let index = 0; index < args.length; index++) {
       const arg = args[index];
       if (this.freeVarBounds[arg] > freeVarBound) freeVarBound = this.freeVarBounds[arg];
       if (this.hasQuantifierFlags[arg]) hasQuantifier = true;
+      if (this.hasLabelFlags[arg]) hasLabel = true;
       if (this.depths[arg] + 1 > depth) depth = this.depths[arg] + 1;
     }
     this.freeVarBounds[id] = freeVarBound;
     this.hasQuantifierFlags[id] = hasQuantifier ? 1 : 0;
+    this.hasLabelFlags[id] = hasLabel ? 1 : 0;
     this.depths[id] = depth;
     return id;
   }
@@ -2164,6 +2179,67 @@ export class AstManager {
     });
     this.registerNode(id);
     return id;
+  }
+
+  // A label takes its polarity and names as the parameters of its declaration, and a label literal
+  // takes its names.
+  mkLabel(isPositive: boolean, names: string[], expr: number) {
+    return this.mkApp(this.mkLabelDecl(OP_LABEL, isPositive, names), [expr], SORT_BOOL);
+  }
+
+  mkLabelLit(names: string[]) {
+    return this.mkApp(this.mkLabelDecl(OP_LABEL_LIT, true, names), [], SORT_BOOL);
+  }
+
+  private mkLabelDecl(op: number, isPositive: boolean, names: string[]) {
+    const nameIds = names.map((name) => {
+      const existing = this.labelNameIds.get(name);
+      if (existing !== undefined) return existing;
+      this.labelNames.push(name);
+      this.labelNameIds.set(name, this.labelNames.length - 1);
+      return this.labelNames.length - 1;
+    });
+    const parameters = op === OP_LABEL ? [isPositive ? 1 : 0, ...nameIds] : nameIds;
+    const key = `${op}:${parameters.join(",")}`;
+    const existing = this.labelDecls.get(key);
+    if (existing !== undefined) return existing;
+    const name = op === OP_LABEL_LIT ? "lbl-lit" : isPositive ? "lblpos" : "lblneg";
+    const domain = op === OP_LABEL ? [SORT_BOOL] : [];
+    const parameterHashes = names.map(getSymbolHash);
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      SORT_BOOL,
+      getInfoHash(
+        Z3_LABEL_FAMILY,
+        op - LABEL_OP_BASE,
+        op === OP_LABEL ? [isPositive ? 1 : 0, ...parameterHashes] : parameterHashes,
+      ),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_LABEL,
+      op,
+      domain,
+      range: SORT_BOOL,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.labelDecls.set(key, decl);
+    return decl;
+  }
+
+  isLabelPositive(decl: number) {
+    return this.funcDecls[decl].parameters[0] === 1;
+  }
+
+  getLabelNames(decl: number) {
+    const funcDecl = this.funcDecls[decl];
+    return funcDecl.parameters
+      .slice(funcDecl.op === OP_LABEL ? 1 : 0)
+      .map((nameId) => this.labelNames[nameId]);
   }
 
   mkPattern(terms: number[]) {

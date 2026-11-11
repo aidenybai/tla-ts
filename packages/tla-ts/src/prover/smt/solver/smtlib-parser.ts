@@ -1156,14 +1156,23 @@ export const createSmtlibReader = (
     const bodySExpr = list.items[2];
     const isAnnotated = bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!");
     const annotations = bodySExpr.kind === "list" && isAnnotated ? bodySExpr.items : [];
-    const body = parseTerm(isAnnotated ? annotations[1] : bodySExpr);
-    if (manager.sorts[body] !== SORT_BOOL) throw new SmtParseError("expected a formula", bodySExpr);
+    const parsedBody = parseTerm(isAnnotated ? annotations[1] : bodySExpr);
+    if (manager.sorts[parsedBody] !== SORT_BOOL)
+      throw new SmtParseError("expected a formula", bodySExpr);
     const attributes = Array.from(
       { length: Math.ceil((annotations.length - 2) / 2) },
       (_unused, index) => ({
         keyword: annotations[2 + 2 * index],
         value: annotations[3 + 2 * index],
       }),
+    );
+    const body = attributes.reduce(
+      (labeled, attribute) =>
+        attribute.keyword.kind === "keyword" &&
+        (attribute.keyword.text === ":lblpos" || attribute.keyword.text === ":lblneg")
+          ? mkLabel(labeled, attribute.keyword.text === ":lblpos", attribute.value, bodySExpr)
+          : labeled,
+      parsedBody,
     );
     const patterns: number[] = [];
     const noPatterns: number[] = [];
@@ -1804,23 +1813,31 @@ export const createSmtlibReader = (
     if (isSymbol(head, "forall") || isSymbol(head, "exists"))
       return parseQuantifier(sexpr, head.text === "forall");
     if (isSymbol(head, "let")) return parseLet(sexpr);
-    const named = parseTerm(sexpr.items[1] ?? sexpr.end);
-    const nameIndex = sexpr.items.findIndex(
-      (item) => item.kind === "keyword" && item.text === ":named",
+    // Each attribute applies to the expression the attributes before it made.
+    return sexpr.items.slice(2).reduce(
+      (annotated, keyword, index, attributes) => {
+        if (keyword.kind !== "keyword") return annotated;
+        const value = attributes[index + 1];
+        if (keyword.text === ":lblpos" || keyword.text === ":lblneg")
+          return mkLabel(annotated, keyword.text === ":lblpos", value, sexpr);
+        if (keyword.text !== ":named") return annotated;
+        const name = expectSymbol(value, "invalid attribute value, symbol expected", sexpr).text;
+        manager.incRef(annotated);
+        lastNamed.name = name;
+        lastNamed.expr = annotated;
+        manager.mkMacro(name, annotated);
+        declare(macros, name, { domain: [], range: manager.sorts[annotated], body: annotated });
+        return annotated;
+      },
+      parseTerm(sexpr.items[1] ?? sexpr.end),
     );
-    if (nameIndex !== -1) {
-      const name = expectSymbol(
-        sexpr.items[nameIndex + 1],
-        "invalid attribute value, symbol expected",
-        sexpr,
-      ).text;
-      manager.incRef(named);
-      lastNamed.name = name;
-      lastNamed.expr = named;
-      manager.mkMacro(name, named);
-      declare(macros, name, { domain: [], range: manager.sorts[named], body: named });
-    }
-    return named;
+  };
+
+  const mkLabel = (expr: number, isPositive: boolean, value: SExpr | undefined, at: SExpr) => {
+    const name = expectSymbol(value, "invalid attribute value, symbol expected", at).text;
+    if (manager.sorts[expr] !== SORT_BOOL)
+      throw new SmtParseError("invalid labeled expression, expression must have Bool sort", at);
+    return manager.mkLabel(isPositive, [name], expr);
   };
 
   const parseTerm = (sexpr: SExpr): number => {

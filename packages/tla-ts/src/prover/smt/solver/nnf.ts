@@ -12,6 +12,7 @@ import {
   OP_EQ,
   OP_IMPLIES,
   OP_ITE,
+  OP_LABEL,
   OP_NOT,
   OP_OR,
   OP_XOR,
@@ -130,6 +131,7 @@ class ExprNamer extends RewriterTpl {
     const manager = this.manager;
     const isNamed =
       manager.kinds[expr] === KIND_QUANTIFIER ||
+      (manager.kinds[expr] === KIND_APP && manager.getOp(expr) === OP_LABEL) ||
       (this.isNamingFormulas &&
         manager.kinds[expr] === KIND_APP &&
         manager.funcDecls[manager.decls[expr]].family === FAMILY_BASIC &&
@@ -240,6 +242,7 @@ export class Nnf {
     private manager: AstManager,
     names: DefinedNames,
     private mode = NNF_SKOLEM,
+    private isIgnoringLabels = false,
   ) {
     this.results = new RefVector(manager);
     this.caches = Array.from({ length: 4 }, () => new ActCache(manager, manager.getNumAsts()));
@@ -317,7 +320,7 @@ export class Nnf {
   private visit(expr: number, isPositive: boolean, isInQuantifier: boolean) {
     const manager = this.manager;
     const isSkipping = this.mode === NNF_SKOLEM || (this.mode === NNF_QUANT && !isInQuantifier);
-    if (isSkipping && !manager.hasQuantifierFlags[expr]) {
+    if (isSkipping && !manager.hasQuantifierFlags[expr] && !manager.hasLabelFlags[expr]) {
       this.skip(expr, isPositive);
       return true;
     }
@@ -462,8 +465,21 @@ export class Nnf {
         this.setResult(frame.spos, manager.mkApp(OP_AND, [first, second], SORT_BOOL));
         return true;
       }
+      case OP_LABEL: {
+        if (!this.visitChildren(frame, [[manager.getArg(expr, 0), isPositive]])) return false;
+        const decl = manager.decls[expr];
+        if (this.isIgnoringLabels || isPositive !== manager.isLabelPositive(decl)) return true;
+        const arg = this.results.items[this.results.size - 1];
+        const literal = manager.mkLabelLit(manager.getLabelNames(decl));
+        this.setResult(frame.spos, manager.mkApp(OP_AND, [arg, literal], SORT_BOOL));
+        return true;
+      }
       default: {
-        if (this.mode !== NNF_FULL && !manager.hasQuantifierFlags[expr]) {
+        if (
+          this.mode !== NNF_FULL &&
+          !manager.hasQuantifierFlags[expr] &&
+          !manager.hasLabelFlags[expr]
+        ) {
           this.skip(expr, isPositive);
           return true;
         }

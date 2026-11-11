@@ -5,6 +5,7 @@ import {
   FAMILY_CHAR,
   FAMILY_DATATYPE,
   FAMILY_FPA,
+  FAMILY_LABEL,
   FAMILY_MODEL_VALUE,
   FAMILY_SEQ,
   FAMILY_USER,
@@ -18,6 +19,7 @@ import {
   OP_DT_RECOGNISER,
   OP_SEQ_SKOLEM,
   OP_FPA_NUM,
+  OP_LABEL,
   OP_ITE,
   OP_NUM,
   OP_PATTERN,
@@ -154,6 +156,20 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
       domain: decl.domain,
       range,
     };
+  if (decl.family === FAMILY_LABEL) {
+    const names = manager
+      .getLabelNames(manager.decls[expr])
+      .flatMap((name) => [PARAM_SYMBOL, name]);
+    return {
+      name: decl.name,
+      parameters:
+        decl.op === OP_LABEL
+          ? [PARAM_INT, manager.isLabelPositive(manager.decls[expr]) ? 1 : 0, ...names]
+          : names,
+      domain: decl.domain,
+      range,
+    };
+  }
   const builtin = manager.getBuiltinSignature(decl.op, manager.getArgs(expr));
   return { name: builtin.name, parameters: [], domain: builtin.domain, range };
 };
