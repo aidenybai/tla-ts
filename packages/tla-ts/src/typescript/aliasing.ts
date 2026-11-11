@@ -244,6 +244,22 @@ const getEscapes = (
     if (context.heap !== undefined && getKind(literal, context) === "object") {
       return land([context.heap], depths);
     }
+    // A local that a returned object literal holds, as one that a return gives, ends with the
+    // caller holding its only name.
+    const returned = ts.findAncestor(
+      literal.parent,
+      (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
+    );
+    if (
+      ts.isIdentifier(node) &&
+      returned !== undefined &&
+      ts.isReturnStatement(returned) &&
+      returned.expression !== undefined &&
+      strip(returned.expression) === literal &&
+      isOnlyName(node, returned, context)
+    ) {
+      return [];
+    }
     return getFrom(literal, getContainer(depths));
   }
   if (ts.isSpreadElement(parent) || ts.isSpreadAssignment(parent)) {
@@ -368,6 +384,29 @@ const getReached = (sourceFile: ts.SourceFile, context: Context) => {
   return reached;
 };
 
+// Whether a call gives a new object each time: its callee returns only object literals, which
+// nothing else can name, though the objects inside them may still be shared.
+const isFreshCall = (node: ts.Node, context: Context) => {
+  const callee = ts.isCallExpression(node) ? getCallee(node.expression, context) : undefined;
+  if (callee?.body === undefined || callee.asteriskToken !== undefined) return false;
+  const body = callee.body;
+  if (!ts.isBlock(body)) return ts.isObjectLiteralExpression(strip(body));
+  const returns: ts.ReturnStatement[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isReturnStatement(node)) returns.push(node);
+    if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return (
+    returns.length > 0 &&
+    returns.every(
+      (statement) =>
+        statement.expression !== undefined &&
+        ts.isObjectLiteralExpression(strip(statement.expression)),
+    )
+  );
+};
+
 export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
   const reached = getReached(sourceFile, context);
   const changed = new Map<ts.Symbol, number>();
@@ -410,6 +449,8 @@ export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
         new Set(),
       );
       const sourceDepth = symbol === undefined ? undefined : changed.get(symbol);
+      // A target may change the top of a new object, which only it names.
+      const freshDepth = isFreshCall(node, context) ? 1 : 0;
       const isShared = escapes.some((escape) => {
         const targetDepth =
           escape.target === undefined || escape.target === symbol
@@ -417,7 +458,7 @@ export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
             : changed.get(escape.target);
         return (
           (sourceDepth !== undefined && sourceDepth >= escape.source) ||
-          (targetDepth !== undefined && targetDepth >= escape.landing)
+          (targetDepth !== undefined && targetDepth >= escape.landing + freshDepth)
         );
       });
       if (isShared) {

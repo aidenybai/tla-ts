@@ -1254,6 +1254,49 @@ describe("errors", () => {
     expect(() => compile(source)).toThrow("items would share an object that changes in place");
   });
 
+  it("changes an object that a call makes, and returns a local in an object literal", async () => {
+    const result = await checkModel(`
+      interface Spot {
+        line: number;
+        range: number;
+      }
+      const getSpot = (line: number): Spot => ({ line, range: 0 });
+      const readField = (line: number) => {
+        const spot = getSpot(line);
+        spot.range = line * 2;
+        return { name: "field", spot };
+      };
+
+      let count = 0;
+
+      export const tick = () => {
+        count = count === 1 ? 0 : 1;
+      };
+
+      export const isCorrect = () => readField(3).spot.range === 6 && readField(3).spot.line === 3;
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(result.status).toBe("success");
+  });
+
+  it("rejects a local that a returned object literal holds while an array keeps it", () => {
+    const source = `
+      const make = () => {
+        const items: number[] = [];
+        const kept = [items];
+        items.push(1);
+        return { items, size: kept[0].length };
+      };
+
+      let count = 0;
+
+      export const tick = () => {
+        count = make().size;
+      };
+    `;
+    expect(() => compile(source)).toThrow("items would share an object that changes in place");
+  });
+
   it("returns a local that a function changes, as the caller holds its only name", async () => {
     const result = await checkModel(`
       const build = (size: number) => {
