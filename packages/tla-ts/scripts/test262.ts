@@ -619,6 +619,65 @@ const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
 
+// A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
+// by it.
+const UNINTENDED_COMPARISON_ERROR = 2367;
+
+const EQUALITY_OPERATORS = new Set([
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+]);
+
+const CONDITION_OPERATORS = new Set([
+  ts.SyntaxKind.AmpersandAmpersandToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.QuestionQuestionToken,
+]);
+
+// An operand that TypeScript narrows by a comparison, as getReferenceCandidate finds it.
+const isReference = (node: ts.Expression): boolean => {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isTypeOfExpression(node)
+  ) {
+    return isReference(node.expression);
+  }
+  if (ts.isBinaryExpression(node)) {
+    return node.operatorToken.kind === ts.SyntaxKind.CommaToken
+      ? isReference(node.right)
+      : ts.isAssignmentOperator(node.operatorToken.kind);
+  }
+  return (
+    ts.isIdentifier(node) ||
+    node.kind === ts.SyntaxKind.ThisKeyword ||
+    ts.isPropertyAccessExpression(node) ||
+    ts.isElementAccessExpression(node)
+  );
+};
+
+// Whether a comparison decides which code runs next, where TypeScript narrows its operands.
+const isCondition = (node: ts.Node): boolean => {
+  const parent = node.parent;
+  if (ts.isParenthesizedExpression(parent)) return isCondition(parent);
+  if (ts.isPrefixUnaryExpression(parent)) {
+    return parent.operator === ts.SyntaxKind.ExclamationToken && isCondition(parent);
+  }
+  if (ts.isBinaryExpression(parent) && CONDITION_OPERATORS.has(parent.operatorToken.kind)) {
+    return parent.left === node || isCondition(parent);
+  }
+  return (
+    ((ts.isIfStatement(parent) || ts.isWhileStatement(parent) || ts.isDoStatement(parent)) &&
+      parent.expression === node) ||
+    (ts.isForStatement(parent) && parent.condition === node) ||
+    (ts.isConditionalExpression(parent) && parent.condition === node)
+  );
+};
+
 // Ignores those errors where the line they're on starts outside a string or template, so that
 // // @ts-ignore above it changes nothing that Node runs. A read of a value that isn't an object,
 // such as undefined in a pattern, still throws, so its error stays.
@@ -662,10 +721,25 @@ const ignoreSoundErrors = () => {
       declarations.every((declaration) => !declaration.getSourceFile().isDeclarationFile)
     );
   };
+  const isUnnarrowed = (node: ts.Node, diagnostic: ts.Diagnostic) => {
+    const comparison = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.BinaryExpression =>
+        ts.isBinaryExpression(ancestor) &&
+        EQUALITY_OPERATORS.has(ancestor.operatorToken.kind) &&
+        ancestor.getStart() === diagnostic.start &&
+        ancestor.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+    );
+    return (
+      comparison !== undefined &&
+      !(isCondition(comparison) && (isReference(comparison.left) || isReference(comparison.right)))
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
       diagnostic.code === UNUSED_OPERAND_ERROR ||
+      (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isPlainObject(node)) ||
       // Node may define a global that TypeScript doesn't know, such as print.
