@@ -2,6 +2,16 @@
 // src/tactic/ufbv/ufbv_tactic.cpp, src/nlsat/tactic/qfnra_nlsat_tactic.cpp), MIT license, see
 // z3-license.txt.
 
+interface QfnraSolver {
+  simpleCheck: number;
+  heuristic?: number;
+  orders: [number, number][];
+  ls: number;
+  smt: number;
+  seeds: number;
+  seedLimit: number;
+}
+
 const BV2SAT =
   "(using-params (and-then simplify propagate-values solve-eqs max-bv-sharing bit-blast aig " +
   "(using-params sat :flat false :som false :gc dyn_psm)) :flat false :som false :gc dyn_psm)";
@@ -66,6 +76,110 @@ const getQfnraNlsat = (isFactoring: boolean) =>
   `${isFactoring ? "factor" : "skip"} solve-eqs (using-params purify-arith :complete false) ` +
   "(using-params simplify :elim_and true :blast_distinct true) tseitin-cnf-core " +
   "(using-params simplify :elim_and true :blast_distinct true) nlsat))";
+
+const QFNRA_NLSAT = getQfnraNlsat(true);
+
+const getQfnraSolver = (solver: QfnraSolver) =>
+  [
+    `(try-for (and-then (using-params ${QFNRA_NLSAT} :simple_check true) fail-if-undecided) ` +
+      `${solver.simpleCheck})`,
+    ...(solver.heuristic === undefined ? [] : [`(try-for ${QFNRA_NLSAT} ${solver.heuristic})`]),
+    ...solver.orders.map(
+      ([strategy, limit]) =>
+        `(try-for (using-params ${QFNRA_NLSAT} :variable_ordering_strategy ${strategy}) ${limit})`,
+    ),
+    `(using-params smt :use_ls true :ls_time ${solver.ls})`,
+    `(and-then (try-for (using-params smt :arith.greatest_error_pivot true) ${solver.smt}) ` +
+      "fail-if-undecided)",
+    ...Array.from(
+      { length: solver.seeds },
+      (_unused, seed) =>
+        `(try-for (using-params ${QFNRA_NLSAT} :seed ${seed} :shuffle_vars true) ` +
+        `${solver.seedLimit})`,
+    ),
+    QFNRA_NLSAT,
+  ].join(" ");
+
+const QFNRA_VERY_SMALL = getQfnraSolver({
+  simpleCheck: 10000,
+  heuristic: 4000,
+  orders: [
+    [4, 4000],
+    [3, 6000],
+    [1, 8000],
+    [5, 8000],
+    [2, 10000],
+  ],
+  ls: 60,
+  smt: 300000,
+  seeds: 200,
+  seedLimit: 3000,
+});
+
+const QFNRA_SMALL = getQfnraSolver({
+  simpleCheck: 20000,
+  heuristic: 5000,
+  orders: [
+    [4, 5000],
+    [3, 10000],
+    [1, 15000],
+    [5, 15000],
+    [2, 20000],
+  ],
+  ls: 70,
+  smt: 350000,
+  seeds: 100,
+  seedLimit: 5000,
+});
+
+const QFNRA_MIDDLE = getQfnraSolver({
+  simpleCheck: 30000,
+  heuristic: 10000,
+  orders: [
+    [4, 15000],
+    [3, 15000],
+    [1, 20000],
+    [5, 20000],
+    [2, 25000],
+  ],
+  ls: 80,
+  smt: 375000,
+  seeds: 40,
+  seedLimit: 10000,
+});
+
+const QFNRA_LARGE = getQfnraSolver({
+  simpleCheck: 50000,
+  orders: [
+    [4, 15000],
+    [3, 30000],
+    [1, 40000],
+    [5, 40000],
+    [2, 50000],
+  ],
+  ls: 90,
+  smt: 400000,
+  seeds: 10,
+  seedLimit: 20000,
+});
+
+const QFNRA_VERY_LARGE = getQfnraSolver({
+  simpleCheck: 100000,
+  orders: [
+    [1, 80000],
+    [5, 80000],
+    [2, 100000],
+  ],
+  ls: 100,
+  smt: 425000,
+  seeds: 0,
+  seedLimit: 0,
+});
+
+const QFNRA =
+  "(and-then simplify propagate-values (if (< memory 30) (or-else " +
+  `${QFNRA_VERY_SMALL}) (if (< memory 80) (or-else ${QFNRA_SMALL}) (if (< memory 300) (or-else ` +
+  `${QFNRA_MIDDLE}) (if (< memory 600) (or-else ${QFNRA_LARGE}) (or-else ${QFNRA_VERY_LARGE}))))))`;
 
 const QFNIA_BV_SOLVER =
   "(using-params (and-then simplify propagate-values (using-params simplify :local_ctx true " +
@@ -166,7 +280,8 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["qflia", QFLIA],
   ["qfidl", QFIDL],
   ["qfnia", QFNIA],
-  ["qfnra-nlsat", getQfnraNlsat(true)],
+  ["qfnra-nlsat", QFNRA_NLSAT],
+  ["qfnra", QFNRA],
   ["qflra", "(using-params smt :arith.greatest_error_pivot true)"],
   ["lra", LRA],
   ["lia", LRA],

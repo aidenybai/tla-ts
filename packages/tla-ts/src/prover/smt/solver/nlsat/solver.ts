@@ -111,6 +111,11 @@ export class NlsatSolver {
     this.mkClause([TRUE_LITERAL], false, null);
   }
 
+  setSeed(seed: number) {
+    this.randomSeed = seed;
+    this.ism.setSeed(seed);
+  }
+
   private checkpoint() {
     this.steps++;
     if ((this.limit !== null && !this.limit.inc()) || this.steps > this.budget)

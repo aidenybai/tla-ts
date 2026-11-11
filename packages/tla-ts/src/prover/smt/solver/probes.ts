@@ -170,8 +170,13 @@ const isNonFpQfnra = (manager: AstManager, expr: number) => {
   );
 };
 
-// Z3 builds these probes into its tactics without registering them by name.
-const INTERNAL_PROBES = new Map<string, Probe>([["is-fp-qfnra", mkTest(isNonFpQfnra)]]);
+// Z3 builds these probes into its tactics without registering them by name. memory is registered,
+// but it reads the megabytes Z3's allocator handed out, which the port has no counterpart for:
+// only the port's own strategies see it, as 0, so qfnra takes the branch Z3 takes on small goals.
+const INTERNAL_PROBES = new Map<string, Probe>([
+  ["is-fp-qfnra", mkTest(isNonFpQfnra)],
+  ["memory", () => 0],
+]);
 
 const LINEAR_OPS = [OP_LE, OP_GE, OP_LT, OP_GT, OP_ADD, OP_NUM];
 

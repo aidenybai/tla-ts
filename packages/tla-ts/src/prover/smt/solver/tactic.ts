@@ -1068,7 +1068,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runNlsat(environment.manager),
+      build: (environment, params) =>
+        runNlsat(environment.manager, {
+          seed: getUint(params, "seed", 0),
+          isShufflingVars: getBool(params, "shuffle_vars", false),
+          variableOrderingStrategy: getUint(params, "variable_ordering_strategy", 0),
+        }),
     },
   ],
   [
@@ -1138,7 +1143,7 @@ const UNPORTED_TACTICS = new Set(
     "fold-unfold fpa2bv horn horn-simplify injectivity " +
     "nlqsat nra pb-preprocess pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-values2 psmt " +
-    "qe qe_rec qe2 qfbv-sls qffd qfnra " +
+    "qe qe_rec qe2 qfbv-sls qffd " +
     "qfufbv qsat recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"

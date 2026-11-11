@@ -1,5 +1,5 @@
 // Ported from Z3 (src/nlsat/tactic/nlsat_tactic.cpp), MIT license, see z3-license.txt.
-import { SmtTacticError } from "../../../errors";
+import { SmtTacticError, SmtUnsupportedError } from "../../../errors";
 import { type AstManager, SORT_INT } from "./ast";
 import type { Goal } from "./goal";
 import { goal2nlsat } from "./goal2nlsat";
@@ -41,13 +41,22 @@ const mkModel = (
   return model;
 };
 
-export const runNlsat = (manager: AstManager) => (goal: Goal) => {
+export interface NlsatOptions {
+  seed: number;
+  isShufflingVars: boolean;
+  variableOrderingStrategy: number;
+}
+
+export const runNlsat = (manager: AstManager, options: NlsatOptions) => (goal: Goal) => {
   if (goal.isDecided()) return [goal];
   if (goal.isProofsEnabled) throw new SmtTacticError("nlsat does not support proof production");
   const solver = new NlsatSolver(manager.limit);
+  solver.setSeed(options.seed);
   const t2x = new Map<number, number>();
   const a2b = new Map<number, number>();
   goal2nlsat(manager, goal.forms.items, solver, t2x, a2b, null);
+  if (options.isShufflingVars || options.variableOrderingStrategy !== 0)
+    throw new SmtUnsupportedError("nlsat's shuffle_vars and variable_ordering_strategy");
   const status = solver.check();
   if (status === L_TRUE && !containsUnsupported(manager, t2x, a2b)) {
     const model = mkModel(manager, solver, t2x, a2b);
