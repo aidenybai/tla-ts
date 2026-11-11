@@ -55,7 +55,7 @@ export const DropdownMenuRadioItem = (props: RadioItemProps) => (
     closeOnClick
     {...props}
     className={cn(
-      "relative flex cursor-default items-center rounded-md py-1 pr-8 pl-2 text-sm text-muted-foreground outline-none select-none data-checked:text-foreground data-highlighted:bg-muted data-highlighted:text-foreground",
+      "relative flex cursor-default items-center rounded-md py-1 pr-8 pl-2 text-sm text-muted-foreground outline-none select-none data-checked:text-foreground data-highlighted:bg-foreground/8 data-highlighted:text-foreground",
       props.className,
     )}
   >

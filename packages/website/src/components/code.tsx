@@ -123,7 +123,7 @@ interface RunProps {
 
 export const CodeRun = (props: RunProps) => (
   <Button
-    variant={props.isDone ? "outline" : "success"}
+    variant={props.isDone || props.isRunning ? "outline" : "success"}
     size="icon"
     aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
     disabled={props.isRunning}

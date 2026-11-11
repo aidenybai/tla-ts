@@ -163,7 +163,11 @@ export const PlaygroundHeader = () => {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button disabled={!state.canRun} variant="success" onClick={state.run}>
+        <Button
+          disabled={!state.canRun}
+          variant={state.isRunning ? "outline" : "success"}
+          onClick={state.run}
+        >
           <RunIcon isRunning={state.isRunning} isDone={false} />
           {state.isRunning ? "Processing" : "Run"}
           {!state.isRunning && (

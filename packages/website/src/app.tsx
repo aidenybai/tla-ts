@@ -22,7 +22,7 @@ export const App = () => (
           <Link href="https://lamport.azurewebsites.net/tla/tla.html">TLA+</Link>.
         </p>
         <div className="flex gap-2">
-          <a href="/playground" className={cn(buttonVariants(), "text-foreground")}>
+          <a href="/playground" className={buttonVariants({ variant: "primary" })}>
             <Play weight="fill" className="size-3" />
             Playground
           </a>
