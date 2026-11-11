@@ -1,6 +1,5 @@
 {
   "tlapm/backends/z3/z3test/old-regressions/smt2/t220.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/old-regressions/smt2/t258.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5420.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5429.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5452.smt2": "message-mismatch",
@@ -43,7 +42,6 @@
   "tlapm/backends/z3/z3test/regressions/smt2/4008.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/5710.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/5911.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/6196.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/6553-2-simp.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/7026-1.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/7489.smt2": "message-mismatch",

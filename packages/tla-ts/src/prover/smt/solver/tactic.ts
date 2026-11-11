@@ -44,6 +44,9 @@ import { propagateIneqs } from "./bound-simplifier";
 import { diffNeq } from "./diff-neq";
 import { lia2pb } from "./lia2pb";
 import { runPb2Bv } from "./pb2bv-tactic";
+import { fm } from "./fm-tactic";
+import { addBounds } from "./add-bounds-tactic";
+import { Rational } from "./rational";
 import { runNlsat } from "./nlsat-tactic";
 import { occf } from "./occf";
 import { propagateValues } from "./propagate-values";
@@ -73,6 +76,7 @@ import { tseitinCnf } from "./tseitin-cnf";
 const PARAM_BOOL = 0;
 const PARAM_UINT = 1;
 const PARAM_SYMBOL = 2;
+const PARAM_NUMERAL = 3;
 
 export type TacticParam = boolean | number | string;
 export type TacticParams = ReadonlyMap<string, TacticParam>;
@@ -198,6 +202,13 @@ const getBool = (params: TacticParams, name: string, defaultValue: boolean) => {
 const getUint = (params: TacticParams, name: string, defaultValue: number) => {
   const value = params.get(name);
   return typeof value === "number" ? value : defaultValue;
+};
+
+const getNumeral = (params: TacticParams, name: string, defaultValue: string) => {
+  const value = params.get(name);
+  const parts = (typeof value === "string" ? value : defaultValue).split(".");
+  const fraction = parts[1] ?? "";
+  return Rational.of(BigInt(parts[0] + fraction), 10n ** BigInt(fraction.length));
 };
 
 export const getRewriterOptions = (manager: AstManager, params: TacticParams): RewriterOptions => ({
@@ -771,6 +782,61 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "fm",
+    {
+      descrs: new Map([
+        ...REWRITER_DESCRS,
+        ...getDescrs("", [
+          ["produce_models", PARAM_BOOL, false, true],
+          ["fm_real_only", PARAM_BOOL, true, true],
+          ["fm_occ", PARAM_BOOL, false, true],
+          ["fm_limit", PARAM_UINT, 5000000, true],
+          ["fm_cutoff1", PARAM_UINT, 8, true],
+          ["fm_cutoff2", PARAM_UINT, 256, true],
+          ["fm_extra", PARAM_UINT, 0, true],
+        ]),
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) => {
+          const manager = environment.manager;
+          simplifyGoal(
+            manager,
+            goal,
+            getRewriterOptions(
+              manager,
+              new Map([...params, ["arith_lhs", true], ["elim_and", true], ["som", true]]),
+            ),
+          );
+          fm(manager, goal, {
+            isRealOnly: getBool(params, "fm_real_only", true),
+            limit: getUint(params, "fm_limit", 5000000),
+            cutoff1: getUint(params, "fm_cutoff1", 8),
+            cutoff2: getUint(params, "fm_cutoff2", 256),
+            extra: getUint(params, "fm_extra", 0),
+            isOcc: getBool(params, "fm_occ", false),
+          });
+        }),
+    },
+  ],
+  [
+    "add-bounds",
+    {
+      descrs: getDescrs("", [
+        ["add_bound_lower", PARAM_NUMERAL, "-2", true],
+        ["add_bound_upper", PARAM_NUMERAL, "2", true],
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          addBounds(
+            environment.manager,
+            goal,
+            getNumeral(params, "add_bound_lower", "-2"),
+            getNumeral(params, "add_bound_upper", "2"),
+          ),
+        ),
+    },
+  ],
+  [
     "fix-dl-var",
     {
       descrs: REWRITER_DESCRS,
@@ -1027,11 +1093,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "add-bounds blast-term-ite " +
+    "blast-term-ite " +
     "bv-slice bvarray2uf cofactor-term-ite collect-statistics " +
     "degree-shift demodulator " +
     "elim-predicates elim-uncnstr2 " +
-    "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
+    "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv " +
     "fold-unfold fpa2bv horn horn-simplify injectivity " +
     "nla2bv nlqsat nra pb-preprocess pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-values2 psmt " +
@@ -1067,9 +1133,13 @@ const parseParamValue = (kind: number, value: SExpr) =>
       ? isUnsigned(value)
         ? Number(value.text)
         : undefined
-      : isSymbol(value)
-        ? value.text
-        : undefined;
+      : kind === PARAM_NUMERAL
+        ? value.kind === "numeral" || value.kind === "decimal"
+          ? value.text
+          : undefined
+        : isSymbol(value)
+          ? value.text
+          : undefined;
 
 const getUntypedParamValue = (value: SExpr) =>
   value.kind === "list"
@@ -1128,7 +1198,9 @@ const getParams = (
           ? "invalid parameter value, true or false expected"
           : found.descr.kind === PARAM_UINT
             ? "invalid parameter value, unsigned integer expected"
-            : "invalid parameter value, symbol expected",
+            : found.descr.kind === PARAM_NUMERAL
+              ? "invalid parameter value, numeral expected"
+              : "invalid parameter value, symbol expected",
         end,
       );
     if (isUnportedParam(found.descr, parsed))
