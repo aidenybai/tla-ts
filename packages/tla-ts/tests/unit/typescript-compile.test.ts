@@ -1978,6 +1978,18 @@ describe("errors", () => {
     ).toThrow("Unsupported expression: super");
   });
 
+  it("extends an empty class that the extends clause makes", async () => {
+    const result = await check(
+      compile(
+        `class C extends class {} {\n  value = 1;\n  get double() {\n    return this.value * 2;\n  }\n}\nconst c = new C();\nif (Object.getPrototypeOf(C) === Function.prototype || Object.getPrototypeOf(C.prototype) === Object.prototype) throw new Error("missed");\nif (!(c instanceof C) || c.double !== 2) throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    expect(() => compile(`class C extends class {\n  m() {}\n} {}\nconst c = new C();`)).toThrow(
+      "Unsupported statement",
+    );
+  });
+
   it("runs the defaults that a call or a declaration certainly evaluates", async () => {
     const result = await check(
       compile(

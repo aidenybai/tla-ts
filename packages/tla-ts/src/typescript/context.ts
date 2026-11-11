@@ -664,11 +664,21 @@ export const getBuiltInBase = (
   return base === undefined ? undefined : getBuiltInBase(base, context);
 };
 
-// The class that a class extends, which the script defines before it.
+// An empty class that a class's extends clause makes, which the class makes its objects after.
+export const isInlineBase = (node: ts.ClassLikeDeclaration): node is ts.ClassExpression =>
+  ts.isClassExpression(node) &&
+  ts.isExpressionWithTypeArguments(node.parent) &&
+  node.heritageClauses === undefined &&
+  node.members.length === 0;
+
+// The class that a class extends, which the script defines before it or its extends clause makes.
 export const getBaseClass = (node: ts.ClassLikeDeclaration, context: Context) => {
   const heritage = node.heritageClauses?.find(
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
   )?.types[0]?.expression;
+  if (heritage !== undefined && ts.isClassExpression(heritage)) {
+    return isInlineBase(heritage) ? heritage : undefined;
+  }
   const declaration =
     heritage === undefined || !ts.isIdentifier(heritage)
       ? undefined
@@ -765,7 +775,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
       ? !hasExtends(node) ||
         isNullSafe(node, context) ||
         getBuiltInBase(node, context) !== undefined
-      : isHeapClass(base, context) &&
+      : (isInlineBase(base) || isHeapClass(base, context)) &&
         !isNullBased(base) &&
         isDerivedSafe(node, base, context) &&
         (getBuiltInBase(base, context) === undefined ||

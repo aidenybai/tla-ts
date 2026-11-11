@@ -28,6 +28,7 @@ import {
   getBuiltInBase,
   getLiteralName,
   isAmbient,
+  isInlineBase,
   isNullBased,
   getHeapClass,
   isNestedFunction,
@@ -434,7 +435,15 @@ export const translateClassRef = (
 // The heap after a node from getAllocated adds the object it makes.
 // The constructor object and the prototype that a class makes, prototype first, so the
 // constructor object is the last on the heap.
-const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context: Context) => {
+const translateClass = (
+  node: HeapClass,
+  start: Expression,
+  scope: Scope,
+  context: Context,
+): Expression => {
+  const base = ts.isClassLike(node) ? getBaseClass(node, context) : undefined;
+  const inlineBase = base !== undefined && isInlineBase(base) ? base : undefined;
+  const heap = inlineBase === undefined ? start : translateClass(inlineBase, start, scope, context);
   const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
   const define = (object: Expression, key: Expression, value: Expression, flags: boolean[]) =>
     useJavaScript("Define", [object, key, value, ...flags.map(boolean)], context);
@@ -467,15 +476,16 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
             [true, false, true],
           );
     }, object);
-  const base = ts.isClassLike(node) ? getBaseClass(node, context) : undefined;
   const builtInBase =
     ts.isClassLike(node) && base === undefined ? getBuiltInBase(node, context) : undefined;
   const baseRef =
-    base !== undefined
-      ? translateClassRef(base, scope, context)
-      : builtInBase === undefined
-        ? undefined
-        : translateBuiltInValue(builtInBase, node, context);
+    inlineBase !== undefined
+      ? useJavaScript("NextRef", [start, number(2)], context)
+      : base !== undefined
+        ? translateClassRef(base, scope, context)
+        : builtInBase === undefined
+          ? undefined
+          : translateBuiltInValue(builtInBase, node, context);
   const basePrototype =
     builtInBase !== undefined
       ? translateBuiltInValue(`${builtInBase}.prototype`, node, context)
