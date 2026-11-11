@@ -35,6 +35,7 @@ import {
   isNestedFunction,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getJsonText, parseJson } from "./json";
 import { getConstructor } from "./exceptions";
 import { translateExpression, translateToString } from "./expressions";
 import {
@@ -1363,6 +1364,8 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["TypeError", "RangeError"];
   }
   if (isUnresolved(node, context)) return ["ReferenceError"];
+  const jsonText = getJsonText(node, context);
+  if (jsonText !== undefined) return "error" in parseJson(jsonText) ? ["SyntaxError"] : [];
   const created = ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
     return ["ReferenceError"];

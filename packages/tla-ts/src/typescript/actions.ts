@@ -58,6 +58,7 @@ import {
   isNullBased,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getJsonText, parseJson, translateHoldsJson } from "./json";
 import { getIteratorFunctions, isIteratedPattern, isTaken, takeFromIterator } from "./iterators";
 import {
   translateCondition,
@@ -2905,6 +2906,23 @@ const translateExpressionStatement = (
   if (isUnresolved(expression, context)) {
     return throwError("ReferenceError", path, expression, context, frame);
   }
+  // JSON.parse of a literal that isn't JSON throws a SyntaxError, and of one that is makes objects
+  // that nothing reads.
+  const jsonText = getJsonText(expression, context);
+  if (jsonText !== undefined) {
+    return ifThenElse(
+      translateHoldsJson(expression, "parse", path.scope, context),
+      "error" in parseJson(jsonText)
+        ? throwError("SyntaxError", path, expression, context, frame)
+        : continueWith(path),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call JSON.parse where a script replaced it"),
+        ]),
+      ),
+    );
+  }
   // A call's value runs though the statement drops it, so that a getter it reads, which tla-ts
   // can't call, stops the check: TLC would read only a value that something uses.
   if (ts.isCallExpression(expression)) {
@@ -3361,7 +3379,7 @@ export const bindOnce = (path: Path, name: string, value: Expression, rest: Form
 
 // Throws the TypeError that JavaScript throws where a change to an object fails.
 const throwError = (
-  name: "TypeError" | "RangeError" | "ReferenceError",
+  name: "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError",
   path: Path,
   node: ts.Node,
   context: Context,

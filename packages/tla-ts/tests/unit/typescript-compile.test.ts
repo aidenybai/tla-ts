@@ -1296,6 +1296,22 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't call toJSON");
   });
 
+  it("parses a literal as JSON, and throws a SyntaxError where it isn't JSON", async () => {
+    const result = await checkModel(`
+      const box = { seen: 0 };
+      let caught = false;
+      try {
+        JSON.parse("[1,]");
+      } catch (error) {
+        caught = error instanceof SyntaxError;
+      }
+      if (!caught) throw new Error("syntax");
+      JSON.parse('{"a": [1]}');
+      if (JSON.parse('"a"') !== "a" || JSON.parse(" 12 ") !== 12) throw new Error("parse");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("throws a TypeError where Object.assign can't write a property", async () => {
     const result = await checkModel(`
       const target: { [key: string]: unknown } = { a: 1 };
