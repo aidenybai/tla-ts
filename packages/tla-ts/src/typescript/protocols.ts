@@ -20,6 +20,7 @@ import {
   getCallee,
   getReturnedFunctions,
   getUndefined,
+  isNestedFunction,
   skipCasts,
 } from "./context";
 import { type Formula, ifThenElse, leaf } from "./formula";
@@ -311,12 +312,24 @@ export const isDescriptorRead = (node: ts.Node, context: Context): node is ts.Ca
   node.expression.expression.getText() === "Object" &&
   node.expression.name.text === "defineProperty" &&
   node.arguments.length >= 3 &&
-  DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key));
+  DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key)) &&
+  getFieldGetters(node, context).every((getter) => isRunnableGetter(getter, context));
 
 // The getters that reading a descriptor's fields may run.
 const getFieldGetters = (node: ts.Node, context: Context) => [
   ...new Set(DESCRIPTOR_FIELDS.flatMap((key) => getKeyGetters(node, key, context))),
 ];
+
+// Whether tla-ts can run a getter's body, which makes each function expression it returns as an
+// object. A statement that might run one it can't keeps reading properties as an expression,
+// which stops only where the getter runs.
+const isRunnableGetter = (getter: FunctionNode, context: Context) =>
+  findNodes(getter, ts.isReturnStatement).every(
+    (statement) =>
+      statement.expression === undefined ||
+      !ts.isFunctionExpression(statement.expression) ||
+      isNestedFunction(statement.expression, context),
+  );
 
 export const getDescriptorGetters = (node: ts.Node, context: Context) =>
   isDescriptorRead(node, context)
@@ -695,7 +708,12 @@ export const isDescriptorsRead = (node: ts.Node, context: Context) =>
   !node.arguments.some(ts.isSpreadElement) &&
   (getLiteralKeys(node.arguments[1]) !== undefined
     ? DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key))
-    : getReadGetters(node, context).some((getter) => !getGetters(node, context).includes(getter)));
+    : getReadGetters(node, context).some(
+        (getter) => !getGetters(node, context).includes(getter),
+      )) &&
+  [...getFieldGetters(node, context), ...getReadGetters(node, context)].every((getter) =>
+    isRunnableGetter(getter, context),
+  );
 
 // The getters that a read may run where the script defines a getter under its key: the functions
 // that descriptors give as getters, and the function objects that functions return.
@@ -734,7 +752,11 @@ export const isGetterRead = (
   if (key === undefined || isWritten || !getGetterKeys(node).has(key)) return false;
   if (getKind(node.expression, context) !== "object") return false;
   const pure = getGetters(node, context);
-  return getReadGetters(node, context).some((getter) => !pure.includes(getter));
+  const getters = getReadGetters(node, context);
+  return (
+    getters.some((getter) => !pure.includes(getter)) &&
+    getters.every((getter) => isRunnableGetter(getter, context))
+  );
 };
 
 // Runs a read that a getter may answer, which evaluates the object and then runs the getter that
