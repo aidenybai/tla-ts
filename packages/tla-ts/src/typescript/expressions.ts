@@ -139,6 +139,8 @@ const BINARY_OPERATORS = new Map([
   [ts.SyntaxKind.AsteriskAsteriskToken, "^"],
   [ts.SyntaxKind.EqualsEqualsEqualsToken, "="],
   [ts.SyntaxKind.ExclamationEqualsEqualsToken, "#"],
+  [ts.SyntaxKind.EqualsEqualsToken, "="],
+  [ts.SyntaxKind.ExclamationEqualsToken, "#"],
   [ts.SyntaxKind.LessThanToken, "<"],
   [ts.SyntaxKind.LessThanEqualsToken, "<="],
   [ts.SyntaxKind.GreaterThanToken, ">"],
@@ -869,7 +871,31 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     );
   }
   if (kind === ts.SyntaxKind.InstanceOfKeyword) return translateInstanceOf(node, scope, context);
+  const isLoose =
+    kind === ts.SyntaxKind.EqualsEqualsToken || kind === ts.SyntaxKind.ExclamationEqualsToken;
+  const isPositive =
+    kind === ts.SyntaxKind.EqualsEqualsEqualsToken || kind === ts.SyntaxKind.EqualsEqualsToken;
+  const [leftNames, rightNames] = [node.left, node.right].map((side) =>
+    getTypeNames(context.checker.getTypeAtLocation(side), context.checker),
+  );
+  // == is === between values of one type.
+  if (
+    isLoose &&
+    !(leftNames?.length === 1 && rightNames?.length === 1 && leftNames[0] === rightNames[0])
+  ) {
+    const isEqual = useJavaScript(
+      "LooseEquals",
+      [
+        context.heap === undefined ? tuple([]) : getHeap(scope, node, context),
+        translate(node.left),
+        translate(node.right),
+      ],
+      context,
+    );
+    return isPositive ? isEqual : not(isEqual);
+  }
   const isEquality =
+    isLoose ||
     kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
     kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
   if (
@@ -882,7 +908,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       [translate(node.left), translate(node.right)],
       context,
     );
-    return kind === ts.SyntaxKind.EqualsEqualsEqualsToken ? isEqual : not(isEqual);
+    return isPositive ? isEqual : not(isEqual);
   }
   if (isEquality && !isComparable(node.left, node.right, context)) {
     const isSame = useJavaScript(
@@ -890,7 +916,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       [translate(node.left), translate(node.right)],
       context,
     );
-    return kind === ts.SyntaxKind.EqualsEqualsEqualsToken ? isSame : not(isSame);
+    return isPositive ? isSame : not(isSame);
   }
   if (kind === ts.SyntaxKind.InKeyword) {
     if (ts.isPrivateIdentifier(node.left)) {

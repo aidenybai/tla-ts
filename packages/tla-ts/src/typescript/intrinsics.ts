@@ -200,6 +200,8 @@ const isCompared = (node: ts.Expression, context: Context): boolean => {
     return [
       ts.SyntaxKind.EqualsEqualsEqualsToken,
       ts.SyntaxKind.ExclamationEqualsEqualsToken,
+      ts.SyntaxKind.EqualsEqualsToken,
+      ts.SyntaxKind.ExclamationEqualsToken,
     ].includes(parent.operatorToken.kind);
   }
   if (ts.isVariableDeclaration(parent) && parent.initializer === node) {

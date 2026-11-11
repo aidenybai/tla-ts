@@ -1113,6 +1113,8 @@ const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
     return (
       kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
       kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      kind === ts.SyntaxKind.EqualsEqualsToken ||
+      kind === ts.SyntaxKind.ExclamationEqualsToken ||
       (kind === ts.SyntaxKind.InKeyword && parent.right === node)
     );
   }

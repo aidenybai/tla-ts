@@ -683,7 +683,8 @@ LOCAL ReadNumber(text, Use(_, _, _)) ==
             Use("integer", FALSE, ParseFitting(body, radix))
        [] isDecimal -> Use(IF isExact THEN "integer" ELSE "fraction", isNegative, magnitude)
        [] text \\in {"Infinity", "+Infinity", "-Infinity"} -> Use("infinity", isNegative, 0)
-       [] CharactersOf(text) \\subseteq CharactersOf(Alphanumerics) \\cup {"+", "-", ".", "_", "!"} ->
+       [] \\/ CharactersOf(text) \\subseteq CharactersOf(Alphanumerics) \\cup {"+", "-", ".", "_", "!"}
+          \\/ CharactersOf(text) \\cap CharactersOf("[]{}()<>,;:#$%&*=?@^|~") # {} ->
             Use("nan", FALSE, 0)
        [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(text) \\o " to a number")
 
@@ -1193,6 +1194,60 @@ ObjectToString(heap, value, kind) ==
           [] kind # "" -> kind
           [] OTHER -> Assert(FALSE, "tla-ts can't tell the kind of " \\o ToString(value)))
     \\o "]"
+
+\\* ToPrimitive of an object, which tla-ts follows where the object reads the built-in valueOf and
+\\* toString and has no Symbol.toPrimitive.
+LOCAL LoosePrimitive(heap, ref) ==
+  LET valueOf == Get(heap, ref, "valueOf")
+      isBuiltIn(method, path) == IsRef(method) /\\ ~IsHeap(method) /\\ method[Ref] = path
+      kinds == {"Boolean", "Number", "String"}
+      kind == CASE ~IsHeap(ref) /\\ \\E other \\in kinds : ref[Ref] = other \\o ".prototype" ->
+                     CHOOSE other \\in kinds : ref[Ref] = other \\o ".prototype"
+                [] IsHeap(ref) /\\ "primitive" \\in DOMAIN Lookup(heap, ref) ->
+                     CASE TypeOf(Lookup(heap, ref).primitive) = "boolean" -> "Boolean"
+                       [] TypeOf(Lookup(heap, ref).primitive) = "number" -> "Number"
+                       [] OTHER -> "String"
+                [] OTHER -> ""
+  IN CASE ~IsRef(ref) \\/ Get(heap, ref, WellKnownSymbol("toPrimitive")) # Undefined ->
+            Assert(FALSE, "tla-ts can't convert " \\o ToString(ref) \\o " to a primitive")
+       [] kind # "" /\\ isBuiltIn(valueOf, kind \\o ".prototype.valueOf") ->
+            WrappedPrimitive(heap, ref, kind, "valueOf")
+       [] /\\ isBuiltIn(valueOf, "Object.prototype.valueOf")
+          /\\ isBuiltIn(Get(heap, ref, "toString"), "Object.prototype.toString") ->
+            ObjectToString(heap, ref, "")
+       [] OTHER -> Assert(FALSE, "tla-ts can't call valueOf or toString on " \\o ToString(ref))
+
+LOCAL LooseKind(value) ==
+  CASE value = Null -> "null"
+    [] TypeOf(value) = "function" -> "object"
+    [] OTHER -> TypeOf(value)
+
+\\* Whether a number equals what ToNumber gives for a string. Numbers that aren't integers aren't
+\\* values, so a string that reads as a fraction equals none.
+LOCAL EqualsText(number, text) ==
+  ReadNumber(text, LAMBDA kind, isNegative, magnitude :
+    CASE kind = "integer" -> StrictEquals(number, IF isNegative THEN -magnitude ELSE magnitude)
+      [] kind = "infinity" -> number = IF isNegative THEN NegativeInfinity ELSE Infinity
+      [] OTHER -> FALSE)
+
+\\* JavaScript's ==, which converts a boolean to a number, a string to compare it with a number, and
+\\* an object to compare it with a primitive.
+RECURSIVE LooseEquals(_, _, _)
+LooseEquals(heap, left, right) ==
+  LET leftKind == LooseKind(left)
+      rightKind == LooseKind(right)
+      primitives == {"string", "number", "symbol"}
+  IN CASE leftKind = rightKind -> StrictEquals(left, right)
+       [] {leftKind, rightKind} = {"null", "undefined"} -> TRUE
+       [] leftKind = "number" /\\ rightKind = "string" -> EqualsText(left, right)
+       [] leftKind = "string" /\\ rightKind = "number" -> EqualsText(right, left)
+       [] leftKind = "boolean" -> LooseEquals(heap, IF left THEN 1 ELSE 0, right)
+       [] rightKind = "boolean" -> LooseEquals(heap, left, IF right THEN 1 ELSE 0)
+       [] leftKind \\in primitives /\\ rightKind = "object" ->
+            LooseEquals(heap, left, LoosePrimitive(heap, right))
+       [] leftKind = "object" /\\ rightKind \\in primitives ->
+            LooseEquals(heap, LoosePrimitive(heap, left), right)
+       [] OTHER -> FALSE
 
 \\* ArraySpeciesCreate, which makes the array that a method returns through the constructor of the
 \\* array that the method copies, where tla-ts follows only Array.

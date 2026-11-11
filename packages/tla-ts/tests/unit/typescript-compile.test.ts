@@ -1287,6 +1287,37 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("compares values loosely with == and !=", async () => {
+    const result = await checkModel(`
+      const object: unknown = { a: 1 };
+      const other: unknown = { a: 1 };
+      const wrapper: unknown = new Number(5);
+      const values: unknown[] = [1, "1", true, null, undefined, "0x10", "", "-0", "abc"];
+      if (!(values[0] == values[1]) || !(values[0] == values[2]) || values[0] != "1.0") {
+        throw new Error("numbers");
+      }
+      if (!(values[3] == values[4]) || values[3] == 0 || values[4] == false) {
+        throw new Error("nullish");
+      }
+      if (values[5] != 16 || values[6] != 0 || values[7] != 0 || values[8] == 0) {
+        throw new Error("strings");
+      }
+      if (object != object || object == other) throw new Error("identity");
+      if (object != "[object Object]" || wrapper != "5") {
+        throw new Error("primitive");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where == calls a method that a script gives", async () => {
+    const result = await checkModel(`
+      const object: unknown = { valueOf: () => 1 };
+      if (object != 1) throw new Error("valueOf");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call valueOf or toString");
+  });
+
   it("lists the own property names of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };
