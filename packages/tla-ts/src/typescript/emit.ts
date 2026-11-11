@@ -45,12 +45,20 @@ export interface Sections {
   assumptions: string[];
 }
 
+// A state variable's TypeScript type, split into the members of a union, and its initializer.
+export interface StateVariable {
+  name: string;
+  types: string[];
+  initial: string | undefined;
+}
+
 export interface CompiledSpec {
   name: string;
   source: Module;
   config: string;
   loadModule: (name: string) => string | undefined;
   regions: Region[];
+  variables: StateVariable[];
 }
 
 const getMagnitude = (value: Expression) =>
@@ -289,5 +297,18 @@ export const emit = (
     config,
     loadModule: (name) => (isJavaScript && name === "JavaScript" ? JAVASCRIPT_MODULE : undefined),
     regions: getRegions(source, sourceFile, model, context),
+    variables: model.variables.map((variable) => {
+      const declaration = variable.declaration;
+      const type = context.checker.getTypeAtLocation(declaration.name ?? declaration);
+      return {
+        name: variable.name,
+        types: (type.isUnion() ? type.types : [type]).map((member) =>
+          context.checker.typeToString(member),
+        ),
+        initial: ts.isVariableDeclaration(declaration)
+          ? declaration.initializer?.getText()
+          : undefined,
+      };
+    }),
   };
 };
