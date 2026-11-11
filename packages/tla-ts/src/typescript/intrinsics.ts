@@ -296,6 +296,7 @@ export const translateBuiltInValue = (
     | "Boolean.prototype"
     | "Number.prototype"
     | "String.prototype"
+    | `String.prototype.${string}`
     | "Date.prototype"
     | "Symbol.prototype"
     | "Promise"

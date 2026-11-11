@@ -4,12 +4,14 @@ import {
   checkElement,
   getArrayLikeCall,
   getCallbackReceiver,
+  getStringCall,
   getUpdatedValue,
   EVERY_INDEX_METHODS,
   HOLE_SKIPPING_METHODS,
   translateMethodElements,
   MUTATING_METHODS,
   removeLast,
+  translatePrimitiveMethod,
 } from "./collections";
 import {
   findNodes,
@@ -1040,6 +1042,64 @@ export const translateCallStatement = (
               ]),
             ),
           ),
+    );
+  }
+  const stringCall = getStringCall(expression, context);
+  if (stringCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const builtIn = translateBuiltInValue(
+      `String.prototype.${stringCall.method}`,
+      expression,
+      context,
+    );
+    const conversion = {
+      operands: [stringCall.owner, ...stringCall.values],
+      hint: "string" as const,
+      combine: (primitives: readonly Expression[]) => tuple([...primitives]),
+    };
+    return ifThenElse(
+      apply("/\\", [
+        useJavaScript(
+          "SameValue",
+          [translateExpression(stringCall.callee, path.scope, context), builtIn],
+          context,
+        ),
+        useJavaScript(
+          "HoldsBuiltIn",
+          [heap, builtIn, string("call"), string("Function.prototype.call")],
+          context,
+        ),
+      ]),
+      runConversion(expression, conversion, path, context, frame, (after, converted) => {
+        const primitives = [...stringCall.values, undefined].map((_, position) =>
+          index(converted, [number(position + 1)]),
+        );
+        const text = primitives[0];
+        return ifThenElse(
+          apply("\\/", [
+            apply("\\in", [text, set([getUndefined(context), identifier("Null")])]),
+            apply("=", [useJavaScript("TypeOf", [text], context), string("symbol")]),
+          ]),
+          throwTypeError(after, expression, context, frame),
+          continueWith(
+            after,
+            translatePrimitiveMethod(
+              stringCall.primitive,
+              useJavaScript("StringOf", [text], context),
+              primitives.slice(1),
+              context,
+            ),
+          ),
+        );
+      }),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(
+            `tla-ts can't call String.prototype.${stringCall.method} where a script replaced it`,
+          ),
+        ]),
+      ),
     );
   }
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
@@ -3581,6 +3641,7 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getBound(node.expression, context) !== undefined ||
   getDateCall(node, context) !== undefined ||
+  getStringCall(node, context) !== undefined ||
   isDescriptorsRead(node, context) ||
   (isObjectChange(node, context) &&
     node.expression.name.text !== "construct" &&

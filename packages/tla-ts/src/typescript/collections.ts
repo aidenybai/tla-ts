@@ -16,7 +16,7 @@ import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateSetKey } from "./expressions";
 import { translateBody } from "./functions";
-import { DATE_FIELDS, getHeap, isDateType, TIME_METHODS } from "./heap";
+import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } from "./heap";
 import { isBuiltInObject, translateBuiltInValue, translateSymbolProperty } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
@@ -1122,38 +1122,25 @@ export const translateMethod = (
   }
   const translateOptional = (argument: ts.Expression | undefined) =>
     argument === undefined ? getUndefined(context) : translateExpression(argument, scope, context);
-  const result = useJavaScript(
-    primitiveMethod.operator,
-    [
-      primitiveCall.wrapper !== undefined
-        ? useJavaScript(
-            "WrappedPrimitive",
-            [
-              getHeap(scope, node, context),
-              translateExpression(receiver, scope, context),
-              string(primitiveCall.wrapper),
-              string(primitiveCall.method),
-            ],
-            context,
-          )
-        : primitiveCall.converter === undefined
-          ? translateExpression(receiver, scope, context)
-          : useJavaScript(
-              primitiveCall.converter,
-              [translateOptional(primitiveCall.owner)],
-              context,
-            ),
-      ...primitiveMethod.parameters.map((_, position) =>
-        translateOptional(primitiveCall.methodArguments[position]),
-      ),
-      ...(primitiveMethod.trimmed ?? []).map(boolean),
-    ],
+  return translatePrimitiveMethod(
+    primitiveMethod,
+    primitiveCall.wrapper !== undefined
+      ? useJavaScript(
+          "WrappedPrimitive",
+          [
+            getHeap(scope, node, context),
+            translateExpression(receiver, scope, context),
+            string(primitiveCall.wrapper),
+            string(primitiveCall.method),
+          ],
+          context,
+        )
+      : primitiveCall.converter === undefined
+        ? translateExpression(receiver, scope, context)
+        : useJavaScript(primitiveCall.converter, [translateOptional(primitiveCall.owner)], context),
+    primitiveCall.methodArguments.map(translateOptional),
     context,
   );
-  // A script that holds only integers can't hold the NaN that a method may give.
-  return primitiveMethod.isNaNable === true && !context.hasSpecialNumbers
-    ? useJavaScript("PlainNumber", [result], context)
-    : result;
 };
 
 // A method call on a string or a number, or String.prototype.method.call(value, ...arguments),
@@ -1200,6 +1187,63 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
       wrapper: wrapper !== undefined && WRAPPERS.has(wrapper) ? wrapper : undefined,
     }
   );
+};
+
+// A call of a String.prototype method through call, directly or through a variable that its
+// declaration gives the method, on a value that a statement converts to a string: undefined,
+// null, and symbols throw a TypeError, and objects convert through ToPrimitive.
+export const getStringCall = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined || !isMethodCall(node) || node.expression.name.text !== "call") {
+    return undefined;
+  }
+  const callee = node.expression.expression;
+  const method = getPrototypeMethod(callee, "String", context);
+  const primitive = method === undefined ? undefined : STRING_METHODS.get(method);
+  const owner = node.arguments.at(0);
+  const values = node.arguments.slice(1);
+  if (
+    method === undefined ||
+    primitive === undefined ||
+    owner === undefined ||
+    ts.isSpreadElement(owner) ||
+    values.length > primitive.parameters.length ||
+    !values.every((value, position) =>
+      primitive.parameters[position] === "number"
+        ? isNumberLike(value, context)
+        : isEvery(context.checker.getTypeAtLocation(value), ts.TypeFlags.StringLike),
+    )
+  ) {
+    return undefined;
+  }
+  // String.prototype.method.call of a primitive reads it as a string in an expression.
+  const isDirect = ts.isPropertyAccessExpression(callee);
+  const isPrimitive = isEvery(
+    context.checker.getTypeAtLocation(owner),
+    ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike,
+  );
+  return isDirect && isPrimitive ? undefined : { method, primitive, callee, owner, values };
+};
+
+// The value of a primitive's method, given the primitive that it reads and its arguments.
+export const translatePrimitiveMethod = (
+  method: PrimitiveMethod,
+  text: Expression,
+  values: readonly Expression[],
+  context: Context,
+) => {
+  const result = useJavaScript(
+    method.operator,
+    [
+      text,
+      ...method.parameters.map((_, position) => values[position] ?? getUndefined(context)),
+      ...(method.trimmed ?? []).map(boolean),
+    ],
+    context,
+  );
+  // A script that holds only integers can't hold the NaN that a method may give.
+  return method.isNaNable === true && !context.hasSpecialNumbers
+    ? useJavaScript("PlainNumber", [result], context)
+    : result;
 };
 
 // The types of the objects that wrap a primitive.

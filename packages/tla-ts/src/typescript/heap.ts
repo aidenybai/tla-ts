@@ -1260,7 +1260,7 @@ export const getDateCall = (node: ts.Node, context: Context) => {
   if (context.heap === undefined || !isMethodCall(node)) return undefined;
   const callee = node.expression.expression;
   const isCall = node.expression.name.text === "call";
-  const method = isCall ? getDateMethod(callee, context) : node.expression.name.text;
+  const method = isCall ? getPrototypeMethod(callee, "Date", context) : node.expression.name.text;
   const isKnown =
     method !== undefined &&
     (DATE_SETTERS.has(method) ||
@@ -1277,8 +1277,9 @@ export const getDateCall = (node: ts.Node, context: Context) => {
   };
 };
 
-// The Date.prototype method that a value is, or that a variable holds from its declaration.
-const getDateMethod = (node: ts.Expression, context: Context) => {
+// The method of a built-in's prototype, such as Date.prototype, that a value is, or that a variable
+// holds from its declaration.
+export const getPrototypeMethod = (node: ts.Expression, owner: string, context: Context) => {
   const declaration = ts.isIdentifier(node)
     ? getSymbol(node, context.checker)?.valueDeclaration
     : undefined;
@@ -1290,7 +1291,7 @@ const getDateMethod = (node: ts.Expression, context: Context) => {
     ts.isPropertyAccessExpression(value) &&
     ts.isPropertyAccessExpression(value.expression) &&
     value.expression.name.text === "prototype" &&
-    getBuiltIn(value.expression.expression, context) === "Date"
+    getBuiltIn(value.expression.expression, context) === owner
     ? value.name.text
     : undefined;
 };

@@ -3032,6 +3032,67 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("converts the value that a String.prototype method reads through call", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const trimEnd = String.prototype.trimEnd;
+      let caught = 0;
+      try {
+        trimEnd.call(null);
+      } catch (error) {
+        if (error instanceof TypeError) caught += 1;
+      }
+      const empty = { toString: undefined, valueOf: undefined };
+      try {
+        // @ts-ignore
+        String.prototype.trimStart.call(empty);
+      } catch (error) {
+        if (error instanceof TypeError) caught += 1;
+      }
+      if (caught !== 2) throw new Error("caught");
+    `);
+    expect(result.failure).toBeUndefined();
+    const converted = await checkModel(`
+      const log = { text: "" };
+      const trimEnd = String.prototype.trimEnd;
+      const value = {
+        toString() {
+          log.text += "t";
+          return " ab ";
+        },
+        valueOf() {
+          log.text += "v";
+          return 3;
+        },
+      };
+      const trimmed = trimEnd.call(value);
+      const described = String.prototype.trim.call({});
+      if (trimmed !== " ab" || log.text !== "t") throw new Error("converted");
+      if (described !== "[object Object]") throw new Error("object");
+    `);
+    expect(converted.failure).toBeUndefined();
+    const nullish = await checkModel(
+      `const box = { size: 0 };\nconst value: number | undefined = undefined;\nconst trimmed = String.prototype.trim.call(value);`,
+    );
+    expect(nullish.failure?.message).toContain("TypeError");
+  });
+
+  it("throws the TypeError of a new of a built-in method that a declaration holds", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const factory = String.prototype.charAt;
+      let caught = false;
+      try {
+        // @ts-ignore
+        const made = new factory();
+      } catch (error) {
+        caught = error instanceof TypeError;
+      }
+      if (!caught) throw new Error("constructed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("writes numbers in a radix", async () => {
     const result = await check(
       compile(
