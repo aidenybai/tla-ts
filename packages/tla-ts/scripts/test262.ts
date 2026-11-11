@@ -28,6 +28,9 @@ interface Metadata {
   isModule: boolean;
 }
 
+// tla-ts takes local time to be UTC, so Node's Date must too.
+process.env.TZ = "UTC";
+
 const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
 
 const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
