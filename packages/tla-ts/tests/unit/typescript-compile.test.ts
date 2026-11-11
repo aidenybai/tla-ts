@@ -1942,6 +1942,20 @@ describe("errors", () => {
     expect(wide.failure?.message).toContain("tla-ts can't tell the code of a character outside ASCII");
   });
 
+  it("pads a string at its start or end", async () => {
+    const result = await checkModel(`
+      const pad = (value: number) => String(value).padStart(2, "0");
+      if (pad(5) !== "05" || pad(123) !== "123") throw new Error("pad");
+      if ("ab".padStart(7, "xyz") !== "xyzxyab" || "ab".padEnd(7, "xyz") !== "abxyzxy") {
+        throw new Error("fill");
+      }
+      if ("ab".padStart(5) !== "   ab" || "ab".padStart(6, "") !== "ab" || "abc".padEnd(-1) !== "abc") {
+        throw new Error("edges");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("converts a string to a number, and stops where the number is NaN in a script of integers", async () => {
     const result = await checkModel(`
       const read = (text: string) => Number(text);

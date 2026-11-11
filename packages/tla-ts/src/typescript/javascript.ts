@@ -1176,6 +1176,24 @@ StringCharacters(value) ==
          THEN character
          ELSE Assert(FALSE, "tla-ts can't iterate a string with a character outside ASCII")]
 
+\\* A filler repeated and cut to a length.
+RECURSIVE FillTo(_, _)
+FillTo(filler, length) ==
+  IF Len(filler) >= length THEN SubSeq(filler, 1, length) ELSE filler \\o FillTo(filler, length - Len(filler))
+
+\\* StringPad, which padStart and padEnd fill a string with until it's maxLength long.
+LOCAL StringPad(value, maxLength, fill, isStart) ==
+  LET text == Text(value)
+      target == ToLength(maxLength)
+      filler == IF fill = Undefined THEN " " ELSE Text(fill)
+  IN  CASE target <= Len(text) \\/ filler = "" -> text
+        [] isStart -> FillTo(filler, target - Len(text)) \\o text
+        [] OTHER -> text \\o FillTo(filler, target - Len(text))
+
+PadStart(value, maxLength, fill) == StringPad(value, maxLength, fill, TRUE)
+
+PadEnd(value, maxLength, fill) == StringPad(value, maxLength, fill, FALSE)
+
 RECURSIVE RadixDigits(_, _)
 RadixDigits(value, radix) ==
   LET digit == value % radix
