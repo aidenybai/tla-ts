@@ -2585,6 +2585,22 @@ describe("errors", () => {
     ).toThrow("spec.ts:3:18 first would share an object that changes in place, so copy it");
   });
 
+  it("stops where two equal arrays of a script may be two arrays", async () => {
+    await expect(
+      checkModel(`
+        const source = [1, 2];
+        const copy = source.slice();
+        if (copy === source) throw new Error("same");
+      `),
+    ).rejects.toThrow("tla-ts can't tell whether two equal arrays are the same array");
+    const result = await checkModel(`
+      const source = [1, 2];
+      const other = [3];
+      if (source === other || source !== source) throw new Error("identity");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

@@ -1128,6 +1128,16 @@ export const isInertValue = (argument: ts.Expression): boolean =>
         isInertValue(property.initializer),
     ));
 
+// A file that exports nothing, which runs as JavaScript does rather than as a spec's model.
+export const isScript = (sourceFile: ts.SourceFile) =>
+  sourceFile.statements.every(
+    (statement) =>
+      !ts.canHaveModifiers(statement) ||
+      !(ts.getModifiers(statement) ?? []).some(
+        (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+      ),
+  );
+
 // The heap class that a new names.
 export const getNewClass = (node: ts.Node, context: Context) =>
   ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;

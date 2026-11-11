@@ -25,6 +25,7 @@ import {
   getNewClass,
   getArgumentsOwner,
   getSymbol,
+  isScript,
   getTopLevelDeclaration,
   getUndefined,
   isHeapClass,
@@ -1035,6 +1036,28 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       context,
     );
     return isPositive ? isSame : not(isSame);
+  }
+  // A script's arrays outside the heap are TLA+ sequences, which compare by value, so equal ones
+  // may still be two arrays, unless both sides name the same one.
+  if (
+    isEquality &&
+    isScript(node.getSourceFile()) &&
+    getKind(node.left, context) === "sequence" &&
+    getKind(node.right, context) === "sequence" &&
+    !(
+      ts.isIdentifier(node.left) &&
+      ts.isIdentifier(node.right) &&
+      getSymbol(node.left, context.checker) === getSymbol(node.right, context.checker)
+    )
+  ) {
+    return ifExpression(
+      apply("=", [translate(node.left), translate(node.right)]),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't tell whether two equal arrays are the same array"),
+      ]),
+      boolean(!isPositive),
+    );
   }
   if (kind === ts.SyntaxKind.InKeyword) {
     if (ts.isPrivateIdentifier(node.left)) {

@@ -8,6 +8,7 @@ import {
   getCallee,
   getSymbol,
   isInertValue,
+  isScript,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
@@ -24,15 +25,6 @@ import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
 import { apply, define, getLocation, getModuleName, identifier, locate, tuple } from "./tla";
 import { getDomain } from "./types";
-
-const isScript = (sourceFile: ts.SourceFile) =>
-  sourceFile.statements.every(
-    (statement) =>
-      !ts.canHaveModifiers(statement) ||
-      !(ts.getModifiers(statement) ?? []).some(
-        (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-      ),
-  );
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {

@@ -657,7 +657,7 @@ const CASES: Record<string, (string | [string, string])[]> = {
       ({ kept = 6 } = source);`,
     ],
     [
-      "[x, flag, y + z, a + b, assigned === pair, declared]",
+      "[x, flag, y + z, a + b, assigned[1] === pair[1], declared]",
       `const box = {};
       let x = 0;
       let y = 0;
