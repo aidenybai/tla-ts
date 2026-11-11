@@ -2930,16 +2930,15 @@ LOCAL DenseElements(heap, ref) ==
   LET object == Lookup(heap, ref)
       length == object.values["length"]
   IN IF /\\ IsArrayObject(object)
-        /\\ object.attributes["length"].writable
         /\\ \\A position \\in 0..(length - 1) :
              /\\ ToString(position) \\in DOMAIN object.values
              /\\ object.attributes[ToString(position)] = Writable
      THEN [position \\in 1..length |-> object.values[ToString(position - 1)]]
      ELSE Assert(FALSE, "tla-ts can't change an array in place that has holes or fixed elements")
 
-\\* The heap after an array's elements change in place, where each index past the old end takes an
-\\* ordinary write.
-LOCAL WithElements(heap, ref, elements) ==
+\\* The heap after an array's elements change in place and its length becomes the given one, where
+\\* each index past the old end takes an ordinary write.
+LOCAL WithElements(heap, ref, elements, length) ==
   LET object == Lookup(heap, ref)
       old == {key \\in DOMAIN object.values : IsIndex(key)}
       indices == {ToString(position - 1) : position \\in DOMAIN elements}
@@ -2948,26 +2947,39 @@ LOCAL WithElements(heap, ref, elements) ==
      THEN Update(heap, ref, [object EXCEPT
             !.keys = [position \\in DOMAIN elements |-> ToString(position - 1)]
                        \\o SelectSeq(@, LAMBDA key : ~IsIndex(key)),
-            !.values = [key \\in kept |-> CASE key = "length" -> Len(elements)
+            !.values = [key \\in kept |-> CASE key = "length" -> length
                                             [] key \\in indices -> elements[ToIndex(key) + 1]
                                             [] OTHER -> @[key]],
             !.attributes = [key \\in kept |-> IF key \\in indices THEN Writable ELSE @[key]]])
      ELSE Assert(FALSE, "tla-ts can't add an element where the array can't take it")
 
-\\* What push, pop, shift, or unshift does to an array that the heap holds: the heap after, and the
-\\* value that the method gives.
+\\* What push, pop, shift, or unshift does to an array that the heap holds: the heap after, the value
+\\* that the method gives, and whether it throws a TypeError. An array whose length is fixed throws
+\\* where the method sets its length, after a pop or a shift has moved and deleted its elements, and
+\\* one that takes no new index throws where the method first writes one.
 ArrayChange(heap, ref, method, items) ==
-  LET elements == DenseElements(heap, ref)
+  LET object == Lookup(heap, ref)
+      elements == DenseElements(heap, ref)
+      length == Len(elements)
+      isFixed == ~object.attributes["length"].writable
+      isAdding == method \\in {"push", "unshift"} /\\ items # <<>>
+      first == CASE method = "push" \\/ length = 0 -> ToString(length)
+                 [] OTHER -> ToString(length + Len(items) - 1)
       changed == CASE method = "push" -> elements \\o items
                    [] method = "unshift" -> items \\o elements
                    [] elements = <<>> -> elements
-                   [] method = "pop" -> SubSeq(elements, 1, Len(elements) - 1)
+                   [] method = "pop" -> SubSeq(elements, 1, length - 1)
                    [] OTHER -> Tail(elements)
-  IN [heap |-> WithElements(heap, ref, changed),
-      value |-> CASE method \\in {"push", "unshift"} -> Len(changed)
-                  [] elements = <<>> -> Undefined
-                  [] method = "pop" -> elements[Len(elements)]
-                  [] OTHER -> Head(elements)]
+  IN IF isAdding /\\ (isFixed \\/ ~object.extensible)
+     THEN IF AccessorOf(heap, ref, first) = Undefined
+          THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+          ELSE Assert(FALSE, "tla-ts can't add an element where the array can't take it")
+     ELSE [heap |-> WithElements(heap, ref, changed, IF isFixed THEN length ELSE Len(changed)),
+           value |-> CASE method \\in {"push", "unshift"} -> Len(changed)
+                       [] elements = <<>> -> Undefined
+                       [] method = "pop" -> elements[length]
+                       [] OTHER -> Head(elements),
+           isThrown |-> isFixed]
 
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==

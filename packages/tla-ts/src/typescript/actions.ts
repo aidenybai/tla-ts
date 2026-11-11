@@ -1236,7 +1236,11 @@ export const translateCallStatement = (
             [heap, ref, string(method), tuple(translateArguments(arrayChange.items))],
             context,
           ),
-          continueWith(withHeap(field(change, "heap")), field(change, "value")),
+          ifThenElse(
+            field(change, "isThrown"),
+            throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
+            continueWith(withHeap(field(change, "heap")), field(change, "value")),
+          ),
         ),
         leaf(
           apply("Assert", [

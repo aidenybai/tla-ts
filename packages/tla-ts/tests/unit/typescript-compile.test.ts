@@ -2766,6 +2766,30 @@ describe("errors", () => {
     );
   });
 
+  it("throws where an array that the heap holds has a fixed length", async () => {
+    const result = await checkModel(`
+      const items: number[] & { tag?: string } = [1, 2, 3];
+      const others: number[] & { tag?: string } = [1];
+      items.tag = "t";
+      others.tag = "t";
+      Object.defineProperty(items, "length", { writable: false });
+      Object.defineProperty(others, "length", { writable: false });
+      let caught = 0;
+      try {
+        items.pop();
+      } catch (error) {
+        if (error instanceof TypeError) caught++;
+      }
+      try {
+        others.push(4);
+      } catch (error) {
+        if (error instanceof TypeError) caught++;
+      }
+      if (caught !== 2 || items.length !== 3 || 2 in items || 1 in others) throw new Error("fixed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("iterates and spreads an array that the heap holds", async () => {
     const result = await checkModel(`
       const box = {};
