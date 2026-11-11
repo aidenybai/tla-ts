@@ -1,10 +1,12 @@
-import type { ReactNode } from "react";
+import { m } from "motion/react";
+import { useId, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 
 interface ToggleGroupState {
   value: string;
   isDisabled: boolean;
+  indicatorId: string;
   onValueChange: (value: string) => void;
 }
 
@@ -19,24 +21,28 @@ interface ToggleGroupProps {
   children: ReactNode;
 }
 
-export const ToggleGroup = (props: ToggleGroupProps) => (
-  <toggleGroupContext.PartsContext
-    value={{
-      value: props.value,
-      isDisabled: props.isDisabled ?? false,
-      onValueChange: props.onValueChange,
-    }}
-  >
-    <div
-      role="group"
-      aria-label={props.label}
-      data-slot="toggle-group"
-      className={cn("flex w-fit shrink-0 items-center bg-muted p-0.5", props.className)}
+export const ToggleGroup = (props: ToggleGroupProps) => {
+  const indicatorId = useId();
+  return (
+    <toggleGroupContext.PartsContext
+      value={{
+        value: props.value,
+        isDisabled: props.isDisabled ?? false,
+        indicatorId,
+        onValueChange: props.onValueChange,
+      }}
     >
-      {props.children}
-    </div>
-  </toggleGroupContext.PartsContext>
-);
+      <div
+        role="group"
+        aria-label={props.label}
+        data-slot="toggle-group"
+        className={cn("flex w-fit shrink-0 items-center bg-muted p-0.5", props.className)}
+      >
+        {props.children}
+      </div>
+    </toggleGroupContext.PartsContext>
+  );
+};
 
 interface ToggleGroupItemProps {
   value: string;
@@ -61,7 +67,14 @@ export const ToggleGroupItem = (props: ToggleGroupItemProps) => {
         props.className,
       )}
     >
-      {props.children}
+      {group.value === props.value && (
+        <m.span
+          layoutId={group.indicatorId}
+          transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+          className="absolute inset-0 rounded-[inherit] bg-raised shadow-raised"
+        />
+      )}
+      <span className="relative z-10 flex">{props.children}</span>
     </button>
   );
 };

@@ -92,7 +92,7 @@ interface FooterProps {
 }
 
 export const CodeFooter = (props: FooterProps) => (
-  <div className="-mr-4 -mb-4 -ml-4 flex shrink-0 basis-[calc(100%+2rem)] items-center gap-1.5 border-t py-2 pr-2.5 pl-4 text-sm">
+  <div className="relative z-10 -mr-4 -mb-4 -ml-4 flex shrink-0 bg-card basis-[calc(100%+2rem)] items-center gap-1.5 border-t py-2 pr-2.5 pl-4 text-sm">
     {props.children}
   </div>
 );
