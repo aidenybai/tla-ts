@@ -2711,6 +2711,18 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads a constant's array that changes in place where a function reads it", async () => {
+    const result = await checkModel(`
+      const names: string[] = [];
+      const count = () => names.length;
+      names.push("a");
+      const first = count();
+      names.push("b");
+      if (first !== 1 || count() !== 2) throw new Error("count");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {

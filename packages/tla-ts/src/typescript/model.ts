@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import {
   type Context,
+  findNodes,
   type FunctionNode,
   getFunction,
   getSymbol,
@@ -9,12 +10,15 @@ import {
   isHeapClass,
   isHeapFunction,
   isInlined,
+  isScript,
 } from "./context";
 import type { Expression } from "../ast";
+import { getWritten, getWrittenRoots } from "./actions";
 import { TlaTypeScriptError } from "../errors";
 import { getAllocated } from "./heap";
 import { VALUE_TAGS } from "./properties";
 import { getLocation, identifier, set } from "./tla";
+import { getKind } from "./types";
 
 export interface Variable {
   name: string;
@@ -81,13 +85,15 @@ const isExported = (node: HelperDeclaration) =>
   ts.isSourceFile(ts.isVariableDeclaration(node) ? node.parent.parent.parent : node.parent);
 
 // A let is a state variable, and so is a const in a script with a heap that makes an object, as
-// only statements can make objects.
-const isLet = (declared: Declared, context: Context) => {
+// only statements can make objects, and a script's const whose value the script changes in place.
+const isLet = (declared: Declared, changed: ReadonlySet<ts.Symbol>, context: Context) => {
   const declaration = declared.declaration;
+  const symbol = getSymbol(declared.identifier, context.checker);
   return (
     ts.isVariableDeclaration(declaration) &&
     ((declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
       !ts.isIdentifier(declaration.name) ||
+      (symbol !== undefined && changed.has(symbol)) ||
       (context.heap !== undefined &&
         declaration.initializer !== undefined &&
         (hasObjectLiteral(declaration.initializer) ||
@@ -195,11 +201,27 @@ export const readModel = (
     )
     .map((statement) => declareModelValues(statement, context));
   const declarations = statements.flatMap(getDeclarations);
+  const changed = new Set(
+    isScript(sourceFile)
+      ? [sourceFile, ...imported]
+          .flatMap((root) =>
+            findNodes(root, (node): node is ts.Node => getWritten(node) !== undefined),
+          )
+          .flatMap((node) => {
+            const written = getWritten(node);
+            return written === undefined ? [] : getWrittenRoots(written);
+          })
+          .flatMap((root) => {
+            const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+            return symbol !== undefined && getKind(root, context) !== "object" ? [symbol] : [];
+          })
+      : [],
+  );
   // An imported file's variable that changes is state as the model's own is, which its file may
   // export, as an importer reads the same binding.
   const variables = [...imported.flatMap(getDeclarations), ...declarations].flatMap((declared) => {
     const declaration = declared.declaration;
-    if (!isLet(declared, context) || !ts.isVariableDeclaration(declaration)) return [];
+    if (!isLet(declared, changed, context) || !ts.isVariableDeclaration(declaration)) return [];
     const symbol = getSymbol(declared.identifier, context.checker);
     const isImported = declaration.getSourceFile() !== sourceFile;
     if ((isExported(declaration) && !isImported) || symbol === undefined) {
@@ -223,7 +245,7 @@ export const readModel = (
     context.variables.set(symbol, identifier(name, getLocation(statement.name)));
     return [{ name, symbol, declaration: statement }];
   });
-  const helpers = declarations.filter((declared) => !isLet(declared, context));
+  const helpers = declarations.filter((declared) => !isLet(declared, changed, context));
   const exported = helpers.flatMap((declared) => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);
