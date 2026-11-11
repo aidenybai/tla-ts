@@ -130,7 +130,7 @@ const isInertClass = (statement: ts.Statement) =>
         (ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Static) !== 0),
   );
 
-const isDeclaration = (statement: ts.Statement) =>
+export const isDeclaration = (statement: ts.Statement) =>
   isInertClass(statement) ||
   ts.isModuleDeclaration(statement) ||
   ts.isImportDeclaration(statement) ||
@@ -180,7 +180,12 @@ const getBoundNames = (name: ts.BindingName): ts.Identifier[] =>
       );
 
 // Reads a model's state variables, exported functions, and tags, and names them in TLA+.
-export const readModel = (sourceFile: ts.SourceFile, context: Context): Model => {
+// Imported holds the statements of the files that the model imports, which run first.
+export const readModel = (
+  sourceFile: ts.SourceFile,
+  imported: readonly ts.Statement[],
+  context: Context,
+): Model => {
   const statements = sourceFile.statements;
   const tags = new Map(statements.map((statement) => [statement, getTags(statement)]));
   const symmetrySets = statements
@@ -190,11 +195,14 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     )
     .map((statement) => declareModelValues(statement, context));
   const declarations = statements.flatMap(getDeclarations);
-  const variables = declarations.flatMap((declared) => {
+  // An imported file's variable that changes is state as the model's own is, which its file may
+  // export, as an importer reads the same binding.
+  const variables = [...imported.flatMap(getDeclarations), ...declarations].flatMap((declared) => {
     const declaration = declared.declaration;
     if (!isLet(declared, context) || !ts.isVariableDeclaration(declaration)) return [];
     const symbol = getSymbol(declared.identifier, context.checker);
-    if (isExported(declaration) || symbol === undefined) {
+    const isImported = declaration.getSourceFile() !== sourceFile;
+    if ((isExported(declaration) && !isImported) || symbol === undefined) {
       throw new TlaTypeScriptError("State variables can't be exported", declaration);
     }
     if (context.variables.has(symbol)) return [];
@@ -229,6 +237,7 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     variables: [...variables, ...classes],
     // A script makes its functions before it runs, so they come first.
     script: [
+      ...imported,
       ...statements.filter(
         (statement) => ts.isFunctionDeclaration(statement) && isHeapDeclaration(statement),
       ),

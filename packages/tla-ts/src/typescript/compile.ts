@@ -1,14 +1,14 @@
 import ts from "@typescript/typescript6";
-import { translateScript, writesState } from "./actions";
-import { rejectSharing } from "./aliasing";
-import { type Context, createContext } from "./context";
+import { getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
+import { getReached, rejectSharing } from "./aliasing";
+import { type Context, createContext, findNodes, getCallee, getSymbol } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
 import { findHeapArrays, isHoleyArray, translateConstantFunctions } from "./heap";
 import { translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
-import { type Exported, type Model, readModel, type Variable } from "./model";
+import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
 import { link } from "./regions";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
@@ -83,6 +83,105 @@ export const compile = (
   const program = createProgram(source, path, libraries);
   const context = createContext(program.checker);
   const sourceFile = program.sourceFile;
+  // The files that the model imports, each after the files it imports, as they run.
+  const visited = new Set([sourceFile]);
+  const files: ts.SourceFile[] = [];
+  const visitImports = (file: ts.SourceFile) =>
+    file.statements.forEach((statement) => {
+      const specifier =
+        ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
+          ? statement.moduleSpecifier
+          : undefined;
+      const imported =
+        specifier && program.checker.getSymbolAtLocation(specifier)?.valueDeclaration;
+      if (
+        imported === undefined ||
+        !ts.isSourceFile(imported) ||
+        imported.isDeclarationFile ||
+        visited.has(imported)
+      ) {
+        return;
+      }
+      visited.add(imported);
+      visitImports(imported);
+      files.push(imported);
+    });
+  visitImports(sourceFile);
+  // An imported file's top-level statements that change what the model reads run before the
+  // model's own, with the variables of imported files that the model reaches and that change.
+  const hasEffect = (node: ts.Node): boolean =>
+    getWritten(node) !== undefined ||
+    ((ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+      getCallee(node.expression, context)?.body !== undefined) ||
+    (ts.forEachChild(node, hasEffect) ?? false);
+  const effects = files.flatMap((file) =>
+    file.statements.filter((statement) =>
+      ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.some(
+            (declaration) =>
+              declaration.initializer !== undefined &&
+              !ts.isFunctionLike(declaration.initializer) &&
+              hasEffect(declaration.initializer),
+          )
+        : !isDeclaration(statement),
+    ),
+  );
+  const getWrittenSymbols = (roots: readonly ts.Node[]) =>
+    new Set(
+      getReached(roots, context).flatMap((reached) =>
+        findNodes(reached, (node): node is ts.Node => getWritten(node) !== undefined).flatMap(
+          (node) => {
+            const target = getWritten(node);
+            return target === undefined
+              ? []
+              : getWrittenRoots(target).flatMap((root) => getSymbol(root, context.checker) ?? []);
+          },
+        ),
+      ),
+    );
+  const getImported = (run: readonly ts.Statement[]): ts.Statement[] => {
+    const written = getWrittenSymbols([sourceFile, ...run]);
+    // Where any of them changes, every variable that the model reaches runs where its file
+    // declares it, as its value may read one that changes.
+    const declared = getReached([sourceFile, ...run], context).flatMap((node) => {
+      const statement = node.parent?.parent;
+      const symbol = ts.isVariableDeclaration(node)
+        ? getSymbol(node.name, context.checker)
+        : undefined;
+      return symbol !== undefined &&
+        ts.isVariableDeclaration(node) &&
+        !(node.initializer !== undefined && ts.isFunctionLike(node.initializer)) &&
+        ts.isVariableStatement(statement) &&
+        ts.isSourceFile(statement.parent) &&
+        files.includes(statement.parent)
+        ? [
+            {
+              statement,
+              symbol,
+              isChanged:
+                (statement.declarationList.flags & ts.NodeFlags.Const) === 0 || written.has(symbol),
+            },
+          ]
+        : [];
+    });
+    const states = declared.some((state) => state.isChanged) || run.length > 0 ? declared : [];
+    const next = effects.filter(
+      (statement) =>
+        run.includes(statement) ||
+        [...getWrittenSymbols([statement])].some((symbol) =>
+          declared.some((state) => state.isChanged && state.symbol === symbol),
+        ),
+    );
+    return next.length > run.length
+      ? getImported(next)
+      : [...new Set([...run, ...states.map((state) => state.statement)])].toSorted(
+          (left, right) =>
+            files.indexOf(left.getSourceFile()) - files.indexOf(right.getSourceFile()) ||
+            left.pos - right.pos,
+        );
+  };
+  const imported = getImported(effects.filter((statement) => !ts.isVariableStatement(statement)));
+  const roots = [sourceFile, ...imported];
   // A script, with no exported functions, gives the objects and classes it makes, or reads through
   // Object or hasOwnProperty, identity with a heap. The heap binds to the symbol of lib's PropertyKey type,
   // which no value can have.
@@ -110,7 +209,7 @@ export const compile = (
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
     (ts.forEachChild(node, usesObjects) ?? false);
-  if (heap !== undefined && isScript(sourceFile) && usesObjects(sourceFile)) {
+  if (heap !== undefined && isScript(sourceFile) && roots.some(usesObjects)) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     const usesSpecialNumbers = (node: ts.Node): boolean =>
@@ -123,8 +222,8 @@ export const compile = (
       // Division may give an infinity or -0.
       (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
-    context.hasSpecialNumbers = usesSpecialNumbers(sourceFile);
-    context.heapArrays = findHeapArrays(sourceFile, context);
+    context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
+    context.heapArrays = findHeapArrays(roots, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>
       (ts.isCallExpression(node) &&
@@ -137,7 +236,7 @@ export const compile = (
         (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left)) &&
         prototypes.has(node.left.expression.getText())) ||
       (ts.forEachChild(node, changesPrototype) ?? false);
-    context.hasInheritedElements = changesPrototype(sourceFile);
+    context.hasInheritedElements = roots.some(changesPrototype);
     const getSymbolCalls = (node: ts.Node): number =>
       node
         .getChildren()
@@ -151,13 +250,16 @@ export const compile = (
     // may make a few symbols, as where a loop or a function runs it again.
     context.symbols = [
       ...WELL_KNOWN_SYMBOLS,
-      ...Array.from({ length: 4 * getSymbolCalls(sourceFile) }, () => ""),
+      ...Array.from(
+        { length: 4 * roots.reduce((count, root) => count + getSymbolCalls(root), 0) },
+        () => "",
+      ),
     ].map((name) =>
       context.names.getFresh(`Symbol${name.charAt(0).toUpperCase()}${name.slice(1)}`),
     );
   }
-  const model = readModel(sourceFile, context);
-  rejectSharing(program.sourceFile, context);
+  const model = readModel(sourceFile, imported, context);
+  rejectSharing(roots, context);
   // A using declaration disposes nothing where it holds only null or undefined.
   const isNothing = (node: ts.Expression | undefined) =>
     node !== undefined &&

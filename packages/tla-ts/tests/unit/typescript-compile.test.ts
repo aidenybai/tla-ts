@@ -1113,6 +1113,23 @@ describe("definitions", () => {
     );
   });
 
+  it("runs the files a script imports first, in the order they import each other", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/ordered.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("!== 12", "!== 2"), path));
+    expect(wrong.failure?.message).toContain("out of order");
+  });
+
+  it("changes the state of another file", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/totaling.ts");
+    const source = readFileSync(path, "utf8");
+    const result = await check(compile(source, path));
+    expect([result.status, result.distinctStates]).toEqual(["deadlock", 4]);
+    const violated = await check(compile(source.replace("<= 3", "<= 2"), path));
+    expect(violated.status).toBe("invariant-violation");
+  });
+
   it("compiles constants and functions imported from other files", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/counter.ts");
     const result = await check(compile(readFileSync(path, "utf8"), path));

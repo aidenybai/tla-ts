@@ -411,8 +411,8 @@ const getEscapes = (
 // an object that a variable changes in place.
 // The model's file, with the declarations in other files that it names and that they name in turn,
 // which hold every function of another file that the model may run.
-const getReached = (sourceFile: ts.SourceFile, context: Context) => {
-  const reached: ts.Node[] = [sourceFile];
+export const getReached = (roots: readonly ts.Node[], context: Context) => {
+  const reached = [...roots];
   const seen = new Set<ts.Node>(reached);
   const visit = (node: ts.Node): void => {
     const declarations = ts.isIdentifier(node)
@@ -420,14 +420,14 @@ const getReached = (sourceFile: ts.SourceFile, context: Context) => {
       : [];
     for (const declaration of declarations) {
       const file = declaration.getSourceFile();
-      if (file === sourceFile || file.isDeclarationFile || seen.has(declaration)) continue;
+      if (seen.has(file) || file.isDeclarationFile || seen.has(declaration)) continue;
       seen.add(declaration);
       reached.push(declaration);
       visit(declaration);
     }
     ts.forEachChild(node, visit);
   };
-  visit(sourceFile);
+  roots.forEach(visit);
   return reached;
 };
 
@@ -454,8 +454,8 @@ const isFreshCall = (node: ts.Node, context: Context) => {
   );
 };
 
-export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
-  const reached = getReached(sourceFile, context);
+export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
+  const reached = getReached(roots, context);
   const changed = new Map<ts.Symbol, number>();
   const addChanged = (written: Written[]) =>
     written.forEach((entry) =>

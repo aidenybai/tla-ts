@@ -1485,7 +1485,7 @@ export const isHoleyArray = (node: ts.Node): node is ts.ArrayLiteralExpression =
     ts.isIdentifier(node.parent.name)) ||
     (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node));
 
-export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
+export const findHeapArrays = (roots: readonly ts.Node[], context: Context) => {
   const arrays = new Set<ts.ArrayLiteralExpression | ts.BindingElement>();
   const find = (node: ts.Node) => {
     const argument = ts.isCallExpression(node) ? node.arguments.at(0) : undefined;
@@ -1507,7 +1507,7 @@ export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
     if (isHoleyArray(node)) arrays.add(node);
     ts.forEachChild(node, find);
   };
-  find(sourceFile);
+  roots.forEach(find);
   // A rest element that a script only reads as an object, and whose identity a comparison or a
   // call could see, is an array that the heap holds.
   const references = new Map<ts.Symbol, ts.Identifier[]>();
@@ -1527,7 +1527,7 @@ export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
     }
     ts.forEachChild(node, collect);
   };
-  if (context.heap !== undefined) collect(sourceFile);
+  if (context.heap !== undefined) roots.forEach(collect);
   rests.forEach((rest) => {
     const symbol = getSymbol(rest.name, context.checker);
     const uses = (symbol === undefined ? [] : (references.get(symbol) ?? [])).filter(
@@ -1556,7 +1556,7 @@ export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
     }
     ts.forEachChild(node, check);
   };
-  if (arrays.size > 0) check(sourceFile);
+  if (arrays.size > 0) roots.forEach(check);
   return arrays;
 };
 
