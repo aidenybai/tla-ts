@@ -2996,6 +2996,27 @@ describe("errors", () => {
     expect((await checkModel(getGeneratorSource("4,5,1,0;7,-1,1,1;"))).failure).toBeDefined();
   });
 
+  it("assigns an object's other properties to a rest property", async () => {
+    const getSource = (check: string) => `
+      let rest: { [key: string]: number } = {};
+      let a = 0;
+      const source: { a: number; b: number; c: number } = { a: 1, b: 2, c: 3 };
+      ({ a, ...rest } = source);
+      const keys = Object.keys(rest);
+      if (${check}) throw new Error(keys.join(","));
+    `;
+    expect(
+      (
+        await checkModel(
+          getSource(
+            "a !== 1 || keys.length !== 2 || rest.b !== 2 || rest.c !== 3 || rest === source",
+          ),
+        )
+      ).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("keys.length !== 3"))).failure).toBeDefined();
+  });
+
   it("makes a new function object each time a function makes one as a property's value", async () => {
     const getSource = (comparison: string) => `
       const make = function () {

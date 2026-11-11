@@ -693,7 +693,40 @@ const assignPattern = (
       target,
       context,
     );
-    const assigned = target.properties.reduce((current, property) => {
+    const assigned = target.properties.reduce((current, property, position) => {
+      const heapSymbol = context.heap;
+      // A new object with the properties that the other properties don't name.
+      if (
+        ts.isSpreadAssignment(property) &&
+        ts.isIdentifier(property.expression) &&
+        position === target.properties.length - 1 &&
+        isHeapObject &&
+        heapSymbol !== undefined
+      ) {
+        const excluded = target.properties.flatMap((other) =>
+          other !== property && other.name !== undefined && ts.isIdentifier(other.name)
+            ? [string(other.name.text)]
+            : [],
+        );
+        const heap = getHeap(current.scope, property, context);
+        const allocated = useJavaScript(
+          "Allocate",
+          [heap, useJavaScript("RestObject", [heap, value, set(excluded)], context)],
+          context,
+        );
+        return assign(
+          property.expression,
+          {
+            ...current,
+            scope: {
+              ...current.scope,
+              bindings: new Map([...current.scope.bindings, [heapSymbol, allocated]]),
+            },
+          },
+          context,
+          () => useJavaScript("Allocated", [allocated], context),
+        );
+      }
       if (
         !(ts.isShorthandPropertyAssignment(property) || ts.isPropertyAssignment(property)) ||
         !ts.isIdentifier(property.name)
