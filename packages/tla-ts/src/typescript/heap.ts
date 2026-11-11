@@ -1473,6 +1473,17 @@ const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
 
 // The array literals that a script passes to the Object functions that treat arrays as objects.
 // Each use of a variable that holds one must read it as an object.
+// An array literal with holes, which a sequence can't hold, where a variable that only reads it as
+// an object holds it, or a method reads it.
+export const isHoleyArray = (node: ts.Node): node is ts.ArrayLiteralExpression =>
+  ts.isArrayLiteralExpression(node) &&
+  node.elements.some(ts.isOmittedExpression) &&
+  !node.elements.some(ts.isSpreadElement) &&
+  ((ts.isVariableDeclaration(node.parent) &&
+    node.parent.initializer === node &&
+    ts.isIdentifier(node.parent.name)) ||
+    (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node));
+
 export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
   const arrays = new Set<ts.ArrayLiteralExpression | ts.BindingElement>();
   const find = (node: ts.Node) => {
@@ -1492,19 +1503,7 @@ export const findHeapArrays = (sourceFile: ts.SourceFile, context: Context) => {
     ) {
       arrays.add(literal);
     }
-    // An array literal with holes, which a sequence can't hold, where a variable that only reads it
-    // as an object holds it, or a method reads it.
-    if (
-      ts.isArrayLiteralExpression(node) &&
-      node.elements.some(ts.isOmittedExpression) &&
-      !node.elements.some(ts.isSpreadElement) &&
-      ((ts.isVariableDeclaration(node.parent) &&
-        node.parent.initializer === node &&
-        ts.isIdentifier(node.parent.name)) ||
-        (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node))
-    ) {
-      arrays.add(node);
-    }
+    if (isHoleyArray(node)) arrays.add(node);
     ts.forEachChild(node, find);
   };
   find(sourceFile);

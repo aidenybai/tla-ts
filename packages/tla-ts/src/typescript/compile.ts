@@ -5,7 +5,7 @@ import { type Context, createContext } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
-import { findHeapArrays, translateConstantFunctions } from "./heap";
+import { findHeapArrays, isHoleyArray, translateConstantFunctions } from "./heap";
 import { translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, type Model, readModel, type Variable } from "./model";
@@ -108,7 +108,7 @@ export const compile = (
     (ts.isIdentifier(node) &&
       ["arguments", "Symbol", "Promise", "setTimeout", "JSON"].includes(node.text)) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
-    (ts.isArrayLiteralExpression(node) && node.elements.some(ts.isOmittedExpression)) ||
+    isHoleyArray(node) ||
     (ts.forEachChild(node, usesObjects) ?? false);
   if (heap !== undefined && isScript(sourceFile) && usesObjects(sourceFile)) {
     context.heap = heap;
