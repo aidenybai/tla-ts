@@ -741,18 +741,17 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   }
   if (ts.isCallExpression(node) && isDescription(node, context)) {
     const key = translatePropertyKey(node.arguments[1], scope, context);
-    const described =
-      getKind(node.arguments[0], context) === "sequence"
-        ? useJavaScript(
-            "DescribeElement",
-            [translateExpression(node.arguments[0], scope, context), key],
-            context,
-          )
-        : useJavaScript(
-            "Describe",
-            [heap, translateObjectValue(node.arguments[0], scope, context), key],
-            context,
-          );
+    const described = isElementDescription(node, context)
+      ? useJavaScript(
+          "DescribeElement",
+          [translateExpression(node.arguments[0], scope, context), key],
+          context,
+        )
+      : useJavaScript(
+          "Describe",
+          [heap, translateObjectValue(node.arguments[0], scope, context), key],
+          context,
+        );
     return useJavaScript("Allocate", [heap, described], context);
   }
   if (!ts.isCallExpression(node) || !isCreation(node, context)) {
@@ -792,6 +791,11 @@ const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
     isHeapType(checker.getNonNullableType(contextual), node, context)
   );
 };
+
+// A description of a property of an array that a sequence holds, not of a built-in object.
+export const isElementDescription = (node: ts.CallExpression, context: Context) =>
+  getKind(node.arguments[0], context) === "sequence" &&
+  !isBuiltInObject(node.arguments[0], context);
 
 // Object.getOwnPropertyDescriptor, or Reflect's, which only differs where the target isn't an
 // object.

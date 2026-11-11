@@ -58,6 +58,7 @@ import {
   getHeap,
   isCreation,
   isDescription,
+  isElementDescription,
   isSymbolCall,
   isNewObject,
   getNewWrapper,
@@ -646,7 +647,7 @@ const translateCall = (
     }
     const key = translatePropertyKey(node.arguments[1], scope, context);
     return ifExpression(
-      getKind(node.arguments[0], context) === "sequence"
+      isElementDescription(node, context)
         ? useJavaScript(
             "HasOwnElement",
             [translateExpression(node.arguments[0], scope, context), key],

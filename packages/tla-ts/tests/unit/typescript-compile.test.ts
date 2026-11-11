@@ -1211,6 +1211,18 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("describes Array.prototype as the built-in object it is", async () => {
+    const result = await checkModel(`
+      const holder = { seen: 0 };
+      const described = Object.getOwnPropertyDescriptor(Array.prototype, "constructor");
+      if (described === undefined || described.value !== Array || described.enumerable !== false) {
+        throw new Error("constructor");
+      }
+      holder.seen = 1;
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("describes the properties of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };
