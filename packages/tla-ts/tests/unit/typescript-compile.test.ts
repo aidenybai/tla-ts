@@ -682,6 +682,23 @@ describe("values", () => {
     expect(result.failure?.message).toContain("tla-ts can't hold -1 >>> 0 in an integer");
   });
 
+  it("assigns with the compound forms of %, **, and the bitwise operators", async () => {
+    const result = await checkModel(`
+      let value = 12;
+      value &= 10;
+      value |= 3;
+      value <<= 28;
+      value >>= 4;
+      value >>>= 6;
+      value %= 1000;
+      value **= 2;
+      let negative = -7;
+      negative %= 3;
+      if (value !== 20736 || negative !== -1) throw new Error("compound");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("converts the objects that a bitwise operator takes in order", async () => {
     const result = await checkModel(`
       const log = { text: "" };

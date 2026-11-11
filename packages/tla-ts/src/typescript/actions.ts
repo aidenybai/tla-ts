@@ -80,6 +80,7 @@ import {
   translateKey,
   translateSetKey,
   translateToString,
+  BITWISE_OPERATORS,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import { getErrorClass, translateEngineError, translateThrown } from "./exceptions";
@@ -357,6 +358,22 @@ const COMPOUND_OPERATORS = new Map([
   [ts.SyntaxKind.PlusEqualsToken, "+"],
   [ts.SyntaxKind.MinusEqualsToken, "-"],
   [ts.SyntaxKind.AsteriskEqualsToken, "*"],
+  [ts.SyntaxKind.PercentEqualsToken, "%"],
+  [ts.SyntaxKind.AsteriskAsteriskEqualsToken, "^"],
+  [ts.SyntaxKind.SlashEqualsToken, "/"],
+]);
+
+// The operators on the bits of integers that compound assignments apply.
+const BITWISE_ASSIGNMENTS = new Map([
+  [ts.SyntaxKind.AmpersandEqualsToken, ts.SyntaxKind.AmpersandToken],
+  [ts.SyntaxKind.BarEqualsToken, ts.SyntaxKind.BarToken],
+  [ts.SyntaxKind.CaretEqualsToken, ts.SyntaxKind.CaretToken],
+  [ts.SyntaxKind.LessThanLessThanEqualsToken, ts.SyntaxKind.LessThanLessThanToken],
+  [ts.SyntaxKind.GreaterThanGreaterThanEqualsToken, ts.SyntaxKind.GreaterThanGreaterThanToken],
+  [
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ],
 ]);
 
 const LOGICAL_OPERATORS = new Set([
@@ -374,13 +391,18 @@ const NUMBER_OPERATORS = new Map([
   ["+", "Add"],
   ["-", "Subtract"],
   ["*", "Multiply"],
+  ["%", "Remainder"],
+  ["^", "Power"],
+  ["/", "Divide"],
 ]);
 
 // An arithmetic operator, which the JavaScript module computes in a script that names NaN,
-// Infinity, or -0.
+// Infinity, or -0. Otherwise % keeps the dividend's sign as Rem does.
 const applyArithmetic = (operator: string, operands: Expression[], context: Context) => {
   const name = context.hasSpecialNumbers ? NUMBER_OPERATORS.get(operator) : undefined;
-  return name === undefined ? apply(operator, operands) : useJavaScript(name, operands, context);
+  if (name !== undefined) return useJavaScript(name, operands, context);
+  if (operator === "%") context.prelude.add("Rem");
+  return apply(operator === "%" ? "Rem" : operator, operands);
 };
 
 const getPart = (target: Target, step: ExceptPathStep): Target => ({
@@ -760,13 +782,27 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   }
   const isConcatenated =
     kind === ts.SyntaxKind.PlusEqualsToken && getKind(expression.left, context) === "string";
-  const operator = isConcatenated ? "\\o" : COMPOUND_OPERATORS.get(kind);
+  const bitwiseKind = BITWISE_ASSIGNMENTS.get(kind);
+  const bitwise = bitwiseKind === undefined ? undefined : BITWISE_OPERATORS.get(bitwiseKind);
+  const operator = isConcatenated ? "\\o" : (bitwise ?? COMPOUND_OPERATORS.get(kind));
   if (operator === undefined) return undefined;
   if (
     !isConcatenated &&
     (!isNumberLike(expression.left, context) || !isNumberLike(expression.right, context))
   ) {
     throw new TlaTypeScriptError(`${expression.operatorToken.getText()} needs numbers`, expression);
+  }
+  if (operator === "/" && !context.hasSpecialNumbers) {
+    throw new TlaTypeScriptError(
+      "Write division as Math.floor(a / b) or Math.trunc(a / b)",
+      expression,
+    );
+  }
+  if (bitwise !== undefined) {
+    const value = translateExpression(expression.right, path.scope, context);
+    return assign(expression.left, path, context, (current) =>
+      useJavaScript(bitwise, [current, value], context),
+    );
   }
   const value = isConcatenated
     ? translateToString(expression.right, path.scope, context)
