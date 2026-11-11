@@ -349,7 +349,9 @@ const pendingTests = [
     .flatMap((path) => portModelTest(path) ?? []),
 ];
 
-const corrections = new Map(findTests([importDirectory]).map((test) => [test.path, test]));
+const corrections = new Map(
+  findTests([relative(dirname(SUITE_DIRECTORY), importDirectory)]).map((test) => [test.path, test]),
+);
 rmSync(importDirectory, { recursive: true, force: true });
 
 const command = getHost("tlc");
