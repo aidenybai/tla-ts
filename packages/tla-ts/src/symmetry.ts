@@ -300,16 +300,29 @@ export const getRepresentative = (
   permutations: RankedImages[],
   order: number[],
 ): Value[] => {
-  let smallest = state;
-  for (const images of permutations) {
-    const permuted = state.slice();
-    let comparison = 0;
-    for (const index of order) {
-      permuted[index] = permuteValue(state[index], images);
-      if (comparison === 0) comparison = compareValues(permuted[index], smallest[index]);
-      if (comparison > 0) break;
+  // Narrows the permutations one variable at a time to those whose images tie for the smallest so
+  // far, so each variable is permuted only by permutations that can still give the smallest state.
+  // The state itself stays a candidate until a permutation makes a variable smaller.
+  const candidates = permutations.slice();
+  let candidateCount = candidates.length;
+  let isStateSmallest = true;
+  const smallest = state.slice();
+  for (const index of order) {
+    if (candidateCount === 0) break;
+    let kept = 0;
+    for (let candidate = 0; candidate < candidateCount; candidate++) {
+      const images = candidates[candidate];
+      const permuted = permuteValue(state[index], images);
+      const comparison =
+        kept === 0 && !isStateSmallest ? -1 : compareValues(permuted, smallest[index]);
+      if (comparison < 0) {
+        smallest[index] = permuted;
+        isStateSmallest = false;
+        kept = 0;
+      }
+      if (comparison <= 0) candidates[kept++] = images;
     }
-    if (comparison < 0) smallest = permuted;
+    candidateCount = kept;
   }
-  return smallest;
+  return isStateSmallest ? state : smallest;
 };

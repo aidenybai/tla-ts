@@ -934,6 +934,17 @@ ASSUME TLCFP(a) = -887695703
     expect(progress).toEqual([{ kind: "liveness-prepared", branches }]);
   });
 
+  it("counts each symmetric state once when a later variable tells the permutations apart", async () => {
+    // Each of a, b, c has one of four <<x, y>> pairs, so the classes are the 20 multisets of three
+    // pairs, verified with TLC.
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b, c\nVARIABLES x, y\nS == {a, b, c}\nInit == x \\in [S -> {0, 1}] /\\ y \\in [S -> {0, 1}]\nNext == UNCHANGED <<x, y>>\nSym == Permutations(S)\n====",
+      config: "CONSTANTS a = a b = b c = c\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+    });
+    expect(result.distinctStates).toBe(20);
+  });
+
   it("warns about a permuted set with fewer than two elements", async () => {
     const warnings: CheckProgress[] = [];
     const result = await check({
