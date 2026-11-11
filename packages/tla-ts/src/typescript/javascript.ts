@@ -2371,6 +2371,17 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
     : useJavaScript("TypeOfIn", [heap, value], context);
 };
 
+// A number as a string, where a value that TypeScript types as a number may still be undefined,
+// such as an element past an array's end, which TLC would print as Undefined.
+export const translateNumberString = (value: Expression, context: Context) =>
+  context.hasSpecialNumbers
+    ? useJavaScript("StringOf", [value], context)
+    : ifExpression(
+        apply("=", [value, getUndefined(context)]),
+        string("undefined"),
+        apply("ToString", [value]),
+      );
+
 export const isComparableType = (left: ts.Type, right: ts.Type, checker: ts.TypeChecker) => {
   const names = [left, right].map((type) => getTypeNames(type, checker));
   if (names.some((name) => name === undefined)) return false;
@@ -2523,11 +2534,7 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
   }
   if (name === "String") {
     if (kind === "string") return value;
-    if (kind === "number") {
-      return context.hasSpecialNumbers
-        ? useJavaScript("StringOf", [value], context)
-        : apply("ToString", [value]);
-    }
+    if (kind === "number") return translateNumberString(value, context);
     if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
     if (isEmpty) return string(kind);
     const heap = context.heap === undefined ? undefined : scope.bindings.get(context.heap);

@@ -2601,6 +2601,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("writes an element past an array's end as undefined", async () => {
+    const result = await checkModel(`
+      const items = [1, 2];
+      const missing = items[5] as number;
+      if (\`\${missing}\` !== "undefined") throw new Error("missing");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

@@ -90,6 +90,7 @@ import {
   isComparable,
   mayBeNumber,
   translateConversion,
+  translateNumberString,
   translateParseInt,
   translateToNumber,
   translateTypeOf,
@@ -880,11 +881,7 @@ export const translateToString = (node: ts.Expression, scope: Scope, context: Co
   const value = translateExpression(node, scope, context);
   const flags = context.checker.getTypeAtLocation(node).flags;
   if (getKind(node, context) === "string") return value;
-  if (isNumberLike(node, context)) {
-    return context.hasSpecialNumbers
-      ? useJavaScript("StringOf", [value], context)
-      : apply("ToString", [value]);
-  }
+  if (isNumberLike(node, context)) return translateNumberString(value, context);
   if (isBooleanLike(node, context)) return ifExpression(value, string("true"), string("false"));
   if (flags & ts.TypeFlags.Null) return string("null");
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
