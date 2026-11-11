@@ -957,10 +957,27 @@ export const isAllocation = (node: ts.Node, context: Context) =>
 
 // The primitive that new Boolean, new Number, or new String wraps in an object.
 export const getNewWrapper = (node: ts.Node, context: Context) => {
-  const name =
+  const called =
     context.heap !== undefined && ts.isNewExpression(node)
       ? getBuiltIn(node.expression, context)
       : undefined;
+  // new Object of a primitive wraps it as its own constructor would.
+  const argument = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+  const names =
+    called === "Object" &&
+    argument !== undefined &&
+    isHeapType(context.checker.getTypeAtLocation(node), node, context)
+      ? getTypeNames(context.checker.getTypeAtLocation(argument), context.checker)
+      : undefined;
+  const primitive = names?.length === 1 ? names[0] : undefined;
+  const name =
+    primitive === "string"
+      ? "String"
+      : primitive === "number"
+        ? "Number"
+        : primitive === "boolean"
+          ? "Boolean"
+          : called;
   return (name === "Boolean" || name === "Number" || name === "String") &&
     ts.isNewExpression(node) &&
     (node.arguments ?? []).length <= 1 &&

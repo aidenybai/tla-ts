@@ -1576,6 +1576,18 @@ const translateNode = (
     }
     return allocated;
   }
+  // new Object of an object gives the object.
+  const passed = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+  if (
+    ts.isNewExpression(node) &&
+    passed !== undefined &&
+    node.arguments?.length === 1 &&
+    getBuiltIn(node.expression, context) === "Object" &&
+    isHeapType(context.checker.getTypeAtLocation(node), node, context) &&
+    (getKind(passed, context) === "object" || isBuiltInObject(passed, context))
+  ) {
+    return translateObjectValue(passed, scope, context);
+  }
   if (ts.isNewExpression(node)) {
     const classes = getErrorClass(getSymbol(node.expression, context.checker), context.checker);
     return classes === undefined

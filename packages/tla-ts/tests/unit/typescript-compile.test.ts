@@ -1308,6 +1308,30 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives new Object's object argument back and wraps a primitive one", async () => {
+    const result = await checkModel(`
+      declare global {
+        interface ObjectConstructor {
+          new <T extends object>(value: T): T;
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          new (value: number): Number;
+        }
+      }
+      const box = { prop: 1 };
+      const same = new Object(box);
+      if (same !== box || same.prop !== 1) throw new Error("same");
+      const count = new Object(5);
+      if (count.constructor !== Number || typeof count !== "object") throw new Error("number");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects new Object of a value whose type doesn't tell the object", () => {
+    expect(() =>
+      compile("const box = { prop: 1 };\nconst same: Object = new Object(box);"),
+    ).toThrow("spec.ts:2:22 Unsupported constructor: new Object");
+  });
+
   it("describes the properties of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };
