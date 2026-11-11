@@ -396,6 +396,10 @@ ArrowObject(functionPrototype, name, length) ==
                 "length", length, FALSE, FALSE, TRUE),
          "name", name, FALSE, FALSE, TRUE)
 
+\\* A function that bind makes, which has no prototype and constructs where its target does.
+BoundFunctionObject(functionPrototype, name, length, isConstructor) ==
+  [ArrowObject(functionPrototype, "bound " \\o name, length) EXCEPT !.isConstructor = isConstructor]
+
 \\* A generator function, which can't construct, and its prototype object, which the generator
 \\* objects it makes inherit from. tla-ts can't read the properties of the built-in objects they
 \\* inherit from.

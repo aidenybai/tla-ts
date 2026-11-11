@@ -51,6 +51,7 @@ import {
   isInlined,
   getFunctionOfKind,
   isUnresolved,
+  getBound,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -977,6 +978,33 @@ export const translateCallStatement = (
     );
   }
   const callee = called?.method ?? getCallback(expression.expression, path, context);
+  const bound = callee === undefined ? getBound(expression.expression, context) : undefined;
+  if (bound !== undefined && !bound.isSteady) {
+    throw new TlaTypeScriptError(
+      `Unsupported call: ${expression.expression.getText()}`,
+      expression,
+    );
+  }
+  if (bound !== undefined && !frame.inlining.has(bound.target)) {
+    return inlineBody(
+      expression,
+      bound.target,
+      [...bound.arguments, ...expression.arguments],
+      ts.isArrowFunction(bound.target)
+        ? undefined
+        : {
+            value:
+              bound.receiver === undefined
+                ? getUndefined(context)
+                : translateExpression(bound.receiver, path.scope, context),
+            method: bound.target,
+          },
+      path,
+      context,
+      frame,
+      continueWith,
+    );
+  }
   const dispatched = callee === undefined ? getDispatched(expression, path, context) : undefined;
   if (dispatched !== undefined) {
     const target = getCast(expression.expression);
@@ -3114,6 +3142,7 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
+  getBound(node.expression, context) !== undefined ||
   (isObjectChange(node) &&
     node.expression.name.text !== "construct" &&
     isHeapType(context.checker.getTypeAtLocation(node), node, context)) ||

@@ -12,6 +12,7 @@ import type { Expression } from "../ast";
 import {
   type Context,
   type FunctionNode,
+  getBinding,
   getAccessKey,
   getCalledMethod,
   getObjectGetter,
@@ -463,6 +464,13 @@ const translateCall = (
       throw new TlaTypeScriptError("Make symbols only where a statement always runs", node);
     }
     return made;
+  }
+  if (getBinding(node, context) !== undefined) {
+    const bound = scope.allocated.get(node);
+    if (bound === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return bound;
   }
   const converted =
     translateConversion(node, scope, context) ?? translateIntrinsic(node, scope, context);

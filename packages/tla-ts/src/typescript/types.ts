@@ -10,6 +10,7 @@ import {
   isHeapFunction,
   translateString,
   type Unknown,
+  getBound,
 } from "./context";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
@@ -194,7 +195,7 @@ export const getCollection = (node: ts.Expression, context: Context) => {
 };
 
 export const getKind = (node: ts.Expression, context: Context): Kind => {
-  if (isHeapArray(node, context)) return "object";
+  if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
   if (isSequenceType(type, checker)) return "sequence";

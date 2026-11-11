@@ -471,7 +471,10 @@ export const getLocalCaptures = (node: FunctionNode, context: Context) => {
 
 // The function that a script evaluates once, which is a value with one identity, either as the
 // expression or through a name that its declaration gives it and nothing assigns.
-export const getFunctionValue = (node: ts.Node, context: Context) => {
+export const getFunctionValue = (
+  node: ts.Node,
+  context: Context,
+): ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration | undefined => {
   if (context.heap === undefined) return undefined;
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
   const declaration = symbol?.valueDeclaration;
@@ -494,6 +497,84 @@ export const getFunctionValue = (node: ts.Node, context: Context) => {
     !isFunctionObject(found, context)
     ? found
     : undefined;
+};
+
+export interface Binding {
+  target: ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration;
+  receiver: ts.Expression | undefined;
+  arguments: ts.Expression[];
+  isSteady: boolean;
+  isCall: boolean;
+}
+
+// A value that reads the same wherever a script reads it: a literal, or a name that nothing assigns
+// and that holds its value by the time the node runs.
+const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
+  if (
+    ts.isLiteralExpression(value) ||
+    value.getText() === "undefined" ||
+    [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(
+      value.kind,
+    )
+  ) {
+    return true;
+  }
+  const symbol = ts.isIdentifier(value) ? getSymbol(value, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  return (
+    symbol !== undefined &&
+    declaration !== undefined &&
+    declaration.getSourceFile() === node.getSourceFile() &&
+    (ts.isFunctionDeclaration(declaration) || declaration.end < node.getStart()) &&
+    !isAssigned(symbol, node.getSourceFile(), context)
+  );
+};
+
+// A call of Function.prototype.bind on a function that a script evaluates once, as f.bind(x, ...)
+// or Function.prototype.bind.call(f, x, ...). A call of the bound function reads its receiver and
+// arguments again, so it needs them steady, and an empty object can only be bound.
+export const getBinding = (node: ts.Node, context: Context): Binding | undefined => {
+  if (context.heap === undefined || !isMethodCall(node)) return undefined;
+  const callee = node.expression;
+  const isCall =
+    callee.name.text === "call" && callee.expression.getText() === "Function.prototype.bind";
+  if (!isCall && callee.name.text !== "bind") return undefined;
+  const values = isCall ? [...node.arguments] : [callee.expression, ...node.arguments];
+  const target = values[0] === undefined ? undefined : getFunctionValue(values[0], context);
+  if (
+    target === undefined ||
+    (!ts.isArrowFunction(target) && target.asteriskToken !== undefined) ||
+    (ts.getCombinedModifierFlags(target) & ts.ModifierFlags.Async) !== 0 ||
+    values.some(
+      (value) =>
+        !isSteady(value, node, context) &&
+        !(ts.isObjectLiteralExpression(value) && value.properties.length === 0),
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    target,
+    receiver: values[1],
+    arguments: values.slice(2),
+    isSteady: values.every((value) => isSteady(value, node, context)),
+    isCall,
+  };
+};
+
+// The binding that a value is: a call of bind, or a name that one gives and nothing assigns.
+export const getBound = (node: ts.Expression, context: Context) => {
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const value =
+    symbol !== undefined &&
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    !isAssigned(symbol, node.getSourceFile(), context)
+      ? declaration.initializer
+      : node;
+  return getBinding(skipCasts(value), context);
 };
 
 const heapClasses = new WeakMap<ts.ClassLikeDeclaration, boolean>();

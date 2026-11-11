@@ -1186,6 +1186,29 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the length and the name of the function that a value holds", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      function two(first: number, second: number) {
+        holder.count = first * second;
+      }
+      const restOne = (first: number, ...rest: number[]) => {
+        holder.count = first + rest.length;
+      };
+      let ref: (first: number, second: number) => void;
+      ref = (first: number, second = 39) => {
+        holder.count = first + second;
+      };
+      if (ref.length !== 1) throw new Error("default");
+      ref = two;
+      if (ref.length !== 2) throw new Error("plain");
+      const chosen = holder.count > 5 ? two : restOne;
+      if (chosen.length !== 1) throw new Error("rest");
+      if (chosen.name !== "restOne" || ref.name !== "two") throw new Error("name");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("describes the properties of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };
@@ -1215,27 +1238,43 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("reads the length and the name of the function that a value holds", async () => {
+  it("binds a function's receiver and leading arguments", async () => {
     const result = await checkModel(`
-      const holder = { count: 0 };
-      function two(first: number, second: number) {
-        holder.count = first * second;
+      const holder = { prop: "abc" };
+      function pair(this: unknown, first: number, second: number) {
+        return this === holder && first === 1 && second === 2;
       }
-      const restOne = (first: number, ...rest: number[]) => {
-        holder.count = first + rest.length;
-      };
-      let ref: (first: number, second: number) => void;
-      ref = (first: number, second = 39) => {
-        holder.count = first + second;
-      };
-      if (ref.length !== 1) throw new Error("default");
-      ref = two;
-      if (ref.length !== 2) throw new Error("plain");
-      const chosen = holder.count > 5 ? two : restOne;
-      if (chosen.length !== 1) throw new Error("rest");
-      if (chosen.name !== "restOne" || ref.name !== "two") throw new Error("name");
+      const bound = pair.bind(holder, 1);
+      if (bound(2) !== true) throw new Error("call");
+      if (bound.length !== 1 || bound.name !== "bound pair") throw new Error("properties");
+      if (Object.getPrototypeOf(bound) !== Function.prototype) throw new Error("prototype");
+      const other = Function.prototype.bind.call(pair, holder, 1);
+      if (other === bound) throw new Error("identity");
     `);
     expect(result.failure).toBeUndefined();
+  });
+
+  it("stops binding where a script replaced Function.prototype.bind", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      function one(this: unknown) {
+        return 1;
+      }
+      Function.prototype.bind = function (this: unknown) {
+        holder.count += 1;
+        return one;
+      } as typeof Function.prototype.bind;
+      const bound = one.bind(null);
+    `);
+    expect(result.failure?.message).toContain("replaced Function.prototype.bind");
+  });
+
+  it("stops where a bound function would see a fresh receiver", () => {
+    expect(() =>
+      compile(
+        "function self(this: unknown) {\n  return this;\n}\nconst bound = self.bind({});\nconst first = bound();",
+      ),
+    ).toThrow("spec.ts:5:15 Unsupported call: bound");
   });
 
   it("stops where a callee holds a function that the script doesn't declare", async () => {

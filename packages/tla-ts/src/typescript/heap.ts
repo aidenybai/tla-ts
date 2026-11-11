@@ -23,6 +23,7 @@ import {
   isMethodCall,
   type MethodCall,
   isUnresolved,
+  getBinding,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor } from "./exceptions";
@@ -37,6 +38,7 @@ import { getTypeNames, translateToNumber, useJavaScript } from "./javascript";
 import { createStateScope, type Scope } from "./scope";
 import {
   apply,
+  ifExpression,
   boolean,
   functionFrom,
   identifier,
@@ -583,6 +585,50 @@ export const translateHasPrivate = (
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
+  const binding = getBinding(node, context);
+  if (binding !== undefined) {
+    const length = getFunctionLength(getParameters(binding.target)) - binding.arguments.length;
+    const holds = (object: "Function.prototype" | "Function.prototype.bind", key: string) =>
+      useJavaScript(
+        "HoldsBuiltIn",
+        [
+          heap,
+          translateBuiltInValue(object, node, context),
+          string(key),
+          string(`Function.prototype.${key}`),
+        ],
+        context,
+      );
+    return ifExpression(
+      binding.isCall
+        ? apply("/\\", [
+            holds("Function.prototype", "bind"),
+            holds("Function.prototype.bind", "call"),
+          ])
+        : holds("Function.prototype", "bind"),
+      useJavaScript(
+        "Allocate",
+        [
+          heap,
+          useJavaScript(
+            "BoundFunctionObject",
+            [
+              translateBuiltInValue("Function.prototype", node, context),
+              string(getFunctionName(binding.target)),
+              number(Math.max(0, length)),
+              boolean(!ts.isArrowFunction(binding.target)),
+            ],
+            context,
+          ),
+        ],
+        context,
+      ),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't bind a function where a script replaced Function.prototype.bind"),
+      ]),
+    );
+  }
   if (ts.isCallExpression(node) && isSymbolCall(node, context)) {
     return useJavaScript(
       isSymbolFor(node, context) ? "RegisterSymbol" : "NewSymbol",
@@ -817,6 +863,7 @@ export const translateAllocatedValue = (
     : useJavaScript("Allocated", [heap], context);
 
 export const isAllocation = (node: ts.Node, context: Context) =>
+  getBinding(node, context) !== undefined ||
   (ts.isCallExpression(node) &&
     (isDescription(node, context) || isCreation(node, context) || isSymbolCall(node, context))) ||
   isNewObject(node, context) ||

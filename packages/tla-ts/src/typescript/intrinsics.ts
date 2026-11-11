@@ -212,6 +212,7 @@ export type Collection = "Set" | "Map" | "WeakMap" | "WeakSet";
 export const translateBuiltInValue = (
   name:
     | "Function.prototype"
+    | "Function.prototype.bind"
     | "Array.prototype"
     | "Object.prototype"
     | "Array"
