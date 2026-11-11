@@ -623,7 +623,7 @@ const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
 
 // An operator's operand of a type that the operator doesn't take, which tla-ts converts to a
-// primitive where it's an object that the test declares.
+// primitive where it's an object that the test declares, a wrapper, or a primitive.
 const OPERAND_TYPE_ERRORS = new Set([2362, 2363, 2365]);
 
 // A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
@@ -736,7 +736,18 @@ const ignoreSoundErrors = () => {
         ts.TypeFlags.Undefined |
         ts.TypeFlags.Null)) !==
     0;
-  // An operation on objects that the test declares and primitives, which tla-ts converts.
+  const isWrapper = (node: ts.Node) => {
+    const symbol = checker.getTypeAtLocation(node).getSymbol();
+    return (
+      symbol !== undefined &&
+      ["Boolean", "Number", "String"].includes(symbol.getName()) &&
+      (symbol.declarations ?? []).every(
+        (declaration) => declaration.getSourceFile().isDeclarationFile,
+      )
+    );
+  };
+  // An operation on objects that the test declares, wrappers, and primitives, which tla-ts
+  // converts.
   const isConverted = (node: ts.Node, diagnostic: ts.Diagnostic) => {
     const start = diagnostic.start ?? 0;
     const end = start + (diagnostic.length ?? 0);
@@ -752,8 +763,9 @@ const ignoreSoundErrors = () => {
     const operands = [operation.left, operation.right];
     return (
       !(kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment) &&
-      operands.some(isPlainObject) &&
-      operands.every((operand) => isPlainObject(operand) || isPrimitive(operand))
+      operands.every(
+        (operand) => isPlainObject(operand) || isWrapper(operand) || isPrimitive(operand),
+      )
     );
   };
   const isUnnarrowed = (node: ts.Node, diagnostic: ts.Diagnostic) => {
