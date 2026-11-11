@@ -11,15 +11,14 @@ import {
   SORT_BOOL,
 } from "./ast";
 import { hasUninterpreted, isAppOf, pushNotOwned } from "./ast-util";
+import { extractVars } from "./qe";
 import type { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { ProtoModel } from "./proto-model";
 import { Mbproj } from "./qe-mbp";
 import { QuantifierHoister } from "./quant-hoist";
 import { RefVector } from "./ref-vector";
-import { InvVarShifter } from "./rewriter-tpl";
 import { SmtKernel } from "./smt-kernel";
-import { VarSubst } from "./var-subst";
 
 const NO_LEVEL = -1;
 
@@ -811,22 +810,6 @@ export class Qsat {
     }
   }
 }
-
-// extract_vars: the body of the quantifier over fresh constants for its variables, with a
-// reference.
-const extractVars = (manager: AstManager, quantifier: number, vars: RefVector) => {
-  const data = manager.getQuantifier(quantifier);
-  const fresh = data.sorts.map((sort) => manager.mkFreshConst("x", sort));
-  for (const expr of fresh) vars.push(expr);
-  const subst = new VarSubst(manager, true);
-  const substituted = subst.apply(data.body, fresh);
-  subst.release();
-  const shifter = new InvVarShifter(manager);
-  const result = shifter.shift(substituted, fresh.length);
-  shifter.release();
-  manager.decRef(substituted);
-  return result;
-};
 
 const isOccurringIn = (manager: AstManager, variable: number, expr: number) => {
   const visited = new Set<number>();

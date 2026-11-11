@@ -48,6 +48,7 @@ import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
+import { runQe } from "./qe";
 import { applyQeLite } from "./qe-lite";
 import { QSAT_QE, QSAT_QE_REC, QSAT_SAT, runQsat } from "./qsat";
 import { simplifyGoal } from "./quant-tactics";
@@ -898,6 +899,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "qe",
+    {
+      descrs: new Map(),
+      isRejectingUnknown: false,
+      build: (environment) => runQe(environment.manager),
+    },
+  ],
+  [
     "qsat",
     {
       descrs: new Map(),
@@ -988,7 +997,7 @@ const UNPORTED_TACTICS = new Set(
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
     "nla2bv nlqsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
-    "qe qfbv-sls qffd qfnra " +
+    "qfbv-sls qffd qfnra " +
     "qfufbv recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
