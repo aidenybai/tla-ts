@@ -1,3 +1,4 @@
+import "./index.css";
 import { CodeBlock } from "./components/code-block";
 import { ExampleTabs } from "./components/example-tabs";
 import { PROOF_EXAMPLES, SPEC_EXAMPLES } from "./examples";

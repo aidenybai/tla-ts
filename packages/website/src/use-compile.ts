@@ -6,7 +6,6 @@ export interface Compilation {
   // The TypeScript that the spec's regions index into.
   input: string;
   spec: CompiledSpec;
-  elapsed: number;
 }
 
 interface CompileState {
@@ -62,11 +61,7 @@ export const useCompile = (source: string, fileName: string) => {
       setState((previous) =>
         response.kind === "compiled"
           ? {
-              compilation: {
-                input: request.source,
-                spec: response.spec,
-                elapsed: response.elapsed,
-              },
+              compilation: { input: request.source, spec: response.spec },
               finished: request.source,
               error: undefined,
             }
@@ -81,7 +76,6 @@ export const useCompile = (source: string, fileName: string) => {
 
   return {
     compilation: state.compilation,
-    error: state.error,
-    isCompiling: state.finished !== source,
+    error: state.finished === source ? state.error : undefined,
   };
 };

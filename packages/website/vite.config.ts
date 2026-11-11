@@ -35,7 +35,22 @@ const typescriptLibraries = (): Plugin => ({
 
 export default defineConfig({
   plugins: [
-    react(),
+    // The editor's components come from Realize, which memoizes through the React Compiler.
+    react({
+      babel: {
+        plugins: [
+          [
+            "babel-plugin-react-compiler",
+            {
+              sources: (fileName: string) =>
+                /\/src\/(components\/(ui|viewer)|hooks|lib|store)\/|\/src\/editor\.tsx$/.test(
+                  fileName,
+                ),
+            },
+          ],
+        ],
+      },
+    }),
     tailwindcss(),
     typescriptLibraries(),
     {

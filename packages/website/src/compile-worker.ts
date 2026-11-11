@@ -9,18 +9,13 @@ export interface CompileRequest {
 }
 
 export type CompileResponse =
-  | { kind: "compiled"; spec: CompiledSpec; elapsed: number }
+  | { kind: "compiled"; spec: CompiledSpec }
   | { kind: "failed"; message: string };
 
 self.onmessage = (event: MessageEvent<CompileRequest>) => {
-  const startedAt = performance.now();
   try {
     const spec = compile(event.data.source, event.data.fileName, libraries);
-    self.postMessage({
-      kind: "compiled",
-      spec,
-      elapsed: performance.now() - startedAt,
-    } satisfies CompileResponse);
+    self.postMessage({ kind: "compiled", spec } satisfies CompileResponse);
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     self.postMessage({ kind: "failed", message: error.message } satisfies CompileResponse);
