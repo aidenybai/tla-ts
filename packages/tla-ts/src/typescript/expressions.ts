@@ -3,6 +3,7 @@ import {
   translateArrayConstructor,
   translateArrayLikeCall,
   translateFunctionConstructor,
+  translateHeapElements,
   translateMethod,
   translateNew,
   translateSet,
@@ -133,6 +134,7 @@ import {
   getPropertyKey,
   isBooleanLike,
   isFieldName,
+  isHeapArray,
   isHeapType,
   isNumberLike,
   rejectGeneratorUse,
@@ -258,6 +260,9 @@ const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, co
       return Array.isArray(last)
         ? [...result.slice(0, -1), [...last, value]]
         : [...result, [value]];
+    }
+    if (isHeapArray(element.expression, context)) {
+      return [...result, translateHeapElements(element.expression, scope, context)];
     }
     if (getKind(element.expression, context) !== "sequence") {
       throw new TlaTypeScriptError(

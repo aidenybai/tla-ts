@@ -380,6 +380,9 @@ const translateUnordered = (
 export const translateSet = (node: ts.Expression, scope: Scope, context: Context) => {
   const unordered = translateUnordered(node, scope, context);
   if (unordered !== undefined) return unordered.set;
+  if (isHeapArray(node, context)) {
+    return getElements(translateHeapElements(node, scope, context), context);
+  }
   const kind = getKind(node, context);
   const value = translateExpression(node, scope, context);
   if (kind === "set") return value;
@@ -1614,6 +1617,30 @@ export const getHeapArrayChange = (node: ts.Node, context: Context) =>
         items: node.arguments,
       }
     : undefined;
+
+// The elements that the iterator of an array that the heap holds gives, as for-of and spread read
+// them, where Array.prototype still holds the built-in iterator.
+export const translateHeapElements = (node: ts.Expression, scope: Scope, context: Context) =>
+  share(translateExpression(node, scope, context), "array", context, (array) => {
+    const heap = getHeap(scope, node, context);
+    return ifExpression(
+      useJavaScript(
+        "HoldsBuiltIn",
+        [
+          heap,
+          array,
+          useJavaScript("WellKnownSymbol", [string("iterator")], context),
+          string("Array.prototype.values"),
+        ],
+        context,
+      ),
+      useJavaScript("ArrayLikeValues", [heap, array], context),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't iterate an array whose iterator a script replaced"),
+      ]),
+    );
+  });
 
 export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const call = getArrayLikeCall(node, context);

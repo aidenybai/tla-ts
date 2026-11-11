@@ -1652,6 +1652,9 @@ const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
     return parent.expression === node;
   }
   if (ts.isTypeOfExpression(parent)) return true;
+  // A loop or a spread runs the array's iterator, which reads its elements as an object's.
+  if (ts.isForOfStatement(parent) && parent.expression === node) return true;
+  if (ts.isSpreadElement(parent)) return true;
   if (ts.isBinaryExpression(parent)) {
     const kind = parent.operatorToken.kind;
     return (

@@ -2766,6 +2766,31 @@ describe("errors", () => {
     );
   });
 
+  it("iterates and spreads an array that the heap holds", async () => {
+    const result = await checkModel(`
+      const box = {};
+      const holes: (number | undefined)[] = [1, , 3];
+      let total = 0;
+      let missing = 0;
+      for (const item of holes) {
+        if (item === undefined) missing++;
+        else total += item;
+      }
+      const copy = [0, ...holes];
+      if (total !== 4 || missing !== 1 || copy.length !== 4 || Math.max(...[2, 5]) !== 5) {
+        throw new Error("elements");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const items: number[] & { tag?: string } = [1, 2];
+        items.tag = "t";
+        for (const item of items) if (item === 1) items.push(3);
+      `),
+    ).toThrow("tla-ts can't iterate an array that the heap holds while the loop changes objects");
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {

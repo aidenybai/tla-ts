@@ -4,6 +4,7 @@ import {
   checkElement,
   getCallbackReceiver,
   getHeapArrayChange,
+  translateHeapElements,
   getRegExpCall,
   getStringCall,
   getUpdatedValue,
@@ -5086,10 +5087,16 @@ const translateIterations = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const iterated = ts.isForOfStatement(loop) || ts.isForInStatement(loop) ? loop : undefined;
+  // A for-of over an array that the heap holds visits its elements, as its iterator reads them.
+  const isHeapIteration =
+    iterated !== undefined &&
+    ts.isForOfStatement(iterated) &&
+    isHeapArray(iterated.expression, context);
   // A for-of over an object that a script declares iterates through the object's iterator.
   const isIterator =
     iterated !== undefined &&
     ts.isForOfStatement(iterated) &&
+    !isHeapIteration &&
     getKind(iterated.expression, context) !== "sequence" &&
     isIteratedValue(iterated.expression, context);
   const isForIn =
@@ -5110,11 +5117,20 @@ const translateIterations = (
     !isForIn &&
     !isIterator &&
     !isStringIteration &&
+    !isHeapIteration &&
     getKind(iterated.expression, context) !== "sequence"
   ) {
     throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
   }
   const changed = getChanged(loop, path, context);
+  // The iterator reads each element as the loop reaches it, which a copy of the elements matches
+  // only while the body changes no object.
+  if (isHeapIteration && changed.some((symbol) => symbol === context.heap)) {
+    throw new TlaTypeScriptError(
+      "Unsupported loop: tla-ts can't iterate an array that the heap holds while the loop changes objects",
+      iterated?.expression,
+    );
+  }
   // A for-in skips a key that its body deletes before visiting it, which a list of keys can't.
   if (isForIn && changed.some((symbol) => symbol === context.heap)) {
     throw new TlaTypeScriptError("Don't change objects while a for-in iterates one", loop);
@@ -5371,7 +5387,9 @@ const translateIterations = (
                         [translateExpression(iterated.expression, path.scope, context)],
                         context,
                       )
-                    : translateExpression(iterated.expression, path.scope, context),
+                    : isHeapIteration
+                      ? translateHeapElements(iterated.expression, path.scope, context)
+                      : translateExpression(iterated.expression, path.scope, context),
               ),
             ]),
         operator,
