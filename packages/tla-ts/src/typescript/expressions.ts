@@ -365,15 +365,20 @@ const translateObjectLiteral = (
 };
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
-  const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
   const isSpecial = context.hasSpecialNumbers;
+  // Math's functions convert their arguments to numbers. A statement converts the objects among
+  // them through their methods, and ToNumber stops on any other.
+  const translate = (inner: ts.Expression) => {
+    const value = translateExpression(inner, scope, context);
+    if ((context.checker.getTypeAtLocation(inner).flags & ts.TypeFlags.NumberLike) !== 0) {
+      return value;
+    }
+    const converted = useJavaScript("ToNumber", [value], context);
+    return isSpecial ? converted : useJavaScript("PlainNumber", [converted], context);
+  };
   const argument = node.arguments[0];
   if (method === "pow" && node.arguments.length === 2) {
-    return useJavaScript(
-      "Power",
-      node.arguments.map((inner) => translateExpression(inner, scope, context)),
-      context,
-    );
+    return useJavaScript("Power", node.arguments.map(translate), context);
   }
   if ((method === "floor" || method === "trunc") && node.arguments.length === 1) {
     const division = ts.isParenthesizedExpression(argument) ? argument.expression : argument;

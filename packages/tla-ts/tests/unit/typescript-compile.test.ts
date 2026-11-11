@@ -1566,6 +1566,38 @@ describe("errors", () => {
     expect(ordered.failure?.message).toContain("tla-ts can't order strings");
   });
 
+  it("converts the arguments of Math's functions, and stops where it can't", async () => {
+    const result = await checkModel(`
+      let order = "";
+      const first = {
+        valueOf() {
+          order += "a";
+          return 7;
+        },
+      };
+      const second = {
+        valueOf() {
+          order += "b";
+          return -4;
+        },
+      };
+      const largest = Math.max(first as any, second as any, "3" as any);
+      const absolute = Math.abs(second as any);
+      if (largest !== 7 || absolute !== 4 || order !== "abb") throw new Error("converted");
+    `);
+    expect(result.failure).toBeUndefined();
+    const unconverted = await checkModel(`
+      const larger = (value: any) => Math.max(value, 1);
+      const result = larger({});
+    `);
+    expect(unconverted.failure?.message).toContain("tla-ts can't convert this object to a number");
+    const indexed = await checkModel(`
+      const list = [1, 2, 3];
+      const value = list.at({} as any);
+    `);
+    expect(indexed.failure?.message).toContain("tla-ts can't convert this object to a number");
+  });
+
   it("rejects a conversion whose method changes what the statement read before it", () => {
     expect(() =>
       compile(

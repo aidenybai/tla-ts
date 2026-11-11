@@ -1248,6 +1248,7 @@ ToNumber(value) ==
              [] kind = "infinity" -> IF isNegative THEN NegativeInfinity ELSE Infinity
              [] kind = "nan" -> NaN
              [] OTHER -> Assert(FALSE, "tla-ts can't represent the number " \\o ToString(value)))
+    [] IsRef(value) -> Assert(FALSE, "tla-ts can't convert this object to a number")
     [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of converting a symbol to a number")
 
 \\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds

@@ -12,6 +12,7 @@ import {
 import { concatenate, translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
+import { getBuiltIn } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { bind, callValue, getMethods, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, not, string, tuple } from "./tla";
@@ -104,6 +105,47 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
     )
       ? { operands, hint, combine }
       : undefined;
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    getBuiltIn(node.expression.expression, context) === "Math"
+  ) {
+    const method = node.expression.name.text;
+    const operands = node.arguments;
+    const toNumbers = (primitives: readonly Expression[]) =>
+      primitives.map((primitive) => useJavaScript("ToNumber", [primitive], context));
+    if (operands.some(ts.isSpreadElement)) return undefined;
+    if ((method === "max" || method === "min") && operands.length > 0) {
+      return make(
+        operands,
+        "number",
+        (primitives) =>
+          plain(
+            toNumbers(primitives).reduce((result, value) =>
+              useJavaScript(method === "max" ? "Maximum" : "Minimum", [result, value], context),
+            ),
+          ),
+        true,
+      );
+    }
+    if (method === "abs" && operands.length === 1) {
+      return make(
+        operands,
+        "number",
+        (primitives) => plain(useJavaScript("AbsoluteValue", toNumbers(primitives), context)),
+        true,
+      );
+    }
+    if (method === "pow" && operands.length === 2) {
+      return make(
+        operands,
+        "number",
+        (primitives) => plain(useJavaScript("Power", toNumbers(primitives), context)),
+        true,
+      );
+    }
+    return undefined;
+  }
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
     const declarations = getSymbol(node.expression, context.checker)?.declarations ?? [];
     const argument = node.arguments.at(0);

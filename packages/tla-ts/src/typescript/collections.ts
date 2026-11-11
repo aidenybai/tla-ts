@@ -546,11 +546,16 @@ const translateSequenceOperation = (
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
   const argument = call.arguments[0];
   const getLength = () => apply("Len", [sequence]);
+  // An index after ToNumber, which stops on an object.
+  const getIndex = (inner: ts.Expression) =>
+    isNumberLike(inner, context)
+      ? translate(inner)
+      : useJavaScript("ToNumber", [translate(inner)], context);
   // An index that counts back from the end when it's negative, as at() and slice() take it.
   const getRelative = (inner: ts.Expression, operator: "RelativeIndex" | "ClampedIndex") =>
     ts.isNumericLiteral(inner)
       ? translate(inner)
-      : useJavaScript(operator, [translate(inner), getLength()], context);
+      : useJavaScript(operator, [getIndex(inner), getLength()], context);
   const orUndefined = (exists: Expression, value: Expression) => {
     if (isDefined) return value;
     return ifExpression(exists, value, getUndefined(context));
@@ -704,7 +709,19 @@ const translateSequenceOperation = (
         const last =
           end === undefined
             ? getLength()
-            : useJavaScript("ClampedIndex", [translate(end), getLength()], context);
+            : isNumberLike(end, context)
+              ? useJavaScript("ClampedIndex", [translate(end), getLength()], context)
+              : share(translate(end), "end", context, (value) =>
+                  ifExpression(
+                    apply("=", [value, getUndefined(context)]),
+                    getLength(),
+                    useJavaScript(
+                      "ClampedIndex",
+                      [useJavaScript("ToNumber", [value], context), getLength()],
+                      context,
+                    ),
+                  ),
+                );
         const first =
           start.kind === "Number" ? number(start.value + 1) : apply("+", [start, number(1)]);
         return apply("SubSeq", [sequence, first, last]);
