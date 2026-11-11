@@ -1178,7 +1178,11 @@ const OBJECT_CHANGES = new Map([
   ["freeze", { operator: "Freeze", arity: 1, objects: [0] }],
   ["seal", { operator: "Seal", arity: 1, objects: [0] }],
   ["preventExtensions", { operator: "PreventExtensions", arity: 1, objects: [0] }],
+  ["setPrototypeOf", { operator: "SetPrototypeOf", arity: 2, objects: [0] }],
 ]);
+
+// The changes that throw a TypeError where they fail.
+const FALLIBLE_CHANGES = new Set(["defineProperty", "defineProperties", "setPrototypeOf"]);
 
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
@@ -1194,6 +1198,7 @@ export const isObjectChange = (node: ts.Node): node is MethodCall =>
 // of an empty array, and the RangeError of an array's invalid length.
 export const getEngineErrors = (node: ts.Node, context: Context) => {
   const isDefinition = isObjectChange(node) && node.expression.name.text.startsWith("define");
+  const isFallible = isObjectChange(node) && FALLIBLE_CHANGES.has(node.expression.name.text);
   if (
     isDefinition &&
     context.heapArrays.size > 0 &&
@@ -1206,7 +1211,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
     return ["ReferenceError"];
   }
-  return isDefinition ||
+  return isFallible ||
     (isObjectChange(node) && isConstruct(node)) ||
     ts.isNewExpression(node) ||
     (isMethodCall(node) && node.expression.name.text.startsWith("reduce"))
@@ -1292,6 +1297,6 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
     );
   return {
     change: useJavaScript(change.operator, [getHeap(scope, node, context), ...values], context),
-    isFallible: method.startsWith("define"),
+    isFallible: FALLIBLE_CHANGES.has(method),
   };
 };

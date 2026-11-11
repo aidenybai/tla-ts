@@ -1376,6 +1376,27 @@ Create(heap, prototype, properties) ==
        [] change.isDone -> change.heap
        [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
 
+\\* Whether a prototype chain reaches an object.
+RECURSIVE ChainHas(_, _, _)
+ChainHas(heap, prototype, ref) ==
+  /\\ prototype # Null
+  /\\ \\/ SameValue(prototype, ref)
+     \\/ ChainHas(heap, Lookup(heap, prototype).prototype, ref)
+
+\\* Object.setPrototypeOf, which fails where the object isn't extensible or the chain would loop.
+\\* Object.prototype keeps the prototype it has, and a primitive stays as it is.
+SetPrototypeOf(heap, ref, prototype) ==
+  LET object == Lookup(heap, ref)
+      result(isDone, isChanged) ==
+        [heap |-> IF isChanged THEN Update(heap, ref, [object EXCEPT !.prototype = prototype]) ELSE heap,
+         isDone |-> isDone, isRangeError |-> FALSE]
+  IN CASE ref \\in {Undefined, Null} \\/ ~(prototype = Null \\/ IsObjectArgument(prototype)) ->
+            result(FALSE, FALSE)
+       [] ~IsObjectArgument(ref) \\/ SameValue(prototype, object.prototype) -> result(TRUE, FALSE)
+       [] SameValue(ref, ObjectPrototype) \\/ ~object.extensible -> result(FALSE, FALSE)
+       [] ChainHas(heap, prototype, ref) -> result(FALSE, FALSE)
+       [] OTHER -> result(TRUE, TRUE)
+
 LOCAL Restrict(heap, ref, isFrozen) ==
   LET object == Lookup(heap, ref)
       attributes ==

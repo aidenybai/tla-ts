@@ -1236,6 +1236,27 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("sets an object's prototype, and throws a TypeError where the chain would loop", async () => {
+    const result = await checkModel(`
+      const parent: { [key: string]: unknown } = { inherited: 1 };
+      const child: { [key: string]: unknown } = {};
+      Object.setPrototypeOf(child, parent);
+      if (child.inherited !== 1 || Object.getPrototypeOf(child) !== parent) {
+        throw new Error("set");
+      }
+      let caught = false;
+      try {
+        Object.setPrototypeOf(parent, child);
+      } catch (error) {
+        caught = error instanceof TypeError;
+      }
+      if (!caught) throw new Error("cycle");
+      Object.setPrototypeOf(child, null);
+      if (Object.getPrototypeOf(child) !== null) throw new Error("null");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("describes the properties of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };
