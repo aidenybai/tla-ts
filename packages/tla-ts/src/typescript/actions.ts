@@ -4693,6 +4693,7 @@ const translateIterations = (
       generators: new Map(),
       tasks: undefined,
     };
+    const carriedValues = tuple(parameters.map((parameter) => identifier(parameter)));
     const operator: OperatorDefinition = {
       ...define(
         name,
@@ -4700,10 +4701,17 @@ const translateIterations = (
           name: parameter,
           arity: 0,
         })),
+        // Each iteration evaluates the values it carries, which an operator's arguments otherwise
+        // defer, so that a value that each iteration builds on, such as a string that grows,
+        // doesn't nest thousands of deferred steps.
         render(
-          ts.isDoStatement(loop) || opened !== undefined
-            ? translateBody(inner)
-            : ifThenElse(test(inner), translateBody(inner), done(inner)),
+          ifThenElse(
+            apply("=", [carriedValues, carriedValues]),
+            ts.isDoStatement(loop) || opened !== undefined
+              ? translateBody(inner)
+              : ifThenElse(test(inner), translateBody(inner), done(inner)),
+            leaf(boolean(false)),
+          ),
         ),
       ),
       isRecursive: true,

@@ -387,6 +387,19 @@ describe("top-level statements", () => {
     expect(getTrace(result)).toEqual([{ count: "3" }]);
   });
 
+  it("run a loop that builds a string as deep as a loop of numbers", async () => {
+    const result = await checkModel(`
+      let text = "";
+      let count = 0;
+      while (count < 1200) {
+        text += ".";
+        count++;
+      }
+      if (text.length !== 1200) throw new Error("built");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stop the check when a loop throws, though nothing reads what it changes", async () => {
     await expect(
       checkModel(`
