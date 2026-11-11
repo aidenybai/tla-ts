@@ -197,6 +197,21 @@ export const getCollection = (node: ts.Expression, context: Context) => {
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
+  // An object stays one where TypeScript narrows its type, as instanceof Object narrows it to the
+  // library's Object.
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+  const declared =
+    symbol === undefined || context.heap === undefined
+      ? undefined
+      : checker.getNonNullableType(checker.getTypeOfSymbol(symbol));
+  const declaredMembers =
+    declared === undefined ? [] : declared.isUnion() ? declared.types : [declared];
+  if (
+    declaredMembers.length > 0 &&
+    declaredMembers.every((member) => isPlainObject(member, context))
+  ) {
+    return "object";
+  }
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
   if (isSequenceType(type, checker)) return "sequence";
   if (isSetType(type)) return "set";

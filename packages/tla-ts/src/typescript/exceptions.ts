@@ -4,6 +4,7 @@ import { type Context, getHeapClass, getSymbol, getUndefined, share } from "./co
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
+import { translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { getKind } from "./types";
@@ -167,6 +168,9 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   }
   const symbol = getSymbol(node.right, context.checker);
   const classes = getErrorClass(symbol, context.checker);
+  const builtIn =
+    classes === undefined ? translateBuiltInInstanceOf(node, scope, context) : undefined;
+  if (builtIn !== undefined) return builtIn;
   if (symbol === undefined || classes === undefined) {
     throw new TlaTypeScriptError(`Unsupported instanceof: ${node.right.getText()}`, node);
   }

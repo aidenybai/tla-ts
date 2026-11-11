@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { type Context, getSymbol, getUndefined } from "./context";
+import { type Context, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { translateExpression } from "./expressions";
@@ -8,7 +8,17 @@ import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import type { Scope } from "./scope";
 import type { Expression } from "../ast";
 import { BUILT_INS } from "./built-ins";
-import { boolean, functionFrom, identifier, number, record, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  functionFrom,
+  identifier,
+  ifExpression,
+  number,
+  record,
+  string,
+  tuple,
+} from "./tla";
 import { getCollection, getKind } from "./types";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
@@ -97,6 +107,66 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   return (type.getSymbol()?.flags ?? 0) & ts.SymbolFlags.ObjectLiteral
     ? "Object.prototype"
     : undefined;
+};
+
+// left instanceof C, where C is a built-in constructor other than an error, while C keeps
+// Function.prototype's @@hasInstance. A value off the heap has the prototype its type tells.
+export const translateBuiltInInstanceOf = (
+  node: ts.BinaryExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const name = getBuiltIn(node.right, context);
+  if (name === undefined || context.heap === undefined || BUILT_INS[name]?.[4] !== true) {
+    return undefined;
+  }
+  const left = node.left;
+  const type = context.checker.getTypeAtLocation(left);
+  const isPrimitive =
+    !type.isUnion() &&
+    (type.flags &
+      (ts.TypeFlags.NumberLike |
+        ts.TypeFlags.StringLike |
+        ts.TypeFlags.BooleanLike |
+        ts.TypeFlags.BigIntLike |
+        ts.TypeFlags.ESSymbolLike |
+        ts.TypeFlags.Undefined |
+        ts.TypeFlags.Null)) !==
+      0;
+  const isObject = getKind(left, context) === "object";
+  const parent = isPrimitive || isObject ? undefined : getPrototype(left, context);
+  if (!isPrimitive && !isObject && (parent === undefined || parent === "null")) return undefined;
+  const heap = getHeap(scope, node, context);
+  const constructor = translateBuiltIn(name, node.right, scope, context);
+  const prototype = useJavaScript("Get", [heap, constructor, string("prototype")], context);
+  const found = (value: Expression) => {
+    if (isPrimitive) return boolean(false);
+    if (isObject) return useJavaScript("IsPrototypeOf", [heap, prototype, value], context);
+    const inherited = translateBuiltIn(parent ?? "null", left, scope, context);
+    return apply("\\/", [
+      useJavaScript("SameValue", [inherited, prototype], context),
+      useJavaScript("IsPrototypeOf", [heap, prototype, inherited], context),
+    ]);
+  };
+  return share(translateExpression(left, scope, context), "value", context, (value) =>
+    ifExpression(
+      useJavaScript(
+        "HoldsBuiltIn",
+        [
+          heap,
+          constructor,
+          useJavaScript("WellKnownSymbol", [string("hasInstance")], context),
+          string("Function.prototype.@@hasInstance"),
+        ],
+        context,
+      ),
+      ifExpression(apply("=", [value, value]), found(value), boolean(false)),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call a Symbol.hasInstance that a script defined"),
+      ]),
+    ),
+  );
 };
 
 export const isBuiltInObject = (node: ts.Expression, context: Context) =>

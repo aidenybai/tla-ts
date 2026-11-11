@@ -1211,6 +1211,19 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("tells whether a value inherits from a built-in constructor's prototype", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const orphan = Object.create(null) as object;
+      const list = [1, 2];
+      const add = (value: number) => value;
+      if (!(holder instanceof Object) || holder instanceof Array) throw new Error("object");
+      if (!(list instanceof Array) || !(list instanceof Object)) throw new Error("array");
+      if (!(add instanceof Function) || orphan instanceof Object) throw new Error("other");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("describes Array.prototype as the built-in object it is", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };
