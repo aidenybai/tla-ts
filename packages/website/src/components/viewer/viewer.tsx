@@ -5,6 +5,7 @@ import { VIEW_MODES, type ViewMode } from "@/lib/view-mode";
 import type { Example, ViewFile } from "@/model";
 import { ViewerProvider, useViewer } from "./context";
 import { JsonPane } from "./json-pane";
+import { RunPanel } from "./run-panel";
 import { SourceMap } from "./source-map";
 import { SourcePane } from "./source-pane";
 import { Status } from "./status";
@@ -54,17 +55,22 @@ const PANES: Record<ViewMode, ComponentType> = {
 const Source = () => {
   const { mode } = useViewer();
   return (
-    <main className="min-h-0">
-      {VIEW_MODES.map((paneMode) => {
-        const Pane = PANES[paneMode];
-        return (
-          <Activity key={paneMode} mode={paneMode === mode ? "visible" : "hidden"}>
-            <ErrorBoundary FallbackComponent={Crash}>
-              <Pane />
-            </ErrorBoundary>
-          </Activity>
-        );
-      })}
+    <main className="flex min-h-0 flex-col">
+      <div className="min-h-0 flex-1">
+        {VIEW_MODES.map((paneMode) => {
+          const Pane = PANES[paneMode];
+          return (
+            <Activity key={paneMode} mode={paneMode === mode ? "visible" : "hidden"}>
+              <ErrorBoundary FallbackComponent={Crash}>
+                <Pane />
+              </ErrorBoundary>
+            </Activity>
+          );
+        })}
+      </div>
+      <ErrorBoundary FallbackComponent={Crash}>
+        <RunPanel />
+      </ErrorBoundary>
     </main>
   );
 };

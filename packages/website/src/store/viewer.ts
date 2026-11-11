@@ -17,8 +17,8 @@ interface ViewerStoreState {
 
 export type ViewerStore = StoreApi<ViewerStoreState>;
 
-// Hovering a node focuses it and everything linked to it. Clicking one keeps it focused after the
-// pointer leaves, until a second click on it or on empty space.
+// Hovering a node focuses it and everything linked to it. A selected node stays focused after the
+// pointer leaves.
 export const createViewerStore = (view: ViewFile): ViewerStore => {
   const index = buildGraphIndex(view);
   const getFocus = (nodeId: string | null) =>
@@ -37,10 +37,8 @@ export const createViewerStore = (view: ViewFile): ViewerStore => {
       if (get().hoveredNodeId !== null)
         set({ hoveredNodeId: null, causalNodeIds: getFocus(get().selectedNodeId) });
     },
-    select: (nodeId) => {
-      const selectedNodeId = nodeId === get().selectedNodeId ? null : nodeId;
-      set({ selectedNodeId, causalNodeIds: getFocus(get().hoveredNodeId ?? selectedNodeId) });
-    },
+    select: (selectedNodeId) =>
+      set({ selectedNodeId, causalNodeIds: getFocus(get().hoveredNodeId ?? selectedNodeId) }),
     setShowingAllArcs: (isShowingAllArcs) => set({ isShowingAllArcs }),
   }));
 };

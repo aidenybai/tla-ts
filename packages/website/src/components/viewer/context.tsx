@@ -4,6 +4,7 @@ import { navigate, usePathname } from "@/lib/navigation";
 import { getPathMode, getRouteHref } from "@/lib/route";
 import type { ViewMode } from "@/lib/view-mode";
 import type { Example, ViewFile } from "@/model";
+import { useRun } from "../../use-run";
 import { ViewerStoreContext, createViewerStore } from "@/store/viewer";
 
 interface ViewerState {
@@ -14,6 +15,9 @@ interface ViewerState {
   json: string;
   setMode: (mode: ViewMode) => void;
   colorByNodeId: Map<string, string>;
+  runner: ReturnType<typeof useRun>;
+  isResultOpen: boolean;
+  setResultOpen: (isResultOpen: boolean) => void;
 }
 
 const ViewerContext = createContext<ViewerState | null>(null);
@@ -30,6 +34,8 @@ export const ViewerProvider = ({ examples, name, view, json, children }: ViewerP
   const mode = getPathMode(usePathname());
   const [store] = useState(() => createViewerStore(view));
   const colorByNodeId = getColorByNodeId(view);
+  const runner = useRun();
+  const [isResultOpen, setResultOpen] = useState(false);
   const setMode = (next: ViewMode) => navigate(getRouteHref(name, next), true);
   return (
     <ViewerContext
@@ -41,6 +47,9 @@ export const ViewerProvider = ({ examples, name, view, json, children }: ViewerP
         json,
         setMode,
         colorByNodeId,
+        runner,
+        isResultOpen,
+        setResultOpen,
       }}
     >
       <ViewerStoreContext value={store}>{children}</ViewerStoreContext>

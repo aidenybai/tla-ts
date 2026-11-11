@@ -222,6 +222,7 @@ export const buildViewFile = (file: string, source: string, spec: PrintedSpec): 
     file,
     source,
     module: { file: `${spec.name}.tla`, source: spec.source },
+    config: spec.config,
     nodes,
     edges,
   };
