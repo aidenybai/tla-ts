@@ -52,6 +52,10 @@ const IMPURE_BUILTINS = new Set([
   "Assert",
   "JavaTime",
   "RandomElement",
+  "RandomSubset",
+  "RandomSetOfSubsets",
+  "RandomSubsetSet",
+  "TestRandomSetOfSubsets",
   "TLCGet",
   "TLCSet",
 ]);
@@ -337,3 +341,7 @@ export const getReadVariables = (
 
 export const isNonconstant = (expression: Expression, environment: Environment) =>
   (getExpressionsRow([expression], environment)[0] & NONCONSTANT) !== 0;
+
+// Evaluating the expression again in the same state gives the same value and does nothing else.
+export const isRepeatable = (expression: Expression, environment: Environment) =>
+  (getExpressionsRow([expression], environment)[0] & (IMPURE | READS_IMPURE)) === 0;

@@ -126,6 +126,20 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  it("draws RandomSubset again at each reference to a LET definition in an action", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Randomization, TLC\nVARIABLE x\nInit == x = 0\nNext == LET s == RandomSubset(1, 1..1000) IN x' = 0 /\\ PrintT(<<s, s>>)\n====",
+      config: "INIT Init\nNEXT Next",
+      seed: 1n,
+      onPrint: (text) => prints.push(text),
+    });
+    const draws = prints.map((text) => text.match(/\{\d+\}/g));
+    expect(draws).toHaveLength(1);
+    expect(draws[0]?.[0]).not.toBe(draws[0]?.[1]);
+  });
+
   it('reports the seed in TLCGet("config")', async () => {
     const result = await check({
       source:
