@@ -300,7 +300,15 @@ const proveModule = async (
   return unproved.length > 0;
 };
 
-const DEBUG_FLAGS = new Set(["tempfiles", "hidden", "alldefs", "no_smt_set_extensionality"]);
+const DEBUG_FLAGS = new Set([
+  "tempfiles",
+  "hidden",
+  "alldefs",
+  "rw+",
+  "rw",
+  "rwsetext",
+  "no_smt_set_extensionality",
+]);
 
 export const runTlapm = async (args: string[]) => {
   const parsed = TLAPM_COMMAND.parse(args);
@@ -428,7 +436,10 @@ export const runTlapm = async (args: string[]) => {
       stretch: Number(parsed.get("--stretch")?.[0] ?? 1),
       isFlattened: !parsed.has("--noflatten"),
       smtLogic: parsed.get("--smt-logic")?.[0] ?? "UFNIA",
-      smtEncoding: { isSetExtensional: !debugFlags.has("no_smt_set_extensionality") },
+      smtEncoding: {
+        rewriteLevel: ["rwsetext", "rw", "rw+"].findLastIndex((flag) => debugFlags.has(flag)) + 1,
+        isSetExtensional: !debugFlags.has("no_smt_set_extensionality"),
+      },
     },
     printing,
     isKeepingFiles: debugFlags.has("tempfiles"),

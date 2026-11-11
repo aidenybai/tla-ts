@@ -11,6 +11,7 @@ import {
 } from "../../obligations/expression";
 import { compareStrings } from "../ocaml";
 import { createPrinter } from "./context";
+import { simplifySets } from "./simplify";
 import { layOutCommand } from "./layout";
 import { getSymbolSpec, type CollectState, type SymbolSpec } from "./data";
 import type { Entry } from "./flatten";
@@ -251,7 +252,10 @@ export const encodeSmt = (
   const simplified = sortRecordFields(
     simplifyRecordEqualities({ kind: "Sequent", sequent: prepared }),
   );
-  const sequent = simplified.kind === "Sequent" ? simplified.sequent : prepared;
+  const sequent = simplifySets(
+    simplified.kind === "Sequent" ? simplified.sequent : prepared,
+    encoding.rewriteLevel,
+  );
   const encoder = createEncoder(session, encoding);
   const context = encodeContext(sequent.context, encoder);
   const goal = isSecondOrder(sequent.active)

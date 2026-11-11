@@ -23,6 +23,7 @@ import {
   disjoin,
   FUN_APP,
   FUN_EXCEPT,
+  FUN_ISAFCN,
   FUN_SET,
   getBinders,
   INT_LTEQ,
@@ -57,6 +58,7 @@ export interface EncodingSession {
 
 // The options of Smtlib.preprocess that tlapm's --debug flags set.
 export interface SmtEncoding {
+  rewriteLevel: number;
   isSetExtensional: boolean;
 }
 
@@ -480,7 +482,10 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
 
   // Standardize: an opaque name the Action frontend introduces is an anonymous operator, named
   // OPAQUE_ when it has no arguments.
-  const encodeOpaque = (name: string, args: Expr[], env: Env | undefined, mode: Mode) => {
+  const encodeOpaque = (name: string, args: Expr[], env: Env | undefined, mode: Mode): Term => {
+    // Rewrite.simplify_sets writes IsAFcn for the functions in a set of functions.
+    if (name === "IsAFcn" && args.length === 1)
+      return bool(`(${FUN_ISAFCN} ${encodeIdv(args[0], env, mode)})`);
     if (args.length === 0 && name.endsWith("#prime"))
       return idv(getPrimed(env, name.slice(0, -"#prime".length)));
     const anonymousName = args.length === 0 ? `Anon_OPAQUE_${name}` : `Anon_${name}`;
