@@ -1215,13 +1215,18 @@ export const getStringCall = (node: ts.Node, context: Context) => {
   ) {
     return undefined;
   }
-  // String.prototype.method.call of a primitive reads it as a string in an expression.
+  // String.prototype.method.call of a primitive reads it as a string in an expression, and tla-ts
+  // can't convert a function, whose source text it doesn't keep.
+  const type = context.checker.getTypeAtLocation(owner);
   const isDirect = ts.isPropertyAccessExpression(callee);
   const isPrimitive = isEvery(
-    context.checker.getTypeAtLocation(owner),
+    type,
     ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike,
   );
-  return isDirect && isPrimitive ? undefined : { method, primitive, callee, owner, values };
+  return (isDirect && isPrimitive) ||
+    getTypeNames(type, context.checker)?.includes("function") === true
+    ? undefined
+    : { method, primitive, callee, owner, values };
 };
 
 // The value of a primitive's method, given the primitive that it reads and its arguments.
