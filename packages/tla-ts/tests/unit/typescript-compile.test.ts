@@ -2889,6 +2889,16 @@ describe("errors", () => {
     ).toThrow("Only state variables and local lets can change: items");
   });
 
+  it("rejects a function parameter that a helper uses as a value", () => {
+    expect(() =>
+      checkModel(`
+        const first = (value: number) => value + 1;
+        const isFirst = (factory: (value: number) => number) => factory === first;
+        if (!isFirst(first)) throw new Error("same");
+      `),
+    ).toThrow("Call this function parameter, or pass it to a function");
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {

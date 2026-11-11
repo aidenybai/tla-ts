@@ -139,6 +139,32 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   context.inProgress.add(declaration);
   const body = callee === undefined ? getInitializer(declaration) : callee.body;
   if (body === undefined) throw new TlaTypeScriptError("Give this a value", declaration);
+  // TLA+ can only call an operator parameter, or pass it to another, so it isn't a value.
+  const operators = new Set(
+    parameters.flatMap((parameter, index) => {
+      const symbol = getSymbol(parameter.node.name, context.checker);
+      return declared[index].arity > 0 && symbol !== undefined ? [symbol] : [];
+    }),
+  );
+  const rejectValues = (node: ts.Node) => {
+    const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+    if (ts.isIdentifier(node) && symbol !== undefined && operators.has(symbol)) {
+      const parent = node.parent;
+      const isCalled = ts.isCallExpression(parent) && parent.expression === node;
+      const isPassed =
+        ts.isCallExpression(parent) &&
+        parent.arguments.some((argument) => argument === node) &&
+        (context.checker.getContextualType(node)?.getCallSignatures().length ?? 0) > 0;
+      if (!isCalled && !isPassed) {
+        throw new TlaTypeScriptError(
+          "Call this function parameter, or pass it to a function",
+          node,
+        );
+      }
+    }
+    ts.forEachChild(node, rejectValues);
+  };
+  if (operators.size > 0) rejectValues(body);
   const value = translateBody(body, bindNames(createStateScope(context), parameters), context);
   context.inProgress.delete(declaration);
   context.output.push(
