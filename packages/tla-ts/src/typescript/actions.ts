@@ -89,6 +89,7 @@ import {
   getAllocated,
   getCandidateValue,
   getHeap,
+  getNewWrapper,
   isAllocation,
   isObjectChange,
   getDateCall,
@@ -4680,6 +4681,11 @@ const findLeadingCall = (
     const isAssignment =
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
     return isAssignment ? blocked : thenConverted(inOrder([node.left, node.right]));
+  }
+  // A Boolean, Number, or String object runs no code where a statement makes it.
+  if (ts.isNewExpression(node) && getNewWrapper(node, context) !== undefined) {
+    const found = inOrder(node.arguments ?? []);
+    return found.call !== undefined || found.isBlocked ? found : evaluate(node);
   }
   if (ts.isCallExpression(node)) {
     if (!isPlainCallee(node.expression, context)) return blocked;

@@ -1542,6 +1542,30 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("converts the primitives and wrappers that an operator on numbers takes", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const empty = null;
+      // @ts-ignore
+      const difference = "3" - true;
+      // @ts-ignore
+      const sum = true + empty;
+      // @ts-ignore
+      const product = new Number(2) * new String("3");
+      // @ts-ignore
+      const isLess = "10" < 9;
+      if (difference !== 2 || sum !== 1 || product !== 6 || isLess) throw new Error("converted");
+    `);
+    expect(result.failure).toBeUndefined();
+    const ordered = await checkModel(`
+      const first = { toString: () => "a" };
+      const second = { toString: () => "b" };
+      // @ts-ignore
+      const isOrdered = first <= second;
+    `);
+    expect(ordered.failure?.message).toContain("tla-ts can't order strings");
+  });
+
   it("rejects a conversion whose method changes what the statement read before it", () => {
     expect(() =>
       compile(

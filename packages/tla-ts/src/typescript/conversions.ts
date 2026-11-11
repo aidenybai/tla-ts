@@ -38,24 +38,47 @@ const NUMBER_OPERATIONS = new Map([
   [ts.SyntaxKind.AsteriskAsteriskToken, "Power"],
 ]);
 
-// An object that a script declares, which ToPrimitive converts through its methods.
-const isObjectOperand = (node: ts.Expression, context: Context) =>
-  getKind(skipCasts(node), context) === "object" &&
-  context.checker.getTypeAtLocation(skipCasts(node)).getCallSignatures().length === 0;
+const WRAPPERS = new Set(["Boolean", "Number", "String"]);
 
-// A primitive operand, which ToPrimitive gives back.
-const isPrimitiveOperand = (node: ts.Expression, context: Context) => {
-  const flags = context.checker.getTypeAtLocation(skipCasts(node)).flags;
+// An object that a script declares, or a Boolean, Number, or String, which ToPrimitive converts
+// through its methods. ToPrimitive gives back a primitive that a wrapper's type also takes.
+const isObjectOperand = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(skipCasts(node));
+  const symbol = type.getSymbol();
+  const isWrapper =
+    symbol !== undefined &&
+    WRAPPERS.has(symbol.getName()) &&
+    (symbol.declarations ?? []).every(
+      (declaration) => declaration.getSourceFile().isDeclarationFile,
+    );
   return (
-    (flags &
-      (ts.TypeFlags.NumberLike |
-        ts.TypeFlags.StringLike |
-        ts.TypeFlags.BooleanLike |
-        ts.TypeFlags.Undefined |
-        ts.TypeFlags.Null)) !==
-    0
+    (isWrapper || getKind(skipCasts(node), context) === "object") &&
+    type.getCallSignatures().length === 0
   );
 };
+
+const hasFlags = (node: ts.Expression, flags: ts.TypeFlags, context: Context) =>
+  (context.checker.getTypeAtLocation(skipCasts(node)).flags & flags) !== 0;
+
+// A primitive operand, which ToPrimitive gives back.
+const isPrimitiveOperand = (node: ts.Expression, context: Context) =>
+  hasFlags(
+    node,
+    ts.TypeFlags.NumberLike |
+      ts.TypeFlags.StringLike |
+      ts.TypeFlags.BooleanLike |
+      ts.TypeFlags.Undefined |
+      ts.TypeFlags.Null,
+    context,
+  );
+
+// A primitive that an operator on numbers converts, which tla-ts otherwise rejects.
+const isConvertedPrimitive = (node: ts.Expression, context: Context) =>
+  hasFlags(
+    node,
+    ts.TypeFlags.StringLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.Undefined | ts.TypeFlags.Null,
+    context,
+  ) && !hasFlags(node, ts.TypeFlags.NumberLike, context);
 
 // The conversion that a node makes, where one of its operands is an object.
 export const getConversion = (node: ts.Node, context: Context): Conversion | undefined => {
@@ -63,12 +86,19 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
   const plain = (value: Expression) =>
     context.hasSpecialNumbers ? value : useJavaScript("PlainNumber", [value], context);
   const toNumber = (value: Expression) => plain(useJavaScript("ToNumber", [value], context));
+  // An operation converts objects, and an operator on numbers converts the primitives that tla-ts
+  // otherwise rejects, too.
   const make = (
     operands: readonly ts.Expression[],
     hint: Hint,
     combine: Conversion["combine"],
+    isOnNumbers = false,
   ): Conversion | undefined =>
-    operands.some((operand) => isObjectOperand(operand, context)) &&
+    operands.some(
+      (operand) =>
+        isObjectOperand(operand, context) ||
+        (isOnNumbers && isConvertedPrimitive(operand, context)),
+    ) &&
     operands.every(
       (operand) => isObjectOperand(operand, context) || isPrimitiveOperand(operand, context),
     )
@@ -121,21 +151,29 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
   if (!ts.isBinaryExpression(node)) return undefined;
   const kind = node.operatorToken.kind;
   const operands = [node.left, node.right];
+  // + joins strings, which tla-ts does without converting.
   if (kind === ts.SyntaxKind.PlusToken) {
-    return make(operands, "default", (primitives) =>
-      plain(useJavaScript("AddPrimitives", [...primitives], context)),
+    return make(
+      operands,
+      "default",
+      (primitives) => plain(useJavaScript("AddPrimitives", [...primitives], context)),
+      !operands.some((operand) => hasFlags(operand, ts.TypeFlags.StringLike, context)),
     );
   }
   const operation = NUMBER_OPERATIONS.get(kind);
   if (operation !== undefined) {
-    return make(operands, "number", (primitives) =>
-      plain(
-        useJavaScript(
-          operation,
-          primitives.map((primitive) => useJavaScript("ToNumber", [primitive], context)),
-          context,
+    return make(
+      operands,
+      "number",
+      (primitives) =>
+        plain(
+          useJavaScript(
+            operation,
+            primitives.map((primitive) => useJavaScript("ToNumber", [primitive], context)),
+            context,
+          ),
         ),
-      ),
+      true,
     );
   }
   // == converts an object that it compares with a primitive other than null and undefined.
@@ -153,23 +191,34 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       return kind === ts.SyntaxKind.EqualsEqualsToken ? isEqual : not(isEqual);
     });
   }
-  // a > b and a <= b compare b with a, though they convert a first.
+  // a > b and a <= b compare b with a, though they convert a first. Two strings don't convert.
+  const isOrdered = !operands.every((operand) =>
+    hasFlags(operand, ts.TypeFlags.StringLike, context),
+  );
   const compare = (name: string, left: Expression, right: Expression) =>
     useJavaScript(name, [left, right], context);
   if (kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.GreaterThanToken) {
     const isSwapped = kind === ts.SyntaxKind.GreaterThanToken;
-    return make(operands, "number", (primitives) =>
-      isSwapped
-        ? compare("LessThanPrimitives", primitives[1], primitives[0])
-        : compare("LessThanPrimitives", primitives[0], primitives[1]),
+    return make(
+      operands,
+      "number",
+      (primitives) =>
+        isSwapped
+          ? compare("LessThanPrimitives", primitives[1], primitives[0])
+          : compare("LessThanPrimitives", primitives[0], primitives[1]),
+      isOrdered,
     );
   }
   if (kind === ts.SyntaxKind.LessThanEqualsToken || kind === ts.SyntaxKind.GreaterThanEqualsToken) {
     const isSwapped = kind === ts.SyntaxKind.GreaterThanEqualsToken;
-    return make(operands, "number", (primitives) =>
-      isSwapped
-        ? compare("LessOrEqualPrimitives", primitives[1], primitives[0])
-        : compare("LessOrEqualPrimitives", primitives[0], primitives[1]),
+    return make(
+      operands,
+      "number",
+      (primitives) =>
+        isSwapped
+          ? compare("LessOrEqualPrimitives", primitives[1], primitives[0])
+          : compare("LessOrEqualPrimitives", primitives[0], primitives[1]),
+      isOrdered,
     );
   }
   return undefined;
