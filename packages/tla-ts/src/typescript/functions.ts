@@ -77,6 +77,8 @@ export const readsState = (
       return readsState(declaration, context, visited);
     }
   }
+  // A regexp literal is an object, whose methods are built-in ones only while the heap says so.
+  if (context.heap !== undefined && ts.isRegularExpressionLiteral(node)) return true;
   return (
     ts.forEachChild(node, (child) => readsState(child, context, visited) || undefined) ?? false
   );

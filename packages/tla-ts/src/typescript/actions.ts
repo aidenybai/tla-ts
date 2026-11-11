@@ -5,8 +5,9 @@ import {
   getCallbackReceiver,
   getHeapArrayChange,
   translateHeapElements,
-  getRegExpCall,
+  getHeapRegExpCall,
   getStringCall,
+  translateRegExpReplacer,
   getUpdatedValue,
   EVERY_INDEX_METHODS,
   HOLE_SKIPPING_METHODS,
@@ -203,6 +204,7 @@ import {
 import {
   getCollection,
   isBooleanLike,
+  isEvery,
   rejectAnyReceiver,
   getField,
   getKind,
@@ -1160,54 +1162,88 @@ export const translateCallStatement = (
           ),
     );
   }
-  const regExpCall = context.heap === undefined ? undefined : getRegExpCall(expression, context);
+  const regExpCall = getHeapRegExpCall(expression, context);
   if (regExpCall !== undefined) {
     const heap = getHeap(path.scope, expression, context);
     const regexp = context.names.getFresh("regexp");
     const changeName = context.names.getFresh("change");
     const change = identifier(changeName);
     const method = regExpCall.method;
-    const text = translateExpression(regExpCall.text, path.scope, context);
-    const values = regExpCall.values.map((value) =>
-      translateExpression(value, path.scope, context),
+    const textName = context.names.getFresh("text");
+    const text = identifier(textName);
+    const replacer = regExpCall.values.find(
+      (value) =>
+        (method === "replace" || method === "replaceAll") &&
+        !isEvery(context.checker.getTypeAtLocation(value), ts.TypeFlags.StringLike),
     );
-    // exec and match make arrays, and split's limit is undefined where the call passes none.
-    const operation = useJavaScript(
-      regExpCall.operator,
-      [
-        heap,
-        identifier(regexp),
-        text,
-        ...(method === "exec" || method === "match"
-          ? [translateBuiltInValue("Array.prototype", expression, context)]
-          : method === "split" && values.length === 0
-            ? [getUndefined(context)]
-            : values),
-      ],
-      context,
-    );
-    const run = bindOnce(
-      path,
-      changeName,
-      operation,
-      continueWith(withHeap(field(change, "heap")), field(change, "value")),
-    );
-    // replaceAll throws a TypeError where the regexp isn't global, as its flags tell.
     const changeable = set([string("RegExp.prototype"), string("String.prototype")]);
+    const changed = withHeap(field(change, "heap"));
+    // A replace function runs for each match once they're all found, with the heap after.
+    const run =
+      replacer === undefined
+        ? bindOnce(
+            path,
+            changeName,
+            useJavaScript(
+              regExpCall.heapOperator,
+              [
+                heap,
+                identifier(regexp),
+                text,
+                // exec and match make arrays, and split's limit is undefined where the call
+                // passes none.
+                ...(method === "exec" || method === "match"
+                  ? [translateBuiltInValue("Array.prototype", expression, context)]
+                  : method === "split" && regExpCall.values.length === 0
+                    ? [getUndefined(context)]
+                    : regExpCall.values.map((value) =>
+                        translateExpression(value, path.scope, context),
+                      )),
+              ],
+              context,
+            ),
+            continueWith(changed, field(change, "value")),
+          )
+        : bindOnce(
+            path,
+            changeName,
+            useJavaScript("RegExpMatchesIn", [heap, identifier(regexp), text], context),
+            continueWith(
+              changed,
+              translateRegExpReplacer(
+                replacer,
+                useJavaScript(
+                  "RegExpOf",
+                  [field(change, "heap"), identifier(regexp), changeable],
+                  context,
+                ),
+                text,
+                field(change, "value"),
+                changed.scope,
+                context,
+              ),
+            ),
+          );
+    // replaceAll throws a TypeError where the regexp isn't global, as its flags tell.
     return bindOnce(
       path,
       regexp,
       translateExpression(regExpCall.regexp, path.scope, context),
-      method === "replaceAll"
-        ? ifThenElse(
-            field(
-              useJavaScript("RegExpOf", [heap, identifier(regexp), changeable], context),
-              "global",
-            ),
-            run,
-            throwTypeError(path, expression, context, frame),
-          )
-        : run,
+      bindOnce(
+        path,
+        textName,
+        translateExpression(regExpCall.text, path.scope, context),
+        method === "replaceAll"
+          ? ifThenElse(
+              field(
+                useJavaScript("RegExpOf", [heap, identifier(regexp), changeable], context),
+                "global",
+              ),
+              run,
+              throwTypeError(path, expression, context, frame),
+            )
+          : run,
+      ),
     );
   }
   const arrayChange = getHeapArrayChange(expression, context);
@@ -4134,7 +4170,7 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getBound(node.expression, context) !== undefined ||
   getDateCall(node, context) !== undefined ||
-  (context.heap !== undefined && getRegExpCall(node, context) !== undefined) ||
+  getHeapRegExpCall(node, context) !== undefined ||
   getViewCall(node, context) !== undefined ||
   getHeapArrayChange(node, context) !== undefined ||
   getStringCall(node, context) !== undefined ||
@@ -4565,7 +4601,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       isRevoke(node, context) ||
       isProxyOperation(node, context) ||
       getDateCall(node, context) !== undefined ||
-      getRegExpCall(node, context) !== undefined ||
+      getHeapRegExpCall(node, context) !== undefined ||
       getViewCall(node, context) !== undefined ||
       getHeapArrayChange(node, context) !== undefined ||
       isAllocation(node, context) ||

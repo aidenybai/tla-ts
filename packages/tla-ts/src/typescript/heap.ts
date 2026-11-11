@@ -37,7 +37,7 @@ import {
   skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { ARRAY_LIKE_METHODS, getRegExpCall, IN_PLACE_METHODS } from "./collections";
+import { ARRAY_LIKE_METHODS, getHeapRegExpCall, IN_PLACE_METHODS } from "./collections";
 import { getJsonText, parseJson } from "./json";
 import { getConstructor } from "./exceptions";
 import { translateExpression, translateToString } from "./expressions";
@@ -2163,7 +2163,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
       ...(dateCall.method === "toISOString" ? ["RangeError"] : []),
     ];
   }
-  if (context.heap !== undefined && getRegExpCall(node, context)?.method === "replaceAll") {
+  if (getHeapRegExpCall(node, context)?.method === "replaceAll") {
     return ["TypeError"];
   }
   if (getViewCall(node, context) !== undefined) return ["TypeError", "RangeError"];

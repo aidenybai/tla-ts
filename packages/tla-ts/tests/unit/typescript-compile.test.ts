@@ -5873,6 +5873,74 @@ describe("regular expressions", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("run a replace function for each match where a script has objects", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      const escapes = new Map([["a", "A"], ["\\n", "\\\\n"]]);
+      const escape = (text: string) =>
+        text.replace(
+          /[a\\n\\x00-\\x1f]/g,
+          (character) =>
+            escapes.get(character) ??
+            \`\\\\u\${character.charCodeAt(0).toString(16).padStart(4, "0")}\`,
+        );
+      if (escape("xa\\n\\x01") !== "xA\\\\n\\\\u0001") throw new Error("escape");
+      const sticky = /(b)(c)?/y;
+      sticky.lastIndex = 1;
+      const swapped = "abcb".replace(
+        sticky,
+        (all, first, second, at, whole) => \`[\${all}\${first}\${second}\${at}\${whole}]\`,
+      );
+      if (swapped !== "a[bcbc1abcb]b" || sticky.lastIndex !== 3) throw new Error("sticky");
+      const global = /b/g;
+      global.lastIndex = 2;
+      const counted = "abab".replace(global, () => String(global.lastIndex));
+      if (counted !== "a0a0") throw new Error("counted");
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
+  it("stop where a replace function would take the object of a match's groups", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      const grouped = "ab".replace(/(?<letter>b)/, (all, letter, at, whole, groups) =>
+        groups === undefined ? "none" : all,
+      );
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't pass a replace function");
+  });
+
+  it("call a regexp literal's method in an expression where a script has objects", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      const isWord = (character: string) => /[A-Za-z0-9_]/.test(character);
+      const read = (source: string, at: number) => {
+        const character = source[at];
+        if (character === "\\\\" && /[a-z]/.test(source[at + 1] ?? "")) return "word";
+        if (character === "+" && isWord(source[at + 1] ?? "")) return "plus";
+        return "none";
+      };
+      if (read("x\\\\in", 1) !== "word" || read("+a", 0) !== "plus") throw new Error("read");
+      if (read("+-", 0) !== "none") throw new Error("none");
+      if (holder.tag === "made" && "a-b".split(/-/).length !== 2) throw new Error("split");
+      if (holder.tag === "made" && "a.b".replace(/\\./g, "!") !== "a!b") throw new Error("replace");
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
+  it("stop where a script changed the method that a regexp literal's call reads", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      RegExp.prototype.test = () => false;
+      const found = holder.tag === "made" && /a/.test("a");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call a regexp's method");
+  });
+
   it("stop where a script changed what a regexp's method reads", async () => {
     const result = await checkModel(`
       const pattern = /a/;

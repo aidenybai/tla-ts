@@ -2504,6 +2504,13 @@ RegExpOf(heap, ref, changeable) ==
   THEN heap.objects[ref[Ref]].regexp
   ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
 
+\\* The record of a regexp literal's pattern, where a call can't observe the object that the literal
+\\* makes, while a script hasn't changed the built-in objects in changeable.
+RegExpFresh(heap, regexp, changeable) ==
+  IF DOMAIN heap.changed \\cap changeable = {}
+  THEN regexp
+  ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
+
 LOCAL LastIndexValue(heap, ref) == heap.objects[ref[Ref]].values["lastIndex"]
 
 \\* The heap after Set of a regexp's lastIndex, which throws a TypeError where it isn't writable.
@@ -2577,19 +2584,31 @@ RegExpMatchIn(heap, ref, value, prototype) ==
         [] matches = <<>> -> [heap |-> reset, value |-> Null]
         [] OTHER -> [heap |-> made, value |-> Allocated(made)]
 
-\\* String.prototype.replace or replaceAll through RegExp.prototype[@@replace], with a replacement
-\\* template. A global regexp replaces each match and leaves lastIndex at 0, and another the match
-\\* that exec finds.
-RegExpReplaceIn(heap, ref, value, template) ==
+\\* The heap once String.prototype.replace or replaceAll through RegExp.prototype[@@replace] finds its
+\\* matches, and those matches. A global regexp finds each match and leaves lastIndex at 0, and
+\\* another the match that exec finds.
+RegExpMatchesIn(heap, ref, value) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
       text == RegExpText(regexp, value)
       run == RegExpRun(heap, ref, regexp, text)
   IN  IF regexp.global
-      THEN [heap |-> SetLastIndex(heap, ref, 0),
-            value |-> RegExpReplaced(regexp, text, RegExpMatches(regexp, text, 0), Text(template))]
-      ELSE [heap |-> run.heap,
-            value |-> RegExpReplaced(regexp, text, IF run.match.end = -1 THEN <<>> ELSE <<run.match>>,
-                                     Text(template))]
+      THEN [heap |-> SetLastIndex(heap, ref, 0), value |-> RegExpMatches(regexp, text, 0)]
+      ELSE [heap |-> run.heap, value |-> IF run.match.end = -1 THEN <<>> ELSE <<run.match>>]
+
+\\* String.prototype.replace or replaceAll through RegExp.prototype[@@replace], with a replacement
+\\* template.
+RegExpReplaceIn(heap, ref, value, template) ==
+  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
+      found == RegExpMatchesIn(heap, ref, value)
+  IN  [heap |-> found.heap,
+       value |-> RegExpReplaced(regexp, RegExpText(regexp, value), found.value, Text(template))]
+
+\\* The argument at a position that replace calls a function with where a script has objects, which
+\\* would pass the named groups as an object.
+RegExpArgumentIn(regexp, text, match, position) ==
+  IF position = regexp.captures + 3 /\\ DOMAIN regexp.names # {}
+  THEN Assert(FALSE, "tla-ts can't pass a replace function the object of a match's groups")
+  ELSE RegExpArgument(regexp, text, match, position)
 
 \\* String.prototype.search through RegExp.prototype[@@search], which sets lastIndex to 0 while exec
 \\* runs and then back.
