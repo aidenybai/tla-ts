@@ -943,6 +943,28 @@ describe("calls", () => {
     ).toThrow("Only state variables and local lets can change: seen");
   });
 
+  it("ends a case with a block that returns", async () => {
+    const getSource = (expected: string) => `
+      const describe = (value: number): string => {
+        const name = (current: number) => {
+          switch (current) {
+            case 0: {
+              const zero = "zero";
+              return zero;
+            }
+            default: {
+              throw new Error("other");
+            }
+          }
+        };
+        return value === 0 ? name(value) : "other";
+      };
+      if (describe(0) !== "${expected}" || describe(1) !== "other") throw new Error("describe");
+    `;
+    expect((await checkModel(getSource("zero"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("one"))).rejects.toThrow("describe");
+  });
+
   it("maps with a local function that a name holds", async () => {
     const result = await checkModel(`
       const scale = (items: number[]): number[] => {

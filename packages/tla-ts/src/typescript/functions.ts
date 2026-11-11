@@ -771,6 +771,15 @@ export const translateIf = (
   );
 };
 
+// A statement that always returns or throws, as a block that ends in one does.
+const isLeaving = (statement: ts.Statement): boolean => {
+  if (ts.isBlock(statement)) {
+    const last = statement.statements.at(-1);
+    return last !== undefined && isLeaving(last);
+  }
+  return ts.isReturnStatement(statement) || ts.isThrowStatement(statement);
+};
+
 // A switch as nested IFs. Each clause but the last must end in break, return, or throw.
 export const translateSwitch = (
   statement: ts.SwitchStatement,
@@ -791,9 +800,7 @@ export const translateSwitch = (
     const lastClause = group[group.length - 1];
     const body = lastClause.statements;
     const last = body.at(-1);
-    const isTerminated =
-      last !== undefined &&
-      (ts.isBreakStatement(last) || ts.isReturnStatement(last) || ts.isThrowStatement(last));
+    const isTerminated = last !== undefined && (ts.isBreakStatement(last) || isLeaving(last));
     const isLast = start + group.length === clauses.length;
     if (body.length > 0 && !isTerminated && !isLast) {
       throw new TlaTypeScriptError("End each case with break, return, or throw", lastClause);
