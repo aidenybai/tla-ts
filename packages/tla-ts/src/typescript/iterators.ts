@@ -1,7 +1,15 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import { type Frame, type Path, throwTypeError, translateJoined } from "./actions";
-import { type Context, findNodes, getAccessorFunctions, getSymbol, getUndefined } from "./context";
+import {
+  type Context,
+  findNodes,
+  getAccessorFunctions,
+  getSymbol,
+  getUndefined,
+  isInertValue,
+  skipCasts,
+} from "./context";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { useJavaScript } from "./javascript";
@@ -13,8 +21,9 @@ const taken = new WeakSet<Expression>();
 
 export const isTaken = (value: Expression) => taken.has(value);
 
-// The values a rest element takes from an iterator before tla-ts stops following it.
-const REST_LIMIT = 3;
+// The values that a rest element or a spread takes from an iterator before tla-ts stops following
+// it.
+const TAKE_LIMIT = 3;
 
 // The key of the method that makes an object's iterator, Symbol.iterator, as protocols name it.
 const ITERATOR_KEY = "@@iterator";
@@ -281,11 +290,11 @@ const takeAll = (
         finish(closed, values),
       );
     }
-    if (values.length >= count + REST_LIMIT) {
+    if (values.length >= count + TAKE_LIMIT) {
       return leaf(
         apply("Assert", [
           boolean(false),
-          string(`tla-ts can't take more than ${REST_LIMIT} values into a rest element`),
+          string(`tla-ts can't take more than ${TAKE_LIMIT} values into a rest element`),
         ]),
       );
     }
@@ -316,3 +325,87 @@ const takeAll = (
     (opened, iterator, next) => step(opened, iterator, next, []),
   );
 };
+
+// The objects that the spreads of an array literal or a new iterate through their iterators, where
+// every other part is one that evaluating can't throw or change.
+export const getIteratedSpreads = (node: ts.Expression, context: Context) => {
+  const parts = ts.isArrayLiteralExpression(node)
+    ? node.elements
+    : ts.isNewExpression(node) && isInertValue(skipCasts(node.expression))
+      ? (node.arguments ?? [])
+      : [];
+  const spreads = parts.flatMap((part) =>
+    ts.isSpreadElement(part) && isIteratedValue(part.expression, context) ? [part.expression] : [],
+  );
+  return spreads.length > 0 &&
+    parts.every(
+      (part) =>
+        ts.isOmittedExpression(part) ||
+        (ts.isSpreadElement(part) ? spreads.includes(part.expression) : isInertValue(part)),
+    )
+    ? spreads
+    : undefined;
+};
+
+// Runs spreads that iterate objects, which take and read each value of the objects' iterators, for
+// a statement that drops what they take.
+export const takeSpreads = (
+  site: ts.Node,
+  iterables: readonly Expression[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+) =>
+  translateJoined(
+    site,
+    path,
+    context,
+    (after) => throwTypeError(after, site, context, frame),
+    (throwWith) =>
+      translateJoined(
+        site,
+        path,
+        context,
+        (after) => continueWith(after),
+        (rejoin) => {
+          const spread = (current: Path, rest: readonly Expression[]): Formula =>
+            rest.length === 0
+              ? rejoin(current)
+              : openIterator(
+                  site,
+                  rest[0],
+                  current,
+                  context,
+                  frame,
+                  throwWith,
+                  (opened, iterator, next) => {
+                    const step = (stepping: Path, count: number): Formula =>
+                      count >= TAKE_LIMIT
+                        ? leaf(
+                            apply("Assert", [
+                              boolean(false),
+                              string(`tla-ts can't spread more than ${TAKE_LIMIT} values`),
+                            ]),
+                          )
+                        : stepIterator(
+                            site,
+                            iterator,
+                            next,
+                            stepping,
+                            context,
+                            frame,
+                            throwWith,
+                            (done) => spread(done, rest.slice(1)),
+                            (stepped, result) =>
+                              readValue(site, result, stepped, context, frame, (taken) =>
+                                step(taken, count + 1),
+                              ),
+                          );
+                    return step(opened, 0);
+                  },
+                );
+          return spread(path, iterables);
+        },
+      ),
+  );

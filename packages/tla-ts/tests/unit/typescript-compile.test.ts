@@ -2273,6 +2273,44 @@ describe("errors", () => {
     expect((await checkModel(getSource(0))).failure?.message).toContain("break");
   });
 
+  it("runs the spreads of a statement through the iterators of the objects they spread", async () => {
+    const getSource = (stepsAfter: number) => `
+      let steps = 0;
+      const counted = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              steps += 1;
+              return { value: steps, done: steps > 2 };
+            },
+          };
+        },
+      };
+      const failing = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              throw new RangeError("step");
+            },
+          };
+        },
+      };
+      [0, ...counted];
+      const read = (): number => steps;
+      if (read() !== ${stepsAfter}) throw new Error("steps");
+      let caught = false;
+      try {
+        // @ts-ignore
+        new function () {}(...failing);
+      } catch (error) {
+        caught = error instanceof RangeError;
+      }
+      if (!caught) throw new Error("caught");
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("steps");
+  });
+
   it("rejects an array pattern whose value's type doesn't tell an array from an object", () => {
     expect(() =>
       compile(`

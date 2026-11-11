@@ -62,6 +62,7 @@ import { getConversion, getConversionFunctions, runConversion } from "./conversi
 import { getJsonText, parseJson, translateHoldsJson } from "./json";
 import {
   closeIterator,
+  getIteratedSpreads,
   getIteratorFunctions,
   isIteratedPattern,
   isIteratedValue,
@@ -71,6 +72,7 @@ import {
   readValue,
   stepIterator,
   takeFromIterator,
+  takeSpreads,
 } from "./iterators";
 import {
   translateCondition,
@@ -3034,6 +3036,27 @@ const translateExpressionStatement = (
       ),
     );
   }
+  // An array literal or a new whose spreads iterate objects runs them though the statement drops
+  // what they take. A new would then construct with them, which tla-ts doesn't follow.
+  const spreads = getIteratedSpreads(expression, context);
+  if (spreads !== undefined) {
+    return takeSpreads(
+      expression,
+      spreads.map((spread) => translateExpression(spread, path.scope, context)),
+      path,
+      context,
+      frame,
+      (after) =>
+        ts.isNewExpression(expression)
+          ? leaf(
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't construct with the values that a spread takes"),
+              ]),
+            )
+          : continueWith(after),
+    );
+  }
   // A call's value runs though the statement drops it, so that a getter it reads, which tla-ts
   // can't call, stops the check: TLC would read only a value that something uses.
   if (ts.isCallExpression(expression)) {
@@ -3798,10 +3821,13 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
         visit(called);
       });
     }
-    // A pattern that destructures an object, or a for-of that iterates one, runs the functions of
-    // the object's iterator.
+    // A pattern that destructures an object, or a for-of or a spread that iterates one, runs the
+    // functions of the object's iterator.
     if (
       (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) ||
+      (ts.isSpreadElement(node) &&
+        getKind(node.expression, context) !== "sequence" &&
+        isIteratedValue(node.expression, context)) ||
       (ts.isForOfStatement(node) &&
         getKind(node.expression, context) !== "sequence" &&
         isIteratedValue(node.expression, context))
