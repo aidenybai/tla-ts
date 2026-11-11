@@ -85,8 +85,6 @@ const findCount = (functionValue: FunctionValue, element: Value) => {
   return position === -1 ? undefined : functionValue.range[position];
 };
 
-// Bags.java casts each count to IntValue, so a count that isn't an integer fails with a
-// ClassCastException.
 const toCount = (value: Value) => {
   if (typeof value === "number") return value;
   const javaClass = `tlc2.value.impl.${getJavaClassName(value)}`;
@@ -101,7 +99,7 @@ const addCounts = (left: Value, right: Value) => {
   return sum;
 };
 
-// Bags.java subtracts counts as Java ints, which wrap, where the - of the TLA+ definition overflows.
+// Deviation from TLC: Bags.java subtracts counts as Java ints, which wrap; this overflows like -.
 const subtractCounts = (functionValue: FunctionValue, index: number, other: FunctionValue) => {
   const count = toCount(functionValue.range[index]);
   const removed = findCount(other, functionValue.domain[index]);
@@ -123,7 +121,6 @@ const getPairs = (functionValue: FunctionValue) =>
 
 const EMPTY_BAG = createSortedFunction([], []);
 
-// SubBag compares the counts with the >= of Naturals, which Integers replaces when TLC loads it.
 export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Builtin[] => [
   defineConstant("EmptyBag", EMPTY_BAG),
   defineOperator("IsABag", 1, (args) => {
@@ -242,7 +239,7 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
           (subBags, key, index) =>
             subBags.flatMap((entries) => [
               entries,
-              ...Array.from({ length: counts[index] }, (_, copies): [Value, Value][] => [
+              ...Array.from({ length: counts[index] }, (_value, copies): [Value, Value][] => [
                 ...entries,
                 [key, copies + 1],
               ]),

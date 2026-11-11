@@ -87,7 +87,6 @@ const isSubsetOf = (left: Value[], right: Value) =>
 const BOOLEAN_SET = createSet([false, true]);
 markNormalized(BOOLEAN_SET);
 
-// A balanced merge compares each element about log2 of the set count times.
 const getBalancedUnion = (sets: SetValue[], start: number, end: number): SetValue => {
   if (end - start === 1) return sets[start];
   const middle = (start + end) >> 1;
@@ -100,11 +99,9 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
-// These keep the intersection and difference they compute normalized.
 const isNormalizedReducible = (set: ReducibleSet) =>
   set.kind === "Interval" || (set.kind === "Set" && set.isNormalized);
 
-// TLC combines a set enumeration or an interval with a set by testing each element's membership.
 const combineReducible = (
   operator: SetOperationValue["operator"],
   set: ReducibleSet,
@@ -165,7 +162,6 @@ export const CORE_OPERATORS: Builtin[] = [
     2,
     (args) => !isElementOf(getValue(args, 0, "\\notin"), getValue(args, 1, "\\notin")),
   ),
-  // TLC tests each element of the left set for membership in the right value.
   defineBinary("\\subseteq", (left, right) => {
     if (!isSetValue(left)) {
       throw new TlaEvaluationError(`\\subseteq expects a set but received ${formatValue(left)}`);
@@ -191,7 +187,6 @@ export const CORE_OPERATORS: Builtin[] = [
     }
     return !someStreamedElement(left, (element) => !isElementOf(element, right));
   }),
-  // TLC defers set operations on non-sets to enumerating or testing membership in the result.
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
       const left = getValue(args, 0, operator);
@@ -218,14 +213,12 @@ export const CORE_OPERATORS: Builtin[] = [
             : operator === "\\cap"
               ? getSortedIntersection
               : getSortedDifference;
-        // The merge compares the elements, which TLC tests for membership one by one instead.
         return computeLikeTlcOnFailure(
           (finiteLeft, finiteRight) => {
             const leftSet = toFiniteSet(finiteLeft);
             const rightSet = toFiniteSet(finiteRight);
             const merged = merge(leftSet, rightSet);
             if (operator === "\\cup") {
-              // TLC appends the right set's new elements to the left set's, unsorted.
               const written = getWrittenElements(leftSet);
               const added = getSortedDifference(rightSet, leftSet).elements;
               const isSorted =
@@ -268,7 +261,6 @@ export const CORE_OPERATORS: Builtin[] = [
     if (!isEnumeratedSet(outer) || sets.length !== written.length) {
       return markStreamedSet({ kind: "Union", base: outer });
     }
-    // TLC adds each set's elements in written order, and only those not yet in the union.
     const added = sets.flatMap(getWrittenElements);
     const getUnionLikeTlc = () => {
       const union: MixedSetValue = { kind: "MixedSet", elements: [] };
@@ -298,7 +290,6 @@ export const CORE_OPERATORS: Builtin[] = [
 
 const NEG_SIGNATURE = getJavaSignature("Integers", "Neg", "IntValue", 1);
 
-// TLC computes this arithmetic in tlc2.module.Naturals, or Integers if loaded, named in errors.
 const createArithmeticOperators = (module: string) => {
   const dotDotSignature = getJavaSignature(module, "DotDot", "IntervalValue", 2);
   return [
@@ -341,14 +332,12 @@ const NATURALS_ARITHMETIC = createArithmeticOperators("Naturals");
 
 const INTEGERS_ARITHMETIC = createArithmeticOperators("Integers");
 
-// TLC loads Integers for a trace exploration spec, whose methods then replace these.
 export const getTraceSpecArithmetic = (builtin: Builtin) => {
   const index = NATURALS_ARITHMETIC.indexOf(builtin);
   return index === -1 ? undefined : INTEGERS_ARITHMETIC[index];
 };
 
-// Naturals#GEQ names itself > in its errors, and Integers#GT returns a BoolValue. Only a
-// spec that extends Integers gets Integers' comparisons.
+// Naturals#GEQ names itself > in its errors, and Integers#GT returns a BoolValue.
 const createComparisonOperators = (module: string) => {
   const getSignature = (method: string, result = "tlc2.value.IBoolValue") =>
     `public static ${result} tlc2.module.${module}.${method}(tlc2.value.impl.Value,tlc2.value.impl.Value)`;

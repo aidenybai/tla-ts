@@ -125,9 +125,6 @@ export const formatMessage = (isTool: boolean, code: number, level: MessageLevel
     ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
     : `${LEVEL_PREFIXES[level]}${text}`;
 
-// With -tool, TLC wraps each message in markers of its code and level, and leaves lines such as
-// Print's bare. A warning prints once, -nowarning drops it, and without -tool the first one
-// says how to drop them.
 export const createMessagePrinter = (
   isTool: boolean,
   isWarningEnabled = true,
@@ -158,12 +155,9 @@ export const createMessagePrinter = (
   };
 };
 
-// TLC 1.7.4's message for a missing initial predicate also blames a parameterized INSTANCE.
 export const MISSING_INIT_174 =
   "The configuration file did not specify the initial state predicate.\nCan also be caused by trying to run TLC on a specification from\na module imported with a parameterized INSTANCE statement.";
 
-// isEvalException: whether TLC throws the message as an EvalException, not a TLCRuntimeException.
-// TLC's -tool output wraps such a message in its own markers even inside another message.
 const CODED_MESSAGES: [code: number, template: string, isEvalException: boolean][] = [
   [1005, STACK_OVERFLOW_MESSAGE, false],
   [
@@ -343,12 +337,10 @@ interface CodedMessage {
   isEvalException: boolean;
 }
 
-const codedMessagePatterns = {
-  value: undefined as { pattern: RegExp; message: CodedMessage }[] | undefined,
-};
+let codedMessagePatterns: { pattern: RegExp; message: CodedMessage }[] | undefined;
 
 const getCodedMessagePatterns = () =>
-  (codedMessagePatterns.value ??= CODED_MESSAGES.map(([code, template, isEvalException]) => ({
+  (codedMessagePatterns ??= CODED_MESSAGES.map(([code, template, isEvalException]) => ({
     pattern: new RegExp(
       `^${template
         .split(/%\d+%/)
@@ -358,8 +350,6 @@ const getCodedMessagePatterns = () =>
     message: { code, isEvalException },
   })));
 
-// Plain messages that read like coded ones: the overflows of SetOfFcnsValue and SetOfTuplesValue,
-// SetPredValue's tuple membership, and Tool#enabled's for ~> and -+->.
 const UNCODED_MESSAGE_PATTERN =
   /^Overflow when computing the number of elements in( |:\n\[(?![A-Za-z0-9_]+: ))|\nis an element of a set of \d+-tuples\.$|^In computing ENABLED, TLC encountered a temporal formula \(a (~> b|-\+-> formula)\)\./;
 
@@ -368,13 +358,10 @@ export const getCodedMessage = (text: string): CodedMessage | undefined =>
     ? undefined
     : getCodedMessagePatterns().find((item) => item.pattern.test(text))?.message;
 
-// Only a standard module's Java code throws an EvalException; Assert.fail throws the other kind.
 export const isEvalException = (error: TlaEvaluationError) =>
   error instanceof TlaModuleError || getCodedMessage(error.message)?.isEvalException === true;
 
-// The messages that end with the message of the error they report, after this text.
 const INNER_MESSAGE_PREFIXES = new Map([
-  // "The exception was a <class>\n: "
   [1000, "\n: "],
   [2105, "failed.\n"],
   [2154, "but it produced the following error:\n"],
@@ -384,7 +371,6 @@ const INNER_MESSAGE_PREFIXES = new Map([
   [2405, "failed.\n"],
 ]);
 
-// TLC's message holds the inner error's text as TLC printed it, markers included.
 export const formatInnerMessage = (code: number, text: string, isTool: boolean) => {
   const prefix = isTool ? INNER_MESSAGE_PREFIXES.get(code) : undefined;
   const index = prefix === undefined ? -1 : text.indexOf(prefix);
@@ -440,14 +426,12 @@ const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationE
 
 const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
 
-// TLC 1.7.4 wraps an error in adding a successor in a RuntimeException naming its class.
 const WRAPPED_EVAL_EXCEPTION = `${UNEXPECTED_EXCEPTION}tlc2.tool.EvalException: `;
 const WRAPPED_RUNTIME_EXCEPTION = `${UNEXPECTED_EXCEPTION}util.Assert$TLCRuntimeException: `;
 
 export const getWrappedException = (error: TlaEvaluationError) =>
   isEvalException(error) ? WRAPPED_EVAL_EXCEPTION : WRAPPED_RUNTIME_EXCEPTION;
 
-// TLC reports an EvalException, or a TLCRuntimeException without its own message, as unexpected.
 export const withUnexpectedException = <Result>(compute: () => Result) => {
   try {
     return compute();
@@ -477,8 +461,6 @@ const formatErrorMessage = (error: TlaEvaluationError, isTool: boolean): string 
   return `${prefix}${formatNestedMessage(message.slice(prefix.length), isTool)}`;
 };
 
-// TLC reports an error with a headline by its message's code, and one that escapes the next
-// states with an EvalException's code, or as an unexpected exception.
 export interface FailureMessage {
   code: number;
   message: string;
@@ -498,7 +480,6 @@ export const getFailureMessage = (
       toolMessage: formatErrorMessage(error, true),
     };
   }
-  // TLC prints a StackOverflowError by its code in the next states, as plain text in the initial.
   if (error instanceof TlaStackOverflowError) {
     return {
       code: isNextState ? MESSAGE_CODE.stackOverflow : MESSAGE_CODE.general,

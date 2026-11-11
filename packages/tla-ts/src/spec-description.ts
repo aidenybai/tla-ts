@@ -165,6 +165,21 @@ const getThunk = (expression: Expression, scope: Scope | undefined) => {
   return binding?.kind === "Thunk" ? binding : undefined;
 };
 
+const unwrapBinding = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+) => {
+  if (expression.kind === "Let") {
+    return {
+      expression: expression.body,
+      scope: bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+    };
+  }
+  const thunk = getThunk(expression, scope);
+  return thunk && { expression: thunk.expression, scope: thunk.scope };
+};
+
 const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =>
   (closure?.params ?? []).flatMap((param): [string, Value][] => {
     const binding = lookupScope(scope, param.name);
@@ -191,7 +206,6 @@ const getInstanceActions = (
   const callAction = (): SpecAction[] => [
     { name: instanceAction.name, location: expression.location, parameters: [], expression, scope },
   ];
-  // TLC's action is the SubstInNode the instance puts around the operator's body.
   if (called && args.length === 0) {
     return [{ ...instanceAction, parameters: [], expression: called.body, scope: called.scope }];
   }
@@ -279,7 +293,6 @@ const getActions = (
     return getInstanceActions(instanceAction, expression, scope, called, environment);
   if (!called) return [createSplitAction()];
   const args = getArguments(expression);
-  // TLC names an action after the operator it applies, as SANY names it in the spec.
   const calledName = isLocallyResolved(expression)
     ? called.name
     : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
@@ -322,19 +335,11 @@ const describeSpecification = (
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined, innerFrames = frames) =>
     describeSpecification(inner, innerScope, environment, description, next, innerFrames);
-  // TLC wraps each conjunct it takes from an instance in the instance's SubstInNode.
   const createConjunct = (name: string, conjunct: Expression, conjunctScope: Scope | undefined) =>
     createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope);
-  if (expression.kind === "Let") {
-    recurse(
-      expression.body,
-      bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
-    );
-    return;
-  }
-  const thunk = getThunk(expression, scope);
-  if (thunk) {
-    recurse(thunk.expression, thunk.scope);
+  const unwrapped = unwrapBinding(expression, scope, environment);
+  if (unwrapped) {
+    recurse(unwrapped.expression, unwrapped.scope);
     return;
   }
   const called = resolveClosure(expression, scope, environment);
@@ -387,16 +392,9 @@ const describeProperty = (
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined) =>
     describeProperty(configName, inner, innerScope, environment, description);
-  if (expression.kind === "Let") {
-    recurse(
-      expression.body,
-      bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
-    );
-    return;
-  }
-  const thunk = getThunk(expression, scope);
-  if (thunk) {
-    recurse(thunk.expression, thunk.scope);
+  const unwrapped = unwrapBinding(expression, scope, environment);
+  if (unwrapped) {
+    recurse(unwrapped.expression, unwrapped.scope);
     return;
   }
   const called = resolveClosure(expression, scope, environment);
@@ -476,7 +474,6 @@ const getSpecDescription = (
     describeSpecification(specification.body, undefined, environment, description, next);
     next.forEach((item) =>
       description.actions.push(
-        // TLC takes an instance's SubstInNode as one action, located at the instance.
         ...(item.frames.length > 0
           ? [
               {
@@ -528,14 +525,8 @@ export const getSubscriptVariables = (
       return expression.elements.every((element) => collect(element, innerScope));
     }
     if (expression.kind === "Label") return collect(expression.body, innerScope);
-    if (expression.kind === "Let") {
-      return collect(
-        expression.body,
-        bindDefinitions(expression.definitions, getConstantContext(environment, innerScope)),
-      );
-    }
-    const thunk = getThunk(expression, innerScope);
-    if (thunk) return collect(thunk.expression, thunk.scope);
+    const unwrapped = unwrapBinding(expression, innerScope, environment);
+    if (unwrapped) return collect(unwrapped.expression, unwrapped.scope);
     const argument =
       expression.kind === "Identifier" && isLocallyResolved(expression)
         ? lookupScope(innerScope, expression.name)
@@ -599,8 +590,6 @@ export const getSpecificationValue = (
   instanceActions: Map<string, InstanceAction>,
 ): Value => {
   const description = getSpecDescription(config, environment, instanceActions);
-  // Describing a checked formula evaluates the constant definitions it names, so only
-  // TLCGet("spec") describes them, not the actions TLC splits at startup.
   config.invariants.forEach((name) => {
     const definition = getOperatorDefinition(name, environment);
     if (definition) description.invariants.push(createAction(name, definition.body));

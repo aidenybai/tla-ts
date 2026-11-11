@@ -30,6 +30,7 @@ import {
   TlaEvaluationError,
   TlaModuleError,
   UNEXPECTED_EXCEPTION,
+  formatRange,
 } from "./errors";
 import {
   describeNode,
@@ -39,7 +40,6 @@ import {
   getStartupValue,
   expectBoolean,
   expectBooleanBody,
-  formatRange,
   getDefinition,
   type Context,
   type Environment,

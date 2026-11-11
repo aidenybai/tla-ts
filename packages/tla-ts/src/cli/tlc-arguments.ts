@@ -44,8 +44,6 @@ export interface RuntimeInvariant {
   expression: string;
 }
 
-// TLC prints a command line error as -tool asks only if -tool came first. An argument TLC reads
-// past the end, or can't parse without catching the exception, ends TLC with that exception.
 export interface TlcArgumentsError {
   error: string;
   isTool: boolean;
@@ -147,10 +145,9 @@ const LOADED_TRACES: Record<string, TraceFormat> = {
 const isInRanges = (ranges: number[][], code: number) =>
   ranges.some((range) => code >= range[0] && code <= range[1]);
 
-// String#split drops the empty strings at the end.
-const splitLikeJava = (text: string) => {
+const splitLikeJava = (text: string, separator: string) => {
   if (text === "") return [text];
-  const parts = text.split(",");
+  const parts = text.split(separator);
   while (parts.at(-1) === "") parts.pop();
   return parts;
 };
@@ -238,7 +235,7 @@ const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
 
 export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsError => {
   const parsed = createDefaults();
-  const cursor = { index: 0 };
+  let argumentIndex = 0;
   const reject = (error: string): TlcArgumentsError => ({ error, isTool: parsed.isTool });
   const getMissing = (): TlcArgumentsError => ({
     error: `java.lang.ArrayIndexOutOfBoundsException: Index ${args.length} out of bounds for length ${args.length}`,
@@ -247,20 +244,19 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
   });
   const suppressedCodes: MessageCodes = { tlc: [], sany: [] };
   const errorCodes: MessageCodes = { tlc: [], sany: [] };
-  const peek = () => args[cursor.index];
-  const take = () => args[cursor.index++];
+  const peek = () => args[argumentIndex];
+  const take = () => args[argumentIndex++];
   const readInteger = (bits: 32 | 64, missing: string, malformed: string) => {
     const text = peek();
     if (text === undefined) return reject(missing);
     const value = parseJavaInteger(text, bits);
     if (value === undefined) return reject(`${malformed} But encountered ${text}`);
-    cursor.index++;
+    argumentIndex++;
     return value;
   };
-  while (cursor.index < args.length) {
+  while (argumentIndex < args.length) {
     const flag = take();
-    const isSwitch = Object.hasOwn(SWITCHES, flag);
-    if (isSwitch) {
+    if (Object.hasOwn(SWITCHES, flag)) {
       SWITCHES[flag](parsed);
       continue;
     }
@@ -273,7 +269,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       ) {
         continue;
       }
-      cursor.index++;
+      argumentIndex++;
       const hasFile = options.split(",").some((option) => option.startsWith("file="));
       parsed.scheduler = options.split(",").includes("sched=rl")
         ? "rl"
@@ -304,21 +300,22 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         return reject(`Error: ${flag} requires a comma-separated list of message codes.`);
       }
       const codes = flag === "-suppressMessages" ? suppressedCodes : errorCodes;
-      for (const item of splitLikeJava(text)) {
+      for (const item of splitLikeJava(text, ",")) {
         const trimmed = item.replace(/^[^!-\uffff]+|[^!-\uffff]+$/g, "");
         const parsedCode = parseJavaInteger(trimmed, 32);
         if (parsedCode === undefined) return reject(`Error: For input string: "${trimmed}"`);
         const code = Number(parsedCode);
         if (isInRanges(TLC_MESSAGE_CODES, code)) {
           codes.tlc.push(code);
-        } else if (SANY_WARNING_CODES.has(code) || isInRanges(SANY_ERROR_CODES, code)) {
-          if (codes === suppressedCodes && !SANY_WARNING_CODES.has(code)) {
-            return reject(`Error: code ${code} is an error and cannot be suppressed.`);
-          }
-          codes.sany.push(code);
-        } else {
+          continue;
+        }
+        if (!SANY_WARNING_CODES.has(code) && !isInRanges(SANY_ERROR_CODES, code)) {
           return reject(`Error: unknown message code: ${code}`);
         }
+        if (codes === suppressedCodes && !SANY_WARNING_CODES.has(code)) {
+          return reject(`Error: code ${code} is an error and cannot be suppressed.`);
+        }
+        codes.sany.push(code);
       }
       continue;
     }
@@ -370,13 +367,13 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
           options.includes(option),
         )
       ) {
-        cursor.index++;
+        argumentIndex++;
       }
       continue;
     }
     if (flag === "-generateSpecTE") {
       parsed.isTraceSpecForced = true;
-      if (peek() === "nomonolith") cursor.index++;
+      if (peek() === "nomonolith") argumentIndex++;
       continue;
     }
     if (flag === "-noGenerateSpecTE" || flag.toLowerCase() === "-note") {
@@ -410,17 +407,16 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
           `Trying to instantiate a custom IStateWriter implementation ${format.replaceAll("class,", "")}.`,
         );
       }
-      // Like TLC, -dump takes a format only when it starts with dot and a file follows.
-      const arity = format?.startsWith("dot") && cursor.index + 1 < args.length ? 2 : 1;
-      parsed.dump = args.slice(cursor.index, cursor.index + arity);
-      cursor.index += arity;
+      const arity = format?.startsWith("dot") && argumentIndex + 1 < args.length ? 2 : 1;
+      parsed.dump = args.slice(argumentIndex, argumentIndex + arity);
+      argumentIndex += arity;
       if (parsed.dump.length === 0)
         return reject("Error: A file name for dumping states required.");
       continue;
     }
     if (flag.toLowerCase() === "-loadtrace" || flag.toLowerCase() === "-dumptrace") {
       const name = flag.toLowerCase() === "-loadtrace" ? "-loadTrace" : "-dumpTrace";
-      if (cursor.index + 1 >= args.length) {
+      if (argumentIndex + 1 >= args.length) {
         return reject(
           name === "-loadTrace"
             ? "Error: A format and a file name for loading traces required."
@@ -449,9 +445,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       if (!target.includes("!")) {
         return reject(`Module!Operator for postCondition required. Encountered: ${target}`);
       }
-      // String#split drops the empty strings at the end.
-      const parts = target.split("!");
-      while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+      const parts = splitLikeJava(target, "!");
       if (parts.length !== 2) {
         return reject(
           `Module!Operator for postCondition must be of the form module!operator. Encountered: ${target}`,

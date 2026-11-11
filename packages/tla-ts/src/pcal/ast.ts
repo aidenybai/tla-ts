@@ -9,8 +9,6 @@ export interface PcalToken {
   type: number;
 }
 
-// For each line, the token of an earlier line it is aligned under, with that token's column when
-// the expression was normalized.
 export interface PcalExpr {
   tokens: PcalToken[][];
   anchorTokens: (PcalToken | undefined)[] | undefined;
@@ -22,8 +20,6 @@ interface PcalCoord {
   item: number;
 }
 
-// The Java keeps these in static fields that SANY never resets, so options one module sets carry
-// over to the modules SANY validates after it.
 export interface PcalParams {
   labelFlag: boolean;
   labelRoot: string;
@@ -46,20 +42,21 @@ export const createPcalParams = (): PcalParams => ({
   inputVersionNumber: PCAL_VERSION_WEIGHT,
 });
 
-// "1.5" is 1500, and -1 means a malformed version.
 export const getPcalVersionNumber = (text: string) => {
-  const state = { result: 0, digitsAfterDecimal: 0, isAfterDecimal: false };
+  let result = 0;
+  let digitsAfterDecimal = 0;
+  let isAfterDecimal = false;
   for (const char of text) {
     if (char === ".") {
-      state.isAfterDecimal = true;
+      isAfterDecimal = true;
       continue;
     }
     if (char < "0" || char > "9") return -1;
-    state.result = 10 * state.result + Number(char);
-    if (state.isAfterDecimal) state.digitsAfterDecimal += 1;
-    if (state.digitsAfterDecimal > 3) return -1;
+    result = 10 * result + Number(char);
+    if (isAfterDecimal) digitsAfterDecimal += 1;
+    if (digitsAfterDecimal > 3) return -1;
   }
-  return state.result * 10 ** Math.max(0, 3 - state.digitsAfterDecimal);
+  return result * 10 ** Math.max(0, 3 - digitsAfterDecimal);
 };
 
 interface PcalBase {
@@ -225,7 +222,6 @@ export interface PcalCall extends PcalBase {
   args: PcalExpr[];
 }
 
-// A Return or CallReturn outside a procedure has a null from, which Java prints as "null".
 export interface PcalReturn extends PcalBase {
   kind: "Return";
   from: string | undefined;
@@ -315,8 +311,7 @@ export const toLabeledStmt = (node: PcalStmt) => {
   return node;
 };
 
-// Vector.elementAt, which throws for an index out of bounds.
-export const getElement = <T>(vector: T[], index: number) => {
+export const getElement = <Item>(vector: Item[], index: number) => {
   if (index < 0 || index >= vector.length) {
     throw new PcalRuntimeError(`ArrayIndexOutOfBoundsException: ${index}`);
   }
@@ -329,7 +324,6 @@ export const createPcalToken = (string: string, column: number, type: number): P
   type,
 });
 
-// A string token's width counts its quotes.
 export const getPcalTokenWidth = (token: PcalToken) =>
   token.type === PCAL_TOKEN.string ? token.string.length + 2 : token.string.length;
 
@@ -450,12 +444,10 @@ export const stepPcalCoord = (expr: PcalExpr, coord: PcalCoord, steps: number) =
   return result;
 };
 
-// Skips a record field name, such as the a in r.a, [a |-> 1] or [a : S].
 const findNextInstance = (expr: PcalExpr, id: string, start: PcalCoord) => {
   for (let coord = expr.tokens.length === 0 ? undefined : { ...start }; coord !== undefined;) {
     const token = getPcalTokenAt(expr, coord);
     const isString = token.type === PCAL_TOKEN.string;
-    // The id is an identifier, so a token that is the id is none of the tokens skipped below.
     if (!isString && token.string === id) return coord;
     const afterNext =
       !isString && (token.string === "[" || token.string === ",")
@@ -492,12 +484,10 @@ const substituteAt = (
       ? tokenLine[coord.item + 1].column - (token.column + getPcalTokenWidth(token))
       : 0;
   const restOfLine = tokenLine.splice(coord.item + 1);
-  const cursor = {
-    lineIndex: coord.line,
-    indent: (isParenthesized ? 1 : 0) + token.column,
-    isInserting: !isParenthesized,
-  };
-  const getLine = () => expr.tokens[cursor.lineIndex];
+  let lineIndex = coord.line;
+  let indent = (isParenthesized ? 1 : 0) + token.column;
+  let isInserting = !isParenthesized;
+  const getLine = () => expr.tokens[lineIndex];
   if (isOneTokenPcalExpr(replacement)) {
     const replacementToken = replacement.tokens[0][0];
     token.string = replacementToken.string;
@@ -510,30 +500,30 @@ const substituteAt = (
     const newExpr = clonePcalExpr(replacement);
     newExpr.tokens.forEach((replacementLine, index) => {
       replacementLine.forEach((nextToken) => {
-        nextToken.column += cursor.indent;
-        if (!cursor.isInserting) {
+        nextToken.column += indent;
+        if (!isInserting) {
           getLine().push(nextToken);
           return;
         }
         token.string = nextToken.string;
         token.type = nextToken.type;
-        cursor.isInserting = false;
+        isInserting = false;
       });
       if (index + 1 >= newExpr.tokens.length) return;
-      cursor.indent = 0;
-      cursor.lineIndex += 1;
-      const currentLine = cursor.lineIndex;
+      indent = 0;
+      lineIndex += 1;
+      const currentLine = lineIndex;
       expr.tokens.splice(currentLine, 0, []);
       const oldAnchors = expr.anchorTokens ?? [];
       const oldColumns = expr.anchorTokCol ?? [];
-      expr.anchorTokens = expr.tokens.map((_, item) =>
+      expr.anchorTokens = expr.tokens.map((_line, item) =>
         item < currentLine
           ? oldAnchors[item]
           : item === currentLine
             ? newExpr.anchorTokens?.[index + 1]
             : oldAnchors[item - 1],
       );
-      expr.anchorTokCol = expr.tokens.map((_, item) =>
+      expr.anchorTokCol = expr.tokens.map((_line, item) =>
         item < currentLine
           ? oldColumns[item]
           : item === currentLine
@@ -549,7 +539,7 @@ const substituteAt = (
     }
   }
   const line = getLine();
-  const result = { line: cursor.lineIndex, item: line.length - 1 };
+  const result = { line: lineIndex, item: line.length - 1 };
   if (restOfLine.length > 0) {
     const previous = line[line.length - 1];
     const shift = previous.column + getPcalTokenWidth(previous) + spaces - restOfLine[0].column;
@@ -610,7 +600,6 @@ export const getSubstitutedPcalExpr = (expr: PcalExpr, args: PcalExpr[], params:
 export const substitutePcalExprs = (exprs: PcalExpr[], args: PcalExpr[], params: string[]) =>
   exprs.map((expr) => getSubstitutedPcalExpr(expr, args, params));
 
-// TLAExpr.toString, which names the column of a junction except in TLC 1.7.4.
 const formatPcalExpr = (expr: PcalExpr, version?: TlcVersion) => {
   const getColumn = (token: PcalToken) => (version === "1.7.4" ? "" : `(col${token.column}) `);
   const tokens = expr.tokens.map((line) =>
@@ -639,95 +628,94 @@ export const formatPcalNode = (
 ) => {
   const formatExpr = (expr: PcalExpr) => formatPcalExpr(expr, version);
   const columns = [0];
-  const depth = { value: 0 };
+  let depth = 0;
   const indent = (text: string) => {
-    columns[depth.value + 1] = columns[depth.value] + text.length;
-    depth.value += 1;
+    columns[depth + 1] = columns[depth] + text.length;
+    depth += 1;
     return text;
   };
   const endIndent = () => {
-    depth.value -= 1;
+    depth -= 1;
     return "";
   };
-  const newLine = () => `\n${" ".repeat(columns[depth.value])}`;
+  const getNewLine = () => `\n${" ".repeat(columns[depth])}`;
   const isOldVersion = inputVersionNumber < 1500;
-  // The separators' new lines take the indentation the elements before them leave.
   const formatSeq = (vector: (PcalNode | PcalExpr)[]) =>
     `${indent("<<")}${vector
       .map(
         (element, index) =>
-          `${index > 0 ? `, ${newLine()}` : ""}${"kind" in element ? format(element) : formatExpr(element)}`,
+          `${index > 0 ? `, ${getNewLine()}` : ""}${"kind" in element ? format(element) : formatExpr(element)}`,
       )
       .join("")}>>${endIndent()}`;
   const formatQuotedSeq = (vector: string[]) =>
     `${indent("<<")}${vector.map((element) => `"${element}"`).join(", ")}>>${endIndent()}`;
   const formatSeqOfSeqs = (vectors: PcalStmt[][]) =>
     `${indent("<< ")}${vectors
-      .map((vector, index) => `${index > 0 ? `, ${newLine()}` : ""}${formatSeq(vector)}`)
+      .map((vector, index) => `${index > 0 ? `, ${getNewLine()}` : ""}${formatSeq(vector)}`)
       .join("")} >>${endIndent()}`;
   const formatEqOrIn = (isEq: boolean) => (isEq ? '"="' : '"\\\\in"');
   const format = (node: PcalNode): string => {
     switch (node.kind) {
       case "Uniprocess":
-        return `${indent("")}[type     |-> "uniprocess", ${newLine()} name  |-> "${node.name}", ${newLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${newLine()}${indent(" defs   |-> ")}${formatExpr(node.defs)},${endIndent()}${newLine()}${indent(" prcds  |-> ")}${formatSeq(node.prcds)},${endIndent()}${newLine()}${indent(" body  |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type     |-> "uniprocess", ${getNewLine()} name  |-> "${node.name}", ${getNewLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${getNewLine()}${indent(" defs   |-> ")}${formatExpr(node.defs)},${endIndent()}${getNewLine()}${indent(" prcds  |-> ")}${formatSeq(node.prcds)},${endIndent()}${getNewLine()}${indent(" body  |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`;
       case "Multiprocess":
-        return `${indent("")}[type    |-> "multiprocess", ${newLine()} name  |-> "${node.name}", ${newLine()}${indent(" decls |-> ")}${formatSeq(node.decls)},${endIndent()}${newLine()}${indent(" defs  |-> ")}${formatExpr(node.defs)},${endIndent()}${newLine()}${indent(" prcds |-> ")}${formatSeq(node.prcds)},${endIndent()}${newLine()}${indent(" procs |-> ")}${formatSeq(node.procs)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type    |-> "multiprocess", ${getNewLine()} name  |-> "${node.name}", ${getNewLine()}${indent(" decls |-> ")}${formatSeq(node.decls)},${endIndent()}${getNewLine()}${indent(" defs  |-> ")}${formatExpr(node.defs)},${endIndent()}${getNewLine()}${indent(" prcds |-> ")}${formatSeq(node.prcds)},${endIndent()}${getNewLine()}${indent(" procs |-> ")}${formatSeq(node.procs)}]${endIndent()}${endIndent()}`;
       case "Procedure":
         return isOldVersion
-          ? `${indent("")}[name   |-> "${node.name}", ${newLine()}${indent(" params |-> ")}${formatSeq(node.params)},${endIndent()}${newLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${newLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`
-          : `${indent("")}[name   |-> "${node.name}", ${newLine()}minusLabels |-> ${formatQuotedSeq(node.minusLabels)}, plusLabels |->${formatQuotedSeq(node.plusLabels)}, proceduresCalled |->${formatQuotedSeq(node.proceduresCalled)},${newLine()}${indent(" params |-> ")}${formatSeq(node.params)},${endIndent()}${newLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${newLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`;
+          ? `${indent("")}[name   |-> "${node.name}", ${getNewLine()}${indent(" params |-> ")}${formatSeq(node.params)},${endIndent()}${getNewLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${getNewLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`
+          : `${indent("")}[name   |-> "${node.name}", ${getNewLine()}minusLabels |-> ${formatQuotedSeq(node.minusLabels)}, plusLabels |->${formatQuotedSeq(node.plusLabels)}, proceduresCalled |->${formatQuotedSeq(node.proceduresCalled)},${getNewLine()}${indent(" params |-> ")}${formatSeq(node.params)},${endIndent()}${getNewLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${getNewLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`;
       case "Process":
         return isOldVersion
-          ? `${indent("")}[name   |-> "${node.name}", ${newLine()} eqOrIn |-> ${formatEqOrIn(node.isEq)},${newLine()} id     |-> ${formatExpr(node.id)},${newLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${newLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`
-          : `${indent("")}[name   |-> "${node.name}",${newLine()} fairness |-> "${PCAL_FAIRNESS[node.fairness]}", minusLabels |-> ${formatQuotedSeq(node.minusLabels)}, plusLabels |->${formatQuotedSeq(node.plusLabels)}, proceduresCalled |->${formatQuotedSeq(node.proceduresCalled)},${newLine()} eqOrIn |-> ${formatEqOrIn(node.isEq)},${newLine()} id     |-> ${formatExpr(node.id)},${newLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${newLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`;
+          ? `${indent("")}[name   |-> "${node.name}", ${getNewLine()} eqOrIn |-> ${formatEqOrIn(node.isEq)},${getNewLine()} id     |-> ${formatExpr(node.id)},${getNewLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${getNewLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`
+          : `${indent("")}[name   |-> "${node.name}",${getNewLine()} fairness |-> "${PCAL_FAIRNESS[node.fairness]}", minusLabels |-> ${formatQuotedSeq(node.minusLabels)}, plusLabels |->${formatQuotedSeq(node.plusLabels)}, proceduresCalled |->${formatQuotedSeq(node.proceduresCalled)},${getNewLine()} eqOrIn |-> ${formatEqOrIn(node.isEq)},${getNewLine()} id     |-> ${formatExpr(node.id)},${getNewLine()}${indent(" decls  |-> ")}${formatSeq(node.decls)},${endIndent()}${getNewLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`;
       case "VarDecl":
         return `${indent("")}[var |-> "${node.var}", eqOrIn |-> ${formatEqOrIn(node.isEq)}, val |-> ${formatExpr(node.val)}]${endIndent()}`;
       case "PVarDecl":
         return `${indent("")}[var |-> "${node.var}", eqOrIn |-> "=", val |-> ${formatExpr(node.val)}]${endIndent()}`;
       case "LabeledStmt":
-        return `${indent("")}[label |-> "${node.label}",${newLine()}${indent(" stmts |-> ")}${formatSeq(node.stmts)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[label |-> "${node.label}",${getNewLine()}${indent(" stmts |-> ")}${formatSeq(node.stmts)}]${endIndent()}${endIndent()}`;
       case "While":
-        return `${indent("")}[type    |-> "while", ${newLine()} test    |-> ${formatExpr(node.test)},${newLine()}${indent(" labDo   |-> ")}${formatSeq(node.labDo)},${endIndent()}${newLine()}${indent(" unlabDo |-> ")}${formatSeq(node.unlabDo)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type    |-> "while", ${getNewLine()} test    |-> ${formatExpr(node.test)},${getNewLine()}${indent(" labDo   |-> ")}${formatSeq(node.labDo)},${endIndent()}${getNewLine()}${indent(" unlabDo |-> ")}${formatSeq(node.unlabDo)}]${endIndent()}${endIndent()}`;
       case "Assign":
-        return `${indent("")}[type |-> "assignment",${newLine()}${indent(" ass  |-> ")}${formatSeq(node.ass)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type |-> "assignment",${getNewLine()}${indent(" ass  |-> ")}${formatSeq(node.ass)}]${endIndent()}${endIndent()}`;
       case "SingleAssign":
-        return `${indent("")}[lhs |-> ${format(node.lhs)},${newLine()} rhs |-> ${formatExpr(node.rhs)}]${endIndent()}`;
+        return `${indent("")}[lhs |-> ${format(node.lhs)},${getNewLine()} rhs |-> ${formatExpr(node.rhs)}]${endIndent()}`;
       case "Lhs":
         return `[var |-> "${node.var}", sub |-> ${formatExpr(node.sub)}]`;
       case "If":
-        return `${indent("")}[type    |-> "if", ${newLine()} test    |-> ${formatExpr(node.test)},${newLine()}${indent(" then |-> ")}${formatSeq(node.Then)},${endIndent()}${newLine()}${indent(" else |-> ")}${formatSeq(node.Else)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type    |-> "if", ${getNewLine()} test    |-> ${formatExpr(node.test)},${getNewLine()}${indent(" then |-> ")}${formatSeq(node.Then)},${endIndent()}${getNewLine()}${indent(" else |-> ")}${formatSeq(node.Else)}]${endIndent()}${endIndent()}`;
       case "Either":
-        return `${indent("")}[type |-> "either", ${newLine()}${indent(" ors  |-> ")}${formatSeqOfSeqs(node.ors)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type |-> "either", ${getNewLine()}${indent(" ors  |-> ")}${formatSeqOfSeqs(node.ors)}]${endIndent()}${endIndent()}`;
       case "With":
-        return `${indent("")}[type   |-> "with", ${newLine()} var    |-> "${node.var}",${newLine()} eqOrIn |-> ${formatEqOrIn(node.isEq)},${newLine()} exp    |-> ${formatExpr(node.exp)},${newLine()}${indent(" do     |-> ")}${formatSeq(node.Do)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type   |-> "with", ${getNewLine()} var    |-> "${node.var}",${getNewLine()} eqOrIn |-> ${formatEqOrIn(node.isEq)},${getNewLine()} exp    |-> ${formatExpr(node.exp)},${getNewLine()}${indent(" do     |-> ")}${formatSeq(node.Do)}]${endIndent()}${endIndent()}`;
       case "When":
-        return `${indent("")}[type |-> "when", ${newLine()} exp |-> ${formatExpr(node.exp)}]${endIndent()}`;
+        return `${indent("")}[type |-> "when", ${getNewLine()} exp |-> ${formatExpr(node.exp)}]${endIndent()}`;
       case "PrintS":
-        return `${indent("")}[type |-> "print", ${newLine()} exp |-> ${formatExpr(node.exp)}]${endIndent()}`;
+        return `${indent("")}[type |-> "print", ${getNewLine()} exp |-> ${formatExpr(node.exp)}]${endIndent()}`;
       case "Assert":
-        return `${indent("")}[type |-> "assert", ${newLine()} exp |-> ${formatExpr(node.exp)}]${endIndent()}`;
+        return `${indent("")}[type |-> "assert", ${getNewLine()} exp |-> ${formatExpr(node.exp)}]${endIndent()}`;
       case "Skip":
         return '[type |-> "skip"]';
       case "LabelIf":
-        return `${indent("")}[type      |-> "labelIf",${newLine()} test      |-> ${formatExpr(node.test)},${newLine()}${indent(" unlabThen |-> ")}${formatSeq(node.unlabThen)},${endIndent()}${newLine()}${indent(" labThen   |-> ")}${formatSeq(node.labThen)},${endIndent()}${newLine()}${indent(" unlabElse |-> ")}${formatSeq(node.unlabElse)},${endIndent()}${newLine()}${indent(" labElse   |-> ")}${formatSeq(node.labElse)}]${endIndent()}${newLine()}${endIndent()}`;
+        return `${indent("")}[type      |-> "labelIf",${getNewLine()} test      |-> ${formatExpr(node.test)},${getNewLine()}${indent(" unlabThen |-> ")}${formatSeq(node.unlabThen)},${endIndent()}${getNewLine()}${indent(" labThen   |-> ")}${formatSeq(node.labThen)},${endIndent()}${getNewLine()}${indent(" unlabElse |-> ")}${formatSeq(node.unlabElse)},${endIndent()}${getNewLine()}${indent(" labElse   |-> ")}${formatSeq(node.labElse)}]${endIndent()}${getNewLine()}${endIndent()}`;
       case "LabelEither":
-        return `${indent("")}[type    |-> "labelEither",${newLine()}${indent(" clauses |-> ")}${formatSeq(node.clauses)}]${endIndent()}${newLine()}${endIndent()}`;
+        return `${indent("")}[type    |-> "labelEither",${getNewLine()}${indent(" clauses |-> ")}${formatSeq(node.clauses)}]${endIndent()}${getNewLine()}${endIndent()}`;
       case "Clause":
-        return `${indent("")}${indent("[unlabOr |-> ")}${formatSeq(node.unlabOr)},${endIndent()}${newLine()}${indent(" labOr   |-> ")}${formatSeq(node.labOr)}]${endIndent()}${newLine()}${endIndent()}`;
+        return `${indent("")}${indent("[unlabOr |-> ")}${formatSeq(node.unlabOr)},${endIndent()}${getNewLine()}${indent(" labOr   |-> ")}${formatSeq(node.labOr)}]${endIndent()}${getNewLine()}${endIndent()}`;
       case "Call":
-        return `${indent("")}[type     |-> "call",${newLine()} returnTo |-> "${node.returnTo}",${newLine()} to       |-> "${node.to}",${newLine()}${indent(" args     |-> ")}${formatSeq(node.args)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type     |-> "call",${getNewLine()} returnTo |-> "${node.returnTo}",${getNewLine()} to       |-> "${node.to}",${getNewLine()}${indent(" args     |-> ")}${formatSeq(node.args)}]${endIndent()}${endIndent()}`;
       case "Return":
         return `[type |-> "return", from |-> "${node.from ?? "null"}"]`;
       case "CallReturn":
-        return `${indent("")}[type     |-> "callReturn",${newLine()} from     |-> "${node.from ?? "null"}",${newLine()} to       |-> "${node.to}",${newLine()}${indent("args     |-> ")}${formatSeq(node.args)}]${newLine()}${endIndent()}${endIndent()}`;
+        return `${indent("")}[type     |-> "callReturn",${getNewLine()} from     |-> "${node.from ?? "null"}",${getNewLine()} to       |-> "${node.to}",${getNewLine()}${indent("args     |-> ")}${formatSeq(node.args)}]${getNewLine()}${endIndent()}${endIndent()}`;
       case "CallGoto":
-        return `${indent("")}[type     |-> "callGoto",${newLine()} after    |-> "${node.after}",${newLine()} to       |-> "${node.to}",${newLine()}${indent("args     |-> ")}${formatSeq(node.args)}]${newLine()}${endIndent()}${endIndent()}`;
+        return `${indent("")}[type     |-> "callGoto",${getNewLine()} after    |-> "${node.after}",${getNewLine()} to       |-> "${node.to}",${getNewLine()}${indent("args     |-> ")}${formatSeq(node.args)}]${getNewLine()}${endIndent()}${endIndent()}`;
       case "Goto":
         return `[type |-> "goto",  to |-> "${node.to}"]`;
       case "Macro":
-        return `${indent("")}[name   |-> "${node.name}", ${newLine()}${indent(" params |-> ")}${indent("<<")}${node.params.join(`, ${newLine()}`)}>>${endIndent()},${endIndent()}${newLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[name   |-> "${node.name}", ${getNewLine()}${indent(" params |-> ")}${indent("<<")}${node.params.join(`, ${getNewLine()}`)}>>${endIndent()},${endIndent()}${getNewLine()}${indent(" body   |-> ")}${formatSeq(node.body)}]${endIndent()}${endIndent()}`;
       case "MacroCall":
-        return `${indent("")}[type |-> "macrocall",${newLine()} name |-> "${node.name}",${newLine()}${indent(" args     |-> ")}${formatSeq(node.args)}]${endIndent()}${endIndent()}`;
+        return `${indent("")}[type |-> "macrocall",${getNewLine()} name |-> "${node.name}",${getNewLine()}${indent(" args     |-> ")}${formatSeq(node.args)}]${endIndent()}${endIndent()}`;
     }
   };
   return format(node);

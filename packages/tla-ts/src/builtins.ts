@@ -18,8 +18,6 @@ import {
   type Value,
 } from "./values";
 
-// TLC evaluates these in its core, or its Java code takes integers, so a wrong argument is an
-// evaluation failure. Every other standard-module operator raises an EvalException.
 const CORE_OPERATOR_NAMES = new Set([
   "=",
   "#",
@@ -229,12 +227,9 @@ export const getKindString = (value: Value) => KIND_STRINGS[getJavaClassName(val
 const getJavaOverrideMessage = (signature: string, message: string) =>
   `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`;
 
-export const createJavaOverrideError = (signature: string, message: string) =>
+const createJavaOverrideError = (signature: string, message: string) =>
   new TlaEvaluationError(getJavaOverrideMessage(signature, message));
 
-// TLC reports a failure inside an operator's Java method as a failure of the method, except an
-// EvalException the method raises itself, and a NullPointerException as an EvalException. A method
-// that evaluates its own arguments reports every failure as a failure of the method.
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
   const reportAsJavaFailure =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
@@ -247,7 +242,6 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
           throw error;
         }
         const isFingerprinted = isFingerprintedSince(depth);
-        // The wrapping error replaces the FingerprintException.
         if (setTrace.sets) setTrace.sets.length = depth;
         const isWrapped =
           builtin.isLazy === true || !(error instanceof TlaModuleError) || isFingerprinted;
@@ -311,7 +305,6 @@ const getIntegerArgument = (value: Value, position: string, name: string) => {
   return value;
 };
 
-// The error of an argument that isn't an integer names the operator as TLC's method does.
 export const defineComparison = (
   name: string,
   compare: (left: number, right: number) => boolean,

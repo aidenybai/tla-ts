@@ -1,14 +1,13 @@
-// tlapm reports a proof it reuses from an earlier obligation with the same fingerprint without a
-// time, so each such obligation must share its fingerprint with an earlier one in its module that
-// the same prover concluded about.
-
 import { join } from "node:path";
 import { TlaError } from "../src";
 import { getFingerprint } from "../src/prover/prep/fingerprint";
 import { CORPORA_DIRECTORY } from "./corpora";
 import { getModuleObligations, readProofRecords } from "./proof-records";
 
-const counts = { reused: 0, unmatched: 0, shared: 0, unloaded: 0 };
+let reusedCount = 0;
+let unmatchedCount = 0;
+let sharedCount = 0;
+let unloadedCount = 0;
 for (const record of readProofRecords()) {
   const obligations = (() => {
     try {
@@ -19,7 +18,7 @@ for (const record of readProofRecords()) {
     }
   })();
   if (!obligations) {
-    counts.unloaded++;
+    unloadedCount++;
     continue;
   }
   const byId = new Map(obligations.map((obligation) => [obligation.id, obligation]));
@@ -31,13 +30,13 @@ for (const record of readProofRecords()) {
     const prior = seen.get(fingerprint);
     const isShared = prior?.provers.has(expected.prover) ?? false;
     if (expected.status === "proved" && expected.timeUsed === undefined) {
-      if (isShared) counts.reused++;
+      if (isShared) reusedCount++;
       else {
-        counts.unmatched++;
+        unmatchedCount++;
         console.log(`unmatched ${record.id} #${expected.id}: ${expected.prover}`);
       }
     } else if (isShared) {
-      counts.shared++;
+      sharedCount++;
       console.log(`shared    ${record.id} #${expected.id}: ${expected.prover} with #${prior?.id}`);
     }
     const entry = prior ?? { id: expected.id, provers: new Set<string>() };
@@ -46,6 +45,6 @@ for (const record of readProofRecords()) {
   });
 }
 console.log(
-  `${counts.reused} reused, ${counts.unmatched} unmatched, ${counts.shared} shared, ${counts.unloaded} modules unloaded`,
+  `${reusedCount} reused, ${unmatchedCount} unmatched, ${sharedCount} shared, ${unloadedCount} modules unloaded`,
 );
-if (counts.unmatched > 0) process.exitCode = 1;
+if (unmatchedCount > 0) process.exitCode = 1;

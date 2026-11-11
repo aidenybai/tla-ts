@@ -3,7 +3,6 @@ import { readJson } from "../../src/json-reader";
 
 const LENIENT_ERROR = "Use JsonReader.setStrictness(Strictness.LENIENT) to accept malformed JSON";
 
-// Each expectation is what Gson 2.14.0's JsonParser.parseString returns or throws.
 describe("readJson matches Gson's JsonParser", () => {
   it("reads lenient JSON", () => {
     expect(readJson("{a: 'b'}")).toEqual(new Map([["a", "b"]]));

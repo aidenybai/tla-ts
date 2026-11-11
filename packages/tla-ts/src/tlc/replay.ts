@@ -40,16 +40,11 @@ import {
 import { substitutionFrames } from "../instances";
 import { MESSAGE_CODE } from "./messages";
 
-// Replays a failed computation as TLC's CallStackTool does, walking the predicates in the order
-// and nesting of Tool.getInitStates and getNextStates, so it records the nodes TLC records, and
-// counts the coverage TLC counts.
-
 interface ReplayAction {
   expression: Expression;
   scope: Scope | undefined;
 }
 
-// TLC's ActionItemList: the conjuncts left to process, the first at the head.
 interface ActionItem {
   kind: "Predicate" | "Unchanged" | "Changed";
   expression: Expression;
@@ -82,7 +77,6 @@ const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Re
   try {
     return run();
   } catch (error) {
-    // A quantifier enumerates its bounds outside any evaluation.
     freezeCallStack(callStack, sets.slice(depth), error);
     throw error;
   } finally {
@@ -101,8 +95,6 @@ const runAt = <Result>(replay: Replay, node: number, run: () => Result) =>
 const evaluateAt = (replay: Replay, node: number, expression: Expression, context: Context) =>
   runAt(replay, node, () => evaluate(expression, context));
 
-// TLC evaluates a user-defined or overridden operator's arguments under its node, but doesn't
-// count the node itself.
 const evaluateOperatorAt = (
   replay: Replay,
   node: number,
@@ -132,7 +124,6 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-// SANY parses A /\ B /\ C as (A /\ B) /\ C, so the replay recreates the node of each prefix.
 const getPrefix = (expression: Expression & { kind: "And" | "Or" }, count: number): Expression => {
   const first = expression.operands[0].location;
   const range = expression.location.range;
@@ -193,13 +184,9 @@ const isTrue = (value: Value) => {
   return value;
 };
 
-// Once every variable has a value, TLC evaluates the conjuncts left instead of walking them,
-// though not under ENABLED, and the next states take this shortcut only with warnings on.
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
   !replay.isEnabled && (replay.isInit || replay.environment.runtime.isWarningEnabled);
 
-// TLC counts the node that goes on to the conjuncts left for each next state they produce, but
-// counts an initial state only as it adds it.
 const proceed = (
   replay: Replay,
   items: ActionItem | undefined,
@@ -269,7 +256,6 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
   try {
     return !isEqualLikeTlc(before, after);
   } catch (error) {
-    // TLC's v0.equals(v1) raises a FingerprintException when v0 has a source.
     if (replay.callStack) freezeCallStack(replay.callStack, [before], error);
     throw error;
   }
@@ -322,7 +308,6 @@ const visitAt = (
     switch (expression.kind) {
       case "Let": {
         const context = getContext(replay, scope, partial);
-        // TLC walks a LET definition's body again at each reference, under the reference.
         const definitions = expression.definitions;
         const bound = replay.coverage
           ? bindDefinitions(definitions, context, {
@@ -343,7 +328,6 @@ const visitAt = (
     }
   });
 
-// The value of a user-defined operator TLC evaluates instead of walking its body.
 const visitValue = (
   replay: Replay,
   value: Value,
@@ -429,7 +413,6 @@ const visitDefined = (
   return visitValue(replay, value, items, partial, node);
 };
 
-// A variable takes the value when it has none yet, and otherwise must already have it.
 const proceedWithValue = (
   replay: Replay,
   items: ActionItem | undefined,
@@ -451,7 +434,6 @@ const createItem = (
   rest: ActionItem | undefined,
 ): ActionItem => ({ kind, expression, scope, node, rest });
 
-// TLC costs a set it enumerates for each element, and for the end of the enumeration.
 const getEnumerated = (replay: Replay, set: Value, elements: Value[]) => {
   if (replay.coverage) costCoverage(replay.coverage, set, elements.length + 1);
   return elements;
@@ -482,7 +464,6 @@ const visitAssignment = (
     return proceedWithValue(replay, items, partial, index, value, node);
   }
   const set: Value = expression.operator === "\\subseteq" ? { kind: "Subset", base: value } : value;
-  // TLC gives the power set the source of its base, so a failure to enumerate it names both.
   if (typeof set === "object" && set !== value) replay.callStack?.sources.set(set, source);
   if (assigned !== undefined) {
     return (
@@ -510,7 +491,6 @@ const ENABLED_TEMPORAL_FORMS: Partial<Record<Expression["kind"], string>> = {
   StrongFairness: "SF",
 };
 
-// TLC rejects a temporal formula, and a quantifier or CHOOSE without a bound, under ENABLED.
 export const getEnabledFailure = (expression: Expression) => {
   const form =
     expression.kind === "Apply" && (expression.operator === "~>" || expression.operator === "-+->")
@@ -636,7 +616,6 @@ const visitApplication = (
     case "Forall": {
       const bounds = getBindings(replay, expression, context, node);
       if (bounds.length === 0) return proceed(replay, items, partial, node);
-      // TLC adds each binding after the first to the front of the conjuncts left.
       const rest = bounds
         .slice(1)
         .reduce<ActionItem | undefined>(
@@ -764,9 +743,7 @@ const visitUnchanged = (
         return visitUnchanged(replay, operator.body, items, operator.scope, partial, node);
       }
     }
-    // Tool#enabledUnchanged evaluates an operator application in the partial next state, which
-    // fails on a variable it hasn't assigned, as its comment says. tla-ts walks the operator's
-    // body as it walks a definition without parameters.
+    // Deviation from TLC: Tool#enabledUnchanged evaluates the application in the partial next state and fails on an unassigned variable.
     if (replay.isEnabled && expression.kind === "Apply") {
       const context = getContext(replay, scope, partial);
       const operator = resolveApplyOperator(expression, context);
@@ -835,7 +812,6 @@ export const replayEnabled = (
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
   try {
-    // liveness.ts builds the <<A>>_v of WF_v(A) at the location of A.
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
       const changed = createItem("Changed", expression.subscript, scope, -1, undefined);
       visit(replay, expression.action, changed, scope, getEmptyState(environment), -1);
@@ -845,7 +821,6 @@ export const replayEnabled = (
     return false;
   } catch (error) {
     if (error !== ENABLED_FOUND) throw error;
-    // The frames the walk left are those of the successor, not of a failure.
     if (callStack) {
       callStack.expressions.length = depth;
       callStack.isFrozen = false;
@@ -870,14 +845,12 @@ export const replayInitialStates = (
   visit(replay, first.expression, rest, first.scope, getEmptyState(environment), first.node ?? -1);
 };
 
-// TLC checks the successors of an action once it has computed them all.
 export const replaySuccessors = <Action extends ReplayAction>(
   actions: Action[],
   state: Value[],
   environment: Environment,
   onState: (state: Value[], action: Action) => void,
 ) => {
-  // TLC fails to split a next-state relation that isn't an operator application, so replays none.
   if (actions.some((action) => LITERAL_KINDS.has(action.expression.kind))) return;
   actions.forEach((action) => {
     const successors: Value[][] = [];
@@ -898,10 +871,9 @@ export const walkSuccessors = (
   visit(replay, action.expression, undefined, action.scope, getEmptyState(environment), node);
 };
 
-// TLC's Spec.getPrimedLocs, whose nodes TLC reports even when they never produce a state.
 export const getPrimedRanges = (actions: ReplayAction[], environment: Environment) => {
   const ranges: Expression[] = [];
-  const context = (scope: Scope | undefined): Context => ({
+  const createContext = (scope: Scope | undefined): Context => ({
     environment,
     scope,
     state: undefined,
@@ -933,7 +905,11 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
   ): void => {
     switch (expression.kind) {
       case "Let":
-        collect(expression.body, bindDefinitions(expression.definitions, context(scope)), visited);
+        collect(
+          expression.body,
+          bindDefinitions(expression.definitions, createContext(scope)),
+          visited,
+        );
         return;
       case "Label":
         collect(expression.body, scope, visited);
@@ -989,7 +965,7 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
         }
         const operator =
           expression.kind === "Apply"
-            ? resolveApplyOperator(expression, context(scope))
+            ? resolveApplyOperator(expression, createContext(scope))
             : binding?.kind === "Operator"
               ? binding.operator
               : binding
@@ -1001,7 +977,11 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
         const args = expression.kind === "Apply" ? expression.args : [];
         if (operator.params.length !== args.length) return;
         visited.add(operator.body);
-        collect(operator.body, bindOperatorArguments(operator, args, context(scope)), visited);
+        collect(
+          operator.body,
+          bindOperatorArguments(operator, args, createContext(scope)),
+          visited,
+        );
         visited.delete(operator.body);
       }
     }

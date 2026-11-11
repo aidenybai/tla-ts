@@ -54,7 +54,6 @@ export const createActionRecord = (action: string | undefined) =>
     ],
   ]);
 
-// TLC's CounterExample is its own class, so ToTrace refuses a record that only looks like one.
 const counterExamples = new WeakSet<Value & object>();
 
 const createCounterExampleRecord = (action: Value[], states: Value[]) => {
@@ -189,16 +188,18 @@ export const createTlcExtOperators = (
       }
       return false;
     }),
-    defineStateOperator("TLCGetOrDefault", 2, (args) => {
-      const key = getValue(args, 0, "TLCGetOrDefault");
-      return getRegister(runtime, key) ?? getValue(args, 1, "TLCGetOrDefault");
-    }),
-    defineStateOperator("Trace", 0, (_, context) => {
+    defineStateOperator(
+      "TLCGetOrDefault",
+      2,
+      (args) =>
+        getRegister(runtime, getValue(args, 0, "TLCGetOrDefault")) ??
+        getValue(args, 1, "TLCGetOrDefault"),
+    ),
+    defineStateOperator("Trace", 0, (_args, context) => {
       const variables = context?.environment.variables ?? [];
-      // TLC evaluates an assumption in an empty state, which assigns none of the variables.
       const state = context?.state ?? variables.map(() => undefined);
       if (!context || !isCompleteState(state)) {
-        const unassigned = variables.filter((_, index) => state[index] === undefined);
+        const unassigned = variables.filter((_name, index) => state[index] === undefined);
         throw new TlaEvaluationError(
           `In evaluating TLCExt!Trace, the state is not completely specified yet (variable${unassigned.length > 1 ? "s" : ""} ${unassigned.join(", ")} undefined).`,
         );
@@ -210,7 +211,6 @@ export const createTlcExtOperators = (
             name,
             step[index],
           ]);
-          // A simulated behavior's states also record their actions.
           const action = runtime.getSimulationValue?.("action", step);
           return createRecord(action === undefined ? fields : [["_action", action], ...fields]);
         }),
@@ -244,7 +244,6 @@ export const createTlcExtOperators = (
       }
       return createModelValue(name);
     }),
-    // Only simulation runs the deferred expression, for the successor it chooses.
     defineLazyOperator("TLCDefer", 1, (args, context) => {
       const expression = getOperator(args, 0, "TLCDefer").expression;
       if (context && expression) {
@@ -257,9 +256,7 @@ export const createTlcExtOperators = (
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     {
       ...defineLazyOperator("PickSuccessor", 1, (args, context) => {
-        // Outside an action, TLC's successor is an empty state, which assigns none of the variables.
-        // TLCExt.tla promises TRUE for a successor not fully determined, where TLCExt#pickSuccessor
-        // fingerprints it first and fails.
+        // Deviation from TLC: TLCExt#pickSuccessor fingerprints a partial successor and fails, where TLCExt.tla promises TRUE.
         const next = context?.next ?? (context?.environment.variables ?? []).map(() => undefined);
         if (!isCompleteState(next)) return true;
         if (context?.next && runtime.isSeen(next)) return true;
@@ -282,7 +279,7 @@ export const createTlcExtOperators = (
             `Extend behavior of length ${runtime.getLevel(context.state)} with a "${action?.name}" step [<Action ${action?.location.range && formatRange(action.location.range)}>]? (Yes/no/explored/states/diff):`,
           ),
         );
-        // tla-ts gives PickSuccessor no standard input to read an answer from.
+        // Deviation from TLC: PickSuccessor has no standard input to read an answer from.
         throw new TlaEndOfInputError();
       }),
       isActionLevel: true,
@@ -323,7 +320,6 @@ export const createTlcExtOperators = (
         );
       }
       const definition = context ? getDefinition(name, context.environment) : undefined;
-      // A definition that TLC overrides with Java has the Java method's value, not its body's.
       const builtin = definition ? undefined : context?.environment.builtins.get(name);
       if (builtin?.arity === 0) return builtin.evaluate([], context);
       if (!definition || !context) {

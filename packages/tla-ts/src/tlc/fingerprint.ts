@@ -143,9 +143,9 @@ const POLYNOMIALS = [
   0x91f5a5fa9c5515a5n,
 ];
 
-const selected = { polynomial: POLYNOMIALS[0] };
+let selectedPolynomial = POLYNOMIALS[0];
 
-export const getFingerprintPolynomial = () => selected.polynomial;
+export const getFingerprintPolynomial = () => selectedPolynomial;
 
 const SLICE_HIGH_0 = new Int32Array(256);
 const SLICE_HIGH_1 = new Int32Array(256);
@@ -155,8 +155,8 @@ const SLICE_LOW_0 = new Int32Array(256);
 const SLICE_LOW_1 = new Int32Array(256);
 const SLICE_LOW_2 = new Int32Array(256);
 const SLICE_LOW_3 = new Int32Array(256);
-// The polynomial's high and low 32 bits, which avoid a BigInt operation for every byte.
-const initial = { high: 0, low: 0 };
+let initialHigh = 0;
+let initialLow = 0;
 let high = 0;
 let low = 0;
 
@@ -166,12 +166,9 @@ const extendByte = (byte: number) => {
   high = (high >>> 8) ^ SLICE_HIGH_0[index];
 };
 
-// Extending is linear over GF(2), so extending by four bytes at once shifts the fingerprint by a
-// word and adds, for each of the four, the fingerprint from zero of that byte followed by the zero
-// bytes that come after it: SLICE_HIGH_k and SLICE_LOW_k hold them for k zero bytes after.
 export const setFingerprintPolynomial = (index: number) => {
   const polynomial = POLYNOMIALS[index];
-  selected.polynomial = polynomial;
+  selectedPolynomial = polynomial;
   const powers: bigint[] = [];
   for (let power = 1n << 63n; powers.length < 72;) {
     powers.push(power);
@@ -198,8 +195,8 @@ export const setFingerprintPolynomial = (index: number) => {
       highs[zeros][byte] = (previousHigh[byte] >>> 8) ^ SLICE_HIGH_0[index];
     }
   }
-  initial.high = Number(BigInt.asIntN(32, polynomial >> 32n));
-  initial.low = Number(BigInt.asIntN(32, polynomial));
+  initialHigh = Number(BigInt.asIntN(32, polynomial >> 32n));
+  initialLow = Number(BigInt.asIntN(32, polynomial));
 };
 
 setFingerprintPolynomial(0);
@@ -221,8 +218,6 @@ const SET_ENUM_VALUE = 5;
 const FCN_RCD_VALUE = 9;
 const MODEL_VALUE = 21;
 
-// Returns how many bytes it extends the fingerprint by. A model value extends it with its
-// UniqueString token, which TLC numbers from 1 in intern order.
 const extendScalar = (value: boolean | number | string | ModelValue) => {
   if (typeof value === "boolean") {
     extendByte(BOOL_VALUE);
@@ -273,27 +268,26 @@ const extendValue = (value: Value) => {
   }
 };
 
-// Evaluating a lazy value can fingerprint another, so this restores the fingerprint it interrupts.
 export const getTlcFingerprint = (state: Value[]) => {
-  const outer = { high, low };
-  high = initial.high;
-  low = initial.low;
+  const outerHigh = high;
+  const outerLow = low;
+  high = initialHigh;
+  low = initialLow;
   for (const value of state) extendValue(value);
   const fingerprint = (BigInt(high >>> 0) << 32n) | BigInt(low >>> 0);
-  high = outer.high;
-  low = outer.low;
+  high = outerHigh;
+  low = outerLow;
   return fingerprint;
 };
 
 export const getTlcFingerprints = (states: Value[][], order: number[]) => {
   const fingerprints = new BigInt64Array(states.length);
-  // Each fingerprint's low and high words, as a BigInt64Array is little-endian.
   const words = new Int32Array(fingerprints.buffer);
   const outerHigh = high;
   const outerLow = low;
   states.forEach((state, position) => {
-    high = initial.high;
-    low = initial.low;
+    high = initialHigh;
+    low = initialLow;
     for (const index of order) extendValue(state[index]);
     words[2 * position] = low;
     words[2 * position + 1] = high;

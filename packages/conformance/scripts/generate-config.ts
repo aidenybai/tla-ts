@@ -56,7 +56,7 @@ export const generateConfigMatrix = () =>
           {
             description: `Sets a constant to ${value.name} through ${form.name}, then uses it through ${use.name}.`,
             ref: "tlc2/tool/impl/ModelConfig.java#parse; tlc2/tool/impl/SpecProcessor.java#processConstants",
-            // An integer past 32 bits in a .cfg assignment is an uncaught NumberFormatException in ModelConfig#parse.
+            // Deviation from TLC: an integer past 32 bits in a .cfg assignment is an uncaught NumberFormatException.
             features:
               form.name === "assignment" && value.name === "too_big"
                 ? ["config-values", "tlc-bug"]

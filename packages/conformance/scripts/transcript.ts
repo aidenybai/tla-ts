@@ -34,14 +34,19 @@ interface OpenMessage {
   slot: number;
 }
 
+interface MarkerSplit {
+  parts: (string | RegExpExecArray)[];
+  offset: number;
+}
+
 // A message can embed another's full text, so its markers can open mid-line.
 const splitAtMarkers = (line: string) =>
-  [...line.matchAll(MARKER)].reduce(
+  [...line.matchAll(MARKER)].reduce<MarkerSplit>(
     (state, match) => ({
       parts: [...state.parts, line.slice(state.offset, match.index), match],
       offset: match.index + match[0].length,
     }),
-    { parts: [] as (string | RegExpExecArray)[], offset: 0 },
+    { parts: [], offset: 0 },
   );
 
 export const normalizeTranscript = (output: string, options: TranscriptOptions) => {
