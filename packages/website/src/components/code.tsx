@@ -1,8 +1,8 @@
 import { useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
-import { getTokenLines, type Language } from "../highlighter";
 import type { LineNote } from "../run-worker";
+import type { Source } from "../site-data";
 import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
 import { CopyIcon } from "./copy-icon";
@@ -13,8 +13,7 @@ const COPIED_MS = 1500;
 const NO_HIGHLIGHTS = {};
 
 interface CodeState {
-  code: string;
-  language: Language;
+  source: Source;
   isMultiline: boolean;
   activeLine: number | undefined;
   notes: LineNote[];
@@ -25,8 +24,7 @@ interface CodeState {
 const codeContext = createPartsContext<CodeState>("Code.Root");
 
 interface RootProps {
-  code: string;
-  language: Language;
+  source: Source;
   activeLine?: number;
   notes?: LineNote[];
   highlights?: Record<string, string>;
@@ -35,12 +33,11 @@ interface RootProps {
 }
 
 export const CodeRoot = (props: RootProps) => {
-  const isMultiline = props.code.includes("\n");
+  const isMultiline = props.source.lines.length > 1;
   return (
     <codeContext.PartsContext
       value={{
-        code: props.code,
-        language: props.language,
+        source: props.source,
         isMultiline,
         activeLine: props.activeLine,
         notes: props.notes ?? [],
@@ -63,12 +60,11 @@ export const CodeRoot = (props: RootProps) => {
 export const CodeContent = () => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
-  useTokenMorph(contentRef, code.code, code.highlights, code.onMorphEnd);
-  const lines = getTokenLines(code.code, code.language);
+  useTokenMorph(contentRef, code.source.code, code.highlights, code.onMorphEnd);
   if (!code.isMultiline)
     return (
       <code className="min-w-0 flex-1 truncate font-mono text-[13px]/[1.7] text-foreground">
-        <CodeLine tokens={lines[0]} />
+        <CodeLine tokens={code.source.lines[0]} />
       </code>
     );
   return (
@@ -76,7 +72,7 @@ export const CodeContent = () => {
       ref={contentRef}
       className="relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground"
     >
-      {lines
+      {code.source.lines
         .map((tokens, index) => ({ tokens, number: index + 1 }))
         .map((line) => (
           <CodeLine
@@ -144,7 +140,7 @@ export const CodeCopy = () => {
       size="icon"
       aria-label={isCopied ? "Copied" : "Copy"}
       onClick={async () => {
-        await navigator.clipboard.writeText(code.code);
+        await navigator.clipboard.writeText(code.source.code);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), COPIED_MS);
       }}

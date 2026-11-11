@@ -5,14 +5,10 @@ import {
   RegisteredCustomLanguages,
 } from "@pierre/diffs";
 import { codeToTokens } from "@pierre/highlights";
+import type { Source, Token } from "./site-data";
 import { TLA_GRAMMAR } from "./tla-grammar";
 
-export type Language = "shellscript" | "typescript" | "tlaplus";
-
-export interface Token {
-  content: string;
-  style: Record<string, string>;
-}
+type Language = "shellscript" | "typescript" | "tlaplus";
 
 interface Palette {
   foreground: string;
@@ -83,18 +79,6 @@ const HIGHLIGHTS_THEMES = {
   dark: getHighlightsTheme(DARK_NAME, "dark", DARK),
 };
 
-if (!RegisteredCustomLanguages.has(TLA_GRAMMAR.name)) {
-  registerCustomLanguage(TLA_GRAMMAR.name, async () => ({ default: [TLA_GRAMMAR] }), ["tla"]);
-  registerCustomTheme(LIGHT_NAME, async () => getShikiTheme(LIGHT_NAME, "light", LIGHT));
-  registerCustomTheme(DARK_NAME, async () => getShikiTheme(DARK_NAME, "dark", DARK));
-}
-
-const shiki = await getSharedHighlighter({
-  themes: [LIGHT_NAME, DARK_NAME],
-  langs: [TLA_GRAMMAR.name],
-  preferredHighlighter: "shiki-js",
-});
-
 const getToken = (content: string, style: Record<string, string>, prefix: string): Token => ({
   content,
   style: {
@@ -103,21 +87,36 @@ const getToken = (content: string, style: Record<string, string>, prefix: string
   },
 });
 
-export const getTokenLines = (code: string, language: Language): Token[][] =>
-  language === "tlaplus"
-    ? shiki
-        .codeToTokens(code, {
-          lang: language,
-          themes: { light: LIGHT_NAME, dark: DARK_NAME },
-          defaultColor: false,
-        })
-        .tokens.map((line) =>
-          line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--shiki-")),
-        )
-    : codeToTokens(code, {
-        lang: language,
-        themes: HIGHLIGHTS_THEMES,
-        defaultColor: false,
-      }).tokens.map((line) =>
-        line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--hls-")),
-      );
+export const createHighlighter = async () => {
+  if (!RegisteredCustomLanguages.has(TLA_GRAMMAR.name)) {
+    registerCustomLanguage(TLA_GRAMMAR.name, async () => ({ default: [TLA_GRAMMAR] }), ["tla"]);
+    registerCustomTheme(LIGHT_NAME, async () => getShikiTheme(LIGHT_NAME, "light", LIGHT));
+    registerCustomTheme(DARK_NAME, async () => getShikiTheme(DARK_NAME, "dark", DARK));
+  }
+  const shiki = await getSharedHighlighter({
+    themes: [LIGHT_NAME, DARK_NAME],
+    langs: [TLA_GRAMMAR.name],
+    preferredHighlighter: "shiki-js",
+  });
+  return (code: string, language: Language): Source => ({
+    code,
+    lines:
+      language === "tlaplus"
+        ? shiki
+            .codeToTokens(code, {
+              lang: language,
+              themes: { light: LIGHT_NAME, dark: DARK_NAME },
+              defaultColor: false,
+            })
+            .tokens.map((line) =>
+              line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--shiki-")),
+            )
+        : codeToTokens(code, {
+            lang: language,
+            themes: HIGHLIGHTS_THEMES,
+            defaultColor: false,
+          }).tokens.map((line) =>
+            line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--hls-")),
+          ),
+  });
+};

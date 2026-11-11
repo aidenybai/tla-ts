@@ -11,10 +11,7 @@ export const buttonVariants = cva(
       variant: {
         outline:
           "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground enabled:active:scale-[0.97]",
-        link: cn(
-          LINK_CLASS_NAME,
-          "inline-grid rounded-none aria-pressed:font-medium aria-pressed:no-underline",
-        ),
+        link: cn(LINK_CLASS_NAME, "inline rounded-none aria-pressed:no-underline"),
       },
       size: {
         default: "h-8 px-2.5",

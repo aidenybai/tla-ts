@@ -34,7 +34,7 @@ export const ThemeSwitcherRoot = (props: RootProps) => {
           );
           setTheme(nextTheme);
         }}
-        className="rounded-full"
+        className="rounded-lg"
       >
         {props.children}
       </ToggleGroup>
@@ -51,12 +51,12 @@ interface OptionProps {
 export const ThemeSwitcherOption = (props: OptionProps) => {
   const switcher = themeSwitcherContext.useParts();
   return (
-    <ToggleGroupItem value={props.value} label={props.label} className="size-7 rounded-full">
+    <ToggleGroupItem value={props.value} label={props.label} className="size-7 rounded-md">
       {switcher.theme === props.value && (
         <m.span
           layoutId={switcher.indicatorId}
           transition={{ type: "spring", duration: 0.3, bounce: 0 }}
-          className="absolute inset-0 rounded-full bg-raised shadow-raised"
+          className="absolute inset-0 rounded-md bg-raised shadow-raised"
         />
       )}
       <span className="relative flex">{props.children}</span>

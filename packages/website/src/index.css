@@ -87,7 +87,6 @@
   --radius-xl: calc(var(--radius) * 1.5);
   --shadow-raised:
     0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
-  --ease-in-out-cubic: cubic-bezier(0.645, 0.045, 0.355, 1);
   --animate-line-fade: line-fade 1s linear infinite;
 
   @keyframes line-fade {

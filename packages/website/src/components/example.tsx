@@ -34,7 +34,7 @@ export const ExampleRoot = (props: RootProps) => {
   const [phase, setPhase] = useState<"idle" | "rewinding" | "compiling">("idle");
   const [hasRun, setHasRun] = useState(false);
   const isRunning = phase !== "idle" || runner.isRunning;
-  const request = { source: example.tla, config: example.config };
+  const request = { source: example.tla.code, config: example.config };
   return (
     <exampleContext.PartsContext
       value={{
@@ -80,23 +80,22 @@ export const ExampleDescription = () => {
       Here, TLA-ts checks{" "}
       {EXAMPLES.map((example, index) => (
         <Fragment key={example.fileName}>
-          {index > 0 && (index === EXAMPLES.length - 1 ? ", or " : ", ")}
+          {index === EXAMPLES.length - 1 && "or "}
           {example.article}{" "}
-          <Button
-            variant="link"
-            size="inline"
-            aria-pressed={example === state.example}
-            disabled={state.isRunning}
-            onClick={() => state.select(example)}
-          >
-            <span className="col-start-1 row-start-1">{example.label}</span>
-            <span aria-hidden className="invisible col-start-1 row-start-1 font-medium">
+          <span className="whitespace-nowrap">
+            <Button
+              variant="link"
+              size="inline"
+              aria-pressed={example === state.example}
+              disabled={state.isRunning}
+              onClick={() => state.select(example)}
+            >
               {example.label}
-            </span>
-          </Button>
+            </Button>
+            {index === EXAMPLES.length - 1 ? "." : ","}
+          </span>{" "}
         </Fragment>
       ))}
-      .
     </p>
   );
 };
@@ -129,14 +128,14 @@ export const ExampleHint = () => {
 };
 
 const VIEW_ITEM_CLASS_NAME =
-  "h-6 rounded-md px-2 text-xs aria-pressed:bg-raised aria-pressed:shadow-raised";
+  "h-7 rounded-md px-2 text-xs aria-pressed:bg-raised aria-pressed:shadow-raised";
 
 interface VerdictProps {
   result: RunResult;
 }
 
 const Verdict = (props: VerdictProps) => (
-  <>
+  <span className="flex min-w-0 items-center gap-1.5 transition-opacity duration-200 ease-out starting:opacity-0">
     {props.result.isPassed ? (
       <Check weight="bold" className="shrink-0 text-success" />
     ) : (
@@ -150,15 +149,14 @@ const Verdict = (props: VerdictProps) => (
     >
       {props.result.title}
     </span>
-  </>
+  </span>
 );
 
 export const ExampleSource = () => {
   const state = exampleContext.useParts();
   return (
     <CodeRoot
-      language={state.isCompiled ? "tlaplus" : "typescript"}
-      code={state.isCompiled ? state.example.tla : state.example.typescript}
+      source={state.isCompiled ? state.example.tla : state.example.typescript}
       activeLine={state.result?.activeLine}
       notes={state.result?.notes}
       highlights={state.example.highlights}

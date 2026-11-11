@@ -1,9 +1,19 @@
+export interface Token {
+  content: string;
+  style: Record<string, string>;
+}
+
+export interface Source {
+  code: string;
+  lines: Token[][];
+}
+
 export interface CompiledExample {
   fileName: string;
-  typescript: string;
   name: string;
-  tla: string;
   config: string;
+  typescript: Source;
+  tla: Source;
   highlightNames: string[];
 }
 
