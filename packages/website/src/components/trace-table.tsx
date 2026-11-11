@@ -11,7 +11,7 @@ interface TraceTableProps {
 
 const CELL_CLASS_NAME = "border-b border-gray-300 px-3 py-1.5 align-top";
 const HEADER_CLASS_NAME =
-  "sticky top-0 z-10 border-b bg-white px-3 py-2 text-left font-sans text-sm font-normal text-gray-1000";
+  "sticky top-0 z-10 border-b bg-surface px-3 py-2 text-left font-sans text-sm font-normal text-gray-1000";
 
 export const TraceTable = (props: TraceTableProps) => {
   const loopStart = props.loopStart ?? props.trace.length;
@@ -40,10 +40,10 @@ export const TraceTable = (props: TraceTableProps) => {
                 "transition-[opacity,background-color] duration-200",
                 index > props.activeIndex && "opacity-30",
                 isFailing
-                  ? "bg-red-50 motion-safe:animate-shake"
+                  ? "bg-danger-soft motion-safe:animate-shake"
                   : isActive
                     ? "bg-gray-200"
-                    : "bg-white",
+                    : "bg-surface",
               )}
             >
               <td
@@ -65,7 +65,7 @@ export const TraceTable = (props: TraceTableProps) => {
                 <span
                   className={cn(
                     "mr-3 font-mono text-sm tabular-nums",
-                    isFailing ? "text-red-500" : "text-gray-900",
+                    isFailing ? "text-danger-muted" : "text-gray-900",
                   )}
                 >
                   {String(step.number).padStart(2, "0")}
@@ -84,7 +84,7 @@ export const TraceTable = (props: TraceTableProps) => {
                   }}
                   className={cn(
                     "text-left hover:underline",
-                    isFailing ? "text-red-600" : "text-gray-1200",
+                    isFailing ? "text-danger" : "text-gray-1200",
                   )}
                 >
                   {step.action ?? "Init"}
@@ -98,7 +98,7 @@ export const TraceTable = (props: TraceTableProps) => {
                       isActive ? "break-words" : "truncate",
                       index > 0 && previous.get(name) !== value
                         ? isFailing
-                          ? "text-red-700"
+                          ? "text-danger-strong"
                           : "text-gray-1200"
                         : "text-gray-1000",
                     )}
@@ -107,7 +107,7 @@ export const TraceTable = (props: TraceTableProps) => {
                       className={cn(
                         index > 0 &&
                           previous.get(name) !== value &&
-                          (isFailing ? "bg-red-100" : "bg-amber-100"),
+                          (isFailing ? "bg-danger-tint" : "bg-changed"),
                         "rounded-sm box-decoration-clone px-0.5",
                       )}
                     >

@@ -10,6 +10,13 @@
       name="description"
       content="A TLA+ interpreter and model checker in TypeScript, 2× faster than TLC."
     />
+    <script>
+      document.documentElement.classList.toggle(
+        "dark",
+        (localStorage.getItem("tla-ts-theme") ??
+          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark",
+      );
+    </script>
   </head>
   <body>
     <div id="root"></div>
