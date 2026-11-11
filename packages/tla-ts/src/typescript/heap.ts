@@ -1180,6 +1180,19 @@ const getLiteralTime = (node: ts.Expression) => {
   ]);
 };
 
+// The fields that a Date's getters give, in local time and in UTC, which tla-ts takes to be the
+// same.
+export const DATE_FIELDS = new Map<string, string>([
+  ...["FullYear", "Month", "Date", "Day", "Hours", "Minutes", "Seconds", "Milliseconds"].flatMap(
+    (field) => [[`get${field}`, field] as const, [`getUTC${field}`, field] as const],
+  ),
+  ["getYear", "Year"],
+  ["getTimezoneOffset", "TimezoneOffset"],
+]);
+
+// The methods that give a Date's time value.
+export const TIME_METHODS = new Set(["getTime", "valueOf"]);
+
 // The Date setters, by the position of the first field each sets, the year at 1 and the
 // milliseconds at 7, or 0 for setTime and setYear, and how many numbers each takes.
 const DATE_SETTERS = new Map<string, { position: number; arity: number }>([
@@ -1201,17 +1214,59 @@ const DATE_SETTERS = new Map<string, { position: number; arity: number }>([
   ["setYear", { position: 0, arity: 1 }],
 ]);
 
-// The setter that a call of a Date's method runs, where its arguments convert to numbers without
-// running code.
-export const getDateSetter = (node: ts.Node, context: Context) => {
-  const setter = isMethodCall(node) ? DATE_SETTERS.get(node.expression.name.text) : undefined;
-  return context.heap !== undefined &&
-    setter !== undefined &&
-    isMethodCall(node) &&
-    isDateType(node.expression.expression, context) &&
-    node.arguments.length >= 1 &&
-    node.arguments.length <= setter.arity &&
-    node.arguments.every((argument) => isNumeric(argument, context))
+// A call of a Date's setter or toISOString that a statement runs, or a statement's call of a
+// Date.prototype method through call, which throws a TypeError where its receiver isn't a Date.
+export const getDateCall = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined || !isMethodCall(node)) return undefined;
+  const callee = node.expression.expression;
+  const isCall = node.expression.name.text === "call";
+  const method = isCall ? getDateMethod(callee, context) : node.expression.name.text;
+  const isKnown =
+    method !== undefined &&
+    (DATE_SETTERS.has(method) ||
+      method === "toISOString" ||
+      (isCall && (DATE_FIELDS.has(method) || TIME_METHODS.has(method))));
+  if (!isKnown || (!isCall && !isDateType(callee, context))) return undefined;
+  if (isCall && !ts.isExpressionStatement(node.parent)) return undefined;
+  return {
+    method,
+    isSetter: DATE_SETTERS.has(method),
+    callee: isCall ? callee : undefined,
+    receiver: isCall ? node.arguments.at(0) : callee,
+    values: isCall ? node.arguments.slice(1) : node.arguments,
+  };
+};
+
+// The Date.prototype method that a value is, or that a variable holds from its declaration.
+const getDateMethod = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const value =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : node;
+  return value !== undefined &&
+    ts.isPropertyAccessExpression(value) &&
+    ts.isPropertyAccessExpression(value.expression) &&
+    value.expression.name.text === "prototype" &&
+    getBuiltIn(value.expression.expression, context) === "Date"
+    ? value.name.text
+    : undefined;
+};
+
+// The position of the first field that a Date setter sets, and how many it takes, where its
+// arguments convert to numbers without running code.
+export const getDateSetter = (
+  method: string,
+  values: readonly ts.Expression[],
+  context: Context,
+) => {
+  const setter = DATE_SETTERS.get(method);
+  return setter !== undefined &&
+    values.length >= 1 &&
+    values.length <= setter.arity &&
+    values.every((argument) => isNumeric(argument, context))
     ? setter
     : undefined;
 };
@@ -1490,7 +1545,8 @@ export const isObjectChange = (node: ts.Node): node is MethodCall =>
 
 // The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
 // failed definition or Reflect.construct, a new of a value that isn't a constructor, or a reduce
-// of an empty array, and the RangeError of an array's invalid length.
+// of an empty array, the RangeError of an array's invalid length, and a Date method's TypeError
+// on another receiver and toISOString's RangeError of an invalid date.
 export const getEngineErrors = (node: ts.Node, context: Context) => {
   const isDefinition = isObjectChange(node) && node.expression.name.text.startsWith("define");
   const isFallible = isObjectChange(node) && FALLIBLE_CHANGES.has(node.expression.name.text);
@@ -1504,6 +1560,13 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (isUnresolved(node, context)) return ["ReferenceError"];
   const jsonText = getJsonText(node, context);
   if (jsonText !== undefined) return "error" in parseJson(jsonText) ? ["SyntaxError"] : [];
+  const dateCall = getDateCall(node, context);
+  if (dateCall !== undefined) {
+    return [
+      ...(dateCall.callee === undefined ? [] : ["TypeError"]),
+      ...(dateCall.method === "toISOString" ? ["RangeError"] : []),
+    ];
+  }
   const created = ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
     return ["ReferenceError"];

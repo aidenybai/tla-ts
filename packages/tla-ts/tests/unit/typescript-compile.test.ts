@@ -1263,6 +1263,34 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws a Date method's TypeError on another receiver and toISOString's RangeError", async () => {
+    const getSource = (receiver: string) => `
+      const throws = (run: () => void, isType: boolean) => {
+        let caught = false;
+        try {
+          run();
+        } catch (error) {
+          caught = isType ? error instanceof TypeError : error instanceof RangeError;
+        }
+        if (!caught) throw new Error("throws");
+      };
+      const getUTCSeconds = Date.prototype.getUTCSeconds;
+      const valid = new Date(-1);
+      const invalid = new Date(NaN);
+      throws(function () {
+        getUTCSeconds.call(${receiver});
+      }, true);
+      throws(function () {
+        invalid.toISOString();
+      }, false);
+      const text = valid.toISOString();
+      if (text !== "1969-12-31T23:59:59.999Z") throw new Error("text");
+    `;
+    expect((await checkModel(getSource("{}"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("valid"))).failure?.message).toContain("throws");
+  });
+
   it("gives Date.UTC's time value where it fits TLC's integers", async () => {
     const result = await checkModel(`
       const same = (actual: unknown, expected: unknown) => {

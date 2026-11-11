@@ -90,6 +90,7 @@ import {
   getHeap,
   isAllocation,
   isObjectChange,
+  getDateCall,
   getDateSetter,
   translateAllocated,
   translateAllocatedValue,
@@ -879,35 +880,93 @@ export const translateCallStatement = (
             bindings: new Map([...path.scope.bindings, [heapSymbol, heap]]),
           },
         };
-  const dateSetter = getDateSetter(expression, context);
-  if (dateSetter !== undefined && ts.isPropertyAccessExpression(expression.expression)) {
-    const name = context.names.getFresh("change");
+  const dateCall = getDateCall(expression, context);
+  if (dateCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const receiver = context.names.getFresh("date");
+    const timeName = context.names.getFresh("time");
+    const time = identifier(timeName);
+    const isStatement = ts.isExpressionStatement(expression.parent);
+    const setter = getDateSetter(dateCall.method, dateCall.values, context);
+    const changeName = context.names.getFresh("change");
+    const change = identifier(changeName);
+    const run = dateCall.isSetter
+      ? setter === undefined
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't convert the arguments of this Date setter"),
+            ]),
+          )
+        : bindOnce(
+            path,
+            changeName,
+            useJavaScript(
+              "DateChange",
+              [
+                heap,
+                identifier(receiver),
+                time,
+                string(dateCall.method),
+                number(setter.position),
+                tuple(
+                  dateCall.values.map((argument) =>
+                    translateToNumber(argument, expression, path.scope, context),
+                  ),
+                ),
+              ],
+              context,
+            ),
+            // A time value too far from 1970 for TLC's integers is only a number where something
+            // reads it.
+            continueWith(
+              withHeap(field(change, "heap")),
+              isStatement
+                ? undefined
+                : useJavaScript("TimeNumber", [field(change, "time")], context),
+            ),
+          )
+      : dateCall.method === "toISOString"
+        ? ifThenElse(
+            apply("=", [time, identifier("NaN")]),
+            throwError("RangeError", path, expression, context, frame),
+            continueWith(path, useJavaScript("ISOString", [time], context)),
+          )
+        : continueWith(path);
+    const callee = dateCall.callee;
+    const withTime = (value: Expression) => bindOnce(path, timeName, value, run);
     return bindOnce(
       path,
-      name,
-      useJavaScript(
-        "DateChange",
-        [
-          getHeap(path.scope, expression, context),
-          translateExpression(expression.expression.expression, path.scope, context),
-          string(expression.expression.name.text),
-          number(dateSetter.position),
-          tuple(
-            expression.arguments.map((argument) =>
-              translateToNumber(argument, expression, path.scope, context),
+      receiver,
+      dateCall.receiver === undefined
+        ? getUndefined(context)
+        : translateExpression(dateCall.receiver, path.scope, context),
+      callee === undefined
+        ? withTime(
+            useJavaScript(
+              "DateTime",
+              [heap, identifier(receiver), string(dateCall.method)],
+              context,
+            ),
+          )
+        : ifThenElse(
+            useJavaScript(
+              "IsDateMethod",
+              [translateExpression(callee, path.scope, context), string(dateCall.method)],
+              context,
+            ),
+            ifThenElse(
+              useJavaScript("IsDate", [heap, identifier(receiver)], context),
+              withTime(useJavaScript("TimeOfDate", [heap, identifier(receiver)], context)),
+              throwTypeError(path, expression, context, frame),
+            ),
+            leaf(
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't tell which function this value holds"),
+              ]),
             ),
           ),
-        ],
-        context,
-      ),
-      // A time value too far from 1970 for TLC's integers is only a number where something reads
-      // it.
-      continueWith(
-        withHeap(field(identifier(name), "heap")),
-        ts.isExpressionStatement(expression.parent)
-          ? undefined
-          : useJavaScript("TimeNumber", [field(identifier(name), "time")], context),
-      ),
     );
   }
   if (isObjectChange(expression) && heapSymbol !== undefined) {
@@ -3325,7 +3384,7 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getBound(node.expression, context) !== undefined ||
-  getDateSetter(node, context) !== undefined ||
+  getDateCall(node, context) !== undefined ||
   (isObjectChange(node) &&
     node.expression.name.text !== "construct" &&
     isHeapType(context.checker.getTypeAtLocation(node), node, context)) ||
@@ -3691,7 +3750,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||
       isObjectChange(node) ||
-      getDateSetter(node, context) !== undefined ||
+      getDateCall(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));

@@ -15,7 +15,7 @@ import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateSetKey } from "./expressions";
 import { translateBody } from "./functions";
-import { getHeap, isDateType } from "./heap";
+import { DATE_FIELDS, getHeap, isDateType, TIME_METHODS } from "./heap";
 import { isBuiltInObject, translateBuiltInValue, translateSymbolProperty } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
@@ -1030,7 +1030,8 @@ export const translateMethod = (
   if (context.heap !== undefined && kind === "object" && isDateType(receiver, context)) {
     const method = node.expression.name.text;
     const field = DATE_FIELDS.get(method);
-    if ((field === undefined && !TIME_METHODS.has(method)) || node.arguments.length > 0) {
+    const isKnown = field !== undefined || TIME_METHODS.has(method) || method === "toISOString";
+    if (!isKnown || node.arguments.length > 0) {
       return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
     }
     const time = useJavaScript(
@@ -1042,6 +1043,18 @@ export const translateMethod = (
       ],
       context,
     );
+    if (method === "toISOString") {
+      return share(time, "time", context, (shared) =>
+        ifExpression(
+          apply("=", [shared, identifier("NaN")]),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't throw the RangeError of toISOString here"),
+          ]),
+          useJavaScript("ISOString", [shared], context),
+        ),
+      );
+    }
     return field === undefined
       ? useJavaScript("TimeNumber", [time], context)
       : useJavaScript("DateField", [time, string(field)], context);
@@ -1162,19 +1175,6 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
     }
   );
 };
-
-// The fields that a Date's getters give, in local time and in UTC, which tla-ts takes to be the
-// same.
-const DATE_FIELDS = new Map<string, string>([
-  ...["FullYear", "Month", "Date", "Day", "Hours", "Minutes", "Seconds", "Milliseconds"].flatMap(
-    (field) => [[`get${field}`, field] as const, [`getUTC${field}`, field] as const],
-  ),
-  ["getYear", "Year"],
-  ["getTimezoneOffset", "TimezoneOffset"],
-]);
-
-// The methods that give a Date's time value.
-const TIME_METHODS = new Set(["getTime", "valueOf"]);
 
 // The types of the objects that wrap a primitive.
 const WRAPPERS = new Set(["Boolean", "Number", "String"]);

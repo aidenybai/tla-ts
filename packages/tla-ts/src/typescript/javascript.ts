@@ -1437,30 +1437,44 @@ LOCAL DateSet(time, position, values) ==
      ELSE TimeClip(MakeDate(MakeDay(field(1), field(2), field(3)),
                             MakeTime(field(4), field(5), field(6), field(7))))
 
+\\* Whether a value is the built-in Date.prototype method of the given name.
+IsDateMethod(value, method) ==
+  IsRef(value) /\\ ~IsHeap(value) /\\ value[Ref] = "Date.prototype." \\o method
+
+\\* Whether a value is a Date, which holds a time value.
+IsDate(heap, value) == IsHeap(value) /\\ "time" \\in DOMAIN Lookup(heap, value)
+
+\\* What toISOString gives for a valid time value, with a six-digit year past 0 to 9999.
+ISOString(time) ==
+  LET year == YearOf(time)
+      pad(value, width) ==
+        LET text == ToString(value) IN SubSeq("000000", 1, width - Len(text)) \\o text
+  IN (CASE year < 0 -> "-" \\o pad(-year, 6)
+        [] year > 9999 -> "+" \\o pad(year, 6)
+        [] OTHER -> pad(year, 4))
+       \\o "-" \\o pad(MonthOf(time) + 1, 2) \\o "-" \\o pad(DateOf(time), 2)
+       \\o "T" \\o pad(time.ms \\div 3600000, 2) \\o ":" \\o pad((time.ms \\div 60000) % 60, 2)
+       \\o ":" \\o pad((time.ms \\div 1000) % 60, 2) \\o "." \\o pad(time.ms % 1000, 3) \\o "Z"
+
 \\* The object that new Date makes, which holds its time value.
 DateObject(prototype, time) == [EmptyObject EXCEPT !.prototype = prototype] @@ [time |-> time]
 
 \\* The time value that new Date takes from another Date.
 TimeOfDate(heap, value) ==
-  IF IsHeap(value) /\\ "time" \\in DOMAIN Lookup(heap, value)
+  IF IsDate(heap, value)
   THEN Lookup(heap, value).time
   ELSE Assert(FALSE, "tla-ts can't convert " \\o ToString(value) \\o " to a time value")
 
 \\* The time value of a Date that reads the built-in method from its prototype.
 DateTime(heap, ref, method) ==
-  IF /\\ IsHeap(ref)
-     /\\ "time" \\in DOMAIN Lookup(heap, ref)
-     /\\ IsRef(Get(heap, ref, method))
-     /\\ ~IsHeap(Get(heap, ref, method))
-     /\\ Get(heap, ref, method)[Ref] = "Date.prototype." \\o method
+  IF IsDate(heap, ref) /\\ IsDateMethod(Get(heap, ref, method), method)
   THEN Lookup(heap, ref).time
   ELSE Assert(FALSE, "tla-ts can't call this method on " \\o ToString(ref))
 
-\\* The heap after a Date setter, which takes the method's name and where it starts setting fields,
-\\* or 0 for setTime and setYear, and the time value it sets.
-DateChange(heap, ref, method, position, values) ==
-  LET time == DateTime(heap, ref, method)
-      year == values[1]
+\\* The heap after a Date setter, which takes the Date's time value, the method's name, and where it
+\\* starts setting fields, or 0 for setTime and setYear, and the time value it sets.
+DateChange(heap, ref, time, method, position, values) ==
+  LET year == values[1]
       next == CASE method = "setTime" -> TimeFromNumber(values[1])
                 [] method = "setYear" /\\ year = NaN -> NaN
                 [] method = "setYear" ->
