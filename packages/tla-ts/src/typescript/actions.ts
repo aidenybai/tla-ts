@@ -58,6 +58,7 @@ import {
   isNullBased,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getConversion, getConversionFunctions, runConversion } from "./conversions";
 import { getJsonText, parseJson, translateHoldsJson } from "./json";
 import { getIteratorFunctions, isIteratedPattern, isTaken, takeFromIterator } from "./iterators";
 import {
@@ -3418,14 +3419,31 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
 };
 
 // Makes the objects that a node's object literals create, before the statement that evaluates
-// them runs, since an expression can't change the heap.
-const allocate = (
+// them runs, since an expression can't change the heap. A conversion that ran already made those
+// of its operands.
+export const allocate = (
   node: ts.Node | undefined,
   path: Path,
   context: Context,
   continueWith: (path: Path) => Formula,
 ): Formula =>
-  allocateAll(node === undefined ? [] : getAllocated(node, context), path, context, continueWith);
+  allocateAll(
+    node === undefined
+      ? []
+      : getAllocated(node, context).filter(
+          (allocation) =>
+            ts.findAncestor(allocation.parent, (ancestor) =>
+              ts.isFunctionLike(ancestor)
+                ? "quit"
+                : ts.isExpression(ancestor) &&
+                  path.scope.results.has(ancestor) &&
+                  getConversion(ancestor, context) !== undefined,
+            ) === undefined,
+        ),
+    path,
+    context,
+    continueWith,
+  );
 
 const allocateAll = (
   allocations: ts.Node[],
@@ -3755,6 +3773,15 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
     if (context.heap !== undefined && isHeapChanged) changed.add(context.heap);
+    // An operation that converts an object runs its valueOf and toString methods.
+    if (ts.isExpression(node) && getConversion(node, context) !== undefined) {
+      if (context.heap !== undefined) changed.add(context.heap);
+      getConversionFunctions(node, context).forEach((called) => {
+        if (visited.has(called)) return;
+        visited.add(called);
+        visit(called);
+      });
+    }
     // A pattern that destructures an object runs the functions of the object's iterator.
     if (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) {
       if (context.heap !== undefined) changed.add(context.heap);
@@ -4496,15 +4523,7 @@ const getLeadingAwait = (
 };
 
 const getStatementAwait = (statement: ts.Statement, path: Path) => {
-  const evaluated = ts.isExpressionStatement(statement)
-    ? statement.expression
-    : ts.isVariableStatement(statement)
-      ? statement.declarationList.declarations[0]?.initializer
-      : ts.isIfStatement(statement)
-        ? statement.expression
-        : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
-          ? statement.expression
-          : undefined;
+  const evaluated = getEvaluated(statement);
   return evaluated === undefined ? undefined : getLeadingAwait(evaluated, path.scope.results);
 };
 
@@ -4558,6 +4577,9 @@ interface LeadingCall {
   call: ts.CallExpression | undefined;
   // Whether evaluation may stop or branch before what follows, which then can't run first.
   isBlocked: boolean;
+  // The operation that converts an object to a primitive first, which runs code, so nothing after
+  // it can run before it.
+  conversion?: ts.Expression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -4581,6 +4603,13 @@ const findLeadingCall = (
     }
     return none;
   };
+  // An operation that converts its operands, which it evaluates first.
+  const thenConverted = (found: LeadingCall): LeadingCall =>
+    found.call !== undefined || found.isBlocked
+      ? found
+      : ts.isExpression(node) && getConversion(node, context) !== undefined
+        ? { call: undefined, isBlocked: true, conversion: node }
+        : none;
   if (ts.isExpression(node) && path.scope.results.has(node)) return none;
   if (
     ts.isParenthesizedExpression(node) ||
@@ -4605,7 +4634,7 @@ const findLeadingCall = (
     return node.operator === ts.SyntaxKind.PlusPlusToken ||
       node.operator === ts.SyntaxKind.MinusMinusToken
       ? blocked
-      : findLeadingCall(node.operand, before, path, context);
+      : thenConverted(findLeadingCall(node.operand, before, path, context));
   }
   if (ts.isArrayLiteralExpression(node)) return inOrder(node.elements);
   if (ts.isObjectLiteralExpression(node)) {
@@ -4629,7 +4658,7 @@ const findLeadingCall = (
       : blocked;
   }
   if (ts.isTemplateExpression(node)) {
-    return inOrder(node.templateSpans.map((span) => span.expression));
+    return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
   }
   if (ts.isConditionalExpression(node)) {
     const found = findLeadingCall(node.condition, before, path, context);
@@ -4650,11 +4679,11 @@ const findLeadingCall = (
     }
     const isAssignment =
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
-    return isAssignment ? blocked : inOrder([node.left, node.right]);
+    return isAssignment ? blocked : thenConverted(inOrder([node.left, node.right]));
   }
   if (ts.isCallExpression(node)) {
     if (!isPlainCallee(node.expression, context)) return blocked;
-    const found = inOrder(node.arguments);
+    const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
     if (isGeneratorType(node, context)) return blocked;
     return isStatementCall(node, path, context) ? { call: node, isBlocked: false } : evaluate(node);
@@ -4669,10 +4698,10 @@ const findLeadingCall = (
     : blocked;
 };
 
-// The call inside a statement's expression that runs as its own statement first, other than one
-// that the statement itself runs.
-const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) => {
-  const evaluated = ts.isExpressionStatement(statement)
+// The expression that a statement evaluates first, where it runs what the expression needs as
+// statements before it.
+const getEvaluated = (statement: ts.Statement) =>
+  ts.isExpressionStatement(statement)
     ? statement.expression
     : ts.isVariableStatement(statement)
       ? statement.declarationList.declarations[0]?.initializer
@@ -4681,6 +4710,11 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
         : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
           ? statement.expression
           : undefined;
+
+// The call inside a statement's expression that runs as its own statement first, other than one
+// that the statement itself runs.
+const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
   if (evaluated === undefined) return undefined;
   const outer = skipCasts(evaluated);
   return getLeadingCall(
@@ -4713,6 +4747,26 @@ const getLeadingCall = (
   }
   rejectEarlyRun(call, [call], before, path, context);
   return call;
+};
+
+// The operation that a statement's expression evaluates first that converts an object to a
+// primitive, which runs as its own statement. Nothing that the statement evaluates before it may
+// read what the conversion's methods change.
+const getHoistedConversion = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const node = findLeadingCall(evaluated, before, path, context).conversion;
+  const conversion = node === undefined ? undefined : getConversion(node, context);
+  if (node === undefined || conversion === undefined) return undefined;
+  rejectEarlyRun(
+    node,
+    getConversionFunctions(node, context),
+    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
+    path,
+    context,
+  );
+  return { node, conversion };
 };
 
 // Runs the first call that a node evaluates that only statements can run, and then the rest with
@@ -4772,10 +4826,11 @@ export const translateStatements = (
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
-  // An await statement whose promise fulfilled drops the value.
+  // An await statement whose promise fulfilled, or a conversion that ran, drops the value.
   if (
     ts.isExpressionStatement(statement) &&
-    ts.isAwaitExpression(skipCasts(statement.expression)) &&
+    (ts.isAwaitExpression(skipCasts(statement.expression)) ||
+      getConversion(skipCasts(statement.expression), context) !== undefined) &&
     path.scope.results.has(skipCasts(statement.expression))
   ) {
     return continueWith(path);
@@ -4835,6 +4890,30 @@ export const translateStatements = (
       );
     });
   }
+  const converted = getHoistedConversion(statement, path, context);
+  if (converted !== undefined) {
+    return runConversion(
+      converted.node,
+      converted.conversion,
+      path,
+      context,
+      frame,
+      (after, value) =>
+        translateStatements(
+          statements,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [converted.node, value]]),
+            },
+          },
+          context,
+          frame,
+        ),
+    );
+  }
+
   if (
     (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) ||
     (ts.isFunctionDeclaration(statement) && isHeapFunction(statement, context))

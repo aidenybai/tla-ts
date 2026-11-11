@@ -1218,6 +1218,63 @@ LOCAL LoosePrimitive(heap, ref) ==
             ObjectToString(heap, ref, "")
        [] OTHER -> Assert(FALSE, "tla-ts can't call valueOf or toString on " \\o ToString(ref))
 
+\\* What a built-in valueOf or toString gives where ToPrimitive calls it on an object. It's the
+\\* object itself for Object.prototype.valueOf, so that ToPrimitive goes on to the next method.
+ConvertWith(heap, ref, method) ==
+  LET path == IF IsRef(method) /\\ ~IsHeap(method) THEN method[Ref] ELSE ""
+      kinds == {"Boolean", "Number", "String"}
+  IN CASE path = "Object.prototype.valueOf" -> ref
+       [] path = "Object.prototype.toString" -> ObjectToString(heap, ref, "")
+       [] \\E kind \\in kinds : path = kind \\o ".prototype.valueOf" ->
+            WrappedPrimitive(heap, ref, CHOOSE kind \\in kinds : path = kind \\o ".prototype.valueOf",
+                             "valueOf")
+       [] path = "String.prototype.toString" -> WrappedPrimitive(heap, ref, "String", "toString")
+       [] path = "Number.prototype.toString" ->
+            NumberToString(WrappedPrimitive(heap, ref, "Number", "toString"), Undefined)
+       [] path = "Boolean.prototype.toString" ->
+            BooleanToString(WrappedPrimitive(heap, ref, "Boolean", "toString"))
+       [] OTHER -> Assert(FALSE, "tla-ts can't tell what this method gives where it converts an object")
+
+\\* ToNumber of a primitive. tla-ts can't represent a string's fraction.
+ToNumber(value) ==
+  CASE value = Undefined -> NaN
+    [] value = Null -> 0
+    [] TypeOf(value) = "boolean" -> IF value THEN 1 ELSE 0
+    [] TypeOf(value) = "number" -> value
+    [] TypeOf(value) = "string" ->
+         ReadNumber(TrimEnd(TrimStart(value)), LAMBDA kind, isNegative, magnitude :
+           CASE kind = "integer" /\\ isNegative -> IF magnitude = 0 THEN NegativeZero ELSE -magnitude
+             [] kind = "integer" -> magnitude
+             [] kind = "infinity" -> IF isNegative THEN NegativeInfinity ELSE Infinity
+             [] kind = "nan" -> NaN
+             [] OTHER -> Assert(FALSE, "tla-ts can't represent the number " \\o ToString(value)))
+    [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of converting a symbol to a number")
+
+\\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds
+\\* them as numbers otherwise.
+AddPrimitives(left, right) ==
+  IF TypeOf(left) = "string" \\/ TypeOf(right) = "string"
+  THEN StringOf(left) \\o StringOf(right)
+  ELSE Add(ToNumber(left), ToNumber(right))
+
+\\* JavaScript's < of two primitives. TLA+ strings have no order.
+LessThanPrimitives(left, right) ==
+  IF TypeOf(left) = "string" /\\ TypeOf(right) = "string"
+  THEN Assert(FALSE, "tla-ts can't order strings")
+  ELSE LessThan(ToNumber(left), ToNumber(right))
+
+\\* JavaScript's <= of two primitives. TLA+ strings have no order.
+LessOrEqualPrimitives(left, right) ==
+  IF TypeOf(left) = "string" /\\ TypeOf(right) = "string"
+  THEN Assert(FALSE, "tla-ts can't order strings")
+  ELSE LessOrEqual(ToNumber(left), ToNumber(right))
+
+\\* A number in a script that holds only integers, which can't hold NaN, the infinities, or -0.
+PlainNumber(value) ==
+  IF value \\in SpecialNumbers
+  THEN Assert(FALSE, "tla-ts can't represent " \\o ToString(value) \\o " in this script")
+  ELSE value
+
 LOCAL LooseKind(value) ==
   CASE value = Null -> "null"
     [] TypeOf(value) = "function" -> "object"

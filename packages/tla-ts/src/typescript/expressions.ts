@@ -197,7 +197,7 @@ const OBJECT_TESTS = new Map([
 
 const NUMBER_TESTS = new Set(["isNaN", "isFinite", "isInteger", "isSafeInteger"]);
 
-const concatenate = (parts: Expression[]) =>
+export const concatenate = (parts: Expression[]) =>
   parts.reduce((left, right) => apply("\\o", [left, right]));
 
 // The key of an element access, which counts from 1 in a sequence where JavaScript counts from 0.

@@ -1465,6 +1465,91 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't call valueOf or toString");
   });
 
+  it("converts an object to a primitive through the valueOf and toString it holds", async () => {
+    const result = await checkModel(`
+      const log = { text: "" };
+      const object = {
+        valueOf() {
+          log.text += "v";
+          return 5;
+        },
+        toString() {
+          log.text += "t";
+          return "s";
+        },
+      };
+      const fallback = { valueOf: () => ({}), toString: () => "7" };
+      const sum = (object as any) + 1;
+      const text = String(object);
+      const product = (fallback as any) * 2;
+      const record = { size: 1 };
+      const plain = \`\${record}!\`;
+      if (sum !== 6 || text !== "s" || product !== 14 || plain !== "[object Object]!") {
+        throw new Error("converted");
+      }
+      if (log.text !== "vt") throw new Error("order");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("throws what a conversion's method throws, or a TypeError where none gives a primitive", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const throwing = {
+        valueOf(): number {
+          throw new RangeError("valueOf");
+        },
+      };
+      const objects = { valueOf: () => ({}), toString: () => ({}) };
+      let thrown = "";
+      try {
+        Number(throwing);
+      } catch (error) {
+        thrown += error instanceof RangeError ? "R" : "?";
+      }
+      try {
+        Number(objects);
+      } catch (error) {
+        thrown += error instanceof TypeError ? "T" : "?";
+      }
+      if (thrown !== "RT") throw new Error(thrown);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("converts through Symbol.toPrimitive, for ==, and for objects that the operation makes", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      const exotic = {
+        [Symbol.toPrimitive]: function () {
+          count += 1;
+          return 2;
+        },
+        valueOf: () => 9,
+      };
+      const other = { size: 1 };
+      const doubled = (exotic as any) * 2;
+      // @ts-ignore
+      const isEqual = exotic == 2;
+      // @ts-ignore
+      const isSame = exotic == other;
+      // @ts-ignore
+      const made = { valueOf: () => 3 } + 1;
+      if (doubled !== 4 || made !== 4 || count !== 2) throw new Error("converted");
+      if (!isEqual) throw new Error("equal");
+      if (isSame) throw new Error("same");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects a conversion whose method changes what the statement read before it", () => {
+    expect(() =>
+      compile(
+        "let y = 2;\nconst object = {\n  valueOf() {\n    y = 10;\n    return 1;\n  },\n};\nconst result = y * ((object as any) + 1);",
+      ),
+    ).toThrow("tla-ts can't run this before what reads what it changes");
+  });
+
   it("makes an object from an array's entries", async () => {
     const result = await checkModel(`
       const entries = [["z", 1], ["y", 2], ["x", 3], ["y", 4]];
