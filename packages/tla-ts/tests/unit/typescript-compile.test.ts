@@ -2647,7 +2647,11 @@ describe("errors", () => {
       const order = { size: 0, ranks: {} as Record<string, number> };
       order.ranks.a = order.size++;
       const pre = ++order.size;
-      if (x !== 4 || z !== 14 || order.ranks.a !== 0 || pre !== 2) throw new Error("counts");
+      const items = [10, 20, 30];
+      const at = items[Math.min(order.size++, 2)];
+      if (x !== 4 || z !== 14 || order.ranks.a !== 0 || pre !== 2 || at !== 30) {
+        throw new Error("counts");
+      }
     `);
     expect(result.failure).toBeUndefined();
     expect(() =>

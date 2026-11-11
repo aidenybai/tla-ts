@@ -5383,29 +5383,33 @@ const isPlainIncrement = (node: Increment, context: Context) => {
   );
 };
 
-// Whether a target's evaluation reads only names and keys that an increment doesn't write, so
-// that the increment can run before it.
-const isUnwritten = (target: ts.Expression, increment: Increment, context: Context): boolean => {
+// Whether evaluating a node reads only names and keys that an increment doesn't write, so that
+// the increment can run before it.
+const isUnaffected = (node: ts.Expression, increment: Increment, context: Context): boolean => {
   const operand = increment.operand;
-  const isRead = (node: ts.Expression): boolean =>
-    ts.isParenthesizedExpression(node)
-      ? isRead(node.expression)
-      : ts.isIdentifier(node)
-        ? !ts.isIdentifier(operand) ||
-          getSymbol(node, context.checker) !== getSymbol(operand, context.checker)
-        : ts.isPropertyAccessExpression(node)
-          ? (!ts.isPropertyAccessExpression(operand) || node.name.text !== operand.name.text) &&
-            isRead(node.expression)
-          : ts.isStringLiteral(node) ||
-            ts.isNumericLiteral(node) ||
-            node.kind === ts.SyntaxKind.ThisKeyword;
-  return ts.isPropertyAccessExpression(target)
-    ? target.questionDotToken === undefined && isRead(target.expression)
-    : ts.isElementAccessExpression(target) &&
-        target.questionDotToken === undefined &&
-        isRead(target.expression) &&
-        isRead(target.argumentExpression);
+  return ts.isParenthesizedExpression(node)
+    ? isUnaffected(node.expression, increment, context)
+    : ts.isIdentifier(node)
+      ? !ts.isIdentifier(operand) ||
+        getSymbol(node, context.checker) !== getSymbol(operand, context.checker)
+      : ts.isPropertyAccessExpression(node)
+        ? node.questionDotToken === undefined &&
+          !getGetterKeys(node).has(node.name.text) &&
+          (!ts.isPropertyAccessExpression(operand) || node.name.text !== operand.name.text) &&
+          isUnaffected(node.expression, increment, context)
+        : ts.isStringLiteral(node) ||
+          ts.isNumericLiteral(node) ||
+          node.kind === ts.SyntaxKind.ThisKeyword;
 };
+
+// Whether an assignment's target evaluates its object and key without what an increment writes.
+const isUnwritten = (target: ts.Expression, increment: Increment, context: Context) =>
+  ts.isPropertyAccessExpression(target)
+    ? target.questionDotToken === undefined && isUnaffected(target.expression, increment, context)
+    : ts.isElementAccessExpression(target) &&
+      target.questionDotToken === undefined &&
+      isUnaffected(target.expression, increment, context) &&
+      isUnaffected(target.argumentExpression, increment, context);
 
 // The assignment that a statement evaluates first, inside an expression, which can run as a
 // statement before it, since nothing the statement evaluates before it sees the change.
@@ -5424,7 +5428,16 @@ const getLeadingAssignment = (
     ts.isPropertyAccessExpression(node) ||
     ts.isElementAccessExpression(node)
   ) {
-    return getLeadingAssignment(node.expression, results, context);
+    const leading = getLeadingAssignment(node.expression, results, context);
+    if (leading !== undefined || !ts.isElementAccessExpression(node)) return leading;
+    // An element access evaluates its object, and then its key.
+    const inKey = getLeadingAssignment(node.argumentExpression, results, context);
+    return inKey !== undefined &&
+      isIncrement(inKey) &&
+      node.questionDotToken === undefined &&
+      isUnaffected(node.expression, inKey, context)
+      ? inKey
+      : undefined;
   }
   if (ts.isConditionalExpression(node))
     return getLeadingAssignment(node.condition, results, context);
