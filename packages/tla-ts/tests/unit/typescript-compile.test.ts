@@ -998,6 +998,20 @@ describe("calls", () => {
     `);
     expect(result.failure).toBeUndefined();
   });
+  it("branch on a short-circuit whose right operand calls a function that makes objects", async () => {
+    const result = await checkModel(`
+      const cursor = { index: 1 };
+      const read = (source: string, at: number) =>
+        source[at] === "\\\\" ? { text: "word", length: 2 } : source[at] === "+" ? { text: "plus", length: 1 } : undefined;
+      const first = read("x\\\\in", cursor.index) ?? read("+a", 0);
+      if (first?.text !== "word") throw new Error("first");
+      const second = read("+a", cursor.index) ?? read("+a", 0);
+      if (second?.text !== "plus") throw new Error("second");
+      const third = cursor.index > 0 ? read("--", 0) : read("+a", 0);
+      if (third !== undefined) throw new Error("third");
+    `);
+    expect(result.status).toBe("deadlock");
+  });
 });
 
 describe("calls tla-ts can't compile", () => {

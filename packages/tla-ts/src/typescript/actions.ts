@@ -194,6 +194,7 @@ import {
   identifier,
   ifExpression,
   index,
+  not,
   number,
   record,
   prime,
@@ -5803,6 +5804,9 @@ interface LeadingCall {
   // The read that a getter which changes something may answer first, or an operation on a proxy,
   // whose trap may change something, which runs as a statement.
   read?: ts.Expression;
+  // A short-circuit or a conditional whose operand that runs only sometimes is a call that only
+  // statements can run, so the statement branches on which operand gives the value.
+  branch?: ts.BinaryExpression | ts.ConditionalExpression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -5895,9 +5899,17 @@ const findLeadingCall = (
   if (ts.isTemplateExpression(node)) {
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
   }
+  const isBranchCall = (operand: ts.Expression) => {
+    const call = skipCasts(operand);
+    return ts.isCallExpression(call) && findLeadingCall(call, [], path, context).call === call;
+  };
   if (ts.isConditionalExpression(node)) {
     const found = findLeadingCall(node.condition, before, path, context);
-    return found.call !== undefined ? found : blocked;
+    return found.call !== undefined
+      ? found
+      : !found.isBlocked && (isBranchCall(node.whenTrue) || isBranchCall(node.whenFalse))
+        ? { ...blocked, branch: node }
+        : blocked;
   }
   if (ts.isBinaryExpression(node)) {
     const kind = node.operatorToken.kind;
@@ -5907,7 +5919,11 @@ const findLeadingCall = (
       kind === ts.SyntaxKind.QuestionQuestionToken
     ) {
       const found = findLeadingCall(node.left, before, path, context);
-      return found.call !== undefined ? found : blocked;
+      return found.call !== undefined
+        ? found
+        : !found.isBlocked && isBranchCall(node.right)
+          ? { ...blocked, branch: node }
+          : blocked;
     }
     if (kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
       return findLeadingCall(node.right, before, path, context);
@@ -6043,8 +6059,36 @@ const getLeadingCall = (
   ) {
     return undefined;
   }
-  rejectEarlyRun(call, [call], before, path, context);
+  rejectEarlyRun(
+    call,
+    [call],
+    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === call) === undefined),
+    path,
+    context,
+  );
   return call;
+};
+
+// The short-circuit or the conditional that a statement's expression evaluates first whose operand
+// that runs only sometimes is a call that only statements can run. Nothing that the statement
+// evaluates before it may read what the call changes.
+const getHoistedBranch = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const node = findLeadingCall(evaluated, before, path, context).branch;
+  if (node === undefined) return undefined;
+  const operands = ts.isConditionalExpression(node)
+    ? [node.whenTrue, node.whenFalse]
+    : [node.right];
+  rejectEarlyRun(
+    node,
+    operands.map(skipCasts).filter(ts.isCallExpression),
+    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
+    path,
+    context,
+  );
+  return node;
 };
 
 // The operation that a statement's expression evaluates first that converts an object to a
@@ -6201,6 +6245,49 @@ export const translateStatements = (
         ),
       ),
     );
+  }
+  const branch = getHoistedBranch(statement, path, context);
+  if (branch !== undefined) {
+    const withValue = (after: Path, value: Expression) =>
+      translateStatements(
+        statements,
+        {
+          ...after,
+          scope: { ...after.scope, results: new Map([...after.scope.results, [branch, value]]) },
+        },
+        context,
+        frame,
+      );
+    const evaluate = (operand: ts.Expression) => {
+      const call = skipCasts(operand);
+      return ts.isCallExpression(call) && !path.scope.results.has(call)
+        ? allocate(call, path, context, (allocated) =>
+            translateCallStatement(call, allocated, context, frame, (after, value) =>
+              withValue(after, value ?? getUndefined(context)),
+            ),
+          )
+        : withValue(path, translateExpression(operand, path.scope, context));
+    };
+    if (ts.isConditionalExpression(branch)) {
+      return ifThenElse(
+        translateCondition(branch.condition, path.scope, context),
+        evaluate(branch.whenTrue),
+        evaluate(branch.whenFalse),
+      );
+    }
+    const kind = branch.operatorToken.kind;
+    context.prelude.add("Null");
+    context.prelude.add("Undefined");
+    const isRight =
+      kind === ts.SyntaxKind.QuestionQuestionToken
+        ? apply("\\in", [
+            translateExpression(branch.left, path.scope, context),
+            set([identifier("Null"), identifier("Undefined")]),
+          ])
+        : kind === ts.SyntaxKind.AmpersandAmpersandToken
+          ? translateCondition(branch.left, path.scope, context)
+          : not(translateCondition(branch.left, path.scope, context));
+    return ifThenElse(isRight, evaluate(branch.right), evaluate(branch.left));
   }
   const hoisted = getHoistedAssignment(statement, path, context);
   // An increment gives its operand's number from before, or after, as its prefix form does.
