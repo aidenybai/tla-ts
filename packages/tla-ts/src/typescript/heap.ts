@@ -1697,5 +1697,6 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
       context,
     ),
     isFallible: FALLIBLE_CHANGES.has(method),
+    values,
   };
 };

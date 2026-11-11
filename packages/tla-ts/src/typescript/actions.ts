@@ -134,6 +134,7 @@ import {
   translateSwitch,
   translateThrow,
 } from "./functions";
+import { getDescriptorGetters, isDescriptorRead, readDescriptor } from "./protocols";
 import {
   bindPattern,
   bindPatternInline,
@@ -1037,6 +1038,9 @@ export const translateCallStatement = (
       expression.expression.name.text === "construct" || target === undefined
         ? undefined
         : translateObjectValue(target, path.scope, context);
+    if (isDescriptorRead(expression, context) && "values" in translated) {
+      return readDescriptor(expression, translated.values, path, context, frame, continueWith);
+    }
     if (!translated.isFallible) {
       return bindOnce(
         path,
@@ -3571,7 +3575,7 @@ export const bindOnce = (path: Path, name: string, value: Expression, rest: Form
     : bindValue(name, value, rest);
 
 // Throws the TypeError that JavaScript throws where a change to an object fails.
-const throwError = (
+export const throwError = (
   name: "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError",
   path: Path,
   node: ts.Node,
@@ -3865,6 +3869,12 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
         visit(called);
       });
     }
+    // A definition that reads its descriptor's fields runs their getters.
+    getDescriptorGetters(node, context).forEach((called) => {
+      if (visited.has(called)) return;
+      visited.add(called);
+      visit(called);
+    });
     // A pattern that destructures an object, or a for-of or a spread that iterates one, runs the
     // functions of the object's iterator.
     if (

@@ -1478,6 +1478,50 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs the getters of a descriptor's fields in the order defineProperty reads them", async () => {
+    const result = await checkModel(`
+      const log = { text: "" };
+      const target: { [key: string]: unknown } = {};
+      const attributes: { [key: string]: unknown } = {};
+      Object.defineProperty(attributes, "enumerable", {
+        get: function () {
+          log.text += "e";
+          return true;
+        },
+      });
+      Object.defineProperty(attributes, "value", {
+        get: function () {
+          log.text += "v";
+          return 1;
+        },
+      });
+      Object.defineProperty(target, "property", attributes);
+      const read = log.text;
+      if (read !== "ev" || target.property !== 1) throw new Error(read);
+      const invalid: { [key: string]: unknown } = {};
+      Object.defineProperty(invalid, "get", {
+        get: function () {
+          log.text += "g";
+          return 5;
+        },
+      });
+      Object.defineProperty(invalid, "set", {
+        get: function () {
+          log.text += "s";
+          return undefined;
+        },
+      });
+      let caught = false;
+      try {
+        Object.defineProperty(target, "other", invalid);
+      } catch (error) {
+        caught = error instanceof TypeError;
+      }
+      if (!caught || log.text !== "evg") throw new Error(log.text);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("sets an object's prototype, and throws a TypeError where the chain would loop", async () => {
     const result = await checkModel(`
       const parent: { [key: string]: unknown } = { inherited: 1 };

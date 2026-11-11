@@ -387,7 +387,14 @@ export const translateFoundGetter = (
               junction("And", [
                 useJavaScript("IsRef", [sharedObject], context),
                 apply("=", [
-                  useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context),
+                  useJavaScript(
+                    "CodeOf",
+                    [
+                      sharedHeap,
+                      useJavaScript("GetterOf", [sharedHeap, sharedObject, sharedKey], context),
+                    ],
+                    context,
+                  ),
                   translateFunctionValue(getter, context),
                 ]),
               ]),

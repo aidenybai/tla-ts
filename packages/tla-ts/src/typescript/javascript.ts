@@ -1149,11 +1149,11 @@ ToBoolean(value) ==
 LOCAL Fields == {"value", "writable", "get", "set", "enumerable", "configurable"}
 
 \\* A descriptor is valid if its get and set are functions or undefined, and it doesn't mix them
-\\* with value or writable. Otherwise ToPropertyDescriptor throws a TypeError.
-LOCAL ToDescriptor(heap, ref) ==
-  LET fields == {field \\in Fields : Has(heap, ref, field)}
-      isCallable(field) ==
-        LET value == Get(heap, ref, field) IN value = Undefined \\/ TypeOfIn(heap, value) = "function"
+\\* with value or writable. Otherwise ToPropertyDescriptor throws a TypeError. The values are the
+\\* fields that ToPropertyDescriptor read.
+LOCAL FieldsDescriptor(heap, fields, values) ==
+  LET valueOf(field) == IF field \\in fields THEN values[field] ELSE Undefined
+      isCallable(field) == valueOf(field) = Undefined \\/ TypeOfIn(heap, valueOf(field)) = "function"
       isAccessor == fields \\cap {"get", "set"} # {}
       isData == fields \\cap {"value", "writable"} # {}
   IN [fields |-> fields,
@@ -1161,12 +1161,20 @@ LOCAL ToDescriptor(heap, ref) ==
       isData |-> isData,
       isValid |-> /\\ \\A field \\in fields \\cap {"get", "set"} : isCallable(field)
                   /\\ ~(isAccessor /\\ isData),
-      value |-> Get(heap, ref, "value"),
-      get |-> Get(heap, ref, "get"),
-      set |-> Get(heap, ref, "set"),
-      writable |-> ToBoolean(Get(heap, ref, "writable")),
-      enumerable |-> ToBoolean(Get(heap, ref, "enumerable")),
-      configurable |-> ToBoolean(Get(heap, ref, "configurable"))]
+      value |-> valueOf("value"),
+      get |-> valueOf("get"),
+      set |-> valueOf("set"),
+      writable |-> ToBoolean(valueOf("writable")),
+      enumerable |-> ToBoolean(valueOf("enumerable")),
+      configurable |-> ToBoolean(valueOf("configurable"))]
+
+\\* The descriptor of the fields that a script read, running their getters, with whether it has
+\\* each.
+ReadDescriptor(heap, has, values) == FieldsDescriptor(heap, {field \\in Fields : has[field]}, values)
+
+LOCAL ToDescriptor(heap, ref) ==
+  LET fields == {field \\in Fields : Has(heap, ref, field)}
+  IN FieldsDescriptor(heap, fields, [field \\in fields |-> Get(heap, ref, field)])
 
 \\* No value a script makes is the same as a value TLA+ can't represent.
 LOCAL CanApply(object, key, descriptor) ==
@@ -1702,7 +1710,7 @@ ApplyAll(object, keys, descriptors) ==
 
 \\* Whether a value is an object, where a function throws a TypeError if it isn't. An object that
 \\* isn't in the heap, such as an array, stops the run.
-LOCAL IsObjectArgument(value) ==
+IsObjectArgument(value) ==
   CASE IsObject(value) -> TRUE
     [] value # Null /\\ TypeOf(value) = "object" ->
          Assert(FALSE, "tla-ts can't use " \\o ToString(value) \\o " as an object here")
@@ -1716,16 +1724,21 @@ LOCAL CanDefineOn(ref, descriptor) ==
          \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"},
          "tla-ts can't define accessors on built-in objects")
 
-DefineProperty(heap, ref, key, descriptor) ==
-  LET converted == ToDescriptor(heap, descriptor)
-      applied == ApplyAll(Lookup(heap, ref), <<key>>, <<converted>>)
-  IN IF /\\ IsObjectArgument(ref)
-        /\\ IsObjectArgument(descriptor)
-        /\\ converted.isValid
-        /\\ CanDefineOn(ref, converted)
+\\* Defines each key with the descriptor that ToPropertyDescriptor gave it, in order.
+DefineConvertedAll(heap, ref, keys, descriptors) ==
+  LET applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
+  IN IF \\A position \\in DOMAIN keys :
+          descriptors[position].isValid /\\ CanDefineOn(ref, descriptors[position])
      THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
            isRangeError |-> applied.isRangeError]
      ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
+
+DefineConverted(heap, ref, key, converted) == DefineConvertedAll(heap, ref, <<key>>, <<converted>>)
+
+DefineProperty(heap, ref, key, descriptor) ==
+  IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
+  THEN DefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
+  ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
 DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
@@ -1735,13 +1748,8 @@ DefineProperties(heap, ref, properties) ==
         \\/ ~IsObjectArgument(properties)
         \\/ \\E position \\in DOMAIN keys : ~IsObjectArgument(values[position])
      THEN [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
-     ELSE LET descriptors == [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])]
-              applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
-          IN IF \\A position \\in DOMAIN keys :
-                  descriptors[position].isValid /\\ CanDefineOn(ref, descriptors[position])
-             THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
-                   isRangeError |-> applied.isRangeError]
-             ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
+     ELSE DefineConvertedAll(heap, ref, keys,
+                             [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])])
 
 LOCAL EntryPart(heap, entry, position) ==
   CASE IsRef(entry) -> Get(heap, entry, ToString(position - 1))

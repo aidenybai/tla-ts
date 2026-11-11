@@ -833,18 +833,22 @@ export const isFunctionObject = (
   isDefault(node);
 
 // A function expression or a method that another function makes as the value of an object's
-// property each time it runs, which is an object of its own each time. It reads no name that the
-// functions around it bind, so it runs the same wherever tla-ts inlines it.
+// property, or a function expression that it returns, each time it runs, which is an object of its
+// own each time. It reads no name that the functions around it bind, so it runs the same wherever
+// tla-ts inlines it.
 export const isNestedFunction = (
   node: ts.Node,
   context: Context,
 ): node is ts.FunctionExpression | ts.MethodDeclaration =>
   context.heap !== undefined &&
   ((ts.isFunctionExpression(node) &&
-    ts.isPropertyAssignment(node.parent) &&
-    node.parent.initializer === node &&
-    !isFunctionObject(node, context) &&
-    getFunctionValue(node, context) === undefined) ||
+    ((ts.isPropertyAssignment(node.parent) &&
+      node.parent.initializer === node &&
+      !isFunctionObject(node, context) &&
+      getFunctionValue(node, context) === undefined) ||
+      (ts.isReturnStatement(node.parent) &&
+        node.parent.expression === node &&
+        findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments")))) ||
     (ts.isMethodDeclaration(node) &&
       node.body !== undefined &&
       ts.isObjectLiteralExpression(node.parent) &&
@@ -1000,10 +1004,28 @@ const isMaking = (node: ts.Node): boolean =>
   ts.isNewExpression(node) ||
   (ts.forEachChild(node, (child) => isMaking(child) || undefined) ?? false);
 
+const returnedFunctions = new WeakMap<ts.SourceFile, ts.FunctionExpression[]>();
+
+// The function objects that functions return, which a descriptor may give as a getter.
+const getReturnedFunctions = (node: ts.Node, context: Context) => {
+  const file = node.getSourceFile();
+  const known = returnedFunctions.get(file);
+  if (known !== undefined) return known;
+  const found = findNodes(
+    file,
+    (inner): inner is ts.FunctionExpression =>
+      ts.isFunctionExpression(inner) &&
+      ts.isReturnStatement(inner.parent) &&
+      isNestedFunction(inner, context),
+  );
+  returnedFunctions.set(file, found);
+  return found;
+};
+
 // The getters that a read can run as an expression, which take no argument, change nothing, and
 // make no function or object.
 export const getGetters = (node: ts.Node, context: Context) =>
-  getAccessorFunctions(node, "get", context).filter(
+  [...getAccessorFunctions(node, "get", context), ...getReturnedFunctions(node, context)].filter(
     (getter) =>
       getParameters(getter).length === 0 &&
       getter.body !== undefined &&
