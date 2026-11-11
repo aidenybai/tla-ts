@@ -5,6 +5,8 @@
 
 tla-ts formally verifies your TypeScript code with [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
 
+Try it on the [website](https://tla-ts.aidenybai.com).
+
 ## How it works
 
 1. Run `npx tla-ts [file].ts`.
@@ -36,11 +38,9 @@ increment == count' = count + 1
 Next == increment
 Spec == /\ Init
         /\ [][Next]_vars
-small == count < 3
+small == count < 3 \* violated after three calls to increment
 ====
 ```
-
-`npx tla-ts counter.ts` reports that `small` is violated after three calls to `increment`.
 
 ## Install
 
