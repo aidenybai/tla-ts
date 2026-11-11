@@ -287,7 +287,7 @@ const isCalledInPlace = (node: ts.Node) => {
 };
 
 const isMethodShape = (node: ts.Node): node is ts.MethodDeclaration =>
-  ts.isMethodDeclaration(node) && node.body !== undefined && !ts.isComputedPropertyName(node.name);
+  ts.isMethodDeclaration(node) && node.body !== undefined;
 
 export const isPrivateMember = (node: ts.Node) =>
   (ts.isClassElement(node) || ts.isAccessor(node)) &&

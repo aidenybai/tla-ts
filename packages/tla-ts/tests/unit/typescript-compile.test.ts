@@ -1206,7 +1206,7 @@ describe("errors", () => {
 
   it("rejects a class whose member names run code", () => {
     expect(() => compile(`let count = 0;\nclass Counter {\n  [count++]() {}\n}`)).toThrow(
-      "spec.ts:2:1 Unsupported statement",
+      "spec.ts:3:4 Unsupported expression: count++",
     );
   });
 
