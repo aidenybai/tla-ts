@@ -1287,6 +1287,17 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("lists the own property names of an array that a sequence holds", async () => {
+    const result = await checkModel(`
+      const holder = { seen: 0 };
+      const odd = [1, 2, 3].filter((value) => value % 2 === 1);
+      const names = Object.getOwnPropertyNames(odd);
+      if (names.length !== 3 || names[0] !== "0" || names[2] !== "length") throw new Error("names");
+      holder.seen = 1;
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("describes the properties of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };

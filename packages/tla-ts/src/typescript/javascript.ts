@@ -1207,6 +1207,8 @@ ArrayObject(prototype, elements) ==
 \\* The description of a property of an array that a sequence holds.
 DescribeElement(elements, key) == DescribeObject(ArrayObject(Null, elements), key)
 
+ElementNames(elements) == OwnKeys(ArrayObject(Null, elements))
+
 HasOwnElement(elements, key) == key \\in DOMAIN ArrayObject(Null, elements).values
 
 \\* The arguments object of a call in strict mode, which holds the values the call gives under their

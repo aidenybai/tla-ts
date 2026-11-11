@@ -573,7 +573,14 @@ const translateCall = (
     ) {
       return tuple([]);
     }
-    if (getKind(argument, context) === "sequence" && method !== "getOwnPropertyNames") {
+    if (getKind(argument, context) === "sequence" && method === "getOwnPropertyNames") {
+      return useJavaScript(
+        "ElementNames",
+        [translateExpression(argument, scope, context)],
+        context,
+      );
+    }
+    if (getKind(argument, context) === "sequence") {
       return share(
         translateExpression(argument, scope, context),
         "elements",
