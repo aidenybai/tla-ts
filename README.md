@@ -1,7 +1,7 @@
 <h1>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="packages/website/public/logo-dark.svg">
-    <img src="packages/website/public/logo-light.svg" width="33" alt="" valign="middle" />
+    <img src="packages/website/public/logo-light.svg" width="36" alt="" valign="middle" />
   </picture>
   tla-ts
 </h1>
@@ -60,11 +60,17 @@ You can also skip the install and run `npx tla-ts [file].ts`.
 
 ## CLI
 
-Pass a TypeScript file or a TLA+ spec:
+Pass a TypeScript file, a TLA+ spec, or a TLA+ module with proofs:
 
 ```shell
-npx tla-ts counter.ts   # transpile TypeScript to TLA+ and check it
-npx tla-ts Counter.tla  # check a TLA+ spec
+# transpile TypeScript to TLA+ and check it
+npx tla-ts counter.ts
+
+# check a TLA+ spec
+npx tla-ts Counter.tla
+
+# prove a TLA+ module with TLAPM
+npx tla-ts tlapm Module.tla
 ```
 
 For a TLA+ spec, tla-ts reads `Counter.cfg` from the same folder and takes TLC's options.
