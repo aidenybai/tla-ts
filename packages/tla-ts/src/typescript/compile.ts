@@ -23,6 +23,28 @@ const translateInitial = (variable: Variable, context: Context) => {
   return `${variable.name} = ${indent(wrapEquated(value), "     ")}`;
 };
 
+// A boolean function whose one parameter holds state variables, such as (before: { count: number }),
+// relates the state before each step to the state after it, as an @always property does.
+const isStepProperty = (definition: Exported, context: Context) => {
+  const parameters = definition.node.parameters;
+  if (parameters.length !== 1) return false;
+  const properties = context.checker.getTypeAtLocation(parameters[0]).getProperties();
+  const variables = [...context.variables.keys()];
+  return (
+    properties.length > 0 &&
+    properties.every((property) => {
+      const variable = variables.find((candidate) => candidate.name === property.name);
+      return (
+        variable !== undefined &&
+        context.checker.isTypeAssignableTo(
+          context.checker.getTypeOfSymbol(variable),
+          context.checker.getTypeOfSymbol(property),
+        )
+      );
+    })
+  );
+};
+
 const translateExported = (
   definition: Exported,
   model: Model,
@@ -46,6 +68,9 @@ const translateExported = (
       "An exported function that returns a value must return a boolean, or be tagged, such as @view",
       definition.node,
     );
+  }
+  if (isStepProperty(definition, context)) {
+    return translateProperty(definition, "always", model, sections, context);
   }
   return translateInvariant(definition, sections, context);
 };

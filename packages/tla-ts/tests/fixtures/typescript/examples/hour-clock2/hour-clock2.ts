@@ -10,5 +10,4 @@ export const tick = () => {
 /** @always */
 export const isHour = () => hr >= 1 && hr <= 12;
 
-/** @always */
 export const ticksModulo12 = (before: { hr: Hour }) => hr === (before.hr % 12) + 1;

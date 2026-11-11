@@ -101,7 +101,6 @@ const isLockStep = (
   nextLockPc.get(other(self)) === lockPc.get(other(self));
 
 // LSpec, the refinement of Lock: each step is a step of Lock under the translation.
-/** @always */
 export const lSpec = (before: State) => {
   const lockPc = translatePc(before.pc);
   const nextLockPc = translatePc(pc);

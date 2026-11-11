@@ -74,7 +74,6 @@ export const inv = () =>
 export const liveness = () => isTerminated(active);
 
 // TDSpec, the refinement of SyncTerminationDetection: its steps, and its fairness.
-/** @always */
 export const tdNext = (before: State) => {
   const wasDetected = isTerminationDetected({
     active: before.active,
