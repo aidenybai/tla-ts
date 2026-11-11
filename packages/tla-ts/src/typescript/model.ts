@@ -137,7 +137,9 @@ const isDeclaration = (statement: ts.Statement) =>
   ts.isTypeAliasDeclaration(statement) ||
   ts.isInterfaceDeclaration(statement) ||
   ts.isEnumDeclaration(statement) ||
-  (ts.isExportDeclaration(statement) && statement.isTypeOnly) ||
+  // A re-export, like an import, only loads the module it names.
+  (ts.isExportDeclaration(statement) &&
+    (statement.isTypeOnly || statement.moduleSpecifier !== undefined)) ||
   (ts.isFunctionDeclaration(statement) && statement.body !== undefined);
 
 // The functions and constants a statement declares.
