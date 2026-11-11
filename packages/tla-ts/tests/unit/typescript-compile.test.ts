@@ -2978,6 +2978,21 @@ describe("errors", () => {
     ).toThrow("Call this function parameter, or pass it to a function");
   });
 
+  it("returns a value whose call ran first", async () => {
+    const result = await checkModel(`
+      let calls = 0;
+      const tick = (n: number): number => {
+        calls += 1;
+        return n;
+      };
+      const outer = (n: number): number => {
+        return tick(n) + 1;
+      };
+      if (outer(2) !== 3 || calls !== 1) throw new Error("outer");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {

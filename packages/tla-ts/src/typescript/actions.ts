@@ -5511,7 +5511,10 @@ const isLibraryCall = (node: ts.CallExpression, context: Context) =>
 // Whether each call that a value makes is to a local function that an expression can run, as one
 // that reads no state and changes nothing outside it.
 const hasOnlyLiftableCalls = (node: ts.Node, path: Path, context: Context): boolean => {
-  if (ts.isFunctionLike(node)) return true;
+  // A call that ran as its own statement first has its value.
+  if (ts.isFunctionLike(node) || (ts.isExpression(node) && path.scope.results.has(node))) {
+    return true;
+  }
   if (ts.isNewExpression(node)) return false;
   if (ts.isCallExpression(node) && !isLibraryCall(node, context)) {
     const symbol = getSymbol(node.expression, context.checker);
