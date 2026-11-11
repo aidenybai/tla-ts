@@ -310,7 +310,30 @@ const getEscapes = (
 // TLA+ values have no identity, so tla-ts copies an object wherever JavaScript would share it.
 // The copy only differs from the original once one of them changes in place, so reject sharing
 // an object that a variable changes in place.
+// The model's file, with the declarations in other files that it names and that they name in turn,
+// which hold every function of another file that the model may run.
+const getReached = (sourceFile: ts.SourceFile, context: Context) => {
+  const reached: ts.Node[] = [sourceFile];
+  const seen = new Set<ts.Node>(reached);
+  const visit = (node: ts.Node): void => {
+    const declarations = ts.isIdentifier(node)
+      ? (getSymbol(node, context.checker)?.declarations ?? [])
+      : [];
+    for (const declaration of declarations) {
+      const file = declaration.getSourceFile();
+      if (file === sourceFile || file.isDeclarationFile || seen.has(declaration)) continue;
+      seen.add(declaration);
+      reached.push(declaration);
+      visit(declaration);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return reached;
+};
+
 export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
+  const reached = getReached(sourceFile, context);
   const changed = new Map<ts.Symbol, number>();
   const addChanged = (written: Written[]) =>
     written.forEach((entry) =>
@@ -329,7 +352,7 @@ export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
     }
     ts.forEachChild(node, collect);
   };
-  collect(sourceFile);
+  reached.forEach(collect);
   if (changed.size === 0) return;
   const visit = (node: ts.Node) => {
     if (ts.isTypeNode(node)) return;
@@ -370,5 +393,5 @@ export const rejectSharing = (sourceFile: ts.SourceFile, context: Context) => {
     }
     ts.forEachChild(node, visit);
   };
-  visit(sourceFile);
+  reached.forEach(visit);
 };

@@ -936,6 +936,13 @@ describe("definitions", () => {
     expect(result.failure?.message).toContain("count is one");
   });
 
+  it("rejects a function of another file that shares an object it changes", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/aliasing.ts");
+    expect(() => compile(readFileSync(path, "utf8"), path)).toThrow(
+      "first would share an object that changes in place, so copy it",
+    );
+  });
+
   it("compiles constants and functions imported from other files", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/counter.ts");
     const result = await check(compile(readFileSync(path, "utf8"), path));
