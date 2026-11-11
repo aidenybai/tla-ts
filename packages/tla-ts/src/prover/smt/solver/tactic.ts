@@ -46,6 +46,8 @@ import { lia2pb } from "./lia2pb";
 import { runPb2Bv } from "./pb2bv-tactic";
 import { fm } from "./fm-tactic";
 import { addBounds } from "./add-bounds-tactic";
+import { cofactorTermIte } from "./cofactor-elim-term-ite";
+import { nla2bv } from "./nla2bv-tactic";
 import { Rational } from "./rational";
 import { runNlsat } from "./nlsat-tactic";
 import { occf } from "./occf";
@@ -837,6 +839,41 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "cofactor-term-ite",
+    {
+      descrs: getDescrs("", [["cofactor_equalities", PARAM_BOOL, true, true]]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          cofactorTermIte(
+            environment.manager,
+            goal,
+            getRewriterOptions(environment.manager, params),
+            getBool(params, "cofactor_equalities", true),
+          ),
+        ),
+    },
+  ],
+  [
+    "nla2bv",
+    {
+      descrs: getDescrs("", [
+        ["nla2bv_max_bv_size", PARAM_UINT, UINT_MAX, true],
+        ["nla2bv_bv_size", PARAM_UINT, 4, true],
+        ["nla2bv_root", PARAM_UINT, 2, true],
+        ["nla2bv_divisor", PARAM_UINT, 2, true],
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          nla2bv(environment.manager, goal, {
+            maxBvSize: getUint(params, "nla2bv_max_bv_size", UINT_MAX),
+            bvSize: getUint(params, "nla2bv_bv_size", 4),
+            root: getUint(params, "nla2bv_root", 2),
+            divisor: getUint(params, "nla2bv_divisor", 2),
+          }),
+        ),
+    },
+  ],
+  [
     "fix-dl-var",
     {
       descrs: REWRITER_DESCRS,
@@ -1094,12 +1131,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 const UNPORTED_TACTICS = new Set(
   (
     "blast-term-ite " +
-    "bv-slice bvarray2uf cofactor-term-ite collect-statistics " +
+    "bv-slice bvarray2uf collect-statistics " +
     "degree-shift demodulator " +
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv " +
     "fold-unfold fpa2bv horn horn-simplify injectivity " +
-    "nla2bv nlqsat nra pb-preprocess pqffd " +
+    "nlqsat nra pb-preprocess pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-values2 psmt " +
     "qe qe_rec qe2 qfbv-sls qffd qfnra " +
     "qfufbv qsat recover-01 reduce-args2 " +
