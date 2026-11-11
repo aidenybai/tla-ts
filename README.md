@@ -57,30 +57,6 @@ npm install tla-ts
 
 You can also skip the install and run `npx tla-ts [file].ts`.
 
-## About
-
-tla-ts is a research project by [Aiden Bai](https://aidenybai.com).
-
-Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
-
-| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
-| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
-| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |    2.2× |
-| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.06 s |  0.71 s |    1.5× |
-| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.37 s |  0.17 s |    2.2× |
-| 542 conformance models                                         |                 | 986.6 s | 403.3 s |    2.4× |
-
-Wall time on 8 workers, also including startup. Each time is the median of 3 runs on an Apple M4 Pro.
-
-| Spec                                                                                                                  | Distinct states |     TLC | tla-ts | Speedup |
-| --------------------------------------------------------------------------------------------------------------------- | --------------: | ------: | -----: | ------: |
-| [Raft with reconfiguration](https://github.com/will62794/tla-web/blob/8193eb0/specs/RaftWithReconfigSingleServer.tla) |         298,493 | 10.50 s | 8.96 s |    1.2× |
-| [Sailfish](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/dag-consensus)                             |         109,604 |  4.34 s | 4.07 s |    1.1× |
-| [Fast Paxos](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/SimplifiedFastPaxos)                     |          25,617 |  3.91 s | 2.57 s |    1.5× |
-| [Buffered random access file](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/braf)                   |           3,316 |  4.70 s | 3.61 s |    1.3× |
-
-tla-ts currently maintains 32.32% conformance with [test262](https://github.com/tc39/test262) (17,372 / 53,755 passing).
-
 ## API
 
 ### `check`
@@ -144,6 +120,26 @@ formatValue(step.state.queue); // "<<1, 2>>"
 | `TlaConfigError`      | The configuration is invalid                    |
 | `TlaEvaluationError`  | Evaluating the spec fails                       |
 | `TlaUnsupportedError` | The spec or call uses something tla-ts can't do |
+
+## Benchmarks
+
+Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
+
+| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
+| -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
+| [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |    2.2× |
+| [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.06 s |  0.71 s |    1.5× |
+| [Bounded queue](packages/tla-ts/benchmarks/queue)              |          44,044 |  0.37 s |  0.17 s |    2.2× |
+| 542 conformance models                                         |                 | 986.6 s | 403.3 s |    2.4× |
+
+Wall time on 8 workers, also including startup. Each time is the median of 3 runs on an Apple M4 Pro.
+
+| Spec                                                                                                                  | Distinct states |     TLC | tla-ts | Speedup |
+| --------------------------------------------------------------------------------------------------------------------- | --------------: | ------: | -----: | ------: |
+| [Raft with reconfiguration](https://github.com/will62794/tla-web/blob/8193eb0/specs/RaftWithReconfigSingleServer.tla) |         298,493 | 10.50 s | 8.96 s |    1.2× |
+| [Sailfish](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/dag-consensus)                             |         109,604 |  4.34 s | 4.07 s |    1.1× |
+| [Fast Paxos](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/SimplifiedFastPaxos)                     |          25,617 |  3.91 s | 2.57 s |    1.5× |
+| [Buffered random access file](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/braf)                   |           3,316 |  4.70 s | 3.61 s |    1.3× |
 
 ## Development
 
