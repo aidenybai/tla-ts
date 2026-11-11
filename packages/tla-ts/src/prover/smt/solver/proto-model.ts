@@ -163,6 +163,13 @@ export class FuncInterp {
     this.elseExpr = current;
   }
 
+  copy() {
+    const copied = new FuncInterp(this.manager, this.arity);
+    for (const entry of this.entries) copied.insertNewEntry(entry.args, entry.result);
+    if (this.elseExpr !== null) copied.setElse(this.elseExpr);
+    return copied;
+  }
+
   isConstant() {
     const elseExpr = this.elseExpr;
     if (elseExpr === null || !this.manager.isGround(elseExpr)) return false;
@@ -698,6 +705,18 @@ export class ProtoModel {
       this.manager.decDeclRef(entry[0]);
       entry[1].release();
     }
+  }
+
+  copy() {
+    const model = new ProtoModel(this.manager);
+    model.isFinal = this.isFinal;
+    for (const decl of this.constDecls)
+      model.registerConst(decl, this.constInterps.get(decl) as number);
+    for (const decl of this.funcDecls)
+      model.registerFunc(decl, (this.funcInterps.get(decl) as FuncInterp).copy());
+    for (const sort of this.getUninterpretedSorts())
+      for (const value of this.getKnownUniverse(sort)) model.registerValue(value);
+    return model;
   }
 
   mkModel() {

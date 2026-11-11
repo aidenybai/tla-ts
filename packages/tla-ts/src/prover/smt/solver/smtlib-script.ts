@@ -16,18 +16,13 @@ import {
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
-  OP_DIV,
-  OP_IDIV,
-  OP_MOD,
-  OP_MUL,
-  OP_TO_REAL,
-  OP_UMINUS,
   OP_IMPLIES,
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
 } from "./ast";
 import { Goal, PRECISION_NAMES } from "./goal";
+import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
 import {
@@ -50,8 +45,14 @@ import {
   type SmtList,
   type SmtlibReader,
 } from "./smtlib-parser";
-import { OptContext } from "./opt-context";
-import { isInNraFragment } from "./opt-nlsat";
+import {
+  isBeyondOptimization,
+  O_MAXIMIZE,
+  O_MAXSMT,
+  O_MINIMIZE,
+  OptContext,
+  type OptObjective,
+} from "./opt-context";
 import { getLogicStrategy } from "./logic-tactics";
 import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic } from "./smt-logics";
@@ -168,6 +169,24 @@ const BUILTIN_OPTIONS = new Set([
 
 const getParameterName = (keyword: string) => keyword.slice(1).toLowerCase().replaceAll("-", "_");
 
+const getSoftParameters = (items: SExpr[]) => {
+  const parameters = { weight: Rational.one, id: null as string | null };
+  for (let index = 0; index < items.length; index += 2) {
+    const keyword = items[index];
+    const name = keyword.kind === "keyword" ? getParameterName(keyword.text) : "";
+    const value = items[index + 1];
+    if (name === "weight" && (value?.kind === "numeral" || value?.kind === "decimal")) {
+      const [whole, fraction = ""] = value.text.split(".");
+      parameters.weight = Rational.of(BigInt(whole + fraction), 10n ** BigInt(fraction.length));
+      continue;
+    }
+    if (name !== "id" || !isSymbol(value))
+      throw new SmtUnsupportedError(`the parameter :${name} of assert-soft`);
+    parameters.id = value.text;
+  }
+  return parameters;
+};
+
 const getSimplifyParams = (items: SExpr[]) => {
   const params = new Map<string, TacticParam>();
   for (let index = 0; index < items.length; index += 2) {
@@ -241,44 +260,10 @@ const getScopeCount = (list: SmtList) => {
   return Number(argument.text);
 };
 
-// opt::context warns that it does not support quantifiers, and optsmt need not find a bound of
-// nonlinear arithmetic, so the port does not answer either.
-const isBeyondOptimization = (manager: AstManager, formulas: number[]) => {
-  const seen = new Set<number>();
-  const stack = [...formulas];
-  for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
-    if (seen.has(expr)) continue;
-    seen.add(expr);
-    if (manager.hasQuantifierFlags[expr]) return true;
-    const args = manager.getArgs(expr);
-    const op = manager.getOp(expr);
-    const isConstant = (arg: number): boolean =>
-      manager.isNumeral(arg) ||
-      ((manager.getOp(arg) === OP_UMINUS || manager.getOp(arg) === OP_TO_REAL) &&
-        isConstant(manager.getArg(arg, 0)));
-    if (op === OP_MUL && args.filter((arg) => !isConstant(arg)).length > 1) return true;
-    if ((op === OP_DIV || op === OP_IDIV || op === OP_MOD) && !manager.isNumeral(args[1]))
-      return true;
-    stack.push(...args);
-  }
-  return false;
-};
-
-const hasIntConst = (manager: AstManager, formulas: number[]) => {
-  const seen = new Set<number>();
-  const stack = [...formulas];
-  for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
-    if (seen.has(expr)) continue;
-    seen.add(expr);
-    if (manager.isUninterpretedConst(expr) && manager.sorts[expr] === SORT_INT) return true;
-    manager.pushArgs(expr, stack);
-  }
-  return false;
-};
-
 interface Scope {
   assertions: number;
   objectives: number;
+  softTrail: number;
 }
 
 interface CheckResult {
@@ -289,11 +274,10 @@ interface CheckResult {
   core: number[] | undefined;
 }
 
-interface ScriptObjective {
-  term: number;
-  isSoft: boolean;
-  isMax: boolean;
-}
+const getObjectiveTerms = (objectives: readonly OptObjective[]) =>
+  objectives.flatMap((objective) =>
+    objective.type === O_MAXSMT ? objective.terms : [objective.term],
+  );
 
 interface ScriptState {
   manager: AstManager;
@@ -302,7 +286,9 @@ interface ScriptState {
   assertions: number[];
   names: number[];
   assertionTexts: string[];
-  objectives: ScriptObjective[];
+  objectives: OptObjective[];
+  // The objective of each soft constraint, in the order they were asserted.
+  softTrail: number[];
   optimizer: OptContext | undefined;
   scopes: Scope[];
   check: CheckResult | undefined;
@@ -359,6 +345,7 @@ export const runSmtlibScript = (
       names: [],
       assertionTexts: [],
       objectives: [],
+      softTrail: [],
       optimizer: undefined,
       scopes: [],
       check: undefined,
@@ -408,15 +395,6 @@ export const runSmtlibScript = (
     const manager = state.manager;
     const objectives = state.objectives;
     const hard = [...getNamedAssertions(), ...state.names.filter((name) => name !== -1), ...extra];
-    if (
-      !isLinear &&
-      (objectives.some(
-        (objective) => objective.isSoft || manager.sorts[objective.term] !== SORT_REAL,
-      ) ||
-        !isInNraFragment(manager, [...hard, ...objectives.map((objective) => objective.term)]) ||
-        hasIntConst(manager, [...hard, ...objectives.map((objective) => objective.term)]))
-    )
-      throw new SmtUnsupportedError("optimization beyond linear arithmetic");
     const pinned = hard.map((form) => {
       manager.incRef(form);
       return form;
@@ -441,6 +419,12 @@ export const runSmtlibScript = (
         ...getOptOptions(),
         hasAssumptions,
         isLinear,
+        maxsat: {
+          maxsatEngine: settings.parameters.get("opt.maxsat_engine") ?? "maxres",
+          isMaxlexEnabled: settings.parameters.get("opt.maxlex.enable") !== "false",
+          isHillClimbing: settings.parameters.get("opt.maxres.hill_climb") !== "false",
+          maxCoreSize: Number(settings.parameters.get("opt.maxres.max_core_size") ?? 3),
+        },
         isEliminatingZeroOne:
           settings.parameters.get("opt.elim_01") !== "false" &&
           state.logic === undefined &&
@@ -517,17 +501,13 @@ export const runSmtlibScript = (
       state.objectives.length > 0 &&
       isBeyondOptimization(state.manager, [
         ...state.assertions,
-        ...state.objectives.map((objective) => objective.term),
+        ...getObjectiveTerms(state.objectives),
       ]);
-    const isMaxSmt = state.objectives.some(
-      (objective) =>
-        objective.isSoft || state.manager.isBvSort(state.manager.sorts[objective.term]),
-    );
     if (isBeyond) {
       optimize(extra, false);
       return;
     }
-    if (state.objectives.length > 0 && !isMaxSmt && optimize(extra, true)) return;
+    if (state.objectives.length > 0 && optimize(extra, true)) return;
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     try {
@@ -632,7 +612,23 @@ export const runSmtlibScript = (
       throw new SmtParseError("Objective must be bit-vector, integer or real", list.end);
     resetOptimizer();
     state.manager.incRef(term);
-    state.objectives.push({ term, isSoft: false, isMax });
+    state.objectives.push({
+      type: isMax ? O_MAXIMIZE : O_MINIMIZE,
+      term,
+      terms: [],
+      weights: [],
+      id: null,
+    });
+  };
+  const releaseObjectives = (size: number, softSize: number) => {
+    const state = script.state;
+    for (const index of state.softTrail.splice(softSize).reverse()) {
+      const objective = state.objectives[index];
+      state.manager.decRef(objective.terms.pop() as number);
+      objective.weights.pop();
+    }
+    for (const objective of state.objectives.splice(size))
+      if (objective.type !== O_MAXSMT) state.manager.decRef(objective.term);
   };
   const restoreAssertions = (size: number) => {
     const state = script.state;
@@ -742,9 +738,25 @@ export const runSmtlibScript = (
       const formula = state.reader.parseTerm(list.items[1] ?? list.end);
       if (state.manager.sorts[formula] !== SORT_BOOL)
         throw new SmtParseError("Invalid type for expression. Expected Boolean type.", list.end);
+      const parameters = getSoftParameters(list.items.slice(2));
       resetOptimizer();
+      const existing = state.objectives.findIndex(
+        (objective) => objective.type === O_MAXSMT && objective.id === parameters.id,
+      );
+      const index = existing === -1 ? state.objectives.length : existing;
+      if (existing === -1)
+        state.objectives.push({
+          type: O_MAXSMT,
+          term: -1,
+          terms: [],
+          weights: [],
+          id: parameters.id,
+        });
+      if (parameters.weight.isZero()) return;
       state.manager.incRef(formula);
-      state.objectives.push({ term: formula, isSoft: true, isMax: false });
+      state.objectives[index].terms.push(formula);
+      state.objectives[index].weights.push(parameters.weight);
+      state.softTrail.push(index);
     },
     push: (list) => {
       const state = script.state;
@@ -753,6 +765,7 @@ export const runSmtlibScript = (
         state.scopes.push({
           assertions: state.assertions.length,
           objectives: state.objectives.length,
+          softTrail: state.softTrail.length,
         });
         state.reader.push();
         state.isIncremental = true;
@@ -773,8 +786,7 @@ export const runSmtlibScript = (
       for (let index = 0; index < count; index++) state.reader.pop();
       restoreAssertions(scope.assertions);
       resetOptimizer();
-      for (const objective of state.objectives.splice(scope.objectives))
-        state.manager.decRef(objective.term);
+      releaseObjectives(scope.objectives, scope.softTrail);
       state.scopes.length -= count;
     },
     reset: () => {
@@ -787,9 +799,8 @@ export const runSmtlibScript = (
       clearCheck();
       restoreAssertions(0);
       resetOptimizer();
-      for (const objective of state.objectives) state.manager.decRef(objective.term);
-      state.objectives = [];
-      state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0 }));
+      releaseObjectives(0, 0);
+      state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
       state.isIncremental = state.scopes.length > 0;
       state.hasChecked = false;
     },

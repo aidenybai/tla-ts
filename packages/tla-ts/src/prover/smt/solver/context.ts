@@ -8,6 +8,7 @@ import {
   KIND_VAR,
   OP_IMPLIES,
   OP_ITE,
+  OP_NOT,
   SORT_BOOL,
 } from "./ast";
 import { getCongruenceJustification, isCongruent } from "./cg-table";
@@ -36,6 +37,7 @@ import {
   UNDO_TH_VAR,
 } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import { MaxCliques } from "./max-cliques";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate, toBoolVar } from "./literal";
 import type { MacroManager } from "./macro-finder";
 import { mkModel } from "./model-generator";
@@ -1418,6 +1420,32 @@ export class Context extends Internalizer {
       if (result !== L_FALSE || this.unsatCore.length === 0) return result;
       if (!this.theories.some((theory) => theory.shouldResearch(this.unsatCore))) return result;
     }
+  }
+
+  findMutexes(vars: readonly number[]) {
+    const manager = this.manager;
+    const cliques = new MaxCliques((index) => index ^ 1);
+    const literals: number[] = [];
+    for (const variable of vars) {
+      const isNot = manager.getOp(variable) === OP_NOT;
+      const atom = isNot ? manager.getArg(variable, 0) : variable;
+      const boolVar = this.findBoolVar(atom);
+      if (boolVar !== undefined) literals.push(mkLiteral(boolVar, isNot));
+    }
+    for (let index = 0; index < this.binaryWatches.length; index++)
+      for (const other of this.binaryWatches[index] ?? []) {
+        const source = index ^ 1;
+        if (source < other) cliques.addEdge(source, other);
+      }
+    return cliques.cliques2(literals).map((mutex) =>
+      mutex.map((index) => {
+        const literal = index as Literal;
+        if (literal === this.trueLiteral) return manager.trueExpr;
+        if (literal === this.falseLiteral) return manager.falseExpr;
+        const atom = this.boolVar2Expr[getVar(literal)];
+        return isNegated(literal) ? manager.mkApp(OP_NOT, [atom], SORT_BOOL) : atom;
+      }),
+    );
   }
 
   isAssumption(boolVar: BoolVar) {

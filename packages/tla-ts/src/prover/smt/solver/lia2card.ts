@@ -116,8 +116,9 @@ class PbRewriter extends RewriterTpl {
     return isThen && isElse;
   }
 
-  isPbSum(term: number) {
-    return this.getSum(0, term, Rational.one, [], { args: [], coeffs: [], coeff: Rational.zero });
+  getPbSum(term: number) {
+    const sum: PbSum = { args: [], coeffs: [], coeff: Rational.zero };
+    return this.getSum(0, term, Rational.one, [], sum) ? sum : undefined;
   }
 
   private getPb(first: number, second: number) {
@@ -191,12 +192,9 @@ class PbRewriter extends RewriterTpl {
   }
 }
 
-export const isPbSum = (manager: AstManager, term: number) => {
-  const terms = new RefVector(manager);
-  const isSum = new PbRewriter(manager, terms, 4, true).isPbSum(term);
-  terms.reset();
-  return isSum;
-};
+// The terms of the sum stay in terms.
+export const getPbSum = (manager: AstManager, term: number, terms: RefVector) =>
+  new PbRewriter(manager, terms, 4, true).getPbSum(term);
 
 export const lia2card = (
   manager: AstManager,

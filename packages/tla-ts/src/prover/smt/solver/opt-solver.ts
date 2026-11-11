@@ -93,14 +93,24 @@ export class OptSolver {
     return L_TRUE;
   }
 
-  check() {
+  check(assumptions: readonly number[] = []) {
     this.model = null;
-    const result = this.adjustResult(this.kernel.check());
+    const result = this.adjustResult(this.kernel.check(assumptions));
     if (result === L_TRUE) {
       this.model = this.getContextModel();
       if (this.objectiveModels.length === 1) this.objectiveModels[0] = this.model;
     }
     return result;
+  }
+
+  getUnsatCore() {
+    return this.kernel.context.unsatCore;
+  }
+
+  findMutexes(vars: readonly number[]) {
+    const mutexes = this.kernel.context.findMutexes(vars);
+    for (const mutex of mutexes) for (const literal of mutex) this.pinned.push(literal);
+    return mutexes;
   }
 
   getModel() {
