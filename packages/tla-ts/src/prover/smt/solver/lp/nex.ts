@@ -1,7 +1,4 @@
-// Ported from Z3 (src/math/lp/nex.h), MIT license, see z3-license.txt. The nonlinear expressions
-// that horner splits into cross-nested forms: scalars, variables, products of powers with a
-// coefficient, and sums. Products and sums are mutable, since nex_creator simplifies them in place
-// and cross_nested rewrites their children.
+// Ported from Z3 (src/math/lp/nex.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 
 interface NexScalar {
@@ -56,7 +53,6 @@ export const isLinear = (expr: Nex): boolean => {
   return true;
 };
 
-// is_a_linear_term: a linear combination of at least two variables.
 export const isALinearTerm = (sum: NexSum) => {
   let numberOfNonScalars = 0;
   for (const child of sum.children) {
@@ -68,7 +64,6 @@ export const isALinearTerm = (sum: NexSum) => {
   return numberOfNonScalars > 1;
 };
 
-// get_powers_from_mul: refills powers with the power of each variable child.
 export const getPowersFromMul = (mul: NexMul, powers: Map<number, number>) => {
   powers.clear();
   for (const child of mul.children)

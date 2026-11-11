@@ -1,0 +1,3 @@
+---- MODULE FixConstant ----
+CONSTANT Shared
+====

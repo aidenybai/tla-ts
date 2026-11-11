@@ -13,7 +13,7 @@ const checkCounterExample = async (configName: string) => {
     onPrint: (text) => printed.push(text),
   });
   // TLC prints what the postcondition prints after the trace.
-  return [result.status, ...printed, ...(result.violation?.traceOutput ?? [])];
+  return [result.status, ...printed, ...(result.violation?.postconditionOutput ?? [])];
 };
 
 describe("POSTCONDITION after a violation matches TLC", () => {

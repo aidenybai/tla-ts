@@ -1,9 +1,6 @@
-// Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp,
-// src/model/value_factory.cpp, src/model/model_core.cpp), MIT license, see z3-license.txt. The
-// model that the SMT kernel builds from a satisfying assignment, and that model-based quantifier
-// instantiation completes and checks.
+// Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp, src/model/value_factory.cpp, src/model/model_core.cpp), MIT license, see z3-license.txt.
 import {
-  AstManager,
+  type AstManager,
   KIND_APP,
   KIND_VAR,
   OP_AND,
@@ -24,9 +21,6 @@ interface FuncEntry {
   result: number;
 }
 
-// func_interp: a finite table of entries and an else expression over the variables (:var i) for
-// argument i. It holds the arguments and result of each entry, the else expression and the cached
-// interpretation.
 export class FuncInterp {
   entries: FuncEntry[] = [];
   private entryTable = new Map<string, FuncEntry>();
@@ -49,7 +43,6 @@ export class FuncInterp {
   insertNewEntry(args: number[], result: number) {
     const manager = this.manager;
     this.resetInterpCache();
-    // func_entry: the result is held first, then the arguments.
     manager.incRef(result);
     for (const arg of args) manager.incRef(arg);
     const entry = { args: [...args], result };
@@ -64,7 +57,6 @@ export class FuncInterp {
       this.insertNewEntry(args, result);
       return;
     }
-    // func_entry::set_result.
     this.manager.incRef(result);
     this.manager.decRef(entry.result);
     entry.result = result;
@@ -75,20 +67,17 @@ export class FuncInterp {
     this.interp = null;
   }
 
-  // func_entry::deallocate.
   private releaseEntry(entry: FuncEntry) {
     for (const arg of entry.args) this.manager.decRef(arg);
     this.manager.decRef(entry.result);
   }
 
-  // ~func_interp.
   release() {
     for (const entry of this.entries) this.releaseEntry(entry);
     if (this.elseExpr !== null) this.manager.decRef(this.elseExpr);
     this.resetInterpCache();
   }
 
-  // is_fi_entry_expr: (ite (and (= (:var 0) a0) ...) t e) with a ground t.
   private getEntryArgs(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_ITE) return undefined;
@@ -150,7 +139,6 @@ export class FuncInterp {
     return best;
   }
 
-  // compress: drops the entries whose result is the else value, and recognizes the identity.
   compress() {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
@@ -177,7 +165,6 @@ export class FuncInterp {
     }
   }
 
-  // is_identity: only Bool has a finite number of elements among tlapm's sorts.
   private isIdentity() {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
@@ -189,7 +176,6 @@ export class FuncInterp {
     return this.entries.length + 1 === 2;
   }
 
-  // get_interp: the interpretation as an expression over the argument variables, which it caches.
   getInterp() {
     if (this.interp !== null) return this.interp;
     const manager = this.manager;
@@ -219,16 +205,11 @@ export class FuncInterp {
 }
 
 export class ProtoModel {
-  // m_interp and m_const_decls: the value of each constant, and the constants in the order they were
-  // registered.
   readonly constInterps: ObjMap<number>;
   private constDecls: number[] = [];
-  // m_finterp, in Z3's slot order, and m_func_decls, in the order they were registered.
   readonly funcInterps: ObjMap<FuncInterp>;
   private funcDecls: number[] = [];
   private auxDecls: ObjHashtable;
-  // user_sort_factory and the arith_factory: the values of each sort, in Z3's hash order, and the
-  // values each factory holds, in the order it made or registered them.
   private values = new Map<number, ObjHashtable>();
   private userSortValues: RefVector;
   private arithValues: RefVector;
@@ -236,9 +217,7 @@ export class ProtoModel {
   private finiteSorts = new Set<number>();
   private boolRandom: RandomGen;
   private evaluator: ModelEvaluator;
-  // m_rewrite: the th_rewriter that cleanup simplifies the interpretations with.
   private rewriter: Rewriter;
-  // The holders of a proto_model and a model are counted, and the last one releases it.
   private refCount = 0;
 
   constructor(readonly manager: AstManager) {
@@ -252,7 +231,6 @@ export class ProtoModel {
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
-  // model_core::register_decl: the model holds the declaration and the value.
   registerConst(decl: number, value: number) {
     const old = this.constInterps.get(decl);
     if (old === undefined) this.manager.incDeclRef(decl);
@@ -262,8 +240,6 @@ export class ProtoModel {
     this.constInterps.set(decl, value);
   }
 
-  // model_core::register_decl: the interpretation replaces the old one, which is released. The model
-  // holds the declaration.
   registerFunc(decl: number, interp: FuncInterp) {
     const old = this.funcInterps.get(decl);
     if (old === undefined) {
@@ -279,7 +255,6 @@ export class ProtoModel {
     this.auxDecls.add(decl);
   }
 
-  // reregister_decl: the old interpretation of decl moves to auxDecl.
   reregisterDecl(decl: number, interp: FuncInterp, auxDecl: number) {
     const old = this.funcInterps.get(decl);
     if (old === undefined) {
@@ -291,11 +266,9 @@ export class ProtoModel {
     this.funcInterps.set(decl, interp);
   }
 
-  // eval: the result comes with a reference, which the caller releases.
   eval(expr: number, isModelCompletion: boolean) {
     this.evaluator.setModelCompletion(isModelCompletion);
-    const result = this.evaluator.rewrite(expr);
-    return result;
+    return this.evaluator.rewrite(expr);
   }
 
   private getValueSet(sort: number) {
@@ -306,15 +279,12 @@ export class ProtoModel {
     return created;
   }
 
-  // arith_factory's values are the integers, of either sort.
   private mkIndexedValue(index: number, sort: number) {
     return isArithSort(sort)
       ? this.manager.mkNumeralOfSort(Rational.of(BigInt(index)), sort)
       : this.manager.mkModelValue(index, sort);
   }
 
-  // mk_value and register_value: a value is inserted only when it is new, since inserting grows the
-  // table even for a value it has.
   private addValue(sort: number, value: number) {
     const set = this.getValueSet(sort);
     if (set.has(value)) return;
@@ -396,14 +366,10 @@ export class ProtoModel {
   }
 
   completePartialFuncs(isUsingFresh: boolean) {
-    // get_some_value may register more declarations, which the loop then completes too.
     for (let index = 0; index < this.funcDecls.length; index++)
       this.completePartialFunc(this.funcDecls[index], isUsingFresh);
   }
 
-  // cleanup_expr: replaces the uninterpreted constants in an else expression with their values. Like
-  // Z3, it walks a todo stack, so it rewrites the last argument of a term first. The trail holds the
-  // terms it rewrote until the next call.
   private cleanupExpr(trail: RefVector, expr: number, foundAuxDecls: ObjHashtable) {
     const manager = this.manager;
     trail.reset();
@@ -448,12 +414,10 @@ export class ProtoModel {
     return cache.get(expr) ?? expr;
   }
 
-  // cleanup: also removes the auxiliary declarations that no interpretation uses.
   cleanup() {
     const manager = this.manager;
     const foundAuxDecls = new ObjHashtable((decl) => manager.getDeclHash(decl));
     const trail = new RefVector(manager);
-    // Like Z3, it collects the interpretations before it cleans them up.
     const interps = Array.from(this.funcInterps, (entry) => entry[1]);
     for (const interp of interps)
       if (interp.elseExpr !== null)
@@ -465,7 +429,6 @@ export class ProtoModel {
       if (cleaned !== value) this.registerConst(decl, cleaned);
     }
     if (foundAuxDecls.size !== this.auxDecls.size) {
-      // remove_aux_decls_not_in_set.
       this.funcDecls = this.funcDecls.filter(
         (decl) => !this.auxDecls.has(decl) || foundAuxDecls.has(decl),
       );
@@ -475,8 +438,6 @@ export class ProtoModel {
     trail.reset();
   }
 
-  // model_core::unregister_decl: releases the value or the interpretation. The last constant takes
-  // the place of a removed one.
   private unregisterDecl(decl: number) {
     const value = this.constInterps.get(decl);
     if (value !== undefined) {
@@ -506,8 +467,6 @@ export class ProtoModel {
     if (this.refCount === 0) this.release();
   }
 
-  // ~proto_model: the rewriter, the evaluator and the factories go before the interpretations, and
-  // the user sort factory before the arith_factory.
   private release() {
     this.rewriter.release();
     this.evaluator.release();
@@ -523,8 +482,6 @@ export class ProtoModel {
     }
   }
 
-  // mk_model: the model holds the values of the constants and the universes of the uninterpreted
-  // sorts, and takes the interpretations of the functions.
   mkModel() {
     const model = new ProtoModel(this.manager);
     for (const entry of this.constInterps) model.registerConst(entry[0], entry[1]);
@@ -539,12 +496,10 @@ export class ProtoModel {
     return model;
   }
 
-  // model::get_some_const_interp.
   getSomeConstInterp(decl: number) {
     return this.constInterps.get(decl) ?? this.getSomeValue(this.manager.funcDecls[decl].range);
   }
 
-  // model::are_equal for values.
   areEqual(first: number, second: number) {
     return first === second;
   }

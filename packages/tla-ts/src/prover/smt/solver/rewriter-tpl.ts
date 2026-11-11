@@ -1,31 +1,20 @@
-// Ported from Z3 (src/ast/rewriter/rewriter.h, rewriter.cpp, rewriter_def.h), MIT license, see
-// z3-license.txt. The main loop of Z3's rewriters, ported step for step with Z3's references: the
-// result stack, the caches and m_r hold their expressions, so that expressions are created and
-// deleted in Z3's order. A configuration overrides the hooks of default_rewriter_cfg.
+// Ported from Z3 (src/ast/rewriter/rewriter.h, rewriter.cpp, rewriter_def.h), MIT license, see z3-license.txt.
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
 import { grow, shrink } from "./array";
 
-// A result that the main loop rewrites again to depth levels, like Z3's BR_REWRITE1 (depth 1) to
-// BR_REWRITE_FULL (depth Infinity).
 export interface Rewrite {
   expr: number;
   depth: number;
 }
 
-// The depth to rewrite a Rewrite's result to. A frame keeps its depth in two bits, where 3 is
-// RW_UNBOUNDED_DEPTH, so BR_REWRITE3 rewrites the result without a bound.
 export const getRewriteDepth = (rewrite: Rewrite) =>
   rewrite.depth >= 3 ? Infinity : rewrite.depth;
 
-// rewriter_tpl's frame states.
 const PROCESS_CHILDREN = 0;
 const REWRITE_BUILTIN = 1;
 const EXPAND_DEF = 2;
 
-// A rewrite still to finish: its expression, state, next child, the depth left to rewrite, where
-// its children's results start on the result stack, whether to cache its result, and whether a
-// child changed.
 interface Frame {
   curr: number;
   state: number;
@@ -41,10 +30,7 @@ interface Scope {
   numQvars: number;
 }
 
-// rewriter_core: the frames, the result stack and one cache per quantifier scope.
 class RewriterCore {
-  // m_frame_stack: the first numFrames frames are open. Like the svector, the stack keeps the frames
-  // past them, which pushFrame writes over.
   protected frames: Frame[] = [];
   protected numFrames = 0;
   protected resultStack: number[] = [];
@@ -61,7 +47,6 @@ class RewriterCore {
     return this.caches[this.scopes.length];
   }
 
-  // must_cache: the result of a shared application with arguments or quantifier.
   protected isCaching(expr: number) {
     const manager = this.manager;
     return (
@@ -113,7 +98,6 @@ class RewriterCore {
     this.numFrames++;
   }
 
-  // begin_scope: each quantifier level gets its own cache, which starts empty.
   protected beginScope() {
     this.scopes.push({ root: this.root, numQvars: this.numQvars });
     if (this.scopes.length === this.caches.length)
@@ -129,7 +113,6 @@ class RewriterCore {
     this.numQvars = scope.numQvars;
   }
 
-  // rewriter_core::reset: releases the outermost cache and the result stack.
   protected resetCore() {
     this.caches[0].reset();
     this.numFrames = 0;
@@ -139,25 +122,11 @@ class RewriterCore {
     this.scopes = [];
   }
 
-  // del_cache_stack: releases every cache, the outermost first.
   protected releaseCaches() {
     for (const cache of this.caches) cache.reset();
   }
-
-  // rewriter_core::cleanup.
-  protected cleanupCore() {
-    this.releaseCaches();
-    this.shrinkResults(0);
-    this.caches = [new ActCache(this.manager, this.manager.getNumAsts())];
-    this.frames = [];
-    this.numFrames = 0;
-    this.scopes = [];
-    this.root = -1;
-    this.numQvars = 0;
-  }
 }
 
-// var_shifter_core: rebuilds an expression with its free variables renamed by processVar.
 abstract class VarShifterCore extends RewriterCore {
   protected abstract processVar(variable: number): void;
 
@@ -232,7 +201,6 @@ abstract class VarShifterCore extends RewriterCore {
     this.setNewChildFlag(expr, result);
   }
 
-  // main_loop: the result comes with a reference, which the caller releases.
   protected mainLoop(expr: number) {
     this.root = expr;
     if (!this.visit(expr))
@@ -260,22 +228,16 @@ abstract class VarShifterCore extends RewriterCore {
     this.resetCore();
   }
 
-  cleanup() {
-    this.cleanupCore();
-  }
-
   release() {
     this.releaseCaches();
   }
 }
 
-// var_shifter: a free variable with index at least bound moves up by shift1, any other by shift2.
 export class VarShifter extends VarShifterCore {
   private bound = 0;
   private shift1 = 0;
   private shift2 = 0;
 
-  // Returns the result with a reference, which the caller releases.
   shift(expr: number, bound: number, shift1: number, shift2: number) {
     if (this.manager.isGroundApp(expr)) {
       this.manager.incRef(expr);
@@ -301,11 +263,9 @@ export class VarShifter extends VarShifterCore {
   }
 }
 
-// inv_var_shifter: the free variables move down by shift.
 export class InvVarShifter extends VarShifterCore {
   private amount = 0;
 
-  // Returns the result with a reference, which the caller releases.
   shift(expr: number, amount: number) {
     if (this.manager.isGroundApp(expr) || amount === 0) {
       this.manager.incRef(expr);
@@ -328,14 +288,10 @@ export class InvVarShifter extends VarShifterCore {
   }
 }
 
-// The bindings of rewriter_tpl's substitution.
 class SubstCore extends RewriterCore {
-  // m_bindings and m_shifts: the binding of each variable of the substitution, innermost last, and
-  // the number of bindings when it was bound.
   protected bindings: number[] = [];
   protected shifts: number[] = [];
 
-  // set_inv_bindings: (:var i) becomes bindings[n - 1 - i], and -1 keeps it.
   setInvBindings(bindings: number[]) {
     shrink(this.bindings, 0);
     shrink(this.shifts, 0);
@@ -345,7 +301,6 @@ class SubstCore extends RewriterCore {
     }
   }
 
-  // set_bindings: (:var i) becomes bindings[i].
   setBindings(bindings: number[]) {
     shrink(this.bindings, 0);
     shrink(this.shifts, 0);
@@ -360,23 +315,16 @@ class SubstCore extends RewriterCore {
   }
 }
 
-// rewriter_tpl's main loop, which calls the hooks of its configuration. It is a class of its own,
-// rather than the base of the configurations, so that V8 sees one shape of it and keeps its property
-// accesses and calls monomorphic.
+// HACK: a class apart from the configurations' base, so that V8 sees one shape of it.
 class RewriterEngine extends SubstCore {
-  // m_r: the last result, which Z3 holds until it assigns the next one.
   private lastResult = -1;
   private newArgs: number[] = [];
   private shifter: VarShifter;
   private invShifter: InvVarShifter;
-  // m_blocked: the constants that a nested rewriter does not expand.
   blocked = new Set<number>();
-  // Whether the config overrides getSubst and getMacro. Otherwise nothing is substituted or expanded
-  // and the call is skipped.
   private isSubstituting: boolean;
   private isExpandingMacros: boolean;
-  // The config's hooks, read once. Many configs share the engine, so a call through config at each
-  // site sees all of their classes and goes megamorphic.
+  // HACK: the hooks are read once, since a call through config at each site goes megamorphic in V8.
   private reduceAppHook: RewriterTpl["reduceApp"];
   private isFlatAssocHook: RewriterTpl["isFlatAssoc"];
   private getMacroHook: RewriterTpl["getMacro"];
@@ -397,7 +345,6 @@ class RewriterEngine extends SubstCore {
     this.invShifter = new InvVarShifter(manager);
   }
 
-  // reset: releases the outermost cache and the bindings.
   reset() {
     this.resetCore();
     shrink(this.bindings, 0);
@@ -406,24 +353,12 @@ class RewriterEngine extends SubstCore {
     this.invShifter.reset();
   }
 
-  // cleanup: releases every cache.
-  cleanup() {
-    this.cleanupCore();
-    this.bindings = [];
-    this.shifter.cleanup();
-    this.invShifter.cleanup();
-    this.shifts = [];
-  }
-
-  // ~rewriter_tpl: the shifters' caches go first, the inverse shifter's before the other's, then
-  // the rewriter's.
   release() {
     this.invShifter.release();
     this.shifter.release();
     this.releaseCaches();
   }
 
-  // operator(): the result comes with a reference, which the caller releases.
   rewrite(expr: number): number {
     const manager = this.manager;
     return manager.withoutTemporaries(() => {
@@ -435,8 +370,6 @@ class RewriterEngine extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      // main_loop and each step of resume_core count a step of the resource limit, and throw
-      // SmtCanceledError when it cancels the rewrite.
       manager.limit.checkpoint();
       if (!this.visit(expr, Infinity))
         while (this.numFrames > 0) {
@@ -456,7 +389,6 @@ class RewriterEngine extends SubstCore {
           if (kind === KIND_APP) this.processApp(curr, frame);
           else if (kind === KIND_QUANTIFIER) this.processQuantifier(curr, frame);
           else {
-            // A definition that is a variable gets a frame of its own.
             this.numFrames--;
             this.processVar(curr);
           }
@@ -465,13 +397,6 @@ class RewriterEngine extends SubstCore {
       this.resultStack.pop();
       return result;
     });
-  }
-
-  // operator() with bindings: resets the rewriter and substitutes bindings[n - 1 - i] for (:var i).
-  rewriteWithBindings(expr: number, bindings: number[]) {
-    this.reset();
-    this.setInvBindings(bindings);
-    return this.rewrite(expr);
   }
 
   setLastResult(expr: number) {
@@ -484,8 +409,6 @@ class RewriterEngine extends SubstCore {
     if (isCaching) this.cache.insert(expr, 0, result);
   }
 
-  // visit: whether expr is rewritten and its result is on the result stack. Otherwise it pushes a
-  // frame for expr.
   private visit(expr: number, maxDepth: number) {
     const manager = this.manager;
     const replacement = this.isSubstituting ? this.getSubstHook.call(this.config, expr) : undefined;
@@ -520,9 +443,6 @@ class RewriterEngine extends SubstCore {
     return false;
   }
 
-  // process_const: a constant is reduced, and a constant it rewrites to is reduced again. It
-  // returns false when the constant rewrites to a term with arguments, which m_r holds. The constant
-  // being reduced is held, like Z3's t.
   private processConst(expr: number) {
     const manager = this.manager;
     let current = expr;
@@ -563,9 +483,6 @@ class RewriterEngine extends SubstCore {
     }
   }
 
-  // A constant that rewrites to a term with arguments: a rewriter with the same configuration
-  // rewrites the term, with the constant blocked so that it is not expanded again. m_r keeps the
-  // result.
   private rewriteConstResult(expr: number) {
     const manager = this.manager;
     if (!this.blocked.has(expr)) {
@@ -581,8 +498,6 @@ class RewriterEngine extends SubstCore {
     this.pushResult(this.lastResult);
   }
 
-  // process_var: a bound variable becomes its binding, shifted over the quantifiers entered since
-  // it was bound.
   private processVar(variable: number) {
     const manager = this.manager;
     const index = manager.values[variable];
@@ -618,7 +533,6 @@ class RewriterEngine extends SubstCore {
       return;
     }
     const numArgs = manager.getNumArgs(expr);
-    // visit pushes a child at depth 0 as it is when the config substitutes nothing.
     if (frame.maxDepth === 0 && !this.isSubstituting && manager.getOp(expr) !== OP_ITE)
       for (; frame.childIndex < numArgs; frame.childIndex++)
         this.pushResult(manager.getArg(expr, frame.childIndex));
@@ -645,8 +559,6 @@ class RewriterEngine extends SubstCore {
         return;
       }
     }
-    // new_args: Z3 passes the results on the stack itself. Nothing rewrites with this engine before
-    // the arguments are used, so one buffer holds them.
     const newArgs = this.newArgs;
     const resultStack = this.resultStack;
     shrink(newArgs, 0);
@@ -654,7 +566,6 @@ class RewriterEngine extends SubstCore {
       newArgs.push(resultStack[index]);
     const reduced = this.reduceAppHook.call(this.config, decl, newArgs, manager.sorts[expr]);
     if (typeof reduced !== "number") {
-      // BR_REWRITE: the result replaces the arguments and is rewritten to the depth it asks for.
       this.setLastResult(reduced.expr);
       manager.decRef(reduced.expr);
       this.shrinkResults(frame.spos);
@@ -668,7 +579,6 @@ class RewriterEngine extends SubstCore {
     const definition =
       reduced === -1 && this.isExpandingMacros ? this.getMacroHook.call(this.config, decl) : -1;
     if (definition !== -1 && (!manager.isGroundApp(definition) || this.config.isReducingMacro())) {
-      // The definition is rewritten with the arguments bound to its variables.
       frame.state = EXPAND_DEF;
       const size = this.bindings.length;
       for (let index = newArgs.length - 1; index >= 0; index--) {
@@ -700,7 +610,6 @@ class RewriterEngine extends SubstCore {
     this.setLastResult(-1);
   }
 
-  // REWRITE_BUILTIN: the result of the rewritten term replaces the term on the result stack.
   private finishRewriteBuiltin(expr: number, frame: Frame) {
     const result = this.resultStack[this.resultStack.length - 1];
     this.setLastResult(result);
@@ -712,8 +621,6 @@ class RewriterEngine extends SubstCore {
     this.setNewChildFlag(expr, -1);
   }
 
-  // EXPAND_DEF: the rewritten definition, with its variables moved back down, replaces the term.
-  // m_r keeps it until the next result.
   private finishExpandDef(expr: number, frame: Frame) {
     const manager = this.manager;
     const numArgs = manager.getNumArgs(expr);
@@ -736,7 +643,6 @@ class RewriterEngine extends SubstCore {
     this.setNewChildFlag(expr, -1);
   }
 
-  // constant_fold: an ite whose condition rewrote to true or false becomes the chosen branch.
   private isConstantFolded(expr: number, frame: Frame) {
     const manager = this.manager;
     if (frame.childIndex !== 1 || manager.getOp(expr) !== OP_ITE) return false;
@@ -777,7 +683,6 @@ class RewriterEngine extends SubstCore {
       if (!this.visit(child, frame.maxDepth)) return;
     }
     const body = this.resultStack[frame.spos];
-    // new_pats: the patterns, which Z3 holds until the quantifier is done.
     const patterns = isRewritingPatterns ? this.resultStack.slice(frame.spos + 1) : data.patterns;
     for (const pattern of patterns) manager.incRef(pattern);
     const reduced = this.config.reduceQuantifier(expr, body, patterns);
@@ -803,9 +708,6 @@ class RewriterEngine extends SubstCore {
   }
 }
 
-// rewriter_tpl with default_rewriter_cfg. A configuration overrides the hooks. The results of
-// reduceApp and reduceQuantifier come with a reference, and -1 is Z3's BR_FAILED or false. A
-// Rewrite from reduceApp is rewritten again.
 export class RewriterTpl {
   readonly engine: RewriterEngine;
 
@@ -829,12 +731,10 @@ export class RewriterTpl {
     return -1;
   }
 
-  // get_macro: the definition of decl over (:var i) for argument i, or -1.
   getMacro(_decl: number) {
     return -1;
   }
 
-  // reduce_macro: whether a ground definition is rewritten rather than taken as it is.
   isReducingMacro() {
     return false;
   }
@@ -843,29 +743,12 @@ export class RewriterTpl {
     return -1;
   }
 
-  // A rewriter with the same configuration, for a constant that rewrites to a term with arguments.
   mkNested(): RewriterTpl {
     return new RewriterTpl(this.manager);
   }
 
-  setInvBindings(bindings: number[]) {
-    this.engine.setInvBindings(bindings);
-  }
-
-  setBindings(bindings: number[]) {
-    this.engine.setBindings(bindings);
-  }
-
-  updateInvBindingAt(index: number, binding: number) {
-    this.engine.updateInvBindingAt(index, binding);
-  }
-
   reset() {
     this.engine.reset();
-  }
-
-  cleanup() {
-    this.engine.cleanup();
   }
 
   release() {
@@ -876,30 +759,18 @@ export class RewriterTpl {
     return this.engine.rewrite(expr);
   }
 
-  rewriteWithBindings(expr: number, bindings: number[]) {
-    return this.engine.rewriteWithBindings(expr, bindings);
-  }
-
   protected setLastResult(expr: number) {
     this.engine.setLastResult(expr);
   }
 }
 
-// The flags of a BetaReducer frame: whether to cache its result, whether a child changed, and
-// whether it waits for the branch that an ite folded to, REWRITE_BUILTIN.
 const FRAME_CACHING = 1;
 const FRAME_NEW_CHILD = 2;
 const FRAME_FOLDED = 4;
 
-// beta_reducer: rewriter_tpl with beta_reducer_cfg, which substitutes bindings for variables and
-// rewrites nothing else. Its main loop is RewriterEngine's with the config's hooks folded in:
-// pre_visit skips a ground term, and nothing reduces, expands or rewrites to a depth. So a frame
-// needs no depth and only the ite folding's state, and its fields are typed arrays.
 export class BetaReducer extends SubstCore {
-  // m_r: the last result, which Z3 holds until it assigns the next one.
   private lastResult = -1;
   private shifter: VarShifter;
-  // Whether the shifter's cache has entries, which reset releases.
   private isShifted = false;
   private frameExprs = new Int32Array(16);
   private frameChildIndexes = new Int32Array(16);
@@ -911,8 +782,6 @@ export class BetaReducer extends SubstCore {
     this.shifter = new VarShifter(manager);
   }
 
-  // reset: releases the outermost cache and the bindings. The inverse shifter of rewriter_tpl only
-  // shifts an expanded definition, so it is always empty and left out.
   reset() {
     this.resetCore();
     shrink(this.bindings, 0);
@@ -922,13 +791,11 @@ export class BetaReducer extends SubstCore {
     this.isShifted = false;
   }
 
-  // ~rewriter_tpl: the shifter's cache goes first, then the rewriter's.
   release() {
     this.shifter.release();
     this.releaseCaches();
   }
 
-  // operator(): the result comes with a reference, which the caller releases.
   rewrite(expr: number): number {
     const manager = this.manager;
     return manager.withoutTemporaries(() => {
@@ -940,8 +807,6 @@ export class BetaReducer extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      // main_loop and each step of resume_core count a step of the resource limit, and throw
-      // SmtCanceledError when it cancels the rewrite.
       manager.limit.checkpoint();
       if (!this.visit(expr))
         while (this.numFrames > 0) {
@@ -969,7 +834,6 @@ export class BetaReducer extends SubstCore {
     });
   }
 
-  // operator() with bindings: resets the rewriter and substitutes bindings[n - 1 - i] for (:var i).
   rewriteWithBindings(expr: number, bindings: number[]) {
     this.reset();
     this.setInvBindings(bindings);
@@ -1002,9 +866,6 @@ export class BetaReducer extends SubstCore {
     this.numFrames++;
   }
 
-  // visit: whether expr is rewritten and its result is on the result stack. Otherwise it opens a
-  // frame for expr. pre_visit's test for a ground term comes before the cache's, which holds no
-  // ground term.
   private visit(expr: number) {
     const manager = this.manager;
     if (manager.isGroundApp(expr)) {
@@ -1028,8 +889,6 @@ export class BetaReducer extends SubstCore {
     return false;
   }
 
-  // process_var: a bound variable becomes its binding, shifted over the quantifiers entered since
-  // it was bound.
   private processVar(variable: number) {
     const manager = this.manager;
     const index = manager.values[variable];
@@ -1083,7 +942,6 @@ export class BetaReducer extends SubstCore {
     this.setLastResult(-1);
   }
 
-  // REWRITE_BUILTIN: the result of the folded branch replaces the ite on the result stack.
   private finishFolded(expr: number, top: number) {
     const result = this.resultStack[this.resultStack.length - 1];
     this.setLastResult(result);
@@ -1095,7 +953,6 @@ export class BetaReducer extends SubstCore {
     this.markNewChild(expr, -1);
   }
 
-  // constant_fold: an ite whose condition rewrote to true or false becomes the chosen branch.
   private isConstantFolded(expr: number, top: number) {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_ITE) return false;
@@ -1136,7 +993,6 @@ export class BetaReducer extends SubstCore {
     }
     const spos = this.frameStarts[top];
     const body = this.resultStack[spos];
-    // new_pats: the patterns, which Z3 holds until the quantifier is done.
     const patterns = this.resultStack.slice(spos + 1);
     for (const pattern of patterns) manager.incRef(pattern);
     this.setLastResult(

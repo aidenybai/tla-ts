@@ -1,6 +1,3 @@
-// Decides a theory tlapm writes for Isabelle, as tlapm's Isabelle backend runs it: use_thy on the
-// heap of Isabelle/TLA+ succeeds or fails.
-
 import { isStackOverflow, TlaIsabelleError } from "../../errors";
 import type { DecideOptions, Verdict } from "../verdict";
 import { parseProofText, terminalProof } from "./isar/method";
@@ -28,7 +25,6 @@ export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Ve
         initGoal(statement),
       ),
     );
-    // Proof.conclude_goal: the theorem must be the statement, from its assumptions only.
     return result !== undefined &&
       result.tpairs.length === 0 &&
       aconv(result.prop, protect(statement.conclusion)) &&
@@ -36,8 +32,6 @@ export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Ve
       ? "unsat"
       : "unknown";
   } catch (error) {
-    // Poly/ML grows its stack instead, until Isabelle runs out of memory, which tlapm counts as a
-    // failure.
     if (error instanceof TlaIsabelleError || isStackOverflow(error)) return "unknown";
     throw error;
   }

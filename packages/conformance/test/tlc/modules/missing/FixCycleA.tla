@@ -1,0 +1,3 @@
+---- MODULE FixCycleA ----
+EXTENDS FixCycleB
+====

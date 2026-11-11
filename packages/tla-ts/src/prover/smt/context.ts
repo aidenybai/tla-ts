@@ -1,8 +1,5 @@
-// ctx.ml and backend/smtlib.ml's naming: each name is salted past the names in scope.
-
 import { formatName } from "./format";
 
-// A quantifier's variables, in scope until the quantifier's closing parenthesis.
 interface QuantifierScope {
   depth: number;
   exits: (() => void)[];
@@ -16,8 +13,6 @@ export interface Identifier {
 
 const getSaltedName = (base: string, salt: number) => (salt === 0 ? base : `${base}_${salt}`);
 
-// Ctx.maybe_adj: a name is its formatted base, salted past the last one with that base and past
-// every name in scope.
 export const createContext = () => {
   const salts = new Map<string, number>();
   const names = new Set<string>();
@@ -30,7 +25,6 @@ export const createContext = () => {
       ) ?? start;
     return { base, salt, name: getSaltedName(base, salt) };
   };
-  // Brings an identifier into scope and returns how to take it out again.
   const enter = (identifier: Identifier) => {
     const previous = salts.get(identifier.base);
     salts.set(identifier.base, identifier.salt);
@@ -44,8 +38,6 @@ export const createContext = () => {
   return { names, adjoin, enter };
 };
 
-// Smtlib.pp_print_obligation names each declaration for the rest of the obligation, and each
-// quantifier's variables within it, so a variable's name depends on the names in scope.
 export const createPrinter = (declared: Map<string, Identifier>) => {
   const context = createContext();
   const resolve = (line: string) => {
@@ -60,42 +52,43 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
     const replacements = new Map<number, string>();
     const renames = new Map<string, string[]>();
     const scopes: QuantifierScope[] = [];
-    const state = { index: 0, depth: 0 };
-    while (state.index < tokens.length) {
-      const token = tokens[state.index][0];
+    let position = 0;
+    let depth = 0;
+    while (position < tokens.length) {
+      const token = tokens[position][0];
       const isQuantifier =
         token === "(" &&
-        (tokens[state.index + 1]?.[0] === "forall" || tokens[state.index + 1]?.[0] === "exists") &&
-        tokens[state.index + 2]?.[0] === "(";
+        (tokens[position + 1]?.[0] === "forall" || tokens[position + 1]?.[0] === "exists") &&
+        tokens[position + 2]?.[0] === "(";
       if (isQuantifier) {
-        state.depth++;
-        const scope: QuantifierScope = { depth: state.depth, exits: [] };
+        depth++;
+        const scope: QuantifierScope = { depth, exits: [] };
         scopes.push(scope);
-        state.index += 3;
-        while (tokens[state.index]?.[0] === "(") {
-          const raw = tokens[state.index + 1][0];
+        position += 3;
+        while (tokens[position]?.[0] === "(") {
+          const raw = tokens[position + 1][0];
           const identifier = context.adjoin(raw.replace(/#\d+$/, ""));
           const stack = renames.get(raw) ?? [];
           renames.set(raw, [...stack, identifier.name]);
           scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
-          replacements.set(state.index + 1, identifier.name);
-          state.index += 4;
+          replacements.set(position + 1, identifier.name);
+          position += 4;
         }
-        state.index++;
+        position++;
         continue;
       }
-      if (token === "(") state.depth++;
+      if (token === "(") depth++;
       if (token === ")") {
-        if (scopes.at(-1)?.depth === state.depth)
+        if (scopes.at(-1)?.depth === depth)
           scopes
             .pop()
             ?.exits.toReversed()
             .forEach((exit) => exit());
-        state.depth--;
+        depth--;
       }
       const name = renames.get(token)?.at(-1);
-      if (name !== undefined) replacements.set(state.index, name);
-      state.index++;
+      if (name !== undefined) replacements.set(position, name);
+      position++;
     }
     return tokens
       .map((match, index) => {

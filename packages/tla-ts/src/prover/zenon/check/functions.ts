@@ -1,6 +1,3 @@
-// The checks of the TLA+ extension's rules for functions, after the lemmas in Zenon.thy that justify
-// them.
-
 import type { PlainRuleName } from "../proof";
 import {
   and,
@@ -18,7 +15,6 @@ import {
   type Term,
 } from "./terms";
 
-// ~isAFcn(f) where f is built by a function constructor closes the branch.
 const getNotFunctionSpec = (formula: Term, constructor: string, arity: number) => {
   expectApp(expectApp(expectNot(formula), "TLA.isAFcn", 1)[0], constructor, arity);
   return { premises: [formula], branches: [] };

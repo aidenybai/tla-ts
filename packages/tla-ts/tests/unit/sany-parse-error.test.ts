@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { getSanyParseError } from "../../src/sany/parse-error";
 
-const toText = (lines: string[]) =>
+const formatParseError = (lines: string[]) =>
   `***Parse Error***\n${lines.map((line) => `${line}\n`).join("")}`;
 
-// The modules come from the conformance corpora unless they test one of the checks SANY's parser
-// makes as it builds the syntax tree, and the expected reports are what SANY's parser prints for
-// them.
 describe("getSanyParseError", () => {
   it("reports where a record constructor has an expression for a field name", () => {
     const source = `---- MODULE definition_parse_error ----
@@ -21,7 +18,7 @@ Small == x <= Limit
 ====
 `;
     expect(getSanyParseError(source)).toBe(
-      toText([
+      formatParseError([
         'Encountered "|->" at line 5, column 13 and token "b" ',
         "",
         "Residual stack trace follows:",
@@ -51,7 +48,7 @@ Inv == x <= 10 /\\ x >= 0
 ====
 `;
     expect(getSanyParseError(source)).toBe(
-      toText([
+      formatParseError([
         'Was expecting "Expression or Instance"',
         'Encountered "LAMBDA" at line 8, column 11 and token "==" ',
         "",
@@ -70,7 +67,7 @@ f == [x \\in TRUE, y |-> TRUE]
 ================================================================================
 `;
     expect(getSanyParseError(source)).toBe(
-      toText([
+      formatParseError([
         'Encountered "|->" at line 3, column 21 and token "y" ',
         "",
         "Residual stack trace follows:",
@@ -92,7 +89,7 @@ BY DEF - , +
 =============================================================================
 `;
     expect(getSanyParseError(source)).toBe(
-      toText([
+      formatParseError([
         'Encountered "," at line 5, column 10 and token "-" ',
         "",
         "Residual stack trace follows:",
@@ -108,7 +105,7 @@ BY DEF - , +
   it("shows the tokens a failed two-token lookahead read", () => {
     const source = "---- MODULE Github1417Local ----\nLOCAL hidden hidden == 42\n====\n";
     expect(getSanyParseError(source)).toBe(
-      toText([
+      formatParseError([
         'Was expecting "LOCAL, INSTANCE, PROOF, ASSUMPTION, THEOREM, RECURSIVE, declaration, or definition"',
         'Encountered "LOCAL hidden" at line 2, column 1 and token "----" ',
         "",
@@ -128,7 +125,7 @@ last modified on Sun 11 Dec 2005 at  0:30:16 UT by lamport
 EXTENDS Naturals, Sequences, FiniteSets , TLC
 `;
     expect(getSanyParseError(source)).toBe(
-      toText([
+      formatParseError([
         'Was expecting "----"',
         'Encountered "-" at line 5, column 40 and token "bug" ',
         "",
@@ -141,7 +138,7 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
 
   it("reports a file without a module header at its last character", () => {
     expect(getSanyParseError("CAUSES the translator to throw an exception\n")).toBe(
-      toText([
+      formatParseError([
         'Was expecting "---- MODULE (beginning of module)"',
         'Encountered "<EOF>" at line 1, column 44 and token "" ',
         "",
@@ -338,11 +335,10 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
     },
   ])("reports $check", (testCase) => {
     expect(getSanyParseError(`---- MODULE Test ----\n${testCase.body}\n====\n`)).toBe(
-      toText(testCase.report),
+      formatParseError(testCase.report),
     );
   });
 
-  // The modules and messages come from SANY.
   it.each([
     [
       "a character no token starts with",
@@ -396,7 +392,7 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
 
   it("reports the parse error before a lexical error in a token the parser never reads", () => {
     expect(getSanyParseError("---- MODULE M ----\nOp == LET a == 1\n====\n\\* abc")).toBe(
-      toText([
+      formatParseError([
         'Encountered "====" at line 3, column 1 and token "1" ',
         "",
         "Residual stack trace follows:",

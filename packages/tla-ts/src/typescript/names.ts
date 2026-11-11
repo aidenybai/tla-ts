@@ -1,5 +1,3 @@
-// TLA+ keywords, the operators of the modules every spec extends, and the names tla-ts
-// generates. A TypeScript name that collides with one of these gets a suffix.
 const RESERVED = new Set([
   "ACTION",
   "ASSUME",

@@ -1,8 +1,6 @@
-// Checks the fingerprints tla-ts computes against the proofs tlapm reused. tlapm reports a proof
-// it reuses from an earlier obligation with the same fingerprint without a time, so each such
-// obligation must share its fingerprint with an earlier one in its module that the same prover
-// concluded about. A freshly decided obligation that shares one is reported too, as a fingerprint
-// that may be too coarse or a module recorded without fingerprints.
+// tlapm reports a proof it reuses from an earlier obligation with the same fingerprint without a
+// time, so each such obligation must share its fingerprint with an earlier one in its module that
+// the same prover concluded about.
 
 import { join } from "node:path";
 import { TlaError } from "../src";
@@ -25,7 +23,6 @@ for (const record of readProofRecords()) {
     continue;
   }
   const byId = new Map(obligations.map((obligation) => [obligation.id, obligation]));
-  // The first obligation with each fingerprint, and the provers that concluded about one.
   const seen = new Map<string, { id: number; provers: Set<string> }>();
   record.obligations.forEach((expected) => {
     const obligation = byId.get(expected.id);

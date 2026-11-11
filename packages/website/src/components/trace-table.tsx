@@ -13,8 +13,6 @@ const CELL_CLASS_NAME = "border-b border-gray-300 px-3 py-1.5 align-top";
 const HEADER_CLASS_NAME =
   "sticky top-0 z-10 border-b bg-white px-3 py-2 text-left font-sans text-sm font-normal text-gray-1000";
 
-// Lists a trace as TLC's Toolbox does: one row per state, one column per variable, with each
-// value that changed from the row above marked.
 export const TraceTable = (props: TraceTableProps) => {
   const loopStart = props.loopStart ?? props.trace.length;
   const lastIndex = props.trace.length - 1;
@@ -76,7 +74,6 @@ export const TraceTable = (props: TraceTableProps) => {
                   type="button"
                   onClick={() => props.onSelect(index)}
                   ref={(element) => {
-                    // Scrolls the drawer, not the page, so playback never moves the reader.
                     const pane = element?.closest("[data-drawer-scroll]");
                     if (!isActive || element === null || !(pane instanceof HTMLElement)) return;
                     const top =

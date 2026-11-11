@@ -1,6 +1,4 @@
 // Ported from Z3 (src/smt/smt_conflict_resolution.cpp), MIT license, see z3-license.txt.
-// First-UIP conflict resolution with lemma minimization. Equalities in a conflict are explained
-// by walking the transitivity branches of the E-graph down to literals.
 import { BinJustification, type BJustification } from "./clause";
 import type { Context } from "./context";
 import { Enode, EqJustification, Justification } from "./enode";
@@ -15,14 +13,11 @@ export class ConflictResolution {
   private todoEqs: Enode[] = [];
   private processedEqs = new Set<string>();
   lemma: Literal[] = [];
-  // m_lemma_atoms: the atoms of the lemma, which it holds until the lemma is a clause.
   readonly lemmaAtoms: RefVector;
   private conflictLevel = 0;
   newScopeLevel = 0;
   lemmaIscopeLevel = 0;
   private unmark: BoolVar[] = [];
-  // m_lvl_set: a level_approx_set, whose bit level mod 32 stands for each level of the lemma, so
-  // other levels can pass for them.
   private levelSet = 0;
   private minimizationStack: BoolVar[] = [];
 
@@ -34,8 +29,6 @@ export class ConflictResolution {
     this.antecedents.push(literal);
   }
 
-  // mark_eq: the pair starts with the node whose owner has the smaller id, which fixes the order in
-  // which eq2literals walks the two branches.
   markEq(first: Enode, second: Enode) {
     if (first === second) return;
     const ids = this.context.manager.ids;
@@ -192,7 +185,6 @@ export class ConflictResolution {
       this.processAntecedent(literal, marks);
   }
 
-  // Returns false when the conflict is at the search level, so the problem is unsat.
   resolve(conflict: BJustification, notLiteral: Literal | null) {
     const context = this.context;
     this.lemma = [];
@@ -204,7 +196,6 @@ export class ConflictResolution {
     const assigned = context.assignedLiterals;
     let index = assigned.length - 1;
     while (index > 0 && context.getAssignLevel(assigned[index]) > this.conflictLevel) index--;
-    // The first slot holds the negated first unique implication point, found below.
     this.lemma.push(context.falseLiteral);
     this.lemmaAtoms.push(-1);
     const marks = { count: 0 };

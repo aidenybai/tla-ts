@@ -1,5 +1,4 @@
-// Ported from Isabelle2025's Pure/tactical.ML and Pure/search.ML. Copyright (c) 1986-2025
-// University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/tactical.ML and Pure/search.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import {
@@ -15,7 +14,7 @@ import {
   type Seq,
 } from "./seq";
 import { cons, type List } from "./list";
-import { aconv } from "./term";
+import { aconv, type Term } from "./term";
 import { nprems, premOf, type Thm } from "./thm";
 
 export type Tactic = (state: Thm) => Seq<Thm>;
@@ -76,7 +75,6 @@ export const determ =
 
 export const tryTac = (tactic: Tactic) => orElse(tactic, allTac);
 
-// Thm.eq_thm: equal hypotheses, flex-flex pairs and propositions.
 export const eqThm = (left: Thm, right: Thm) =>
   left === right ||
   (aconv(left.prop, right.prop) &&
@@ -88,6 +86,9 @@ export const eqThm = (left: Thm, right: Thm) =>
         aconv(pair[0], right.tpairs[index][0]) && aconv(pair[1], right.tpairs[index][1]),
     ));
 
+export const distinctThms = (thms: readonly Thm[]) =>
+  thms.filter((thm, position) => thms.findIndex((other) => eqThm(other, thm)) === position);
+
 export const eqThmProp = (left: Thm, right: Thm) => aconv(left.prop, right.prop);
 
 interface Trail {
@@ -96,7 +97,6 @@ interface Trail {
   readonly tactics: readonly Tactic[];
 }
 
-// EVERY: tac1 THEN ... THEN tacn, without backtracking over repeated states.
 export const every = (tactics: readonly Tactic[]): Tactic => {
   const evy = (trail: readonly Trail[], remaining: readonly Tactic[], state: Thm): Seq<Thm> => {
     if (remaining.length === 0) return makeSeq(() => [state, makeSeq(() => evyBack(trail).pull())]);
@@ -185,16 +185,14 @@ export const firstGoalTac =
 const isThmError = (error: unknown) =>
   error instanceof TlaIsabelleError && error.exception === "THM";
 
-// SUBGOAL: a tactic built from goal index of the state, failing if there is no such goal.
 export const subgoal =
-  (build: (goal: ReturnType<typeof premOf>, index: number) => Tactic): GoalTactic =>
+  (build: (goal: Term, index: number) => Tactic): GoalTactic =>
   (index) =>
   (state) => {
     if (index < 1 || index > nprems(state)) return emptySeq;
     return build(premOf(state, index), index)(state);
   };
 
-// Seq.INTERVAL: applies tactic to goals last down to first.
 const interval = (tactic: GoalTactic, firstIndex: number, lastIndex: number): Tactic =>
   lastIndex < firstIndex
     ? allTac
@@ -230,9 +228,6 @@ export const condTac =
   (state) =>
     test(state) ? onTrue(state) : onFalse(state);
 
-// Search.DEPTH_FIRST: depth-first search for a state satisfying the test. The stack of
-// alternatives and the states already returned are lists, as in Isabelle, since the stack can grow
-// as deep as the search goes.
 const depthFirst = (test: (state: Thm) => boolean, tactic: Tactic): Tactic => {
   const isUsed = (used: List<Thm> | undefined, state: Thm) => {
     for (let current = used; current !== undefined; current = current.tail)
@@ -260,5 +255,4 @@ const depthFirst = (test: (state: Thm) => boolean, tactic: Tactic): Tactic => {
 
 export const hasFewerPrems = (count: number) => (state: Thm) => nprems(state) < count;
 
-// Search.DEPTH_SOLVE: depth-first search until no goals remain.
 export const depthSolve = (tactic: Tactic) => depthFirst(hasFewerPrems(1), tactic);

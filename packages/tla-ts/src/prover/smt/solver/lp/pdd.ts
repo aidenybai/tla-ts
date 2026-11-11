@@ -1,12 +1,5 @@
-// Ported from Z3 (src/math/dd/dd_pdd.h, src/math/dd/dd_pdd.cpp, src/math/dd/pdd_eval.h), MIT
-// license, see z3-license.txt. Polynomial decision diagrams over the rationals, which nla's Grobner
-// solver works on: a node is x*hi + lo for the variable x at its level, lo has no x, and the leaves
-// are values. Only the free semantics is ported, the one nla and dd::solver use: not mod2, mod2N or
-// zero_one_vars, nor what only those or polysat use (the boolean operations, substitution of
-// values, resolve, quot_rem, and division without the inverse). Nodes are never freed, so there is
-// no garbage collection: node indices match Z3's until its first collection, and the node limit
-// counts every node made. The op cache keys on both operands, where Z3's eq_entry compares the
-// first operand of one entry with the second of the other.
+// Ported from Z3 (src/math/dd/dd_pdd.h, src/math/dd/dd_pdd.cpp, src/math/dd/pdd_eval.h), MIT license, see z3-license.txt.
+// Deviation from Z3: nodes are never freed, so node indices match Z3 only until its first collection.
 import { PddMemoryOutError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { shrink } from "../array";
@@ -18,7 +11,6 @@ const SUB_OP = 3;
 const MINUS_OP = 4;
 const MUL_OP = 5;
 const REDUCE_OP = 6;
-// Nodes below this index stand for the operations in the op cache, besides 0 and 1.
 const NO_OP = 10;
 const INITIAL_FREE_NODES = 1024;
 
@@ -72,7 +64,7 @@ export class PddManager {
   private numAllocated = 0;
   private maxNumNodes = 1 << 24;
   private isApplying = false;
-  var2pdd: number[] = [];
+  private var2pdd: number[] = [];
   var2level: number[] = [];
   level2var: number[] = [];
 
@@ -121,19 +113,14 @@ export class PddManager {
     return this.levels.length;
   }
 
-  numVars() {
-    return this.var2pdd.length;
-  }
-
   isVal(node: number) {
     return this.his[node] === 0;
   }
 
-  level(node: number) {
+  private level(node: number) {
     return this.levels[node];
   }
 
-  // A value node is at level 0, so its var is the lowest variable, as in Z3.
   var(node: number) {
     return this.level2var[this.levels[node]];
   }
@@ -148,12 +135,6 @@ export class PddManager {
 
   val(node: number) {
     return this.values[this.los[node]];
-  }
-
-  offset(node: number) {
-    let current = node;
-    while (!this.isVal(current)) current = this.lo(current);
-    return this.val(current);
   }
 
   mkVar(variable: number) {
@@ -174,7 +155,7 @@ export class PddManager {
     return new Pdd(this, ZERO_PDD);
   }
 
-  one() {
+  private one() {
     return new Pdd(this, ONE_PDD);
   }
 
@@ -205,13 +186,10 @@ export class PddManager {
     if (exponent === 0) return this.one();
     if (exponent === 1 || poly.isZero() || poly.isOne()) return poly;
     if (poly.isVal()) return this.mkVal(poly.val().pow(exponent));
-    // j even: pow(p,2*j') = pow(p*p,j'); j odd: pow(p,2*j'+1) = p*pow(p*p,j')
     const half = this.pow(this.mul(poly, poly), Math.floor(exponent / 2));
     return exponent % 2 === 1 ? this.mul(half, poly) : half;
   }
 
-  // apply: operations grow the node limit where Z3 catches mem_out, collects garbage, retries and
-  // then doubles the limit. Without garbage to collect, only the doubling matters.
   private apply(first: number, second: number, op: number) {
     return this.whileApplying(() => this.applyRec(first, second, op));
   }
@@ -283,26 +261,20 @@ export class PddManager {
       }
       case SUB_OP: {
         if (this.isVal(first) || (!this.isVal(second) && firstLevel < secondLevel)) {
-          // p - (ax + b) = -ax + (p - b)
           const lo = this.applyRec(first, this.lo(second), op);
           return this.makeNode(secondLevel, lo, this.minusRec(this.hi(second)));
         }
         if (this.isVal(second) || firstLevel > secondLevel) {
-          // (ax + b) - k = ax + (b - k)
           return this.makeNode(firstLevel, this.applyRec(firstLo, second, op), firstHi);
         }
-        // (ax + b) - (cx + d) = (a - c)x + (b - d)
         const lo = this.applyRec(firstLo, this.lo(second), op);
         return this.makeNode(firstLevel, lo, this.applyRec(firstHi, this.hi(second), op));
       }
       case MUL_OP: {
         if (this.isVal(second) || firstLevel !== secondLevel) {
-          // (x*hi(p)+lo(p))*b = x*hi(p)*b + lo(p)*b
           const lo = this.applyRec(firstLo, second, op);
           return this.makeNode(firstLevel, lo, this.applyRec(firstHi, second, op));
         }
-        // (xa + b)(xc + d) = x(x*ac + ad + bc) + bd, where ad + bc may be x*e + f, so that the
-        // hi child is x*(ac + e) + f.
         const ac = this.applyRec(firstHi, this.hi(second), op);
         const ad = this.applyRec(firstHi, this.lo(second), op);
         const bc = this.applyRec(firstLo, this.hi(second), op);
@@ -342,7 +314,6 @@ export class PddManager {
     return result;
   }
 
-  // reduce_on_match: the monomials of a that lm(b) divides become (b - lt(b))/lm(b).
   private reduceOnMatch(first: number, second: number) {
     let current = first;
     while (this.lmOccurs(second, current)) {
@@ -352,7 +323,6 @@ export class PddManager {
     return current;
   }
 
-  // lm_occurs: whether the leading monomial of p divides a monomial of q.
   private lmOccurs(first: number, second: number): boolean {
     let divisor = this.firstLeading(first);
     let target = second;
@@ -371,7 +341,6 @@ export class PddManager {
     }
   }
 
-  // lt_quotient: minus the r such that lt(p)*r is a monomial of q, given lm_occurs(p, q).
   private ltQuotient(first: number, second: number): number {
     let divisor = this.firstLeading(first);
     let target = second;
@@ -394,8 +363,6 @@ export class PddManager {
     return this.applyRec(this.var2pdd[this.var(second)], quotient, MUL_OP);
   }
 
-  // try_spoly: a*q*qc - b*p*pc, where p = lcm(lm(a),lm(b))/lm(a), q = lcm(lm(a),lm(b))/lm(b) and pc
-  // and qc are the leading coefficients of a and b, when the leading monomials share a variable.
   trySpoly(first: Pdd, second: Pdd) {
     const factors = this.commonFactors(first, second);
     if (factors === null) return null;
@@ -454,7 +421,6 @@ export class PddManager {
     }
   }
 
-  // lm_lt: compares the leading monomials, then the monomials in degree-lex order.
   lmLt(first: Pdd, second: Pdd) {
     let firstNode = this.firstLeading(first.root);
     let secondNode = this.firstLeading(second.root);
@@ -497,8 +463,6 @@ export class PddManager {
     }
   }
 
-  // first_leading: the first node with a term of the leading monomial, the monomial of highest
-  // degree and then highest variables.
   private firstLeading(node: number) {
     let current = node;
     while (
@@ -525,7 +489,6 @@ export class PddManager {
     return degree;
   }
 
-  // factor: p = lc*v^degree + rest, where the degree of v in rest is below degree.
   factor(poly: Pdd, variable: number, degree: number): PddFactor {
     const variableLevel = this.var2level[variable];
     if (degree === 0 || this.level(poly.root) < variableLevel) {
@@ -567,7 +530,6 @@ export class PddManager {
     return { lc, rest };
   }
 
-  // is_binary: v1, x*v1 + v2 or x*v1 + y*v2 + v3, for values v1, v2 and v3.
   isBinary(node: number) {
     const lo = this.lo(node);
     return (
@@ -577,8 +539,6 @@ export class PddManager {
     );
   }
 
-  // get_powers: the variables with a power above 1. The var of a value node is the lowest
-  // variable, so Z3 counts a value under that variable as one more power of it.
   getPowers(poly: Pdd) {
     const powers: PddPower[] = [];
     const marked = new Set<number>();
@@ -589,6 +549,7 @@ export class PddManager {
       const variable = this.var(node);
       let current = node;
       let degree = 1;
+      // Like Z3, a value under the lowest variable counts as one more power of it.
       while (!this.isVal(current) && this.var(this.hi(current)) === variable) {
         degree++;
         todo.push(this.lo(current));
@@ -600,7 +561,6 @@ export class PddManager {
     return powers;
   }
 
-  // var_is_leaf: whether every node of v has values as children.
   varIsLeaf(poly: Pdd, variable: number) {
     const marked = new Set<number>();
     const todo = [poly.root];
@@ -661,8 +621,6 @@ export class PddManager {
     return hi === ZERO_PDD ? lo : this.insertNode(level, lo, hi);
   }
 
-  // insert_node: Z3 adds half as many free nodes again when they run out, and is out of memory
-  // when the nodes already number more than the limit.
   private insertNode(level: number, lo: number, hi: number) {
     const key = `${level},${lo},${hi}`;
     const existing = this.nodeTable.get(key);
@@ -683,7 +641,7 @@ export class PddManager {
 
 export class Pdd {
   constructor(
-    readonly manager: PddManager,
+    private readonly manager: PddManager,
     readonly root: number,
   ) {}
 
@@ -703,10 +661,6 @@ export class Pdd {
     return this.manager.val(this.root);
   }
 
-  offset() {
-    return this.manager.offset(this.root);
-  }
-
   isVal() {
     return this.manager.isVal(this.root);
   }
@@ -723,16 +677,10 @@ export class Pdd {
     return this.manager.degree(this.root) === 1;
   }
 
-  isVar() {
-    return !this.isVal() && this.lo().isZero() && this.hi().isOne();
-  }
-
-  // a*x for a value a.
   isUnary() {
     return !this.isVal() && this.lo().isZero() && this.hi().isVal();
   }
 
-  // x + b for a value b.
   isOffset() {
     return !this.isVal() && this.lo().isVal() && this.hi().isOne();
   }
@@ -763,11 +711,6 @@ export class Pdd {
     return other instanceof Rational
       ? this.manager.mul(this.manager.mkVal(other), this)
       : this.manager.mul(this, other);
-  }
-
-  // div: in the free semantics, multiplication by the inverse, which shares the op cache.
-  div(divisor: Rational) {
-    return this.mul(Rational.one.div(divisor));
   }
 
   pow(exponent: number) {
@@ -806,7 +749,6 @@ export class Pdd {
     return this.manager.getPowers(this);
   }
 
-  // var_factors: the variables that divide every monomial, with their product divided out.
   varFactors(): PddVarFactors {
     if (this.isVal()) return { vars: [], poly: this };
     const manager = this.manager;
@@ -821,7 +763,6 @@ export class Pdd {
     const loVars = loFactors.vars;
     if (loVars.length === 0) return { vars: [], poly: this };
     const loAndHi: number[] = [];
-    // Moves the variables in both lists to loAndHi and keeps the rest in place, by level.
     const merge = (hiVars: number[]) => {
       let loKept = 0;
       let hiKept = 0;
@@ -868,7 +809,6 @@ export class Pdd {
     };
   }
 
-  // subst_pdd: replaces the variable by the polynomial, without the op cache.
   substPdd(variable: number, replacement: Pdd): Pdd {
     const manager = this.manager;
     if (this.isVal() || manager.var2level[this.var()] < manager.var2level[variable]) return this;
@@ -879,7 +819,6 @@ export class Pdd {
     return manager.mkVar(this.var()).mul(hi).add(lo);
   }
 
-  // The monomials, hi before lo, each with its variables from the highest level down.
   *[Symbol.iterator](): Generator<PddMonomial> {
     const manager = this.manager;
     const nodes: IteratorNode[] = [];
@@ -917,7 +856,6 @@ export class Pdd {
     }
   }
 
-  // The coefficients, each marked as the constant term or not. Zero yields one constant 0.
   *coefficients(): Generator<PddCoefficient> {
     const manager = this.manager;
     const nodes: number[] = [];
@@ -962,7 +900,6 @@ export class Pdd {
   }
 }
 
-// pdd_eval: the value of the polynomial under the values of its variables.
 export const evaluatePdd = (poly: Pdd, getValue: (variable: number) => Rational): Rational =>
   poly.isVal()
     ? poly.val()

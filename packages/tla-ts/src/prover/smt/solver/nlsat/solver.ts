@@ -1,14 +1,5 @@
 // Ported from Z3 (src/nlsat/nlsat_solver.cpp, src/nlsat/nlsat_justification.h), MIT license, see
-// z3-license.txt. The nlsat search of Jovanovic and de Moura: Boolean variables first, then the
-// arithmetic variables in order, each a stage. A stage assigns its variable outside the intervals
-// that the clauses watching it exclude, and a conflict learns the explanation of the excluded
-// line. Only Z3's default nlsat parameters are ported: lazy 0, simplify_conflicts, reorder and
-// randomize on, shuffle_vars, inline_vars, minimize_conflicts and check_lemmas off, seed 0. So
-// nlsat_simplify and the bounds of eliminated variables, which only inline_vars makes, are not
-// ported. Neither are what nra never uses: Boolean variables beyond true, transcendental
-// constraints, check(assumptions), check_limit, retract, and set_max_var, without which
-// select_witness never picks the maximal value. The search counts its steps against the resource
-// limit, but not the memory, which Z3 also bounds by max_memory.
+// z3-license.txt.
 import { SmtCanceledError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { type Dependency, linearize, mkJoin, mkLeaf } from "../lp/dependency";
@@ -23,10 +14,8 @@ import type { IntervalSet } from "./interval-set";
 import { NULL_VAR, type Polynomial, PolynomialCache, PolynomialManager } from "./polynomial";
 import { type Clause, type IneqAtom, type IneqKind, isIneqAtom } from "./types";
 
-// null_bool_var: past every Boolean variable.
 const NULL_BOOL_VAR = Infinity;
 
-// m_restart_threshold: the conflicts between two reorderings of the variables.
 const RESTART_THRESHOLD = 10000;
 
 type Justification =
@@ -75,7 +64,6 @@ export class NlsatSolver {
   private watches: Clause[][] = [];
   private infeasible: (IntervalSet | null)[] = [];
   private var2eq: (IneqAtom | null)[] = [];
-  // perm: internal to external variables. invPerm: external to internal.
   private perm: number[] = [];
   private invPerm: number[] = [];
   private explain = new Explain(this.pm, this.am, this.cache, {
@@ -95,7 +83,6 @@ export class NlsatSolver {
   private lemmaAssumptions: Dependency = null;
   private randomSeed = 0;
   private isReordered = false;
-  // max_conflicts: nra sets it before each check.
   maxConflicts = Infinity;
   readonly stats = {
     conflicts: 0,
@@ -106,15 +93,12 @@ export class NlsatSolver {
     irrationalAssignments: 0,
   };
 
-  // m_rlimit: the steps of the search count against the limit, and against the budget of this
-  // solver, which Z3 sets with a scoped_rlimit on a child limit.
   steps = 0;
 
   constructor(
     private limit: ResourceLimit | null = null,
     private budget = Infinity,
   ) {
-    // mk_true_bvar: the clause [true], whose literal the first Boolean stage assigns.
     this.mkClause([TRUE_LITERAL], false, null);
   }
 
@@ -143,17 +127,14 @@ export class NlsatSolver {
     return this.atoms.getAtom(literal);
   }
 
-  // mk_external_clause: an input clause, which depends on assumption when it is not null.
   mkExternalClause(literals: readonly number[], assumption: number | null) {
     this.mkClause(literals, false, assumption === null ? null : mkLeaf(assumption));
   }
 
-  // value(x): the model's value of x, zero when unassigned.
   getValue(variable: number) {
     return this.assignment[variable] ?? new Anum(Rational.zero);
   }
 
-  // get_core: the assumptions of the input clauses the last conflict depends on.
   getCore() {
     return linearize([this.lemmaAssumptions]);
   }
@@ -177,8 +158,6 @@ export class NlsatSolver {
     return max;
   }
 
-  // lit_lt: Boolean literals first, then by maximal variable, degree, inequalities before
-  // equations, and index.
   private compareLiterals(first: number, second: number) {
     const firstAtom = this.atoms.getAtom(first);
     const secondAtom = this.atoms.getAtom(second);
@@ -197,7 +176,7 @@ export class NlsatSolver {
   }
 
   private mkClause(literals: readonly number[], isLearned: boolean, assumptions: Dependency) {
-    const clause: Clause = {
+    const clause = {
       id: this.nextClauseId++,
       literals: literals.length === 0 ? [FALSE_LITERAL] : [...literals],
       isLearned,
@@ -227,8 +206,6 @@ export class NlsatSolver {
     if (index !== -1) watches.splice(index, 1);
     for (const literal of clause.literals) this.atoms.decRef(literal);
   }
-
-  // Search.
 
   private unassignBoolVar(boolVar: number) {
     this.bvalues[boolVar] = L_UNDEF;
@@ -298,7 +275,6 @@ export class NlsatSolver {
     this.setLiteralToTrue(literal, DECISION);
   }
 
-  // value: the assigned value, else the atom's value once its maximal variable is assigned.
   private value(literal: number) {
     const assigned = this.getAssignedValue(literal);
     if (assigned !== L_UNDEF) return assigned;
@@ -326,7 +302,6 @@ export class NlsatSolver {
     return true;
   }
 
-  // R_propagate: literal is true, because with the justifications of set it is infeasible.
   private propagate(literal: number, set: IntervalSet | null, isLiteralIncluded = true) {
     const justifications = this.ism.getJustifications(set);
     const literals = [...justifications.literals];
@@ -340,8 +315,6 @@ export class NlsatSolver {
     this.infeasible[this.xk] = this.ism.mkUnion(set, old);
   }
 
-  // updt_eq: the equation of least degree that holds for the current variable, for the
-  // explanation to simplify with.
   private updateEq(boolVar: number, justification: Justification) {
     if (this.bvalues[boolVar] !== L_TRUE) return;
     const atom = this.atoms.atoms[boolVar];
@@ -436,7 +409,6 @@ export class NlsatSolver {
     this.xk = this.xk === NULL_VAR ? 0 : this.xk + 1;
   }
 
-  // select_witness: a value outside the infeasible intervals, at random among the candidates.
   private selectWitness() {
     const witness = this.ism.pickInComplement(this.infeasible[this.xk], true);
     if (!this.am.isRational(witness)) this.stats.irrationalAssignments++;
@@ -472,8 +444,6 @@ export class NlsatSolver {
     }
   }
 
-  // gc: drops the learned clauses that took no part in a conflict since the last collection,
-  // once they outnumber the input clauses four to one.
   private gc() {
     if (this.learned.length <= 4 * this.clauses.length) return;
     this.resetWatches();
@@ -498,7 +468,6 @@ export class NlsatSolver {
     this.xk = NULL_VAR;
   }
 
-  // do_reorder
   private reorderAtRestart() {
     this.undoToBase();
     this.stats.restarts++;
@@ -507,7 +476,6 @@ export class NlsatSolver {
     this.applyReorder();
   }
 
-  // try_reorder
   private tryReorder() {
     this.gc();
     if (this.stats.restarts % 10 !== 0) return;
@@ -515,9 +483,6 @@ export class NlsatSolver {
     this.applyReorder();
   }
 
-  // search_check: the search, again after each model that gives an integer variable a fraction,
-  // with the lemma that the variable lies outside the open interval between the integers around
-  // its value.
   private searchCheck() {
     this.stats.conflicts = 0;
     this.stats.restarts = 0;
@@ -563,8 +528,6 @@ export class NlsatSolver {
     this.assignment.length = 0;
   }
 
-  // check: satisfiable, unsatisfiable or unknown once maxConflicts conflicts passed. The variables
-  // are reordered for the search and restored after it.
   check() {
     this.initSearch();
     this.explain.isFullDimensional = this.clauses.every((clause) =>
@@ -593,7 +556,6 @@ export class NlsatSolver {
     }
   }
 
-  // sort_clauses_by_degree
   private sortClausesByDegree(clauses: Clause[]) {
     if (clauses.length <= 1) return;
     const degrees = clauses.map((clause) => this.getClauseDegree(clause));
@@ -604,10 +566,6 @@ export class NlsatSolver {
     for (let index = 0; index < sorted.length; index++) clauses[index] = sorted[index];
   }
 
-  // check(rvalues, clause): the assignment's verdict on the clauses. A falsified clause gives the
-  // literal of least degree among the falsified clauses, and the lemma of the linear cell around
-  // the assignment in which that literal stays false. Like Z3, only that case restores the
-  // assignment.
   checkAssignment(values: readonly (Anum | undefined)[]) {
     const saved = this.assignment.map((value) =>
       value === undefined ? undefined : this.am.copy(value),
@@ -644,8 +602,6 @@ export class NlsatSolver {
       this.assignment[variable] = value === undefined ? undefined : this.am.copy(value);
   }
 
-  // Conflict resolution.
-
   private processAntecedent(antecedent: number) {
     this.checkpoint();
     const boolVar = antecedent >> 1;
@@ -674,8 +630,6 @@ export class NlsatSolver {
     this.lemmaAssumptions = mkJoin(clause.assumptions, this.lemmaAssumptions);
   }
 
-  // resolve_lazy_justification: the explanation of the excluded line, with the negations of the
-  // literals that excluded it, as the clause to resolve with.
   private resolveLazyJustification(boolVar: number, literals: number[], clauses: Clause[]) {
     this.lazyClause.reset();
     this.explain.computeConflictExplanation(literals, this.lazyClause);
@@ -690,7 +644,6 @@ export class NlsatSolver {
     for (const literal of this.lemma.literals) this.marks[literal >> 1] = false;
   }
 
-  // scoped_reset_marks
   private releaseMarks() {
     if (this.markCount > 0) {
       this.markCount = 0;
@@ -698,7 +651,6 @@ export class NlsatSolver {
     } else this.resetMarks();
   }
 
-  // resolve: learns a lemma from the conflict and backjumps. False when the lemma is empty.
   private resolve(conflict: Clause) {
     let conflictClause = conflict;
     while (true) {
@@ -717,8 +669,6 @@ export class NlsatSolver {
     }
   }
 
-  // The body of resolve for one conflict: null for the empty lemma, true when the conflict clause
-  // itself is the lemma and now propagates, else the learned clause.
   private learn(conflict: Clause): Clause | true | null {
     this.resolveClause(-1, conflict);
     let top = this.trail.length;
@@ -749,7 +699,6 @@ export class NlsatSolver {
       for (const literal of literals)
         if (this.getAssignedValue(literal) === L_FALSE)
           maxLevel = Math.max(maxLevel, this.levels[literal >> 1]);
-      // remove_literals_from_lvl
       let kept = 0;
       for (const literal of literals) {
         const boolVar = literal >> 1;
@@ -782,7 +731,7 @@ export class NlsatSolver {
     if (literals.every((literal) => this.atoms.getAtom(literal) === null)) {
       const boolVar = literals[literals.length - 1] >> 1;
       this.undoUntil(() => this.bvalues[boolVar] !== L_UNDEF);
-    } else this.undoUntilLevel(this.findNewLevel(literals));
+    } else this.undoUntilLevel(this.findNewLevelArithLemma(literals));
     if (
       literals.length === conflict.literals.length &&
       literals.every((literal, index) => literal === conflict.literals[index])
@@ -793,17 +742,13 @@ export class NlsatSolver {
     return this.mkClause(literals, true, this.lemmaAssumptions);
   }
 
-  // find_new_level_arith_lemma: the highest level of a literal of the current stage other than the
-  // last, else the level below the current one.
-  private findNewLevel(literals: readonly number[]) {
+  private findNewLevelArithLemma(literals: readonly number[]) {
     let level = -1;
     for (const literal of literals.slice(0, -1))
       if (this.atoms.getMaxVar(literal) === this.xk)
         level = Math.max(level, this.levels[literal >> 1]);
     return level === -1 ? this.scopeLevel - 1 : level;
   }
-
-  // Variable order.
 
   private canReorder() {
     return [...this.learned, ...this.clauses].every((clause) =>
@@ -813,7 +758,6 @@ export class NlsatSolver {
     );
   }
 
-  // apply_reorder
   private applyReorder() {
     this.isReordered = false;
     if (!this.canReorder()) return;
@@ -821,7 +765,6 @@ export class NlsatSolver {
     this.isReordered = true;
   }
 
-  // heuristic_reorder: higher maximal degree first, then more occurrences, then a random order.
   private reorderHeuristically() {
     const count = this.isInt.length;
     const maxDegrees = Array.from({ length: count }, () => 0);
@@ -840,7 +783,6 @@ export class NlsatSolver {
         if (isIneqAtom(atom)) atom.polynomials.forEach(collect);
         else collect(atom.polynomial);
       }
-    // init_shuffle
     const shuffle = Array.from({ length: count }, (_value, index) => index);
     const random = new RandomGen(++this.randomSeed);
     for (let index = count; index-- > 0;) {
@@ -858,8 +800,6 @@ export class NlsatSolver {
     this.reorder(permutation);
   }
 
-  // reorder: renames each variable x to permutation[x], in the polynomials, the assignment and
-  // the watches.
   private reorder(permutation: readonly number[]) {
     let kept = 0;
     for (const clause of this.learned) {
@@ -878,11 +818,12 @@ export class NlsatSolver {
     const invPerm = this.invPerm.map((variable) => permutation[variable]);
     for (const [external, internal] of invPerm.entries()) this.perm[internal] = external;
     const isInt = [...this.isInt];
-    for (const [variable, flag] of isInt.entries()) this.isInt[permutation[variable]] = flag;
+    for (const [variable, isIntVariable] of isInt.entries())
+      this.isInt[permutation[variable]] = isIntVariable;
     this.invPerm = invPerm;
     const polynomials = new Set<Polynomial>();
     for (const atom of this.atoms.atoms) {
-      if (atom === null || atom === undefined) continue;
+      if (atom === null) continue;
       if (isIneqAtom(atom)) for (const polynomial of atom.polynomials) polynomials.add(polynomial);
       else polynomials.add(atom.polynomial);
     }
@@ -893,7 +834,6 @@ export class NlsatSolver {
     this.reattachArithClauses(this.learned);
   }
 
-  // restore_order
   restoreOrder() {
     this.reorder([...this.perm]);
   }

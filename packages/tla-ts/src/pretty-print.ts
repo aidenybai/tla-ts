@@ -1,5 +1,4 @@
-// A port of TLC's tlc2.pprint package, which re-parses a printed value and breaks it across
-// lines of at most 80 columns. TLC prints the original text whenever the parse fails.
+// A port of TLC's tlc2.pprint package. TLC prints the original text whenever the parse fails.
 
 import { skipWhile } from "./lexer";
 
