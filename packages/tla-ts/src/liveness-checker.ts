@@ -386,9 +386,9 @@ export const createLivenessChecker = (
 
   // TLC iterates a state's successors and the state itself in the slot order of a SetOfStates, a hash set whose capacity grows with every set that outgrows it.
   const getSuccessorSet = (index: number, state: Value[], successors: LiveSuccessor[]) => {
-    let successorSlots = Array.from<LiveSuccessor | undefined>({
-      length: SUCCESSOR_CAPACITY * capacityMultiplier,
-    });
+    let successorSlots = new Array<LiveSuccessor | undefined>(
+      SUCCESSOR_CAPACITY * capacityMultiplier,
+    ).fill(undefined);
     let successorCount = 0;
     const insertSuccessor = (slots: (LiveSuccessor | undefined)[], successor: LiveSuccessor) => {
       for (
@@ -408,7 +408,7 @@ export const createLivenessChecker = (
     const addSuccessor = (successor: LiveSuccessor) => {
       if (successorCount >= successorSlots.length >> 1) {
         const old = successorSlots;
-        successorSlots = Array.from<LiveSuccessor | undefined>({ length: 2 * old.length + 1 });
+        successorSlots = new Array<LiveSuccessor | undefined>(2 * old.length + 1).fill(undefined);
         for (const entry of old) if (entry) insertSuccessor(successorSlots, entry);
       }
       if (insertSuccessor(successorSlots, successor)) successorCount++;
