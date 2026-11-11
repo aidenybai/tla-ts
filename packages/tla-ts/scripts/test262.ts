@@ -880,6 +880,8 @@ const ignoreSoundErrors = () => {
 // answer than Node.
 const UNREPRESENTABLE = [
   "Overflow when computing",
+  // tla-ts runs a loop as a recursive operator, so thousands of iterations run out of stack.
+  "This was a Java StackOverflowError",
   "TLC can't handle a number this big",
   "TLA+ sequences can't have holes",
   "tla-ts can't",
