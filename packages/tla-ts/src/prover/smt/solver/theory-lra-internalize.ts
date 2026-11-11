@@ -20,6 +20,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
+import { getExtendedNumeral } from "./ast-util";
 import { BoolVar, getVar, Literal } from "./literal";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -210,7 +211,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   private getPowerDegree(power: number) {
     const manager = this.manager;
     if (manager.kinds[manager.getArg(power, 0)] !== KIND_APP) return undefined;
-    const degree = this.getExtendedNumeral(manager.getArg(power, 1));
+    const degree = getExtendedNumeral(manager, manager.getArg(power, 1));
     return degree !== undefined &&
       degree.isInt() &&
       degree.num > 0n &&

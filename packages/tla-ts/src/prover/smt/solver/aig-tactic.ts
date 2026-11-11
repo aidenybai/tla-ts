@@ -1,60 +1,11 @@
-// Ported from Z3 (src/tactic/aig/aig_tactic.cpp, src/ast/for_each_expr.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/tactic/aig/aig_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../errors";
-import {
-  type AstManager,
-  KIND_APP,
-  KIND_QUANTIFIER,
-  OP_ADD,
-  OP_AND,
-  OP_MUL,
-  OP_OR,
-  OP_SEQ_CONCAT,
-  OP_XOR,
-} from "./ast";
+import type { AstManager } from "./ast";
 import { AigManager } from "./aig";
-import { isAssociativeBvOp } from "./bv-decl-plugin";
+import { getNumExprs } from "./ast-util";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";
 import type { Tactic } from "./tactic";
-
-const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL, OP_SEQ_CONCAT]);
-
-// Like Z3, marks only the expressions with several references, and counts an associative
-// application of n arguments as n - 1 binary ones.
-const getNumExprs = (manager: AstManager, root: number) => {
-  const marked = new Set<number>();
-  const isUnvisited = (expr: number) => {
-    if (manager.getRefCount(expr) <= 1) return true;
-    if (marked.has(expr)) return false;
-    marked.add(expr);
-    return true;
-  };
-  const todo = [root];
-  let count = 0;
-  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-    const kind = manager.kinds[expr];
-    if (kind === KIND_QUANTIFIER) {
-      const data = manager.getQuantifier(expr);
-      for (const child of [data.body, ...data.patterns, ...data.noPatterns])
-        if (isUnvisited(child)) todo.push(child);
-      count++;
-      continue;
-    }
-    if (kind !== KIND_APP) {
-      count++;
-      continue;
-    }
-    const op = manager.getOp(expr);
-    const numArgs = manager.getNumArgs(expr);
-    count += ASSOCIATIVE_OPS.has(op) || isAssociativeBvOp(op) ? numArgs - 1 : 1;
-    for (let index = 0; index < numArgs; index++) {
-      const arg = manager.getArg(expr, index);
-      if (isUnvisited(arg)) todo.push(arg);
-    }
-  }
-  return count;
-};
 
 // Z3 rewrites each formula with a dependency on its own, but the goal does not track dependencies,
 // which only named assertions under unsat cores have.

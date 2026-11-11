@@ -17,11 +17,11 @@ import {
   OP_TO_INT,
   OP_TO_REAL,
   OP_UMINUS,
-  KIND_APP,
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
 } from "./ast";
+import { getExtendedNumeral } from "./ast-util";
 import { Enode } from "./enode";
 import { FALSE_LITERAL, getVar, isNegated, Literal, negate, TRUE_LITERAL } from "./literal";
 import { Rational } from "./rational";
@@ -139,71 +139,16 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     else if (op === OP_POWER) this.mkPowerAxiom(expr);
   }
 
-  protected getExtendedNumeral(expr: number) {
-    const manager = this.manager;
-    if (manager.isNumeral(expr)) return manager.getRationalValue(expr);
-    const todo = [{ term: expr, isVisited: false, isNegated: false }];
-    const values: Rational[] = [];
-    while (todo.length > 0) {
-      const frame = todo.pop()!;
-      if (frame.isVisited) {
-        const op = manager.getOp(frame.term);
-        const numArgs = manager.getNumArgs(frame.term);
-        const operands = values.splice(values.length - (op === OP_TO_INT ? 1 : numArgs));
-        const value =
-          op === OP_TO_INT
-            ? operands[0].floor()
-            : op === OP_ADD
-              ? operands.reduce((sum, operand) => sum.add(operand), Rational.zero)
-              : op === OP_MUL
-                ? operands.reduce((product, operand) => product.mul(operand), Rational.one)
-                : op === OP_DIV
-                  ? operands[1].isZero()
-                    ? undefined
-                    : operands[0].div(operands[1])
-                  : operands[0].sub(operands[1]);
-        if (value === undefined) return undefined;
-        values.push(frame.isNegated ? value.neg() : value);
-        continue;
-      }
-      let term = frame.term;
-      let isNegated = frame.isNegated;
-      while (manager.getOp(term) === OP_UMINUS || manager.getOp(term) === OP_TO_REAL) {
-        if (manager.getOp(term) === OP_UMINUS) isNegated = !isNegated;
-        term = manager.getArg(term, 0);
-      }
-      if (manager.isNumeral(term)) {
-        const value = manager.getRationalValue(term);
-        values.push(isNegated ? value.neg() : value);
-        continue;
-      }
-      const op = manager.getOp(term);
-      if (
-        manager.kinds[term] !== KIND_APP ||
-        (op !== OP_TO_INT &&
-          op !== OP_ADD &&
-          op !== OP_MUL &&
-          !(op === OP_SUB && manager.getNumArgs(term) === 2) &&
-          op !== OP_DIV)
-      )
-        return undefined;
-      todo.push({ term, isVisited: true, isNegated });
-      for (let index = manager.getNumArgs(term); index-- > 0;)
-        todo.push({ term: manager.getArg(term, index), isVisited: false, isNegated: false });
-    }
-    return values[values.length - 1];
-  }
-
   private mkPowerAxiom(power: number) {
     const manager = this.manager;
     const context = this.context;
     const base = manager.getArg(power, 0);
     const exponent = manager.getArg(power, 1);
     const zero = manager.mkRealNumeral(Rational.zero);
-    const baseValue = this.getExtendedNumeral(base);
+    const baseValue = getExtendedNumeral(manager, base);
     if (baseValue?.isPositive())
       this.mkAxiom([negate(this.mkLiteral(manager.mkApp(OP_LE, [power, zero], SORT_BOOL)))]);
-    const exponentValue = this.getExtendedNumeral(exponent);
+    const exponentValue = getExtendedNumeral(manager, exponent);
     if (exponentValue?.isPositive() && exponentValue.num === 1n && exponentValue.den > 1n) {
       const isNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [base, zero], SORT_BOOL));
       const root = manager.mkApp(
