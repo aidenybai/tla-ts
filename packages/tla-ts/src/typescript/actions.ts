@@ -1789,12 +1789,21 @@ export const bindCall = (
     const symbol = getSymbol(parameter.name, context.checker);
     return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
   });
+  // A function that no parameter takes evaluates to an object that nothing reads, unless the
+  // callee reads its arguments.
+  const isArgumentsRead =
+    findNodes(
+      callee,
+      (inner): inner is ts.Identifier => ts.isIdentifier(inner) && inner.text === "arguments",
+    ).length > 0;
   const isValue = (position: number) => {
     const parameter = parameters.at(position);
-    return (
-      parameter === undefined ||
-      !callbacks.some((entry) => entry[0] === getSymbol(parameter.name, context.checker))
-    );
+    const argument = argumentNodes.at(position);
+    return parameter === undefined
+      ? isArgumentsRead ||
+          argument === undefined ||
+          !(ts.isFunctionExpression(argument) || ts.isArrowFunction(argument))
+      : !callbacks.some((entry) => entry[0] === getSymbol(parameter.name, context.checker));
   };
   const values = shareArguments(
     argumentNodes
@@ -4058,6 +4067,18 @@ const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boole
       visited.add(callee);
       if (usesHeap(callee, context, visited)) return true;
     }
+    // A call through a variable that holds one of several functions branches between them, which
+    // only statements can do.
+    const declaration = getSymbol(getCast(node.expression), context.checker)?.valueDeclaration;
+    if (
+      callee === undefined &&
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      !declaration.getSourceFile().isDeclarationFile &&
+      getFunctionCandidates(getCast(node.expression), context).length > 0
+    ) {
+      return true;
+    }
   }
   return ts.forEachChild(node, (child) => usesHeap(child, context, visited) || undefined) ?? false;
 };
@@ -5454,11 +5475,17 @@ const hasOnlyLiftableCalls = (node: ts.Node, path: Path, context: Context): bool
   );
 };
 
-const hasCall = (node: ts.Node, context: Context): boolean =>
+// A call or a new that a node evaluates, besides the objects that statements made before it.
+const hasCall = (
+  node: ts.Node,
+  context: Context,
+  allocated: ReadonlyMap<ts.Node, Expression> = new Map(),
+): boolean =>
   !ts.isFunctionLike(node) &&
+  !allocated.has(node) &&
   ((ts.isCallExpression(node) && !isLibraryCall(node, context)) ||
     ts.isNewExpression(node) ||
-    (ts.forEachChild(node, (child) => hasCall(child, context) || undefined) ?? false));
+    (ts.forEachChild(node, (child) => hasCall(child, context, allocated) || undefined) ?? false));
 
 const translateTry = (
   statement: ts.TryStatement,
@@ -6288,7 +6315,7 @@ export const translateStatements = (
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }
       if (
-        hasCall(returned, context) &&
+        hasCall(returned, context, inner.scope.allocated) &&
         !inner.scope.results.has(skipCasts(returned)) &&
         !hasOnlyLiftableCalls(returned, inner, context)
       ) {

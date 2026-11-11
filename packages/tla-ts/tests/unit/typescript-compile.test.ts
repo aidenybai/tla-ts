@@ -5880,6 +5880,43 @@ describe("regular expressions", () => {
   });
 });
 
+describe("calls through values", () => {
+  it("returns an object that a function called through a variable makes", async () => {
+    const result = await checkModel(`
+      type Factory = (a: number, b: unknown) => unknown;
+      function add(a: number, b: unknown) { return a + (b as number); }
+      function make(a: number, b: unknown) { return new Int8Array(a); }
+      const fs: Factory[] = [add, make];
+      let out = "";
+      for (let k = 0; k < fs.length; ++k) {
+        const factory = fs[k];
+        const made = factory(3, 2);
+        out += typeof made + ";";
+      }
+      const run = (f: (a: number) => void) => { for (let k = 0; k < 2; ++k) f(k); };
+      run(function (k) { const factory = fs[k]; const made = factory(3, 2); out += typeof made + ";"; });
+      if (out !== "number;object;number;object;") throw new Error(out);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("skips a function that a callback takes but doesn't name", async () => {
+    const result = await checkModel(`
+      const marker = new Uint8Array(1);
+      const each = (f: (value: number, make: (inner: unknown) => unknown) => void) => {
+        for (let k = 0; k < 2; ++k) {
+          const base = k;
+          f(base, function (inner: unknown) { return [base, inner]; });
+        }
+      };
+      let out = 0;
+      each(function (value) { out += value; });
+      if (out !== 1) throw new Error("sum");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+});
+
 describe("buffers", () => {
   it("reads and writes the elements of typed arrays that share a buffer", async () => {
     const result = await checkModel(`
