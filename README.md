@@ -3,25 +3,25 @@
     <source media="(prefers-color-scheme: dark)" srcset="packages/website/public/logo-dark.svg">
     <img src="packages/website/public/logo-light.svg" width="36" alt="" valign="middle" />
   </picture>
-  tla-ts
+  TLA-ts
 </h1>
 
 [![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 [![downloads](https://img.shields.io/npm/dt/tla-ts.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 
-tla-ts formally verifies your TypeScript code with [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
+TLA-ts formally verifies your TypeScript code with [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
 
-Under the hood, tla-ts is a transpiler that turns TypeScript/JavaScript into TLA+. It uses a 1:1 reimplementation of [TLC](https://github.com/tlaplus/tlaplus)/[TLAPM](https://proofs.tlapl.us) in TypeScript that runs 2× faster.
+Under the hood, TLA-ts is a transpiler that turns TypeScript/JavaScript into TLA+. It uses a 1:1 reimplementation of [TLC](https://github.com/tlaplus/tlaplus)/[TLAPM](https://proofs.tlapl.us) in TypeScript that runs 2× faster.
 
 [View playground](https://tla-ts.aidenybai.com)
 
 ## How it works
 
 1. Run `npx tla-ts [file].ts`.
-2. tla-ts transpiles TypeScript into TLA+.
-3. tla-ts model checks TypeScript code and finds violations.
+2. TLA-ts transpiles TypeScript into TLA+.
+3. TLA-ts model checks TypeScript code and finds violations.
 
-Here, tla-ts checks a counter:
+Here, TLA-ts checks a counter:
 
 ```ts
 // counter.ts
@@ -34,7 +34,7 @@ export const increment = () => {
 export const small = () => count < 3;
 ```
 
-tla-ts transpiles it into this TLA+ module:
+TLA-ts transpiles it into this TLA+ module:
 
 ```tla
 ---- MODULE Counter ----
@@ -73,7 +73,7 @@ npx tla-ts Counter.tla
 npx tla-ts tlapm Module.tla
 ```
 
-For a TLA+ spec, tla-ts reads `Counter.cfg` from the same folder and takes TLC's options.
+For a TLA+ spec, TLA-ts reads `Counter.cfg` from the same folder and takes TLC's options.
 
 ## API
 
@@ -137,13 +137,13 @@ formatValue(step.state.queue); // "<<1, 2>>"
 | `TlaSyntaxError`      | The module doesn't parse                        |
 | `TlaConfigError`      | The configuration is invalid                    |
 | `TlaEvaluationError`  | Evaluating the spec fails                       |
-| `TlaUnsupportedError` | The spec or call uses something tla-ts can't do |
+| `TlaUnsupportedError` | The spec or call uses something TLA-ts can't do |
 
 ## Benchmarks
 
 Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
 
-| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
+| Spec                                                           | Distinct states |     TLC |  TLA-ts | Speedup |
 | -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
 | [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |    2.2× |
 | [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.06 s |  0.71 s |    1.5× |
@@ -152,7 +152,7 @@ Wall time on one worker, including JVM and Node startup. Both checkers report th
 
 Wall time on 8 workers, also including startup. Each time is the median of 3 runs on an Apple M4 Pro.
 
-| Spec                                                                                                                  | Distinct states |     TLC | tla-ts | Speedup |
+| Spec                                                                                                                  | Distinct states |     TLC | TLA-ts | Speedup |
 | --------------------------------------------------------------------------------------------------------------------- | --------------: | ------: | -----: | ------: |
 | [Raft with reconfiguration](https://github.com/will62794/tla-web/blob/8193eb0/specs/RaftWithReconfigSingleServer.tla) |         298,493 | 10.50 s | 8.96 s |    1.2× |
 | [Sailfish](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/dag-consensus)                             |         109,604 |  4.34 s | 4.07 s |    1.1× |
