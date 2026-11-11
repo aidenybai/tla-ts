@@ -5,7 +5,7 @@
 
 tla-ts formally verifies your TypeScript code with [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
 
-Try it on the [website](https://tla-ts.aidenybai.com).
+[View playground](https://tla-ts.aidenybai.com)
 
 ## How it works
 
