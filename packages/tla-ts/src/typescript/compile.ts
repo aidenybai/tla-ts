@@ -72,8 +72,14 @@ const translateExported = (
 
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
 // relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
-export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
-  const program = createProgram(source, fileName.replaceAll("\\", "/"));
+// Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
+export const compile = (
+  source: string,
+  fileName = "spec.ts",
+  libraries?: ReadonlyMap<string, string>,
+): CompiledSpec => {
+  const path = fileName.replaceAll("\\", "/");
+  const program = createProgram(source, path, libraries);
   const context = createContext(program.checker);
   const sourceFile = program.sourceFile;
   // A script, with no exported functions, gives the objects and classes it makes, or reads through
@@ -191,5 +197,5 @@ export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
       define("UsedSymbols", [], tuple(context.symbols.map((name) => identifier(name)))),
     );
   }
-  return emit(getModuleName(fileName), program.sourceFile, model, sections, context);
+  return emit(getModuleName(path), program.sourceFile, model, sections, context);
 };
