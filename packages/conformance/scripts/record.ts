@@ -1,5 +1,4 @@
-import { availableParallelism } from "node:os";
-import { getHost, runPool, runTest } from "./hosts";
+import { getHost, runPool, runTest, WORKERS } from "./hosts";
 import {
   findTests,
   getContexts,
@@ -8,8 +7,6 @@ import {
   writeRecordings,
   type Recording,
 } from "./test-file";
-
-const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(4, availableParallelism()));
 
 const args = process.argv.slice(2);
 const isMissingOnly = args.includes("--missing");
@@ -22,7 +19,8 @@ const oracles = new Map(
   [...new Set(tests.map((test) => test.suite))].map((suite) => [suite, getHost(suite)]),
 );
 const refused: string[] = [];
-const progress = { done: 0, recorded: 0 };
+let doneCount = 0;
+let recordedCount = 0;
 
 await runPool(tests, WORKERS, async (test) => {
   const recordings: Record<string, Recording> = {};
@@ -46,12 +44,12 @@ await runPool(tests, WORKERS, async (test) => {
   refused.push(...refusals);
   if (refusals.length === 0) {
     writeRecordings(test, recordings);
-    progress.recorded += 1;
+    recordedCount += 1;
   }
-  progress.done += 1;
-  if (progress.done % 200 === 0) console.log(`${progress.done}/${tests.length}`);
+  doneCount += 1;
+  if (doneCount % 200 === 0) console.log(`${doneCount}/${tests.length}`);
 });
 
 refused.sort().forEach((line) => console.error(`REFUSED ${line}\n`));
-console.log(`Recorded ${progress.recorded} of ${tests.length} tests`);
+console.log(`Recorded ${recordedCount} of ${tests.length} tests`);
 process.exit(refused.length === 0 ? 0 : 1);

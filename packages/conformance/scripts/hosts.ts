@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { SuiteTest, TestContext } from "./test-file";
 import { normalizeTranscript } from "./transcript";
@@ -16,6 +16,10 @@ import { normalizeTranscript } from "./transcript";
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 
 export const TLC_JAR = join(PACKAGE_DIRECTORY, ".oracles/tla2tools.jar");
+
+export const WORKERS = Number(
+  process.env.CONFORMANCE_WORKERS ?? Math.min(4, availableParallelism()),
+);
 
 const DETERMINISTIC_ARGUMENTS = [
   "-workers",
@@ -95,8 +99,7 @@ interface Run {
   limits: Limits;
 }
 
-// Not the kill command: procps reads `kill -9 -<group>` as `kill -9 -1`, which kills every process
-// the user owns.
+// Not the kill command: procps reads `kill -9 -<group>` as `kill -9 -1`, every process of the user.
 const killGroup = (groupId: number | undefined) => {
   if (groupId === undefined) return;
   try {
@@ -123,9 +126,9 @@ const spawnRun = (run: Run) =>
         detached: true,
       });
       const groupId = child.pid;
-      const state: { exceeded?: "time" | "memory" } = {};
+      let exceeded: "time" | "memory" | undefined;
       const stop = (reason: "time" | "memory") => {
-        state.exceeded ??= reason;
+        exceeded ??= reason;
         killGroup(groupId);
       };
       const timer = run.limits.milliseconds
@@ -149,7 +152,7 @@ const spawnRun = (run: Run) =>
           exit: exitCode ?? (signal ? -1 : 0),
           stdout: Buffer.concat(stdout).toString("utf8"),
           stderr: Buffer.concat(stderr).toString("utf8"),
-          ...(state.exceeded ? { exceeded: state.exceeded } : {}),
+          ...(exceeded ? { exceeded } : {}),
         });
       });
     },
@@ -214,9 +217,9 @@ export const runPool = async <Item>(
   concurrency: number,
   work: (item: Item) => Promise<void>,
 ) => {
-  const queue = { next: 0 };
+  let nextIndex = 0;
   const runWorker = async () => {
-    while (queue.next < items.length) await work(items[queue.next++]);
+    while (nextIndex < items.length) await work(items[nextIndex++]);
   };
   await Promise.all(Array.from({ length: concurrency }, runWorker));
 };

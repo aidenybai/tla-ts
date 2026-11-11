@@ -84,13 +84,8 @@ const EXPRESSION_CONTEXTS = [
   },
 ];
 
-const getLastModuleEnd = (source: string) => {
-  const matches = [...source.matchAll(new RegExp(MODULE_END, "gm"))];
-  return matches.at(-1)?.index;
-};
-
 const appendToModule = (source: string, text: string) => {
-  const end = getLastModuleEnd(source);
+  const end = [...source.matchAll(new RegExp(MODULE_END, "gm"))].at(-1)?.index;
   if (end === undefined) throw new Error("The test has no module end line");
   return `${source.slice(0, end)}${text}\n${source.slice(end)}`;
 };
@@ -112,7 +107,7 @@ export const parseTest = (path: string, text: string): SuiteTest | undefined => 
   };
 };
 
-const listFiles = (directory: string): string[] =>
+export const listFiles = (directory: string): string[] =>
   readdirSync(directory)
     .sort()
     .flatMap((entry) => {
@@ -142,7 +137,7 @@ export const getContexts = (test: SuiteTest): TestContext[] =>
 export const getShard = <Item>(items: Item[], shard: string | undefined) => {
   if (!shard) return items;
   const parts = shard.split("/").map(Number);
-  return items.filter((_, index) => index % parts[1] === parts[0]);
+  return items.filter((_item, index) => index % parts[1] === parts[0]);
 };
 
 const ALL_CONTEXTS = "all";
@@ -172,6 +167,5 @@ export const writeRecordings = (test: SuiteTest, recordings: Record<string, Reco
   const entries = Object.values(recordings);
   const isUniform = entries.every((entry) => isSameRecording(entry, entries[0]));
   const stored = isUniform ? { [ALL_CONTEXTS]: entries[0] } : recordings;
-  const block = formatYaml(stored);
-  writeFileSync(test.path, `${test.source}\n(*--- recorded\n${block}\n---*)\n`);
+  writeFileSync(test.path, `${test.source}\n(*--- recorded\n${formatYaml(stored)}\n---*)\n`);
 };

@@ -12,7 +12,7 @@ interface Template {
   tlcBugValues?: string[];
 }
 
-// Bags.java reads a value that isn't a function as a null bag and throws a NullPointerException.
+// Deviation from TLC: Bags.java reads a value that isn't a function as a null bag and throws.
 const NON_FUNCTION_VALUES = VALUES.filter(
   (value) => !/^(Fcn|Tuple|Record)/.test(value.valueClass),
 ).map((value) => value.name);
@@ -75,7 +75,7 @@ const UNARY_TEMPLATES: Template[] = [
     name: "union_of",
     ref: "tlc2/value/impl/UnionValue.java",
     render: (value) => `UNION ${value}`,
-    // TLC's error names its Java enumerator object, not the value.
+    // Deviation from TLC: TLC's error names its Java enumerator object, not the value.
     tlcBugValues: [
       "bag",
       "colon_greater",
@@ -285,7 +285,7 @@ const UNARY_TEMPLATES: Template[] = [
     name: "tuple_pattern",
     ref: "tlc2/util/Context.java",
     render: (value) => `{a : <<a, b>> \\in ${value}}`,
-    // TLC's message for a binder that doesn't match ends in its unfilled %1.
+    // Deviation from TLC: TLC's message for a binder that doesn't match ends in its unfilled %1.
     tlcBugValues: [
       "boolean_set",
       "interval",

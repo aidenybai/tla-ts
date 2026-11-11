@@ -1,7 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
-import { getHost, getSuiteCommand, HOSTS, runPool, runTest, type HostResult } from "./hosts";
+import {
+  getHost,
+  getSuiteCommand,
+  HOSTS,
+  runPool,
+  runTest,
+  WORKERS,
+  type HostResult,
+} from "./hosts";
 import {
   findTests,
   getContexts,
@@ -29,7 +36,6 @@ interface ResultEntry {
   actual: HostResult;
 }
 
-const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(4, availableParallelism()));
 const CRASH_EXIT = -1;
 
 const args = process.argv.slice(2);

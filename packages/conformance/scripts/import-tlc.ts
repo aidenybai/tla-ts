@@ -8,9 +8,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { availableParallelism } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
-import { getHost, runPool, runTest } from "./hosts";
+import { getHost, runPool, runTest, WORKERS } from "./hosts";
 import {
   findTests,
   formatYaml,
@@ -25,7 +24,6 @@ import {
 
 const TOOLS_PATH = "tlatools/org.lamport.tlatools";
 const LIMIT_MILLISECONDS = 30_000;
-const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(4, availableParallelism()));
 
 const checkout = process.argv[2];
 const toolsDirectory = join(checkout, TOOLS_PATH);
@@ -71,8 +69,7 @@ interface PendingTest {
   isOutcomeObserved: boolean;
 }
 
-// These expect TLC to leak a Java exception or an internal name, or, with -continue, to report
-// that no error was found after a violation.
+// Deviation from TLC: these expect a leaked Java exception or name, or -continue to hide a violation.
 const TLC_BUG_TESTS = new Set([
   "PrintTraceExceptionTest",
   "ContinueTest",
@@ -105,27 +102,30 @@ const getConstructorArguments = (java: string) => {
   const start = java.search(/\bsuper\s*\(/);
   if (start === -1) return undefined;
   const open = java.indexOf("(", start);
-  const scan = { depth: 0, isString: false, current: "", parts: [] as string[] };
+  const parts: string[] = [];
+  let depth = 0;
+  let isString = false;
+  let current = "";
   for (let index = open; index < java.length; index += 1) {
     const character = java[index];
-    if (scan.isString) {
-      scan.current += character;
-      if (character === '"' && java[index - 1] !== "\\") scan.isString = false;
+    if (isString) {
+      current += character;
+      if (character === '"' && java[index - 1] !== "\\") isString = false;
       continue;
     }
-    if (character === '"') scan.isString = true;
-    if ("({".includes(character)) scan.depth += 1;
-    if (")}".includes(character)) scan.depth -= 1;
-    if (scan.depth === 0) {
-      scan.parts.push(scan.current.trim());
-      return scan.parts;
+    if (character === '"') isString = true;
+    if ("({".includes(character)) depth += 1;
+    if (")}".includes(character)) depth -= 1;
+    if (depth === 0) {
+      parts.push(current.trim());
+      return parts;
     }
-    if (character === "," && scan.depth === 1) {
-      scan.parts.push(scan.current.trim());
-      scan.current = "";
+    if (character === "," && depth === 1) {
+      parts.push(current.trim());
+      current = "";
       continue;
     }
-    if (!(index === open)) scan.current += character;
+    if (index !== open) current += character;
   }
   return undefined;
 };
@@ -352,15 +352,15 @@ const pendingTests = [
 const corrections = new Map(findTests([importDirectory]).map((test) => [test.path, test]));
 rmSync(importDirectory, { recursive: true, force: true });
 
-const command = getHost("tlc");
-const kept = { count: 0 };
+const host = getHost("tlc");
+let keptCount = 0;
 
 await runPool(pendingTests, WORKERS, async (pending) => {
   const path = writePending(pending);
   const test = parseTest(path, readFileSync(path, "utf8"));
   if (!test) return;
   const result = await runTest(
-    command,
+    host,
     test,
     { name: "model", source: test.source, config: test.metadata.config ?? "" },
     { milliseconds: LIMIT_MILLISECONDS },
@@ -386,9 +386,9 @@ await runPool(pendingTests, WORKERS, async (pending) => {
       ),
     );
   }
-  kept.count += 1;
-  if (kept.count % 100 === 0) console.log(`${kept.count}/${pendingTests.length}`);
+  keptCount += 1;
+  if (keptCount % 100 === 0) console.log(`${keptCount}/${pendingTests.length}`);
 });
 
 skipped.sort().forEach((line) => console.log(`SKIPPED ${line}`));
-console.log(`Ported ${kept.count} tests and skipped ${skipped.length}`);
+console.log(`Ported ${keptCount} tests and skipped ${skipped.length}`);

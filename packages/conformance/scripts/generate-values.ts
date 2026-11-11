@@ -62,7 +62,7 @@ const BINARY_OPERATORS: BinaryOperator[] = [
     name: "apply",
     ref: "tlc2/value/impl/FcnRcdValue.java#apply",
     render: (left, right) => `(${left})[${right}]`,
-    // TLC indexes past an argument shorter than the parameters, and prints the Java exception.
+    // Deviation from TLC: TLC indexes past an argument shorter than the parameters.
     tlcBugPairs: [
       "function_pair_domain__bag",
       "function_pair_domain__function_empty",
@@ -90,31 +90,30 @@ const generateBinaryOperator = (operator: BinaryOperator) =>
     ),
   );
 
-const ARITHMETIC_OPERATORS = ["+", "-", "*", "\\div", "%", "^", "<", "<=", "..", "/="];
-const ARITHMETIC_NAMES = [
-  "plus",
-  "minus",
-  "times",
-  "div",
-  "mod",
-  "power",
-  "less",
-  "less_equal",
-  "interval",
-  "not_equal",
+const ARITHMETIC_OPERATORS = [
+  { name: "plus", symbol: "+" },
+  { name: "minus", symbol: "-" },
+  { name: "times", symbol: "*" },
+  { name: "div", symbol: "\\div" },
+  { name: "mod", symbol: "%" },
+  { name: "power", symbol: "^" },
+  { name: "less", symbol: "<" },
+  { name: "less_equal", symbol: "<=" },
+  { name: "interval", symbol: ".." },
+  { name: "not_equal", symbol: "/=" },
 ];
 const INTEGER_VALUES = VALUES.filter((value) => value.valueClass === "IntValue");
 
 const generateArithmetic = () =>
-  ARITHMETIC_OPERATORS.forEach((symbol, index) =>
+  ARITHMETIC_OPERATORS.forEach((operator) =>
     INTEGER_VALUES.forEach((left) =>
       VALUES.forEach((right) =>
         writeValueTest(
-          `arithmetic/${ARITHMETIC_NAMES[index]}`,
-          `${ARITHMETIC_NAMES[index]}_${left.name}__${right.name}`,
-          `${symbol} of ${left.name} and ${right.name}, including overflow and type errors.`,
+          `arithmetic/${operator.name}`,
+          `${operator.name}_${left.name}__${right.name}`,
+          `${operator.symbol} of ${left.name} and ${right.name}, including overflow and type errors.`,
           "tlc2/module/Naturals.java; tlc2/module/Integers.java",
-          `(${left.text}) ${symbol} (${right.text})`,
+          `(${left.text}) ${operator.symbol} (${right.text})`,
         ),
       ),
     ),
