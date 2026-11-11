@@ -2942,6 +2942,26 @@ describe("errors", () => {
     ).toThrow("tla-ts can't assign a rest element to an array that a script reads as an object");
   });
 
+  it("runs a for-of pattern's default call only where its element is undefined", async () => {
+    const getSource = (check: string) => `
+      let count = 0;
+      const counter = (): number => {
+        count += 1;
+        return count * 10;
+      };
+      let seen = "";
+      for (const [w = counter(), x = counter(), y = counter()] of [
+        [undefined, 5, undefined] as (number | undefined)[],
+        [1, undefined, 2],
+      ]) {
+        seen = seen + \`\${w},\${x},\${y},\${count};\`;
+      }
+      if (seen !== "${check}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("10,5,20,2;1,30,2,3;"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("10,5,20,2;1,20,2,3;"))).failure).toBeDefined();
+  });
+
   it("makes a new function object each time a function makes one as a property's value", async () => {
     const getSource = (comparison: string) => `
       const make = function () {

@@ -4404,6 +4404,68 @@ const bindIteration = (
       bindIteration(declared, values, source, after, context, frame, continueWith),
     );
   if (taken) return taken;
+  // A default that calls a function runs only where its element is undefined, before the pattern
+  // binds.
+  const pending =
+    ts.isArrayBindingPattern(name) &&
+    name.elements.every((inner) => !ts.isBindingElement(inner) || ts.isIdentifier(inner.name))
+      ? name.elements.flatMap((inner, position) => {
+          const initializer = ts.isBindingElement(inner) ? inner.initializer : undefined;
+          const call = initializer && getCast(initializer);
+          return call !== undefined &&
+            ts.isCallExpression(call) &&
+            !path.scope.results.has(call) &&
+            (isStatementCall(call, path, context) ||
+              (path.scope.isCatching && mayThrow(call, context)))
+            ? [{ call, position }]
+            : [];
+        })
+      : [];
+  const first = pending.at(0);
+  if (first !== undefined) {
+    const bound = new Set(
+      findNodes(name, ts.isBindingElement).flatMap((inner) => getSymbols(inner.name, context)),
+    );
+    if (getSymbols(first.call, context).some((symbol) => bound.has(symbol))) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't run this default before what it binds",
+        first.call,
+      );
+    }
+    return translateJoined(
+      first.call,
+      path,
+      context,
+      (after, value) =>
+        bindIteration(
+          declared,
+          element,
+          source,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([
+                ...after.scope.results,
+                [first.call, value ?? getUndefined(context)],
+              ]),
+            },
+          },
+          context,
+          frame,
+          continueWith,
+        ),
+      (next) =>
+        ifThenElse(
+          apply("=", [
+            getElement(element, number(first.position + 1), context),
+            getUndefined(context),
+          ]),
+          translateCallStatement(first.call, path, context, frame, next),
+          next(path, getUndefined(context)),
+        ),
+    );
+  }
   // Each iteration makes the objects that the pattern's defaults make.
   return allocateAll(getAllocated(name, context), path, context, (allocated) => {
     const bound = bindPattern(name, element, allocated.scope, context);
