@@ -24,7 +24,6 @@ const CASES: [string, string][] = [
   ["properties of functions", "count = step.length;"],
   ["converting an array to a string", "label = `${values}`;"],
   ["delete", "delete record.a;"],
-  ["optional chaining", "count = record?.a ?? 0;"],
   [
     "a call that throws inside an expression in try",
     "const getChecked = (): number => { throw new Error('no'); }; try { count = getChecked(); } catch { count = 0; }",

@@ -1214,7 +1214,7 @@ const translatePropertyAccess = (
   scope: Scope,
   context: Context,
 ) => {
-  if (node.questionDotToken !== undefined) {
+  if (node.questionDotToken !== undefined && !scope.results.has(node.expression)) {
     throw new TlaTypeScriptError("Optional chaining isn't supported", node);
   }
   if (ts.isPrivateIdentifier(node.name)) return translatePrivateRead(node, scope, context);
@@ -1568,12 +1568,52 @@ const isPatternSource = (node: ts.Expression, context: Context) => {
   );
 };
 
+// An optional chain is undefined where the base of its first ?. is undefined or null, and reads
+// the rest of the chain from that base otherwise.
+const translateOptionalChain = (node: ts.Expression, scope: Scope, context: Context) => {
+  const getLinks = (link: ts.Expression): ts.Expression[] =>
+    ts.isOptionalChain(link) ? [link, ...getLinks(link.expression)] : [];
+  const optional = getLinks(node)
+    .filter(
+      (link) =>
+        (ts.isPropertyAccessExpression(link) ||
+          ts.isElementAccessExpression(link) ||
+          ts.isCallExpression(link)) &&
+        link.questionDotToken !== undefined &&
+        !scope.results.has(link.expression),
+    )
+    .at(-1);
+  if (optional === undefined || !ts.isOptionalChain(optional)) return undefined;
+  if (ts.isCallExpression(optional)) {
+    throw new TlaTypeScriptError("Optional calls aren't supported", optional);
+  }
+  const base = optional.expression;
+  context.prelude.add("Null");
+  context.prelude.add("Undefined");
+  return share(translateExpression(base, scope, context), "base", context, (shared) =>
+    ifExpression(
+      apply("\\in", [shared, set([identifier("Null"), identifier("Undefined")])]),
+      identifier("Undefined"),
+      translateExpression(
+        node,
+        { ...scope, results: new Map([...scope.results, [base, shared]]) },
+        context,
+      ),
+    ),
+  );
+};
+
 const translateNode = (
   node: ts.Expression,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ): Expression => {
+  const isChainEnd =
+    ts.isOptionalChain(node) &&
+    !(ts.isOptionalChain(node.parent) && node.parent.expression === node);
+  const chain = isChainEnd ? translateOptionalChain(node, scope, context) : undefined;
+  if (chain !== undefined) return chain;
   if (
     ts.isOmittedExpression(node) &&
     ts.isArrayLiteralExpression(node.parent) &&

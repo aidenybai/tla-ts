@@ -353,6 +353,29 @@ const CASES: Record<string, Case[]> = {
       setup: "const table: Record<string, Record<string, number>> = { a: { b: 1, zero: 0 } };",
     },
   ],
+  "optional chains": [
+    {
+      variables: "count = 0, record: { a?: number } | undefined = { a: 1 }",
+      statements: "count = record?.a ?? 0;",
+    },
+    {
+      variables: "count = 0",
+      statements: 'count = (records["y"]?.a ?? 7) + (records["x"]?.a ?? 0);',
+      setup: "const records: Record<string, { a?: number }> = { x: { a: 1 } };",
+    },
+    {
+      variables: "result: unknown = 0",
+      statements: 'result = [table["a"]?.["b"], table["z"]?.["b"] === undefined];',
+      setup: "const table: Record<string, Record<string, number>> = { a: { b: 1, zero: 0 } };",
+    },
+    {
+      variables: "result: unknown = 0",
+      statements:
+        'result = [boxes["a"]?.inner?.value, boxes["b"]?.inner?.value, boxes["c"]?.inner?.value];',
+      setup:
+        "interface Box {\n  inner?: { value: number };\n}\nconst boxes: Record<string, Box> = { a: { inner: { value: 3 } }, b: { inner: undefined } };",
+    },
+  ],
 };
 
 describe.each(Object.entries(CASES))("%s", (_, cases) => {
