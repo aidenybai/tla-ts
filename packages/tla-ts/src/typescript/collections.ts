@@ -1276,6 +1276,9 @@ const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["trim", { operator: "StringTrim", parameters: [], trimmed: [true, true] }],
   ["trimStart", { operator: "StringTrim", parameters: [], trimmed: [true, false] }],
   ["trimEnd", { operator: "StringTrim", parameters: [], trimmed: [false, true] }],
+  ["split", { operator: "StringSplit", parameters: ["string", "number"] }],
+  ["replace", { operator: "StringReplace", parameters: ["string", "string"] }],
+  ["replaceAll", { operator: "StringReplaceAll", parameters: ["string", "string"] }],
 ]);
 
 // The methods that give a string itself, which only a string or a String object has, so that

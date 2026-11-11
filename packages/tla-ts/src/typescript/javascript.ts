@@ -1157,6 +1157,84 @@ CharCodeAt(value, index) == CodeAt(value, index, NaN)
 \\* character's code point is its code.
 CodePointAt(value, index) == CodeAt(value, index, Undefined)
 
+LOCAL FirstOf(indices) == CHOOSE index \\in indices : \\A other \\in indices : index <= other
+
+\\* The pieces that String.prototype.split cuts a string into at a nonempty separator, at most
+\\* limit of them, where a negative limit takes them all.
+RECURSIVE SplitPieces(_, _, _, _)
+SplitPieces(text, separator, start, limit) ==
+  LET found == {index \\in Occurrences(text, separator) : index >= start}
+  IN  IF found = {}
+      THEN <<SubSeq(text, start + 1, Len(text))>>
+      ELSE <<SubSeq(text, start + 1, FirstOf(found))>>
+             \\o (IF limit = 1
+                 THEN <<>>
+                 ELSE SplitPieces(text, separator, FirstOf(found) + Len(separator), limit - 1))
+
+\\* String.prototype.split at a string separator. ToUint32 of a negative limit is past any string's
+\\* length, so a negative limit takes every piece.
+StringSplit(value, separator, limit) ==
+  LET text == Text(value)
+      count == CASE limit = Undefined -> -1
+                 [] limit \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
+                 [] OTHER -> limit
+      head == IF count < 0 \\/ count > Len(text) THEN text ELSE SubSeq(text, 1, count)
+  IN  CASE count = 0 -> <<>>
+        [] separator = Undefined -> <<text>>
+        [] Text(separator) = "" ->
+             [position \\in 1..Len(head) |->
+                LET character == SubSeq(head, position, position)
+                IN  IF character \\in DOMAIN AsciiCodes
+                    THEN character
+                    ELSE Assert(FALSE, "tla-ts can't split a string with a character outside ASCII")]
+        [] text = "" -> <<text>>
+        [] OTHER -> SplitPieces(text, separator, 0, count)
+
+\\* GetSubstitution of a replacement template where a string matched, with no captures: $$ writes $,
+\\* $& the match, $\` what precedes it, and $' what follows it. Any other $ stays as it is.
+RECURSIVE Substitution(_, _, _, _)
+Substitution(template, matched, preceding, following) ==
+  LET next == IF Len(template) >= 2 THEN SubSeq(template, 2, 2) ELSE ""
+      rest == IF Len(template) >= 2 THEN SubSeq(template, 3, Len(template)) ELSE ""
+  IN  CASE template = "" -> ""
+        [] SubSeq(template, 1, 1) # "$" \\/ next = "" ->
+             SubSeq(template, 1, 1) \\o Substitution(Tail(template), matched, preceding, following)
+        [] next = "$" -> "$" \\o Substitution(rest, matched, preceding, following)
+        [] next = "&" -> matched \\o Substitution(rest, matched, preceding, following)
+        [] next = "\`" -> preceding \\o Substitution(rest, matched, preceding, following)
+        [] next = "'" -> following \\o Substitution(rest, matched, preceding, following)
+        [] OTHER -> "$" \\o Substitution(Tail(template), matched, preceding, following)
+
+\\* The positions where replaceAll replaces a string, where an empty one matches between characters.
+RECURSIVE MatchPositions(_, _, _)
+MatchPositions(text, search, start) ==
+  LET found == {index \\in Occurrences(text, search) : index >= start}
+  IN  IF found = {}
+      THEN <<>>
+      ELSE <<FirstOf(found)>>
+             \\o MatchPositions(text, search, FirstOf(found) + (IF search = "" THEN 1 ELSE Len(search)))
+
+\\* A string where each match at the positions becomes its substitution, the rest kept from end on.
+RECURSIVE Replaced(_, _, _, _, _)
+Replaced(text, search, template, positions, end) ==
+  IF positions = <<>>
+  THEN SubSeq(text, end + 1, Len(text))
+  ELSE LET position == Head(positions)
+       IN  SubSeq(text, end + 1, position)
+             \\o Substitution(template, search, SubSeq(text, 1, position),
+                             SubSeq(text, position + Len(search) + 1, Len(text)))
+             \\o Replaced(text, search, template, Tail(positions), position + Len(search))
+
+\\* String.prototype.replace of the first match of a string with a template.
+StringReplace(value, search, template) ==
+  LET text == Text(value)
+      positions == MatchPositions(Text(value), Text(search), 0)
+  IN  Replaced(text, search, Text(template), IF positions = <<>> THEN <<>> ELSE <<Head(positions)>>, 0)
+
+\\* String.prototype.replaceAll of every match of a string with a template.
+StringReplaceAll(value, search, template) ==
+  Replaced(Text(value), Text(search), Text(template), MatchPositions(Text(value), Text(search), 0), 0)
+
 LOCAL Lowercase == "abcdefghijklmnopqrstuvwxyz"
 
 LOCAL Uppercase == "ABCDEFGHIJKLMNOPQRSTUVWXYZ"

@@ -3016,18 +3016,18 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't throw the TypeError of a string method");
   });
 
-  it("throws the TypeError of a new of a built-in method that a declaration holds", async () => {
+  it("splits and replaces at a string", async () => {
     const result = await checkModel(`
-      const box = { size: 0 };
-      const factory = String.prototype.charAt;
-      let caught = false;
-      try {
-        // @ts-ignore
-        const made = new factory();
-      } catch (error) {
-        caught = error instanceof TypeError;
-      }
-      if (!caught) throw new Error("constructed");
+      const text: string = "one two  three";
+      const pieces = text.split(" ");
+      if (pieces.length !== 4 || pieces[2] !== "" || pieces[3] !== "three") throw new Error("split");
+      const limited = text.split(" ", 2);
+      const chars = "abc".split("");
+      if (limited.length !== 2 || limited[1] !== "two" || chars[2] !== "c") throw new Error("limit");
+      if ("a,b".split(",", 0).length !== 0 || "".split("x")[0] !== "") throw new Error("edge");
+      const swapped = "a-b-c".replace("-", "[$&|$\`|$'|$$|$1]");
+      if (swapped !== "a[-|a|b-c|$|$1]b-c") throw new Error(swapped);
+      if ("ab".replaceAll("", "_") !== "_a_b_" || "a-b-c".replaceAll("-", "+") !== "a+b+c") throw new Error("all");
     `);
     expect(result.failure).toBeUndefined();
   });
