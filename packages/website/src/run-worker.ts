@@ -2,7 +2,7 @@ import { check, formatValue, prove, TlaError, type CheckStatus } from "tla-ts";
 import { getErrorResult } from "./run-error";
 
 export type RunRequest =
-  | { kind: "check"; source: string; config: string }
+  | { kind: "check"; source: string; config: string; modules?: Record<string, string> }
   | { kind: "prove"; source: string };
 
 export interface TraceStepSummary {
@@ -57,9 +57,13 @@ const formatElapsed = (elapsedMs: number) => `${Math.round(elapsedMs).toLocaleSt
 
 const getElapsed = (startedAt: number) => formatElapsed(performance.now() - startedAt);
 
-const getCheckResult = async (source: string, config: string): Promise<RunResult> => {
+const getCheckResult = async (
+  source: string,
+  config: string,
+  modules: Record<string, string> | undefined,
+): Promise<RunResult> => {
   const startedAt = performance.now();
-  const result = await check({ source, config });
+  const result = await check({ source, config, loadModule: (name) => modules?.[name] });
   const elapsedMs = performance.now() - startedAt;
   if (result.failure) {
     return getErrorResult("Error", result.failure.message, formatElapsed(elapsedMs));
@@ -127,7 +131,7 @@ self.onmessage = async (event: MessageEvent<RunRequest>) => {
   try {
     self.postMessage(
       event.data.kind === "check"
-        ? await getCheckResult(event.data.source, event.data.config)
+        ? await getCheckResult(event.data.source, event.data.config, event.data.modules)
         : await getProveResult(event.data.source),
     );
   } catch (error) {

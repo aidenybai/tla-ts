@@ -38,6 +38,8 @@ export interface ViewFile extends ViewSource {
   module: ViewSource;
   // The TLC configuration that checks the module.
   config: string;
+  // The modules that the module extends besides the standard ones, by name.
+  modules: Record<string, string>;
   nodes: GraphNode[];
   edges: GraphEdge[];
 }

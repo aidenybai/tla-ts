@@ -14,6 +14,8 @@ export interface PrintedSpec {
   name: string;
   source: string;
   config: string;
+  // The modules that the module extends besides the standard ones, by name.
+  modules: Record<string, string>;
   regions: PrintedRegion[];
   variables: StateVariable[];
 }
@@ -32,6 +34,12 @@ self.onmessage = (event: MessageEvent<CompileRequest>) => {
         name: compiled.name,
         source: printed.text,
         config: compiled.config,
+        modules: Object.fromEntries(
+          compiled.source.extends.flatMap((name) => {
+            const text = compiled.loadModule(name);
+            return text === undefined ? [] : [[name, text]];
+          }),
+        ),
         regions: printed.regions,
         variables: compiled.variables,
       },
