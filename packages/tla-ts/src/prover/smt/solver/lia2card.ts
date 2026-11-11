@@ -116,6 +116,10 @@ class PbRewriter extends RewriterTpl {
     return isThen && isElse;
   }
 
+  isPbSum(term: number) {
+    return this.getSum(0, term, Rational.one, [], { args: [], coeffs: [], coeff: Rational.zero });
+  }
+
   private getPb(first: number, second: number) {
     const sum: PbSum = { args: [], coeffs: [], coeff: Rational.zero };
     const isPb =
@@ -186,6 +190,14 @@ class PbRewriter extends RewriterTpl {
     return result;
   }
 }
+
+// get_pb_sum: whether a term is a weighted sum of 0-1 terms, as an objective MaxSMT takes.
+export const isPbSum = (manager: AstManager, term: number) => {
+  const terms = new RefVector(manager);
+  const isSum = new PbRewriter(manager, terms, 4, true).isPbSum(term);
+  terms.reset();
+  return isSum;
+};
 
 export const lia2card = (
   manager: AstManager,

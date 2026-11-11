@@ -612,6 +612,21 @@ export class LarSolver {
     }
   }
 
+  hasIntVar() {
+    return this.localIsInt.some((isInt) => isInt);
+  }
+
+  // Columns added after the backup get basic values from their rows, as the tableau requires.
+  restoreX() {
+    const core = this.core;
+    const isGrown = core.getBackupSize() < core.getColumnCount();
+    core.restoreX();
+    if (!isGrown) return;
+    for (let rowIndex = 0; rowIndex < this.getRowCount(); rowIndex++)
+      core.x[core.basis[rowIndex]] = this.getBasicVarValueFromRow(rowIndex);
+    this.moveNonBasicColumnsToBounds();
+  }
+
   hasInfInt() {
     for (let column = 0; column < this.getColumnCount(); column++)
       if (this.isInt(column) && !this.core.x[column].isInt()) return true;

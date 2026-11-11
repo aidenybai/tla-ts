@@ -58,6 +58,21 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     return true;
   }
 
+  // mk_ge of theory_lra: the atom of an objective bound, without the enode of its term.
+  protected mkObjectiveBound(atom: number, thVar: number, isLower: boolean, value: Rational) {
+    const context = this.context;
+    if (context.isBInternalized(atom)) return;
+    const boolVar = context.mkBoolVar(atom);
+    this.boolVarToBound[boolVar] = undefined;
+    context.setVarTheory(boolVar, this.id);
+    const apiBound = this.mkVarBound(boolVar, thVar, isLower, value);
+    this.mkBoundAxioms(apiBound);
+    this.updateUnassignedBounds(thVar, 1);
+    this.bounds[thVar].push(apiBound);
+    this.boundsTrail.push(thVar);
+    this.boolVarToBound[boolVar] = apiBound;
+  }
+
   private updateUnassignedBounds(thVar: number, increment: number) {
     const saved = this.unassignedBounds[thVar];
     this.context.pushTrail(() => {

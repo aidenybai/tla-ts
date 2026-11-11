@@ -2,7 +2,7 @@
 // round_to_integer_solution in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
-import { LP_FEASIBLE, LP_OPTIMAL } from "./core-solver";
+import { LP_FEASIBLE, LP_OPTIMAL, LP_UNBOUNDED } from "./core-solver";
 import { type LarSolver, NULL_LPVAR } from "./lar-solver";
 import type { LarTerm } from "./lar-term";
 import { maximizeTerm } from "./maximize-term";
@@ -258,7 +258,7 @@ export const findLargestCube = (solver: LarSolver) => {
     solver.pop(1);
     return false;
   }
-  if (maximum === undefined) {
+  if (maximum.status === LP_UNBOUNDED) {
     addVarBound(solver, edge, KIND_GE, Rational.one);
     const boundedStatus = solver.findFeasibleSolution();
     solver.pop(1);
@@ -267,7 +267,7 @@ export const findLargestCube = (solver: LarSolver) => {
       : false;
   }
   solver.pop(1);
-  return maximum.compare(new Impq(Rational.one)) >= 0
+  return maximum.value.compare(new Impq(Rational.one)) >= 0
     ? roundCenter(solver)
     : roundAndRepair(solver);
 };

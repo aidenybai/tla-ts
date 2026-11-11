@@ -20,6 +20,8 @@ import {
   OP_IDIV,
   OP_MOD,
   OP_MUL,
+  OP_TO_REAL,
+  OP_UMINUS,
   OP_IMPLIES,
   SORT_BOOL,
   SORT_INT,
@@ -246,7 +248,11 @@ const isBeyondOptimization = (manager: AstManager, formulas: number[]) => {
     if (manager.hasQuantifierFlags[expr]) return true;
     const args = manager.getArgs(expr);
     const op = manager.getOp(expr);
-    if (op === OP_MUL && args.filter((arg) => !manager.isNumeral(arg)).length > 1) return true;
+    const isConstant = (arg: number): boolean =>
+      manager.isNumeral(arg) ||
+      ((manager.getOp(arg) === OP_UMINUS || manager.getOp(arg) === OP_TO_REAL) &&
+        isConstant(manager.getArg(arg, 0)));
+    if (op === OP_MUL && args.filter((arg) => !isConstant(arg)).length > 1) return true;
     if ((op === OP_DIV || op === OP_IDIV || op === OP_MOD) && !manager.isNumeral(args[1]))
       return true;
     stack.push(...args);
@@ -393,20 +399,20 @@ export const runSmtlibScript = (
       paretoMaxLemmas: Number(parameters.get("opt.pareto_nlsat_max_lemmas") ?? 128),
     };
   };
-  const optimizeNonlinear = (extra: number[]) => {
+  const optimize = (extra: number[], isLinear: boolean) => {
     const state = script.state;
     const manager = state.manager;
     const objectives = state.objectives;
     const hard = [...getNamedAssertions(), ...state.names.filter((name) => name !== -1), ...extra];
     if (
-      objectives.some(
+      !isLinear &&
+      (objectives.some(
         (objective) => objective.isSoft || manager.sorts[objective.term] !== SORT_REAL,
       ) ||
-      !isInNraFragment(manager, [...hard, ...objectives.map((objective) => objective.term)]) ||
-      hasIntConst(manager, [...hard, ...objectives.map((objective) => objective.term)])
+        !isInNraFragment(manager, [...hard, ...objectives.map((objective) => objective.term)]) ||
+        hasIntConst(manager, [...hard, ...objectives.map((objective) => objective.term)]))
     )
       throw new SmtUnsupportedError("optimization beyond linear arithmetic");
-    const optOptions = getOptOptions();
     const pinned = hard.map((form) => {
       manager.incRef(form);
       return form;
@@ -425,9 +431,16 @@ export const runSmtlibScript = (
     clearCheck();
     state.manager.limit.push(settings.rlimit);
     try {
+      const hasAssumptions = extra.length > 0 || state.names.some((name) => name !== -1);
       const status = optimizer.optimize(hard, {
-        ...optOptions,
-        hasAssumptions: extra.length > 0 || state.names.some((name) => name !== -1),
+        ...getOptOptions(),
+        hasAssumptions,
+        isLinear,
+        isEliminatingZeroOne:
+          settings.parameters.get("opt.elim_01") !== "false" &&
+          state.logic === undefined &&
+          !hasAssumptions &&
+          settings.parameters.get("opt.incremental") !== "true",
       });
       optimizer.model?.incRef();
       state.check = {
@@ -438,7 +451,13 @@ export const runSmtlibScript = (
         core: undefined,
       };
       print(getVerdict(status));
+      return true;
     } catch (error) {
+      // The unported parts of linear optimization keep the answer of the hard constraints.
+      if (isLinear && error instanceof SmtUnsupportedError) {
+        resetOptimizer();
+        return false;
+      }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
       optimizer.release();
       state.check = {
@@ -449,6 +468,7 @@ export const runSmtlibScript = (
         core: undefined,
       };
       print("unknown");
+      return true;
     } finally {
       state.manager.limit.pop();
       for (const form of pinned) manager.decRef(form);
@@ -462,17 +482,23 @@ export const runSmtlibScript = (
     const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
-    // satisfiable, optsmt and maxsmt only improve the model.
-    if (
+    // satisfiable, optsmt and maxsmt only improve the model. MaxSMT and the unported parts of
+    // optsmt only get that answer.
+    const isBeyond =
       state.objectives.length > 0 &&
       isBeyondOptimization(state.manager, [
         ...state.assertions,
         ...state.objectives.map((objective) => objective.term),
-      ])
-    ) {
-      optimizeNonlinear(extra);
+      ]);
+    const isMaxSmt = state.objectives.some(
+      (objective) =>
+        objective.isSoft || state.manager.isBvSort(state.manager.sorts[objective.term]),
+    );
+    if (isBeyond) {
+      optimize(extra, false);
       return;
     }
+    if (state.objectives.length > 0 && !isMaxSmt && optimize(extra, true)) return;
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     try {

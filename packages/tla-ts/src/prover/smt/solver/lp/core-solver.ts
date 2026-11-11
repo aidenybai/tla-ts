@@ -46,6 +46,7 @@ export class CoreSolver {
   infeasibleCombination: [Rational, number][] = [];
   // m_d: the reduced costs while maximize_term runs the tableau_costs strategy, kept on pivots.
   reducedCosts: Rational[] | undefined;
+  private backup: Impq[] = [];
   private isBlandMode = false;
   private leftBasis = new IndexedUintSet();
   private leftBasisRepeated = 0;
@@ -54,6 +55,19 @@ export class CoreSolver {
 
   getColumnCount() {
     return this.matrix.getColumnCount();
+  }
+
+  backupX() {
+    this.backup = this.x.slice();
+  }
+
+  restoreX() {
+    const count = Math.min(this.backup.length, this.getColumnCount());
+    for (let column = 0; column < count; column++) this.x[column] = this.backup[column];
+  }
+
+  getBackupSize() {
+    return this.backup.length;
   }
 
   addColumn(isBasic: boolean) {

@@ -81,7 +81,17 @@ export const canReuseNlsatSolver = (manager: AstManager, terms: readonly number[
   return true;
 };
 
-export class ParetoNlsatSolver {
+export interface ParetoSolver {
+  readonly model: ProtoModel | null;
+  reasonUnknown: string;
+  check(): number;
+  assert(expr: number): void;
+  push(): void;
+  pop(): void;
+  release(): void;
+}
+
+export class ParetoNlsatSolver implements ParetoSolver {
   private assertions: RefVector;
   private pinned: RefVector;
   private tags: (number | null)[] = [];
@@ -212,7 +222,7 @@ export class ParetoNlsatSolver {
 
 export const giaPareto = (
   manager: AstManager,
-  solver: ParetoNlsatSolver,
+  solver: ParetoSolver,
   objectives: readonly ParetoObjective[],
 ) => {
   const pinned = new RefVector(manager);

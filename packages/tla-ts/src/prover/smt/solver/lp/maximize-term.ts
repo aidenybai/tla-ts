@@ -309,16 +309,43 @@ const maximizeOnFeasibleSolver = (solver: LarSolver, term: LarTerm) => {
   return status === LP_UNBOUNDED || status === LP_CANCELLED ? undefined : term.apply(core.x);
 };
 
-export const maximizeTerm = (solver: LarSolver, column: number) => {
+// Integer columns that maximization left fractional move out of the basis, if they can.
+const adjustIntegerColumns = (solver: LarSolver, term: LarTerm, previous: Impq, maximum: Impq) => {
+  const core = solver.core;
+  const restore = () => {
+    core.restoreX();
+    return { status: LP_FEASIBLE, value: previous };
+  };
+  let isChanged = false;
+  for (let column = 0; column < core.x.length; column++) {
+    if (!solver.isInt(column) || core.x[column].isInt()) continue;
+    if (solver.isBase(column) && !solver.removeFromBasis(column)) return restore();
+    if (!core.x[column].isInt()) return restore();
+    isChanged = true;
+  }
+  const changed = isChanged ? term.apply(core.x) : maximum;
+  const isWorse = changed.compare(previous) < 0;
+  if (isWorse) core.restoreX();
+  const value = isWorse ? previous : changed;
+  if (!value.equals(maximum)) return { status: LP_FEASIBLE, value };
+  solver.status = LP_OPTIMAL;
+  return { status: LP_OPTIMAL, value };
+};
+
+export const maximizeTerm = (solver: LarSolver, column: number, isFixingIntCols = false) => {
   const term = solver.hasTerm(column)
     ? solver.getTerm(column)
     : new LarTerm([[column, Rational.one]]);
-  const backup = solver.core.x.slice();
+  solver.core.backupX();
+  const previous = term.apply(solver.core.x);
   const maximum = maximizeOnFeasibleSolver(solver, term);
   if (maximum === undefined) {
-    solver.core.x.splice(0, backup.length, ...backup);
-    return undefined;
+    solver.core.restoreX();
+    return { status: LP_UNBOUNDED, value: Impq.zero };
   }
-  solver.status = LP_OPTIMAL;
-  return maximum;
+  if (!isFixingIntCols) {
+    solver.status = LP_OPTIMAL;
+    return { status: LP_OPTIMAL, value: maximum };
+  }
+  return adjustIntegerColumns(solver, term, previous, maximum);
 };

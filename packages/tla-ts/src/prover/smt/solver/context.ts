@@ -36,7 +36,7 @@ import {
   UNDO_TH_VAR,
 } from "./internalizer";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate } from "./literal";
+import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate, toBoolVar } from "./literal";
 import type { MacroManager } from "./macro-finder";
 import { mkModel } from "./model-generator";
 import type { GeneratedModel } from "./model-generator";
@@ -135,6 +135,7 @@ export class Context extends Internalizer {
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
+  private hasCaseSplit = true;
   private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
   macros: MacroManager | undefined;
@@ -1029,7 +1030,14 @@ export class Context extends Internalizer {
 
   private decide() {
     const boolVar = this.caseSplitQueue.nextCaseSplit();
-    if (boolVar === undefined) return false;
+    if (boolVar === undefined) {
+      const hadCaseSplit = this.hasCaseSplit;
+      this.pushTrail(() => {
+        this.hasCaseSplit = hadCaseSplit;
+      });
+      this.hasCaseSplit = false;
+      return false;
+    }
     const isPositive = this.guess(boolVar);
     this.pushScope();
     this.assign(mkLiteral(boolVar, !isPositive), "axiom", true);
@@ -1185,6 +1193,26 @@ export class Context extends Internalizer {
     if (this.lastSearchFailure === FAILURE_THEORY)
       return `(incomplete (theory${this.incompleteTheories.map((theory) => ` ${theory.name}`).join("")}))`;
     return "unknown";
+  }
+
+  private hasCaseSplits() {
+    if (!this.hasCaseSplit) return false;
+    for (let index = this.numBoolVars; index-- > 0;)
+      if (
+        this.isRelevant(this.boolVar2Expr[index]) &&
+        this.assignment[mkLiteral(toBoolVar(index))] === L_UNDEF
+      )
+        return true;
+    return false;
+  }
+
+  isQuantifierIncomplete() {
+    return this.lastSearchFailure === FAILURE_QUANTIFIERS;
+  }
+
+  // Z3's update_model always answers false, after it recomputes a final state for the next model.
+  updateModel() {
+    if (!this.hasCaseSplits() && this.finalCheck() === FC_DONE) this.resetModel();
   }
 
   getModel() {

@@ -267,7 +267,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
   }
 
   // Int expressions of a Real sum are coerced to Real.
-  private coeffsToApp(coeffs: [number, Rational][], isInt: boolean) {
+  protected coeffsToApp(coeffs: [number, Rational][], isInt: boolean) {
     const manager = this.manager;
     const sort = isInt ? SORT_INT : SORT_REAL;
     const summands = coeffs
