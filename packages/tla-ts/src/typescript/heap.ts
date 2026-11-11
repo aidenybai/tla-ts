@@ -1657,6 +1657,37 @@ export const findHeapArrays = (roots: readonly ts.Node[], context: Context) => {
       arrays.add(rest);
     }
   });
+  // An array literal that a variable holds, where the script gives the array a property that isn't
+  // its length or an index and reads it only as an object, as a test of exec builds the array it
+  // expects.
+  const isNamedWrite = (use: ts.Identifier) =>
+    ts.isPropertyAccessExpression(use.parent) &&
+    use.parent.expression === use &&
+    use.parent.name.text !== "length" &&
+    ts.isBinaryExpression(use.parent.parent) &&
+    use.parent.parent.left === use.parent &&
+    use.parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+  references.forEach((uses, symbol) => {
+    const declaration = symbol.valueDeclaration;
+    const literal =
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer !== undefined &&
+      ts.isArrayLiteralExpression(declaration.initializer)
+        ? declaration.initializer
+        : undefined;
+    const reads = uses.filter((use) => use.parent !== declaration);
+    if (
+      literal !== undefined &&
+      literal.elements.every(
+        (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
+      ) &&
+      reads.some(isNamedWrite) &&
+      reads.every((use) => isArrayObjectUse(use, context))
+    ) {
+      arrays.add(literal);
+    }
+  });
   const check = (node: ts.Node) => {
     if (
       ts.isIdentifier(node) &&

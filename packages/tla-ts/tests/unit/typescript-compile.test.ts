@@ -5570,6 +5570,25 @@ describe("regular expressions", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("hold an array on the heap where a script gives it a property other than an index", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      var expected = ["ab", "b"];
+      // @ts-ignore
+      expected.index = 1;
+      const found = /a(b)/.exec("xab");
+      // @ts-ignore
+      if (found === null || found.index !== expected.index || found.length !== expected.length) {
+        throw new Error("expected");
+      }
+      for (var position = 0; position < expected.length; position++) {
+        if (found[position] !== expected[position]) throw new Error("element");
+      }
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
   it("throw the TypeError of replaceAll with a regexp that isn't global", async () => {
     const result = await checkModel(`
       const holder: { tag?: string } = {};
