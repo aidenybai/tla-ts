@@ -342,7 +342,32 @@ describe("tags", () => {
 
   it("checks eventually with weak fairness", async () => {
     expect((await checkModel(getTicker("/** @fair */"))).status).toBe("success");
-    expect((await checkModel(getTicker(""))).status).toBe("liveness-violation");
+  });
+
+  it("keeps a spec with a liveness property and no fair action from stopping", async () => {
+    const result = await checkModel(getTicker(""));
+    expect(result.status).toBe("success");
+    expect(compile(getTicker("")).source).toContain("WF_vars(Next)");
+  });
+
+  it("lets other steps starve an action that isn't fair", async () => {
+    const getSpec = (tag: string) => `
+      /** @noDeadlock */
+      let count = 0;
+      let isOn = false;
+      ${tag}
+      export const tick = () => {
+        if (count >= 3) return;
+        count++;
+      };
+      export const toggle = () => {
+        isOn = !isOn;
+      };
+      /** @eventually */
+      export const reachesThree = () => count === 3;
+    `;
+    expect((await checkModel(getSpec(""))).status).toBe("liveness-violation");
+    expect((await checkModel(getSpec("/** @fair */"))).status).toBe("success");
   });
 
   it("checks a step property against the state before the step", async () => {

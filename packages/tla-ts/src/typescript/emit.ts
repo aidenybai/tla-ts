@@ -9,6 +9,9 @@ export interface Sections {
   fairness: string[];
   predicates: string[];
   temporal: string[];
+  // The properties that need steps to happen, such as @eventually, which no behavior satisfies
+  // when it may stop.
+  liveness: string[];
   invariants: string[];
   properties: string[];
   constraints: string[];
@@ -37,6 +40,7 @@ export const createSections = (): Sections => ({
   fairness: [],
   predicates: [],
   temporal: [],
+  liveness: [],
   invariants: [],
   properties: [],
   constraints: [],
@@ -94,7 +98,13 @@ export const emit = (
     `Init ==${formatConjunction(sections.init.length > 0 ? sections.init : ["TRUE"])}`,
     ...sections.actions,
     `Next ==${formatDisjunction(sections.next)}`,
-    `Spec ==${formatConjunction(["Init", "[][Next]_vars", ...sections.fairness])}`,
+    `Spec ==${formatConjunction([
+      "Init",
+      "[][Next]_vars",
+      ...(sections.fairness.length === 0 && sections.liveness.length > 0
+        ? ["WF_vars(Next)"]
+        : sections.fairness),
+    ])}`,
     ...sections.predicates,
     ...sections.temporal,
     ...sections.assumptions.map((assumption) => `ASSUME ${assumption}`),

@@ -8,13 +8,11 @@ const M = 5;
 /** @noDeadlock */
 let c!: [Value, Value, Value, Value, Value];
 
-/** @fair */
 export const createToken = () => {
   if (c[0] !== c[N - 1]) return;
   c[0] = ((c[N - 1] + 1) % M) as Value;
 };
 
-/** @fair */
 export const passToken = (node: Node) => {
   if (node === 0 || c[node] === c[node - 1]) return;
   c[node] = c[node - 1];

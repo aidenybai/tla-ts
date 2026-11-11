@@ -98,12 +98,14 @@ export const translateProperty = (
   if (operator !== undefined) {
     sections.temporal.push(`${name} ==\n  ${forAll}${operator}(${value})`);
     sections.properties.push(name);
+    sections.liveness.push(name);
   }
   if (tag === "leadsTo") {
     const parameters = quantified.map((parameter) => parameter.name);
     const target = getLeadsToTarget(definition, parameters, model, context);
     sections.temporal.push(`${name} ==\n  ${forAll}(${value}) ~> ${target}`);
     sections.properties.push(name);
+    sections.liveness.push(name);
   }
   if (tag === "always") {
     sections.temporal.push(

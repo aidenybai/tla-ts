@@ -12,20 +12,17 @@ const beanCount = () => can.black + can.white;
 /** @initially */
 export const startsWithBeans = () => beanCount() >= 1 && beanCount() <= maxBeanCount;
 
-/** @fair */
 export const pickSameColorWhite = () => {
   if (beanCount() <= 1 || can.white < 2) return;
   can.black += 1;
   can.white -= 2;
 };
 
-/** @fair */
 export const pickSameColorBlack = () => {
   if (beanCount() <= 1 || can.black < 2) return;
   can.black -= 1;
 };
 
-/** @fair */
 export const pickDifferentColor = () => {
   if (beanCount() <= 1 || can.black < 1 || can.white < 1) return;
   can.black -= 1;

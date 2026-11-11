@@ -16,7 +16,6 @@ let i = 0;
 let cand: Value;
 let cnt = 0;
 
-/** @fair */
 export const next = () => {
   if (i >= seq.length) return;
   const value = seq[i];
