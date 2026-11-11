@@ -8,6 +8,7 @@ import {
   getSymbol,
   getUndefined,
   isMethodCall,
+  isNameRead,
   type MethodCall,
   share,
 } from "./context";
@@ -233,7 +234,11 @@ const bindIndexed = (
   ];
   return parameters.reduce((current, parameter, position) => {
     const value = bindings[position];
-    if (position === bindings.length - 1 && ts.isIdentifier(parameter.name)) {
+    if (
+      position === bindings.length - 1 &&
+      ts.isIdentifier(parameter.name) &&
+      isNameRead(parameter.name, found.body, context)
+    ) {
       const kind = getKind(parameter.name, context);
       const isUnknown =
         (context.checker.getTypeAtLocation(parameter.name).flags & ts.TypeFlags.Unknown) !== 0;

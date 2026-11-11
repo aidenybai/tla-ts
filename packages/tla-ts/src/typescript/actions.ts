@@ -31,6 +31,7 @@ import {
   isPlain,
   getNewClass,
   isInertValue,
+  isNameRead,
   skipCasts,
   isPrivateMember,
   isStatic,
@@ -2459,7 +2460,8 @@ const translateLoopCall = (
     arrayName !== undefined &&
     ts.isIdentifier(arrayName) &&
     getKind(arrayName, context) !== (loop.isArrayLike ? "object" : "sequence") &&
-    (context.checker.getTypeAtLocation(arrayName).flags & ts.TypeFlags.Unknown) === 0
+    (context.checker.getTypeAtLocation(arrayName).flags & ts.TypeFlags.Unknown) === 0 &&
+    isNameRead(arrayName, callback, context)
   ) {
     throw new TlaTypeScriptError("Type a callback's array parameter as an array", arrayName);
   }

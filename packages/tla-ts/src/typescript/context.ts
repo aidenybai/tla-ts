@@ -1292,6 +1292,16 @@ export const getElement = (
   );
 
 // The nodes in a tree, its root included, that a test picks.
+// Whether a function reads a name that it binds, directly or through its arguments object.
+export const isNameRead = (name: ts.Identifier, within: ts.Node, context: Context) => {
+  const symbol = getSymbol(name, context.checker);
+  return findNodes(within, ts.isIdentifier).some(
+    (other) =>
+      other !== name &&
+      (other.text === "arguments" || getSymbol(other, context.checker) === symbol),
+  );
+};
+
 export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
   const found: T[] = [];
   const visit = (node: ts.Node) => {

@@ -1492,6 +1492,24 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("visited");
   });
 
+  it("passes an array that the heap holds to a callback that never reads its array parameter", async () => {
+    const result = await checkModel(`
+      let seen = 0;
+      function callback(value: unknown, position: number, array: unknown[]) {
+        seen += 1;
+        return position !== 1;
+      }
+      const holey = [0, , 2];
+      if (!holey.every(callback) || seen !== 2) throw new Error("every");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(
+        "let seen = 0;\nfunction callback(value: unknown, position: number, array: unknown[]) {\n  seen += array.length;\n  return true;\n}\nconst holey = [0, , 2];\nholey.every(callback);",
+      ),
+    ).toThrow("Type a callback's array parameter as an array");
+  });
+
   it("describes Array.prototype as the built-in object it is", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };
