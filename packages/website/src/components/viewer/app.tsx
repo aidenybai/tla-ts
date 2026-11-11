@@ -19,6 +19,7 @@ export const App = (props: AppProps) => (
     <Viewer.Source />
     <Viewer.Status>
       <Status.Hover />
+      <Status.Key />
       <Status.Controls />
     </Viewer.Status>
   </Viewer>
