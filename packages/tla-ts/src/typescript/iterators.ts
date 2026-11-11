@@ -199,7 +199,7 @@ export const stepIterator = (
   context: Context,
   frame: Frame,
   throwWith: (path: Path) => Formula,
-  doneWith: (path: Path) => Formula,
+  doneWith: (path: Path, result: Expression) => Formula,
   continueWith: (path: Path, result: Expression) => Formula,
 ) =>
   callMethod(site, "next", next, iterator, path, context, frame, throwWith, (called, result) =>
@@ -209,7 +209,7 @@ export const stepIterator = (
         read(site, held, "done", bound, context, frame, (checked, done) =>
           ifThenElse(
             useJavaScript("ToBoolean", [done], context),
-            doneWith(checked),
+            doneWith(checked, held),
             continueWith(checked, held),
           ),
         ),

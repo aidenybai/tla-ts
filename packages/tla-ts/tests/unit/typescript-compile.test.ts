@@ -2871,6 +2871,48 @@ describe("errors", () => {
     expect((await checkModel(getSource("iterCount !== 1"))).failure).toBeDefined();
   });
 
+  it("passes on the results of an object's iterator through yield*", async () => {
+    const getSource = (check: string) => `
+      const results: { value: number; done?: boolean }[] = [{ value: 1 }, { value: 8, done: true }];
+      let index = 0;
+      let caught = "";
+      const iterable = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              const result = results[index];
+              index += 1;
+              if (result === undefined) throw new RangeError("drained");
+              return result;
+            },
+          };
+        },
+      };
+      function* g() {
+        yield* iterable;
+        try {
+          yield* iterable;
+        } catch (error) {
+          caught = error instanceof RangeError ? "range" : "other";
+        }
+      }
+      const iter = g();
+      const first = iter.next();
+      const second = iter.next();
+      if (${check}) throw new Error("delegated");
+    `;
+    expect(
+      (
+        await checkModel(
+          getSource(
+            'first.value !== 1 || first.done !== undefined || second.done !== true || caught !== "range"',
+          ),
+        )
+      ).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("first.done !== false"))).failure).toBeDefined();
+  });
+
   it("makes a new function object each time a function makes one as a property's value", async () => {
     const getSource = (comparison: string) => `
       const make = function () {

@@ -234,7 +234,8 @@ interface Suspension {
 
 interface Caller {
   path: Path;
-  step: (path: Path, value: Expression | undefined, isDone: boolean) => Formula;
+  // Takes what the body yields or returns, or the result object that a yield* passes on.
+  step: (path: Path, value: Expression | undefined, isDone: boolean, isResult?: boolean) => Formula;
   throwTo: Frame["throwTo"];
   // For an async generator: the promise of the request that resumed the body, and what the code
   // that resumed it does once the body awaits.
@@ -326,6 +327,8 @@ interface YieldMode {
   // Whether a return or a throw at the yield would run code, such as a finally block or the close
   // of an iterator, which tla-ts doesn't follow.
   isGuarded: boolean;
+  // A generator's yield* passes on the result object of the iterator it delegates to.
+  isResult?: boolean;
 }
 
 // A frame whose yields a return or a throw can't complete.
@@ -337,6 +340,7 @@ const guardYields = (frame: Frame): Frame => {
       yieldTo &&
       ((path, value, rest, throwRest, mode) =>
         yieldTo(path, value, rest, throwRest, {
+          ...mode,
           isDelegated: mode?.isDelegated ?? false,
           isGuarded: true,
         })),
@@ -1795,6 +1799,7 @@ const makeGenerator = (
             leave(resumed, (resumer) => rest(enter(resumer, resumed)), mode?.isGuarded),
             settled,
             false,
+            mode?.isResult,
           );
         return isAsync && mode?.isDelegated !== true
           ? suspend(
@@ -1869,7 +1874,8 @@ const translateGeneratorStep = (
     path,
     context,
     frame,
-    (current, value, isDone) => {
+    (current, value, isDone, isResult) => {
+      if (isResult && value !== undefined) return continueWith(current, value);
       if (heapSymbol === undefined) {
         return continueWith(
           current,
@@ -1916,7 +1922,7 @@ const resumeGenerator = (
   path: Path,
   context: Context,
   frame: Frame,
-  step: (path: Path, value: Expression | undefined, isDone: boolean) => Formula,
+  step: Caller["step"],
   continueAsync?: (path: Path, request: Expression) => Formula,
 ): Formula => {
   // An async generator's next, return, or throw gives a promise of what the body does.
@@ -2180,10 +2186,14 @@ const takeFromGenerator = (
             inner,
             context,
             frame,
-            (after, value, isDone) =>
+            (after, value, isDone, isResult) =>
               isDone
                 ? continueWith(after, tuple(values))
-                : step(after, [...values, value ?? getUndefined(context)]),
+                : isResult && value !== undefined
+                  ? readValue(pattern, value, after, context, frame, (read, taken) =>
+                      step(read, [...values, taken]),
+                    )
+                  : step(after, [...values, value ?? getUndefined(context)]),
           );
     return step(current, []);
   };
@@ -3145,6 +3155,16 @@ const translateDelegatedYield = (
   const awaitTo = frame.awaitTo;
   const iterated = node.expression && getCast(node.expression);
   if (
+    yieldTo !== undefined &&
+    awaitTo === undefined &&
+    iterated !== undefined &&
+    getKind(iterated, context) !== "sequence" &&
+    isIteratedValue(iterated, context) &&
+    !hasCall(iterated, context)
+  ) {
+    return delegateToIterator(node, iterated, yieldTo, path, context, frame, continueWith);
+  }
+  if (
     yieldTo === undefined ||
     iterated === undefined ||
     !ts.isArrayLiteralExpression(iterated) ||
@@ -3182,6 +3202,72 @@ const translateDelegatedYield = (
     letIn(
       [define(sequence, [], translateExpression(iterated, inner.scope, context))],
       delegate(inner, 0),
+    ),
+  );
+};
+
+const DELEGATION_LIMIT = 3;
+
+// A generator's yield* over an object's iterator, which passes on each of the iterator's results
+// until one is done. A return or a throw while it delegates would call the iterator's return or
+// throw, which tla-ts doesn't follow.
+const delegateToIterator = (
+  node: ts.YieldExpression,
+  iterated: ts.Expression,
+  yieldTo: NonNullable<Frame["yieldTo"]>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+  const throwTo = frame.throwTo;
+  const throwWith = (current: Path, value: Expression) =>
+    throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
+  const failWith = (failed: Path) => throwTypeError(failed, node, context, frame);
+  const delegate = (
+    current: Path,
+    iterator: Expression,
+    next: Expression,
+    count: number,
+  ): Formula =>
+    count > DELEGATION_LIMIT
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+          ]),
+        )
+      : stepIterator(
+          node,
+          iterator,
+          next,
+          current,
+          context,
+          frame,
+          failWith,
+          (done, result) =>
+            readValue(node, result, done, context, frame, (read, value) =>
+              ifThenElse(apply("=", [value, value]), continueWith(read), leaf(boolean(false))),
+            ),
+          (stepped, result) =>
+            yieldTo(
+              stepped,
+              result,
+              (resumed) => delegate(resumed, iterator, next, count + 1),
+              throwWith,
+              { isDelegated: true, isGuarded: true, isResult: true },
+            ),
+        );
+  return allocate(iterated, path, context, (inner) =>
+    openIterator(
+      node,
+      translateExpression(iterated, inner.scope, context),
+      inner,
+      context,
+      frame,
+      failWith,
+      (opened, iterator, next) => delegate(opened, iterator, next, 0),
     ),
   );
 };
@@ -4107,11 +4193,13 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       visited.add(called);
       visit(called);
     });
-    // A pattern that destructures an object, or a for-of or a spread that iterates one, runs the
-    // functions of the object's iterator.
+    // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,
+    // runs the functions of the object's iterator.
     if (
       (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) ||
-      (ts.isSpreadElement(node) &&
+      ((ts.isSpreadElement(node) ||
+        (ts.isYieldExpression(node) && node.asteriskToken !== undefined)) &&
+        node.expression !== undefined &&
         getKind(node.expression, context) !== "sequence" &&
         isIteratedValue(node.expression, context)) ||
       (ts.isForOfStatement(node) &&
