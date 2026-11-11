@@ -1225,6 +1225,8 @@ const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["includes", { operator: "StringIncludes", parameters: ["string", "number"] }],
   ["startsWith", { operator: "StartsWith", parameters: ["string", "number"] }],
   ["endsWith", { operator: "EndsWith", parameters: ["string", "number"] }],
+  ["toLowerCase", { operator: "ToLowerCase", parameters: [] }],
+  ["toUpperCase", { operator: "ToUpperCase", parameters: [] }],
   ["padStart", { operator: "PadStart", parameters: ["number", "string"] }],
   ["padEnd", { operator: "PadEnd", parameters: ["number", "string"] }],
   ["trim", { operator: "StringTrim", parameters: [], trimmed: [true, true] }],

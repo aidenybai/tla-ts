@@ -1942,6 +1942,22 @@ describe("errors", () => {
     expect(wide.failure?.message).toContain("tla-ts can't tell the code of a character outside ASCII");
   });
 
+  it("changes the case of ASCII letters", async () => {
+    const result = await checkModel(`
+      const lower = (text: string) => text.toLowerCase();
+      if (lower("Hello, World 42!") !== "hello, world 42!" || "az@[\`{".toUpperCase() !== "AZ@[\`{") {
+        throw new Error("case");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`
+        const text = "\u00c9";
+        if (text.toLowerCase() !== "\u00e9") throw new Error("wide");
+      `),
+    ).rejects.toThrow("tla-ts can't change the case of a character outside ASCII");
+  });
+
   it("parses an integer in a radix with parseInt", async () => {
     const result = await checkModel(`
       const read = (text: string, radix?: number) => parseInt(text, radix);

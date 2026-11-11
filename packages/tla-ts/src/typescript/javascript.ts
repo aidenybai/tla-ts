@@ -1157,6 +1157,26 @@ CharCodeAt(value, index) == CodeAt(value, index, NaN)
 \\* character's code point is its code.
 CodePointAt(value, index) == CodeAt(value, index, Undefined)
 
+LOCAL Lowercase == "abcdefghijklmnopqrstuvwxyz"
+
+LOCAL Uppercase == "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+\\* A character in another case, where from and to list the letters of each case in order.
+LOCAL Recased(character, from, to) ==
+  CASE character \\in CharactersOf(from) ->
+         LET position == CHOOSE index \\in 1..26 : SubSeq(from, index, index) = character
+         IN  SubSeq(to, position, position)
+    [] character \\in DOMAIN AsciiCodes -> character
+    [] OTHER -> Assert(FALSE, "tla-ts can't change the case of a character outside ASCII")
+
+RECURSIVE RecasedText(_, _, _)
+RecasedText(text, from, to) ==
+  IF text = "" THEN "" ELSE Recased(SubSeq(text, 1, 1), from, to) \\o RecasedText(Tail(text), from, to)
+
+ToLowerCase(value) == RecasedText(Text(value), Uppercase, Lowercase)
+
+ToUpperCase(value) == RecasedText(Text(value), Lowercase, Uppercase)
+
 \\* JavaScript's < of two strings, which compares the codes of their first different characters.
 RECURSIVE StringLessThan(_, _)
 StringLessThan(left, right) ==
