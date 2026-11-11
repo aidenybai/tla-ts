@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getErrorResult } from "./run-error";
 import type { RunRequest, RunResult } from "./run-worker";
 
 export const useRun = () => {
@@ -15,16 +16,7 @@ export const useRun = () => {
       worker.terminate();
     };
     worker.onmessage = (event: MessageEvent<RunResult>) => finish(event.data);
-    worker.onerror = (event) =>
-      finish({
-        isPassed: false,
-        title: "Error",
-        name: undefined,
-        summary: "",
-        trace: [],
-        loopStart: undefined,
-        rows: [{ title: event.message, detail: "", isFailed: true }],
-      });
+    worker.onerror = (event) => finish(getErrorResult("Error", event.message));
     setIsRunning(true);
     worker.postMessage(request);
   };

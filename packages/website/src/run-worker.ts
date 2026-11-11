@@ -1,4 +1,5 @@
 import { check, formatValue, prove, TlaError, type CheckStatus } from "tla-ts";
+import { getErrorResult } from "./run-error";
 
 export type RunRequest =
   | { kind: "check"; source: string; config: string }
@@ -20,7 +21,8 @@ export interface RunResult {
   rows: RunRow[];
 }
 
-export interface RunRow {
+interface RunRow {
+  id: number;
   title: string;
   detail: string;
   isFailed: boolean;
@@ -39,16 +41,6 @@ const STATUS_TITLES: Record<CheckStatus, string> = {
 
 const getElapsed = (startedAt: number) =>
   `${Math.round(performance.now() - startedAt).toLocaleString()} ms`;
-
-const getErrorResult = (title: string, message: string, summary = ""): RunResult => ({
-  isPassed: false,
-  title,
-  name: undefined,
-  summary,
-  trace: [],
-  loopStart: undefined,
-  rows: [{ title: message, detail: "", isFailed: true }],
-});
 
 const getCheckResult = async (source: string, config: string): Promise<RunResult> => {
   const startedAt = performance.now();
@@ -93,6 +85,7 @@ const getProveResult = async (source: string): Promise<RunResult> => {
     trace: [],
     loopStart: undefined,
     rows: result.obligations.map((obligation) => ({
+      id: obligation.id,
       title: `Line ${obligation.location.split(":")[0]}, ${
         obligation.status === "proved"
           ? `proved by ${obligation.prover}`
