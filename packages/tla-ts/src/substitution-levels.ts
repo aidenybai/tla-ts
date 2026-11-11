@@ -1,5 +1,5 @@
 import type { Declaration, Definition, Expression, SourceLocation, Theorem } from "./ast";
-import { createSanyError, formatRange } from "./errors";
+import { createSanyError, formatRange, type SanyError } from "./errors";
 import {
   ACTION_LEVEL,
   analyzeAssumeProve,
@@ -122,8 +122,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
   };
 
   return (check: InstanceCheck) => {
-    const errors = new Map<string, { location: string; message: string }>();
-    // SANY reports each error at the whole instance.
+    const errors = new Map<string, SanyError>();
     const location = formatRange(
       check.location.range ?? {
         module: check.instancer,

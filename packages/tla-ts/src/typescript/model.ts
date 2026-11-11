@@ -14,7 +14,6 @@ export interface Variable {
   declaration: ts.VariableDeclaration;
 }
 
-// An exported function, which becomes an action, an invariant, or a property its tag names.
 export interface Exported {
   name: string;
   declaration: HelperDeclaration;
@@ -31,9 +30,7 @@ interface Declared {
 export interface Model {
   variables: Variable[];
   exported: Exported[];
-  // Top-level functions and constants by their TypeScript names, which @leadsTo refers to.
   topLevel: Map<string, HelperDeclaration>;
-  // The model values of each @symmetric type, as a TLA+ set.
   symmetrySets: string[];
   isDeadlockChecked: boolean;
 }
@@ -73,7 +70,6 @@ const isLet = (declared: Declared) =>
   ts.isVariableDeclaration(declared.declaration) &&
   (declared.declaration.parent.flags & ts.NodeFlags.Let) !== 0;
 
-// The string literals of a @symmetric type become model values, which TLC can permute.
 const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context) => {
   const type = context.checker.getTypeAtLocation(statement.name);
   const names = (type.isUnion() ? type.types : [type]).map((member) => {
@@ -90,7 +86,6 @@ const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context
   return `{${names.join(", ")}}`;
 };
 
-// The functions and constants a statement declares. Types and imports declare none.
 const getDeclarations = (statement: ts.Statement): Declared[] => {
   if (
     ts.isImportDeclaration(statement) ||
@@ -119,7 +114,6 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
   });
 };
 
-// Reads a model's state variables, exported functions, and tags, and names them in TLA+.
 export const readModel = (sourceFile: ts.SourceFile, context: Context): Model => {
   const statements = sourceFile.statements;
   const tags = new Map(statements.map((statement) => [statement, getTags(statement)]));
@@ -149,14 +143,19 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     const statement = ts.isVariableDeclaration(declaration)
       ? declaration.parent.parent
       : declaration;
-    return [{ ...declared, node, body: node.body, tags: tags.get(statement) ?? new Map() }];
+    return [
+      {
+        name: context.names.getFresh(declared.name),
+        declaration,
+        node,
+        body: node.body,
+        tags: tags.get(statement) ?? new Map(),
+      },
+    ];
   });
   return {
     variables,
-    exported: exported.map((definition) => ({
-      ...definition,
-      name: context.names.getFresh(definition.name),
-    })),
+    exported,
     topLevel: new Map(helpers.map((declared) => [declared.name, declared.declaration])),
     symmetrySets,
     isDeadlockChecked: ![...tags.values()].some((statementTags) => statementTags.has("noDeadlock")),

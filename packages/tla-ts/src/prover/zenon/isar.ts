@@ -1,9 +1,4 @@
-// Ported from Zenon's lltoisar.ml and the -oisar path of main.ml, as shipped in tlapm. Copyright
-// 2008 INRIA, see LICENSE.
-//
-// Prints a proof as the Isar text that Zenon writes with -oisar, which tlapm checks with Isabelle.
-// Zenon numbers each formula the first time it prints or names it: z_H<n> names a hypothesis and
-// ?z_h<n> abbreviates a formula that an earlier (is "...") pattern bound.
+// Ported from Zenon's lltoisar.ml and the -oisar path of main.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
 import { FALSE, GOAL_NAME, TRUE, type BinderExpr, type Expr, type Expressions } from "./expr";
@@ -50,7 +45,6 @@ const PREFIXES: Record<string, string> = {
   "TLA.box": "isa'box",
 };
 
-// Zenon drops the namespace of the symbols it doesn't rename.
 const stripNamespace = (symbol: string) =>
   symbol.length > 4 && symbol.startsWith("TLA.")
     ? symbol.slice(4)
@@ -58,7 +52,6 @@ const stripNamespace = (symbol: string) =>
       ? symbol.slice(6)
       : symbol;
 
-// Zenon's Misc.base26.
 const toBase26 = (number: number): string =>
   number < 26
     ? String.fromCharCode(97 + number)
@@ -70,7 +63,6 @@ const getPairs = <Item>(items: Item[]): [Item, Item][] =>
     items[2 * position + 1],
   ]);
 
-// The numeral that Zenon prints for 0 and its successors, up to 15.
 const getNumeral = (expression: Expr, limit: number): number | undefined => {
   if (limit < 0) return undefined;
   if (expression.kind === "var" && expression.symbol === "0") return 0;
@@ -99,12 +91,8 @@ const getLastBranchIsOther = (branches: Expr[][]) => {
   return last.length === 2;
 };
 
-// Zenon's iinc: the indentation stops growing at 15.
 const increment = (indent: number) => (indent >= 15 ? indent : indent + 1);
 
-// What the search knew when it found a proof: the .znn file's phrases, the proofs that it reused
-// and the properties of relations that the hypotheses stated. The printer stops at the search's
-// limits.
 interface IsarContext {
   exprs: Expressions;
   phrases: Phrase[];
@@ -113,12 +101,9 @@ interface IsarContext {
   limits: Limits;
 }
 
-// The Isar text that Zenon prints with -oisar for a proof that the search found, or undefined when
-// the limits stop the printer first.
 export const printIsar = (proof: MlProof, context: IsarContext): string | undefined => {
   const exprs = context.exprs;
   const numbers = new Map<Expr, number>();
-  // Zenon's Index.get_number.
   const getNumber = (expression: Expr) => {
     const existing = numbers.get(expression);
     if (existing !== undefined) return existing;
@@ -149,8 +134,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     return exprs.elam(binder.args[0], binder.symbol, binder.args[1]);
   };
 
-  // The formulas that (is "...") patterns bound, as a persistent set: a version is the length of
-  // the log, and a version only reads the log's prefix, which later additions from it don't change.
   const dictLog: number[] = [];
   const dictPositions = new Map<number, number>();
   const isBound = (dict: number, number: number) => {
@@ -164,7 +147,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     return dict + 1;
   };
 
-  // Zenon's p_expr: the bound variables are those that a pattern can't abbreviate.
   const printExpr = (env: string[], dict: number, expression: Expr): string => {
     const number = getNumber(expression);
     if (isBound(dict, number) && !expression.freeVars.some((name) => env.includes(name)))
@@ -257,7 +239,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
 
   const expr = (dict: number, expression: Expr) => printExpr([], dict, expression);
 
-  // Zenon's p_apply: the instance of a lambda, through the lambda's abbreviation if it has one.
   const printApply = (dict: number, lambda: Expr, argument: Expr) => {
     const number = getNumber(lambda);
     return isBound(dict, number)
@@ -265,14 +246,12 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
       : expr(dict, exprs.apply(lambda, argument));
   };
 
-  // Zenon's mk_pat: a pattern variable for a formula that has none yet.
   const makePattern = (dict: number, expression: Expr): [string, number] => {
     if (expression.kind === "var" && !isMetaName(expression.symbol)) return ["_", dict];
     const number = getNumber(expression);
     return isBound(dict, number) ? ["_", dict] : [vname(expression), bind(dict, number)];
   };
 
-  // Zenon's p_is: binds the formula's parts to pattern variables.
   const printIs = (dict: number, formula: Expr): number => {
     const binary = (prefix: string, left: Expr, operator: string, right: Expr, suffix: string) => {
       const first = makePattern(dict, left);
@@ -340,7 +319,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
       return printIs(current, formula);
     }, dict);
 
-  // Zenon's p_sub: each branch assumes its formulas and proves FALSE.
   const printBranches = (
     indent: number,
     dict: number,
@@ -359,7 +337,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     });
   };
 
-  // A have for each formula of the branch that the subproof uses, then the subproof.
   const printHaves = (
     indent: number,
     dict: number,
@@ -410,7 +387,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     printBranches(indent, dict, branches, proof.subproofs);
   };
 
-  // Zenon's p_gamma and p_delta: the instance of a quantified formula.
   const printInstance = (
     indent: number,
     dict: number,
@@ -436,7 +412,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     printTree(indent, next, subproof);
   };
 
-  // Zenon's p_sub_equal: proves an argument equal to the other, unless the subproof needn't.
   const printSubEqual = (
     indent: number,
     dict: number,
@@ -460,7 +435,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     return next;
   };
 
-  // Zenon's p_subst: rewrites the arguments that differ one at a time.
   const printSubstitution = (
     indent: number,
     dict: number,
@@ -811,7 +785,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     );
   };
 
-  // A hypothesis of a product or record set's rules, and its negation, each in its own branch.
   const printNegatedHaves = (
     indent: number,
     dict: number,
@@ -1200,7 +1173,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     line(indent, "qed\n");
   };
 
-  // Zenon's p_theorem.
   const theorem = lemmas[lemmas.length - 1];
   const hypotheses = context.phrases.flatMap((phrase) => (phrase.kind === "hyp" ? [phrase] : []));
   const negatedGoal =

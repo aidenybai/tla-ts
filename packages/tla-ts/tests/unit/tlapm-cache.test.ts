@@ -5,7 +5,6 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 import { readMarshaled } from "../../src/prover/tlapm/ocaml-marshal";
 import { getKnownResults, loadFingerprints } from "../../src/prover/tlapm/cache";
 
-// The fingerprints tlapm 9ed0376 wrote for tlapm-cli/Failures.tla.
 const FINGERPRINTS = join(import.meta.dirname, "../fixtures/tlapm-cli/Failures.fingerprints");
 
 const directory = mkdtempSync(join(tmpdir(), "tla-ts-fingerprints-"));

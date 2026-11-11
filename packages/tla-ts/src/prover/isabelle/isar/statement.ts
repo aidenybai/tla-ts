@@ -1,9 +1,4 @@
-// Ported from the statement handling of Isabelle2025's Pure/Isar/expression.ML
-// (prep_full_context_statement). Copyright (c) 1986-2025 University of Cambridge, Technische
-// Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Reads a lemma's fixes, assumes and shows: each proposition is parsed with the variables fixed
-// before it, and all of them are type checked together.
+// Ported from Isabelle2025's Pure/Isar/expression.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { typargsOf } from "../pure/consts";
 import type { Term } from "../pure/term";

@@ -14,9 +14,17 @@ import {
 import { TlaSyntaxError } from "./errors";
 import { getArity, getBoundNames, getPatternNames, isBefore, LOCAL_RESOLUTION } from "./resolve";
 
-// Applications inside an instance with substitutions or parameters, which TLC evaluates in a
-// context that binds them.
 export const contextualApplications = new WeakSet<Expression>();
+
+export const substitutionFrames = new WeakMap<Expression, Expression[]>();
+
+export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
+  if (frames.length === 0) return expression;
+  const copy = { ...expression };
+  if (contextualApplications.has(expression)) contextualApplications.add(copy);
+  substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
+  return copy;
+};
 
 export const renameLocals = (
   expression: Expression,
@@ -34,6 +42,9 @@ export const renameLocals = (
     return { ...mapped, name: names.get(mapped.name) ?? mapped.name };
   }
   if (mapped.kind === "Apply" && isLocallyResolved(mapped) && !bound.has(mapped.operator)) {
+    return { ...mapped, operator: names.get(mapped.operator) ?? mapped.operator };
+  }
+  if (mapped.kind === "OperatorReference" && !bound.has(mapped.operator)) {
     return { ...mapped, operator: names.get(mapped.operator) ?? mapped.operator };
   }
   return mapped;
@@ -222,14 +233,13 @@ interface Instantiation {
   substitutions: Map<string, Expression>;
   variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
-  // A definition of the instantiating module that a substitution names.
   getOuterDefinition: (name: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
+  frame?: Expression;
 }
 
-// LAMBDA is a keyword, so no name bound inside the instance can capture it.
 const LAMBDA_NAME = "LAMBDA";
 
 type RewriteMode = "Normal" | "Enabled" | "Primed";
@@ -240,8 +250,6 @@ interface Rewrite {
   copies: Map<string, string>;
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
-  // The substitutions an operator's copy reads, which it binds once, as TLC binds each to a lazy
-  // value when it evaluates the operator's body.
   bindings?: Map<string, Expression>;
 }
 
@@ -251,9 +259,6 @@ const isVariableAlias = (expression: Expression): boolean =>
   expression.kind === "Identifier" ||
   (expression.kind === "Tuple" && expression.elements.every(isVariableAlias));
 
-// A name, or a tuple of names, stays in place, so a step can assign it or leave it unchanged as
-// TLC does through its lazy value. An operator or a literal costs nothing to evaluate again. A name
-// of a definition that isn't such an alias is bound once.
 const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
   if (replacement.kind !== "Identifier") {
     return (
@@ -549,7 +554,7 @@ const substitute = (
     const replacement = instantiation.substitutions.get(expression.name);
     const bindings = rewrite.bindings;
     if (replacement && (bindings === undefined || !isBoundOnce(replacement, instantiation))) {
-      return replacement;
+      return withSubstitutionFrames(replacement, [expression]);
     }
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);
@@ -697,26 +702,29 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
       ),
       rename,
     );
-    if (mapped.kind !== "Operator" || bindings.size === 0) {
-      return withInstanceParams(mapped, instantiation.params, definition.location);
-    }
-    const definitions = [...bindings].map(([name, replacement]): Definition => ({
-      kind: "Operator",
-      name,
-      params: [],
-      body: replacement,
-      isLocal: true,
-      isRecursive: false,
-      location: replacement.location,
-    }));
-    return withInstanceParams(
-      {
-        ...mapped,
-        body: { kind: "Let", definitions, body: mapped.body, location: mapped.body.location },
-      },
-      instantiation.params,
-      definition.location,
-    );
+    const body: Expression =
+      mapped.kind !== "Operator" || bindings.size === 0
+        ? mapped.body
+        : {
+            kind: "Let",
+            definitions: [...bindings].map(([name, replacement]): Definition => ({
+              kind: "Operator",
+              name,
+              params: [],
+              body: replacement,
+              isLocal: true,
+              isRecursive: false,
+              location: replacement.location,
+            })),
+            body: mapped.body,
+            // TLC has no such LET, so the call stack it prints has no position for it.
+            location: { line: mapped.body.location.line, column: mapped.body.location.column },
+          };
+    const frame = instantiation.frame;
+    // TLC's call stack holds the SubstInNode an instance puts around each definition it copies.
+    if (frame)
+      substitutionFrames.set(body, [frame, ...(substitutionFrames.get(definition.body) ?? [])]);
+    return withInstanceParams({ ...mapped, body }, instantiation.params, definition.location);
   });
 };
 
@@ -781,7 +789,6 @@ const expandLetInstances = (
   return { ...mapped, definitions };
 };
 
-// A named theorem's statement is linked as its definition.
 const getUnnamedStatement = (theorem: Theorem) =>
   theorem.name === undefined && theorem.statement.kind !== "AssumeProve"
     ? theorem.statement

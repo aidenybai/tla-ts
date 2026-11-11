@@ -1,6 +1,4 @@
-// Ported from Isabelle2025's Pure/goal.ML: focusing a tactic on one subgoal. Copyright (c)
-// 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
-// LICENSE.
+// Ported from Isabelle2025's Pure/goal.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { compNoFlatten, protectD, protectI } from "./drule";
@@ -8,10 +6,8 @@ import { emptySeq } from "./seq";
 import { primitive, thenTac, type GoalTactic, type Tactic } from "./tactical";
 import { nprems, permutePrems, type Thm } from "./thm";
 
-// A ==> ... ==> C becomes A ==> #(... ==> C), keeping count premises.
 const protect = (count: number, thm: Thm) => compNoFlatten(thm, count, 1, protectI);
 
-// A ==> ... ==> #C becomes A ==> ... ==> C.
 const conclude = (thm: Thm) => compNoFlatten(thm, nprems(thm), 1, protectD);
 
 const restrict = (index: number, count: number, state: Thm) => {
@@ -22,7 +18,6 @@ const restrict = (index: number, count: number, state: Thm) => {
 
 const unrestrict = (index: number, state: Thm) => permutePrems(0, 1 - index, conclude(state));
 
-// SELECT_GOAL: runs the tactic on goal index alone.
 export const selectGoal =
   (tactic: Tactic): GoalTactic =>
   (index) =>
@@ -37,7 +32,6 @@ export const selectGoal =
     )(state);
   };
 
-// PREFER_GOAL: runs the tactic with goal index moved to the front.
 export const preferGoal =
   (tactic: Tactic): GoalTactic =>
   (index) =>

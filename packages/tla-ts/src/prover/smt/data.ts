@@ -1,6 +1,3 @@
-// encode/n_data.ml: the declaration, dependencies, and axioms of each symbol tlapm's SMT encoding
-// uses.
-
 import { TlaUnsupportedError } from "../../errors";
 import {
   getComponentSet,
@@ -57,9 +54,7 @@ export interface SymbolSpec {
   axioms: Axiom[];
 }
 
-// N_data.s: what the symbols collected so far change about the axioms of the next ones.
 export interface CollectState {
-  // The fields of each record symbol the obligation uses.
   recordFields: Map<string, string[]>;
   strings: string[];
   isFunConstr: boolean;
@@ -72,23 +67,22 @@ export interface CollectState {
 
 const SEQUENCE_DEPS = ["Mem", "Seq", "Len", "FunApp", "NatSet", "Cast_Int", "Proj_Int"];
 
-// N_data.get_deps, with arithmetic and set extensionality as tlapm's SMT backend sets them.
 export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => {
-  const spec = (declaration: string | undefined, deps: string[], axioms: Axiom[]) => ({
+  const createSpec = (declaration: string | undefined, deps: string[], axioms: Axiom[]) => ({
     declaration,
     deps,
     axioms,
   });
   const symbol = tla(name);
-  const fixed = (arity: number, deps: string[], axioms: Axiom[], sort = "Idv") =>
-    spec(declare(symbol, arity, sort), deps, axioms);
+  const declareSpec = (arity: number, deps: string[], axioms: Axiom[], sort = "Idv") =>
+    createSpec(declare(symbol, arity, sort), deps, axioms);
   const enumeration = /^SetEnum_(\d+)$/.exec(name);
   if (enumeration)
-    return fixed(Number(enumeration[1]), ["Mem"], getEnumeration(Number(enumeration[1])));
+    return declareSpec(Number(enumeration[1]), ["Mem"], getEnumeration(Number(enumeration[1])));
   const setOf = /^SetOf_(\d+)$/.exec(name);
   if (setOf) {
     const count = Number(setOf[1]);
-    return spec(
+    return createSpec(
       undefined,
       ["Mem", "IsSetOf"],
       [
@@ -111,7 +105,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       axiom("StrLitDistinct", [value, other], `(distinct ${symbol} ${tla(`StrLit_${other}`)})`),
     );
     state.strings.push(value);
-    return fixed(
+    return declareSpec(
       0,
       ["Mem", "StrSet"],
       [axiom("StrLitIsstr", [value], `(${MEM} ${symbol} ${STR_SET})`), ...distinct],
@@ -125,12 +119,12 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       count === 0
         ? ["FunIsafcn", "Cast_Int", "Seq", "Len"]
         : ["FunIsafcn", "FunDom", "FunApp", `SetEnum_${count}`, "Cast_Int", "Mem", "Seq", "Len"];
-    return fixed(count, deps, getTupleAxioms(count, state.isExcept));
+    return declareSpec(count, deps, getTupleAxioms(count, state.isExcept));
   }
   const product = /^Product_(\d+)$/.exec(name);
   if (product) {
     const count = Number(product[1]);
-    return fixed(
+    return declareSpec(
       count,
       ["Mem", `Tuple_${count}`, "FunApp", "Cast_Int", "Proj_Int"],
       getComponentSet("Product", [count], symbol, tla(`Tuple_${count}`), getIntegers(count), "t"),
@@ -139,7 +133,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   const fields = state.recordFields.get(name);
   if (fields && name.startsWith("Record_")) {
     state.records.push(fields);
-    return fixed(
+    return declareSpec(
       fields.length,
       [
         "FunIsafcn",
@@ -153,21 +147,25 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   }
   if (fields && name.startsWith("RecordSet_")) {
     const record = `Record_${fields.join("_")}`;
-    return fixed(
+    return declareSpec(
       fields.length,
       ["Mem", record, "FunApp", ...fields.map((field) => `StrLit_${field}`)],
       getComponentSet("RecSet", [fields], symbol, tla(record), getFieldKeys(fields), "r"),
     );
   }
   const anonymous = state.anonymous.get(name);
-  if (anonymous !== undefined) return fixed(anonymous, [], []);
+  if (anonymous !== undefined) return declareSpec(anonymous, [], []);
   const typed = TYPED_OPERATORS[name];
   if (typed)
-    return fixed(typed[1], ["Cast_Int"], [getTyping(name)], name === "IntLteq" ? "Bool" : "Idv");
+    return declareSpec(
+      typed[1],
+      ["Cast_Int"],
+      [getTyping(name)],
+      name === "IntLteq" ? "Bool" : "Idv",
+    );
   switch (name) {
-    // SMT-LIB has no exponentiation, so IntExp keeps only its typing.
     case "IntExp":
-      return fixed(
+      return declareSpec(
         2,
         ["Mem", "IntSet", "Cast_Int", "TIntLteq", "TIntLit_0", "TIntLit_1"],
         [
@@ -179,7 +177,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "SelectSeq":
-      return spec(
+      return createSpec(
         undefined,
         [
           "Mem",
@@ -202,9 +200,9 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "Choose":
-      return spec(undefined, [], [axiom("ChooseDef", [], undefined)]);
+      return createSpec(undefined, [], [axiom("ChooseDef", [], undefined)]);
     case "Mem":
-      return fixed(
+      return declareSpec(
         2,
         ["SetExtTrigger"],
         [
@@ -217,7 +215,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         "Bool",
       );
     case "SubsetEq":
-      return fixed(
+      return declareSpec(
         2,
         ["Mem"],
         [
@@ -235,7 +233,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         "Bool",
       );
     case "Union":
-      return fixed(
+      return declareSpec(
         1,
         ["Mem"],
         [
@@ -252,7 +250,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "Subset":
-      return fixed(
+      return declareSpec(
         1,
         ["Mem", "SubsetEq"],
         [
@@ -277,8 +275,8 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         [],
         `(forall ((a Idv) (b Idv) (x Idv)) (! (= (${MEM} x (${symbol} a b)) ${condition.replaceAll("MEM", MEM)}) :pattern ((${MEM} x (${symbol} a b))) :pattern ((${MEM} x a) (${symbol} a b)) :pattern ((${MEM} x b) (${symbol} a b))))`,
       );
-      if (name !== "Cap") return fixed(2, ["Mem"], [definition]);
-      return fixed(
+      if (name !== "Cap") return declareSpec(2, ["Mem"], [definition]);
+      return declareSpec(
         2,
         ["Mem", "SetEnum_0", "SetExtTrigger"],
         [
@@ -292,13 +290,13 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     }
     case "SetSt":
-      return spec(
+      return createSpec(
         undefined,
         ["Mem", "SetEnum_0", "SetExtTrigger"],
         [axiom("SetStDef", [], undefined), axiom("EmptyComprehensionTrigger", [], undefined)],
       );
     case "NatSet":
-      return fixed(
+      return declareSpec(
         0,
         ["IntSet", "TIntLit_0", "Cast_Int", "IntLteq"],
         [
@@ -310,7 +308,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "IntRange":
-      return fixed(
+      return declareSpec(
         2,
         ["Mem", "IntSet", "IntLteq"],
         [
@@ -322,7 +320,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "FunIsafcn":
-      return fixed(
+      return declareSpec(
         1,
         ["Mem", "FunDom", "FunFcn", "FunApp"],
         [
@@ -336,7 +334,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     case "FunSet":
       state.isFunSet = true;
-      return fixed(
+      return declareSpec(
         2,
         ["Mem", "FunIsafcn", "FunDom", "FunApp"],
         [
@@ -360,7 +358,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     case "FunFcn":
       state.isFunConstr = true;
-      return spec(
+      return createSpec(
         undefined,
         ["FunIsafcn"],
         [
@@ -369,13 +367,13 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "FunDom":
-      return fixed(1, ["FunFcn"], [axiom("FunDomDef", [], undefined)]);
+      return declareSpec(1, ["FunFcn"], [axiom("FunDomDef", [], undefined)]);
     case "FunApp":
-      return fixed(2, ["Mem", "FunFcn"], [axiom("FunAppDef", [], undefined)]);
+      return declareSpec(2, ["Mem", "FunFcn"], [axiom("FunAppDef", [], undefined)]);
     case "FunExcept": {
       state.isExcept = true;
       const updated = `(${FUN_EXCEPT} f x y)`;
-      return fixed(
+      return declareSpec(
         3,
         ["Mem", "FunIsafcn", "FunDom", "FunApp"],
         [
@@ -406,7 +404,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     }
     // tlapm labels SeqSetElim1 and SeqSetElim2 SetSetElim1 and SetSetElim2.
     case "Seq":
-      return fixed(
+      return declareSpec(
         1,
         [
           "Mem",
@@ -441,7 +439,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "Len":
-      return fixed(
+      return declareSpec(
         1,
         ["FunDom", "IntRange", "Cast_Int"],
         [
@@ -453,9 +451,9 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "BSeq":
-      return fixed(1, [], []);
+      return declareSpec(1, [], []);
     case "Cat":
-      return fixed(2, SEQUENCE_DEPS, [
+      return declareSpec(2, SEQUENCE_DEPS, [
         axiom(
           "SeqCatTyping",
           [],
@@ -478,7 +476,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ),
       ]);
     case "Append":
-      return fixed(2, SEQUENCE_DEPS, [
+      return declareSpec(2, SEQUENCE_DEPS, [
         axiom(
           "SeqAppendTyping",
           [],
@@ -501,7 +499,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ),
       ]);
     case "Head":
-      return fixed(
+      return declareSpec(
         1,
         ["FunApp", "Cast_Int"],
         [
@@ -513,7 +511,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "Tail":
-      return fixed(1, SEQUENCE_DEPS, [
+      return declareSpec(1, SEQUENCE_DEPS, [
         axiom(
           "SeqTailTyping",
           [],
@@ -532,7 +530,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       ]);
     case "SubSeq": {
       const range = `(${SUB_SEQ} s (${CAST_INT} x) (${CAST_INT} y))`;
-      return fixed(
+      return declareSpec(
         3,
         ["Mem", "Seq", "Len", "FunApp", "IntSet", "Cast_Int", "Proj_Int"],
         [
@@ -555,7 +553,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     }
     case "Cast_Int":
-      return spec(
+      return createSpec(
         declare(symbol, 1, "Idv", "Int"),
         ["Mem", "IntSet", "Proj_Int"],
         [
@@ -577,7 +575,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "Cast_Bool":
-      return spec(
+      return createSpec(
         declare(symbol, 1, "Idv", "Bool"),
         ["Mem", "BoolSet", "Tt_Idv"],
         [
@@ -599,9 +597,9 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         ],
       );
     case "Proj_Int":
-      return spec(declare(symbol, 1, "Int"), [], []);
+      return createSpec(declare(symbol, 1, "Int"), [], []);
     case "TrigEq_Set$Idv$":
-      return fixed(
+      return declareSpec(
         2,
         ["SetExtTrigger"],
         [
@@ -620,17 +618,16 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     case "SetExtTrigger":
     case "IsSetOf":
-      return fixed(name === "IsSetOf" ? 1 : 2, [], [], "Bool");
+      return declareSpec(name === "IsSetOf" ? 1 : 2, [], [], "Bool");
     case "BoolSet":
     case "StrSet":
     case "IntSet":
     case "Tt_Idv":
-      return fixed(0, [], []);
+      return declareSpec(0, [], []);
     case "TIntLteq":
-      return spec(undefined, ["IntLteq"], [getTyping("IntLteq")]);
+      return createSpec(undefined, ["IntLteq"], [getTyping("IntLteq")]);
     default:
-      // The rest are numerals, which SMT-LIB has natively.
-      if (name.startsWith("TIntLit_")) return spec(undefined, [], []);
+      if (name.startsWith("TIntLit_")) return createSpec(undefined, [], []);
       throw new TlaUnsupportedError(`the symbol ${name}`);
   }
 };

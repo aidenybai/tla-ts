@@ -189,18 +189,19 @@ describe("SANY XML export", () => {
     ]);
   });
 
+  // SANY's loop over the parameters keeps only the last one's check, so it accepts the first.
   it.each([
-    ["F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(Op, n - 1))", false],
-    ["F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))", true],
-    ["F(n, Op(_, _)) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))", true],
-  ])("analyzes a recursive call in %s as SANY does", (definition, isFailed) => {
+    "F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(Op, n - 1))",
+    "F(Op(_, _), n) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))",
+    "F(n, Op(_, _)) == IF n = 0 THEN 0 ELSE Op(n, F(n - 1, Op))",
+  ])("rejects %s, whose RECURSIVE declaration has only plain parameters", (definition) => {
     expect(
       isRejected(`---- MODULE Fold ----\nEXTENDS Naturals\nRECURSIVE F(_, _)\n${definition}\n====`),
-    ).toBe(isFailed);
+    ).toBe(true);
   });
 
   it("fails as SANY does on the definition of a DEFINE step", () => {
-    const proof = (reference: string) => `---- MODULE Steps ----
+    const getProof = (reference: string) => `---- MODULE Steps ----
 F == 1
 THEOREM TRUE
 <1>1. DEFINE G == 2
@@ -209,13 +210,13 @@ THEOREM TRUE
   BY ${reference}
 <1> QED
 ====`;
-    expect(exportSanyXml(generate(proof("DEF F")))).toContain("<DefStepNode>");
-    expect(() => exportSanyXml(generate(proof("DEF <1>1")))).toThrow(
+    expect(exportSanyXml(generate(getProof("DEF F")))).toContain("<DefStepNode>");
+    expect(() => exportSanyXml(generate(getProof("DEF <1>1")))).toThrow(
       new TlaUnsupportedError(
         "java.lang.IllegalArgumentException: unsupported kind: 37 in xml export",
       ),
     );
-    expect(isRejected(proof("<1>2"))).toBe(true);
+    expect(isRejected(getProof("<1>2"))).toBe(true);
   });
 
   it("lists a module extended twice once as SANY does", () => {
@@ -319,7 +320,6 @@ THEOREM TRUE
     );
   });
 
-  // SymbolContext's copies share its flags, so the flag a CASE with an OTHER arm sets lasts.
   it("exports the null SANY leaves for an operator after a CASE with OTHER as $Other, as TLC 1.7.4 does", () => {
     const xml = export174(
       "---- MODULE Other ----\nA == CASE TRUE -> 1 [] OTHER -> 2\nOp == <<{1 + 2}>>\n====",
@@ -334,31 +334,29 @@ THEOREM TRUE
     expect(xml).toMatch(/<OpDeclNodeRef>\s*<UID>156<\/UID>\s*<\/OpDeclNodeRef>\s*<\/NewSymbNode>/);
   });
 
-  // TLC 1.7.4's XMLExporter exports a specification with semantic errors, whose nodes SANY never
-  // level-checked.
   it("leaves out the level of an assumption SANY never level-checked, as TLC 1.7.4 does", () => {
     const xml = export174("---- MODULE Unchecked ----\nRECURSIVE F\nASSUME TRUE\nF == 1\n====")();
     expect(xml).toMatch(/<AssumeNode>\s*<location>[\s\S]*?<\/location>\s*<body>/);
   });
 
   it("marks a []ASSUME/[]PROVE as boxed", () => {
-    const theorem = (statement: string) => `---- MODULE Boxed ----
+    const getTheorem = (statement: string) => `---- MODULE Boxed ----
 VARIABLE x
 THEOREM ${statement}
 ====`;
-    const xml = exportSanyXml(generate(theorem("T == []ASSUME x = 1 []PROVE x = 1")));
+    const xml = exportSanyXml(generate(getTheorem("T == []ASSUME x = 1 []PROVE x = 1")));
     expect(xml).toContain("<boxed/>");
     expect(xml).toContain("<begin>14</begin>");
     const getErrors = (source: string) =>
       generate(source)
         .messages.filter((message) => !message.isWarning)
         .map((message) => message.text);
-    expect(getErrors(theorem("[]ASSUME x = 1 PROVE x = 1"))).toEqual([
+    expect(getErrors(getTheorem("[]ASSUME x = 1 PROVE x = 1"))).toEqual([
       "[]ASSUME matched by PROVE instead of []PROVE",
     ]);
-    expect(getErrors(theorem("ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1"))).toEqual([
-      "[]ASSUME used within the scope of an ordinary ASSUME's assumptions",
-    ]);
+    expect(getErrors(getTheorem("ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1"))).toEqual(
+      ["[]ASSUME used within the scope of an ordinary ASSUME's assumptions"],
+    );
     expect(() => generate("---- MODULE Boxed ----\nASSUME TRUE\n[]ASSUME TRUE\n====")).toThrow(
       TlaSyntaxError,
     );

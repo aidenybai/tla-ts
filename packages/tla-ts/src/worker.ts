@@ -1,12 +1,14 @@
-// Worker threads as Web Workers, or as Node's worker_threads where there are none.
-
 const WORKER_THREADS_MODULE = "node:worker_threads";
 const BUN_JSC_MODULE = "bun:jsc";
 
+interface PortEvent {
+  data: unknown;
+}
+
 export interface Port {
   postMessage: (message: unknown, transfer?: unknown[]) => void;
-  addEventListener: (type: "message", listener: (event: { data: unknown }) => void) => void;
-  removeEventListener?: (type: "message", listener: (event: { data: unknown }) => void) => void;
+  addEventListener: (type: "message", listener: (event: PortEvent) => void) => void;
+  removeEventListener?: (type: "message", listener: (event: PortEvent) => void) => void;
   start?: () => void;
 }
 
@@ -17,7 +19,7 @@ export interface WorkerHandle {
 
 interface WebWorker {
   postMessage: (message: unknown, transfer?: unknown[]) => void;
-  addEventListener: (type: string, listener: (event: { data: unknown }) => void) => void;
+  addEventListener: (type: string, listener: (event: PortEvent) => void) => void;
   terminate: () => void;
 }
 
@@ -27,7 +29,6 @@ export const isWorkerSupported = () =>
   typeof Worker === "function" ||
   (typeof process !== "undefined" && process.versions?.node !== undefined);
 
-// The caller writes url as new URL("./name.js", import.meta.url) for bundlers to find.
 export const spawnWorker = async (
   url: URL,
   onMessage: (message: unknown) => void,
@@ -62,8 +63,6 @@ export const getParentPort = async () => {
   return threads.parentPort as unknown as Port;
 };
 
-// A break runs an eden collection on Bun, then lets the event loop turn, where JavaScriptCore's
-// timers give back the memory the collection freed.
 export const createBreak = () => {
   const jsc: Promise<{ edenGC: () => void }> | undefined =
     "Bun" in globalThis

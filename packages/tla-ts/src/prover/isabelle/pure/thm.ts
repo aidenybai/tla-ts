@@ -1,8 +1,4 @@
-// Ported from Isabelle2025's Pure/thm.ML, the inference kernel. Copyright (c) 1986-2025
-// University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Every TLA+ type variable has the empty sort, so the kernel drops the sort hypotheses and
-// constraints. Proof terms and certificates are not recorded either.
+// Ported from Isabelle2025's Pure/thm.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import {
@@ -68,12 +64,11 @@ import {
   type Var,
 } from "./term";
 import type { Limits } from "./interrupt";
-import { smashUnifiers, unifiers, type Tpair } from "./unify";
+import { smashUnifiers, unifiers, type Tpair, type Unifier } from "./unify";
 import { normTermSkip, renameBvars, stripApply, stripAssums2, unifyVarTypes } from "./bicompose";
 
 declare const kernel: unique symbol;
 
-// A theorem. Only this module builds one, so every Thm follows from the axioms by the rules here.
 export interface Thm {
   readonly maxidx: number;
   readonly hyps: readonly Term[];
@@ -109,7 +104,6 @@ const unionTpairs = (left: readonly Tpair[], right: readonly Tpair[]) =>
 const maxidxTpairs = (tpairs: readonly Tpair[], maxidx: number) =>
   tpairs.reduce((result, pair) => maxidxOfTerm(pair[1], maxidxOfTerm(pair[0], result)), maxidx);
 
-// An axiom or a theorem that the reference theories prove, taken on trust.
 export const axiomThm = (prop: Term): Thm => makeThm(maxidxOfTerm(prop), [], [], prop);
 
 export const nprems = (thm: Thm) => countPrems(thm.prop);
@@ -240,11 +234,11 @@ export const transitive = (first: Thm, second: Thm): Thm => {
   );
 };
 
-export const betaConversion = (full: boolean, term: Term): Thm => {
-  if (!full && (term.kind !== "App" || term.fun.kind !== "Abs"))
+export const betaConversion = (isFull: boolean, term: Term): Thm => {
+  if (!isFull && (term.kind !== "App" || term.fun.kind !== "Abs"))
     throw new TlaIsabelleError("THM", "beta_conversion: not a redex");
   const reduced =
-    full || term.kind !== "App" || term.fun.kind !== "Abs"
+    isFull || term.kind !== "App" || term.fun.kind !== "Abs"
       ? betaNorm(term)
       : substBound(term.arg, term.fun.body);
   return makeThm(maxidxOfTerm(term), [], [], mkEquals(term, reduced));
@@ -318,7 +312,6 @@ export const flexflexRule = (limits: Limits | undefined, thm: Thm): Seq<Thm> =>
     smashUnifiers(limits, thm.tpairs, emptyEnvir(thm.maxidx)),
   );
 
-// Thm.generalize: turns the named free variables into schematic ones with the given index.
 export const generalize = (frees: readonly string[], index: number, thm: Thm): Thm => {
   if (frees.length === 0) return thm;
   if (index <= thm.maxidx) throw new TlaIsabelleError("THM", "generalize: bad index");
@@ -381,7 +374,6 @@ const instantiateTerm = (insts: readonly Instantiation[], term: Term): Term => {
   return subst(term);
 };
 
-// Thm.instantiate for term variables. Every instance must have the type of its variable.
 export const instantiate = (insts: readonly Instantiation[], thm: Thm): Thm => {
   if (insts.length === 0) return thm;
   for (const inst of insts)
@@ -395,7 +387,6 @@ export const instantiate = (insts: readonly Instantiation[], thm: Thm): Thm => {
   return makeThm(maxidxTpairs(tpairs, maxidxOfTerm(prop)), thm.hyps, tpairs, prop);
 };
 
-// Thm.instantiate for type variables.
 const instantiateTypesTerm = (tyenv: TyEnv, term: Term): Term => {
   if (maxidxOfTerm(term) < 0) return term;
   switch (term.kind) {
@@ -423,7 +414,6 @@ export const instantiateTypes = (tyenv: TyEnv, thm: Thm): Thm => {
   return makeThm(maxidxTpairs(tpairs, maxidxOfTerm(prop)), thm.hyps, tpairs, prop);
 };
 
-// Thm.renamed_prop: the same theorem with an alpha-equivalent proposition.
 export const renamedProp = (prop: Term, thm: Thm): Thm => {
   if (!aconv(prop, thm.prop)) throw new TlaIsabelleError("TERM", "renamed_prop: props disagree");
   return makeThm(thm.maxidx, thm.hyps, thm.tpairs, prop);
@@ -454,7 +444,6 @@ const destState = (state: Thm, index: number): State => {
   };
 };
 
-// Thm.lift_rule: lifts a rule over the parameters and premises of a goal of a state.
 export const liftRule = (goal: Term, goalMaxidx: number, rule: Thm): Thm => {
   const increment = goalMaxidx + 1;
   const premises = stripImpPrems(rule.prop).map((premise) => liftAll(increment, goal, premise));
@@ -483,10 +472,9 @@ export const incrIndexesThm = (increment: number, thm: Thm): Thm => {
   );
 };
 
-// Thm.assumption: solves goal index by any of its assumptions, with unification.
 export const assumption = (limits: Limits | undefined, index: number, state: Thm): Seq<Thm> => {
   const parts = destState(state, index);
-  const newThm = (unifier: { envir: Envir; tpairs: readonly Tpair[] }): Thm => {
+  const newThm = (unifier: Unifier): Thm => {
     const envir = unifier.envir;
     const isEmpty = isEmptyEnvir(envir);
     const prop = listImplies(parts.before, parts.conclusion);
@@ -520,11 +508,9 @@ export const assumption = (limits: Limits | undefined, index: number, state: Thm
   return addprfs(0);
 };
 
-// Thm.eq_assumption: solves goal index by an assumption equal to its conclusion up to alpha and eta.
 export const eqAssumption = (index: number, state: Thm): Thm => {
   const parts = destState(state, index);
   const problems = assumProblems(-1, parts.goal);
-  // Envir.aeconv against each assumption, contracting the conclusion only once.
   const conclusion = etaContract(problems.conclusion);
   const isFound = problems.hyps.some(
     (hyp) => aconv(hyp, problems.conclusion) || aconv(etaContract(hyp), conclusion),
@@ -604,17 +590,13 @@ const bicomposeAux = (
 ): Seq<Thm> => {
   const orule = compose.rule;
   const lift = countPrems(stripAllBody(parts.goal)) + (compose.isElim ? -1 : 0);
-  const addth = (
-    newAs: { premises: Term[] },
-    unifier: { envir: Envir; tpairs: readonly Tpair[] },
-    rest: Seq<Thm>,
-  ): Seq<Thm> => {
+  const addth = (newPremises: readonly Term[], unifier: Unifier, rest: Seq<Thm>): Seq<Thm> => {
     try {
       const envir = unifier.envir;
       const normt = (term: Term) => normTerm(envir, term);
       const computed = (): [readonly Tpair[], Term[], Term] => {
         if (isEmptyEnvir(envir))
-          return [unifier.tpairs, [...parts.before, ...newAs.premises], parts.conclusion];
+          return [unifier.tpairs, [...parts.before, ...newPremises], parts.conclusion];
         const tpairs = unifier.tpairs.map((pair): Tpair => [normt(pair[0]), normt(pair[1])]);
         if (above(envir, state.maxidx))
           return isLifted
@@ -622,13 +604,13 @@ const bicomposeAux = (
                 tpairs,
                 [
                   ...parts.before,
-                  ...newAs.premises.map((premise) => normTermSkip(envir, lift, premise)),
+                  ...newPremises.map((premise) => normTermSkip(envir, lift, premise)),
                 ],
                 parts.conclusion,
               ]
-            : [tpairs, [...parts.before, ...newAs.premises.map(normt)], parts.conclusion];
+            : [tpairs, [...parts.before, ...newPremises.map(normt)], parts.conclusion];
         if (flags.match) throw new Compose();
-        return [tpairs, [...parts.before, ...newAs.premises].map(normt), normt(parts.conclusion)];
+        return [tpairs, [...parts.before, ...newPremises].map(normt), normt(parts.conclusion)];
       };
       const [tpairs, premises, conclusion] = computed();
       return consSeq(
@@ -668,16 +650,14 @@ const bicomposeAux = (
         ? [...premises]
         : premises.map((premise) => stripApply(rename, conclusion, premise));
     try {
-      return {
-        premises: flags.flatten ? renamed.map((premise) => flattenParams(index, premise)) : renamed,
-      };
+      return flags.flatten ? renamed.map((premise) => flattenParams(index, premise)) : renamed;
     } catch (error) {
       if (error instanceof TlaIsabelleError && error.exception === "TERM")
         throw new TlaIsabelleError("THM", "bicompose: 1st premise");
       throw error;
     }
   };
-  const bbi = isLifted ? stripAssums2(conclusion, parts.goal) : ([conclusion, parts.goal] as const);
+  const bbi: Tpair = isLifted ? stripAssums2(conclusion, parts.goal) : [conclusion, parts.goal];
   const dpairs: Tpair[] = [bbi, ...orule.tpairs, ...parts.tpairs];
   const eres = (envir: Envir, premises: readonly Term[]): Seq<Thm> => {
     if (premises.length === 0) throw new TlaIsabelleError("THM", "bicompose: no premises");
@@ -739,8 +719,6 @@ export interface BiresRule {
   readonly rule: Thm;
 }
 
-// Thm.biresolution: resolves goal index with each rule, the elimination rules also solving their
-// first premise by an assumption.
 export const biresolution = (
   limits: Limits | undefined,
   match: boolean,
@@ -769,7 +747,6 @@ export const biresolution = (
   return flatSeq(res(0));
 };
 
-// Thm.RSN: resolution that must produce exactly one resolvent.
 export const rsn = (rule: Thm, index: number, state: Thm): Thm => {
   const [results] = chopSeq(
     2,

@@ -1,5 +1,4 @@
 // Ported from tlapm's src/backend/isabelle.ml (BSD licensed, see LICENSE-tlapm).
-// An obligation as the Isabelle/TLA+ theory tlapm writes for Isabelle to prove with a tactic.
 
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
@@ -79,7 +78,6 @@ const NONFIX: Partial<Record<Builtin, [string, number]>> = {
   ToString: ["ToString", 1],
 };
 
-// thy_header's tdoms_table: the operators the theory declares, with their arities.
 const DECLARED: [string, number][] = [
   ["Real", 0],
   ["/", 2],
@@ -105,7 +103,6 @@ const getSuccessors = (integer: string) => {
   return `${"succ[".repeat(count)}0${"]".repeat(count)}`;
 };
 
-// thy_header.
 const getTheoryHeader = (name: string, isVerbose: boolean) => [
   "(* automatically generated -- do not edit manually *)",
   `theory ${name} imports Constant Zenon begin`,
@@ -113,23 +110,20 @@ const getTheoryHeader = (name: string, isVerbose: boolean) => [
   HEADER,
 ];
 
-// pp_print_expr on an obligation after Backend.Prep has shipped it.
 const printLemma = (sequent: Sequent) => {
   const context = createContext();
   const adjoin = (name: string) => pushName(context, pickle(name));
   const bump = () => pushName(context, "");
 
-  // A binder's name binds in what prints inside it.
   const withBound = (name: string, print: (bound: string) => string) => {
     const printed = print(adjoin(name));
     popNames(context, 1);
     return printed;
   };
 
-  // pp_print_expr: every expression, apart from the obligation's sequent, prints in parentheses.
   const printExpr = (expression: Expr) => `(${formatExpr(expression)})`;
-  const delimited = (args: Expr[]) => args.map(printExpr).join(", ");
-  const nonfix = (name: string, args: Expr[]) => `(${name} (${delimited(args)}))`;
+  const printDelimited = (args: Expr[]) => args.map(printExpr).join(", ");
+  const printNonfix = (name: string, args: Expr[]) => `(${name} (${printDelimited(args)}))`;
 
   const printInternal = (builtin: Builtin, args: Expr[]): string => {
     const atom = ATOMS[builtin];
@@ -140,9 +134,8 @@ const printLemma = (sequent: Sequent) => {
     if (binary !== undefined && args.length === 2)
       return `(${printExpr(args[0])} ${binary} ${printExpr(args[1])})`;
     const operator = NONFIX[builtin];
-    if (operator && operator[1] === args.length) return nonfix(operator[0], args);
+    if (operator && operator[1] === args.length) return printNonfix(operator[0], args);
     if (builtin === "Unprimable" && args.length === 1) return printExpr(args[0]);
-    // tlapm prints an irregular expression as the hash of its TLA+ text, but never makes one.
     if (builtin === "Irregular" && args.length === 1) throw new TlaUnsupportedError("Irregular");
     throw getUnprintableError(builtin, args.length, "Backend.Isabelle.pp_apply");
   };
@@ -152,11 +145,11 @@ const printLemma = (sequent: Sequent) => {
       case "Ix": {
         const name = getBoundName(context, operator.index);
         if (operator.index <= 0 || name === undefined) throw new TlapmBugError();
-        return args.length === 0 ? name : `(${name} (${delimited(args)}))`;
+        return args.length === 0 ? name : `(${name} (${printDelimited(args)}))`;
       }
       case "Opaque": {
         const name = pickle(operator.name);
-        return args.length === 0 ? `(${name} :: c)` : `(${name} (${delimited(args)}) :: c)`;
+        return args.length === 0 ? `(${name} :: c)` : `(${name} (${printDelimited(args)}) :: c)`;
       }
       case "Internal":
         return printInternal(operator.builtin, args);
@@ -186,7 +179,6 @@ const printLemma = (sequent: Sequent) => {
     );
   };
 
-  // pp_print_sequent_inner: a sequent inside an expression, as a meta-level implication.
   const printNestedSequent = (sequent: Sequent): string => {
     if (sequent.context.length === 0) return printExpr(sequent.active);
     const hyp = sequent.context[0];
@@ -279,7 +271,7 @@ const printLemma = (sequent: Sequent) => {
         );
       }
       case "SetEnum":
-        return `{${delimited(expression.elements)}}`;
+        return `{${printDelimited(expression.elements)}}`;
       case "Fcn": {
         const bound = expression.bounds[0];
         if (expression.bounds.length !== 1)
@@ -296,7 +288,7 @@ const printLemma = (sequent: Sequent) => {
         const printedFunction = printExpr(expression.function);
         return expression.args.length === 1
           ? `fapply (${printedFunction}, ${printExpr(expression.args[0])})`
-          : `fapply (${printedFunction}, <<${delimited(expression.args)}>>)`;
+          : `fapply (${printedFunction}, <<${printDelimited(expression.args)}>>)`;
       }
       case "Arrow":
         return `[${printExpr(expression.domain)} \\<rightarrow> ${printExpr(expression.range)}]`;
@@ -318,11 +310,11 @@ const printLemma = (sequent: Sequent) => {
       case "Dot":
         return `fapply (${printExpr(expression.expression)}, (''${expression.field}''))`;
       case "Tuple":
-        return `<<${delimited(expression.elements)}>>`;
+        return `<<${printDelimited(expression.elements)}>>`;
       case "Product":
         return expression.factors.length === 2
           ? `(${printExpr(expression.factors[0])} \\<times> ${printExpr(expression.factors[1])})`
-          : `Product(\\<langle>${delimited(expression.factors)}\\<rangle>)`;
+          : `Product(\\<langle>${printDelimited(expression.factors)}\\<rangle>)`;
       case "Sub":
       case "Tsub": {
         const suffix = expression.kind === "Sub" ? "sub" : "tsub";
@@ -332,8 +324,8 @@ const printLemma = (sequent: Sequent) => {
       case "Fair":
         return `${cook(expression.fairness === "Weak" ? "a'wf" : "a'sf")}(${printExpr(expression.subscript)},${printExpr(expression.action)})`;
       case "Case": {
-        const conditions = delimited(expression.arms.map((arm) => arm.condition));
-        const bodies = delimited(expression.arms.map((arm) => arm.body));
+        const conditions = printDelimited(expression.arms.map((arm) => arm.condition));
+        const bodies = printDelimited(expression.arms.map((arm) => arm.body));
         return expression.other
           ? `CaseOther(<<${conditions}>>,<<${bodies}>>,${printExpr(expression.other)})`
           : `Case(<<${conditions}>>,<<${bodies}>>)`;
@@ -348,8 +340,6 @@ const printLemma = (sequent: Sequent) => {
     }
   };
 
-  // pp_print_sequent_outer: the obligation's sequent as the lines of a lemma's fixes, assumes and
-  // shows. A pragma's definition ends it with an empty line in place of the goal.
   const printSequent = (sequent: Sequent) => {
     const lines: string[] = [];
     for (const hyp of sequent.context) {
@@ -405,7 +395,6 @@ const printLemma = (sequent: Sequent) => {
   }
 };
 
-// thy_temp: the theory tlapm writes for Isabelle to prove obligation id.
 export const encodeIsabelle = (id: number, sequent: Sequent, tactic: string): string => {
   const lemma = printLemma(sequent);
   return [
@@ -427,7 +416,6 @@ interface IsabelleProof {
   tactic: string;
 }
 
-// Isabelle.thy_init, thy_write and thy_close.
 export const encodeIsabelleTheory = (name: string, proofs: IsabelleProof[]) =>
   [
     ...getTheoryHeader(name, true),

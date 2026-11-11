@@ -7,7 +7,6 @@ interface Case {
   setup?: string;
 }
 
-// Each action body changes the variables the same way in JavaScript and in the TLA+ that tla-ts compiles it to.
 const CASES: Record<string, Case[]> = {
   assignments: [
     { variables: "count = 1", statements: "count = 5;" },

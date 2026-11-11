@@ -1,7 +1,4 @@
-// Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt. Builds a
-// model from the current assignment: every relevant equivalence class gets a value, Booleans from
-// the assignment, integers from the arithmetic theory and other sorts from fresh model values, and
-// each congruence root of an uninterpreted function becomes an entry of its interpretation.
+// Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_MODEL_VALUE,
   FAMILY_USER,
@@ -21,8 +18,6 @@ export interface GeneratedModel {
   root2value: Map<Enode, number>;
 }
 
-// include_func_interp: the model interprets uninterpreted functions, theory_lra's divisions by zero,
-// and the decls of a family without a theory, such as model values, which stand for themselves.
 const isIncludedFuncInterp = (decl: FuncDecl) =>
   decl.family === FAMILY_USER ||
   decl.family === FAMILY_MODEL_VALUE ||
@@ -34,11 +29,9 @@ export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
   const model = new ProtoModel(manager);
   context.theory?.initModel(model);
-  // register_existing_model_values.
   for (const node of context.enodes)
     if (node.root === node && context.isRelevant(node.owner) && manager.isModelValue(node.owner))
       model.registerValue(node.owner);
-  // mk_bool_model.
   for (let boolVar = 0; boolVar < context.numBoolVars; boolVar++) {
     const expr = context.boolVar2Expr[boolVar];
     if (manager.isUninterpretedConst(expr) && context.isRelevant(expr))
@@ -47,9 +40,6 @@ export const mkModel = (context: Context): GeneratedModel => {
         context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr,
       );
   }
-  // mk_values: the values of the arithmetic classes that the theory does not know are fresh, so
-  // they come after all the other values. Like Z3, that includes the class of a numeral without a
-  // theory variable, such as a coefficient.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
   for (const node of context.enodes) {
@@ -76,7 +66,6 @@ export const mkModel = (context: Context): GeneratedModel => {
   for (const node of context.enodes)
     if (manager.isUninterpretedConst(node.owner) && context.isRelevant(node.owner))
       model.registerConst(manager.decls[node.owner], getValue(node));
-  // mk_func_interps.
   for (const node of context.enodes) {
     const expr = node.owner;
     if (!context.isRelevant(expr) || !isIncludedFuncInterp(manager.funcDecls[node.decl])) continue;

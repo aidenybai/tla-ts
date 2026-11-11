@@ -1,26 +1,9 @@
-// Ported from Z3 (src/nlsat/nlsat_interval_set.cpp), MIT license, see z3-license.txt. Sets of
-// disjoint infeasible intervals of the values of one variable, each justified by the literal that
-// excludes it. A null set is empty. The bounds are copies of the numbers they were built from, so
-// refining a bound while comparing it narrows only that copy, as in Z3.
-//
-// A union drops the clauses of the intervals it copies, as Z3's push_back does, and this is
-// sound. An interval's clause is read only by get_justifications, for R_propagate's lazy
-// justification (nlsat_solver.cpp). Its literals come from the justifications alone, and the lazy
-// clause they give is valid in the reals by itself. The clauses are used only for three things:
-// - resolve_lazy_justification joins their assumptions into the lemma's. Resolution already
-//   collects these: each core literal's own justification is resolved, or the literal stays in
-//   the lemma.
-// - update_var2eq skips a lazy justification with clauses. It also skips one with literals, and
-//   every interval brings a literal.
-// - Display.
-// So a dropped clause can only shrink an over-approximated assumption set, and never removes a
-// literal from an explanation.
+// Ported from Z3 (src/nlsat/nlsat_interval_set.cpp), MIT license, see z3-license.txt.
 import { RandomGen } from "../random-gen";
 import { Rational } from "../rational";
 import { Anum, type AlgebraicManager } from "./algebraic";
 import type { Clause } from "./types";
 
-// A null bound is infinite, and an infinite end is always open.
 export interface Interval {
   isLowerOpen: boolean;
   lower: Anum | null;
@@ -97,8 +80,6 @@ export class IntervalSetManager {
     return !first.isUpperOpen && !second.isLowerOpen ? 0 : -1;
   }
 
-  // adjacent: curr ends where next starts and one of them holds the shared point. Both bounds are
-  // finite.
   private isAdjacent(current: Interval, next: Interval) {
     return (
       this.am.compare(current.upper!, next.lower!) === 0 &&
@@ -109,13 +90,14 @@ export class IntervalSetManager {
   // push_back drops the clause, so a union only keeps the clauses of a set it returns unchanged.
   private copyInterval(
     interval: Interval,
-    upper = { isOpen: interval.isUpperOpen, value: interval.upper },
+    isUpperOpen = interval.isUpperOpen,
+    upper = interval.upper,
   ): Interval {
     return {
       isLowerOpen: interval.isLowerOpen,
       lower: interval.lower === null ? null : this.am.copy(interval.lower),
-      isUpperOpen: upper.isOpen,
-      upper: upper.value === null ? null : this.am.copy(upper.value),
+      isUpperOpen,
+      upper: upper === null ? null : this.am.copy(upper),
       justification: interval.justification,
       clause: null,
     };
@@ -145,15 +127,10 @@ export class IntervalSetManager {
           if (touchSign < 0) result.push(this.copyInterval(firstInterval));
           else if (touchSign === 0) {
             if (lowerSign !== 0)
-              result.push(
-                this.copyInterval(firstInterval, { isOpen: true, value: firstInterval.upper }),
-              );
+              result.push(this.copyInterval(firstInterval, true, firstInterval.upper));
           } else if (lowerSign !== 0)
             result.push(
-              this.copyInterval(firstInterval, {
-                isOpen: !secondInterval.isLowerOpen,
-                value: secondInterval.lower,
-              }),
+              this.copyInterval(firstInterval, !secondInterval.isLowerOpen, secondInterval.lower),
             );
           firstIndex++;
         }
@@ -166,15 +143,10 @@ export class IntervalSetManager {
         const touchSign = this.compareUpperLower(secondInterval, firstInterval);
         if (touchSign < 0) result.push(this.copyInterval(secondInterval));
         else if (touchSign === 0)
-          result.push(
-            this.copyInterval(secondInterval, { isOpen: true, value: secondInterval.upper }),
-          );
+          result.push(this.copyInterval(secondInterval, true, secondInterval.upper));
         else
           result.push(
-            this.copyInterval(secondInterval, {
-              isOpen: !firstInterval.isLowerOpen,
-              value: firstInterval.lower,
-            }),
+            this.copyInterval(secondInterval, !firstInterval.isLowerOpen, firstInterval.lower),
           );
         secondIndex++;
       }
@@ -183,7 +155,6 @@ export class IntervalSetManager {
       result.push(this.copyInterval(first.intervals[firstIndex]));
     for (; secondIndex < second.intervals.length; secondIndex++)
       result.push(this.copyInterval(second.intervals[secondIndex]));
-    // Merge adjacent intervals with the same justification.
     const merged = [result[0]];
     for (const next of result.slice(1)) {
       const current = merged[merged.length - 1];
@@ -202,7 +173,6 @@ export class IntervalSetManager {
     return set !== null && set.isFull;
   }
 
-  // subset: every interval of first lies in a run of adjacent intervals of second.
   subset(first: IntervalSet | null, second: IntervalSet | null) {
     if (first === second || first === null) return true;
     if (second === null) return false;
@@ -237,8 +207,6 @@ export class IntervalSetManager {
     return firstIndex === first.intervals.length;
   }
 
-  // get_justifications: the distinct justifications in order, and the clauses of the intervals
-  // that first bring each.
   getJustifications(set: IntervalSet | null) {
     const literals: number[] = [];
     const clauses: Clause[] = [];
@@ -250,10 +218,6 @@ export class IntervalSetManager {
     return { literals, clauses };
   }
 
-  // pick_in_complement: zero when it is outside the set. Otherwise an integer above the last
-  // interval, an integer below the first, or a number in a gap, picked uniformly at random among
-  // them when randomizing, else the first found. With no gap, the shared open end of two
-  // intervals, preferring a rational one. Z3 also takes is_int, and ignores it.
   pickInComplement(set: IntervalSet | null, isRandomized: boolean) {
     if (set === null) return new Anum(Rational.zero);
     const zero = new Anum(Rational.zero);
@@ -301,7 +265,6 @@ export class IntervalSetManager {
     return this.am.copy(irrational!);
   }
 
-  // compare_interval_with_zero: -1 when the interval lies below zero, 1 above, 0 when it holds it.
   private compareIntervalWithZero(interval: Interval, zero: Anum) {
     if (interval.upper !== null) {
       const sign = this.am.compare(interval.upper, zero);
@@ -314,8 +277,6 @@ export class IntervalSetManager {
     return 0;
   }
 
-  // find_complement_sup: the interval whose lower bound is the supremum of the complement, when
-  // the set reaches +oo and the complement is not empty.
   private findComplementSup(set: IntervalSet | null) {
     if (set === null || set.intervals[set.intervals.length - 1].upper !== null) return null;
     for (let index = set.intervals.length - 1; ; index--) {
@@ -331,7 +292,6 @@ export class IntervalSetManager {
     }
   }
 
-  // pick_max_in_complement: the largest number of the complement, or a number just below it.
   pickMaxInComplement(set: IntervalSet | null) {
     const index = this.findComplementSup(set);
     if (index === null) return null;
@@ -341,7 +301,6 @@ export class IntervalSetManager {
     return this.am.select(set!.intervals[index - 1].upper!, current.lower!);
   }
 
-  // query_max_in_complement: the supremum of the complement, and whether it belongs to it.
   queryMaxInComplement(set: IntervalSet | null): ComplementMax | null {
     const index = this.findComplementSup(set);
     if (index === null) return null;

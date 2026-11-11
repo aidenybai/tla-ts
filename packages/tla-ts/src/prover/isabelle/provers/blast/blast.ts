@@ -1,10 +1,4 @@
-// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Paulson's generic tableau prover with proof reconstruction. It converts subgoal 1 to
-// prototerms, Skolemizing its parameters, searches for a tableau proof with the claset's rules,
-// and replays the proof with Isabelle tactics, so the kernel checks every result. Blast ignores
-// the claset's wrappers and the elimination rules whose conclusion is not a formula variable.
+// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../../errors";
 import { selectGoal } from "../../pure/goal";
@@ -36,9 +30,7 @@ import {
   mkBlastFree,
   mkBlastSkolem,
   mkBlastVar,
-  mkGoal,
-  stripBlastImpConcl,
-  stripBlastImpPrems,
+  splitGoalPrems,
   type BlastTerm,
   type VarEntry,
   type VarRef,
@@ -46,10 +38,8 @@ import {
 
 export type { BlastContext } from "./state";
 
-// Blast's depth_limit configuration option.
 const DEPTH_LIMIT = 20;
 
-// TRANS: the subgoal has no translation, such as one applying an unknown to a non-parameter.
 class Trans extends Error {}
 
 const isTermError = (error: unknown) =>
@@ -73,22 +63,20 @@ const discardForalls = (term: Term): Term =>
 interface SubgoalVar {
   readonly key: string;
   readonly ref: VarRef;
-  // The parameters the variable is applied to.
   readonly bounds: readonly number[];
 }
 
-// Translates a subgoal, Skolemizing all its parameters.
 const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
   const vars: SubgoalVar[] = [];
   const tvars: VarEntry[] = [];
-  const from = (level: number, current: Term): BlastTerm => {
+  const convert = (level: number, current: Term): BlastTerm => {
     const [head, args] = stripComb(current);
     const apply = (blastHead: BlastTerm) =>
       listBlastComb(
         blastHead,
-        args.map((arg) => from(level, arg)),
+        args.map((arg) => convert(level, arg)),
       );
-    const bounds = () =>
+    const getBounds = () =>
       args.map((arg) => {
         if (arg.kind !== "Bound")
           throw new Trans("Function unknown's argument not a bound variable");
@@ -106,11 +94,11 @@ const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
         const key = `${head.name}.${head.index}`;
         const known = vars.find((entry) => entry.key === key);
         if (known === undefined) {
-          const entry = { key, ref: { value: undefined }, bounds: bounds() };
+          const entry = { key, ref: { value: undefined }, bounds: getBounds() };
           vars.unshift(entry);
           return mkBlastVar(entry.ref);
         }
-        const argBounds = bounds();
+        const argBounds = getBounds();
         if (
           known.bounds.length === argBounds.length &&
           known.bounds.every((bound, index) => bound === argBounds[index])
@@ -120,13 +108,13 @@ const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
       }
       case "Abs":
         if (args.length > 0) throw new Trans("argument not in normal form");
-        return mkBlastAbs(head.name, from(level + 1, head.body));
+        return mkBlastAbs(head.name, convert(level + 1, head.body));
       case "App":
         throw new Trans("strip_comb");
     }
   };
   const npars = stripParams(term).length;
-  let result = from(0, discardForalls(term));
+  let result = convert(0, discardForalls(term));
   for (let index = 0; index < npars; index += 1) {
     const args = vars.filter((entry) => !entry.bounds.includes(index)).map((entry) => entry.ref);
     result = blastSubstBound(mkBlastSkolem(gensym(state, "T"), args), result);
@@ -141,8 +129,6 @@ interface EveryTrail {
   readonly next: EveryTrail | undefined;
 }
 
-// EVERY, as a loop: Isabelle's EVY and evyBack call each other in tail position, so backtracking
-// over a long reconstruction must not grow the stack.
 const everyTac =
   (tactics: readonly Tactic[]): Tactic =>
   (start) => {
@@ -189,7 +175,6 @@ const initBranch = (terms: readonly BlastTerm[], lim: number): Branch => ({
   lim,
 });
 
-// The tableau engine and proof reconstruction on subgoal 1, with depth limit lim.
 const rawBlast =
   (context: BlastContext, lim: number): Tactic =>
   (goalState) => {
@@ -210,27 +195,13 @@ const rawBlast =
     };
     try {
       const skoprem = fromSubgoal(state, destImplies(goalState.prop)[0]);
-      const trueprop = context.data.trueprop;
-      return prove(
-        state,
-        [
-          initBranch(
-            [
-              mkGoal(stripBlastImpConcl(trueprop, skoprem)),
-              ...stripBlastImpPrems(trueprop, skoprem),
-            ],
-            lim,
-          ),
-        ],
-        cont,
-      );
+      return prove(state, [initBranch(splitGoalPrems(context.data.trueprop, skoprem), lim)], cont);
     } catch (error) {
       if (isBacktrackTo(error, undefined) || error instanceof Trans) return emptySeq;
       throw error;
     }
   };
 
-// Blast.depth_tac: blast with a fixed depth limit.
 export const blastDepthTac =
   (context: BlastContext, limit: number): GoalTactic =>
   (index) =>
@@ -238,7 +209,6 @@ export const blastDepthTac =
       thenTac(atomizePremsTac(context.limits, context.data.atomize)(1), rawBlast(context, limit)),
     )(index);
 
-// Search.DEEPEN (1, lim) from depth m on goal 1.
 const deepen =
   (context: BlastContext, limit: number, depth: number): Tactic =>
   (state): Seq<Thm> =>
@@ -246,7 +216,6 @@ const deepen =
       ? emptySeq
       : orElse(rawBlast(context, depth), deepen(context, limit, depth + 1))(state);
 
-// Blast.blast_tac: iterative deepening up to the depth limit.
 export const blastTac =
   (context: BlastContext): GoalTactic =>
   (index) =>

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, parseModule, TlaSyntaxError } from "../../src";
@@ -6,11 +6,16 @@ import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
+const loadModule = (name: string) => {
+  const path = join(DIRECTORY, `${name}.tla`);
+  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+};
+
 const checkInstances = (configName: string, moduleName = "Instances") =>
   check({
     source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
-    loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+    loadModule,
   });
 
 describe("INSTANCE matches TLC", () => {
@@ -25,8 +30,10 @@ describe("INSTANCE matches TLC", () => {
       source:
         "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nINSTANCE Inner\nInit == x = Merged[2]\nNext == UNCHANGED x\n====",
       config: "INIT Init\nNEXT Next",
-      loadModule: () =>
-        "---- MODULE Inner ----\nCONSTANTS _ @@ _, _ :> _\nMerged == (1 :> 1) @@ (2 :> 2)\n====",
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nCONSTANTS _ @@ _, _ :> _\nMerged == (1 :> 1) @@ (2 :> 2)\n===="
+          : undefined,
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
   });
@@ -36,7 +43,7 @@ describe("INSTANCE matches TLC", () => {
     const result = await check({
       source: readFileSync(join(DIRECTORY, "SubstOnce.tla"), "utf8"),
       config: readFileSync(join(DIRECTORY, "SubstOnce.cfg"), "utf8"),
-      loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+      loadModule,
       onPrint: (text) => prints.push(text),
     });
     expect(result.status).toBe("success");
@@ -63,8 +70,10 @@ describe("INSTANCE matches TLC", () => {
         "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT Acc\nVARIABLE x\nMCBallot == 0..2\nV == INSTANCE Inner\nP(A) == INSTANCE Inner WITH Acc <- A\nInit == x = 0\nNext == UNCHANGED x\nInv == V!Safe /\\ P({3})!Safe /\\ V!Ballot = 0..2 /\\ x = 0\n====",
       config:
         "INIT Init\nNEXT Next\nCONSTANT Acc = {1, 2}\nBallot <-[Inner] MCBallot\nINVARIANT Inv",
-      loadModule: () =>
-        "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT Acc\nBallot == Nat\nSafe == \\A a \\in Acc, b \\in Ballot : b >= 0\n====",
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT Acc\nBallot == Nat\nSafe == \\A a \\in Acc, b \\in Ballot : b >= 0\n===="
+          : undefined,
     });
     expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
       "success",
@@ -202,7 +211,8 @@ const checkSubstitution = (body: string) =>
   check({
     source: `---- MODULE Main ----\nEXTENDS Naturals\nVARIABLE x\n${body}\nInit == x = 0\nNext == x' = x\n====`,
     config: "INIT Init\nNEXT Next",
-    loadModule: (name) => `---- MODULE ${name} ----\n${INNER_MODULES[name]}\n====`,
+    loadModule: (name) =>
+      name in INNER_MODULES ? `---- MODULE ${name} ----\n${INNER_MODULES[name]}\n====` : undefined,
   });
 
 const getLevelError = (module: string, name: string, level: number) =>

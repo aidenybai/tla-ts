@@ -191,7 +191,6 @@ describe("parseModule reads operators like SANY", () => {
     expect(parseModule(`---- MODULE M ----\n${header}\nA == 1\n====`).extends).toEqual(extendees);
   });
 
-  // SANY's lexer marks the definition A as beginning at SUBSET, and doesn't mark one after THEOREM.
   it.each(["EXTENDS SUBSET", "EXTENDS THEOREM", "EXTENDS AXIOM"])(
     "rejects %j before a definition as SANY does",
     (header) => {

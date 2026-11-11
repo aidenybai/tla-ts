@@ -1,20 +1,19 @@
-// The proof context of a theory tlapm writes, as the Isabelle/TLA+ heap sets it up: its simpset,
-// claset, context rules and atomize rules, and Blast instantiated as PredicateLogic.thy does.
-
 import { TlaIsabelleError } from "../../../errors";
 import type { ProofContext } from "../isar/method";
-import { emptyNet } from "../pure/net";
 import type { Limits } from "../pure/interrupt";
-import { insertTaggedBrl, type NetPair } from "../pure/tactic";
 import { blastDepthTac, blastTac, type BlastContext } from "../provers/blast/blast";
 import type { ClassicalContext } from "../provers/classical";
 import { blastHypSubstTac } from "../provers/hypsubst";
-import type { ContextRule } from "../tools/intuitionistic";
-import { getClaset, getClassicalData, getFact, getHypsubstData } from "./classical-setup";
-import type { LogicExtraNetItem, LogicNetPair, TlaLogic } from "./logic";
+import {
+  getClaset,
+  getClassicalData,
+  getFact,
+  getHypsubstData,
+  toNetPair,
+} from "./classical-setup";
+import type { TlaLogic } from "./logic";
 import { getSimpset } from "./simpdata";
 
-// The atomize rules, newest first as Object_Logic keeps them.
 const ATOMIZE_RULES = [
   "Zenon.atomize_object_bAll",
   "Zenon.atomize_meta_bAll",
@@ -24,13 +23,6 @@ const ATOMIZE_RULES = [
   "PredicateLogic.atomize_imp",
   "PredicateLogic.atomize_all",
 ];
-
-// Net.content lists a leaf's items newest first, so inserting them in reverse rebuilds the leaf.
-const toNetPair = (pair: LogicNetPair<LogicExtraNetItem>): NetPair<ContextRule> => {
-  const insertAll = (items: readonly LogicExtraNetItem[], netpair: NetPair<ContextRule>) =>
-    items.reduceRight((result, item) => insertTaggedBrl(item, result), netpair);
-  return insertAll(pair.elim, insertAll(pair.intro, { intro: emptyNet, elim: emptyNet }));
-};
 
 export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext => {
   const atomizeRules = ATOMIZE_RULES.map((name) => getFact(logic, name));

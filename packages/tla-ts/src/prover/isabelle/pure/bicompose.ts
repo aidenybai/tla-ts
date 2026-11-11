@@ -1,7 +1,4 @@
-// Ported from Isabelle2025's Pure/thm.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// The term operations behind Thm.bicompose, which builds the theorem itself in thm.ts.
+// Ported from Isabelle2025's Pure/thm.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { normTerm, type Envir } from "./envir";
@@ -54,8 +51,6 @@ const makeDistinct = (pairs: readonly [string, string][]) => {
   return table;
 };
 
-// Thm.rename_bvars: renames bound variables and some unknowns of the new premises after the
-// names in the disagreement pairs.
 export const renameBvars = (
   dpairs: readonly Tpair[],
   tpairs: readonly Tpair[],
@@ -86,16 +81,24 @@ export const renameBvars = (
   );
   const delClashing = (
     isClash: boolean,
-    xs: Set<string>,
-    ys: Set<string>,
+    clashed: Set<string>,
+    taken: Set<string>,
     rest: readonly [string, string][],
     kept: [string, string][],
   ): [string, string][] => {
-    if (rest.length === 0) return isClash ? delClashing(false, xs, new Set(xs), kept, []) : kept;
-    const [pair, ...others] = rest;
-    if (ys.has(pair[1]))
-      return delClashing(true, new Set(xs).add(pair[0]), new Set(ys).add(pair[0]), others, kept);
-    return delClashing(isClash, xs, new Set(ys).add(pair[1]), others, [pair, ...kept]);
+    if (rest.length === 0)
+      return isClash ? delClashing(false, clashed, new Set(clashed), kept, []) : kept;
+    const pair = rest[0];
+    const others = rest.slice(1);
+    if (taken.has(pair[1]))
+      return delClashing(
+        true,
+        new Set(clashed).add(pair[0]),
+        new Set(taken).add(pair[0]),
+        others,
+        kept,
+      );
+    return delClashing(isClash, clashed, new Set(taken).add(pair[1]), others, [pair, ...kept]);
   };
   const vars = makeDistinct(delClashing(false, unchanged, new Set(unchanged), distinct, []));
   const bounds = makeDistinct(pairs);

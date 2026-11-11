@@ -35,8 +35,6 @@ interface InfixOperator extends Precedence {
   isAssociative: boolean;
 }
 
-// TLAplusParser.lastOp, the operator parsed last, and the operator an operand being parsed follows
-// in its expression.
 interface OperatorContext {
   last?: Precedence;
   preceding?: Precedence;
@@ -154,9 +152,10 @@ const NEGATION_PRECEDENCE = 12;
 
 const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
+const DEFINABLE_POSTFIX_OPERATORS = new Set([...POSTFIX_OPERATORS, "'"]);
+
 const PREFIX_OPERATOR_REFERENCES = new Set(["-", "~", "-."]);
 
-// The prefix operators SANY reads in a definition's left-hand side, built-in ones included.
 const DEFINABLE_PREFIX_OPERATORS = new Set([
   "-.",
   "~",
@@ -193,8 +192,7 @@ const OPERATOR_ARGUMENTS = new Set([
   "UNCHANGED",
   "[]",
   "<>",
-  "'",
-  ...POSTFIX_OPERATORS,
+  ...DEFINABLE_POSTFIX_OPERATORS,
 ]);
 
 const SELECTOR_SYMBOLS = new Set(["<<", ">>", ":", "@", "("]);
@@ -259,6 +257,77 @@ const TLAPM_PUNCTUATION = new Set([
 
 const UNNAMED_STEP_LABELS = new Set(["", "*", "-"]);
 
+interface Point {
+  line: number;
+  column: number;
+}
+
+// A location as tlapm's Loc.locus has it, with stop just past the end.
+interface Span {
+  start: Point;
+  stop: Point;
+}
+
+// tlapm reads a proof as leaf proofs and steps without their proofs, then nests them. first is the
+// index of the first token, before any PROOF.
+type Preproof =
+  | { kind: "Leaf"; proof: Proof; span: Span; first: number; end: number }
+  | {
+      kind: "Step";
+      token: Token;
+      isProof: boolean;
+      body: StepBody;
+      head: SourceRange;
+      statement: SourceRange;
+      span: Span;
+      first: number;
+      start: number;
+      end: number;
+    };
+
+interface NestedProof {
+  proof: Proof | undefined;
+  span: Span;
+  next: number;
+  end: number | undefined;
+}
+
+interface NestedSteps {
+  level: number;
+  steps: ProofStep[];
+  span: Span;
+  next: number;
+  end: number;
+}
+
+const LEAF_NAMES: Record<string, string> = {
+  Obvious: "n OBVIOUS",
+  Omitted: "n OMITTED",
+  By: " BY",
+};
+
+const comparePoints = (left: Point, right: Point) =>
+  left.line - right.line || left.column - right.column;
+
+const mergeSpans = (left: Span, right: Span): Span => ({
+  start: comparePoints(left.start, right.start) <= 0 ? left.start : right.start,
+  stop: comparePoints(left.stop, right.stop) >= 0 ? left.stop : right.stop,
+});
+
+const getSpan = (range: SourceRange): Span => ({
+  start: { line: range.startLine, column: range.startColumn },
+  stop: { line: range.endLine, column: range.endColumn + 1 },
+});
+
+const createProofError = (message: string, span: Span, exception = "Proof.Parser") =>
+  new TlaSyntaxError(message, undefined, {
+    reason: message,
+    line: span.start.line,
+    column: span.start.column,
+    isEnd: false,
+    proof: { stop: span.stop, exception },
+  });
+
 const FACT_KEYWORDS = new Set([
   "CASE",
   "CHOOSE",
@@ -297,7 +366,6 @@ const BUILTIN_CONSTANTS = new Set(["TRUE", "FALSE", "BOOLEAN", "STRING"]);
 
 const NO_OFFSIDE = -1;
 
-// A SANY InfixExpr or PostfixExpr.
 const isOperatorExpression = (expression: Expression) =>
   expression.kind === "Prime" ||
   expression.kind === "Product" ||
@@ -306,6 +374,12 @@ const isOperatorExpression = (expression: Expression) =>
     (expression.args.length === 2
       ? INFIX_OPERATORS.has(expression.operator)
       : POSTFIX_OPERATORS.has(expression.operator)));
+
+// SANY's \land and \lor are infix operators only, not bullets.
+const isBullet = (token: Token) =>
+  (token.text === "/\\" || token.text === "\\/") &&
+  token.spelling !== "\\land" &&
+  token.spelling !== "\\lor";
 
 const isOperatorName = (text: string) =>
   INFIX_OPERATORS.has(text) || POSTFIX_OPERATORS.has(text) || text === "-.";
@@ -335,24 +409,27 @@ const getOperatorApplication = (
 // root module's file, from its ---- MODULE line to the next ==== line.
 export const extractModule = (source: string, name: string) => {
   const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
-  const lines = source.split(/\r?\n/);
+  // MonolithSpecExtractor.module writes each line it reads, with its own line terminator.
+  const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);
   const start = lines.findIndex((line) => header.test(line));
   if (start === -1) return undefined;
   const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
   return `${lines.slice(start, end === -1 ? undefined : end + 1).join("\n")}\n`;
 };
 
-// The tlapm mode parses as tlapm does for proof obligations, which accepts and rejects some modules
-// that SANY does not. The sany mode leaves the checks that SANY makes after parsing to the SANY
-// generator.
+// The tlapm mode parses as tlapm does for proof obligations, which accepts and rejects some
+// modules that SANY does not. The sany mode leaves SANY's post-parse checks to the SANY generator.
 type ParseMode = "tlc" | "tlapm" | "sany";
 
-const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source)): Module => {
+const parse = (
+  source: string,
+  mode: ParseMode,
+  sourceTokens = tokenize(source, mode === "tlapm"),
+): Module => {
   const isTlapm = mode === "tlapm";
   const tokens = isTlapm ? sourceTokens : sourceTokens.map(readAtAsIdentifier);
   const cursor = { index: 0, offsideColumns: [] as number[] };
   const operators: OperatorContext = {};
-  // A RECURSIVE declaration covers the definitions of its own LET or module.
   const recursiveScopes: Set<string>[] = [];
   const factNames = new Set<string>();
   // The NEW, TAKE, and PICK names in scope, which a DEF clause cannot cite.
@@ -438,6 +515,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     if (TLAPM_PUNCTUATION.has(token.text) || token.kind === "Number" || token.kind === "Decimal")
       return token.text;
     if (token.kind === "String") return JSON.stringify(token.text);
+    if (token.kind === "Step") return token.text;
     if (isTlapmKeyword(token)) return `keyword ${token.text}`;
     return token.kind === "Identifier" ? `identifier ${token.text}` : `operator ${token.text}`;
   };
@@ -530,15 +608,13 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     ranges: names.map((item) => item.range),
   });
 
-  // TLAplusParser.Substitution: an identifier, or a prefix, infix or postfix operator.
   const expectSubstitutionTarget = () => {
     const token = peek();
     const isOperator =
       token.kind !== "String" &&
       (DEFINABLE_PREFIX_OPERATORS.has(token.text) ||
         INFIX_OPERATORS.has(token.text) ||
-        POSTFIX_OPERATORS.has(token.text) ||
-        token.text === "'");
+        DEFINABLE_POSTFIX_OPERATORS.has(token.text));
     if (!isOperator) return expectIdentifier();
     cursor.index++;
     return token.text;
@@ -601,7 +677,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       const named = expectName();
       return { kind: "Name", name: named.name, ranges: [named.range] };
     }
-    const names = getNames(parseSeparated(expectName));
+    const names = getNames(isAt(">>") ? [] : parseSeparated(expectName));
     expect(">>");
     return { kind: "Tuple", names: names.names, ranges: names.ranges };
   };
@@ -614,21 +690,66 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       return patterns.map((pattern) => ({ pattern, set }));
     }).flat();
 
-  const parseSubscript = (): Expression => {
+  // TLAplusParser.NoOpExtension, which leaves the arguments of the subscript's last name for a
+  // fairness expression to take as its action.
+  const parseSubscript = (): { subscript: Expression; lastArgs: Expression[] } => {
     const token = peek();
+    if (isTlapm && BUILTIN_CONSTANTS.has(token.text)) {
+      const start = cursor.index;
+      advance();
+      const constant: Expression = {
+        kind: "Identifier",
+        name: token.text,
+        location: getLocation(token),
+      };
+      return { subscript: withRange(constant, start), lastArgs: [] };
+    }
+    const isTlapmAtom =
+      isTlapm && (token.kind === "Number" || token.kind === "String" || isAt("@"));
     if (token.kind === "Identifier") {
       const start = cursor.index;
-      const names = [advance().text];
+      const names: string[] = [];
+      const selectorRanges: SourceRange[] = [];
+      const parseElement = (isApplicable: boolean) => {
+        selectorRanges.push(getRange(cursor.index, cursor.index));
+        names.push(expectIdentifier());
+        return isApplicable && isAt("(") ? parseArguments() : [];
+      };
+      const elementArgs = [parseElement(!isTlapm)];
       while (isAt("!") && peek(1).kind === "Identifier") {
         advance();
-        names.push(expectIdentifier());
+        elementArgs.push(parseElement(true));
       }
-      return withRange(
-        { kind: "Identifier", name: names.join("!"), location: getLocation(token) },
-        start,
-      );
+      const prefixArgs = elementArgs.slice(0, -1);
+      const location = getLocation(token);
+      const lastSelectorRange = selectorRanges[selectorRanges.length - 1];
+      location.range = {
+        ...getRange(start),
+        endLine: lastSelectorRange.endLine,
+        endColumn: lastSelectorRange.endColumn,
+      };
+      const name = names.join("!");
+      const subscript: Expression = prefixArgs.every((args) => args.length === 0)
+        ? { kind: "Identifier", name, location }
+        : {
+            kind: "Apply",
+            operator: name,
+            args: prefixArgs.flat(),
+            argumentCounts: [...prefixArgs.map((args) => args.length), 0],
+            argumentsRange: location.range,
+            selectorRanges,
+            location,
+          };
+      return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
     }
-    if (isAt("<<") || isAt("(")) return parsePrimary();
+    if (isAt("<<") || isAt("(") || isAt("{") || isAt("[") || isTlapmAtom) {
+      const start = cursor.index;
+      const subscript = parsePrimary();
+      return {
+        subscript: subscript.location.range ? subscript : withRange(subscript, start),
+        lastArgs: [],
+      };
+    }
     throw createUnexpected(`Expected a subscript but found ${describeToken(token)}`);
   };
 
@@ -642,7 +763,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       token.kind === "Identifier" &&
       (next.text === "(" ||
         next.text === "[" ||
-        (next.kind === "Operator" && isAt("==", POSTFIX_OPERATORS.has(next.text) ? 3 : 4)))
+        (next.kind === "Operator" &&
+          isAt("==", DEFINABLE_POSTFIX_OPERATORS.has(next.text) ? 3 : 4)))
     );
   };
 
@@ -684,6 +806,9 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           peek(1).line === token.line &&
           peek(1).column === token.endColumn + 1));
     if (isTlapmIncomplete && isStandalone(token)) throw createError("incomplete expression", token);
+    if (isOperatorAlone && !isTlapm && token.text === "\\X" && token.spelling !== "×") {
+      throw createError("\\X may not be used as an infix operator", token);
+    }
     if (isOperatorAlone) {
       cursor.index++;
       return withRange(
@@ -755,7 +880,11 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     const bullet = advance();
     cursor.offsideColumns.push(bullet.column);
     const operands = [parseExpression()];
-    while (peekRaw().text === bullet.text && peekRaw().column === bullet.column) {
+    while (
+      isBullet(peekRaw()) &&
+      peekRaw().text === bullet.text &&
+      peekRaw().column === bullet.column
+    ) {
       cursor.index++;
       operands.push(parseExpression());
     }
@@ -792,11 +921,15 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         return { kind, fields, location };
       }
       if (isBoundAhead()) {
+        const checkpoint = cursor.index;
         const bounds = parseBounds();
-        expect("|->");
-        const body = parseExpression();
-        expect("]");
-        return { kind: "FunctionConstruction", bounds, body, location };
+        if (!isTlapm || isAt("|->")) {
+          expect("|->");
+          const body = parseExpression();
+          expect("]");
+          return { kind: "FunctionConstruction", bounds, body, location };
+        }
+        cursor.index = checkpoint;
       }
       const expression = parseExpression();
       if (accept("->")) {
@@ -812,6 +945,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
             if (accept(".")) {
               if (!isFieldName(peek()))
                 throw createUnexpected(`Expected a field name but found ${describeToken(peek())}`);
+              if (!isTlapm && isAt("@")) throw createUnexpected("@ used in !.@");
               path.push({ kind: "Field", name: advance().text });
               continue;
             }
@@ -832,7 +966,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         return { kind: "Bracket", args, location };
       }
       expect("]_");
-      return { kind: "BoxAction", action: expression, subscript: parseSubscript(), location };
+      return {
+        kind: "BoxAction",
+        action: expression,
+        subscript: parseSubscript().subscript,
+        location,
+      };
     });
 
   // SANY reads the set after the \in of {x \in S} as a whole expression, whatever operators it has.
@@ -883,7 +1022,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     if (accept(">>_")) {
       if (elements.length !== 1)
         throw createError("Expected a single action inside <<A>>_v", start);
-      return { kind: "AngleAction", action: elements[0], subscript: parseSubscript(), location };
+      return {
+        kind: "AngleAction",
+        action: elements[0],
+        subscript: parseSubscript().subscript,
+        location,
+      };
     }
     expect(">>");
     return { kind: "Tuple", elements, location };
@@ -914,9 +1058,17 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   const parseCase = (start: Token): Expression => {
     const arms: CaseArm[] = [];
     do {
+      const otherStart = cursor.index;
       if (accept("OTHER")) {
         expect("->");
-        return { kind: "Case", arms, other: parseExpression(), location: getLocation(start) };
+        const other = parseExpression();
+        return {
+          kind: "Case",
+          arms,
+          other,
+          otherRange: getRange(otherStart),
+          location: getLocation(start),
+        };
       }
       const condition = parseExpression();
       expect("->");
@@ -933,9 +1085,9 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         next.kind === "Number" ||
         SELECTOR_SYMBOLS.has(next.text) ||
         (next.kind === "Operator" &&
-          (INFIX_OPERATORS.has(next.text) ||
-            POSTFIX_OPERATORS.has(next.text) ||
-            PREFIX_OPERATOR_REFERENCES.has(next.text))))
+          (INFIX_OPERATORS.has(next.text) || DEFINABLE_POSTFIX_OPERATORS.has(next.text))) ||
+        ((next.kind === "Operator" || next.kind === "Keyword") &&
+          DEFINABLE_PREFIX_OPERATORS.has(next.text)))
     );
   };
 
@@ -974,7 +1126,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     const isStep = token.kind === "Step" && isStepReference(token);
-    if (isStep && getProofLevel() < 0 && proofLevels.length <= 1) {
+    if (!isTlapm && isStep && getProofLevel() < 0 && proofLevels.length <= 1) {
       throw createError("Step number used outside proof", token);
     }
     if (isStep && token.text[1] === "+") {
@@ -986,8 +1138,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         const params = getNames(accept("(") ? parseSeparated(expectName) : []);
         if (params.names.length > 0) expect(")");
         expect("::");
+        const head = getRange(start);
         const body = parseExpression();
-        // TLAplusParser.labelDoesNotChangeParse.
         if (
           !isTlapm &&
           preceding !== undefined &&
@@ -1002,6 +1154,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           name,
           params: params.names,
           paramRanges: params.ranges,
+          head,
           body,
           location,
         };
@@ -1053,13 +1206,11 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     }
     // SANY reads an infix or postfix operator as a primary expression, with or without arguments.
     if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
-      return {
-        kind: "Apply",
-        operator: token.text,
-        spelling: token.spelling,
-        args: parseArguments(),
-        location,
-      };
+      const args = parseArguments();
+      // SANY's built-in \X has no definition for TLC to evaluate, a TLC bug.
+      return mode === "tlc" && token.text === "\\X" && args.length === 2
+        ? { kind: "Product", factors: args, location }
+        : { kind: "Apply", operator: token.text, spelling: token.spelling, args, location };
     }
     if (token.kind === "Operator" && isOperatorName(token.text) && !isTlapm) {
       return { kind: "Identifier", name: token.text, spelling: token.spelling, location };
@@ -1103,7 +1254,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
             declareRecursive();
             continue;
           }
-          const unit = parseDefinition(false);
+          const unit = parseDefinition(!isTlapm && accept("LOCAL"));
           if (unit.kind === "Instance") instances.push(unit);
           else definitions.push(unit);
         }
@@ -1122,15 +1273,18 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       case "WF_":
       case "SF_": {
         const subscript = parseSubscript();
-        const action = withBracketLayout(() => {
-          expect("(");
-          const expression = parseExpression();
-          expect(")");
-          return expression;
-        });
+        const action =
+          !isAt("(") && subscript.lastArgs.length === 1
+            ? subscript.lastArgs[0]
+            : withBracketLayout(() => {
+                expect("(");
+                const expression = parseExpression();
+                expect(")");
+                return expression;
+              });
         return {
           kind: token.text === "WF_" ? "WeakFairness" : "StrongFairness",
-          subscript,
+          subscript: subscript.subscript,
           action,
           location,
         };
@@ -1143,12 +1297,14 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   // prefix operator.
   const parsePrefixOperand = (operator: Token, low: number, high: number) => {
     operators.last = operators.preceding = { low, high };
-    const operand = parseExpression(high + 1);
+    // tlapm applies a postfix operator to the operand, as no prefix operator binds above it.
+    const operand = parseExpression(
+      isTlapm ? Math.min(high + 1, POSTFIX_PRECEDENCE.low) : high + 1,
+    );
     const next = peek();
-    const nextHigh =
-      next.text === "'" || POSTFIX_OPERATORS.has(next.text)
-        ? POSTFIX_PRECEDENCE.high
-        : INFIX_OPERATORS.get(next.text)?.high;
+    const nextHigh = DEFINABLE_POSTFIX_OPERATORS.has(next.text)
+      ? POSTFIX_PRECEDENCE.high
+      : INFIX_OPERATORS.get(next.text)?.high;
     if (!isTlapm && next.kind === "Operator" && nextHigh !== undefined && nextHigh >= low) {
       throw createError(`Precedence conflict between ${operator.text} and ${next.text}`, next);
     }
@@ -1160,8 +1316,28 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     operators.preceding = undefined;
     const token = peek();
     const location = getLocation(token);
-    if (token.kind === "Operator" && (token.text === "/\\" || token.text === "\\/")) {
+    if (token.kind === "Operator" && isBullet(token)) {
       return parseJunctionList();
+    }
+    if (isTlapm && INFIX_OPERATORS.has(token.text) && isAt("(", 1)) {
+      const start = cursor.index;
+      const nonfix = withBracketLayout(() => {
+        advance();
+        advance();
+        const left = parseExpression();
+        if (!accept(",")) return undefined;
+        const right = parseExpression();
+        expect(")");
+        const apply: Expression = {
+          kind: "Apply",
+          operator: token.text,
+          args: [left, right],
+          location,
+        };
+        return withRange(apply, start);
+      });
+      if (nonfix !== undefined) return nonfix;
+      cursor.index = start;
     }
     if (token.kind === "Operator" || token.kind === "Keyword") {
       switch (token.text) {
@@ -1174,6 +1350,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
             location,
           };
         case "-":
+        case "-.":
+          if (token.text === "-." && !isTlapm) break;
           advance();
           return {
             kind: "Apply",
@@ -1273,7 +1451,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       }
       advance();
       // SANY reads - after an infix operator as prefix -, and rejects it after one that binds tighter.
-      if (infix.low > NEGATION_PRECEDENCE && isAt("-")) {
+      if (!isTlapm && infix.low > NEGATION_PRECEDENCE && isAt("-")) {
         throw createError(`Precedence conflict between ${token.text} and -`, peek());
       }
       operators.last = operators.preceding = infix;
@@ -1341,11 +1519,13 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
 
   const parseDefinitionUnit = (isLocal: boolean): Definition | Instance => {
     const token = peek();
+    const start = cursor.index;
     const location = getLocation(token);
     const parseOperator = (name: string, params: OperatorParam[]): Definition => ({
       kind: "Operator",
       name,
       params,
+      head: getRange(start, cursor.index - 2),
       ...parseBody(),
       isLocal,
       isRecursive: isRecursiveName(name),
@@ -1367,7 +1547,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     const isPrefixDefinition =
       token.kind !== "String" && DEFINABLE_PREFIX_OPERATORS.has(token.text);
     const isPostfixDefinition =
-      token.kind === "Identifier" && POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
+      token.kind === "Identifier" && DEFINABLE_POSTFIX_OPERATORS.has(peek(1).text) && isAt("==", 2);
     if (isPrefixDefinition || isPostfixDefinition) {
       const operator = isPrefixDefinition ? token.text : peek(1).text;
       if (isPrefixDefinition) advance();
@@ -1443,7 +1623,10 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       const name = advance().text;
       return { name, arity: accept("_") ? 2 : 1, location };
     }
-    if (peek().kind === "Operator" && isAt("_", 1)) {
+    const isPrefixOperator =
+      peek().kind !== "String" &&
+      (DEFINABLE_PREFIX_OPERATORS.has(peek().text) || (isTlapm && peek().kind === "Operator"));
+    if (isPrefixOperator && isAt("_", 1)) {
       const operator = advance().text;
       advance();
       return { name: operator === "-" ? "-." : operator, arity: 1, location };
@@ -1490,7 +1673,8 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
       );
     }
     if (isAt("(", 1) || isAt("[", 1)) return isAt("==", getClosingOffset(1));
-    if (next.kind === "Operator" && POSTFIX_OPERATORS.has(next.text)) return isAt("==", 2);
+    if (next.kind === "Operator" && DEFINABLE_POSTFIX_OPERATORS.has(next.text))
+      return isAt("==", 2);
     if (next.kind === "Operator" && INFIX_OPERATORS.has(next.text)) {
       return peek(2).kind === "Identifier" && isAt("==", 3);
     }
@@ -1620,7 +1804,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
         module.variables.some((variable) => variable.name === name),
     );
 
-  // tlapm's definable: names and operators joined by !.
   const parseDefinable = (): Fact => {
     const start = cursor.index;
     const token = peek();
@@ -1655,10 +1838,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     return defs;
   };
 
-  const parseFacts = () => ({
-    facts: isFactAhead() ? parseSeparated(parseFact) : [],
-    defs: accept("DEF") || accept("DEFS") ? parseDefs() : [],
-  });
+  const parseFacts = () => {
+    const facts = isFactAhead() ? parseSeparated(parseFact) : [];
+    const isDef = accept("DEF") || accept("DEFS");
+    if (isTlapm && facts.length === 0 && !isDef) throw createUnexpected("Expected a fact");
+    return { facts, defs: isDef ? parseDefs() : [] };
+  };
 
   const parseUseOrHide = (): UseOrHide => {
     const start = cursor.index;
@@ -1687,9 +1872,12 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
   };
 
   const parseNewSymbol = (): NewSymbol => {
-    const start = cursor.index;
-    const location = getLocation(peek());
+    const newStart = cursor.index;
+    const newLocation = getLocation(peek());
     const isNew = accept("NEW");
+    // tlapm locates a declaration without its NEW.
+    const start = isTlapm ? cursor.index : newStart;
+    const location = isTlapm ? getLocation(peek()) : newLocation;
     const level = peek().kind === "Keyword" ? NEW_SYMBOL_LEVELS.get(peek().text) : undefined;
     if (!isNew && level === undefined) {
       throw createUnexpected(`Expected a declaration but found ${describeToken(peek())}`);
@@ -1736,6 +1924,10 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     const start = cursor.index;
     const location = getLocation(expect("ASSUME"));
     const assumptions = parseSeparated(() => {
+      if (peek().kind === "Identifier" && isAt("::", 1) && isAt("ASSUME", 2)) {
+        advance();
+        advance();
+      }
       if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
       if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text)) return parseNewSymbol();
       return parseExpression();
@@ -1820,7 +2012,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     if (!isCorrectLevel(step)) {
       throw createError(`${isQed ? "QED step" : "step"}'s number has bad level`, step);
     }
-    if (getStepLevel(step) < 0 && getStepName(step) !== undefined) {
+    if (mode !== "sany" && getStepLevel(step) < 0 && getStepName(step) !== undefined) {
       throw createError("<*> and <+> cannot be used for a named step", step);
     }
     cursor.index++;
@@ -1848,25 +2040,26 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     return withRange({ ...step, body, head, statement, proof }, start);
   };
 
-  const parseProofBody = (): Proof => {
-    const location = getLocation(peek());
-    if (isAt("BY") || (isAt("PROOF") && isAt("BY", 1))) {
-      accept("PROOF");
-      advance();
+  const parseLeafProof = (
+    location: SourceLocation,
+  ): Exclude<Proof, { kind: "Steps" }> | undefined => {
+    if (accept("BY")) {
       const keyword = getRange(cursor.index - 1);
       return { kind: "By", isOnly: accept("ONLY"), ...parseFacts(), keyword, location };
     }
-    const terminal = peek(isAt("PROOF") ? 1 : 0);
-    if (
-      terminal.kind === "Keyword" &&
-      (terminal.text === "OBVIOUS" || terminal.text === "OMITTED")
-    ) {
-      accept("PROOF");
-      advance();
-      const keyword = getRange(cursor.index - 1);
-      return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", keyword, location };
-    }
+    const terminal = peek();
+    if (terminal.kind !== "Keyword" || (terminal.text !== "OBVIOUS" && terminal.text !== "OMITTED"))
+      return undefined;
+    advance();
+    const keyword = getRange(cursor.index - 1);
+    return { kind: terminal.text === "OBVIOUS" ? "Obvious" : "Omitted", keyword, location };
+  };
+
+  const parseProofBody = (): Proof => {
+    const location = getLocation(peek());
     accept("PROOF");
+    const leaf = parseLeafProof(location);
+    if (leaf) return leaf;
     const steps = [parseStep()];
     while (steps[steps.length - 1].body.kind !== "Qed") steps.push(parseStep());
     return { kind: "Steps", level: getProofLevel(), steps, location };
@@ -1878,6 +2071,164 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     const proof = withProofScope(parseProofBody);
     proofLevels.pop();
     return withRange(proof, start);
+  };
+
+  const isPreproofStart = () =>
+    peek().kind === "Step" || (peek().kind === "Keyword" && PROOF_STARTS.has(peek().text));
+
+  // tlapm locates a USE or HIDE step by its keywords and DEF clause.
+  const getStepSpan = (head: SourceRange, body: StepBody) => {
+    if (body.kind !== "Use" && body.kind !== "Hide") return getSpan(head);
+    const lastDef = body.defs[body.defs.length - 1]?.location.range;
+    return mergeSpans(
+      getSpan({ ...head, endLine: head.startLine, endColumn: head.startColumn }),
+      getSpan(lastDef ?? body.keyword),
+    );
+  };
+
+  const parsePreproof = (): Preproof => {
+    const first = cursor.index;
+    const location = getLocation(peek());
+    const isProof = accept("PROOF");
+    const leaf = parseLeafProof(location);
+    if (leaf) {
+      const proof = withRange(leaf, first);
+      return { kind: "Leaf", proof, span: getSpan(proof.keyword), first, end: cursor.index - 1 };
+    }
+    const token = peek();
+    if (token.kind !== "Step") {
+      throw createUnexpected(`Expected a step number but found ${describeToken(token)}`);
+    }
+    const start = cursor.index;
+    advance();
+    const statementStart = cursor.index;
+    const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
+    const head = getRange(start);
+    return {
+      kind: "Step",
+      token,
+      isProof,
+      body,
+      head,
+      statement: getRange(statementStart),
+      span: getStepSpan(head, body),
+      first,
+      start,
+      end: cursor.index - 1,
+    };
+  };
+
+  // A backtrack leaves the proof implicitly omitted.
+  const nestProof = (
+    items: Preproof[],
+    index: number,
+    level: number,
+    levelSpan: Span,
+  ): NestedProof => {
+    const item = items[index];
+    if (!item) return { proof: undefined, span: levelSpan, next: index, end: undefined };
+    if (item.kind === "Leaf")
+      return { proof: item.proof, span: item.span, next: index + 1, end: item.end };
+    const nested = nestSteps(items, index, level, levelSpan, true);
+    if (!nested) return { proof: undefined, span: levelSpan, next: index, end: undefined };
+    const location = {
+      ...getLocation(tokens[item.first]),
+      range: getRange(item.first, nested.end),
+    };
+    return {
+      proof: { kind: "Steps", level: nested.level, steps: nested.steps, location },
+      span: nested.span,
+      next: nested.next,
+      end: nested.end,
+    };
+  };
+
+  const nestSteps = (
+    items: Preproof[],
+    index: number,
+    level: number,
+    levelSpan: Span,
+    isFirst: boolean,
+  ): NestedSteps | undefined => {
+    const item = items[index];
+    if (!item) {
+      throw createProofError(
+        `Unexpected end of (sub)proof at level ${level} before QED step`,
+        levelSpan,
+      );
+    }
+    if (item.kind === "Leaf") {
+      throw createProofError(
+        `Expecting a proof step but found a${LEAF_NAMES[item.proof.kind]} leaf proof`,
+        item.span,
+      );
+    }
+    if (!isFirst && item.isProof) {
+      throw createProofError("PROOF keyword found in step that does not begin subproof", item.span);
+    }
+    const implicit = item.token.text[1];
+    if (implicit === "+" && !isFirst) {
+      throw createProofError("<+> used but no subproof expected", item.span);
+    }
+    const stepLevel =
+      implicit === "*"
+        ? level - (isFirst && !item.isProof ? 1 : 0)
+        : implicit === "+"
+          ? level
+          : getStepLevel(item.token);
+    if (stepLevel < level || (!isFirst && stepLevel > level)) return undefined;
+    const proof = PROVABLE_STEPS.has(item.body.kind)
+      ? nestProof(items, index + 1, stepLevel + 1, item.span)
+      : { proof: undefined, span: item.span, next: index + 1, end: undefined };
+    const end = proof.end ?? item.end;
+    const step: ProofStep = {
+      name: getStepName(item.token),
+      token: item.token.text,
+      body: item.body,
+      head: item.head,
+      statement: item.statement,
+      proof: proof.proof,
+      location: { ...getLocation(item.token), range: getRange(item.start, end) },
+    };
+    const span = mergeSpans(item.span, proof.span);
+    if (item.body.kind === "Qed") {
+      return { level: stepLevel, steps: [step], span, next: proof.next, end };
+    }
+    const rest = nestSteps(
+      items,
+      proof.next,
+      stepLevel,
+      { start: span.stop, stop: span.stop },
+      false,
+    );
+    return (
+      rest && {
+        ...rest,
+        level: stepLevel,
+        steps: [step, ...rest.steps],
+        span: mergeSpans(span, rest.span),
+      }
+    );
+  };
+
+  // tlapm reads every step and leaf proof that follows, then nests them by level, where the first
+  // step counts as having PROOF.
+  const parseTlapmProof = () => {
+    if (!isPreproofStart()) return undefined;
+    const items: Preproof[] = [];
+    while (isPreproofStart()) items.push(parsePreproof());
+    const first = items[0];
+    if (first.kind === "Step") items[0] = { ...first, isProof: true };
+    const nested = nestProof(items, 0, 0, first.span);
+    const extra = items[nested.next];
+    if (extra) {
+      throw createProofError(
+        "extra step(s) after finished proof",
+        extra.span,
+        "Proof.Parser.toplevel",
+      );
+    }
+    return nested.proof;
   };
 
   // SANY binds the name of a theorem or assumption that a module already defines to the first
@@ -1898,6 +2249,7 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
     }
     const parsed = withProofScope(() => {
       const statement = isAt("ASSUME") ? parseAssumeProve() : parseExpression();
+      if (isTlapm) return { statement, proof: parseTlapmProof() };
       return { statement, proof: isProofStart(peek()) ? parseProof() : undefined };
     });
     const statement = parsed.statement;
@@ -2054,10 +2406,13 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
           module.units.push({ kind: "Use", use });
           continue;
         }
-        case "RECURSIVE":
-          advance();
-          module.units.push({ kind: "Recursive", declarations: declareRecursive() });
+        case "RECURSIVE": {
+          const unitLocation = getLocation(advance());
+          const declarations = declareRecursive();
+          unitLocation.range = getRange(tokenIndex);
+          module.units.push({ kind: "Recursive", declarations, location: unitLocation });
           continue;
+        }
         case "INSTANCE":
           addDefinitionUnit(
             module,
@@ -2105,7 +2460,6 @@ const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source))
 
 export const parseModule = (source: string) => parse(source, "tlc");
 
-// Parses a module the caller has tokenized already.
 export const parseModuleTokens = (source: string, tokens: Token[]) => parse(source, "tlc", tokens);
 
 export const parseTlapmModule = (source: string) => parse(source, "tlapm");

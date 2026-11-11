@@ -1,13 +1,9 @@
-// Ported from Z3 (src/ast/normal_forms/pull_quant.cpp), MIT license, see z3-license.txt. Pulls
-// the universal quantifiers nested in a formula in Skolem normal form to the top, so the model
-// finder sees one flat quantifier.
+// Ported from Z3 (src/ast/normal_forms/pull_quant.cpp), MIT license, see z3-license.txt.
 import { KIND_QUANTIFIER, OP_AND, OP_NOT, OP_OR, type AstManager, type SmtSymbol } from "./ast";
 import { mkNot } from "./ast-util";
 import { type Rewrite, RewriterTpl, VarShifter } from "./rewriter-tpl";
 
-// rewriter_tpl with pull_quant's rw_cfg.
 export class PullQuant extends RewriterTpl {
-  // rw_cfg::m_shift.
   private varShifter: VarShifter;
 
   constructor(manager: AstManager) {
@@ -15,7 +11,6 @@ export class PullQuant extends RewriterTpl {
     this.varShifter = new VarShifter(manager);
   }
 
-  // pull_quant1_core for an application of not, and or or. The result comes with a reference.
   private pullFromApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     if (manager.funcDecls[decl].op === OP_NOT) {
@@ -31,8 +26,6 @@ export class PullQuant extends RewriterTpl {
       return result;
     }
     let isForall: boolean | undefined;
-    // The variables in reverse, the last variable of the first quantifier first. A name that repeats
-    // becomes a fresh one.
     const sorts: number[] = [];
     const names: SmtSymbol[] = [];
     let weight = Number.POSITIVE_INFINITY;
@@ -57,7 +50,6 @@ export class PullQuant extends RewriterTpl {
     if (isForall === undefined) return -1;
     const numDecls = sorts.length;
     let shiftAmount = 0;
-    // new_adjusted_children, which holds each shifted child.
     const adjusted = args.map((child) => {
       if (manager.kinds[child] !== KIND_QUANTIFIER)
         return this.varShifter.shift(child, 0, numDecls, 0);
@@ -122,15 +114,12 @@ export class PullQuant extends RewriterTpl {
     return result;
   }
 
-  // ~rw: the configuration's shifter goes first, then the rewriter.
   release() {
     this.varShifter.release();
     super.release();
   }
 }
 
-// pull_quant's operator(), with a pull_quant of its own. The result comes with a reference, which
-// the caller releases.
 export const pullQuant = (manager: AstManager, expr: number) => {
   const pull = new PullQuant(manager);
   const result = pull.rewrite(expr);

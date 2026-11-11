@@ -13,19 +13,15 @@ export interface TraceStepSummary {
 export interface RunResult {
   isPassed: boolean;
   title: string;
-  // The invariant or property that failed, shown next to the title.
   name: string | undefined;
   summary: string;
-  // A check's counterexample, which the drawer steps through.
   trace: TraceStepSummary[];
   loopStart: number | undefined;
-  // A proof's obligations, or why the run failed.
   rows: RunRow[];
 }
 
 export interface RunRow {
   title: string;
-  // Shown while the row is the active step, such as the goal an obligation proves.
   detail: string;
   isFailed: boolean;
 }
@@ -44,19 +40,22 @@ const STATUS_TITLES: Record<CheckStatus, string> = {
 const getElapsed = (startedAt: number) =>
   `${Math.round(performance.now() - startedAt).toLocaleString()} ms`;
 
+const getErrorResult = (title: string, message: string, summary = ""): RunResult => ({
+  isPassed: false,
+  title,
+  name: undefined,
+  summary,
+  trace: [],
+  loopStart: undefined,
+  rows: [{ title: message, detail: "", isFailed: true }],
+});
+
 const getCheckResult = async (source: string, config: string): Promise<RunResult> => {
   const startedAt = performance.now();
   const result = await check({ source, config });
-  if (result.failure)
-    return {
-      isPassed: false,
-      title: "Error",
-      name: undefined,
-      summary: getElapsed(startedAt),
-      trace: [],
-      loopStart: undefined,
-      rows: [{ title: result.failure.message, detail: "", isFailed: true }],
-    };
+  if (result.failure) {
+    return getErrorResult("Error", result.failure.message, getElapsed(startedAt));
+  }
   return {
     isPassed: result.status === "success",
     title: STATUS_TITLES[result.status],
@@ -64,7 +63,6 @@ const getCheckResult = async (source: string, config: string): Promise<RunResult
     summary: `${result.distinctStates.toLocaleString()} states, depth ${result.depth}, ${getElapsed(startedAt)}`,
     trace: (result.violation?.trace ?? []).map((step, index) => ({
       number: index + 1,
-      // TLC labels a step "Announce(1) line 138, col 5 to …", and only the call is shown.
       action:
         step.action === undefined ? undefined : (step.label ?? step.action).split(" line ")[0],
       variables: Object.entries(step.state).map(([name, value]): [string, string] => [
@@ -117,14 +115,6 @@ self.onmessage = async (event: MessageEvent<RunRequest>) => {
     );
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    self.postMessage({
-      isPassed: false,
-      title: error.name,
-      name: undefined,
-      summary: "",
-      trace: [],
-      loopStart: undefined,
-      rows: [{ title: error.message, detail: "", isFailed: true }],
-    } satisfies RunResult);
+    self.postMessage(getErrorResult(error.name, error.message));
   }
 };

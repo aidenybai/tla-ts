@@ -31,7 +31,6 @@ const encodeRecord = (
 ) =>
   `[k |-> "${kind}", neg |-> ${isNegative ? "TRUE" : "FALSE"}, i |-> ${encodeInteger(integer)}, m |-> ${encodeBigNat(mantissa)}, e |-> ${exponent}]`;
 
-// The canonical record of a Number, read from its IEEE 754 bits.
 const encodeNumber = (value: number) => {
   const view = new DataView(new ArrayBuffer(8));
   view.setFloat64(0, value);
@@ -65,7 +64,6 @@ const encodeString = (text: string) =>
 const encodeLessThan = (left: number, right: number) =>
   Number.isNaN(left) || Number.isNaN(right) ? '"undefined"' : `${left < right}`.toUpperCase();
 
-// mulberry32, so the generated values are the same on every run.
 const createRandom = (seed: number) => {
   let state = seed;
   return () => {
@@ -76,10 +74,8 @@ const createRandom = (seed: number) => {
   };
 };
 
-// The Number nearest a positive numerator / denominator, ties to even, subnormals included.
 const roundQuotient = (numerator: bigint, denominator: bigint) => {
   const magnitude = numerator.toString(2).length - denominator.toString(2).length;
-  // The quotient in units of 2 ** shift has at least 54 bits, or reaches 2 ** -1076 if smaller.
   const shift = Math.max(magnitude - 55, -1076);
   const scaledNumerator = shift < 0 ? numerator << BigInt(-shift) : numerator;
   const scaledDenominator = shift > 0 ? denominator << BigInt(shift) : denominator;
@@ -93,8 +89,7 @@ const roundQuotient = (numerator: bigint, denominator: bigint) => {
   return Number(kept + (isRoundedUp ? 1n : 0n)) * 2 ** (shift + dropped);
 };
 
-// The correctly rounded base ** exponent for a finite base and a small integral exponent, which
-// V8 computes with the platform's pow: Linux gives 10 ** 23 as 1.0000000000000001e23.
+// V8 computes ** with the platform's pow: Linux gives 10 ** 23 as 1.0000000000000001e23.
 const getExactPower = (base: number, exponent: number) => {
   const view = new DataView(new ArrayBuffer(8));
   view.setFloat64(0, Math.abs(base));
@@ -203,7 +198,6 @@ const loadModule = (name: string) => {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
 };
 
-// Evaluates every check in one module and returns the names of those that fail.
 const getFailures = async (checks: NumberCheck[]) => {
   const assumptions = Array.from(
     { length: Math.ceil(checks.length / CHECKS_PER_ASSUME) },
@@ -250,8 +244,6 @@ const createBinaryChecks = (
     expected: getExpected(left, right),
   }));
 
-// The host is the reference, so the checks need Node 24 or later, whose V8 rounds ** correctly and
-// has Math.f16round. Each check evaluates hundreds of Numbers in TLA+, which takes seconds on CI.
 describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, () => {
   it("encodes constants and integers in the canonical form", async () => {
     const failures = await getFailures([
@@ -554,8 +546,6 @@ describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, 
     expect(failures).toEqual([]);
   });
 
-  // JavaScript leaves these to the platform's libm, which can be an ulp off, so the expected
-  // values are the correctly rounded ones, from bc at 1300 digits.
   it("computes the transcendental Math functions correctly rounded", async () => {
     const expectations: [string, number, number][] = [
       ["MathExp", 0.5, 1.6487212707001282],
@@ -842,8 +832,6 @@ describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, 
     expect(failures).toEqual([]);
   });
 
-  // JavaScript leaves these to the platform's pow, which can round them wrongly, so the expected
-  // values are the correctly rounded ones.
   it.each([
     [-1, 1 + 2 ** -52],
     [1.5, 1 - 2 ** -53],

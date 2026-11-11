@@ -1,8 +1,6 @@
-// Ported from Z3 (src/util/uint_set.h, src/util/heap.h, src/math/lp/stacked_vector.h), MIT
-// license, see z3-license.txt. The containers whose iteration order the lp solver depends on.
+// Ported from Z3 (src/util/uint_set.h, src/util/heap.h, src/math/lp/stacked_vector.h), MIT license, see z3-license.txt.
 import { shrink } from "../array";
 
-// indexed_uint_set: insertion order, and a removal moves the last element into the gap.
 export class IndexedUintSet {
   elems: number[] = [];
   private positions: number[] = [];
@@ -39,7 +37,6 @@ export class IndexedUintSet {
   }
 }
 
-// heap<lpvar_lt>: the infeasible columns, smallest first.
 export class VarHeap {
   private values: number[] = [];
   private positions: number[] = [];
@@ -76,11 +73,6 @@ export class VarHeap {
     this.positions[last] = position;
     this.moveUp(position);
     this.moveDown(this.positions[last]);
-  }
-
-  clear() {
-    for (const value of this.values) this.positions[value] = -1;
-    this.values = [];
   }
 
   private swap(first: number, second: number) {
@@ -127,7 +119,6 @@ interface StackedScope {
   logSize: number;
 }
 
-// stacked_vector: a vector whose size and values a pop restores to the matching push.
 export class StackedVector<T> {
   values: T[] = [];
   private log: StackedLogEntry<T>[] = [];
@@ -172,8 +163,7 @@ interface HashNode<V> extends HashLink<V> {
   readonly value: V;
 }
 
-// __constrain_hash: a mask for a power of two bucket count, and a remainder otherwise.
-const getBucket = (hash: number, count: number) =>
+const constrainHash = (hash: number, count: number) =>
   (count & (count - 1)) === 0 ? hash & (count - 1) : hash < count ? hash : hash % count;
 
 const isHashPowerOfTwo = (count: number) => count > 2 && (count & (count - 1)) === 0;
@@ -190,17 +180,11 @@ const getNextPrime = (value: number) => {
   return candidate;
 };
 
-// std::unordered_map<unsigned, V> of libc++, which Z3's release build on macOS uses: one list
-// threads every node, each bucket points at the node before its first one, a new node goes to the
-// front of its bucket, and the table grows to the next prime. The iteration order is the list.
+// libc++'s std::unordered_map, whose iteration order Z3's macOS release build exposes: a Map would iterate differently.
 export class UnorderedUintMap<V> {
   private readonly anchor: HashLink<V> = { key: -1, next: null };
   private buckets: (HashLink<V> | null)[] = [];
   private nodes = new Map<number, HashNode<V>>();
-
-  get size() {
-    return this.nodes.size;
-  }
 
   has(key: number) {
     return this.nodes.has(key);
@@ -214,14 +198,13 @@ export class UnorderedUintMap<V> {
     for (let node = this.anchor.next; node !== null; node = node.next) yield [node.key, node.value];
   }
 
-  // __emplace_unique_key_args: the key is new.
   insert(key: number, value: V) {
     const node: HashNode<V> = { key, value, next: null };
     const count = this.buckets.length;
     if (this.nodes.size + 1 > count || count === 0)
       this.rehash(Math.max(2 * count + (isHashPowerOfTwo(count) ? 0 : 1), this.nodes.size + 1));
     this.nodes.set(key, node);
-    const bucket = getBucket(key, this.buckets.length);
+    const bucket = constrainHash(key, this.buckets.length);
     const previous = this.buckets[bucket];
     if (previous !== null) {
       node.next = previous.next;
@@ -231,29 +214,28 @@ export class UnorderedUintMap<V> {
     node.next = this.anchor.next;
     this.anchor.next = node;
     this.buckets[bucket] = this.anchor;
-    if (node.next !== null) this.buckets[getBucket(node.next.key, this.buckets.length)] = node;
+    if (node.next !== null) this.buckets[constrainHash(node.next.key, this.buckets.length)] = node;
   }
 
-  // remove: unlinks the node and repairs the buckets of it and of its successor.
   delete(key: number) {
     const node = this.nodes.get(key);
     if (node === undefined) return;
     this.nodes.delete(key);
     const count = this.buckets.length;
-    const bucket = getBucket(key, count);
+    const bucket = constrainHash(key, count);
     let previous = this.buckets[bucket] ?? this.anchor;
     while (previous.next !== node) previous = previous.next ?? this.anchor;
-    const isPreviousOutside = previous === this.anchor || getBucket(previous.key, count) !== bucket;
-    if (isPreviousOutside && (node.next === null || getBucket(node.next.key, count) !== bucket))
+    const isPreviousOutside =
+      previous === this.anchor || constrainHash(previous.key, count) !== bucket;
+    if (isPreviousOutside && (node.next === null || constrainHash(node.next.key, count) !== bucket))
       this.buckets[bucket] = null;
     if (node.next !== null) {
-      const nextBucket = getBucket(node.next.key, count);
+      const nextBucket = constrainHash(node.next.key, count);
       if (nextBucket !== bucket) this.buckets[nextBucket] = previous;
     }
     previous.next = node.next;
   }
 
-  // clear keeps the bucket count.
   clear() {
     this.anchor.next = null;
     this.buckets.fill(null);
@@ -272,11 +254,11 @@ export class UnorderedUintMap<V> {
     let previous: HashLink<V> = this.anchor;
     let current = previous.next;
     if (current === null) return;
-    let previousBucket = getBucket(current.key, count);
+    let previousBucket = constrainHash(current.key, count);
     this.buckets[previousBucket] = previous;
     previous = current;
     for (current = current.next; current !== null; current = previous.next) {
-      const bucket = getBucket(current.key, count);
+      const bucket = constrainHash(current.key, count);
       if (bucket === previousBucket) {
         previous = current;
         continue;

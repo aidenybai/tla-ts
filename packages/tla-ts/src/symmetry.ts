@@ -1,4 +1,4 @@
-import type { Expression } from "./ast";
+import type { BoundPattern, Expression } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -20,7 +20,6 @@ import {
   type Value,
 } from "./values";
 
-// The image of each model value a permutation moves, by name.
 type Images = Map<string, ModelValue>;
 
 const getPermutationKey = (permutation: Images) =>
@@ -59,8 +58,32 @@ const toImages = (value: Value) => {
 };
 
 // SyntaxTreeNode.getHumanReadableImage, which joins the tokens of an expression without spaces.
+const getBoundImage = (pattern: BoundPattern, set: Expression | undefined) => {
+  const names = pattern.kind === "Name" ? pattern.name : `<<${pattern.names.join(",")}>>`;
+  return set ? `${names}\\in${getExpressionImage(set)}` : names;
+};
+
 const getExpressionImage = (expression: Expression): string => {
   if (expression.kind === "Identifier") return expression.name;
+  if (expression.kind === "Number") return expression.text ?? String(expression.value);
+  if (expression.kind === "SetEnumeration") {
+    return `{${expression.elements.map(getExpressionImage).join(",")}}`;
+  }
+  if (expression.kind === "Choose") {
+    return `CHOOSE${getBoundImage(expression.pattern, expression.set)}:${getExpressionImage(expression.body)}`;
+  }
+  if (expression.kind === "Tuple")
+    return `<<${expression.elements.map(getExpressionImage).join(",")}>>`;
+  if (expression.kind === "Record") {
+    const fields = expression.fields.map(
+      (field) => `${field.name}|->${getExpressionImage(field.value)}`,
+    );
+    return `[${fields.join(",")}]`;
+  }
+  if (expression.kind === "FunctionConstruction") {
+    const bounds = expression.bounds.map((bound) => getBoundImage(bound.pattern, bound.set));
+    return `[${bounds.join(",")}|->${getExpressionImage(expression.body)}]`;
+  }
   if (expression.kind !== "Apply") return "";
   const args = expression.args.map(getExpressionImage);
   return /^[A-Za-z_]/.test(expression.operator)
@@ -99,10 +122,11 @@ export const getSymmetryGroup = (
   if (!elements.every(isFunctionValue)) {
     throw createSymmetryError("The symmetry values must be function records.");
   }
-  const permutations = elements.map(toImages);
   // Tool#getSymmetryPerms warns about each permuted set with fewer than two elements, by the name
   // the config substitutes for it. As many permuted sets as permutations means none has two.
-  const permutedSets = definition.body.kind === "Apply" ? definition.body.args : [];
+  const body = definition.body;
+  const permutedSets =
+    body.kind === "Apply" ? body.args : body.kind === "SetEnumeration" ? body.elements : [];
   const configNames = new Map(
     substitutions
       .filter((substitution) => substitution.module === undefined)
@@ -125,7 +149,7 @@ export const getSymmetryGroup = (
     return undefined;
   }
   const group = new Map<string, Images>();
-  permutations.forEach((permutation) => {
+  elements.map(toImages).forEach((permutation) => {
     if (permutation.size > 0) group.set(getPermutationKey(permutation), permutation);
   });
   const generators = [...group.values()];
@@ -242,9 +266,8 @@ const permuteValue = (value: Value, images: Images): Value => {
   return elements ? createSet(elements) : set;
 };
 
-// TLCStateMut#fingerPrint: the smallest image of the state under the group in TLC's variable
-// order. TLC permutes the state under each permutation, variable by variable, and moves on to the
-// next permutation as soon as a variable's image is larger than the smallest state's.
+// TLC permutes the state under each permutation, variable by variable, and moves on to the next
+// permutation as soon as a variable's image is larger than the smallest state's.
 export const getRepresentative = (
   state: Value[],
   permutations: Images[],

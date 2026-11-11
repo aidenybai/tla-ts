@@ -1,5 +1,4 @@
-// A port of tlapm's Expr.Deref: a subexpression reference such as Op!2!<< resolves to the
-// subexpression it names, abstracted over the bound names it uses.
+// A port of tlapm's Expr.Deref.
 
 import { TlaProofError, TlapmBugError } from "../errors";
 import { consAll, consSubstitution, shift, substituteExpr } from "./substitution";
@@ -48,7 +47,6 @@ const stripParensAndAtomic = (expression: Expr): Expr => {
   return rest;
 };
 
-// Parentheses go everywhere but in the definitions of a LET.
 const stripParens = (expression: Expr): Expr => {
   if (expression.kind === "Let") {
     return at(
@@ -63,8 +61,6 @@ const stripParens = (expression: Expr): Expr => {
 const hasNegativeIndex = (expression: Expr): boolean =>
   expression.kind === "Ix" ? expression.index <= 0 : getChildren(expression).some(hasNegativeIndex);
 
-// Visit.iter's context for each binder, stopping at labels with other names and at declarations
-// in an ASSUME.
 const findLabel = (expression: Expr, label: string, context: Hyp[]): LabelMatch | undefined => {
   const search = (inner: Expr, innerContext = context) => findLabel(inner, label, innerContext);
   const searchBounds = (bounds: Bound[], body: Expr) =>
@@ -133,7 +129,6 @@ const findLabel = (expression: Expr, label: string, context: Hyp[]): LabelMatch 
   }
 };
 
-// The first count indices in reverse, and the rest past the parameters.
 const getReversal = (count: number, paramCount: number) =>
   consAll(
     Array.from({ length: count }, (_item, index): Expr => ({ kind: "Ix", index: index + 1 })),
@@ -354,7 +349,6 @@ const getNumbered = (
   return [expression.kind === "Let" ? expression.definitions : [], result];
 };
 
-// Reorders label arguments given in source order to the order of the label's de Bruijn indices.
 const permute = (indices: number[], args: Expr[]) => {
   const count = indices.length;
   let current = indices;
@@ -513,7 +507,7 @@ const resolveSelectors = (
   const expression = isLabel ? state.expression : stripParens(state.expression);
   const count = state.definitions.length;
   const next = ((): Resolution & { rest: Selector[]; isLabel: boolean } => {
-    const numbered = (position: number, message: string) => {
+    const resolveNumbered = (position: number, message: string) => {
       const [definitions, inner] = getNumbered(
         onWarning,
         expression,
@@ -536,11 +530,11 @@ const resolveSelectors = (
         });
       }
       case "Number":
-        return numbered(selector.value, `Cannot resolve !${selector.value}`);
+        return resolveNumbered(selector.value, `Cannot resolve !${selector.value}`);
       case "Left":
-        return numbered(1, "Cannot resolve !<<");
+        return resolveNumbered(1, "Cannot resolve !<<");
       case "Right":
-        return numbered(2, "Cannot resolve !>>");
+        return resolveNumbered(2, "Cannot resolve !>>");
       case "Instance":
         return {
           params: [],

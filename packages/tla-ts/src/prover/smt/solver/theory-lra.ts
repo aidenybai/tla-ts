@@ -1,11 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp, src/math/lp/lp_api.h), MIT
-// license, see z3-license.txt. Linear integer and real arithmetic, as the theory_lra solver that
-// Z3's default configuration uses for UFNIA. Terms become columns of the lp solver, integer or not
-// by their sort, atoms become bounds on them, propagation makes the tableau feasible and propagates
-// implied bounds and equalities, and the final check runs the integer solver and assumes equalities
-// between shared terms with equal values. Nonlinear products and divisions go to nla
-// (src/math/lp/nla_core.cpp), which refines the model with lemmas, and runs nlsat on what they
-// leave open. This class adds the scopes to the chain of classes that theory-lra-state.ts starts.
+// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp, src/math/lp/lp_api.h), MIT license, see z3-license.txt.
 import { shrink } from "./array";
 import { TheoryLraFinalCheck } from "./theory-lra-final-check";
 

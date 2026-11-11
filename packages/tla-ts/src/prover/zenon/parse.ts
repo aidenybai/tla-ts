@@ -1,7 +1,4 @@
-// Ported from Zenon's lexzen.mll and parsezen.mly, as shipped in tlapm. Copyright 2005 INRIA, see
-// LICENSE.
-//
-// Reads Zenon's native input format, the .znn files that tlapm writes.
+// Ported from Zenon's lexzen.mll and parsezen.mly, as shipped in tlapm. Copyright 2005 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
 import {
@@ -109,7 +106,6 @@ const tokenize = (text: string) => {
   return tokens;
 };
 
-// Zenon's myfold: an n-ary connective nests to the right.
 const foldRight = (combine: (left: Expr, right: Expr) => Expr, first: Expr, rest: Expr[]): Expr =>
   rest.length === 0 ? first : combine(first, foldRight(combine, rest[0], rest.slice(1)));
 
@@ -127,7 +123,7 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
   };
   const tokens = tokenize(text);
   let position = 0;
-  const peek = (offset = 0) => tokens[position + offset];
+  const peek = () => tokens[position];
   const next = () => tokens[position++];
   const expect = (kind: TokenKind, value?: string) => {
     const token = next();
@@ -138,7 +134,6 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
   const isAt = (kind: TokenKind, value?: string) =>
     peek().kind === kind && (value === undefined || peek().text === value);
 
-  // A lambda after its first parenthesis: ((x y "type") body).
   const parseLambda = () => {
     expect("open");
     const names: string[] = [];

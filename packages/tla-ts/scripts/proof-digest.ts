@@ -9,8 +9,6 @@ import type {
 } from "../src/ast";
 import { getChild, getChildren, type XmlElement } from "./xml";
 
-// A proof tree reduced to what both SANY and tla-ts can report: each node's kind, name, and
-// location, with facts by their location and definitions by their names.
 type ProofDigest =
   | { kind: "omitted" | "obvious"; range: string | undefined }
   | { kind: "by"; range: string | undefined; only: boolean; facts: string[]; defs: string[] }
@@ -151,7 +149,6 @@ export const digestSany = (document: XmlElement, moduleName: string): ModuleDige
     const location = getChild(node, "location");
     return location && getText(getChild(location, "filename"));
   };
-  // A module also lists the theorems of the modules it extends, which come from other files.
   const digestModule = (module: XmlElement): ModuleDigest => {
     const filename = getFilename(module);
     return {
@@ -178,7 +175,7 @@ export const digestSany = (document: XmlElement, moduleName: string): ModuleDige
 
 const formatRange = (location: SourceLocation) => {
   const range = location.range;
-  return range && `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`;
+  return range && `${range.startLine}:${range.startColumn}-${range.endLine}:${range.endColumn}`;
 };
 
 const getFactDigest = (fact: Fact) =>
@@ -254,7 +251,6 @@ const digestParsedTheorem = (theorem: Theorem): TheoremDigest => ({
   proof: digestParsedProof(theorem.proof),
 });
 
-// The same digest of a module that tla-ts parsed.
 export const digestParsed = (module: Module): ModuleDigest => ({
   name: module.name,
   units: [

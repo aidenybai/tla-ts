@@ -1,8 +1,7 @@
 // Ported from Z3 (src/parsers/smt2/smt2parser.cpp), MIT license, see z3-license.txt.
-// Parses the SMT-LIB subset that tlapm emits into Z3-style expressions.
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
-  AstManager,
+  type AstManager,
   FAMILY_ARITH,
   FAMILY_BASIC,
   KIND_QUANTIFIER,
@@ -43,20 +42,15 @@ import { replaceFreeVars } from "./var-subst";
 
 type SExpr = string | SExpr[];
 
-// A name in scope: a variable bound by a quantifier, or a let binding's term. depth is the number of
-// binders above it.
 type Binding =
   | { kind: "var"; depth: number; sort: number }
   | { kind: "let"; depth: number; expr: number };
 
 interface SmtProblem {
   assertions: number[];
-  // Z3 prints no answer for a script without check-sat.
   hasCheckSat: boolean;
 }
 
-// An application that parseTerm is parsing: its name, its list, where its arguments start on the
-// result stack, and its next argument.
 interface ApplicationFrame {
   name: string;
   list: SExpr[];
@@ -83,7 +77,6 @@ const BUILTIN_OPS = new Map<string, number>([
   ["is_int", OP_IS_INT],
 ]);
 
-// arith_decl_plugin's use_coercion: the operators that are Real when any argument is Real.
 const COERCING_OPS = new Set([OP_ADD, OP_SUB, OP_UMINUS, OP_MUL, OP_LE, OP_GE, OP_LT, OP_GT]);
 
 const DECIMAL = /^([0-9]+)\.([0-9]+)$/;
@@ -155,8 +148,6 @@ const expectSymbol = (sexpr: SExpr | undefined): string => {
   return sexpr;
 };
 
-// Parses a script, and hands each assertion to assertExpr as Z3's cmd_context does, before it parses
-// the next command. Expressions are created in the order of Z3's parser, and live as long as there.
 export const parseSmtlib = (
   text: string,
   manager: AstManager,
@@ -186,14 +177,12 @@ export const parseSmtlib = (
     return undefined;
   };
 
-  // basic_decl_plugin::join: Int and Real join to Real. Other sorts join only with themselves.
   const getJoin = (args: number[]) => {
     const argSorts = args.map((arg) => manager.sorts[arg]);
     if (!argSorts.every(isArithSort)) return argSorts[0];
     return argSorts.includes(SORT_REAL) ? SORT_REAL : SORT_INT;
   };
 
-  // The sort of the arguments of a builtin, as Z3's decl plugins pick its declaration.
   const getDomainSort = (op: number, args: number[]) => {
     if (op === OP_ITE) return getJoin(args.slice(1));
     if (op === OP_EQ || op === OP_DISTINCT) return getJoin(args);
@@ -218,8 +207,6 @@ export const parseSmtlib = (
           ? domainSort
           : SORT_BOOL;
 
-  // ast_manager::coerce_to: an Int argument of a Real position becomes to_real, and a Real argument
-  // of an Int position to_int.
   const coerce = (arg: number, sort: number) => {
     const argSort = manager.sorts[arg];
     if (argSort === sort || !isArithSort(argSort) || !isArithSort(sort)) return arg;
@@ -228,9 +215,6 @@ export const parseSmtlib = (
       : manager.mkApp(OP_TO_INT, [arg], SORT_INT);
   };
 
-  // Coerces the arguments of an application to the sorts of its declaration, as Z3 does with its
-  // default int_real_coercions, then checks their sorts and number, so the solver only sees
-  // well-sorted terms, and that quantifiers occur only under Boolean connectives.
   const mkApp = (decl: number, inputArgs: number[], domainSort?: number) => {
     const op = manager.funcDecls[decl].op;
     const name = manager.funcDecls[decl].name;
@@ -295,8 +279,6 @@ export const parseSmtlib = (
     return expr;
   };
 
-  // push_pattern_frame with ignore_bad_patterns: (t1 ... tn) is a multi-pattern, (f a ...) a pattern
-  // of one term, and a pattern that starts with a constant is dropped unparsed.
   const parsePattern = (sexpr: SExpr) => {
     if (!Array.isArray(sexpr) || sexpr.length === 0) return undefined;
     const head = sexpr[0];
@@ -307,8 +289,6 @@ export const parseSmtlib = (
     return manager.mkPattern([parseTerm(sexpr)]);
   };
 
-  // pattern_validator: a pattern has no Boolean operator other than equality, no quantifier, and
-  // every variable of its quantifier.
   const isValidPattern = (pattern: number, numDecls: number) => {
     const found = new Set<number>();
     const isValid = (expr: number): boolean => {
@@ -342,8 +322,6 @@ export const parseSmtlib = (
     });
     scopes.push(scope);
     depth += varSorts.length;
-    // parse_sorted_vars: the variables are created first, the first declared with the largest index,
-    // and the parser's stack holds them until the quantifier is created.
     const boundVars = varSorts.map((sort, index) =>
       manager.mkVar(varSorts.length - 1 - index, sort),
     );
@@ -369,8 +347,6 @@ export const parseSmtlib = (
       }
     scopes.pop();
     depth -= varSorts.length;
-    // pop_quant_frame: the invalid patterns leave the parser's stack before the quantifier is made,
-    // and the valid ones after.
     let numKept = 0;
     for (const pattern of patterns) {
       if (!isValidPattern(pattern, varSorts.length)) continue;
@@ -411,7 +387,6 @@ export const parseSmtlib = (
     const chainable = CHAINABLE_OPS.get(name);
     if (chainable !== undefined) return mkChain(chainable, args);
     if (name === "-") return mkApp(args.length === 1 ? OP_UMINUS : OP_SUB, args);
-    // ast_manager::mk_app: / is left associative, so more arguments nest to the left.
     if (name === "/" && args.length > 2)
       return args
         .slice(1)
@@ -423,8 +398,6 @@ export const parseSmtlib = (
     return mkApp(decl, args);
   };
 
-  // A term without nested applications to parse first: a symbol, a quantifier, a let or an
-  // annotation.
   const parseLeaf = (sexpr: SExpr): number => {
     if (typeof sexpr === "string") {
       if (/^[0-9]+$/.test(sexpr)) return manager.mkNumeral(BigInt(sexpr));
@@ -437,9 +410,6 @@ export const parseSmtlib = (
       if (sexpr === "false") return manager.falseExpr;
       const binding = lookup(sexpr);
       if (binding?.kind === "var") return manager.mkVar(depth - 1 - binding.depth, binding.sort);
-      // Z3's var_shifter moves the free variables of a let binding up by the binders since. Its cache
-      // holds the terms it makes, but this parser holds no references, so it rebuilds the binding
-      // with replaceFreeVars.
       if (binding !== undefined)
         return depth === binding.depth
           ? binding.expr
@@ -452,7 +422,6 @@ export const parseSmtlib = (
     if (head === "forall" || head === "exists") return parseQuantifier(sexpr, head === "forall");
     if (head === "let") return parseLet(sexpr);
     const named = parseTerm(sexpr[1]);
-    // name_expr: cmd_context keeps a named expression as a macro.
     const nameIndex = sexpr.indexOf(":named");
     if (nameIndex !== -1) {
       manager.incRef(named);
@@ -461,8 +430,6 @@ export const parseSmtlib = (
     return named;
   };
 
-  // Applications keep their own stack, like Z3's parser, so deeply nested terms do not exhaust the
-  // call stack.
   const parseTerm = (sexpr: SExpr): number => {
     const frames: ApplicationFrame[] = [];
     const results: number[] = [];
@@ -502,8 +469,7 @@ export const parseSmtlib = (
     } else if (name === "declare-fun" || name === "declare-const") {
       const domain = name === "declare-fun" ? expectList(list[2]).map(parseSort) : [];
       const range = parseSort(name === "declare-fun" ? list[3] : list[2]);
-      // builtin_signature_collides and is_transcendental_shadow_decl each apply the builtin of that
-      // name to fresh variables, which they then release.
+      // Z3's builtin_signature_collides and is_transcendental_shadow_decl each make and release fresh variables of the domain.
       for (let round = 0; round < 2; round++) {
         const vars = domain.map((sort, index) => manager.mkVar(index, sort));
         for (const domainVar of vars) manager.incRef(domainVar);
@@ -511,7 +477,6 @@ export const parseSmtlib = (
       }
       funcs.set(expectSymbol(list[1]), manager.mkFuncDecl(expectSymbol(list[1]), domain, range));
     } else if (name === "assert") {
-      // cmd_context::assert_expr keeps the assertion, and passes it to the solver.
       const assertion = expectBool(parseTerm(list[1]));
       manager.incRef(assertion);
       assertions.push(assertion);

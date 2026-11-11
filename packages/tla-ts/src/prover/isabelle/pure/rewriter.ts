@@ -1,6 +1,4 @@
-// Ported from Isabelle2025's Pure/raw_simplifier.ML, the bottom-up rewriting of terms, and the
-// goal conversions of Pure/conv.ML. Copyright (c) 1986-2025 University of Cambridge, Technische
-// Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/raw_simplifier.ML and Pure/conv.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { gconvRule, impCongRule } from "./conv";
@@ -17,17 +15,19 @@ import {
   stripImpPrems,
 } from "./logic";
 import { boundName } from "./name";
-import { matchTermNet, type Net } from "./net";
+import { matchTermNet } from "./net";
 import { firstOrderMatchPattern, matchPattern, matches, type MatchEnv } from "./pattern";
 import {
   addPrems,
   congKey,
   congName,
   extractSafeRrules,
+  hasVar,
   insertRrule,
   mkProcrule,
   SIMP_DEPTH_LIMIT,
-  type Procedure,
+  varsOf,
+  type RawRrule,
   type Rrule,
   type SimpContext,
 } from "./raw-simplifier";
@@ -36,8 +36,6 @@ import { emptyTyEnv, substType } from "./type";
 import {
   aconv,
   existsSubterm,
-  eqTyp,
-  foldVars,
   listComb,
   maxidxOfTerm,
   mkBound,
@@ -50,7 +48,6 @@ import {
   dummyT,
   type App,
   type Term,
-  type Var,
 } from "./term";
 import { termOrd } from "./term-ord";
 import {
@@ -76,11 +73,10 @@ import {
 import { checkInterrupt, type Limits } from "./interrupt";
 import { resolveTac } from "./tactic";
 import { listOfSeq, seqHead, singleSeq, emptySeq, type Seq } from "./seq";
-import { allGoals, eqThm } from "./tactical";
+import { allGoals, distinctThms } from "./tactical";
 
 export type Prover = (context: SimpContext, thm: Thm) => Thm | undefined;
 
-// simple_prover: proves the premises of a rewrite rule with the premises of the simpset.
 export const simpleProver: Prover = (context, thm) =>
   seqHead(allGoals(resolveTac(context.limits, context.simpset.prems))(thm));
 
@@ -95,7 +91,6 @@ const betaEtaConversion = (term: Term) => {
   return transitive(beta, etaConversion(rhsOf(beta)));
 };
 
-// Thm.match and Thm.instantiate: instantiates rule so that pattern becomes object.
 const instantiateMatch = (env: MatchEnv, rule: Thm): Thm => {
   const typed = instantiateTypes(env.tyenv, rule);
   const insts: Instantiation[] = tableEntries(env.tenv).map(([key, binding]) => ({
@@ -110,7 +105,6 @@ const renameBoundvars = (pattern: Term, object: Term, thm: Thm) => {
   return renamed === undefined ? thm : renamedProp(renamed, thm);
 };
 
-// check_conv: joins thm and next, allowing for beta and eta differences in the middle term.
 const checkConv = (thm: Thm, next: Thm): Thm | undefined => {
   try {
     return transitive(thm, next);
@@ -150,18 +144,9 @@ const isWeakCong = (context: SimpContext, lhs: Term) => {
 const uncondSkel = (context: SimpContext, lhs: Term, rhs: Term) =>
   isWeakCong(context, lhs) ? SKEL0 : rhs;
 
-const varsOf = (term: Term) => foldVars((atom, result: Var[]) => [...result, atom], term, []);
-
 const condSkel = (context: SimpContext, lhs: Term, rhs: Term) => {
   const lhsVars = varsOf(lhs);
-  return varsOf(rhs).every((variable) =>
-    lhsVars.some(
-      (other) =>
-        other.name === variable.name &&
-        other.index === variable.index &&
-        eqTyp(other.type, variable.type),
-    ),
-  )
+  return varsOf(rhs).every((variable) => hasVar(lhsVars, variable))
     ? uncondSkel(context, lhs, rhs)
     : SKEL0;
 };
@@ -187,7 +172,6 @@ const sortRrules = (rrules: readonly Rrule[]) => {
   return [...simple, ...conditional];
 };
 
-// rewritec's rew: rewrites the eta-contracted term with one rule.
 const rew = (
   prover: Prover,
   maxt: number,
@@ -199,7 +183,7 @@ const rew = (
   const [rthm, elhs] =
     maxt === -1 || !rrule.extra
       ? [rrule.thm, rrule.elhs]
-      : [incrIndexesThm(maxt + 1, rrule.thm), incrementTerm(maxt + 1, rrule.elhs)];
+      : [incrIndexesThm(maxt + 1, rrule.thm), incrIndexes([], maxt + 1, rrule.elhs)];
   const env = rrule.fo
     ? firstOrderMatchPattern(elhs, etaTerm, { tyenv: emptyTyEnv, tenv: emptyTEnv })
     : matchPattern(elhs, etaTerm, { tyenv: emptyTyEnv, tenv: emptyTEnv });
@@ -224,7 +208,6 @@ const rew = (
   return { thm: joined, skel: condSkel(context, ruleLhs, ruleRhs) };
 };
 
-// rewritec's rews: the first rule that rewrites the term.
 const rews = (
   prover: Prover,
   maxt: number,
@@ -239,7 +222,6 @@ const rews = (
   return undefined;
 };
 
-// rewritec: one rewrite step at the root of a term.
 const rewritec = (
   prover: Prover,
   maxt: number,
@@ -259,7 +241,7 @@ const rewritec = (
     sortRrules(matchTermNet(context.simpset.rules, etaTerm)),
   );
   if (rewritten !== undefined) return rewritten;
-  for (const proc of matchTermNet(context.simpset.simprocs as Net<Procedure>, etaTerm)) {
+  for (const proc of matchTermNet(context.simpset.simprocs, etaTerm)) {
     if (!matches(proc.lhs, term, emptyTyEnv, emptyTEnv)) continue;
     const raw = proc.proc(context, etaTerm);
     if (raw === undefined) continue;
@@ -269,9 +251,6 @@ const rewritec = (
   return undefined;
 };
 
-const incrementTerm = (increment: number, term: Term) => incrIndexes([], increment, term);
-
-// congc: applies a congruence rule to a term.
 const congc = (
   prover: (thm: Thm) => Thm | undefined,
   maxt: number,
@@ -313,16 +292,12 @@ export interface RewriteMode {
 }
 
 interface PremRules {
-  readonly rules: ReturnType<typeof extractSafeRrules>;
+  readonly rules: readonly RawRrule[];
   readonly asm: Thm | undefined;
 }
 
-// bottomc: bottom-up rewriting with the simpset of the context.
 const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
-  // Isabelle's botc recurses after each rewrite at the top and chains the steps on the way back,
-  // so a simpset that rewrites forever keeps every step until Isabelle runs out of memory. This
-  // loops and chains each step as it goes, which gives the same theorem, so such a simpset runs
-  // into the time limit holding only the latest one.
+  // Deviation from Isabelle: botc loops instead of recursing, so an endless simpset hits the time limit, not the memory limit.
   const botc = (skel: Term, context: SimpContext, term: Term): Thm | undefined => {
     let chained: Thm | undefined;
     let currentSkel = skel;
@@ -382,10 +357,10 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
   };
   const impc = (term: Term, context: SimpContext) =>
     mode.mutsimp ? mutImpc0([], term, [], context) : nonmutImpc(term, context);
-  const rulesOfPrem = (prem: Term, context: SimpContext): [PremRules, SimpContext] => {
-    if (maxidxOfTerm(prem) !== -1) return [{ rules: [], asm: undefined }, context];
+  const rulesOfPrem = (prem: Term, context: SimpContext): PremRules => {
+    if (maxidxOfTerm(prem) !== -1) return { rules: [], asm: undefined };
     const asm = assume(prem);
-    return [{ rules: extractSafeRrules(context, asm), asm }, context];
+    return { rules: extractSafeRrules(context, asm), asm };
   };
   const addRrules = (rules: readonly PremRules[], context: SimpContext): SimpContext => {
     const simpset = rules.reduce(
@@ -419,7 +394,8 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     eq: Thm | undefined,
   ): Thm | undefined => {
     if (prems.length === 0) return eq;
-    const [prem, ...rest] = prems;
+    const prem = prems[0];
+    const rest = prems.slice(1);
     const inner = addRrules(rules.slice(1).reverse(), context);
     const nextConcl = mkImplies(prem, eq === undefined ? concl : rhsOf(eq));
     const dprem = eq === undefined ? undefined : disch(false, prem, eq);
@@ -439,13 +415,8 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     context: SimpContext,
   ): Thm | undefined => {
     const newPrems = stripImpPrems(concl);
-    let current = context;
     const newRules: PremRules[] = [];
-    for (const prem of newPrems) {
-      const [rule, next] = rulesOfPrem(prem, current);
-      newRules.push(rule);
-      current = next;
-    }
+    for (const prem of newPrems) newRules.push(rulesOfPrem(prem, context));
     return mutImpc(
       [...prems, ...newPrems],
       stripImpConcl(concl),
@@ -453,7 +424,7 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
       [],
       [],
       [],
-      current,
+      context,
       -1,
       -1,
     );
@@ -497,8 +468,10 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
             );
       return transitive1(folded, rest);
     }
-    const [prem, ...otherPrems] = prems;
-    const [rule, ...otherRules] = rules;
+    const prem = prems[0];
+    const otherPrems = prems.slice(1);
+    const rule = rules[0];
+    const otherRules = rules.slice(1);
     const simplified =
       count === 0
         ? undefined
@@ -526,7 +499,7 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
           ),
         -1,
       );
-    const [newRule, next] = rulesOfPrem(newPrem, context);
+    const newRule = rulesOfPrem(newPrem, context);
     const eqn = otherPrems
       .slice(0, index)
       .reduceRight(
@@ -540,7 +513,7 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
       [newPrem, ...donePrems],
       [newRule, ...doneRules],
       [eqn, ...eqns],
-      next,
+      context,
       donePrems.length,
       -1,
     );
@@ -550,7 +523,7 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
     const first = mode.simprem ? botc(SKEL0, context, prem) : undefined;
     const simplifiedPrem = first === undefined ? prem : rhsOf(first);
     const inner = mode.useprem
-      ? addRrules([rulesOfPrem(simplifiedPrem, context)[0]], context)
+      ? addRrules([rulesOfPrem(simplifiedPrem, context)], context)
       : context;
     const second = botc(SKEL0, inner, conc);
     if (second === undefined)
@@ -563,13 +536,9 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
   return tryBotc;
 };
 
-// Drule.flexflex_unique
 const flexflexUnique = (limits: Limits, thm: Thm): Thm => {
   if (thm.tpairs.length === 0) return thm;
-  const results = listOfSeq(flexflexRule(limits, thm));
-  const distinct = results.filter(
-    (result, index) => results.findIndex((other) => eqThm(other, result)) === index,
-  );
+  const distinct = distinctThms(listOfSeq(flexflexRule(limits, thm)));
   if (distinct.length === 1) return distinct[0];
   throw new TlaIsabelleError(
     "THM",
@@ -579,7 +548,6 @@ const flexflexUnique = (limits: Limits, thm: Thm): Thm => {
   );
 };
 
-// rewrite_cterm: proves term == term' by rewriting.
 export const rewriteCterm = (
   mode: RewriteMode,
   prover: Prover,

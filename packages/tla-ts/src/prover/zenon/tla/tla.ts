@@ -1,7 +1,4 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// The TLA+ extension: rules for set theory, functions, records, tuples, CHOOSE, IF and CASE, and
-// rewriting a subterm with an equality on the branch.
 
 import {
   FALSE,
@@ -12,9 +9,9 @@ import {
   type NegatedRelationExpr,
   type RelationExpr,
 } from "../expr";
-import type { Node, Priority } from "../node";
+import type { Node } from "../node";
 import type { Phrase } from "../parse";
-import { makeRule, type Rule } from "../proof";
+import { makeRule } from "../proof";
 import { getFunctionNodes, getFunctionSetNodes } from "./functions";
 import { getRecordNodes, getTupleNodes } from "./records";
 import { getRewriteNodes } from "./rewrites";
@@ -50,7 +47,6 @@ const OTHER_SYMBOLS = [
   "TLA.box",
 ];
 
-// The symbols that hypotheses can't define, as Zenon's predef with the tla extension.
 export const PREDEFINED_SYMBOLS = [
   "=",
   ...SET_CONSTRUCTORS,
@@ -58,7 +54,7 @@ export const PREDEFINED_SYMBOLS = [
   ...OTHER_SYMBOLS,
 ];
 
-const definition = (
+const makeDefinition = (
   exprs: Expressions,
   name: string,
   symbol: string,
@@ -75,13 +71,12 @@ const definition = (
   },
 });
 
-// Zenon's built_in_defs. Expressions belong to one run of the prover, so each run builds them.
 export const getBuiltInDefinitions = (exprs: Expressions): Phrase[] => {
   const bound = exprs.evar("x");
-  const isInSet = exprs.eapp("TLA.in", [bound, exprs.evar("S")]);
+  const membership = exprs.eapp("TLA.in", [bound, exprs.evar("S")]);
   const holds = exprs.eapp("P", [bound]);
   return [
-    definition(
+    makeDefinition(
       exprs,
       "subset_def",
       "TLA.subseteq",
@@ -91,28 +86,28 @@ export const getBuiltInDefinitions = (exprs: Expressions): Phrase[] => {
         exprs.elam(bound, "", exprs.eapp("TLA.in", [bound, exprs.evar("B")])),
       ]),
     ),
-    definition(
+    makeDefinition(
       exprs,
       "bAll_def",
       "TLA.bAll",
       ["S", "P"],
-      exprs.eall(bound, "", exprs.eimply(isInSet, holds)),
+      exprs.eall(bound, "", exprs.eimply(membership, holds)),
     ),
-    definition(
+    makeDefinition(
       exprs,
       "bEx_def",
       "TLA.bEx",
       ["S", "P"],
-      exprs.eex(bound, "", exprs.eand(isInSet, holds)),
+      exprs.eex(bound, "", exprs.eand(membership, holds)),
     ),
-    definition(
+    makeDefinition(
       exprs,
       "bChoose_def",
       "TLA.bChoice",
       ["S", "P"],
-      exprs.etau(bound, "", exprs.eand(isInSet, holds)),
+      exprs.etau(bound, "", exprs.eand(membership, holds)),
     ),
-    definition(
+    makeDefinition(
       exprs,
       "prod_def",
       "TLA.prod",
@@ -122,7 +117,6 @@ export const getBuiltInDefinitions = (exprs: Expressions): Phrase[] => {
   ];
 };
 
-// The elements of a set given by enumeration, and whether it may hold more.
 const getSetValues = (set: Expr): [Expr[], boolean] => {
   if (isVariable(set, "TLA.emptyset")) return [[], false];
   if (isApp(set, "TLA.upair", 2)) return [set.args, false];
@@ -145,34 +139,45 @@ const getBooleanNodes = (literal: Literal): Item[] | undefined => {
   const isNegated = literal.isNegated;
   const atom = literal.atom;
   const relation = literal.relation;
-  const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
-    makeExtensionNode(literal, priority, rule, branches);
-  const instance = (priority: Priority, quantified: Expr, term: Expr) =>
-    makeInstanceNode(literal, priority, quantified, term);
-  if (atom.kind === "meta") return instance("arity", atom.args[0], isNegated ? TRUE : FALSE);
+  if (atom.kind === "meta")
+    return makeInstanceNode(literal, "arity", atom.args[0], isNegated ? TRUE : FALSE);
   if (relation?.symbol !== "=") return undefined;
   const left = relation.args[0];
   const right = relation.args[1];
   if (right.kind === "true")
     return isNegated
-      ? node("prop", makeRule("noteq_x_true", [formula, exprs.enot(left), left]), [
-          [exprs.enot(left)],
-        ])
-      : node("prop", makeRule("eq_x_true", [formula, left, left]), [[left]]);
+      ? makeExtensionNode(
+          literal,
+          "prop",
+          makeRule("noteq_x_true", [formula, exprs.enot(left), left]),
+          [[exprs.enot(left)]],
+        )
+      : makeExtensionNode(literal, "prop", makeRule("eq_x_true", [formula, left, left]), [[left]]);
   if (left.kind === "true")
     return isNegated
-      ? node("prop", makeRule("noteq_true_x", [formula, exprs.enot(right), right]), [
-          [exprs.enot(right)],
-        ])
-      : node("prop", makeRule("eq_true_x", [formula, right, right]), [[right]]);
+      ? makeExtensionNode(
+          literal,
+          "prop",
+          makeRule("noteq_true_x", [formula, exprs.enot(right), right]),
+          [[exprs.enot(right)]],
+        )
+      : makeExtensionNode(literal, "prop", makeRule("eq_true_x", [formula, right, right]), [
+          [right],
+        ]);
   if (!isNegated && right.kind === "false")
-    return node("prop", makeRule("eq_x_false", [formula, exprs.enot(left), left]), [
-      [exprs.enot(left)],
-    ]);
+    return makeExtensionNode(
+      literal,
+      "prop",
+      makeRule("eq_x_false", [formula, exprs.enot(left), left]),
+      [[exprs.enot(left)]],
+    );
   if (!isNegated && left.kind === "false")
-    return node("prop", makeRule("eq_false_x", [formula, exprs.enot(right), right]), [
-      [exprs.enot(right)],
-    ]);
+    return makeExtensionNode(
+      literal,
+      "prop",
+      makeRule("eq_false_x", [formula, exprs.enot(right), right]),
+      [[exprs.enot(right)]],
+    );
   return undefined;
 };
 
@@ -182,8 +187,6 @@ const getChoiceNodes = (literal: Literal): Item[] | undefined => {
   const goalness = literal.goalness;
   const isNegated = literal.isNegated;
   const relation = literal.relation;
-  const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
-    makeExtensionNode(literal, priority, rule, branches);
   if (relation === undefined) return undefined;
   const left = relation.args[0];
   const right = relation.args[1];
@@ -200,7 +203,8 @@ const getChoiceNodes = (literal: Literal): Item[] | undefined => {
     const leftBody = exprs.substitute([[left.args[0], bound]], left.args[1]);
     const rightBody = exprs.substitute([[right.args[0], bound]], right.args[1]);
     const differ = exprs.eex(bound, left.symbol, exprs.eapp("$notequiv", [leftBody, rightBody]));
-    return node(
+    return makeExtensionNode(
+      literal,
       { instance: differ },
       makeRule("choose_diff_choose", [
         formula,
@@ -212,7 +216,9 @@ const getChoiceNodes = (literal: Literal): Item[] | undefined => {
     );
   }
   if (!isNegated && relation.symbol === "$notequiv")
-    return node("arity", makeRule("notequivdef", []), [[exprs.enot(exprs.eequiv(left, right))]]);
+    return makeExtensionNode(literal, "arity", makeRule("notequivdef", []), [
+      [exprs.enot(exprs.eequiv(left, right))],
+    ]);
   const choice = right.kind === "tau" ? right : left.kind === "tau" ? left : undefined;
   if (isNegated && isEquality && choice !== undefined) {
     const term = right.kind === "tau" ? left : right;
@@ -238,7 +244,6 @@ const getChoiceNodes = (literal: Literal): Item[] | undefined => {
   return undefined;
 };
 
-// The bounded quantifier over an enumerated set in \A x : x \in S => P or ~\E x : x \in S /\ P.
 const getEnumeratedQuantifier = (formula: Expr) => {
   const isEnumerated = (set: Expr) =>
     isVariable(set, "TLA.emptyset") ||
@@ -266,14 +271,11 @@ const getEnumeratedQuantifier = (formula: Expr) => {
 };
 
 const getEnumeratedNodes = (literal: Literal): Item[] | undefined => {
-  const formula = literal.formula;
-  const instance = (priority: Priority, quantified: Expr, term: Expr) =>
-    makeInstanceNode(literal, priority, quantified, term);
-  const enumerated = getEnumeratedQuantifier(formula);
+  const enumerated = getEnumeratedQuantifier(literal.formula);
   if (enumerated !== undefined) {
     const values = getSetValues(enumerated.set);
     const nodes: Item[] = values[0].flatMap((value) =>
-      instance("arity", enumerated.quantified, value),
+      makeInstanceNode(literal, "arity", enumerated.quantified, value),
     );
     return values[1] ? nodes : [...nodes, "stop"];
   }
@@ -285,19 +287,21 @@ const getNaturalNodes = (literal: Literal): Item[] | undefined => {
   const formula = literal.formula;
   const isNegated = literal.isNegated;
   const relation = literal.relation;
-  const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
-    makeExtensionNode(literal, priority, rule, branches);
-  const instance = (priority: Priority, quantified: Expr, term: Expr) =>
-    makeInstanceNode(literal, priority, quantified, term);
   if (isNegated && relation?.symbol === "TLA.in" && isVariable(relation.args[1], "arith.N")) {
     const left = relation.args[0];
-    if (isVariable(left, "0")) return node("prop", makeRule("in_nat_0", [formula]), []);
+    if (isVariable(left, "0"))
+      return makeExtensionNode(literal, "prop", makeRule("in_nat_0", [formula]), []);
     if (isApp(left, "TLA.fapply", 2) && isVariable(left.args[0], "TLA.Succ")) {
       const previous = exprs.enot(member(exprs, left.args[1], exprs.evar("arith.N")));
-      return node("prop", makeRule("in_nat_succ", [formula, previous, left.args[1]]), [[previous]]);
+      return makeExtensionNode(
+        literal,
+        "prop",
+        makeRule("in_nat_succ", [formula, previous, left.args[1]]),
+        [[previous]],
+      );
     }
     if (left.kind === "meta")
-      return instance({ instance: left.args[0] }, left.args[0], exprs.evar("0"));
+      return makeInstanceNode(literal, { instance: left.args[0] }, left.args[0], exprs.evar("0"));
   }
   return undefined;
 };
@@ -326,8 +330,6 @@ const getPropNodes = (context: TlaContext, formula: Expr, goalness: number): Ite
   );
 };
 
-// Zenon's newnodes_inst_bounded: instantiates \A x \in S : P and ~\E x \in S : P with the terms
-// known to be in S.
 const getBoundedInstances = (context: TlaContext, formula: Expr, goalness: number): Node[] => {
   const exprs = context.exprs;
   const index = context.index;
@@ -491,8 +493,7 @@ export const getExtensionNodes = (
   formula: Expr,
   goalness: number,
 ): ExtensionNodes => {
-  // OCaml evaluates the operands of @ right to left, so the last rules run first. The order
-  // decides the names of fresh variables.
+  // OCaml evaluates the operands of @ right to left, so the last rules run first, which decides the names of fresh variables.
   const bounded = getBoundedInstances(context, formula, goalness);
   const right = getEqualityPropositionNodes(context, formula, false);
   const left = getEqualityPropositionNodes(context, formula, true);

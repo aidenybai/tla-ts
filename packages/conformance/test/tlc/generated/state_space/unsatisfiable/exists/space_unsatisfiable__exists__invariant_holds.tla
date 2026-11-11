@@ -1,0 +1,35 @@
+(*---
+description: Explores init unsatisfiable and next exists with check invariant_holds.
+ref: tlc2/tool/impl/Tool.java#getInitStates; tlc2/tool/impl/Tool.java#getNextStates
+features:
+  - state-space
+outcome: any
+config: |
+  INIT Init
+  NEXT Next
+  INVARIANT Inv
+---*)
+---- MODULE space_unsatisfiable__exists__invariant_holds ----
+EXTENDS Integers
+VARIABLES x, y
+vars == <<x, y>>
+Assign(a, b) == x = a /\ y = b
+Same(a, b) == a = a /\ b = b
+Init == x = 0 /\ y = 0 /\ x = 1
+Next == \E v \in {y} : y' = v /\ x' = x
+Inv == TRUE
+====
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    2149:3 The invariant Inv is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.
+    2190:0 Finished computing initial states: 0 distinct states generated at <date>.
+    2193:0 Model checking completed. No error has been found.
+      Estimates of the probability that TLC did not check all reachable states
+      because two distinct states had the same fingerprint:
+      calculated (optimistic):  val = 0.0
+    2199:0 0 states generated, 0 distinct states found, 0 states left on queue.
+    2194:0 The depth of the complete state graph search is 0.
+---*)

@@ -1,9 +1,6 @@
-// Ported from Z3 (maximize_term and its helpers in src/math/lp/lar_solver.cpp, and the tableau
-// part of src/math/lp/lp_primal_core_solver.h, src/math/lp/lp_primal_core_solver_def.h,
-// src/math/lp/lp_primal_core_solver_tableau_def.h), MIT license, see z3-license.txt. The primal
-// simplex with the tableau_costs strategy: from a feasible solution, a non-basic column whose
-// reduced cost improves the objective enters, the ratio test picks the basic column that leaves,
-// and the reduced costs follow every pivot.
+// Ported from Z3 (maximize_term and its helpers in src/math/lp/lar_solver.cpp, and the tableau part
+// of src/math/lp/lp_primal_core_solver.h, src/math/lp/lp_primal_core_solver_def.h,
+// src/math/lp/lp_primal_core_solver_tableau_def.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import {
   COLUMN_BOXED,
@@ -22,12 +19,9 @@ import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import { Impq } from "./numeric-pair";
 
-// m_nbasis_sort_counter: the non-basic columns are sorted again after this many choices.
 const NBASIS_SORT_PERIOD = 20;
-// percent_of_entering_to_check, for more than 300 non-basic columns.
 const PERCENT_OF_ENTERING_TO_CHECK = 5;
 
-// The theta of a ratio test, and whether a bound limits it yet.
 interface ThetaLimit {
   theta: Impq;
   isUnlimited: boolean;
@@ -59,8 +53,6 @@ class CostsSimplex {
     private readonly reducedCosts: Rational[],
   ) {}
 
-  // lar_core_solver::solve and lp_primal_core_solver::solve, not only looking for a feasible
-  // solution.
   solve() {
     const core = this.core;
     const settings = core.settings;
@@ -70,7 +62,7 @@ class CostsSimplex {
         core.status = LP_CANCELLED;
         return;
       }
-      this.oneIteration();
+      this.oneIterationTableau();
       if (settings.isCanceled()) {
         core.status = LP_CANCELLED;
         return;
@@ -82,24 +74,22 @@ class CostsSimplex {
     );
   }
 
-  // one_iteration_tableau.
-  private oneIteration() {
+  private oneIterationTableau() {
     const core = this.core;
-    const entering = this.chooseEntering();
+    const entering = this.chooseEnteringColumnTableau();
     if (entering === -1) {
       core.status = core.isFeasible() ? LP_OPTIMAL : LP_INFEASIBLE;
       return;
     }
     const limit: ThetaLimit = { theta: Impq.zero, isUnlimited: true };
-    const leaving = this.findLeaving(entering, limit);
+    const leaving = this.findLeavingAndTTableau(entering, limit);
     if (leaving === -1) {
       core.status = LP_UNBOUNDED;
       return;
     }
-    this.advance(entering, leaving, limit.theta);
+    this.advanceOnEnteringAndLeavingTableau(entering, leaving, limit.theta);
   }
 
-  // sort_non_basis: the non-basic columns by the size of their columns, the empty ones last.
   private sortNonBasis() {
     const core = this.core;
     const columns = core.matrix.columns;
@@ -115,23 +105,20 @@ class CostsSimplex {
       core.heading[core.nbasis[index]] = -index - 1;
   }
 
-  // get_number_of_non_basic_column_to_try_for_enter.
-  private getNumberToTry() {
+  private getNumberOfNonBasicColumnToTryForEnter() {
     const count = this.core.nbasis.length;
     const scaled = count > 300 ? Math.floor((count * PERCENT_OF_ENTERING_TO_CHECK) / 100) : count;
     if (scaled === 0) return 0;
     return Math.max(this.core.settings.getRandomNext() % scaled, 1);
   }
 
-  // choose_entering_column_tableau: among the first beneficial columns, the one with the fewest
-  // cells, and a random one among ties. It moves to the end of the list.
-  private chooseEntering() {
+  private chooseEnteringColumnTableau() {
     const core = this.core;
     if (this.sortCounter === 0) {
       this.sortNonBasis();
       this.sortCounter = NBASIS_SORT_PERIOD;
     } else this.sortCounter--;
-    let numToGoOver = this.getNumberToTry();
+    let numToGoOver = this.getNumberOfNonBasicColumnToTryForEnter();
     if (numToGoOver === 0) return -1;
     let minCells = core.matrix.getRowCount() + 1;
     let enteringIndex = -1;
@@ -139,7 +126,7 @@ class CostsSimplex {
     const list = this.nonBasisList;
     for (let index = 0; numToGoOver > 0 && index < list.length; index++) {
       const column = list[index];
-      if (!this.isBeneficial(column)) continue;
+      if (!this.isColumnBeneficialForEnteringBasis(column)) continue;
       const cells = core.matrix.columns[column].length;
       if (cells < minCells) {
         minCells = cells;
@@ -157,8 +144,7 @@ class CostsSimplex {
     return entering;
   }
 
-  // column_is_benefitial_for_entering_basis.
-  private isBeneficial(column: number) {
+  private isColumnBeneficialForEnteringBasis(column: number) {
     const core = this.core;
     const reducedCost = this.reducedCosts[column];
     if (reducedCost.isZero()) return false;
@@ -178,10 +164,7 @@ class CostsSimplex {
     }
   }
 
-  // find_leaving_and_t_tableau: the basic column that the ratio test stops first, with ties
-  // broken by the shortest row and then at random, or the entering column itself when it reaches
-  // its other bound first.
-  private findLeaving(entering: number, limit: ThetaLimit) {
+  private findLeavingAndTTableau(entering: number, limit: ThetaLimit) {
     const core = this.core;
     const matrix = core.matrix;
     const column = matrix.columns[entering];
@@ -233,8 +216,6 @@ class CostsSimplex {
     return candidates[core.settings.getRandomNext() % candidates.length];
   }
 
-  // limit_theta_on_basis_column: x[basic] + theta * m stays within the bounds of the column, or
-  // moves toward them when it is outside.
   private limitThetaOnBasisColumn(basic: number, m: Rational, limit: ThetaLimit) {
     const core = this.core;
     const x = core.x[basic];
@@ -280,21 +261,19 @@ class CostsSimplex {
     if (!limit.isUnlimited) clampTheta(limit);
   }
 
-  // advance_on_entering_and_leaving_tableau.
-  private advance(entering: number, leaving: number, theta: Impq) {
+  private advanceOnEnteringAndLeavingTableau(entering: number, leaving: number, theta: Impq) {
     const core = this.core;
     const sign = Rational.fromNumber(this.signOfEnteringDelta);
     if (entering === leaving) {
-      this.updateX(entering, theta.mul(sign));
+      this.updateXTableau(entering, theta.mul(sign));
       return;
     }
-    if (!theta.isZero()) this.updateX(entering, core.isFeasible() ? theta.mul(sign) : theta);
+    if (!theta.isZero()) this.updateXTableau(entering, core.isFeasible() ? theta.mul(sign) : theta);
     core.pivot(entering, leaving);
     this.nonBasisList[this.nonBasisList.length - 1] = leaving;
   }
 
-  // update_x_tableau.
-  private updateX(entering: number, delta: Impq) {
+  private updateXTableau(entering: number, delta: Impq) {
     const core = this.core;
     core.x[entering] = core.x[entering].add(delta);
     for (const cell of core.matrix.columns[entering])
@@ -305,9 +284,7 @@ class CostsSimplex {
   }
 }
 
-// maximize_term_on_feasible_r_solver: the costs of the term and their reduced costs, the simplex,
-// and the term's value at the optimum, or undefined when it is unbounded or cancelled.
-const maximizeOnFeasibleSolver = (solver: LarSolver, term: LarTerm) => {
+const maximizeTermOnFeasibleRSolver = (solver: LarSolver, term: LarTerm) => {
   const core = solver.core;
   solver.moveNonBasicColumnsToBounds();
   const reducedCosts = core.x.map(() => Rational.zero);
@@ -330,14 +307,12 @@ const maximizeOnFeasibleSolver = (solver: LarSolver, term: LarTerm) => {
   return status === LP_UNBOUNDED || status === LP_CANCELLED ? undefined : term.apply(core.x);
 };
 
-// maximize_term without fixing the integer columns: the maximum of the column or of its term, or
-// undefined, with the values restored, when it is unbounded.
 export const maximizeTerm = (solver: LarSolver, column: number) => {
   const term = solver.hasTerm(column)
     ? solver.getTerm(column)
     : new LarTerm([[column, Rational.one]]);
   const backup = solver.core.x.slice();
-  const maximum = maximizeOnFeasibleSolver(solver, term);
+  const maximum = maximizeTermOnFeasibleRSolver(solver, term);
   if (maximum === undefined) {
     solver.core.x.splice(0, backup.length, ...backup);
     return undefined;

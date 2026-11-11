@@ -17,7 +17,7 @@ const checkFixture = async (name: string) => {
         (existsSync(fixturePath) ? readFileSync(fixturePath, "utf8") : undefined)
       );
     },
-    writeFile: (path, content) => written.set(path, content),
+    writeFile: (path, content) => written.set(path, String(content)),
   });
   return { ...result, written };
 };

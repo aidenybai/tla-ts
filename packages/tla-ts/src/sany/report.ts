@@ -18,29 +18,20 @@ import type { TlcVersion } from "../tlc/version";
 interface SanyReport {
   text: string;
   isFailed: boolean;
-  // The specification SANY analyzes, which has errors when SANY rejects it.
   specification?: SanySpecification;
 }
 
-// Where SANY reads a module from: a file of its own, the file of the root module, which holds the
-// root module's inner modules too, or the files of its standard modules.
 export type SanyModuleOrigin = "file" | "root file" | "standard";
 
 export interface SanyReportOptions {
-  // The file name SANY's caller gives it, which it prints in its messages about the specification.
   fileName?: string;
-  // TLC runs SANY to print the file it parses each module from, as describeFile names it, and each
-  // module it analyzes and lints.
   describeFile?: (moduleName: string, origin: SanyModuleOrigin) => string;
-  // tla2sany.xml.XMLExporter runs SANY with its validAstSettings, which neither lint the modules
-  // nor validate their PlusCal, and prints only SANY's errors.
   isXmlExport?: boolean;
   version?: TlcVersion;
-  // The modules TLC adds to the root module's EXTENDS for its post conditions.
   rootExtendees?: string[];
-  // Prints what SANY prints as it goes, before the report holds all of it.
+  suppressedCodes?: number[];
+  errorCodes?: number[];
   onPrint?: (text: string) => void;
-  // Prints what TLC 1.7.4's SANY prints to its error stream as it goes.
   onPrintError?: (text: string) => void;
 }
 
@@ -54,11 +45,9 @@ interface Validation {
   isError: boolean;
 }
 
-// ErrorDetails.toString.
 const formatMessage = (message: SanyMessage) =>
   `${formatSanyLocation(message.location)}\n\n${message.text}`;
 
-// Errors.toString: the errors and then the warnings of a phase of SANY.
 const formatErrors = (messages: SanyMessage[]) => {
   const errors = messages.filter((message) => !message.isWarning);
   const warnings = messages.filter((message) => message.isWarning);
@@ -70,7 +59,8 @@ const formatErrors = (messages: SanyMessage[]) => {
   ].join("");
 };
 
-// tla2sany.semantic.StandardModules: SANY lints the modules other than these.
+const RECORD_FIELD_CLASH = 4802;
+
 const UNLINTED_MODULES = new Set([
   "FiniteSets",
   "Sequences",
@@ -83,7 +73,6 @@ const UNLINTED_MODULES = new Set([
   "TLC",
 ]);
 
-// The modules a module and its inner modules extend, other than its inner modules.
 const getExtendees = (module: Module) => {
   const innerNames = new Set<string>();
   const extendees: string[] = [];
@@ -107,15 +96,11 @@ const parseValidatedModule = (text: string) => {
   }
 };
 
-// ParseUnit.parseFile: SANY names the specification by the root module once it parses it.
 export const getSanyModuleName = (text: string, version?: TlcVersion) =>
   version === "1.7.4" && getSany174LexicalError(text) !== undefined
     ? undefined
     : parseValidatedModule(text)?.name;
 
-// What SANY prints while TLC runs it on the specification in rootPath, and whether SANY rejects the
-// specification. loadModule finds the source of the other modules, and SANY's standard modules fill
-// in the rest.
 export const getSanyReport = (
   rootPath: string,
   loadModule: (name: string) => string | undefined,
@@ -124,7 +109,6 @@ export const getSanyReport = (
   const rootName = basename(rootPath, ".tla");
   const standardModules = getSanyStandardModules(options.version);
   const name = options.fileName ?? rootName;
-  // SANY looks for the root module where it looks for the others, its standard modules among them.
   const source = existsSync(rootPath)
     ? readFileSync(rootPath, "utf8")
     : standardModules.get(rootName);
@@ -135,7 +119,6 @@ export const getSanyReport = (
   };
   const log = (text: string) => write(`${text}\n`);
   const isTlc174 = options.version === "1.7.4";
-  // TLC 1.7.4's XMLExporter discards what SANY prints to ToolIO.out rather than its error stream.
   const isToolOutputDiscarded = isTlc174 && options.isXmlExport;
   const warn = (text: string) => {
     if (!options.isXmlExport) log(text);
@@ -144,15 +127,12 @@ export const getSanyReport = (
   const origins = new Map<string, SanyModuleOrigin>([
     [rootName, existsSync(rootPath) ? "file" : "standard"],
   ]);
-  const isFailed = { value: false };
-  // The messages of SANY's parsing phase, which come from its validation of PlusCal, and whether
-  // SANY has printed them and whether one is an error that ends its run before semantic analysis.
+  let isFailed = false;
   const parseMessages: SanyMessage[] = [];
-  const parsePhase = { isReported: false, isAborted: false };
+  let isParseReported = false;
+  let isParseAborted = false;
   const session = createPcalSession(createPcalParams(), log);
   const loadedModules = new Map<string, LoadedModule>();
-  // TLC 1.7.4's SpecObj.validateParseUnit prints what it finds, which follows the file SANY parses
-  // next, as SANY validates a module once it parses the module or one that extends it.
   const validations: Validation[] = [];
   const printValidations = () =>
     validations
@@ -160,7 +140,6 @@ export const getSanyReport = (
       .forEach((validation) =>
         validation.isError ? options.onPrintError?.(`${validation.text}\n`) : log(validation.text),
       );
-  // SpecObj.validateParseUnit: Errors.addMessage drops a message it already has.
   const validate = (moduleName: string) => {
     const loaded = loadedModules.get(moduleName);
     const range = loaded?.module.location.range;
@@ -173,7 +152,6 @@ export const getSanyReport = (
     );
     const isTlaChanged = results.has("TLA_DIVERGENCE_EXISTS");
     const isPcalChanged = results.has("PCAL_DIVERGENCE_EXISTS");
-    // Both versions word a change to just one of the algorithm and its translation alike.
     const oneChange =
       isTlaChanged === isPcalChanged
         ? undefined
@@ -205,9 +183,6 @@ export const getSanyReport = (
     if (parseMessages.some((message) => message.text === text)) return;
     parseMessages.push({ location: moduleName, text, isWarning });
   };
-  // SpecObj.loadSpec validates the root module once it parses, and a module each time SANY
-  // resolves another module's EXTENDS of it, which the report does when the generator loads it,
-  // and for a module loaded earlier, when the generator loads a module that extends it.
   const loadValidatedModule = (moduleName: string, text: string) => {
     if (options.isXmlExport || loadedModules.has(moduleName)) return;
     const module = parseValidatedModule(text);
@@ -221,12 +196,10 @@ export const getSanyReport = (
       .filter((extendee) => extendee !== moduleName && loadedModules.has(extendee))
       .forEach(validate);
   };
-  // SANY.frontEndParse: once SANY has loaded the specification, it prints the warnings of its
-  // parsing phase, and when there are errors, every message, and stops.
   const reportParseMessages = () => {
     printValidations();
-    if (parsePhase.isReported) return;
-    parsePhase.isReported = true;
+    if (isParseReported) return;
+    isParseReported = true;
     const warnings = parseMessages.filter((message) => message.isWarning);
     if (warnings.length > 0) {
       warn(`Warnings (${warnings.length}) during syntax parsing of ${name}:\n\n`);
@@ -234,13 +207,12 @@ export const getSanyReport = (
     }
     if (warnings.length === parseMessages.length) return;
     log(formatErrors(parseMessages));
-    isFailed.value = true;
-    parsePhase.isAborted = true;
+    isFailed = true;
+    isParseAborted = true;
   };
   const loadSource = (moduleName: string) => {
     const standard = standardModules.get(moduleName);
     const file = loadModule(moduleName);
-    // TLC 1.7.4's SANY reads a module only from a file of its own.
     const extracted =
       file === undefined && standard === undefined && source !== undefined && !isTlc174
         ? extractModule(source, moduleName)
@@ -250,13 +222,12 @@ export const getSanyReport = (
       moduleName,
       file !== undefined ? "file" : extracted !== undefined ? "root file" : "standard",
     );
-    // The standard modules have no PlusCal, and SANY validates an extracted module's own text.
     if (text !== undefined) loadValidatedModule(moduleName, text);
     return text ?? standard;
   };
   const generate = () => {
-    // HACK: SANY reports a fatal error of its parsing phase by the exception it throws, so the
-    // report catches the TlaSyntaxError the generator throws for one.
+    // HACK: SANY reports a fatal parsing error by the exception it throws, so the report catches the
+    // TlaSyntaxError the generator throws for one.
     try {
       if (source === undefined) {
         throw new TlaSanyFatalError(`Cannot find source file for module ${name}`, undefined);
@@ -264,7 +235,6 @@ export const getSanyReport = (
       loadValidatedModule(rootName, source);
       return generateSanySpecification(source, loadSource, {
         rootFileName: rootName,
-        // XMLExporter gives SANY the file it is asked for, and TLC the name of the module.
         rootFilePath: options.isXmlExport ? `${name.replace(/\.tla$/, "")}.tla` : undefined,
         version: options.version,
         rootExtendees: options.rootExtendees,
@@ -277,20 +247,16 @@ export const getSanyReport = (
         },
         onAnalyze: (moduleName) => {
           reportParseMessages();
-          // TLC 1.7.4's XMLExporter prints what SANY prints as it analyzes the modules.
-          if ((describeFile || isToolOutputDiscarded) && !parsePhase.isAborted) {
+          if ((describeFile || isToolOutputDiscarded) && !isParseAborted) {
             log(`Semantic processing of module ${moduleName}`);
           }
         },
-        // SANY.frontEndSemanticAnalysis: after each module, SANY level-checks it if there are no
-        // errors yet, then prints every message so far.
         onModule: (module, messages) => {
-          if (parsePhase.isAborted) return;
+          if (isParseAborted) return;
           if (messages.every((message) => message.isWarning))
             checkModuleLevels(module, { messages, isTlc174 });
           if (messages.length === 0) return;
-          if (messages.some((message) => !message.isWarning)) isFailed.value = true;
-          // TLC 1.7.4's SANY prints the errors and warnings together.
+          if (messages.some((message) => !message.isWarning)) isFailed = true;
           if (isTlc174) return log(`Semantic errors:\n\n${formatErrors(messages)}`);
           const warnings = messages.filter((message) => message.isWarning);
           if (warnings.length > 0) {
@@ -304,9 +270,7 @@ export const getSanyReport = (
         },
       });
     } catch (error) {
-      isFailed.value = true;
-      // SANY.frontEndParse turns a Java exception of its validation of PlusCal into a fatal
-      // error, printing the exception and its messages so far.
+      isFailed = true;
       if (error instanceof PcalRuntimeError) {
         log(`\nFatal errors while parsing TLA+ spec in file ${name}\n`);
         log(error.message);
@@ -315,8 +279,6 @@ export const getSanyReport = (
       }
       if (!(error instanceof TlaSanyFatalError)) throw error;
       const fatal = { location: error.location, text: error.message, isWarning: false };
-      // TLC 1.7.4's ParseException.getShortMessage fails on an error at the first token, which has
-      // no image.
       const isImageless = isTlc174 && error.parseError?.includes(' and token "" ');
       if (error.parseError !== undefined && !isImageless && !isToolOutputDiscarded) {
         log(error.parseError);
@@ -328,28 +290,32 @@ export const getSanyReport = (
         );
         return;
       }
-      // TLC 1.7.4's SANY aborts with an AbortException, and keeps the message as an abort.
       if (isTlc174) {
         log("tla2sany.semantic.AbortException");
         write(`*** Abort messages: 1\n\n${formatMessage(fatal)}\n\n\n`);
         return;
       }
       log(formatMessage(fatal));
-      log(formatErrors(parsePhase.isReported ? [fatal] : [...parseMessages, fatal]));
+      log(formatErrors(isParseReported ? [fatal] : [...parseMessages, fatal]));
     }
   };
   const specification = generate();
   if (specification !== undefined) reportParseMessages();
-  // SANY.frontEndLinting: when SANY accepts the specification, it lints the modules that are not
-  // its standard modules, then prints the warnings. TLC 1.7.4's SANY has no linter.
-  if (specification !== undefined && !isFailed.value && !options.isXmlExport && !isTlc174) {
+  if (specification !== undefined && !isFailed && !options.isXmlExport && !isTlc174) {
     const linted = specification.modules.filter((module) => !UNLINTED_MODULES.has(module.name));
     if (describeFile) linted.forEach((module) => log(`Linting of module ${module.name}`));
-    linted.flatMap(lintSanyModule).forEach((warning) => log(`${formatMessage(warning)}\n\n\n`));
+    const warnings = options.suppressedCodes?.includes(RECORD_FIELD_CLASH)
+      ? []
+      : linted.flatMap(lintSanyModule);
+    const prefix = options.errorCodes?.includes(RECORD_FIELD_CLASH)
+      ? "Warning treated as error: "
+      : "";
+    warnings.forEach((warning) => log(`${prefix}${formatMessage(warning)}\n\n\n`));
+    if (prefix && warnings.length > 0) isFailed = true;
   }
   return {
     text: lines.join(""),
-    isFailed: isFailed.value,
-    specification: parsePhase.isAborted ? undefined : specification,
+    isFailed,
+    specification: isParseAborted ? undefined : specification,
   };
 };

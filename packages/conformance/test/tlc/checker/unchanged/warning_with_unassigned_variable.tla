@@ -1,0 +1,30 @@
+(*---
+description: UNCHANGED of a changed variable warns when another variable is still unassigned, because only then does generation reach processUnchanged.
+ref: tlc2/tool/impl/Tool.java#processUnchangedImplVar
+outcome: deadlock
+config: |
+  INIT Init
+  NEXT Next
+---*)
+---- MODULE warning_with_unassigned_variable ----
+EXTENDS Naturals, TLC
+VARIABLES x, y
+Init == x = 0 /\ y = 0
+Next == x' = 5 /\ UNCHANGED x /\ y' = 0
+====
+
+(*--- recorded
+all:
+  exit: 11
+  transcript: |-
+    2190:0 Finished computing initial states: 1 distinct state generated at <date>.
+    2143:3 The variable x was changed while it is specified as UNCHANGED at
+    line 13, col 29 to line 13, col 29 of module warning_with_unassigned_variable
+    2114:1 Deadlock reached.
+    2121:1 The behavior up to this point is:
+    2217:4 1: <Initial predicate>
+    /\ x = 0
+    /\ y = 0
+    2199:0 1 states generated, 1 distinct states found, 0 states left on queue.
+    2194:0 The depth of the complete state graph search is 1.
+---*)

@@ -21,12 +21,11 @@ const read = (name: string) => readFileSync(join(DIRECTORY, name), "utf8");
 
 const decide = (text: string) => decideSmt(text, OPTIONS);
 
-const getRecorded = (z3: string) =>
+const getRecorded = (z3Verdict: string) =>
   Object.entries(verdicts)
-    .filter((entry) => entry[1].z3 === z3)
+    .filter((entry) => entry[1].z3 === z3Verdict)
     .map((entry) => ({ name: entry[0], source: entry[1].source }));
 
-// (g x) is f applied depth times to x, and (g 0) is not: unsat after one instance.
 const getDeepProblem = (depth: number) => {
   const nest = (term: string) => `${"(f ".repeat(depth)}${term}${")".repeat(depth)}`;
   return [
@@ -75,7 +74,6 @@ describe("decideSmt", () => {
     expect(["unsat", "unknown"]).toContain(decide(getDeepProblem(20000)));
   });
 
-  // Doubles round 2^53 + 1 to 2^53 and 2^54 + 3 to 2^54 + 4, which flips each verdict.
   it("tells apart numerals past 2^53", () => {
     const problem = [
       "(declare-fun x () Int)",
@@ -94,7 +92,6 @@ describe("decideSmt", () => {
     for (const problem of problems) expect(decide(problem)).toBe("unsat");
   });
 
-  // Z3: unsat. The 2 of (* 2 a) is nested in a sum before the equality needs it as a term.
   it("relates a numeral to the arithmetic once a product has used it", () => {
     const problem = [
       "(declare-fun a () Int)",
@@ -106,7 +103,6 @@ describe("decideSmt", () => {
     expect(decide(problem)).toBe("unsat");
   });
 
-  // Z3 answers both without the smt tactic, since the preprocessing decides them.
   it("decides a problem that the preprocessing reduces to false or to nothing", () => {
     const decideAssertion = (assertion: string) =>
       decide(`(declare-fun x () Int)\n(assert ${assertion})\n(check-sat)\n`);
@@ -121,7 +117,6 @@ describe("decideSmt", () => {
   });
 });
 
-// Each verdict is Z3's on the same problem.
 describe("decideSmt on real arithmetic", () => {
   const decideLines = (...lines: string[]) => decide([...lines, "(check-sat)"].join("\n"));
 

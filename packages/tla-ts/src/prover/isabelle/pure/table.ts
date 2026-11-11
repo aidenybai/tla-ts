@@ -1,8 +1,4 @@
-// Ported from Isabelle2025's Pure/General/table.ML. Copyright (c) 1986-2025 University of
-// Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Persistent tables ordered by a comparison function. Isabelle's tables are 2-3 trees; any
-// balanced search tree visits keys in the same order, which is all that the ports rely on.
+// Ported from Isabelle2025's Pure/General/table.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 export type Compare<Key> = (left: Key, right: Key) => number;
 
@@ -120,27 +116,6 @@ export const updateTable = <Key, Value>(
   root: insertNode(table.compare, key, value, table.root),
 });
 
-const removeMin = <Key, Value>(
-  node: NonNullable<Node<Key, Value>>,
-): [NonNullable<Node<Key, Value>>, Node<Key, Value>] => {
-  if (!node.left) return [node, node.right];
-  const [minimum, left] = removeMin(node.left);
-  return [minimum, balance(node.key, node.value, left, node.right)];
-};
-
-export const deleteTable = <Key, Value>(table: Table<Key, Value>, key: Key): Table<Key, Value> => {
-  const remove = (node: Node<Key, Value>): Node<Key, Value> => {
-    if (!node) return undefined;
-    const order = table.compare(key, node.key);
-    if (order < 0) return balance(node.key, node.value, remove(node.left), node.right);
-    if (order > 0) return balance(node.key, node.value, node.left, remove(node.right));
-    if (!node.right) return node.left;
-    const [minimum, right] = removeMin(node.right);
-    return balance(minimum.key, minimum.value, node.left, right);
-  };
-  return { compare: table.compare, root: remove(table.root) };
-};
-
 export const minTable = <Key, Value>(table: Table<Key, Value>): [Key, Value] | undefined => {
   let node = table.root;
   if (!node) return undefined;
@@ -157,14 +132,12 @@ const foldNode = <Key, Value, State>(
     ? foldNode(visit, node.right, visit(node.key, node.value, foldNode(visit, node.left, state)))
     : state;
 
-// Table.fold: visits the entries in key order.
 export const foldTable = <Key, Value, State>(
   visit: (key: Key, value: Value, state: State) => State,
   table: Table<Key, Value>,
   state: State,
 ) => foldNode(visit, table.root, state);
 
-// The entries in key order, as Table.dest lists them.
 export const tableEntries = <Key, Value>(table: Table<Key, Value>) =>
   foldTable<Key, Value, [Key, Value][]>(
     (key, value, entries) => {
@@ -175,7 +148,6 @@ export const tableEntries = <Key, Value>(table: Table<Key, Value>) =>
     [],
   );
 
-// fast_string_ord: shorter strings first, then by code units.
 export const fastStringOrd = (left: string, right: string) =>
   left === right
     ? 0
@@ -192,10 +164,8 @@ export interface IndexKey {
   readonly index: number;
 }
 
-// Term_Ord.fast_indexname_ord: by index, then by fast_string_ord on the name.
 export const fastIndexnameOrd = (left: IndexKey, right: IndexKey) =>
   left.index !== right.index ? left.index - right.index : fastStringOrd(left.name, right.name);
 
-// Term_Ord.indexname_ord: by index, then by string_ord on the name.
 export const indexnameOrd = (left: IndexKey, right: IndexKey) =>
   left.index !== right.index ? left.index - right.index : stringOrd(left.name, right.name);

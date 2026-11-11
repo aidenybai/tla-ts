@@ -1,12 +1,8 @@
-// Ported from Isabelle2025's Pure/pattern.ML and Pure/more_pattern.ML. Copyright (c) 1986-2025
-// University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-//
-// Unification and matching of higher-order patterns. Isabelle signals failure with the
-// exceptions Unif, Pattern and MATCH; here they stay inside this module and the exported
-// functions return undefined instead.
+// Ported from Isabelle2025's Pure/pattern.ML and Pure/more_pattern.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { aeconv, genvar, headNorm, lookup, lookup1, update, type Envir, type TEnv } from "./envir";
+import type { Binder } from "./logic";
 import { hasKey, indexnameOrd, updateTable } from "./table";
 import {
   eqTyp,
@@ -31,11 +27,6 @@ import { matchTypes, normType, substType, unifyTypes, type TyEnv } from "./type"
 class Unif {}
 class NotPattern {}
 class Match {}
-
-interface Binder {
-  name: string;
-  type: Typ;
-}
 
 const occurs = (variable: Var, term: Term, envir: Envir): boolean => {
   const visit = (current: Term): boolean => {
@@ -156,7 +147,6 @@ const mkNewHnf = (
   return update(variable, mkHnf(binders, indexes, fresh, args), updated);
 };
 
-// downto0 (is, n): whether is is [n, n - 1, ..., 0].
 const isDownto0 = (indexes: readonly number[], count: number) =>
   indexes.length === count + 1 && indexes.every((index, position) => index === count - position);
 
@@ -306,7 +296,6 @@ const flexflex2 = (
     : assign(rightVar, rightIndexes, leftVar, leftIndexes);
 };
 
-// Pattern.unify_types: undefined where Isabelle raises Unif.
 export const unifyTypesEnvir = (left: Typ, right: Typ, envir: Envir): Envir | undefined => {
   if (eqTyp(left, right)) return envir;
   const tyenv = unifyTypes(right, left, envir.tyenv);
@@ -420,7 +409,6 @@ type PatternUnifyResult =
   | { kind: "clash" }
   | { kind: "not a pattern" };
 
-// Pattern.unify: distinguishes a clash (Unif) from terms outside the pattern fragment (Pattern).
 export const unifyPattern = (left: Term, right: Term, envir: Envir): PatternUnifyResult => {
   try {
     return { kind: "unified", envir: unif([], left, right, envir) };
@@ -595,22 +583,18 @@ const catchMatch = (run: () => MatchEnv): MatchEnv | undefined => {
   }
 };
 
-// Pattern.match: undefined where Isabelle raises MATCH.
 export const matchPattern = (pattern: Term, object: Term, env: MatchEnv): MatchEnv | undefined =>
   catchMatch(() => higherOrderMatch(pattern, object, env));
 
-// Pattern.first_order_match
 export const firstOrderMatchPattern = (
   pattern: Term,
   object: Term,
   env: MatchEnv,
 ): MatchEnv | undefined => catchMatch(() => firstOrderMatch(pattern, object, env));
 
-// Pattern.matches
 export const matches = (pattern: Term, object: Term, tyenv: TyEnv, tenv: TEnv) =>
   matchPattern(pattern, object, { tyenv, tenv }) !== undefined;
 
-// Pattern.pattern
 export const isPattern = (term: Term): boolean => {
   if (term.kind === "Abs") return isPattern(term.body);
   const [head, args] = stripComb(term);
@@ -622,7 +606,6 @@ export const isPattern = (term: Term): boolean => {
   return args.every(isPattern);
 };
 
-// Pattern.first_order
 export const isFirstOrder = (term: Term): boolean => {
   if (term.kind === "Abs") return isFirstOrder(term.body);
   if (term.kind === "App")

@@ -1,7 +1,3 @@
-// A port of tlapm's Backend.Fingerprints.fp_sequent: the digest of an obligation that names its
-// hypotheses and bound variables by the order of their first use, so two obligations that differ
-// only in names share it.
-
 import { TlapmBugError } from "../../errors";
 import {
   adjoin,
@@ -15,7 +11,6 @@ import {
 import { isConstant } from "../../obligations/temporal";
 import { getMd5 } from "./md5";
 
-// builtin_to_int, whose numbers skip [], which fp_bin prints by name.
 const BUILTIN_NUMBERS: Builtin[] = [
   "TRUE",
   "FALSE",
@@ -97,8 +92,6 @@ const MODALS = { Box: 0, Dia: 1 };
 
 const FAIRNESS = { Weak: 0, Strong: 1 };
 
-// What a stack entry stands for: a hypothesis not yet used, under the label its first use prints,
-// one used, numbered, a bound variable not yet used, one used, a pragma, or a hidden fact.
 type Ident =
   | { kind: "Hyp"; label: string }
   | { kind: "HypIndex"; index: number }
@@ -126,7 +119,6 @@ const OCAML_ESCAPES: Record<number, string> = {
   0x08: "\\b",
 };
 
-// OCaml's %S: a string literal, with each byte outside printable ASCII as a decimal escape.
 const quoteString = (value: string) =>
   `"${[...new TextEncoder().encode(value)]
     .map(
@@ -147,7 +139,6 @@ const getBuiltin = (builtin: Builtin) => {
 const getFreshLabel = (hyp: Extract<Hyp, { kind: "Fresh" }>) =>
   hyp.level === "Unknown" ? "Unknown" : hyp.level.toUpperCase();
 
-// fp_sequent's text for an obligation, before its digest.
 const getFingerprintText = (sequent: Sequent) => {
   const stack: Entry[] = [];
   const getEntry = (index: number) => {
@@ -163,7 +154,6 @@ const getFingerprintText = (sequent: Sequent) => {
   };
   const pushVariables = (count: number) =>
     Array.from({ length: count }).forEach(() => push({ kind: "Var" }));
-  // Stack.popn: the entries from the top down.
   const popVariables = (count: number) => Array.from({ length: count }, pop);
   const getVariableNumber = (entry: Entry) => {
     if (entry.ident.kind === "VarIndex") return entry.ident.index;
@@ -178,7 +168,6 @@ const getFingerprintText = (sequent: Sequent) => {
   const printExpr = (counters: Counters, expression: Expr): string => {
     const print = (inner: Expr) => printExpr(counters, inner);
     const printList = (items: Expr[]) => items.map(print).join(",");
-    // fp_bounds pairs each bound with an entry, and prints those with a domain.
     const printBounds = (entries: Entry[], bounds: Bound[]) =>
       bounds
         .map((bound, index) =>
@@ -187,7 +176,6 @@ const getFingerprintText = (sequent: Sequent) => {
             : "",
         )
         .join("");
-    // A binder's body comes first, then what pops off the stack after it.
     const printBound = (count: number, body: Expr) => {
       pushVariables(count);
       const text = print(body);
@@ -220,7 +208,6 @@ const getFingerprintText = (sequent: Sequent) => {
           case "Pragma":
             return "";
         }
-        throw new TlapmBugError();
       }
       case "Opaque":
         return expression.name;
@@ -333,8 +320,6 @@ const getFingerprintText = (sequent: Sequent) => {
     }
   };
 
-  // Each hypothesis prints after the goal and the hypotheses after it, once their uses have
-  // numbered it.
   const printSequent = (inner: Sequent): string => {
     const counters = { hyp: 1, variable: 1 };
     const spin = (index: number, scope: Scope | undefined): string => {
@@ -384,5 +369,4 @@ const getFingerprintText = (sequent: Sequent) => {
   return printSequent(sequent);
 };
 
-// fingerprint: the hex digest of an obligation's fp_sequent text.
 export const getFingerprint = (sequent: Sequent) => getMd5(getFingerprintText(sequent));
