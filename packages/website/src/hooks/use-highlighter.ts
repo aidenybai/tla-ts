@@ -26,7 +26,7 @@ if (!RegisteredCustomLanguages.has(TLA_GRAMMAR.name))
 const loadHighlighter = (): Promise<DiffsHighlighter> => {
   cache.promise ??= getSharedHighlighter({
     themes: [CODE_THEMES.light, CODE_THEMES.dark],
-    langs: ["tsx", "ts", "jsx", "js", "json", TLA_GRAMMAR.name],
+    langs: ["tsx", "ts", "jsx", "js", TLA_GRAMMAR.name],
     preferredHighlighter: HIGHLIGHTER,
   });
   return cache.promise;

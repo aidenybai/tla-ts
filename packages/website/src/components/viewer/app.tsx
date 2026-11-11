@@ -7,7 +7,6 @@ export interface AppProps {
   examples: Example[];
   name: string;
   view: ViewFile;
-  json: string;
 }
 
 export const App = (props: AppProps) => (
@@ -17,7 +16,6 @@ export const App = (props: AppProps) => (
       <Toolbar.FileMenu />
       <Toolbar.Run />
       <Toolbar.Arrows />
-      <Toolbar.Modes />
     </Viewer.Toolbar>
     <Viewer.Source />
     <Viewer.Status>

@@ -1,10 +1,8 @@
-import { Activity, type ComponentType, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useHighlighterWarmup } from "@/hooks/use-highlighter";
-import { VIEW_MODES, type ViewMode } from "@/lib/view-mode";
 import type { Example, ViewFile } from "@/model";
-import { ViewerProvider, useViewer } from "./context";
-import { JsonPane } from "./json-pane";
+import { ViewerProvider } from "./context";
 import { RunPanel } from "./run-panel";
 import { SourceMap } from "./source-map";
 import { SourcePane } from "./source-pane";
@@ -24,7 +22,6 @@ interface RootProps {
   examples: Example[];
   name: string;
   view: ViewFile;
-  json: string;
   children: ReactNode;
 }
 
@@ -40,39 +37,20 @@ const Crash = ({ error }: { error: unknown }) => (
   </pre>
 );
 
-const CodePane = () => (
-  <SourceMap>
-    <SourcePane pane="code" />
-    <SourcePane pane="module" />
-  </SourceMap>
-);
-
-const PANES: Record<ViewMode, ComponentType> = {
-  code: CodePane,
-  json: JsonPane,
-};
-
-const Source = () => {
-  const { mode } = useViewer();
-  return (
-    <main className="flex min-h-0 flex-col">
-      <div className="min-h-0 flex-1">
-        {VIEW_MODES.map((paneMode) => {
-          const Pane = PANES[paneMode];
-          return (
-            <Activity key={paneMode} mode={paneMode === mode ? "visible" : "hidden"}>
-              <ErrorBoundary FallbackComponent={Crash}>
-                <Pane />
-              </ErrorBoundary>
-            </Activity>
-          );
-        })}
-      </div>
+const Source = () => (
+  <main className="flex min-h-0 flex-col">
+    <div className="min-h-0 flex-1">
       <ErrorBoundary FallbackComponent={Crash}>
-        <RunPanel />
+        <SourceMap>
+          <SourcePane pane="code" />
+          <SourcePane pane="module" />
+        </SourceMap>
       </ErrorBoundary>
-    </main>
-  );
-};
+    </div>
+    <ErrorBoundary FallbackComponent={Crash}>
+      <RunPanel />
+    </ErrorBoundary>
+  </main>
+);
 
 export const Viewer = Object.assign(Root, { Toolbar, Source, Status });
