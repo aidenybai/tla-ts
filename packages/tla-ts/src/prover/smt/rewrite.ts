@@ -4,6 +4,7 @@
 import { TlaProverError, TlaUnsupportedError } from "../../errors";
 import { normalizeApply, shiftExpr } from "../../obligations/substitution";
 import { type Bound, type Builtin, type Expr, type Sequent } from "../../obligations/expression";
+import { getNumeral } from "./axioms";
 import { createContext, type Identifier } from "./context";
 import {
   createFlattener,
@@ -57,6 +58,7 @@ export interface EncodingSession {
 
 // The options of Smtlib.preprocess that tlapm's --debug flags set.
 export interface SmtEncoding {
+  isArithmetic: boolean;
   rewriteLevel: number;
   isSetExtensional: boolean;
 }
@@ -280,7 +282,8 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
       components.mode,
     );
     const definitions = components.variables.map(
-      (component, index) => `(${component} (${FUN_APP} ${variable} (${CAST_INT} ${index + 1})))`,
+      (component, index) =>
+        `(${component} (${FUN_APP} ${variable} ${getNumeral(index + 1, encoding.isArithmetic)}))`,
     );
     // Smtlib prints the definitions of a LET last first, and N_axiomatize visits them in order.
     const value =
@@ -393,7 +396,7 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
           "SelectSeq",
           test.body,
           mode,
-          (name) => getSelectSeqAxioms(name, free, test.body, test.variable),
+          (name) => getSelectSeqAxioms(name, free, test.body, test.variable, encoding.isArithmetic),
           free.length + 1,
         );
         return idv(call(symbol, [encodeIdv(args[0], env, mode), ...free]));
@@ -759,6 +762,8 @@ export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) =
         return idv(tla(`StrLit_${expression.value}`));
       case "Num":
         if (expression.fraction !== "") throw new TlaUnsupportedError("a real number");
+        // Type.Synthesize gives a number no type when arithmetic is off.
+        if (!encoding.isArithmetic) return idv(tla(`IntLit_${BigInt(expression.integer)}`));
         return {
           isBool: false,
           text: `(${CAST_INT} ${BigInt(expression.integer)})`,

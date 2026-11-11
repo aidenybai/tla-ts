@@ -80,9 +80,11 @@ const sortRecordFields = (expression: Expr): Expr =>
 // smallest name first.
 const collectSymbols = (entries: Entry[], encoder: Encoder, encoding: SmtEncoding) => {
   const state: CollectState = {
+    isArithmetic: encoding.isArithmetic,
     isSetExtensional: encoding.isSetExtensional,
     recordFields: encoder.recordFields,
     strings: [],
+    integers: [],
     isFunConstr: false,
     isFunSet: false,
     isExcept: false,

@@ -64,6 +64,8 @@ export const NAT_SET = tla("NatSet");
 export const CAST_INT = tla("Cast_Int");
 export const PROJ_INT = tla("Proj_Int");
 export const INT_LTEQ = tla("IntLteq");
+export const INT_PLUS = tla("IntPlus");
+export const INT_MINUS = tla("IntMinus");
 export const INT_RANGE = tla("IntRange");
 export const FUN_APP = tla("FunApp");
 export const FUN_DOM = tla("FunDom");
@@ -88,8 +90,8 @@ export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
   SUBSET,
   UNION,
   DOMAIN: FUN_DOM,
-  Plus: tla("IntPlus"),
-  Minus: tla("IntMinus"),
+  Plus: INT_PLUS,
+  Minus: INT_MINUS,
   Times: tla("IntTimes"),
   Exp: tla("IntExp"),
   Quotient: tla("IntQuotient"),

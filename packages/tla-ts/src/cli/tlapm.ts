@@ -307,6 +307,7 @@ const DEBUG_FLAGS = new Set([
   "rw+",
   "rw",
   "rwsetext",
+  "disable_arithmetic",
   "no_smt_set_extensionality",
 ]);
 
@@ -435,8 +436,11 @@ export const runTlapm = async (args: string[]) => {
       defaultMethods: methods === undefined ? undefined : parseDefaultMethods(methods),
       stretch: Number(parsed.get("--stretch")?.[0] ?? 1),
       isFlattened: !parsed.has("--noflatten"),
-      smtLogic: parsed.get("--smt-logic")?.[0] ?? "UFNIA",
+      smtLogic: debugFlags.has("disable_arithmetic")
+        ? "UF"
+        : (parsed.get("--smt-logic")?.[0] ?? "UFNIA"),
       smtEncoding: {
+        isArithmetic: !debugFlags.has("disable_arithmetic"),
         rewriteLevel: ["rwsetext", "rw", "rw+"].findLastIndex((flag) => debugFlags.has(flag)) + 1,
         isSetExtensional: !debugFlags.has("no_smt_set_extensionality"),
       },

@@ -73,8 +73,12 @@ export const getEnumeration = (count: number) => {
   return [intro, elim];
 };
 
-export const getIntegers = (count: number) =>
-  Array.from({ length: count }, (_value, index) => `(${CAST_INT} ${index + 1})`);
+// Standardize writes a typed number as a cast and an untyped one as an IntLit.
+export const getNumeral = (value: number, isArithmetic: boolean) =>
+  isArithmetic ? `(${CAST_INT} ${value})` : tla(`IntLit_${value}`);
+
+export const getIntegers = (count: number, isArithmetic: boolean) =>
+  Array.from({ length: count }, (_value, index) => getNumeral(index + 1, isArithmetic));
 
 export const getFieldKeys = (fields: string[]) => fields.map((field) => tla(`StrLit_${field}`));
 
@@ -96,8 +100,8 @@ const getComponentExcepts = (
   });
 };
 
-export const getTupleExcepts = (count: number) =>
-  getComponentExcepts("Tup", [count], tla(`Tuple_${count}`), getIntegers(count));
+export const getTupleExcepts = (count: number, isArithmetic: boolean) =>
+  getComponentExcepts("Tup", [count], tla(`Tuple_${count}`), getIntegers(count, isArithmetic));
 
 export const getRecordExcepts = (fields: string[]) =>
   getComponentExcepts("Rec", [fields], tla(`Record_${fields.join("_")}`), getFieldKeys(fields));
@@ -137,12 +141,12 @@ const getComponentFunction = (
   ];
 };
 
-export const getTupleAxioms = (count: number, isExcept: boolean) => {
+export const getTupleAxioms = (count: number, isExcept: boolean, isArithmetic: boolean) => {
   const symbol = tla(`Tuple_${count}`);
   const elements = getNames("x", count);
   const value = call(symbol, elements);
   return [
-    ...getComponentFunction("Tup", [count], symbol, getIntegers(count)),
+    ...getComponentFunction("Tup", [count], symbol, getIntegers(count, isArithmetic)),
     axiom(
       "SeqTupTyping",
       [count],
@@ -157,9 +161,9 @@ export const getTupleAxioms = (count: number, isExcept: boolean) => {
     axiom(
       "SeqTupLen",
       [count],
-      forall(elements, `(= (${LEN} ${value}) (${CAST_INT} ${count}))`, [[value]]),
+      forall(elements, `(= (${LEN} ${value}) ${getNumeral(count, isArithmetic)})`, [[value]]),
     ),
-    ...(isExcept ? getTupleExcepts(count) : []),
+    ...(isExcept ? getTupleExcepts(count, isArithmetic) : []),
   ];
 };
 

@@ -124,7 +124,6 @@
   "tlapm/backends/z3/z3test/regressions/smt2/trig-quadrants.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/trig-spherical.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/z3.17.smt2": "text-mismatch",
-  "tlapm/encodings/smt/arithmetic/disable_arithmetic": "exit-mismatch",
   "tlapm/encodings/smt/arithmetic/smarter_types_nat": "exit-mismatch",
   "tlapm/encodings/smt/arithmetic/smarter_types_plus": "exit-mismatch",
   "tlapm/encodings/smt/arithmetic/smarter_types_range": "exit-mismatch",
