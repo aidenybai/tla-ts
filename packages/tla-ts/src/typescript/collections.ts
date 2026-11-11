@@ -1479,6 +1479,7 @@ const PRIMITIVE_PROTOTYPES = new Map([
 
 const ARRAY_LIKE_METHODS = new Set([
   "at",
+  "join",
   "slice",
   "with",
   "toReversed",
@@ -1567,6 +1568,7 @@ export const HOLE_SKIPPING_METHODS = new Set([
 // what a prototype holds there, or undefined.
 export const EVERY_INDEX_METHODS = new Set([
   "at",
+  "join",
   "with",
   "toReversed",
   "includes",
@@ -1595,6 +1597,23 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
     ? { method, object, methodArguments: isCall ? node.arguments.slice(1) : node.arguments }
     : undefined;
 };
+
+const IN_PLACE_METHODS = new Set(["push", "pop", "shift", "unshift"]);
+
+// A call of push, pop, shift, or unshift on an array that the heap holds, which changes the array
+// in place.
+export const getHeapArrayChange = (node: ts.Node, context: Context) =>
+  ts.isCallExpression(node) &&
+  ts.isPropertyAccessExpression(node.expression) &&
+  IN_PLACE_METHODS.has(node.expression.name.text) &&
+  isHeapArray(node.expression.expression, context) &&
+  !node.arguments.some(ts.isSpreadElement)
+    ? {
+        method: node.expression.name.text,
+        receiver: node.expression.expression,
+        items: node.arguments,
+      }
+    : undefined;
 
 export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const call = getArrayLikeCall(node, context);

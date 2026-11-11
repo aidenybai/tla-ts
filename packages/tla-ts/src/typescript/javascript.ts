@@ -2924,6 +2924,51 @@ SetProperty(heap, ref, key, value) ==
        [] accessor.set \\in DOMAIN ConstantFunctions -> heap
        [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
 
+\\* The elements of an array that the heap holds, which push, pop, shift, and unshift read and write
+\\* whole: each index below its length is its own plain data property.
+LOCAL DenseElements(heap, ref) ==
+  LET object == Lookup(heap, ref)
+      length == object.values["length"]
+  IN IF /\\ IsArrayObject(object)
+        /\\ object.attributes["length"].writable
+        /\\ \\A position \\in 0..(length - 1) :
+             /\\ ToString(position) \\in DOMAIN object.values
+             /\\ object.attributes[ToString(position)] = Writable
+     THEN [position \\in 1..length |-> object.values[ToString(position - 1)]]
+     ELSE Assert(FALSE, "tla-ts can't change an array in place that has holes or fixed elements")
+
+\\* The heap after an array's elements change in place, where each index past the old end takes an
+\\* ordinary write.
+LOCAL WithElements(heap, ref, elements) ==
+  LET object == Lookup(heap, ref)
+      old == {key \\in DOMAIN object.values : IsIndex(key)}
+      indices == {ToString(position - 1) : position \\in DOMAIN elements}
+      kept == (DOMAIN object.values \\ old) \\cup indices
+  IN IF \\A key \\in indices \\ old : CanPut(heap, ref, key) /\\ AccessorOf(heap, ref, key) = Undefined
+     THEN Update(heap, ref, [object EXCEPT
+            !.keys = [position \\in DOMAIN elements |-> ToString(position - 1)]
+                       \\o SelectSeq(@, LAMBDA key : ~IsIndex(key)),
+            !.values = [key \\in kept |-> CASE key = "length" -> Len(elements)
+                                            [] key \\in indices -> elements[ToIndex(key) + 1]
+                                            [] OTHER -> @[key]],
+            !.attributes = [key \\in kept |-> IF key \\in indices THEN Writable ELSE @[key]]])
+     ELSE Assert(FALSE, "tla-ts can't add an element where the array can't take it")
+
+\\* What push, pop, shift, or unshift does to an array that the heap holds: the heap after, and the
+\\* value that the method gives.
+ArrayChange(heap, ref, method, items) ==
+  LET elements == DenseElements(heap, ref)
+      changed == CASE method = "push" -> elements \\o items
+                   [] method = "unshift" -> items \\o elements
+                   [] elements = <<>> -> elements
+                   [] method = "pop" -> SubSeq(elements, 1, Len(elements) - 1)
+                   [] OTHER -> Tail(elements)
+  IN [heap |-> WithElements(heap, ref, changed),
+      value |-> CASE method \\in {"push", "unshift"} -> Len(changed)
+                  [] elements = <<>> -> Undefined
+                  [] method = "pop" -> elements[Len(elements)]
+                  [] OTHER -> Head(elements)]
+
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==
   IF keys = <<>>

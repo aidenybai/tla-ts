@@ -2741,6 +2741,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("changes an array that the heap holds in place", async () => {
+    const result = await checkModel(`
+      const items: number[] & { tag?: string } = [1, 2];
+      items.tag = "t";
+      items.push(3, 4);
+      const popped = items.pop();
+      const length = items.unshift(0);
+      const first = items.shift();
+      const text = items.join("-");
+      if (popped !== 4 || length !== 4 || first !== 0 || text !== "1-2-3" || items.length !== 3) {
+        throw new Error("methods");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const frozen = await checkModel(`
+      const items: number[] & { tag?: string } = [1, 2];
+      items.tag = "t";
+      Object.freeze(items);
+      items.push(3);
+    `);
+    expect(frozen.failure?.message).toContain(
+      "tla-ts can't change an array in place that has holes or fixed elements",
+    );
+  });
+
   it("names a function's model value so that TLC doesn't type it", async () => {
     const result = await checkModel(`
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {

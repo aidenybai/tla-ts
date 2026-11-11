@@ -3,6 +3,7 @@ import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
   checkElement,
   getCallbackReceiver,
+  getHeapArrayChange,
   getRegExpCall,
   getStringCall,
   getUpdatedValue,
@@ -1206,6 +1207,43 @@ export const translateCallStatement = (
             throwTypeError(path, expression, context, frame),
           )
         : run,
+    );
+  }
+  const arrayChange = getHeapArrayChange(expression, context);
+  if (arrayChange !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const arrayName = context.names.getFresh("array");
+    const ref = identifier(arrayName);
+    const changeName = context.names.getFresh("change");
+    const change = identifier(changeName);
+    const method = arrayChange.method;
+    return bindOnce(
+      path,
+      arrayName,
+      translateExpression(arrayChange.receiver, path.scope, context),
+      ifThenElse(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [heap, ref, string(method), string(`Array.prototype.${method}`)],
+          context,
+        ),
+        bindOnce(
+          path,
+          changeName,
+          useJavaScript(
+            "ArrayChange",
+            [heap, ref, string(method), tuple(translateArguments(arrayChange.items))],
+            context,
+          ),
+          continueWith(withHeap(field(change, "heap")), field(change, "value")),
+        ),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't call Array.prototype.${method} where a script replaced it`),
+          ]),
+        ),
+      ),
     );
   }
   const viewCall = getViewCall(expression, context);
@@ -4072,6 +4110,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   getDateCall(node, context) !== undefined ||
   (context.heap !== undefined && getRegExpCall(node, context) !== undefined) ||
   getViewCall(node, context) !== undefined ||
+  getHeapArrayChange(node, context) !== undefined ||
   getStringCall(node, context) !== undefined ||
   isDescriptorsRead(node, context) ||
   isRevoke(node, context) ||
@@ -4502,6 +4541,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       getDateCall(node, context) !== undefined ||
       getRegExpCall(node, context) !== undefined ||
       getViewCall(node, context) !== undefined ||
+      getHeapArrayChange(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
