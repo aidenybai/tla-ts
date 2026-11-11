@@ -19,7 +19,6 @@ const SET_TAG = 5;
 const FUNCTION_TAG = 6;
 const INTERVAL_FUNCTION_TAG = 7;
 
-// A function's TLC class follows its tag, so a worker words errors about it as TLC does.
 const FUNCTION_CLASSES: (FunctionClass | undefined)[] = [undefined, "lambda", "tuple", "record"];
 
 export interface EncodedStates {
@@ -34,16 +33,18 @@ interface StateEncoder {
 }
 
 export const createStateEncoder = (): StateEncoder => {
-  const buffer = { words: new Int32Array(1024), length: 0, count: 0 };
+  let words = new Int32Array(1024);
+  let length = 0;
+  let count = 0;
   const strings: string[] = [];
   const stringIndexes = new Map<string, number>();
   const pushWord = (word: number) => {
-    if (buffer.length === buffer.words.length) {
-      const words = new Int32Array(buffer.words.length * 2);
-      words.set(buffer.words);
-      buffer.words = words;
+    if (length === words.length) {
+      const grown = new Int32Array(words.length * 2);
+      grown.set(words);
+      words = grown;
     }
-    buffer.words[buffer.length++] = word;
+    words[length++] = word;
   };
   const pushString = (value: string) => {
     const known = stringIndexes.get(value);
@@ -96,19 +97,15 @@ export const createStateEncoder = (): StateEncoder => {
   };
   return {
     encode: (state) => {
-      const start = buffer.length;
+      const start = length;
       if (state.every(encodeValue)) {
-        buffer.count++;
+        count++;
         return true;
       }
-      buffer.length = start;
+      length = start;
       return false;
     },
-    finish: () => ({
-      words: buffer.words.slice(0, buffer.length),
-      strings,
-      count: buffer.count,
-    }),
+    finish: () => ({ words: words.slice(0, length), strings, count }),
   };
 };
 
@@ -116,27 +113,27 @@ export const createStateDecoder =
   (width: number) =>
   (encoded: EncodedStates): Value[][] => {
     const words = encoded.words;
-    const cursor = { index: 0 };
+    let cursor = 0;
     const decodeElements = (length: number) => Array.from({ length }, () => decodeValue());
     const decodeValue = (): Value => {
-      const tag = words[cursor.index++];
+      const tag = words[cursor++];
       if (tag === FALSE_TAG) return false;
       if (tag === TRUE_TAG) return true;
-      if (tag === INTEGER_TAG) return words[cursor.index++];
-      if (tag === STRING_TAG) return encoded.strings[words[cursor.index++]];
-      if (tag === MODEL_VALUE_TAG) return createModelValue(encoded.strings[words[cursor.index++]]);
-      if (tag === SET_TAG) return createSortedSet(decodeElements(words[cursor.index++]));
-      const functionClass = FUNCTION_CLASSES[words[cursor.index++]];
+      if (tag === INTEGER_TAG) return words[cursor++];
+      if (tag === STRING_TAG) return encoded.strings[words[cursor++]];
+      if (tag === MODEL_VALUE_TAG) return createModelValue(encoded.strings[words[cursor++]]);
+      if (tag === SET_TAG) return createSortedSet(decodeElements(words[cursor++]));
+      const functionClass = FUNCTION_CLASSES[words[cursor++]];
       if (tag === INTERVAL_FUNCTION_TAG) {
-        const low = words[cursor.index++];
-        const length = words[cursor.index++];
+        const low = words[cursor++];
+        const length = words[cursor++];
         const domain = getFunctionDomain({ kind: "Interval", low, high: low + length - 1 });
         return setFunctionClass(
           createSortedFunction(domain, decodeElements(length)),
           functionClass,
         );
       }
-      const length = words[cursor.index++];
+      const length = words[cursor++];
       const domain = decodeElements(length);
       return setFunctionClass(createSortedFunction(domain, decodeElements(length)), functionClass);
     };

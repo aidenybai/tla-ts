@@ -7,10 +7,8 @@ import {
   type SemanticNode,
 } from "./nodes";
 
-// A port of SANY's tla2sany.linter.Linter, which warns about a record field named like a
-// definition or declaration of the module.
+// A port of SANY's tla2sany.linter.Linter.
 
-// SemanticNode.getChildren.
 const getChildren = (node: SemanticNode): (SemanticNode | undefined)[] => {
   switch (node.kind) {
     case "OpAppl":
@@ -35,7 +33,6 @@ const getChildren = (node: SemanticNode): (SemanticNode | undefined)[] => {
   }
 };
 
-// Operators whose values are sets of values that a record field may range over.
 const SET_OPERATORS = new Map([
   ["Integers", "Int"],
   ["Naturals", "Nat"],
@@ -43,8 +40,6 @@ const SET_OPERATORS = new Map([
   ["Reals", "Reals"],
 ]);
 
-// Linter.isBuiltFromDeclarations: whether an expression applies a declared or bound symbol, BOOLEAN
-// or a standard set of numbers, directly or through the definitions it applies.
 const isBuiltFromDeclarations = (node: SemanticNode | undefined) => {
   const visited = new Set<SemanticNode>();
   const visit = (current: SemanticNode | undefined): boolean => {
@@ -74,7 +69,6 @@ const getFieldName = (pair: OpApplNode) => {
   return name?.kind === "String" ? name : undefined;
 };
 
-// Records.sameDomain, given that SANY rejects a record with two fields of the same name.
 const getDomain = (record: OpApplNode) =>
   JSON.stringify([
     record.operands.length,
@@ -83,7 +77,6 @@ const getDomain = (record: OpApplNode) =>
       .sort(),
   ]);
 
-// ModuleNode.getExtendedModuleSet(true).
 const getExtendedModules = (module: ModuleNode, found = new Set<ModuleNode>()) => {
   module.extendees.forEach((extendee) => {
     if (found.has(extendee)) return;
@@ -93,7 +86,6 @@ const getExtendedModules = (module: ModuleNode, found = new Set<ModuleNode>()) =
   return found;
 };
 
-// Linter.lintRecords: the warnings for the records of a module.
 export const lintSanyModule = (module: ModuleNode): SanyMessage[] => {
   const linted = module.records.map((record) => ({
     domain: getDomain(record),

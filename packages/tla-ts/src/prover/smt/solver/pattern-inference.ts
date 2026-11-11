@@ -1,7 +1,4 @@
 // Ported from Z3 (src/ast/pattern/pattern_inference.cpp), MIT license, see z3-license.txt.
-// Infers E-matching patterns for quantifiers that have none, with Z3's default parameters:
-// pi.max_multi_patterns=0, pi.block_loop_patterns=true, pi.decompose_patterns=true,
-// pi.arith=1 (conservative), pi.avoid_skolems=true.
 import {
   AstManager,
   FAMILY_ARITH,
@@ -40,8 +37,6 @@ const isSameSet = (left: Set<number>, right: Set<number>) =>
 const isSubset = (left: Set<number>, right: Set<number>) =>
   [...left].every((element) => right.has(element));
 
-// pattern_inference_cfg, which asserted_formulas keeps as long as it lives. m_candidates holds its
-// candidates until the end of mk_patterns.
 export class PatternInference {
   private candidates: RefVector;
   private candidateInfos = new Map<number, CandidateInfo>();
@@ -134,7 +129,6 @@ export class PatternInference {
     this.candidates.push(expr);
   }
 
-  // smaller_pattern: whether second is an instance of first.
   private isSmaller(first: number, second: number) {
     const manager = this.manager;
     const bindings = Array.from({ length: this.numBindings }, () => -1);
@@ -282,7 +276,6 @@ export class PatternInference {
       const looseCandidates = this.filterLoopingPatterns().filter(
         (candidate) => !this.containsSubpattern(candidate),
       );
-      // m_tmp1: the candidates that do not cover every variable, which may form a multi-pattern.
       const partialCandidates: number[] = [];
       for (const candidate of looseCandidates) {
         const info = this.candidateInfos.get(candidate);
@@ -292,13 +285,11 @@ export class PatternInference {
       }
       const numExtraMultiPatterns = result.length === 0 ? 1 : 0;
       if (numExtraMultiPatterns > 0 && partialCandidates.length > 0) {
-        // std::stable_sort with m_pattern_weight_lt.
-        const weightOf = (candidate: number) => this.candidateInfos.get(candidate);
         const sorted = partialCandidates
           .map((candidate, index) => ({ candidate, index }))
           .sort((left, right) => {
-            const leftInfo = weightOf(left.candidate);
-            const rightInfo = weightOf(right.candidate);
+            const leftInfo = this.candidateInfos.get(left.candidate);
+            const rightInfo = this.candidateInfos.get(right.candidate);
             if (leftInfo === undefined || rightInfo === undefined) return left.index - right.index;
             if (leftInfo.freeVars.size !== rightInfo.freeVars.size)
               return rightInfo.freeVars.size - leftInfo.freeVars.size;
@@ -314,8 +305,6 @@ export class PatternInference {
     return result;
   }
 
-  // reduce_quantifier for a quantifier without patterns: arithmetic, then looping and non-nested
-  // arithmetic patterns, are allowed when no pattern is found without them.
   infer(numBindings: number, body: number, weight: number): InferredPatterns {
     this.isArithForbidden = true;
     this.isNestedArithOnly = true;
@@ -335,8 +324,6 @@ export class PatternInference {
     };
   }
 
-  // The patterns of a quantifier that pull_quant changed, found once with the settings that infer
-  // restores: arithmetic is allowed, but only nested, and looping patterns are blocked.
   inferPulled(numBindings: number, body: number) {
     this.isArithForbidden = false;
     this.isNestedArithOnly = true;

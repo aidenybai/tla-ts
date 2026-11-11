@@ -6,14 +6,10 @@ import { getObligations } from "../../src/obligations";
 import { encodeForBackend } from "../../src/prover/prove";
 import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
 
-// Modules from tlapm's tests and library, and the theory tlapm wrote for each of their obligations
-// that it sent to Isabelle, as <module>-<obligation>.thy.
 const FIXTURES = join(import.meta.dirname, "../fixtures/isabelle-encoder");
 
 const SESSION = { caseErrors: 0 };
 
-// tlapm's theories differ from tla-ts's only in comments, line breaks, and the theory's name,
-// which tlapm takes from a temporary file.
 const normalize = (text: string) =>
   text
     .replace(/\(\*[\s\S]*?\*\)/g, "")
@@ -24,13 +20,13 @@ const normalize = (text: string) =>
 const readModule = (name: string) =>
   name === "TLAPS" ? TLAPS_MODULE : readFileSync(join(FIXTURES, `${name}.tla`), "utf8");
 
-const getObligation = (name: string, id: number) => {
+const getObligation = (name: string, obligationId: number) => {
   const obligation = getObligations([{ file: `${name}.tla`, source: readModule(name) }], (used) =>
     used === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined,
   )
     .flatMap((result) => result.obligations)
-    .find((innerObligation) => innerObligation.id === id);
-  if (!obligation) throw new Error(`${name} has no obligation ${id}`);
+    .find((innerObligation) => innerObligation.id === obligationId);
+  if (!obligation) throw new Error(`${name} has no obligation ${obligationId}`);
   return obligation;
 };
 

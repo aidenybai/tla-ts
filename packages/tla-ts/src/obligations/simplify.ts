@@ -1,6 +1,4 @@
-// A port of tlapm's Proof.Simplify, which rewrites each proof into the steps Proof.Gen handles:
-// BY becomes USE steps and an OBVIOUS QED, and HAVE, TAKE, WITNESS, CASE and PICK become
-// assertions.
+// A port of tlapm's Proof.Simplify.
 
 import { TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
@@ -33,7 +31,6 @@ import {
   substituteExpr,
 } from "./substitution";
 
-// tlapm builds nodes with x @@ step, which copies all of the step's properties.
 const getProps = (from: Step) => ({
   location: from.location,
   step: from.step,
@@ -51,8 +48,6 @@ const isBinary = (
 const getMessage = (pattern: string, ...args: (string | Doc)[]) =>
   renderDoc(format(pattern, ...args));
 
-// Visit.hyps_of_bounds_unditto: dittos repeat the previous domain, and each domain shifts past the
-// names bound before it.
 const getBoundHyps = (bounds: Bound[]): Hyp[] =>
   expandDittoes(bounds).map((bound, index): Hyp => {
     const domain =
@@ -76,7 +71,6 @@ const expandDittoes = (bounds: Bound[]): Bound[] => {
   });
 };
 
-// The bounds after a witnessed one, where a ditto takes the witnessed domain.
 const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
   const shifted = substituteBounds(shift(1), rest)[1];
   return shifted[0].domain.kind === "Ditto" && first.domain.kind === "Domain"
@@ -90,7 +84,6 @@ const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
     : shifted;
 };
 
-// A WITNESS proves each membership and subset it relies on, then the goal from them.
 const getWitnessProof = (step: Step, sideFacts: Expr[]): Proof => {
   if (sideFacts.length === 0) return { kind: "Obvious", ...getProps(step) };
   const steps = sideFacts.map((item, index): Step => {
@@ -114,7 +107,6 @@ const getWitnessProof = (step: Step, sideFacts: Expr[]): Proof => {
       at({ kind: "Ix", index: 2 * (sideFacts.length - index) }, step),
     ),
   ];
-  // tlapm removes the method from the QED.
   const qedProof: Proof = {
     kind: "By",
     usable: { facts, defs: [] },
@@ -211,7 +203,6 @@ export const createSimplifier = (counter: Counter) => {
     return active.kind === "Apply" && active.args.length === 2 ? active.args[1] : undefined;
   };
 
-  // at_expand: @ in a step stands for the right side of the previous step's assertion.
   const expandAt = (proof: Proof): Proof => {
     if (proof.kind !== "Steps") return proof;
     const steps: Step[] = [];
@@ -358,10 +349,8 @@ export const createSimplifier = (counter: Counter) => {
               `USE DEF ${name} invalid because ${name} is not a defined operator`,
             );
           }
-          return current.map((entry, position) =>
-            position === index
-              ? { ...hyp, visibility: "Hidden" as const, location: step.location }
-              : entry,
+          return current.map((entry, position): Hyp =>
+            position === index ? { ...hyp, visibility: "Hidden", location: step.location } : entry,
           );
         }, context);
         return [hidden, goal, [step], time];

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CONFORMANCE_DIRECTORY, findModels } from "./corpora";
+import { CONFORMANCE_DIRECTORY, findModels, getToolPath } from "./corpora";
 
 interface ConformanceResult {
   id: string;
@@ -19,11 +19,7 @@ interface Timing {
 const CLI_PATH = join(import.meta.dirname, "../dist/cli.js");
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".results.json");
 
-const jarPath = process.env.TLA2TOOLS_JAR;
-if (!jarPath || !existsSync(jarPath)) {
-  console.error("Set TLA2TOOLS_JAR to the path of tla2tools.jar");
-  process.exit(1);
-}
+const jarPath = getToolPath("TLA2TOOLS_JAR", "tla2tools.jar");
 if (!existsSync(CLI_PATH) || !existsSync(RESULTS_PATH)) {
   console.error("Build the package and run pnpm conformance first");
   process.exit(1);
@@ -45,8 +41,6 @@ const models = findModels().filter((model) => matching.has(model.id));
 
 const timings: Timing[] = models.map((model, index) => {
   const metadataDirectory = mkdtempSync(join(tmpdir(), "tla-ts-corpus-"));
-  // tla-ts seeds random operators such as RandomElement with 0 by default, and TLC picks a seed at
-  // random.
   const tlc = time(
     "java",
     [

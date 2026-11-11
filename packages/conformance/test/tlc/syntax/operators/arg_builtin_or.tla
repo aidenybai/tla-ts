@@ -1,0 +1,16 @@
+(*---
+description: "The built-in \\/ may be passed as an operator argument."
+ref: "tla2sany/semantic/Generator.java#generateExprOrOpArg"
+features: [operators]
+flags: [expression]
+outcome: success
+---*)
+---- MODULE arg_builtin_or ----
+Op(F(_,_), a, b) == F(a, b)
+Test == Op(\/, FALSE, TRUE)
+====
+
+(*--- recorded
+all:
+  exit: 0
+---*)

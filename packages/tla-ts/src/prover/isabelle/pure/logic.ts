@@ -1,6 +1,4 @@
-// Ported from Isabelle2025's Pure/logic.ML, the abstract syntax of the meta logic. Copyright (c)
-// 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
-// LICENSE.
+// Ported from Isabelle2025's Pure/logic.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { variantList } from "./name";
@@ -25,7 +23,6 @@ import {
   type Typ,
 } from "./term";
 
-// Logic.occs: whether a subterm of other is aconv to term.
 export const occs = (term: Term, other: Term): boolean =>
   mayOccur(term, other) &&
   (aconv(term, other) ||
@@ -52,7 +49,6 @@ export const mkEquals = (left: Term, right: Term) => {
   return mkApp(mkApp(mkConst("Pure.eq", funTs([type, type], propT)), left), right);
 };
 
-// A term c $ x $ y.
 interface ConstApp2 extends App {
   readonly fun: App;
 }
@@ -101,7 +97,6 @@ export const stripImpConcl = (term: Term): Term => {
   return current;
 };
 
-// Logic.strip_prems: removes count premises, returning them reversed onto premises.
 export const stripPrems = (
   count: number,
   premises: readonly Term[],
@@ -124,11 +119,9 @@ export const isProtected = (term: Term) =>
 export const mkTerm = (term: Term) =>
   mkApp(mkConst("Pure.term", funT(fastypeOf(term), propT)), term);
 
-// Logic.combound: term(Bound (start+count-1), ..., Bound start).
 export const combound = (term: Term, start: number, count: number): Term =>
   count > 0 ? mkApp(combound(term, start + 1, count - 1), mkBound(start)) : term;
 
-// Logic.rlist_abs: ([xn, ..., x1], body) to %x1 ... xn. body.
 export const rlistAbs = (binders: readonly Binder[], body: Term) =>
   binders.reduce((result, binder) => mkAbs(binder.name, binder.type, result), body);
 
@@ -141,7 +134,6 @@ const incrTVar = (increment: number, type: Typ) =>
         type,
       );
 
-// Logic.incr_indexes_operation: lifts the variables over the types and increments their indexes.
 const incrIndexesFixed = (
   fixed: readonly string[],
   types: readonly Typ[],
@@ -201,7 +193,6 @@ const isAllAbs = (
   term.fun.name === "Pure.all" &&
   term.arg.kind === "Abs";
 
-// Logic.lift_abs: lifts a term over the parameters of a goal.
 export const liftAbs = (increment: number, goal: Term, term: Term): Term => {
   const lift = (types: Typ[], current: Term): Term => {
     if (isConstApp2(current, "Pure.imp")) return lift(types, current.arg);
@@ -216,7 +207,6 @@ export const liftAbs = (increment: number, goal: Term, term: Term): Term => {
   return lift([], goal);
 };
 
-// Logic.lift_all: lifts a proposition over the parameters and premises of a goal.
 export const liftAll = (increment: number, goal: Term, term: Term): Term => {
   const lift = (types: Typ[], current: Term): Term => {
     if (isConstApp2(current, "Pure.imp"))
@@ -281,7 +271,6 @@ export const hasMetaPrems = (term: Term): boolean => {
   return false;
 };
 
-// Logic.remove_params: drops count parameters and premise number index.
 const removeParams = (count: number, index: number, term: Term): Term => {
   if (count === 0 && index <= 0) return term;
   if (isConstApp2(term, "Pure.imp"))
@@ -293,7 +282,6 @@ const removeParams = (count: number, index: number, term: Term): Term => {
   return term;
 };
 
-// Logic.flatten_params: moves all parameters to the front, renaming them apart.
 export const flattenParams = (index: number, term: Term) => {
   const params = stripParams(term);
   const names = variantList(
@@ -304,7 +292,6 @@ export const flattenParams = (index: number, term: Term) => {
   return listAll(vars, removeParams(vars.length, index, term));
 };
 
-// Logic.strip_assums_imp: strips at most count premises.
 const stripAssumsImp = (count: number, hyps: Term[], term: Term): [Term[], Term] => {
   if (count === 0) return [hyps, term];
   if (isConstApp2(term, "Pure.imp"))

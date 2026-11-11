@@ -1,6 +1,7 @@
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import { createJavaRandom, type JavaRandom } from "./tlc/random";
 import { createFunction, createRecord, type Value } from "./values";
+import type { SpecAction } from "./spec-description";
 import type { TlcVersion } from "./tlc/version";
 
 export interface CheckerRuntime {
@@ -8,24 +9,23 @@ export interface CheckerRuntime {
   getBehavior: (state: Value[]) => Value[][];
   getSpecification: () => Value;
   counterExample: Value | undefined;
+  deferred: ((next: Value[]) => void) | undefined;
   setLivenessSource: (index: number | undefined) => void;
   getCurrentState: () => Value[] | undefined;
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
+  getSimulationValue:
+    | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
+    | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
-  pause: () => void;
-  // Prints a warning TLC raises while it evaluates, with its message code. TLC prints each
-  // distinct warning once.
+  pause: (() => void) | undefined;
   warn: (code: number, text: string) => void;
-  // TLC's -nowarning turns the warnings off, and with them the shortcut that evaluates the rest
-  // of an action once it assigns every variable, since that shortcut skips a warning.
   isWarningEnabled: boolean;
-  // TLC's -tool, under which the message of an error that TLC raises with a code holds the
-  // code's markers, which AssertError compares with.
   isTool: boolean;
   version: TlcVersion;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
+  getSuccessorAction: (state: Value[], next: Value[]) => SpecAction | undefined;
   generatedStates: number;
   distinctStates: number;
   initialStates: number;
@@ -41,42 +41,42 @@ export interface CheckerRuntime {
   startedAt: number;
 }
 
-// TLC's RandomEnumerableValues keeps one java.util.Random per thread, seeded with -seed. The
-// main thread evaluates constants, assumptions, and initial states with it. A worker reseeds
-// its Random with the fingerprint of each state it expands, XORed with the seed, so a state's
-// successors are the same whatever order the workers expand states in.
 export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime => {
   const startupRandom = createJavaRandom(seed);
-  const worker = { random: createJavaRandom(seed), seededState: undefined as Value[] | undefined };
-  const phase = { isStartup: false };
+  const workerRandom = createJavaRandom(seed);
+  let seededState: Value[] | undefined;
+  let isStartup = false;
   const runtime: CheckerRuntime = {
     getLevel: () => 0,
     getBehavior: () => [],
     getSpecification: () => createRecord([]),
     counterExample: undefined,
+    deferred: undefined,
     isSeen: () => false,
+    getSuccessorAction: () => undefined,
     setLivenessSource: () => {},
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,
+    getSimulationValue: undefined,
     getRandom: () => {
-      const state = phase.isStartup ? undefined : runtime.getCurrentState();
+      const state = isStartup ? undefined : runtime.getCurrentState();
       if (state === undefined) return startupRandom;
-      if (state !== worker.seededState) {
-        worker.random.setSeed(runtime.getFingerprint(state) ^ BigInt.asUintN(64, seed));
-        worker.seededState = state;
+      if (state !== seededState) {
+        workerRandom.setSeed(runtime.getFingerprint(state) ^ BigInt.asUintN(64, seed));
+        seededState = state;
       }
-      return worker.random;
+      return workerRandom;
     },
     evaluateAtStartup: (evaluate) => {
-      const wasStartup = phase.isStartup;
-      phase.isStartup = true;
+      const wasStartup = isStartup;
+      isStartup = true;
       try {
         return evaluate();
       } finally {
-        phase.isStartup = wasStartup;
+        isStartup = wasStartup;
       }
     },
-    pause: () => {},
+    pause: undefined,
     warn: () => {},
     isWarningEnabled: true,
     isTool: false,

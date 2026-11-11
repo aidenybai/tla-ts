@@ -1,9 +1,7 @@
-// Ported from Z3 (src/ast/ast_util.cpp), MIT license, see z3-license.txt. Flattening of conjunctions
-// and disjunctions in Z3's worklist order, and negation that strips a negation instead of nesting one.
+// Ported from Z3 (src/ast/ast_util.cpp), MIT license, see z3-license.txt.
 import { OP_AND, OP_IMPLIES, OP_NOT, OP_OR, type AstManager } from "./ast";
 import { RefVector } from "./ref-vector";
 
-// mk_not.
 export const mkNot = (manager: AstManager, expr: number) =>
   manager.isNot(expr)
     ? manager.getArg(expr, 0)
@@ -13,8 +11,6 @@ export const mkNot = (manager: AstManager, expr: number) =>
         ? manager.trueExpr
         : manager.mkNot(expr);
 
-// flatten_and and flatten_or on an expr_ref_vector, with Z3's references: the vector holds its
-// expressions, and pin holds each visited one until the end.
 const flattenVector = (manager: AstManager, result: RefVector, isAnd: boolean) => {
   const pin = new RefVector(manager);
   const seen = new Set<number>();
@@ -71,7 +67,6 @@ export const flattenAndVector = (manager: AstManager, result: RefVector) =>
 export const flattenOrVector = (manager: AstManager, result: RefVector) =>
   flattenVector(manager, result, false);
 
-// push_not with Z3's references: the result comes with a reference, which the caller releases.
 export const pushNotOwned = (manager: AstManager, expr: number): number => {
   const op = manager.getOp(expr);
   if (op !== OP_AND && op !== OP_OR) {

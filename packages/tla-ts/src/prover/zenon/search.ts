@@ -1,9 +1,4 @@
 // Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-//
-// The tableau search. Each formula added to a branch suggests nodes, which wait in the queue by
-// priority. The search takes the next node, and refutes each of its branches in turn. A branch is
-// closed when it holds a formula and its negation. Zenon's mutually recursive search functions are
-// one loop here, with an explicit stack of frames.
 
 import { TlaZenonError } from "../../errors";
 import { difference, isApp, isDisjoint, isMeta, union, type Expr } from "./expr";
@@ -23,7 +18,6 @@ const isTrivial = (context: SearchContext, formula: Expr) =>
     formula.args[0] === formula.args[1] &&
     context.relations.isReflexive(formula.symbol));
 
-// Zenon's reduce_list: drops the formulas a branch already has, and reverses the rest.
 const reduceBranch = (context: SearchContext, branch: Expr[]) => {
   const exprs = context.exprs;
   const index = context.index;
@@ -138,19 +132,14 @@ interface Frame {
 interface SearchStatistics {
   inferences: number;
   proofNodes: number;
-  // The proofs that closed another branch from the lemma cache. Zenon counts the uses in mlrefc and
-  // prints each of these proofs once, as a lemma.
   reusedProofs: Set<Proof>;
 }
 
 export type SearchFailure = "exhausted" | "time limit" | "memory limit" | "aborted";
 
-// Zenon gives up once its heap passes 1 GB. The port bounds the nodes that the queues of the
-// current branch hold instead. On the corpus files where Zenon runs out of memory, its heap passes
-// 1 GB with 1.9 to 5.5 million of them, and no proof that Zenon finds needs more than 1.3 million.
+// Deviation from Zenon, which gives up at a 1 GB heap: its heap passes that with 1.9 million queued nodes.
 const MAX_QUEUED_NODES = 1_900_000;
 
-// The proof of the hypotheses' inconsistency, or why the search gave up.
 export const search = (
   context: SearchContext,
   definitions: Definition[],
@@ -192,8 +181,6 @@ export const search = (
     return proof;
   };
 
-  // Zenon's next_branch and unwind: descend into the next open branch of a node, or close the node
-  // and pop frames until one has an open branch left.
   const advance = (
     searchNode: Node,
     nodeQueue: Queue,
@@ -227,8 +214,6 @@ export const search = (
     }
   };
 
-  // Pops the frames that the proof closes. Returns the proof when it closes the root, and leaves the
-  // frame to continue on top of the stack otherwise, with the proof recorded.
   const unwind = (proof: Proof): Proof | undefined => {
     for (;;) {
       const frame = stack.pop();
@@ -267,7 +252,6 @@ export const search = (
       if (result !== undefined) return result;
       continue;
     }
-    // Zenon's next_node: the next node whose branches all add something new.
     for (;;) {
       statistics.inferences++;
       const removed = removeNode(queue);

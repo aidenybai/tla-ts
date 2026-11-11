@@ -12,8 +12,7 @@ const checkCounterExample = async (configName: string) => {
     config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
     onPrint: (text) => printed.push(text),
   });
-  // TLC prints what the postcondition prints after the trace.
-  return [result.status, ...printed, ...(result.violation?.traceOutput ?? [])];
+  return [result.status, ...printed, ...(result.violation?.postconditionOutput ?? [])];
 };
 
 describe("POSTCONDITION after a violation matches TLC", () => {

@@ -1,7 +1,4 @@
-// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt. The instantiation
-// sets and the AUF solver of the model finder: the solver groups the argument positions and
-// variables that must share an instantiation set, and each group gets a projection function that
-// maps any value to the value of a term in its set.
+// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
 import { combineHash } from "./hash";
@@ -13,8 +10,6 @@ import { Rewriter } from "./rewriter";
 
 export type Evaluate = (expr: number) => number | null;
 
-// instantiation_set: the S_{k,j} sets of the paper, with the generation of each term. The set holds
-// its terms.
 export class InstantiationSet {
   readonly elems: ObjMap<number>;
   readonly inv: ObjMap<number>;
@@ -36,7 +31,6 @@ export class InstantiationSet {
     this.manager.decRef(expr);
   }
 
-  // ~instantiation_set.
   release() {
     for (const entry of this.elems) this.manager.decRef(entry[0]);
   }
@@ -62,7 +56,6 @@ export class InstantiationSet {
   }
 }
 
-// node: a set of argument positions and variables that share an instantiation set.
 export class Node {
   private find: Node | null = null;
   private eqcSize = 1;
@@ -73,10 +66,7 @@ export class Node {
   private elseExpr: number | null = null;
   private proj: number | null = null;
 
-  constructor(
-    readonly id: number,
-    readonly sort: number,
-  ) {}
+  constructor(readonly sort: number) {}
 
   isRoot() {
     return this.find === null;
@@ -120,12 +110,10 @@ export class Node {
     this.set = new InstantiationSet(manager);
   }
 
-  // ~node.
   release() {
     this.set?.release();
   }
 
-  // Only closed terms join the set.
   insert(manager: AstManager, expr: number, generation: number) {
     if (manager.isGround(expr)) this.getRoot().set?.insert(expr, generation);
   }
@@ -170,31 +158,23 @@ const appendNew = <T>(target: T[], source: T[]) => {
 
 interface AFINode {
   decl: number;
-  index: number;
   node: Node;
 }
 
-// The number that keys an argument position of a declaration in m_A_f_is.
 const ARITY_BOUND = 2 ** 20;
 const getAFIKey = (decl: number, index: number) => decl * ARITY_BOUND + index;
 
-// auf_solver: the "almost uninterpreted fragment" of the paper.
 export class AufSolver {
   private nodes: Node[] = [];
   private uvars = new Map<string, Node>();
-  // m_A_f_is, a table in Z3's slot order, hashed like pair_hash of the declaration and position.
   private aFIs: ObjMap<AFINode>;
   private sort2k = new Map<number, number>();
-  // m_ks, the range of m_sort2k.
   private ks: RefVector;
   private model: ProtoModel | null = null;
-  // m_eval_cache for each model completion flag, and m_eval_cache_range, which holds the results.
   private evalCache = [new Map<number, number>(), new Map<number, number>()];
   private evalCacheRange: RefVector;
   private rootNodes: Node[] = [];
   private newConstraints: number[] = [];
-  // m_rand, seeded with the steps the resource limit counted before the solver was made, which
-  // then counts one more.
   private random: RandomGen;
   constructor(
     private manager: AstManager,
@@ -238,7 +218,7 @@ export class AufSolver {
   private mkNode(key: string, map: Map<string, Node>, sort: number) {
     const existing = map.get(key);
     if (existing !== undefined) return existing;
-    const node = new Node(this.nodes.length, sort);
+    const node = new Node(sort);
     map.set(key, node);
     this.nodes.push(node);
     return node;
@@ -253,9 +233,9 @@ export class AufSolver {
     const key = getAFIKey(decl, index);
     const existing = this.aFIs.get(key);
     if (existing !== undefined) return existing.node;
-    const node = new Node(this.nodes.length, this.manager.funcDecls[decl].domain[index]);
+    const node = new Node(this.manager.funcDecls[decl].domain[index]);
     this.nodes.push(node);
-    this.aFIs.set(key, { decl, index, node });
+    this.aFIs.set(key, { decl, node });
     return node;
   }
 
@@ -267,7 +247,6 @@ export class AufSolver {
     for (const node of this.nodes) if (node.isRoot()) node.mkInstantiationSet(this.manager);
   }
 
-  // cleanup_instantiation_sets: drops the terms that do not evaluate to values.
   private cleanupInstantiationSets() {
     const manager = this.manager;
     for (const node of this.nodes) {
@@ -315,8 +294,6 @@ export class AufSolver {
     return first !== second && manager.isUniqueValue(first) && manager.isUniqueValue(second);
   }
 
-  // pick_instance_diff_exceptions: the term of least generation whose value differs from every
-  // exception.
   private pickInstanceDiffExceptions(node: Node, exceptionValues: number[]) {
     let result: number | null = null;
     let resultGeneration = Number.POSITIVE_INFINITY;
@@ -330,11 +307,6 @@ export class AufSolver {
       }
     }
     return result;
-  }
-
-  // Uninterpreted sorts are not assumed infinite in benchmarks with quantifiers.
-  private isInfinite(sort: number) {
-    return isArithSort(sort);
   }
 
   private getKFor(sort: number) {
@@ -363,8 +335,6 @@ export class AufSolver {
     if (kValue === null) return false;
     for (const exception of exceptions) {
       const value = this.eval(exception, true);
-      // The constraint cannot go into the context while the model is built, so it waits for the
-      // next restart.
       if (value !== null && !this.areDistinct(kValue, value))
         this.newConstraints.push(this.manager.mkNot(this.manager.mkEq(k, exception)));
     }
@@ -381,7 +351,7 @@ export class AufSolver {
         node.setElse(picked);
         return;
       }
-      if (this.isInfinite(node.sort)) {
+      if (isArithSort(node.sort)) {
         const k = this.getKFor(node.sort);
         if (this.assertKDiseqExceptions(k, exceptions)) {
           node.insert(this.manager, k, 0);
@@ -393,7 +363,6 @@ export class AufSolver {
     node.setElse(set.elems.keys().next().value ?? 0);
   }
 
-  // add_mono_exceptions: e - 1 and e + 1 join the set for each integer exception e.
   private addMonoExceptions(node: Node) {
     if (node.sort !== SORT_INT) return;
     const rewriter = this.rewriter;
@@ -462,7 +431,6 @@ export class AufSolver {
     node.setProj(decl);
   }
 
-  // collect_partial_funcs: a func_decl_set, in Z3's slot order.
   private collectPartialFuncs() {
     const manager = this.manager;
     const model = this.getModel();
@@ -480,7 +448,6 @@ export class AufSolver {
     return result;
   }
 
-  // mk_sorts_finite: every uninterpreted sort gets a finite universe.
   private mkSortsFinite() {
     const model = this.getModel();
     for (const node of this.rootNodes)

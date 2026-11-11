@@ -1,7 +1,4 @@
-// Ported from Z3 (src/math/lp/lar_solver.h, src/math/lp/lar_solver.cpp, src/math/lp/column.h,
-// src/math/lp/var_register.h), MIT license, see z3-license.txt. Columns for theory variables and
-// for terms, whose rows the tableau keeps, bounds with dependencies on the constraints that set
-// them, and the push and pop of all of it.
+// Ported from Z3 (src/math/lp/lar_solver.h, src/math/lp/lar_solver.cpp, src/math/lp/column.h, src/math/lp/var_register.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector } from "./containers";
@@ -28,7 +25,7 @@ import {
   LP_UNKNOWN,
   type ColumnType,
 } from "./core-solver";
-import { Dependency, linearize, mkJoin } from "./dependency";
+import { type Dependency, linearize, mkJoin } from "./dependency";
 import type { Explanation } from "./explanation";
 import { LarTerm } from "./lar-term";
 import { LpSettings } from "./lp-settings";
@@ -42,7 +39,6 @@ interface AdjustedBound {
   bound: Rational;
 }
 
-// The column of a term, under its normalized term, with the first coefficient it was divided by.
 interface NormalizedTermColumn {
   coeff: Rational;
   column: number;
@@ -60,6 +56,23 @@ const getTermKey = (term: LarTerm) =>
     .sort()
     .join(",");
 
+const updateDelta = (delta: Rational, low: Impq, high: Impq) => {
+  if (low.x.compare(high.x) >= 0 || low.y.compare(high.y) <= 0) return delta;
+  const candidate = high.x.sub(low.x).div(low.y.sub(high.y));
+  return candidate.compare(delta) < 0 ? candidate : delta;
+};
+
+const getBoundsDelta = (core: CoreSolver, columnCount: number) => {
+  let delta = Rational.one;
+  for (let column = 0; column < columnCount; column++) {
+    if (core.hasLowerBound(column))
+      delta = updateDelta(delta, core.lowerBounds[column], core.x[column]);
+    if (core.hasUpperBound(column))
+      delta = updateDelta(delta, core.x[column], core.upperBounds[column]);
+  }
+  return delta;
+};
+
 export class LarSolver {
   readonly settings: LpSettings;
   readonly core: CoreSolver;
@@ -70,8 +83,8 @@ export class LarSolver {
   readonly columnsWithChangedBounds = new IndexedUintSet();
   rowBoundsToReplay: number[] = [];
   status = LP_UNKNOWN;
-  crossedBoundsColumn = NULL_LPVAR;
-  crossedBoundsDeps: Dependency = null;
+  private crossedBoundsColumn = NULL_LPVAR;
+  private crossedBoundsDeps: Dependency = null;
   private externalToLocal = new Map<number, number>();
   private localToExternal: number[] = [];
   private localIsInt: boolean[] = [];
@@ -83,11 +96,8 @@ export class LarSolver {
   private fixedBaseVarSet = new IndexedUintSet();
   private normalizedTermsToColumns = new Map<string, NormalizedTermColumn>();
   private isRegisteringTerms = false;
-  // m_delta: zero until init_model sets it.
   private delta = Rational.zero;
-  // The callback of nla for the columns whose bounds changed.
   onChangedBounds: ((columns: IndexedUintSet) => void) | undefined;
-  // m_add_term_callback and m_update_column_bound_callback, which the Diophantine solver sets.
   onAddTerm: ((term: LarTerm) => void) | undefined;
   onColumnBoundUpdate: ((column: number) => void) | undefined;
 
@@ -163,8 +173,6 @@ export class LarSolver {
     return column < this.usageInTerms.values.length ? this.usageInTerms.get(column) : 0;
   }
 
-  // Columns.
-
   private registerExternal(external: number, isInt: boolean) {
     const local = this.localToExternal.length;
     this.localToExternal.push(external);
@@ -174,7 +182,7 @@ export class LarSolver {
 
   private addNewVarToCoreFields(isBasic: boolean) {
     this.core.addColumn(isBasic);
-    if (isBasic) this.addTouchedRow(this.getRowCount() - 1);
+    if (isBasic) this.touchedRows.add(this.getRowCount() - 1);
   }
 
   private pushUndoAddColumn() {
@@ -209,7 +217,6 @@ export class LarSolver {
     return true;
   }
 
-  // subst_known_terms: replaces term columns by their terms, the smallest column first.
   private substKnownTerms(term: LarTerm) {
     const seen = new Set<number>();
     for (const entry of term.coeffs) if (this.hasTerm(entry[0])) seen.add(entry[0]);
@@ -276,8 +283,6 @@ export class LarSolver {
     return this.normalizedTermsToColumns.get(getTermKey(term));
   }
 
-  // Removing the last column on pop.
-
   private removeLastColumnFromTableau() {
     const core = this.core;
     const matrix = core.matrix;
@@ -305,8 +310,6 @@ export class LarSolver {
     } else matrix.popColumn();
     core.removeLastColumn(column);
   }
-
-  // Bounds.
 
   private setUpperBoundWitness(column: number, dep: Dependency, bound: Impq) {
     const info = this.columns[column];
@@ -342,7 +345,6 @@ export class LarSolver {
     this.crossedBoundsDeps = mkJoin(isLower ? info.lowerWitness : info.upperWitness, dep);
   }
 
-  // adjust_bound_for_int: a strict or fractional bound on an integer column, rounded.
   private adjustBoundForInt(column: number, kind: ConstraintKind, bound: Rational): AdjustedBound {
     if (!this.isInt(column) || bound.isInt()) return { kind, bound };
     if (kind === KIND_LT || kind === KIND_LE) return { kind: KIND_LE, bound: bound.floor() };
@@ -355,7 +357,6 @@ export class LarSolver {
     return this.constraints.add(column, adjusted.kind, new Impq(adjusted.bound));
   }
 
-  // constraint_is_redundant: the current bound of the column is at least as strong.
   constraintIsRedundant(index: number) {
     const constraint = this.constraints.constraints[index];
     const column = constraint.column;
@@ -390,7 +391,6 @@ export class LarSolver {
     );
   }
 
-  // activate_check_on_equal: also the other column fixed to the same value, if there is one.
   activateCheckOnEqual(index: number) {
     this.activate(index);
     const column = this.constraints.constraints[index].column;
@@ -458,16 +458,6 @@ export class LarSolver {
     this.onColumnBoundUpdate?.(column);
   }
 
-  addTouchedRow(rowIndex: number) {
-    this.touchedRows.add(rowIndex);
-  }
-
-  addColumnRowsToTouchedRows(column: number) {
-    for (const cell of this.core.matrix.columns[column]) this.addTouchedRow(cell.row);
-  }
-
-  // Solving.
-
   private changeBasicColumnsDependingOn(column: number, delta: Impq) {
     const core = this.core;
     for (const cell of core.matrix.columns[column])
@@ -495,16 +485,12 @@ export class LarSolver {
     core.solve();
     this.status = core.status;
     if (this.status === LP_INFEASIBLE || this.status === LP_CANCELLED) return this.status;
-    for (const column of this.columnsWithChangedBounds.elems) {
-      if (core.isBase(column)) this.addTouchedRow(core.heading[column]);
-      else this.addColumnRowsToTouchedRows(column);
-    }
+    this.collectMoreRowsForLpPropagation();
     this.onChangedBounds?.(this.columnsWithChangedBounds);
     this.columnsWithChangedBounds.clear();
     return this.status;
   }
 
-  // get_infeasibility_explanation: the crossed bounds, or the bounds of the infeasible row.
   getInfeasibilityExplanation(explanation: Explanation) {
     explanation.clear();
     if (this.crossedBoundsColumn !== NULL_LPVAR) {
@@ -523,7 +509,6 @@ export class LarSolver {
     }
   }
 
-  // remove_fixed_vars_from_base: pivots fixed basic columns out of the basis.
   removeFixedVarsFromBase() {
     const core = this.core;
     const columnCount = this.getColumnCount();
@@ -545,8 +530,7 @@ export class LarSolver {
     for (const column of toRemove) this.fixedBaseVarSet.delete(column);
   }
 
-  // remove_from_basis: pivots a basic column with the first non-fixed column of its row.
-  removeFromBasis(column: number) {
+  private removeFromBasis(column: number) {
     const core = this.core;
     for (const cell of core.matrix.rows[core.heading[column]]) {
       if (cell.column === column || this.isFixed(cell.column)) continue;
@@ -562,8 +546,6 @@ export class LarSolver {
     return !(core.hasLowerBound(column) && value.compare(core.lowerBounds[column]) < 0);
   }
 
-  // try_to_patch: sets a column to a value unless the column or a basic column it moves is blocked,
-  // reporting each changed column.
   tryToPatch(
     column: number,
     value: Rational,
@@ -591,9 +573,9 @@ export class LarSolver {
   }
 
   moveNonBasicColumnsToBounds() {
-    const core = this.core;
     let isChanged = false;
-    for (const column of core.nbasis) if (this.moveNonBasicColumnToBounds(column)) isChanged = true;
+    for (const column of this.core.nbasis)
+      if (this.moveNonBasicColumnToBounds(column)) isChanged = true;
     if (isChanged) this.findFeasibleSolution();
   }
 
@@ -629,24 +611,11 @@ export class LarSolver {
     return false;
   }
 
-  // The model.
-
-  // init_model: a δ that keeps strict bounds strict and distinct values distinct.
   initModel() {
-    if (this.status !== LP_OPTIMAL && this.status !== LP_FEASIBLE) return false;
+    if (!this.isFeasible()) return false;
     if (this.columnsWithChangedBounds.size > 0) return false;
     const core = this.core;
-    let delta = Rational.one;
-    const updateDelta = (low: Impq, high: Impq) => {
-      if (low.x.compare(high.x) < 0 && low.y.compare(high.y) > 0) {
-        const candidate = high.x.sub(low.x).div(low.y.sub(high.y));
-        if (candidate.compare(delta) < 0) delta = candidate;
-      }
-    };
-    for (let column = 0; column < this.getColumnCount(); column++) {
-      if (core.hasLowerBound(column)) updateDelta(core.lowerBounds[column], core.x[column]);
-      if (core.hasUpperBound(column)) updateDelta(core.x[column], core.upperBounds[column]);
-    }
+    let delta = getBoundsDelta(core, this.getColumnCount());
     const pairs = new Map<string, Impq>();
     for (const value of core.x) pairs.set(value.toString(), value);
     for (;;) {
@@ -664,7 +633,6 @@ export class LarSolver {
     return value.x.add(this.delta.mul(value.y));
   }
 
-  // has_value: the value of a column, or of the term of a column, when δ does not occur in it.
   getExactValue(column: number) {
     const term = this.columns[column].term;
     if (term === null) {
@@ -680,7 +648,6 @@ export class LarSolver {
     return result;
   }
 
-  // has_lower_bound and has_upper_bound: the witness, value and strictness of a bound.
   getBound(column: number, isUpper: boolean) {
     if (column >= this.columns.length) return undefined;
     const info = this.columns[column];
@@ -694,38 +661,25 @@ export class LarSolver {
     };
   }
 
-  // get_rid_of_inf_eps: the values with δ instantiated small enough to keep strict bounds strict.
   getRidOfInfEps() {
     const core = this.core;
     const columnCount = this.getColumnCount();
     if (core.x.slice(0, columnCount).every((value) => value.y.isZero())) return;
-    let delta = Rational.one;
-    const updateDelta = (low: Impq, high: Impq) => {
-      if (low.x.compare(high.x) < 0 && low.y.compare(high.y) > 0) {
-        const candidate = high.x.sub(low.x).div(low.y.sub(high.y));
-        if (candidate.compare(delta) < 0) delta = candidate;
-      }
-    };
-    for (let column = 0; column < columnCount; column++) {
-      if (core.hasLowerBound(column)) updateDelta(core.lowerBounds[column], core.x[column]);
-      if (core.hasUpperBound(column)) updateDelta(core.x[column], core.upperBounds[column]);
-    }
+    const delta = getBoundsDelta(core, columnCount);
     for (let column = 0; column < columnCount; column++) {
       const value = core.x[column];
       if (!value.y.isZero()) core.x[column] = new Impq(value.x.add(delta.mul(value.y)));
     }
   }
 
-  // get_bound_constraint_witnesses_for_column: the witnesses of both bounds.
   getBoundWitnesses(column: number) {
     return mkJoin(this.columns[column].lowerWitness, this.columns[column].upperWitness);
   }
 
-  // collect_more_rows_for_lp_propagation: the rows of the columns whose bounds nla changed.
   collectMoreRowsForLpPropagation() {
     for (const column of this.columnsWithChangedBounds.elems) {
-      if (this.core.isBase(column)) this.addTouchedRow(this.core.heading[column]);
-      else this.addColumnRowsToTouchedRows(column);
+      if (this.core.isBase(column)) this.touchedRows.add(this.core.heading[column]);
+      else for (const cell of this.core.matrix.columns[column]) this.touchedRows.add(cell.row);
     }
   }
 
@@ -736,8 +690,6 @@ export class LarSolver {
   getUpperWitness(column: number) {
     return this.columns[column].upperWitness;
   }
-
-  // Scopes.
 
   pushTrail(undo: () => void) {
     this.trail.push(undo);
@@ -769,7 +721,7 @@ export class LarSolver {
     for (const table of [this.fixedVarTableInt, this.fixedVarTableReal])
       for (const entry of table)
         if (entry[1] >= columnCount || !this.isFixed(entry[1])) table.delete(entry[0]);
-    for (const rowIndex of this.rowBoundsToReplay) this.addTouchedRow(rowIndex);
+    for (const rowIndex of this.rowBoundsToReplay) this.touchedRows.add(rowIndex);
     this.rowBoundsToReplay = [];
     const rowCount = this.getRowCount();
     for (const rowIndex of this.touchedRows.elems.filter((row) => row >= rowCount))
@@ -797,7 +749,6 @@ export class LarSolver {
       if (core.columnIsFeasible(column)) core.infHeap.erase(column);
   }
 
-  // add_equality: the term j - k bounded above and below by 0.
   addEquality(first: number, second: number) {
     const column = this.addTerm(
       [

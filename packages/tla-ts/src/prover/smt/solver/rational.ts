@@ -1,5 +1,4 @@
-// Ported from Z3 (src/util/rational.h), MIT license, see z3-license.txt. Exact rationals for the
-// simplex tableau, normalized with a positive denominator.
+// Ported from Z3 (src/util/rational.h), MIT license, see z3-license.txt.
 
 export const getGcd = (first: bigint, second: bigint) => {
   let left = first < 0n ? -first : first;
@@ -19,8 +18,6 @@ export const getLcm = (first: bigint, second: bigint) => {
   return (product < 0n ? -product : product) / getGcd(first, second);
 };
 
-// mpz_manager's div and mod: SMT-LIB's, whose remainder is never negative. By a positive divisor,
-// div is the floor of the quotient.
 export const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
   const quotient = dividend / divisor;
   if (dividend >= 0n || quotient * divisor === dividend) return quotient;
@@ -33,7 +30,6 @@ export const getEuclideanMod = (dividend: bigint, divisor: bigint) => {
   return divisor > 0n ? remainder + divisor : remainder - divisor;
 };
 
-// The n-th root of an integer when it is exact.
 const getIntRoot = (value: bigint, degree: number): bigint | undefined => {
   if (value < 0n) {
     if (degree % 2 === 0) return undefined;
@@ -90,7 +86,6 @@ export class Rational {
     return this.num < 0n;
   }
 
-  // A sum with zero is the other operand, so a sum that starts at zero allocates nothing.
   add(other: Rational) {
     if (this.num === 0n) return other;
     if (other.num === 0n) return this;
@@ -121,7 +116,6 @@ export class Rational {
     return this.num < 0n ? this.neg() : this;
   }
 
-  // root: the n-th root when it is rational.
   root(degree: number) {
     const num = getIntRoot(this.num, degree);
     const den = num === undefined ? undefined : getIntRoot(this.den, degree);
@@ -132,7 +126,6 @@ export class Rational {
     return Rational.of(this.num ** BigInt(exponent), this.den ** BigInt(exponent));
   }
 
-  // is_big: mpz keeps a numerator or denominator outside a 32-bit int as a bignum.
   isBig() {
     return isBigInt(this.num) || isBigInt(this.den);
   }

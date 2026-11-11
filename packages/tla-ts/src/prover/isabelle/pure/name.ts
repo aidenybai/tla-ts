@@ -1,8 +1,5 @@
-// Ported from Isabelle2025's Pure/name.ML and the name bumping of Pure/General/symbol.ML.
-// Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
-// contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/name.ML and Pure/General/symbol.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-// Symbol.explode: \<name> symbols count as one symbol.
 const explodeSymbols = (text: string): string[] => text.match(/\\<\^?[A-Za-z0-9_']*>|[^]/gu) ?? [];
 
 const isRawSymbolic = (symbol: string) => symbol.startsWith("\\<") && !symbol.startsWith("\\<^");
@@ -48,7 +45,6 @@ const cleanIndex = (name: string): [string, number] => {
 
 export const cleanName = (name: string) => cleanIndex(name)[0];
 
-// Name.context: the declared names with their latest renaming.
 export type NameContext = ReadonlyMap<string, string | undefined>;
 
 export const declareName = (name: string, context: NameContext): NameContext => {
@@ -65,7 +61,6 @@ export const emptyNameContext: NameContext = new Map([
 export const makeNameContext = (names: readonly string[]) =>
   names.reduce((context, name) => declareName(name, context), emptyNameContext);
 
-// Name.variant: a name distinct from the declared ones, keeping a suffix of underscores.
 export const variantName = (name: string, context: NameContext): [string, NameContext] => {
   const [base, count] = cleanIndex(name);
   if (!context.has(base)) return [base + "_".repeat(count), declareName(base, context)];
@@ -79,7 +74,7 @@ export const variantName = (name: string, context: NameContext): [string, NameCo
   return [current + "_".repeat(count), declareName(current, renamed)];
 };
 
-export const variantNames = (names: readonly string[], context: NameContext) => {
+const variantNames = (names: readonly string[], context: NameContext) => {
   let current = context;
   return names.map((name) => {
     const [variant, next] = variantName(name, current);
@@ -91,8 +86,6 @@ export const variantNames = (names: readonly string[], context: NameContext) => 
 export const variantList = (used: readonly string[], names: readonly string[]) =>
   variantNames(names, makeNameContext(used));
 
-// Name.is_bound and Name.bound: the names of loose bound variables in nets and printing.
-// Name.is_bound: the names the simplifier gives the free variables standing for bound ones.
 export const isBoundName = (name: string) => name.startsWith(":");
 
 export const boundName = (index: number) => `:${String(index).padStart(3, "0")}`;

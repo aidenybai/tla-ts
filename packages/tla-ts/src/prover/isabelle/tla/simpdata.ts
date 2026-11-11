@@ -1,10 +1,4 @@
-// The simplifier as Isabelle/TLA+ sets it up in simplifier_setup.ML and PredicateLogic.thy (BSD
-// licensed, see LICENSE): how theorems become rewrite rules, the solvers, the neq simproc, and the
-// simpset of the reference heap.
-//
-// The heap's only looper, "split PredicateLogic.cond", is left out: its rule splitCond has the
-// premise isBool(Q(x)), so Splitter.split_tac never composes it with a goal and the looper always
-// fails.
+// Ported from Isabelle/TLA+'s simplifier_setup.ML and PredicateLogic.thy, BSD licensed, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { genAll, reflexiveThm } from "../pure/drule";
@@ -48,6 +42,9 @@ const isConstApp = (name: string, arity: number, term: Term): boolean =>
     ? term.kind === "Const" && term.name === name
     : term.kind === "App" && isConstApp(name, arity - 1, term.fun);
 
+const getPredicateFact = (logic: TlaLogic, name: string) =>
+  getFact(logic, `PredicateLogic.${name}`);
+
 const catchThm = <Result>(derive: () => Result): Result | undefined => {
   try {
     return derive();
@@ -58,11 +55,9 @@ const catchThm = <Result>(derive: () => Result): Result | undefined => {
 };
 
 const getRewriting = (logic: TlaLogic) => {
-  const fact = (name: string) => getFact(logic, `PredicateLogic.${name}`);
-  const eqReflection = fact("eq_reflection");
-  const eqTrueI = fact("eqTrueI");
-  const neqToEqFalse = rs(fact("neq_conv_eq_False"), eqReflection);
-  // Simpdata.mk_eq
+  const eqReflection = getPredicateFact(logic, "eq_reflection");
+  const eqTrueI = getPredicateFact(logic, "eqTrueI");
+  const neqToEqFalse = rs(getPredicateFact(logic, "neq_conv_eq_False"), eqReflection);
   const mkEq = (thm: Thm): Thm => {
     const conclusion = conclOf(thm);
     const concl = conclusion.kind === "App" ? conclusion : undefined;
@@ -78,22 +73,36 @@ const getRewriting = (logic: TlaLogic) => {
       return rs(thm, neqToEqFalse);
     return rs(rs(thm, eqTrueI), eqReflection);
   };
-  // The final Simpdata.mksimps_pairs: the rules that split a premise by its outermost operator,
-  // and whether to simplify what they give.
   const pairs = new Map<string, { rules: Thm[]; isSimplified: boolean }>([
-    ["PredicateLogic.not", { rules: [fact("boolifyFalseI")], isSimplified: true }],
-    ["PredicateLogic.iff", { rules: [fact("iffThenBoolifyEqual")], isSimplified: true }],
-    ["PredicateLogic.imp", { rules: [fact("mp")], isSimplified: false }],
-    ["PredicateLogic.conj", { rules: [fact("conjD1"), fact("conjD2")], isSimplified: false }],
-    ["PredicateLogic.All", { rules: [fact("spec")], isSimplified: false }],
+    [
+      "PredicateLogic.not",
+      { rules: [getPredicateFact(logic, "boolifyFalseI")], isSimplified: true },
+    ],
+    [
+      "PredicateLogic.iff",
+      { rules: [getPredicateFact(logic, "iffThenBoolifyEqual")], isSimplified: true },
+    ],
+    ["PredicateLogic.imp", { rules: [getPredicateFact(logic, "mp")], isSimplified: false }],
+    [
+      "PredicateLogic.conj",
+      {
+        rules: [getPredicateFact(logic, "conjD1"), getPredicateFact(logic, "conjD2")],
+        isSimplified: false,
+      },
+    ],
+    ["PredicateLogic.All", { rules: [getPredicateFact(logic, "spec")], isSimplified: false }],
     ["PredicateLogic.TRUE", { rules: [], isSimplified: false }],
     ["PredicateLogic.FALSE", { rules: [], isSimplified: false }],
     [
       "PredicateLogic.cond",
-      { rules: [rs(fact("if_bool_equiv_conj"), fact("iffD1"))], isSimplified: false },
+      {
+        rules: [
+          rs(getPredicateFact(logic, "if_bool_equiv_conj"), getPredicateFact(logic, "iffD1")),
+        ],
+        isSimplified: false,
+      },
     ],
   ]);
-  // Simpdata.mk_atomize
   const atoms = (context: SimpContext, thm: Thm): Thm[] => {
     const concl = conclOf(thm);
     if (!(concl.kind === "App" && isConstApp("PredicateLogic.Trueprop", 1, concl))) return [thm];
@@ -120,17 +129,19 @@ const getRewriting = (logic: TlaLogic) => {
 };
 
 const getSolvers = (logic: TlaLogic): { unsafe: Solver; safe: Solver } => {
-  const fact = (name: string) => getFact(logic, `PredicateLogic.${name}`);
   const solutions = [
     reflexiveThm,
-    fact("trueI"),
-    fact("refl"),
-    fact("iff_refl"),
-    fact("notFalseI"),
+    getPredicateFact(logic, "trueI"),
+    getPredicateFact(logic, "refl"),
+    getPredicateFact(logic, "iff_refl"),
+    getPredicateFact(logic, "notFalseI"),
   ];
-  const contradictions = [fact("falseE"), fact("not_refl_False")];
-  const conjI = fact("conjI");
-  const simpImpliesI = fact("simp_impliesI");
+  const contradictions = [
+    getPredicateFact(logic, "falseE"),
+    getPredicateFact(logic, "not_refl_False"),
+  ];
+  const conjI = getPredicateFact(logic, "conjI");
+  const simpImpliesI = getPredicateFact(logic, "simp_impliesI");
   const introSimpImplies =
     (context: SimpContext): GoalTactic =>
     (index) =>
@@ -167,12 +178,13 @@ const getSolvers = (logic: TlaLogic): { unsafe: Solver; safe: Solver } => {
   };
 };
 
-// PredicateLogic.thy's neq simproc: rewrites x = y to FALSE given y ~= x or (y = x) = FALSE.
 const getNeqProc = (logic: TlaLogic) => {
-  const fact = (name: string) => getFact(logic, `PredicateLogic.${name}`);
-  const eqReflection = fact("eq_reflection");
-  const neqToEqFalse = rs(rs(fact("not_sym"), fact("neq_conv_eq_False")), eqReflection);
-  const symEqLeft = rs(fact("symEqLeft"), eqReflection);
+  const eqReflection = getPredicateFact(logic, "eq_reflection");
+  const neqToEqFalse = rs(
+    rs(getPredicateFact(logic, "not_sym"), getPredicateFact(logic, "neq_conv_eq_False")),
+    eqReflection,
+  );
+  const symEqLeft = rs(getPredicateFact(logic, "symEqLeft"), eqReflection);
   const isNeq = (eq: Term, lhs: Term, rhs: Term, thm: Thm) => {
     const prop = thm.prop;
     if (prop.kind !== "App" || prop.arg.kind !== "App") return false;

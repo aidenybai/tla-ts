@@ -1,23 +1,19 @@
-// Ported from Isabelle2025's Pure/raw_simplifier.ML, the simpset and its rewrite rules. Copyright
-// (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
-// LICENSE.
-//
-// Isabelle/TLA+ declares no congruence procedures, so the simpset leaves them out.
+// Ported from Isabelle2025's Pure/raw_simplifier.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { etaContract } from "./envir";
+import { emptyTEnv, etaContract } from "./envir";
 import { symmetricThm } from "./drule";
 import { destEquals, isEquals, occs, stripImpConcl, stripImpPrems } from "./logic";
 import { emptyNet, insertNet, keyOfTerm, type Net } from "./net";
 import { isFirstOrder, isPattern, matches } from "./pattern";
 import { emptyTable, type Table } from "./table";
-import { emptyTEnv } from "./envir";
 import { emptyTyEnv } from "./type";
 import {
   aconv,
   existsSubterm,
   existsType,
   foldVars,
+  eqTerm,
   eqTyp,
   headOf,
   type Term,
@@ -75,8 +71,6 @@ export interface Simpset {
   readonly safeSolvers: readonly Solver[];
 }
 
-// The part of an Isabelle proof context that the simplifier reads: the simpset, the time limits,
-// and the counter that names the free variables standing for bound ones.
 export interface SimpContext {
   readonly limits: Limits;
   readonly simpset: Simpset;
@@ -94,9 +88,10 @@ export const congName = (term: Term): CongName | undefined =>
       ? { isConst: false, name: term.name }
       : undefined;
 
-const varsOf = (term: Term) => foldVars((atom, result: Var[]) => [...result, atom], term, []);
+export const varsOf = (term: Term): Var[] =>
+  foldVars((atom, result: Var[]) => [...result, atom], term, []);
 
-const hasVar = (vars: readonly Var[], variable: Var) =>
+export const hasVar = (vars: readonly Var[], variable: Var) =>
   vars.some(
     (other) =>
       other.name === variable.name &&
@@ -116,8 +111,6 @@ const hasNewTVar = (type: Typ, keys: ReadonlySet<string>): boolean => {
   return false;
 };
 
-// rewrite_rule_extra_vars: whether the right-hand sides have variables outside the left-hand side
-// and the premises.
 const rewriteRuleExtraVars = (prems: readonly Term[], elhs: Term, erhss: readonly Term[]) => {
   const terms = [elhs, ...prems];
   const vars = terms.flatMap(varsOf);
@@ -151,36 +144,7 @@ const vperm = (left: Term, right: Term): boolean => {
   if (left.kind === "Abs" && right.kind === "Abs") return vperm(left.body, right.body);
   if (left.kind === "App" && right.kind === "App")
     return vperm(left.fun, right.fun) && vperm(left.arg, right.arg);
-  return aconvExact(left, right);
-};
-
-const aconvExact = (left: Term, right: Term): boolean => {
-  if (left.kind !== right.kind) return false;
-  switch (left.kind) {
-    case "Const":
-    case "Free":
-      return right.kind === left.kind && left.name === right.name && eqTyp(left.type, right.type);
-    case "Var":
-      return (
-        right.kind === "Var" &&
-        left.name === right.name &&
-        left.index === right.index &&
-        eqTyp(left.type, right.type)
-      );
-    case "Bound":
-      return right.kind === "Bound" && left.index === right.index;
-    case "Abs":
-      return (
-        right.kind === "Abs" &&
-        left.name === right.name &&
-        eqTyp(left.type, right.type) &&
-        aconvExact(left.body, right.body)
-      );
-    case "App":
-      return (
-        right.kind === "App" && aconvExact(left.fun, right.fun) && aconvExact(left.arg, right.arg)
-      );
-  }
+  return eqTerm(left, right);
 };
 
 const isVarPerm = (left: Term, right: Term) => {
@@ -212,7 +176,7 @@ const decompSimp = (thm: Thm): Decomposed => {
   return { prems, lhs, elhs, rhs, perm };
 };
 
-interface RawRrule {
+export interface RawRrule {
   readonly thm: Thm;
   readonly lhs: Term;
   readonly elhs: Term;
@@ -249,7 +213,6 @@ const mkRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
   return rruleEqTrue(context, thm, decomposed.lhs, decomposed.elhs, decomposed.rhs, thm);
 };
 
-// default_reorient: catches looping rules and stupid orientations.
 const defaultReorient = (prems: readonly Term[], lhs: Term, rhs: Term) =>
   rewriteRuleExtraVars(prems, lhs, [rhs]) ||
   headOf(lhs).kind === "Var" ||
@@ -277,7 +240,6 @@ const orientRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
   return rruleEqTrue(context, symmetric, flipped.lhs, flipped.elhs, flipped.rhs, thm);
 };
 
-// extract_safe_rrules: the rewrite rules of an assumption, oriented to avoid loops.
 export const extractSafeRrules = (context: SimpContext, thm: Thm): RawRrule[] =>
   context.simpset.mkRews.mk(thm, context).flatMap((rew) => orientRrule(context, rew));
 
@@ -295,7 +257,6 @@ export const addSimps = (context: SimpContext, thms: readonly Thm[]): Simpset =>
     .flatMap((rew) => mkRrule(context, rew))
     .reduce((simpset, raw) => insertRrule(raw, simpset), context.simpset);
 
-// mk_procrule: the rewrite rule a simplification procedure proves.
 export const mkProcrule = (thm: Thm): Rrule[] => {
   const decomposed = decompSimp(thm);
   if (rewriteRuleExtraVars(decomposed.prems, decomposed.lhs, [decomposed.rhs])) return [];
@@ -307,7 +268,6 @@ export const addPrems = (thms: readonly Thm[], simpset: Simpset): Simpset => ({
   prems: [...thms, ...simpset.prems],
 });
 
-// Rebuilds a rule net from Net.entries, as the reference simpset lists them.
 export const rulesFromEntries = (thms: readonly Thm[]): Net<Rrule> =>
   thms.reduceRight<Net<Rrule>>((net, thm) => {
     const decomposed = decompSimp(thm);
@@ -319,7 +279,6 @@ export const emptyCongs: Table<string, Thm> = emptyTable((left: string, right: s
   left === right ? 0 : left < right ? -1 : 1,
 );
 
-// empty_ss: rewrites with meta-equalities only, and solves no subgoal.
 export const emptySimpset: Simpset = {
   rules: emptyNet,
   prems: [],
@@ -335,4 +294,9 @@ export const emptySimpset: Simpset = {
   loopTacs: [],
   unsafeSolvers: [],
   safeSolvers: [],
+};
+
+export const makeSimpContext = (limits: Limits, rules: readonly Thm[]): SimpContext => {
+  const empty = { limits, simpset: emptySimpset, bounds: 0 };
+  return { ...empty, simpset: addSimps(empty, rules) };
 };

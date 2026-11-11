@@ -1,5 +1,4 @@
-// A port of tlapm's obligation generation (Proof.Gen and Module.Gen): leaf proofs become obligations
-// whose context is everything the proof may use at that point.
+// A port of tlapm's obligation generation (Proof.Gen and Module.Gen).
 
 import { TlapmBugError, TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
@@ -40,7 +39,6 @@ const isAnonymous = (step: StepNumber | undefined) => step?.kind === "Named" && 
 export const getTrue = (from: { location?: Locus }) =>
   at({ kind: "Internal", builtin: "TRUE" }, from);
 
-// Each visible fact of the sequent, shifted past the hypotheses after it.
 const getAssumedFacts = (offset: number, sequent: Sequent) =>
   sequent.context.flatMap((hyp, index) =>
     hyp.kind === "Fact" && hyp.visibility === "Visible"
@@ -60,8 +58,6 @@ const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
   };
 };
 
-// The proof of an assertion leaves the always scope when the assertion assumes a fact that holds
-// only now.
 export const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step, time: Time) => {
   const visibility: Visibility = isAnonymous(step.step) ? "Visible" : "Hidden";
   const hyps = sequent.context.map((hyp): Hyp =>
@@ -101,8 +97,6 @@ export const useAssertion = (
   };
 };
 
-// A cited step or definition keeps the scope it was proved in, and any other fact takes the
-// current one.
 const getFactTime = (context: Hyp[], fact: Expr, time: Time): Time => {
   if (fact.kind !== "Ix") return time;
   const hyp = context[context.length - fact.index];
@@ -157,7 +151,6 @@ const setExpression = (
   return result;
 };
 
-// The lines of tlapm's --toolbox and --line options, which select the proofs to generate.
 export interface LineRange {
   start: number;
   end: number;
@@ -363,7 +356,6 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
     return [sequent.context, generated.obligations ?? []];
   };
 
-  // The definitions go first, then each fact on its own, shifting the facts after it.
   const mutate = (
     context: Hyp[],
     mode: "Use" | "Hide",
@@ -384,7 +376,6 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
     return [last, [...first, ...others]];
   };
 
-  // collect: a QED's obligations come before its sibling steps', and a step's own before its proof's.
   const collect = (proof: Proof): Obligation[] => {
     const obligations: Obligation[] = [];
     const visitProof = (item: Proof) => {
@@ -403,7 +394,6 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
     return obligations;
   };
 
-  // Module.Gen.generate.
   const generateModule = (
     context: Hyp[],
     module: Mule,

@@ -12,6 +12,8 @@ export default defineConfig({
       "packages/tla-ts/tests/conformance/sany.json",
       "packages/tla-ts/tests/conformance/tlapm.json",
       "packages/tla-ts/tests/conformance/proofs.json",
+      "packages/conformance/test",
+      "packages/conformance/baselines",
     ],
   },
   lint: {
@@ -29,8 +31,6 @@ export default defineConfig({
     },
     overrides: [
       {
-        // TypeScript that tla-ts checks declares a variable without a value to start it at every
-        // value of its type, and compares sets and records by value.
         files: ["packages/tla-ts/tests/fixtures/typescript/**/*.ts"],
         rules: { "no-unassigned-vars": "off", "no-constant-binary-expression": "off" },
       },

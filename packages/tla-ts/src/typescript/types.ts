@@ -5,12 +5,10 @@ import { wrap } from "./formula";
 
 export type Kind = "sequence" | "set" | "map" | "string" | "other";
 
-// Why a type has no finite set of values.
 interface Infinite {
   message: string;
 }
 
-// The checker only gives type arguments of type references, which the public API can't detect.
 const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
   (type.flags & ts.TypeFlags.Object) !== 0 &&
   ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0;
@@ -21,13 +19,11 @@ const isSetType = (type: ts.Type) => ["Set", "ReadonlySet"].includes(getTypeName
 
 const isMapType = (type: ts.Type) => ["Map", "ReadonlyMap"].includes(getTypeName(type));
 
-// Arrays, tuples, and unions of them, such as [] | [number] | [number, number].
 const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean =>
   type.isUnion()
     ? type.types.every((member) => isSequenceType(member, checker))
     : checker.isArrayType(type) || checker.isTupleType(type);
 
-// Whether every member of a type, such as each literal in a union, has the given flags.
 const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
   type.isUnion()
     ? type.types.every((member) => isEvery(member, flags))
@@ -49,7 +45,6 @@ export const isBooleanLike = (node: ts.Expression, context: Context) =>
 export const isSet = (node: ts.Expression, context: Context) =>
   isSetType(context.checker.getTypeAtLocation(node));
 
-// TLA+ records only have identifier fields, so an object with numeric keys becomes a function.
 export const isNumericKey = (key: string) => /^-?\d+$/.test(key);
 
 const getLiteral = (type: ts.Type, context: Context) => {
@@ -73,7 +68,6 @@ const getInfinite = (type: ts.Type, reason: string, context: Context): Infinite 
   message: `${context.checker.typeToString(type)} isn't finite: ${reason}`,
 });
 
-// The first type that has no end, or the domains of every type.
 const findDomains = (types: readonly ts.Type[], context: Context) =>
   types.reduce<string[] | Infinite>((domains, type) => {
     if (!Array.isArray(domains)) return domains;
@@ -81,7 +75,6 @@ const findDomains = (types: readonly ts.Type[], context: Context) =>
     return typeof domain === "string" ? [...domains, domain] : domain;
   }, []);
 
-// The set of every value that a finite type allows, which TLC enumerates.
 export const findDomain = (type: ts.Type, context: Context): string | Infinite => {
   const checker = context.checker;
   if (type.flags & ts.TypeFlags.Boolean) return "BOOLEAN";
@@ -95,7 +88,7 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
     const enumerated = literals
       .filter((literal) => literal !== undefined)
       .sort((left, right) =>
-        /^-?\d+$/.test(left) && /^-?\d+$/.test(right) ? Number(left) - Number(right) : 0,
+        isNumericKey(left) && isNumericKey(right) ? Number(left) - Number(right) : 0,
       );
     return [...(enumerated.length > 0 ? [`{${enumerated.join(", ")}}`] : []), ...others]
       .map((domain, _, domains) => (domains.length > 1 ? wrap(domain) : domain))

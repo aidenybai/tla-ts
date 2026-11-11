@@ -1,8 +1,4 @@
-// Ported from Z3 (src/smt/smt_quantifier.cpp), MIT license, see
-// z3-license.txt. Z3's default quantifier plugin: patterns go to an eager matcher, except that a
-// quantifier with only multi-patterns keeps one of them eager and sends the rest to a lazy matcher
-// that runs in the final check. With MBQI, the model finder and the model checker turn candidate
-// models into instances.
+// Ported from Z3 (src/smt/smt_quantifier.cpp), MIT license, see z3-license.txt.
 import {
   CHECK_MODEL_RESTART,
   CHECK_MODEL_SAT,
@@ -22,8 +18,6 @@ import { QiQueue } from "./qi-queue";
 const QI_MAX_EAGER_MULTIPATTERNS = 0;
 const QI_MAX_LAZY_MULTIPATTERN_MATCHING = 2;
 
-// Model-based quantifier instantiation: the finder completes candidate models, the checker refutes
-// them with instances.
 interface Mbqi {
   finder: ModelFinder;
   checker: ModelChecker;
@@ -96,7 +90,6 @@ export class DefaultQuantifierManager {
     }
   }
 
-  // is_shared: a ground term of a pattern, once a quantifier was asserted.
   isShared(node: Enode) {
     return this.isActive && (this.mam.isShared(node) || this.lazyMam.isShared(node));
   }

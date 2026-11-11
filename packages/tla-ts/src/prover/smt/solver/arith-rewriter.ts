@@ -1,6 +1,4 @@
-// Ported from Z3 (src/ast/rewriter/arith_rewriter.cpp), MIT license, see z3-license.txt. Only
-// linear arithmetic and nonlinear factoring are ported, without powers, algebraic numbers or
-// hoisting, which tlapm's encoding does not produce.
+// Ported from Z3 (src/ast/rewriter/arith_rewriter.cpp), MIT license, see z3-license.txt.
 import {
   OP_ADD,
   OP_GE,
@@ -23,7 +21,6 @@ import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
 import type { Rewrite } from "./rewriter-tpl";
 import { shrink } from "./array";
 
-// The parameters that asserted_formulas gives the kernel's rewriter, which also simplifies instances.
 export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
   isSom: true,
   isSortSums: true,
@@ -31,7 +28,6 @@ export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
   isGcdRounding: true,
 };
 
-// The defaults, which the simplify tactic uses.
 export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isSom: false,
   isSortSums: false,
@@ -39,16 +35,13 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isGcdRounding: false,
 };
 
-// The ceiling of the quotient by a positive divisor.
 const getCeilDiv = (dividend: bigint, divisor: bigint) => -getEuclideanDiv(-dividend, divisor);
 
-// symmod: the remainder closest to zero, for a positive modulus.
 const getSymmetricMod = (value: bigint, modulus: bigint) => {
   const remainder = getEuclideanMod(value, modulus);
   return 2n * remainder > modulus ? remainder - modulus : remainder;
 };
 
-// The running gcd of the coefficients of an atom's sides, and the number of their constants.
 interface GcdState {
   gcd: bigint;
   isFirst: boolean;
@@ -63,7 +56,6 @@ const getInverse = (kind: number) =>
   kind === KIND_LE ? KIND_GE : kind === KIND_GE ? KIND_LE : KIND_EQ;
 
 export class ArithRewriter extends PolyRewriter {
-  // The buffer of isNonNegative's factors.
   private factors: number[] = [];
 
   mkLe(left: number, right: number) {
@@ -87,7 +79,6 @@ export class ArithRewriter extends PolyRewriter {
     return this.mkLeGeEq(left, right, KIND_EQ);
   }
 
-  // mk_idiv_core and mk_mod_core: SMT-LIB integer division, whose remainder is non-negative.
   private mkIdivApp(left: number, right: number) {
     return this.manager.mkApp(OP_IDIV, [left, right], SORT_INT);
   }
@@ -96,7 +87,6 @@ export class ArithRewriter extends PolyRewriter {
     return this.manager.mkApp(OP_MOD, [left, right], SORT_INT);
   }
 
-  // arith_util's mk_mul, which makes no product of one factor.
   private mkFlatMulApp(args: number[]) {
     return args.length === 1 ? args[0] : this.manager.mkApp(OP_MUL, args, SORT_INT);
   }
@@ -105,7 +95,6 @@ export class ArithRewriter extends PolyRewriter {
     return this.manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], SORT_INT);
   }
 
-  // flat_mul: the factors of nested products, in Z3's order.
   private getFlatMul(expr: number) {
     const args = [expr];
     for (let index = 0; index < args.length; index++) {
@@ -124,7 +113,6 @@ export class ArithRewriter extends PolyRewriter {
     args.pop();
   }
 
-  // remove_divisor: div ab ac is div b c when a is positive, and div -b -c when it is negative.
   private removeDivisor(factor: number, dividend: number, divisor: number) {
     const manager = this.manager;
     const dividendArgs = this.getFlatMul(dividend);
@@ -150,7 +138,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // get_divides: div ab ac is div b c, and common numeral factors cancel.
   private getDivides(dividend: number, divisor: number) {
     const manager = this.manager;
     const dividendArgs = this.getFlatMul(dividend);
@@ -168,8 +155,7 @@ export class ArithRewriter extends PolyRewriter {
     }
     for (const arg of divisorArgs) {
       const value = manager.getNumeral(arg);
-      // A common factor of -1 stays, or the rewriting of (div (* -1 x) (* -1 y)) diverges. Z3's
-      // check stores the -1 as the dividend's value.
+      // Z3 stores a common factor of -1 as the dividend's value, or (div (* -1 x) (* -1 y)) diverges.
       if (marked.has(arg) && value !== -1n) return this.removeDivisor(arg, dividend, divisor);
       if (marked.has(arg)) dividendValue = -1n;
       if (value === undefined) continue;
@@ -189,7 +175,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // mk_idiv_core.
   mkIdiv(left: number, right: number) {
     const manager = this.manager;
     this.currSort = SORT_INT;
@@ -234,7 +219,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // mk_mod_core.
   mkMod(left: number, right: number) {
     const manager = this.manager;
     this.currSort = SORT_INT;
@@ -246,7 +230,6 @@ export class ArithRewriter extends PolyRewriter {
     const zero = manager.mkNumeral(0n);
     if (left === right && divisor === undefined)
       return this.mkIntIte(manager.mkEq(right, zero), this.mkModApp(zero, zero), zero);
-    // mod is idempotent on a nonzero modulus.
     if (manager.getOp(left) === OP_MOD && manager.getArg(left, 1) === right) {
       if (divisor !== undefined && divisor !== 0n) return left;
       if (divisor === undefined)
@@ -259,7 +242,6 @@ export class ArithRewriter extends PolyRewriter {
           2,
         );
     }
-    // Propagates mod inside a sum or product only if there is something to reduce.
     if (divisor !== undefined && divisor > 0n && (this.isAdd(left) || this.isMul(left))) {
       let isChanged = false;
       const args = manager.mapArgs(left, (arg) => {
@@ -292,7 +274,6 @@ export class ArithRewriter extends PolyRewriter {
           3,
         );
     }
-    // For a symbolic modulus, the summands that are multiples of it go: mod (a + k*y) y = mod a y.
     if (divisor === undefined && this.isAdd(left)) {
       const args: number[] = [];
       for (let index = 0; index < manager.getNumArgs(left); index++) {
@@ -333,7 +314,6 @@ export class ArithRewriter extends PolyRewriter {
         ),
         1,
       );
-    // mod x -y = mod x y.
     if (
       this.isMul(right) &&
       manager.getNumArgs(right) === 2 &&
@@ -369,7 +349,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // mk_div_core: division by a numeral other than 0 is a product.
   mkDiv(left: number, right: number) {
     const manager = this.manager;
     this.currSort = manager.sorts[left];
@@ -382,7 +361,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // mk_to_int_core: (to_int (+ 1.0 (to_real x) y)) is (+ 1 x (to_int y)).
   mkToInt(arg: number) {
     const manager = this.manager;
     if (manager.isInt(arg)) return arg;
@@ -399,7 +377,6 @@ export class ArithRewriter extends PolyRewriter {
       else if (manager.getOp(child) === OP_TO_REAL) intArgs.push(manager.getArg(child, 0));
       else realArgs.push(child);
     }
-    // Z3 makes a sum of one argument, which the manager leaves out.
     const mkSum = (args: number[], sort: number) =>
       args.length === 1 ? args[0] : manager.mkApp(op, args, sort);
     if (realArgs.length === 0) return this.reduce(mkSum(intArgs, SORT_INT), 1);
@@ -412,7 +389,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // mk_to_real_core, with push_to_real: to_real distributes over sums and products.
   mkToReal(arg: number) {
     const manager = this.manager;
     if (manager.isNumeral(arg)) return manager.mkRealNumeral(this.getValue(arg));
@@ -429,8 +405,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // mk_is_int: a numeral is decided, and a term built from integers by sums and products is an
-  // integer. Any other term x is an integer when (to_real (to_int x)) is x.
   mkIsInt(arg: number) {
     const manager = this.manager;
     if (manager.isNumeral(arg))
@@ -473,8 +447,6 @@ export class ArithRewriter extends PolyRewriter {
     else result.push(expr);
   }
 
-  // is_non_negative, without powers and sequences. It counts each factor's occurrences by scanning
-  // the factors, which are few, rather than by sorting them.
   private isNonNegative(expr: number) {
     if (!this.isMul(expr)) return false;
     const factors = this.factors;
@@ -502,13 +474,10 @@ export class ArithRewriter extends PolyRewriter {
       else return false;
     }
     if (numOdd === 0) return true;
-    // x * (x + 1) >= 0 holds for an integer x, as no integer lies strictly between -1 and 0, but
-    // not for a real one.
     if (numOdd !== 2 || !this.manager.isInt(expr)) return false;
     return this.isSuccessor(firstOdd, secondOdd) || this.isSuccessor(secondOdd, firstOdd);
   }
 
-  // Whether sum is base plus or minus one.
   private isSuccessor(base: number, sum: number) {
     if (!this.isAdd(sum)) return false;
     let offset = Rational.zero;
@@ -553,7 +522,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // is_separated. Like narg, the last negated polynomial lives until is_separated returns.
   private getSeparated(left: number, right: number, kind: number) {
     const manager = this.manager;
     if (kind === KIND_EQ || !this.manager.isNumeral(right)) return undefined;
@@ -613,7 +581,6 @@ export class ArithRewriter extends PolyRewriter {
     return this.reduce(manager.mkAnd(atoms), 2);
   }
 
-  // is_bound.
   private getBound(inputLeft: number, inputRight: number, inputKind: number) {
     const manager = this.manager;
     if (
@@ -658,9 +625,6 @@ export class ArithRewriter extends PolyRewriter {
     return undefined;
   }
 
-  // div_polynomial: the quotient, with a reference the caller owns, or undefined when a constant is
-  // not divisible and the atom is an equality. new_args is an expr_ref_buffer, which Z3 releases
-  // first to last as it returns.
   private dividePolynomial(expr: number, divisor: bigint, rounding: "floor" | "ceil" | "none") {
     const manager = this.manager;
     const newArgs: number[] = [];
@@ -695,8 +659,6 @@ export class ArithRewriter extends PolyRewriter {
     return quotient;
   }
 
-  // get_coeffs_gcd: the gcd of the coefficients, or 0 when there is no monomial, and the number of
-  // non-zero constants.
   private getCoeffsGcd(expr: number, state: GcdState) {
     for (let index = 0; index < this.getNumMonomials(expr); index++) {
       const arg = this.getMonomial(expr, index);
@@ -721,7 +683,6 @@ export class ArithRewriter extends PolyRewriter {
         : comparison === 0;
   }
 
-  // mk_le_ge_eq_core. Z3 holds the rewritten sides, new_arg1 and new_arg2, until it returns.
   private mkLeGeEq(originalLeft: number, originalRight: number, kind: number) {
     const manager = this.manager;
     const sides: number[] = [];
@@ -791,8 +752,7 @@ export class ArithRewriter extends PolyRewriter {
       const condition = manager.getArg(left, 0);
       const rightValue = this.getValue(right);
       const holds = (value: Rational) => this.isHolding(value, rightValue, kind);
-      // Z3 makes the negated condition before it knows whether the result uses it, and its
-      // conjunctions build an equality with arith_util::mk_eq but its disjunctions with m.mk_eq.
+      // Z3 makes the negated condition even when unused, and only its conjunctions use arith_util::mk_eq.
       const mkConjunct = (other: number) =>
         kind === KIND_EQ ? this.mkArithEq(other, right) : this.mkAtom(other, right, kind);
       if (this.manager.isNumeral(manager.getArg(left, 1))) {
@@ -847,7 +807,6 @@ export class ArithRewriter extends PolyRewriter {
     return this.factorLeGeEq(left, right, kind);
   }
 
-  // factor_le_ge_eq: a sum with a nonlinear factor f, fg >= 0, splits on the signs of f and g.
   private factorLeGeEq(left: number, right: number, kind: number) {
     if (!this.isZero(right)) return undefined;
     const factor = this.findNlFactor(left);
@@ -868,7 +827,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // arith_util::mk_eq: a numeral goes right, and otherwise the side with the smaller id goes left.
   private mkArithEq(left: number, right: number) {
     const manager = this.manager;
     const isSwapped =
@@ -881,7 +839,6 @@ export class ArithRewriter extends PolyRewriter {
     return manager.mkEq(lhs, rhs);
   }
 
-  // find_nl_factor: a factor of the first nonlinear product of a sum that divides every monomial.
   private findNlFactor(expr: number) {
     const sum = [expr];
     for (let index = 0; index < sum.length; index++) {
@@ -899,7 +856,6 @@ export class ArithRewriter extends PolyRewriter {
     return undefined;
   }
 
-  // get_nl_muls: the factors of a product that are not numerals.
   private getNlMuls(expr: number, muls: number[]) {
     if (this.isMul(expr))
       for (let index = 0; index < this.manager.getNumArgs(expr); index++)
@@ -918,7 +874,6 @@ export class ArithRewriter extends PolyRewriter {
     return this.isMulFactor(factor, expr);
   }
 
-  // remove_factor: the sum or product without one occurrence of the factor in each monomial.
   private removeNlFactor(factor: number, expr: number): number {
     const manager = this.manager;
     const sort = manager.sorts[expr];

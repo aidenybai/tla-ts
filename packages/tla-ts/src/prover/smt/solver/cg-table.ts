@@ -1,9 +1,6 @@
-// Ported from Z3 (src/smt/smt_cg_table.h, src/smt/smt_cg_table.cpp), MIT license, see
-// z3-license.txt. The congruence table maps a declaration and the roots of its arguments to the
-// congruence root, so f(a) and f(b) meet when a and b are merged. Equalities are commutative.
+// Ported from Z3 (src/smt/smt_cg_table.h, src/smt/smt_cg_table.cpp), MIT license, see z3-license.txt.
 import { CONGRUENCE_JUSTIFICATIONS, type Enode } from "./enode";
 
-// The hash of an equality between the classes of first and second, in either order.
 const getEqHash = (decl: number, first: number, second: number) =>
   first < second
     ? (Math.imul(Math.imul(decl, 0x9e3779b1) + first, 0x85ebca6b) + second) | 0
@@ -25,7 +22,6 @@ const getNodeHash = (node: Enode) => {
   return hash;
 };
 
-// Whether node is decl applied to nodes equal to first and second, in either order for an equality.
 const isPairCongruentTo = (node: Enode, first: Enode, second: Enode, isEq: boolean) => {
   const nodeFirst = node.getArg(0).root;
   const nodeSecond = node.getArg(1).root;
@@ -43,8 +39,6 @@ const isCongruentTo = (node: Enode, decl: number, args: Enode[], isEq: boolean) 
   return true;
 };
 
-// congruent: whether two nodes apply one declaration to equal arguments. Only equalities are
-// commutative.
 export const isCongruent = (first: Enode, second: Enode) => {
   if (first.decl !== second.decl || first.numArgs !== second.numArgs) return false;
   if (first.numArgs === 2)
@@ -54,7 +48,6 @@ export const isCongruent = (first: Enode, second: Enode) => {
   return true;
 };
 
-// The justification of a node's equality with the congruent node that the table returned for it.
 export const getCongruenceJustification = (node: Enode, congruent: Enode) =>
   CONGRUENCE_JUSTIFICATIONS[node.isEq && congruent.getArg(0).root !== node.getArg(0).root ? 1 : 0];
 
@@ -62,8 +55,6 @@ const EMPTY = 0;
 const FULL = 1;
 const DELETED = 2;
 
-// Open addressing with linear probing. An erased node leaves a deleted slot, which probes pass over,
-// until the table is rebuilt.
 export class CgTable {
   private nodes = Array<Enode | null>(1024).fill(null);
   private hashes = new Int32Array(1024);
@@ -101,7 +92,6 @@ export class CgTable {
     return undefined;
   }
 
-  // Returns the congruence root for node, which is node itself when it is new.
   insert(node: Enode) {
     const hash = getNodeHash(node);
     const existing = this.findNode(node, hash);
@@ -122,7 +112,6 @@ export class CgTable {
     this.numFull++;
   }
 
-  // Drops the deleted slots, and doubles the table when it is more than a quarter full.
   private rebuild() {
     const nodes = this.nodes;
     const hashes = this.hashes;
@@ -143,12 +132,10 @@ export class CgTable {
     }
   }
 
-  // get_enode_eq_to: the congruence root of decl applied to nodes equal to args, if any.
   findFor(decl: number, args: Enode[], isEq: boolean) {
     return this.find(decl, args, isEq, getHash(decl, args, isEq));
   }
 
-  // The congruence root of a node congruent to node.
   findCongruent(node: Enode) {
     return this.findNode(node, getNodeHash(node));
   }
@@ -167,9 +154,5 @@ export class CgTable {
     this.states[slot] = DELETED;
     this.numFull--;
     this.numDeleted++;
-  }
-
-  contains(node: Enode) {
-    return this.getSlot(node) !== -1;
   }
 }

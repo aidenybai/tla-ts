@@ -4,7 +4,6 @@ import { check, type CheckResult } from "../../src";
 import { describe, expect, it } from "vite-plus/test";
 import { compile } from "../../src/typescript/compile";
 
-// Each directory holds a spec from tlaplus/Examples, its config, and a TypeScript port of it.
 const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
 
 const getSummary = (result: CheckResult) => ({

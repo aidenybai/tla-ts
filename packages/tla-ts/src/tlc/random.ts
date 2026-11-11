@@ -1,9 +1,11 @@
+import { toEnumeratedSet } from "../builtins";
 import { TlaEvaluationError } from "../errors";
 import type { TlcVersion } from "./version";
 import {
   createRecord,
   createSortedFunction,
   createTuple,
+  formatValue,
   getFunctionDomain,
   isEmptySet,
   toFiniteSet,
@@ -21,16 +23,15 @@ const MULTIPLIER = 0x5deece66dn;
 const SEED_MASK = (1n << 48n) - 1n;
 const MAXIMUM_INT = 2147483647;
 
-// java.util.Random, which TLC's RandomEnumerableValues extends.
 export const createJavaRandom = (seed: bigint): JavaRandom => {
-  const state = { value: (BigInt.asUintN(64, seed) ^ MULTIPLIER) & SEED_MASK };
+  let state = (BigInt.asUintN(64, seed) ^ MULTIPLIER) & SEED_MASK;
   const next = (bits: number) => {
-    state.value = (state.value * MULTIPLIER + 0xbn) & SEED_MASK;
-    return Number(BigInt.asIntN(32, state.value >> BigInt(48 - bits)));
+    state = (state * MULTIPLIER + 0xbn) & SEED_MASK;
+    return Number(BigInt.asIntN(32, state >> BigInt(48 - bits)));
   };
   return {
     setSeed: (value) => {
-      state.value = (BigInt.asUintN(64, value) ^ MULTIPLIER) & SEED_MASK;
+      state = (BigInt.asUintN(64, value) ^ MULTIPLIER) & SEED_MASK;
     },
     nextInt: (bound) => {
       const first = next(31);
@@ -46,7 +47,6 @@ export const createJavaRandom = (seed: bigint): JavaRandom => {
   };
 };
 
-// RandomGenerator.primes holds the 1341 consecutive primes from 1277011 to 1295953.
 const PRIMES: number[] = [];
 
 const isPrime = (candidate: number) => {
@@ -63,31 +63,26 @@ const getPrimes = () => {
   return PRIMES;
 };
 
-const nextPrime = (random: JavaRandom) => {
+export const nextPrime = (random: JavaRandom) => {
   const primes = getPrimes();
-  const choice = { index: primes.length };
-  while (choice.index === primes.length) {
-    choice.index = Math.floor(random.nextDouble() * primes.length);
-  }
-  return primes[choice.index];
+  let index = primes.length;
+  while (index === primes.length) index = Math.floor(random.nextDouble() * primes.length);
+  return primes[index];
 };
 
 const getPrimeFactors = (value: number) => {
   const factors: number[] = [];
-  const remaining = { value };
-  for (let divisor = 2; divisor * divisor <= remaining.value; divisor++) {
-    while (remaining.value % divisor === 0) {
+  let remaining = value;
+  for (let divisor = 2; divisor * divisor <= remaining; divisor++) {
+    while (remaining % divisor === 0) {
       factors.push(divisor);
-      remaining.value /= divisor;
+      remaining /= divisor;
     }
   }
-  if (remaining.value > 1) factors.push(remaining.value);
+  if (remaining > 1) factors.push(remaining);
   return factors;
 };
 
-// EnumerableValue.computeOptimalMandA: the smallest modulus m >= max(size, 9) that isn't a
-// multiple of 4 and has a repeated prime factor, and the multiplier 1 + the product of its
-// distinct prime factors.
 const getModulusAndMultiplier = (size: number) => {
   for (let modulus = Math.max(size, 9); ; modulus++) {
     const factors = getPrimeFactors(modulus);
@@ -101,41 +96,35 @@ const getModulusAndMultiplier = (size: number) => {
   }
 };
 
-// EnumerableValue.SubsetEnumerator: count indices below size from a full-period linear
-// congruential generator that starts at random.nextInt(size).
 const getSubsetIndicesMaster = (count: number, size: number, random: JavaRandom) => {
   if (size <= 0) return [];
   const generator = getModulusAndMultiplier(size);
-  const state = { index: BigInt(random.nextInt(size)) };
+  let index = BigInt(random.nextInt(size));
   const increment = BigInt(nextPrime(random));
   return Array.from({ length: count }, () => {
     do {
-      state.index = (generator.multiplier * state.index + increment) % generator.modulus;
-    } while (state.index >= size);
-    return state.index;
+      index = (generator.multiplier * index + increment) % generator.modulus;
+    } while (index >= size);
+    return index;
   });
 };
 
-// TLC 1.7.4's EnumerableValue.SubsetEnumerator: the i-th index is (x * i + a) mod size, for a
-// prime x above size and a = random.nextInt(size), so the first size indices are distinct.
 const getSubsetIndices174 = (count: number, size: number, random: JavaRandom) => {
   if (size <= 0) return [];
   const stride = BigInt(size < 191 ? 191 : MAXIMUM_INT);
   const offset = BigInt(random.nextInt(size));
   return Array.from(
     { length: Math.min(count, size) },
-    (_, index) => (stride * BigInt(index) + offset) % BigInt(size),
+    (_value, index) => (stride * BigInt(index) + offset) % BigInt(size),
   );
 };
 
 const LARGE_STRIDE = (1n << 63n) - 1n - 24n;
 
-// SetOfFcnsOrRcdsValue.BigIntegerSubsetEnumerator, for products with more than 2^31 - 1
-// elements.
 const getLargeSubsetIndices = (count: number, size: bigint, random: JavaRandom) => {
   const signed = random.nextLong();
   const offset = BigInt.asIntN(64, signed < 0n ? -signed : signed);
-  return Array.from({ length: count }, (_, index) => {
+  return Array.from({ length: count }, (_value, index) => {
     const value = (LARGE_STRIDE * BigInt(index) + offset) % size;
     return value < 0n ? value + size : value;
   });
@@ -181,13 +170,11 @@ const getProduct = (set: Value): Product | undefined => {
   return undefined;
 };
 
-// TLC 1.7.4 enumerates a set of tuples to draw from it.
 export const getEnumeratedFactors = (set: Value, version: TlcVersion) =>
   version === "1.7.4" && typeof set === "object" && set.kind === "ProductSet"
     ? set.factors
     : undefined;
 
-// Enumerable#getRandomSubset, which Randomization's RandomSubset calls.
 export const getRandomSubset = (
   count: number,
   set: Value,
@@ -214,18 +201,10 @@ export const getRandomSubset = (
   return getSubsetIndices(count, elements.length, random).map((index) => elements[Number(index)]);
 };
 
-const pickElement = (elements: Value[], random: JavaRandom) => {
-  const element = elements[Math.floor(random.nextDouble() * elements.length)];
-  if (element === undefined) throw new TlaEvaluationError("RandomElement of the empty set");
-  return element;
-};
-
-// TLC!RandomElement chooses each component of a set of functions, records, or tuples
-// separately, and otherwise indexes the enumerated set with nextDouble.
 export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "FunctionSet") {
     // TLC builds the chosen function without the interval its domain came from.
-    const domain = [...getFunctionDomain(set.domain)];
+    const domain = [...toEnumeratedSet(set.domain, "RandomElement", set).elements];
     return createSortedFunction(
       domain,
       domain.map(() => getRandomElement(set.range, random)),
@@ -245,8 +224,17 @@ export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "Interval") {
     const size = Math.max(0, set.high - set.low + 1);
     const offset = Math.floor(random.nextDouble() * size);
-    if (offset >= size) throw new TlaEvaluationError("RandomElement of the empty set");
+    if (offset >= size) {
+      throw new TlaEvaluationError(
+        `Attempted to retrieve out-of-bounds element from the interval value ${formatValue(set)}.`,
+      );
+    }
     return set.low + offset;
   }
-  return pickElement(toFiniteSet(set).elements, random);
+  const elements = toEnumeratedSet(set, "RandomElement").elements;
+  const index = Math.floor(random.nextDouble() * elements.length);
+  if (index >= elements.length) {
+    throw new TlaEvaluationError(`Index ${index} out of bounds for length ${elements.length}`);
+  }
+  return elements[index];
 };

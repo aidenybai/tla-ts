@@ -1,10 +1,8 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-//
-// The rules for functions: membership in a function set, isAFcn and function equality.
 
-import { isApp, type Expr } from "../expr";
+import { isApp } from "../expr";
 import type { Priority } from "../node";
-import { makeRule, type Rule } from "../proof";
+import { makeRule } from "../proof";
 import {
   domain,
   equal,
@@ -22,8 +20,6 @@ export const getFunctionSetNodes = (literal: Literal): Item[] | undefined => {
   const formula = literal.formula;
   const isNegated = literal.isNegated;
   const relation = literal.relation;
-  const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
-    makeExtensionNode(literal, priority, rule, branches);
   if (relation?.symbol === "TLA.in") {
     const element = relation.args[0];
     const set = relation.args[1];
@@ -31,8 +27,8 @@ export const getFunctionSetNodes = (literal: Literal): Item[] | undefined => {
       const fcn = element;
       const source = set.args[0];
       const target = set.args[1];
-      const isFcn = exprs.eapp("TLA.isAFcn", [fcn]);
-      const hasDomain = equal(exprs, domain(exprs, fcn), source);
+      const fcnFormula = exprs.eapp("TLA.isAFcn", [fcn]);
+      const domainFormula = equal(exprs, domain(exprs, fcn), source);
       const bound = exprs.newVar();
       const maps = exprs.eall(
         bound,
@@ -43,21 +39,32 @@ export const getFunctionSetNodes = (literal: Literal): Item[] | undefined => {
         ),
       );
       if (!isNegated) {
-        const rule = makeRule("in_funcset", [formula, isFcn, hasDomain, maps, fcn, source, target]);
+        const rule = makeRule("in_funcset", [
+          formula,
+          fcnFormula,
+          domainFormula,
+          maps,
+          fcn,
+          source,
+          target,
+        ]);
         return [
-          ...node("arity", rule, [[isFcn, hasDomain]]),
-          ...node({ instance: maps }, rule, [[isFcn, hasDomain, maps]]),
+          ...makeExtensionNode(literal, "arity", rule, [[fcnFormula, domainFormula]]),
+          ...makeExtensionNode(literal, { instance: maps }, rule, [
+            [fcnFormula, domainFormula, maps],
+          ]),
         ];
       }
-      const notFcn = exprs.enot(isFcn);
-      const notDomain = exprs.enot(hasDomain);
+      const notFcn = exprs.enot(fcnFormula);
+      const notDomain = exprs.enot(domainFormula);
       const notMaps = exprs.enot(maps);
       const priority: Priority =
         fcn.kind === "app" && FUNCTION_CONSTRUCTORS.includes(fcn.symbol)
           ? "arity"
           : { instance: notMaps };
       const shortcut = isApp(fcn, "TLA.except", 3)
-        ? node(
+        ? makeExtensionNode(
+            literal,
             "arity",
             makeRule("except_notin_funcset", [
               formula,
@@ -77,7 +84,8 @@ export const getFunctionSetNodes = (literal: Literal): Item[] | undefined => {
         : [];
       return [
         ...shortcut,
-        ...node(
+        ...makeExtensionNode(
+          literal,
           priority,
           makeRule("notin_funcset", [formula, notFcn, notDomain, notMaps, fcn, source, target]),
           [[notFcn], [notDomain], [notMaps]],
@@ -94,22 +102,36 @@ export const getFunctionNodes = (literal: Literal): Item[] | undefined => {
   const isNegated = literal.isNegated;
   const atom = literal.atom;
   const relation = literal.relation;
-  const node = (priority: Priority, rule: Rule, branches: Expr[][]) =>
-    makeExtensionNode(literal, priority, rule, branches);
   if (isNegated && isApp(atom, "TLA.isAFcn", 1)) {
     const fcn = atom.args[0];
     if (isApp(fcn, "TLA.Fcn", 2))
-      return node("prop", makeRule("notisafcn_fcn", [formula, fcn.args[0], fcn.args[1]]), []);
+      return makeExtensionNode(
+        literal,
+        "prop",
+        makeRule("notisafcn_fcn", [formula, fcn.args[0], fcn.args[1]]),
+        [],
+      );
     if (isApp(fcn, "TLA.except", 3))
-      return node(
+      return makeExtensionNode(
+        literal,
         "prop",
         makeRule("notisafcn_except", [formula, fcn.args[0], fcn.args[1], fcn.args[2]]),
         [],
       );
     if (isApp(fcn, "TLA.oneArg", 2))
-      return node("prop", makeRule("notisafcn_onearg", [formula, fcn.args[0], fcn.args[1]]), []);
+      return makeExtensionNode(
+        literal,
+        "prop",
+        makeRule("notisafcn_onearg", [formula, fcn.args[0], fcn.args[1]]),
+        [],
+      );
     if (isApp(fcn, "TLA.extend", 2))
-      return node("prop", makeRule("notisafcn_extend", [formula, fcn.args[0], fcn.args[1]]), []);
+      return makeExtensionNode(
+        literal,
+        "prop",
+        makeRule("notisafcn_extend", [formula, fcn.args[0], fcn.args[1]]),
+        [],
+      );
   }
   if (relation?.symbol !== "=") return undefined;
   const left = relation.args[0];
@@ -119,15 +141,18 @@ export const getFunctionNodes = (literal: Literal): Item[] | undefined => {
     const sameDomain = equal(exprs, domain(exprs, left), domain(exprs, right));
     const sameValue = equal(exprs, fapply(exprs, left, bound), fapply(exprs, right, bound));
     if (!isNegated) {
-      const isFcn = exprs.eequiv(
+      const fcnEquivalence = exprs.eequiv(
         exprs.eapp("TLA.isAFcn", [left]),
         exprs.eapp("TLA.isAFcn", [right]),
       );
       const values = exprs.eall(bound, "", sameValue);
-      const result = exprs.eand(exprs.eand(isFcn, sameDomain), values);
-      return node({ instance: values }, makeRule("funequal", [formula, result, left, right]), [
-        [result],
-      ]);
+      const result = exprs.eand(exprs.eand(fcnEquivalence, sameDomain), values);
+      return makeExtensionNode(
+        literal,
+        { instance: values },
+        makeRule("funequal", [formula, result, left, right]),
+        [[result]],
+      );
     }
     const values = exprs.eall(
       bound,
@@ -143,9 +168,12 @@ export const getFunctionNodes = (literal: Literal): Item[] | undefined => {
         values,
       ),
     );
-    return node({ instance: values }, makeRule("notfunequal", [formula, result, left, right]), [
-      [result],
-    ]);
+    return makeExtensionNode(
+      literal,
+      { instance: values },
+      makeRule("notfunequal", [formula, result, left, right]),
+      [[result]],
+    );
   }
   return undefined;
 };

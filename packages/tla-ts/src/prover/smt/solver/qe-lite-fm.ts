@@ -1,6 +1,4 @@
-// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp), MIT license, see z3-license.txt. The fm of
-// qe-lite: Fourier-Motzkin elimination of the integer variables of a quantifier that only occur in
-// clauses with one linear inequality.
+// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp), MIT license, see z3-license.txt.
 import {
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -17,14 +15,11 @@ import {
 import { getGcd } from "./rational";
 import { RefVector } from "./ref-vector";
 
-// fm's parameters.
 const FM_LIMIT = 5000000;
 const FM_CUTOFF1 = 8;
 const FM_CUTOFF2 = 256;
 const FM_EXTRA = 0;
 
-// A clause of Boolean literals and one linear inequality, a1*x1 + ... + an*xn <= c, or < c when
-// strict. A literal is the index of a Boolean constant, negative when negated.
 interface Constraint {
   lits: number[];
   xs: number[];
@@ -34,8 +29,6 @@ interface Constraint {
   isDead: boolean;
 }
 
-// fm: Fourier-Motzkin elimination of the integer variables that only occur in clauses with one
-// linear inequality.
 export class Fm {
   private constraints: Constraint[] = [];
   private bvar2expr: RefVector;
@@ -52,7 +45,6 @@ export class Fm {
   private newFmls: RefVector;
   private counter = 0;
   private isInconsistent = false;
-  // m_sub_todo: the constraints to check for backward subsumption.
   private subTodo: Constraint[] = [];
   numVars = 0;
 
@@ -62,7 +54,6 @@ export class Fm {
     this.newFmls = new RefVector(manager);
   }
 
-  // ~fm.
   release() {
     this.resetConstraints();
     this.newFmls.reset();
@@ -100,14 +91,13 @@ export class Fm {
     this.newFmls.push(this.manager.falseExpr);
   }
 
-  // Z3 keeps m_expr2bvar from the previous run, whose indices then point into the new, shorter
-  // m_bvar2expr. This port clears it.
   private init(fmls: number[]) {
     this.subTodo = [];
     this.resetConstraints();
     this.bvar2expr.reset();
     this.bvar2sign = [0];
     this.bvar2expr.push(-1);
+    // Z3 keeps m_expr2bvar from the previous run, whose indices then point into the new m_bvar2expr.
     this.expr2bvar.clear();
     this.expr2var.clear();
     this.isInt = [];
@@ -135,7 +125,6 @@ export class Fm {
     );
   }
 
-  // is_linear_mon_core: the variable of x or c*x.
   private getMonomialVar(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) === OP_MUL && manager.getNumArgs(expr) === 2) {
@@ -173,7 +162,6 @@ export class Fm {
     return manager.isInt(lhs) && manager.isNumeral(rhs) && this.isLinearPol(lhs);
   }
 
-  // is_occ: a clause of literals with one linear inequality.
   private isOcc(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_OR) return this.isLinearIneq(expr);
@@ -187,7 +175,6 @@ export class Fm {
     return isFound;
   }
 
-  // init_forbidden_set: the integer variables that occur outside the clauses are not eliminated.
   private initForbiddenSet(fmls: number[]) {
     const manager = this.manager;
     this.forbiddenSet.clear();
@@ -289,7 +276,6 @@ export class Fm {
     this.registerConstraint({ lits, xs, as, c, isStrict, isDead: false });
   }
 
-  // normalize_coeffs: divides by the gcd of the coefficients and the constant.
   private normalizeCoeffs(constraint: Constraint) {
     if (constraint.xs.length === 0) return;
     let divisor = constraint.c < 0n ? -constraint.c : constraint.c;
@@ -344,7 +330,6 @@ export class Fm {
     this.constraints = [];
   }
 
-  // to_expr: the constraint as a formula, with a raw reference like Z3's.
   private toExpr(constraint: Constraint) {
     const manager = this.manager;
     let ineq = -1;
@@ -375,8 +360,6 @@ export class Fm {
     return lits.length === 1 ? lits[0] : manager.mkApp(OP_OR, lits, SORT_BOOL);
   }
 
-  // subsumes: c1's literals are among c2's, the polynomials are the same, and c1's bound is at most
-  // c2's.
   private isSubsuming(first: Constraint, second: Constraint) {
     if (first === second) return false;
     if (first.lits.length > second.lits.length || first.xs.length !== second.xs.length)
@@ -436,8 +419,6 @@ export class Fm {
       if (!constraint.isDead) this.backwardSubsumption(constraint);
   }
 
-  // sort_candidates: the variables without a lower or upper bound first, then by the number of
-  // constraints they would create.
   private sortCandidates() {
     const costs: [number, number][] = [];
     this.forbidden.forEach((isForbidden, variable) => {
@@ -455,7 +436,6 @@ export class Fm {
     return costs.map((cost) => cost[0]);
   }
 
-  // analyze: whether every variable is an integer, and whether x's coefficients are all 1 or -1.
   private analyze(constraints: Constraint[], variable: number) {
     let isUnit = true;
     for (const constraint of constraints)
@@ -481,8 +461,6 @@ export class Fm {
     for (const constraint of this.uppers[variable]) constraint.isDead = true;
   }
 
-  // resolve: the combination of a lower and an upper bound of x without x, or undefined when it
-  // holds.
   private resolve(lower: Constraint, upper: Constraint, variable: number) {
     this.counter += lower.xs.length + upper.xs.length + lower.lits.length + upper.lits.length;
     const a = -lower.as[lower.xs.indexOf(variable)];
@@ -561,7 +539,6 @@ export class Fm {
     }
   }
 
-  // copy_remaining: the live constraints of the upper bounds, then of the lower bounds.
   private copyRemaining() {
     for (const lists of [this.uppers, this.lowers])
       for (const constraints of lists)

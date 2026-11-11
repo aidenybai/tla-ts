@@ -1,0 +1,144 @@
+(*---
+description: "CopiesIn dereferences a null conversion like BagIn. Real TLC bug: no argument error is produced."
+ref: tlc2/module/Bags.java#CopiesIn
+features:
+  - Bags
+  - tlc-bug
+flags:
+  - expression
+outcome: evaluation-failure
+correct:
+  assume:
+    exit: 10
+    transcript: |-
+      2105:1 Evaluating assumption line 73, col 8 to line 73, col 11 of module copies_in_non_function failed.
+      2169:0 The second argument of CopiesIn should be a bag, but instead it is:
+      3
+  init:
+    exit: 75
+    transcript: |-
+      1000:1 
+      2169:0 The second argument of CopiesIn should be a bag, but instead it is:
+      3
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+      1. Line 74, column 29 to line 74, column 32 in copies_in_non_function
+      2. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+      3. Line 72, column 9 to line 72, column 22 in copies_in_non_function
+  invariant:
+    exit: 75
+    transcript: |-
+      1000:1 
+      2169:0 The second argument of CopiesIn should be a bag, but instead it is:
+      3
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+      1. Line 76, column 8 to line 76, column 32 in copies_in_non_function
+      2. Line 76, column 29 to line 76, column 32 in copies_in_non_function
+      3. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+      4. Line 72, column 9 to line 72, column 22 in copies_in_non_function
+  next:
+    exit: 255
+    transcript: |-
+      2169:1 The second argument of CopiesIn should be a bag, but instead it is:
+      3
+      2121:1 The behavior up to this point is:
+      2217:4 1: <Initial predicate>
+      conformance_state = TRUE
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 75, column 9 to line 75, column 33 in copies_in_non_function
+      1. Line 75, column 30 to line 75, column 33 in copies_in_non_function
+      2. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+      3. Line 72, column 9 to line 72, column 22 in copies_in_non_function
+  property:
+    exit: 75
+    transcript: |-
+      1000:1 
+      2169:0 The second argument of CopiesIn should be a bag, but instead it is:
+      3
+      2103:1 The error occurred when TLC was evaluating the nested
+      expressions at the following positions:
+      0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+      1. Line 75, column 12 to line 75, column 36 in copies_in_non_function
+      2. Line 75, column 33 to line 75, column 36 in copies_in_non_function
+      3. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+      4. Line 72, column 9 to line 72, column 22 in copies_in_non_function
+---*)
+---- MODULE copies_in_non_function ----
+EXTENDS Bags, TLC, Naturals
+Test == CopiesIn(1, 3) = 0
+====
+
+(*--- recorded
+assume:
+  exit: 10
+  transcript: |-
+    2105:1 Evaluating assumption line 73, col 8 to line 73, col 11 of module copies_in_non_function failed.
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
+    Cannot read field "values" because "fcn" is null
+init:
+  exit: 75
+  transcript: |-
+    1000:1 
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
+    Cannot read field "values" because "fcn" is null
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+    1. Line 74, column 29 to line 74, column 32 in copies_in_non_function
+    2. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+    3. Line 72, column 9 to line 72, column 22 in copies_in_non_function
+next:
+  exit: 255
+  transcript: |-
+    2154:1 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
+    Cannot read field "values" because "fcn" is null
+    2121:1 The behavior up to this point is:
+    2217:4 1: <Initial predicate>
+    conformance_state = TRUE
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 75, column 9 to line 75, column 33 in copies_in_non_function
+    1. Line 75, column 30 to line 75, column 33 in copies_in_non_function
+    2. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+    3. Line 72, column 9 to line 72, column 22 in copies_in_non_function
+invariant:
+  exit: 75
+  transcript: |-
+    1000:1 
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
+    Cannot read field "values" because "fcn" is null
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+    1. Line 76, column 8 to line 76, column 32 in copies_in_non_function
+    2. Line 76, column 29 to line 76, column 32 in copies_in_non_function
+    3. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+    4. Line 72, column 9 to line 72, column 22 in copies_in_non_function
+property:
+  exit: 75
+  transcript: |-
+    1000:1 
+    2154:0 Attempted to apply the operator overridden by the Java method
+    public static tlc2.value.impl.IntValue tlc2.module.Bags.CopiesIn(tlc2.value.impl.Value,tlc2.value.impl.Value),
+    but it produced the following error:
+    Cannot read field "values" because "fcn" is null
+    2103:1 The error occurred when TLC was evaluating the nested
+    expressions at the following positions:
+    0. Line 74, column 9 to line 74, column 32 in copies_in_non_function
+    1. Line 75, column 12 to line 75, column 36 in copies_in_non_function
+    2. Line 75, column 33 to line 75, column 36 in copies_in_non_function
+    3. Line 72, column 9 to line 72, column 26 in copies_in_non_function
+    4. Line 72, column 9 to line 72, column 22 in copies_in_non_function
+---*)

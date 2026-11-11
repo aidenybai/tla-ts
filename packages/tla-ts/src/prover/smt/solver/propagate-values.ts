@@ -1,16 +1,10 @@
-// Ported from Z3 (src/tactic/core/propagate_values_tactic.cpp, src/ast/shared_occs.cpp), MIT license,
-// see z3-license.txt. The propagate-values tactic: a formula that is an atom, a negated atom or an
-// equality with a value rewrites the other formulas, when its atom or term occurs more than once in
-// the goal.
+// Ported from Z3 (src/tactic/core/propagate_values_tactic.cpp, src/ast/shared_occs.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, KIND_QUANTIFIER, OP_EQ, type AstManager } from "./ast";
 import type { Goal } from "./goal";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
-// The max_rounds parameter's default.
 const MAX_ROUNDS = 4;
 
-// goal_shared_occs with atoms tracked: the terms that the goal's formulas reach more than once,
-// quantifier bodies included and patterns excluded.
 const getSharedOccs = (manager: AstManager, forms: number[]) => {
   const visited = new Set<number>();
   const shared = new Set<number>();
@@ -34,7 +28,6 @@ export const propagateValues = (manager: AstManager, goal: Goal) => {
   rewriter.setSubstitution(substitution);
   let occs = getSharedOccs(manager, goal.forms.items);
   let isModified = false;
-  // process_current and push_result.
   const process = (index: number) => {
     const current = goal.forms.items[index];
     const isRewriting = substitution.size !== 0;
@@ -57,8 +50,6 @@ export const propagateValues = (manager: AstManager, goal: Goal) => {
     )
       substitution.set(manager.getArg(rewritten, 0), manager.getArg(rewritten, 1));
   };
-  // Each pass is a round: a forward pass, which stops when it found nothing, then a backward pass,
-  // which stops when it changed nothing.
   for (let round = 0; round < MAX_ROUNDS; round += 2) {
     const size = goal.forms.size;
     for (let index = 0; index < size; index++) {

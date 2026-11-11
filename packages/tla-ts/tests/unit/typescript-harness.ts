@@ -2,8 +2,6 @@ import ts from "@typescript/typescript6";
 import { check, type Value } from "../../src";
 import { compile } from "../../src/typescript/compile";
 
-// Values print as strings that are equal for equal TLA+ values. Sets ignore order, and arrays,
-// Maps, and objects all print as functions from their keys, as TLA+ represents them.
 const formatSet = (elements: string[]) => `{${elements.sort().join(", ")}}`;
 
 const formatFunction = (entries: [string, string][]) =>
@@ -24,7 +22,7 @@ const getCanonical = (value: unknown): string => {
       ? [...value]
       : Array.isArray(value)
         ? value.map((element, index) => [index + 1, element])
-        : Object.entries(value as object).map((entry) => [
+        : Object.entries(value).map((entry) => [
             /^-?\d+$/.test(entry[0]) ? Number(entry[0]) : entry[0],
             entry[1],
           ]);
@@ -52,7 +50,6 @@ const getCanonicalTla = (value: Value): string => {
   throw new Error(`Unexpected value kind: ${value.kind}`);
 };
 
-// Runs a TypeScript module as JavaScript and returns what its getResult export returns.
 const runJavaScript = (source: string) => {
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ESNext },
@@ -63,7 +60,6 @@ const runJavaScript = (source: string) => {
   return exports.getResult();
 };
 
-// The last state that the compiled spec reaches, where no action can run any more.
 const runTla = async (source: string) => {
   const result = await check(compile(source));
   const state = result.violation?.trace.at(-1)?.state;
@@ -73,7 +69,6 @@ const runTla = async (source: string) => {
   return state;
 };
 
-// The value of an expression, in JavaScript and in the TLA+ that tla-ts compiles it to.
 export const evaluateExpression = async (expression: string, setup = "") => {
   const state = await runTla(`${setup}\nlet result = ${expression};`);
   return {
@@ -84,7 +79,6 @@ export const evaluateExpression = async (expression: string, setup = "") => {
   };
 };
 
-// The variables after an action runs statements once, in JavaScript and in the TLA+ that tla-ts compiles it to.
 export const runStatements = async (variables: string, statements: string, setup = "") => {
   const names = ts
     .createSourceFile("variables.ts", `let ${variables};`, ts.ScriptTarget.ESNext)

@@ -8,12 +8,14 @@ export interface StateDump {
   colorize?: boolean;
   actionLabels?: boolean;
   snapshot?: boolean;
+  constrained?: boolean;
+  stuttering?: boolean;
+  strict?: boolean;
 }
 
 export interface GraphState {
   fingerprint: bigint;
   level: number;
-  // The state as TLC prints it after evaluating the alias, and as it prints it without the alias.
   getLabel: () => string;
   getText: () => string;
 }
@@ -31,7 +33,12 @@ export interface StateWriter {
     isSeen: boolean,
     action: GraphAction | undefined,
   ) => void;
-  // The stuttering step of a state that TLC 1.7.4 adds to the behavior graph.
+  writeConstrained: (
+    state: GraphState,
+    successor: GraphState,
+    action: GraphAction | undefined,
+    constraint: string,
+  ) => void;
   writeStuttering: (state: GraphState) => void;
   close: () => void;
 }
@@ -45,8 +52,6 @@ const INITIAL_CAPACITY = 16;
 const getCapacity = (size: number, capacity = INITIAL_CAPACITY): number =>
   size <= capacity * LOAD_FACTOR ? capacity : getCapacity(size, capacity * 2);
 
-// The order in which a java.util.HashMap iterates over keys put in this order: by bucket, and in
-// insertion order within a bucket. A bucket only becomes a tree once 8 keys collide in it.
 const getJavaHashOrder = <Key>(keys: Key[], getHash: (key: Key) => number) => {
   const mask = getCapacity(keys.length) - 1;
   const getBucket = (key: Key) => {
@@ -82,14 +87,12 @@ const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter =
     writeSuccessor: (_state, successor, isSeen) => {
       if (!isSeen) writeState(successor);
     },
-    // TLC 1.7.4 writes the state again, as it takes the stuttering step for one to a new state.
+    writeConstrained: () => {},
     writeStuttering: writeState,
     close: () => writeFile?.(dump.path, states.join("")),
   };
 };
 
-// TLC 1.7.4 draws its nodes as ellipses, gives them no tooltip, and labels an edge with the name
-// of its action alone.
 const createDotWriter = (
   dump: StateDump,
   writeFile: WriteFile,
@@ -106,11 +109,19 @@ const createDotWriter = (
   ];
   const ranks = new Map<number, Set<bigint>>();
   const colors = new Map<string, number>();
+  // Deviation from TLC: it keys an edge by the XOR of its fingerprints, which merges distinct edges.
+  const edges = new Set<string>();
+  const isDuplicate = (state: GraphState, successor: GraphState) => {
+    if (!dump.strict) return false;
+    const key = `${state.fingerprint} ${successor.fingerprint}`;
+    if (edges.has(key)) return true;
+    edges.add(key);
+    return false;
+  };
   const addRank = (state: GraphState) => {
     const rank = ranks.get(state.level) ?? new Set();
     ranks.set(state.level, rank.add(state.fingerprint));
   };
-  // TLC colors an edge by the name of its action, numbering the names from 2 as it finds them.
   const getColor = (action: GraphAction | undefined) => {
     if (!action) return 1;
     const color = colors.get(action.name) ?? colors.size + 2;
@@ -143,30 +154,45 @@ const createDotWriter = (
       writeFile?.(dump.path.replaceAll(".dot", "_snapshot.dot"), lines.join("") + getEnding());
     }
   };
+  const writeEdge = (
+    state: GraphState,
+    successor: GraphState,
+    isSeen: boolean,
+    action: GraphAction | undefined,
+    constraint?: string,
+  ) => {
+    if (isDuplicate(state, successor)) return;
+    const color = dump.colorize ? String(getColor(action)) : "black";
+    const name =
+      dump.actionLabels && action ? escapeDotString(is174 ? action.name : action.signature) : "";
+    const label = constraint === undefined ? name : `${name}\n${constraint}`;
+    lines.push(
+      `${state.fingerprint} -> ${successor.fingerprint} [label="${label}",color="${color}",fontcolor="${color}"];\n`,
+    );
+    if (!isSeen) {
+      const tooltip = is174 ? "" : `,tooltip="${toDotLabel(successor.getText())}"`;
+      const fill = constraint === undefined ? "" : ",style = filled, fillcolor=lightyellow";
+      lines.push(
+        `${successor.fingerprint} [label="${toDotLabel(successor.getLabel())}"${tooltip}${fill}];\n`,
+      );
+    }
+    addRank(state);
+    writeSnapshot();
+  };
   return {
     writeInitialState: (state) => {
       lines.push(`${state.fingerprint} [label="${toDotLabel(state.getLabel())}",style = filled]\n`);
       addRank(state);
       writeSnapshot();
     },
-    writeSuccessor: (state, successor, isSeen, action) => {
-      const color = dump.colorize ? String(getColor(action)) : "black";
-      const label =
-        dump.actionLabels && action ? escapeDotString(is174 ? action.name : action.signature) : "";
-      lines.push(
-        `${state.fingerprint} -> ${successor.fingerprint} [label="${label}",color="${color}",fontcolor="${color}"];\n`,
-      );
-      if (!isSeen) {
-        const tooltip = is174 ? "" : `,tooltip="${toDotLabel(successor.getText())}"`;
-        lines.push(
-          `${successor.fingerprint} [label="${toDotLabel(successor.getLabel())}"${tooltip}];\n`,
-        );
-      }
-      addRank(state);
-      writeSnapshot();
-    },
+    writeSuccessor: writeEdge,
+    writeConstrained: (state, successor, action, constraint) =>
+      writeEdge(state, successor, false, action, constraint),
     writeStuttering: (state) => {
-      lines.push(`${state.fingerprint} -> ${state.fingerprint} [style="dashed"];\n`);
+      if (isDuplicate(state, state)) return;
+      lines.push(
+        `${state.fingerprint} -> ${state.fingerprint} [style="dashed"${is174 ? "" : ',color="lightgray"'}];\n`,
+      );
       addRank(state);
       writeSnapshot();
     },

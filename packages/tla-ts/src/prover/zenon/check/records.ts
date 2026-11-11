@@ -1,6 +1,3 @@
-// The checks of the TLA+ extension's rules for tuples and records, after the lemmas in Zenon.thy
-// that justify them.
-
 import type { PlainRuleName } from "../proof";
 import {
   app,
@@ -21,7 +18,6 @@ import {
   type Term,
 } from "./terms";
 
-// The fields of a record or a set of records, whose labels must be distinct string literals.
 export const getFields = (record: Term, constructor: "TLA.record" | "TLA.recordset") => {
   const fields = getPairs(expectApp(record, constructor));
   const labels = fields.map((field) => getStringText(field[0]));
@@ -49,7 +45,6 @@ const getRecordInequalitySpec = (formula: Term, isRecordRight: boolean): RuleSpe
   };
 };
 
-// Checks that the formulas list exactly the expected ones, and returns them as branches.
 const expectSameSet = (checker: Checker, given: Term[], expected: Term[]) => {
   const keys = new Set(expected.map(checker.getTopKey));
   ensure(
